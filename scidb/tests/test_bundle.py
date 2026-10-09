@@ -505,3 +505,52 @@ def report_db(report):
     from scidb.database import get_database
 
     return get_database()
+
+
+# ---------------------------------------------------------------------------
+# Stage 8: what the import dialogs read first; the report as JSON
+# ---------------------------------------------------------------------------
+
+
+def test_preview_lists_schema_sections_and_path_inputs(project, tmp_path):
+    out = _export_with_config(project, tmp_path)
+    info = bundle.preview(out, providers=[EntitiesSection()])
+
+    assert info["package"] == "gait"
+    assert info["schema_keys"] == ["subject", "session"]
+    assert info["has_history"] is True and info["has_data"] is False
+    assert "code" in info["sections"] and info["sections"]["code"]["files"] == 1
+    by_name = {p["name"]: p for p in info["path_inputs"]}
+    assert by_name["RAW"] == {
+        "name": "RAW", "templates": ["{subject}/{session}.csv"], "root_folders": ["/exporter/data"],
+    }
+    assert by_name["NOTES"]["root_folders"] == []
+    json.dumps(info)  # the CLI prints it as JSON
+
+
+def test_preview_writes_nothing_outside_a_temporary_folder(project, tmp_path):
+    out = _export_with_config(project, tmp_path)
+    before = sorted(p for p in tmp_path.rglob("*"))
+    section = EntitiesSection()
+    bundle.preview(out, providers=[section])
+    assert sorted(p for p in tmp_path.rglob("*")) == before
+    assert not section.ctx.root.exists()  # the temp root is gone
+    assert section.ctx.db is None  # files phase: no database
+
+
+def test_preview_without_providers_still_reads_the_manifest(project, tmp_path):
+    out = _export(project, tmp_path)
+    info = bundle.preview(out)
+    assert info["path_inputs"] == []
+    assert info["schema_keys"] == ["subject", "session"]
+
+
+def test_the_import_report_is_json(project, tmp_path):
+    out = _export_with_config(project, tmp_path)
+    report = import_project(out, tmp_path / "copy", providers=[EntitiesSection()],
+                            path_roots={"RAW": "/mine/raw"})
+    d = report.to_dict()
+    assert json.loads(json.dumps(d)) == d
+    assert d["root"] == str((tmp_path / "copy").resolve())
+    assert d["sections"]["path_inputs"]["rewritten"] == ["RAW"]
+    report_db(report).close()

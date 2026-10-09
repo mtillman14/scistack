@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from scistack_gui.api.artifacts import ARTIFACT_HANDLERS
 from scistack_gui.api.builtin_functions import BUILTIN_FUNCTION_HANDLERS
+from scistack_gui.api.bundles import BUNDLE_HANDLERS
 from scistack_gui.api.glue import GLUE_HANDLERS
 from scistack_gui.api.handlers import Handler
 from scistack_gui.api.history import HISTORY_HANDLERS
@@ -45,6 +46,7 @@ TABLES: dict[str, tuple[Handler, ...]] = {
     "variants": VARIANT_HANDLERS,
     "plot": PLOT_HANDLERS,
     "history": HISTORY_HANDLERS,
+    "bundles": BUNDLE_HANDLERS,
 }
 
 ALL_HANDLERS: tuple[Handler, ...] = tuple(h for table in TABLES.values() for h in table)

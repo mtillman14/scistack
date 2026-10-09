@@ -15,6 +15,7 @@
 
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { importProjectBundle } from './bundleImport';
 import { PlotPanel, PlotTarget } from './plotPanel';
 import { Session, SessionManager } from './session';
 
@@ -257,6 +258,18 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // A .scistack bundle becomes a NEW project, imported in its own process
+  // (bundleImport.ts); opening it afterwards is the trust prompt.
+  const importBundle = vscode.commands.registerCommand(
+    'scistack.importProjectBundle',
+    async () => {
+      await importProjectBundle(outputChannel, async (dbPath) => {
+        await sessions.open(dbPath);
+        updateStatusBar();
+      });
+    }
+  );
+
   // Right-click a .csv in the Explorer. This deliberately needs NO project and
   // NO database: it routes to scistackplot's CsvSource, which is the same
   // DataSource protocol the scidb path implements. With no pipeline open it
@@ -288,6 +301,7 @@ export function activate(context: vscode.ExtensionContext) {
     openPlotPanel,
     plotVariable,
     plotCsv,
+    importBundle,
     outputChannel
   );
 }

@@ -34,6 +34,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { callBackend, isVSCodeMode } from '../api'
 import { useBackendMessage } from '../hooks/useBackendMessage'
 import { useScope } from '../context/ScopeContext'
+import ProjectExportButton from './ProjectExportButton'
 
 export interface HypothesisInfo {
   pipeline_id: string
@@ -419,6 +420,7 @@ export default function HypothesisTabs() {
       >
         ⇧ import
       </button>
+      <ProjectExportButton />
       {(() => {
         const hiddenHypotheses = hiddenPipelines.filter(p => p.is_hypothesis)
         if (hiddenHypotheses.length === 0) return null

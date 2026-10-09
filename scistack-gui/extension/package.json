@@ -60,6 +60,10 @@
       {
         "command": "scistack.plotCsv",
         "title": "SciStack: Plot CSV File"
+      },
+      {
+        "command": "scistack.importProjectBundle",
+        "title": "SciStack: Import Project Bundle…"
       }
     ],
     "configuration": {

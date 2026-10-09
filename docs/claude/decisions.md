@@ -8,6 +8,31 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-08-9 — One bundle CLI, run by the terminal and the extension alike
+
+**Context.** Bundles must work entirely headless and entirely in the GUI.
+An import makes a NEW project with its own DuckDB file, but a GUI session's
+process already holds its own database, and `scistack-gui` must never depend
+on the `scistack` package that owns the `scistack` command.
+
+**Decision.** The commands live in `scistack_gui/bundle_cli.py`.
+`scistack export/import/bundle-info` mounts those parsers, and the VS Code
+command *Import Project Bundle…* runs `python -m scistack_gui.bundle_cli
+import --json` in its own process, then opens the new project as its own
+session. Export from the GUI writes the session's already-open project
+through `headless.export_open_project`, the same composition the terminal
+reaches after opening. `bundle_cli.EXPORT_FLAGS` / `export_choices()` is
+the one list of offered options: the CLI flags and the GUI checkboxes both
+read it, with defaults from `ExportOptions`. Trust is asked before the
+first step that runs the bundle's code (`--check-code`, or opening the new
+project); the import itself never does.
+
+**Consequences.** The browser (non-VS Code) build has no import; the
+terminal covers it. The extension parses the CLI's last stdout line, so the
+CLI's `--json` output is a contract (tested on both sides).
+
+---
+
 ## D-2026-10-08-8 — History without its data is an archive, not live
 
 **Context.** A bundle's history is on by default and its data is opt-in, so

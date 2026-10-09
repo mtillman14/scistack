@@ -345,7 +345,7 @@ def _resolve_pipeline(
     return created_pid
 
 
-def _unresolved_labels(snap) -> list[str]:
+def unresolved_labels(snap) -> list[str]:
     """function/variable labels the import placed a node for that aren't
     in the LOCAL registry yet — informational only (see module docstring:
     nothing blocks the import on this)."""
@@ -565,7 +565,7 @@ def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> 
     }
     old_to_new = canvas_snapshot.apply(db, snap, pipeline_map, include_hides=False)
     globals_report = apply_globals(db, document, resolution, local, discovered=discovered)
-    unresolved = _unresolved_labels(snap) if discovered else None
+    unresolved = unresolved_labels(snap) if discovered else None
 
     logger.info(
         "[portability] import_pipeline_document: %d pipeline(s) (%d reused), "

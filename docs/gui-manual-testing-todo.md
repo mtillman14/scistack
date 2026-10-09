@@ -11,6 +11,49 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzg. Whole-project export + "Import Project Bundle…" — added 2026-10-08
+
+New: an **⇩ export project** button in the tab strip (beside ⇧ import), and a
+VS Code command **SciStack: Import Project Bundle…**. Both frontend bundles
+and the extension are rebuilt; reload the VS Code window.
+
+1. **Export dialog:** click ⇩ export project. Two checkboxes: *History*
+   (ticked) and *Data* (unticked). These defaults come from Python
+   (`ExportOptions`); `scistack export --help` shows the same two with the
+   same defaults.
+2. Click **Export…**: a save dialog filtered to `.scistack`, suggesting
+   `<database name>.scistack`. Save. The popover shows the path and size.
+   `scidb.log`: `[bundles] export_project_bundle -> ...` and `[bundle]
+   export ...` lines.
+3. Untick History and tick Data, then Export: an error says data needs its
+   history (nothing written).
+4. **Import:** Command Palette → *SciStack: Import Project Bundle…*. Pick the
+   file, then a parent folder and a new folder name (the package name is
+   suggested). Schema: the exporter's keys are pre-filled.
+   - Keep them, and for each PathInput pick *Choose my folder…*, then
+     *Import history*.
+   - A progress notification appears, then a Markdown report opens. It shows
+     the folder, the history outcome (archived, if the bundle had no data),
+     the sections and anything to review.
+5. **Trust prompt:** a modal says opening runs the bundle's code. *Trust and
+   Open* adds the folder to the workspace and opens the new project in its
+   own tab: same tabs, nodes, settings, notes. Cancel leaves it closed.
+6. **Another schema:** import again into a new folder and rename a key
+   (e.g. `subject` → `participant`). You are asked which of your keys each
+   missing exporter key is, or to drop it. The report lists the renames and
+   flagged settings. Node levels and exclusions use the new key.
+7. **Refusals:** import into the folder from step 4 again: an error says
+   import makes a NEW project. Open a non-bundle file: an error names the
+   file.
+8. Terminal (same code): `scistack bundle-info X.scistack`, `scistack import
+   X.scistack --into /tmp/t --schema subject --path-root RAW=/data`, then
+   `scistack import ... --check-code` (asks to trust; `--trust` skips the
+   question) lists canvas nodes whose code is missing.
+9. The SciStack output channel logs the exact `python -m
+   scistack_gui.bundle_cli ...` command lines and exit codes.
+
+---
+
 ## 0zzzf. Export/import carries settings, notes; duplicate unchanged — added 2026-10-08
 
 Export/import and duplicate/paste now share one copy mechanism

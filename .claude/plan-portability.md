@@ -292,7 +292,38 @@ As built (D-2026-10-08-8, user decision: history without data is an archive):
 - Tests: Stage 7 block in `scidb/tests/test_bundle.py`; two tests at the end
   of `scistack-gui/tests/test_bundle_project.py`.
 
-## Stage 8: CLI + GUI front ends
+## Stage 8: CLI + GUI front ends — DONE 2026-10-08, tests pass
+
+As built (D-2026-10-08-9):
+- `scistack_gui/bundle_cli.py` owns the commands `export [OUT] [--db]
+  [--history/--no-history] [--data/--no-data]`, `import BUNDLE [--into]
+  [--schema ...] [--map OLD=NEW] [--path-root NAME=DIR]
+  [--history/--no-history] [--check-code] [--trust]` and `bundle-info`,
+  each with `--json` (one line, last). `scistack/__main__.py` mounts the
+  same parsers. `EXPORT_FLAGS` + `export_choices()` are the one list of
+  offered options; defaults read from `ExportOptions` and
+  `import_project`'s signature. `--wheelhouse` is not offered (Stage 10).
+- `scidb.bundle.preview` (what an import dialog needs: schema, sections,
+  PathInputs, environment; config + files-phase sections unpacked into a
+  temp folder) with `_declared_path_inputs` shared with the import rewrite;
+  `ImportReport.to_dict`.
+- `headless`: `export_open_project` (the one export composition, used by
+  the GUI handler and `export_project_bundle`), `preview_bundle`,
+  `import_project_bundle(import_history=)`, `check_code` (I15, discovery
+  on, after trust). `portability_service.unresolved_labels` made public.
+- GUI: `api/bundles.py` (`get_export_options`, `export_project_bundle`);
+  `ProjectExportButton.tsx` in the tab strip. Import is the extension
+  command `scistack.importProjectBundle` (`bundleImport.ts` +
+  vscode-free `bundleImportCore.ts`), which runs `python -m
+  scistack_gui.bundle_cli` in its own process, shows the report as
+  Markdown and asks for trust before opening. The browser build has no
+  import (the terminal covers it).
+- Tests: `scistack-gui/tests/test_bundle_cli.py` (GUI handler and headless
+  export write identical bundles; CLI and headless import make the same
+  project), `scidb/tests/test_bundle.py` (preview, JSON report),
+  `extension/src/bundleImportCore.test.ts`.
+
+Originally planned:
 
 - CLI: `scistack export [--with-data] [--no-history] [--wheelhouse]`,
   `scistack import <bundle> [--into <project>] [--trust] [--schema ...]

@@ -407,6 +407,25 @@ Or use database viewer tools like [DBeaver](https://dbeaver.com) to view the dat
 
 Your data is always one SQL query or visualization away — no Python or MATLAB required.
 
+## Sharing a Whole Project
+
+A project travels as one `.scistack` file: code, config, canvas, saved plots
+and run history. Its derived data is included only if you ask. Raw input
+files are never included; the recipient points each PathInput at their own
+copy.
+
+```bash
+scistack export study.scistack              # --data adds the results, --no-history drops history
+scistack bundle-info study.scistack         # schema, PathInputs, sections; runs no code
+scistack import study.scistack --into ~/study_copy \
+    --path-root RawGait=/data/gait          # --schema/--map for a different schema
+```
+
+An import always makes a **new** project, and it runs none of the bundle's
+code. `--check-code --trust` then loads the code and lists canvas nodes whose
+function is missing. In VS Code, use the **⇩ export project** button and
+the command *SciStack: Import Project Bundle…*, which run the same code.
+
 ## Works in MATLAB Too
 
 SciStack isn't Python-only. The entire framework works in MATLAB with a nearly identical API:

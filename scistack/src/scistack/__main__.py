@@ -3,12 +3,19 @@
 
 Usage:
     scistack init [PATH] [--name NAME] [--schema-keys subject session ...]
+    scistack export [OUT] [--db DB] [--data] [--no-history]
+    scistack import BUNDLE [--into DIR] [--schema ...] [--map OLD=NEW] ...
+    scistack bundle-info BUNDLE
     scistack db <command> ...      # alias for the ``scidb`` CLI
 
 ``init`` is a thin front end over ``scidb.project.init_project``, the one
 owner of "make this folder a SciStack project" (the GUI calls the same
 function when it creates a database). It only creates what is missing, so it
 is safe to run in an existing folder and to run twice.
+
+``export`` / ``import`` / ``bundle-info`` are ``scistack_gui.bundle_cli``'s
+parsers, mounted here (the GUI runs the same module in a subprocess, and
+scistack-gui must never depend on this package).
 """
 
 from __future__ import annotations
@@ -56,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
         "the project folder).",
     )
 
+    # --- export / import / bundle-info (owned by scistack_gui.bundle_cli) ---
+    from scistack_gui.bundle_cli import add_bundle_subparsers
+    from scistack_gui.bundle_cli import dispatch as bundle_dispatch
+
+    add_bundle_subparsers(sub)
+
     # --- db (alias for the scidb CLI; wiring lives in scidb.inspect.cli) ---
     try:
         from scidb.inspect.cli import add_db_subparser
@@ -68,6 +81,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "init":
         return _cmd_init(args)
+
+    if getattr(args, "_bundle_cmd", None) is not None:
+        return bundle_dispatch(args)
 
     if args.command == "db":
         dispatch = getattr(args, "_dispatch", None)

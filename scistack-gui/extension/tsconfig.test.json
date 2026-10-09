@@ -18,6 +18,7 @@
     "src/plotTheme.ts",
     "src/webviewCsp.ts",
     "src/versionCheck.ts",
+    "src/bundleImportCore.ts",
     "src/*.test.ts"
   ]
 }

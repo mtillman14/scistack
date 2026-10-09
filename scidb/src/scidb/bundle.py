@@ -168,6 +168,19 @@ class ImportReport:
     sections: dict[str, dict] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
+    def to_dict(self) -> dict:
+        """JSON-serialisable: what the CLI's ``--json`` prints and the GUI's
+        import command reads back."""
+        return json.loads(json.dumps({
+            "root": str(self.root),
+            "db_path": str(self.db_path),
+            "package": self.package,
+            "schema_keys": list(self.schema_keys),
+            "created": [str(p) for p in self.created],
+            "sections": self.sections,
+            "warnings": list(self.warnings),
+        }, default=str))
+
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -511,6 +524,32 @@ def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
         Log.info(f"[bundle] config written with paths made relative / keys remapped: {path}")
 
 
+def _declared_path_inputs(root: Path) -> "tuple[Path, str, dict[str, list[dict]]] | None":
+    """The PathInputs the project at *root*'s entities TOML declares, as
+    ``(file, text, {name: [{"template", "root_folder"}, ...]})`` (one dict
+    per arm), or ``None`` when the project has no entities file. The one
+    reader both the import rewrite and :func:`preview` use."""
+    from scifor.discovery import project_config_at, read_scistack_section
+
+    from .entities import PATH_INPUTS, resolve_entities_path
+
+    config = project_config_at(root)
+    path = resolve_entities_path(root, read_scistack_section(config)) if config else None
+    if path is None or not Path(path).is_file():
+        return None
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    declared = {}
+    for name, raw in (_toml_loads(text).get(PATH_INPUTS) or {}).items():
+        raw_arms = raw if isinstance(raw, list) else [raw]
+        declared[name] = [
+            {"template": a, "root_folder": None} if isinstance(a, str) else
+            {"template": a.get("template", ""), "root_folder": a.get("root_folder")}
+            for a in raw_arms
+        ]
+    return path, text, declared
+
+
 def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report) -> dict:
     """The PathInputs the new project's entities TOML declares: template
     placeholders renamed through *kmap*; ``root_folder`` set from
@@ -519,32 +558,16 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
     ``root_folder`` is reported, as is a root given for an unknown name.
     PathInputs declared in Python source cannot be rewritten here and keep
     their templates."""
-    from scifor.discovery import project_config_at, read_scistack_section
-
-    from .entities import (
-        PATH_INPUTS,
-        render_path_input_value,
-        resolve_entities_path,
-        upsert_entry,
-    )
+    from .entities import PATH_INPUTS, render_path_input_value, upsert_entry
 
     out = {"rewritten": [], "roots_unchanged": [], "unknown_roots": []}
-    config = project_config_at(root)
-    path = resolve_entities_path(root, read_scistack_section(config)) if config else None
-    if path is None or not Path(path).is_file():
+    found = _declared_path_inputs(root)
+    if found is None:
         out["unknown_roots"] = sorted(path_roots)
         return out
-    path = Path(path)
-    text = path.read_text(encoding="utf-8")
-    declared = _toml_loads(text).get(PATH_INPUTS) or {}
+    path, text, declared = found
 
-    for name, raw in declared.items():
-        raw_arms = raw if isinstance(raw, list) else [raw]
-        arms = [
-            {"template": a, "root_folder": None} if isinstance(a, str) else
-            {"template": a.get("template", ""), "root_folder": a.get("root_folder")}
-            for a in raw_arms
-        ]
+    for name, arms in declared.items():
         where = f"PathInput {name}"
         new_arms = [
             {
@@ -789,6 +812,80 @@ def import_project(
         f"sections={sorted(report.sections)} warnings={len(report.warnings)}"
     )
     return report
+
+
+def preview(
+    bundle_path: "Path | str", *, providers: "list[SectionProvider] | None" = None
+) -> dict:
+    """What an import dialog needs to know before asking anything: the
+    exporter's package and schema, the export options, the sections, the
+    PathInputs (so the user can give their own roots) and the environment
+    check. Nothing is written outside a temporary folder and no code runs:
+    the config and the "files"-phase sections are unpacked there, exactly as
+    :func:`import_project` would unpack them, and read back.
+
+    JSON-serialisable; the CLI's ``bundle-info --json`` and the GUI's import
+    command show this dict."""
+    import tempfile
+
+    from scifor.discovery import config_path_at
+
+    from .schema_map import KeyMap, MapReport
+
+    bundle = read_bundle(bundle_path)
+    manifest = bundle.manifest
+    project = manifest.get("project") or {}
+    keys = list(project.get("schema_keys") or [])
+    kmap = KeyMap.auto(keys, keys)
+    out: dict = {
+        "path": str(Path(bundle_path).resolve()),
+        "package": project.get("package"),
+        "schema_keys": keys,
+        "database": project.get("database"),
+        "exported_root": project.get("root"),
+        "options": manifest.get("options") or {},
+        "sections": {
+            name: {"files": len(files), "bytes": sum(len(d) for d in files.values())}
+            for name, files in sorted(bundle.sections.items())
+        },
+        "has_history": HISTORY_SECTION in bundle.sections,
+        "has_data": DATA_SECTION in bundle.sections,
+        "path_inputs": [],
+        "environment": None,
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        config_files = bundle.sections.get(CONFIG_SECTION, {})
+        if "scistack.toml" in config_files:
+            _write_config(
+                config_path_at(root), config_files["scistack.toml"], kmap, project.get("root"),
+                MapReport(),
+            )
+        ctx = ImportContext(root=root, db=None, db_path=root / "preview.duckdb",
+                            schema_keys=keys, manifest=manifest, key_map=kmap,
+                            map_report=MapReport())
+        for provider in providers or []:
+            files = bundle.sections.get(provider.name)
+            if files is not None and getattr(provider, "phase", PHASE_DATABASE) == PHASE_FILES:
+                provider.import_(ctx, files)
+        found = _declared_path_inputs(root)
+        if found is not None:
+            out["path_inputs"] = [
+                {
+                    "name": name,
+                    "templates": [a["template"] for a in arms],
+                    "root_folders": sorted({a["root_folder"] for a in arms if a["root_folder"]}),
+                }
+                for name, arms in sorted(found[2].items())
+            ]
+        env_files = bundle.sections.get(ENV_SECTION, {})
+        if ENV_FILE in env_files:
+            out["environment"] = check_environment(root, json.loads(env_files[ENV_FILE]))
+    Log.info(
+        f"[bundle] preview {bundle_path}: package={out['package']!r} schema={keys} "
+        f"sections={sorted(out['sections'])} path_inputs={[p['name'] for p in out['path_inputs']]}"
+    )
+    return out
 
 
 def describe(bundle: Bundle) -> str:

@@ -229,7 +229,7 @@ Status as of 2026-10-08.
 | # | Step | Status | Notes |
 |---|---|---|---|
 | E0 | Open the project without the GUI | ✅ | `headless.open_for_export`: bootstrap WITH discovery (the canvas needs the registry; the code is the exporter's own) (Stage 3). |
-| E1 | GUI button + CLI command | 🔧 | The GUI handler `export_pipeline` exists for one pipeline plus the ones it uses. No whole-project export, no CLI. |
+| E1 | GUI button + CLI command | ✅ | `scistack export` and the GUI's ⇩ export project button, both through `headless.export_open_project`; options from `bundle_cli.export_choices` (Stage 8). Single pipeline: the GUI's JSON export. |
 | E2 | Pre-export checks | ❌ | Nothing running; disconnected edges settled at export time (`gui-export-to-plain-python.md`). |
 | E3 | One list of what is exported | ✅ | Every GUI table classified canvas / global / history in its owner's `PORTABILITY`; guard `test_every_gui_table_is_classified` (Stage 2). |
 | E4 | Nodes, edges, sub-pipelines, hidden ports, hypothesis | ✅ | `services/canvas_snapshot.capture`, shared with duplicate/paste (Stage 2). |
@@ -252,9 +252,9 @@ Status as of 2026-10-08.
 | # | Step | Status | Notes |
 |---|---|---|---|
 | I0 | Run without the GUI | ✅ | `headless.open_for_import`: bootstrap with `discover=False`; nothing imports user code (Stage 3). |
-| I1 | GUI button + CLI; new project or current project | 🔧 | Whole project: `headless.import_project_bundle` into a NEW project (Stage 4). Single pipeline into the current project: the GUI's JSON import. CLI/GUI front ends: Stage 8. |
+| I1 | GUI button + CLI; new project or current project | ✅ | Whole project into a NEW project: `scistack import`, and the VS Code command *Import Project Bundle…*, which runs the same `bundle_cli` in its own process (Stage 8). Single pipeline into the current project: the GUI's JSON import. |
 | I2 | Check the format version | ✅ | Bundle (`read_bundle`, also hashes and unlisted files) and the single-pipeline document. |
-| I3 | Ask the user to trust the bundle's code | ❌ | Must come before anything imports the bundle's code. |
+| I3 | Ask the user to trust the bundle's code | ✅ | Import itself runs no code. Trust is asked before the first thing that does: `--check-code` needs `--trust` or a yes; the extension's modal "Trust and Open" before opening the new project (Stage 8). |
 | I4 | Create the project folder (`init`) | ✅ | `scidb.project.init_project`, the one owner (Stage 1); `import_project` calls it after writing the bundle's config. |
 | I5 | Install the wheel + dependencies | 🔧 | Code arrives as SOURCE (a copy, before init). Declared dependencies are compared with the exporter's versions and the `pip install` command is reported; nothing is installed automatically (Stage 5). |
 | I6 | MATLAB paths for the installed `.m` files | ❌ | `scimatlab`. |
@@ -266,10 +266,10 @@ Status as of 2026-10-08.
 | I12 | Restore the rest of the GUI state, with schema keys remapped | ✅ | `canvas_snapshot.apply` + `remap_schema_keys` (Stages 2, 6). |
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
 | I14 | Restore history / data | ✅ | History + data + same schema: loaded live, verbatim, and the GUI tables verbatim too. History without data, or another schema: archived under `.scistack/archive/<export time>/`; exclusions still go live when the schema was kept. `import_history=False` declines it (Stage 7). |
-| I15 | Check that every canvas node's code is found | 🔧 | Needs discovery. A headless import (`discovered=False`) reports it unchecked (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`); the GUI checks on open. |
+| I15 | Check that every canvas node's code is found | ✅ | The import itself runs no code (`discovered=False`): it reports the check as not done (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`). After trust, `headless.check_code` (`scistack import --check-code`) lists every canvas node whose code is missing; the GUI checks on open (Stage 8). |
 | I16 | Same function identity from a wheel and from loose files | ✅ | Moot for a bundle import: the code stays source in `src/<pkg>/`, the exporter's own layout. Revisit for libraries (Stage 10). |
 | I17 | Reproduction check | ❌ | Later: `scistack verify` re-runs against the recipient's own copy of the raw files (read, never copied) and compares content hashes with the imported history. |
-| I18 | Import report | 🔧 | A summary dict is returned; needs a report view, including everything the schema remap flagged. |
+| I18 | Import report | ✅ | `ImportReport.to_dict`; printed by the CLI, shown as a Markdown document by the extension, including everything the schema remap flagged and the history outcome (Stage 8). |
 
 ## Open questions
 

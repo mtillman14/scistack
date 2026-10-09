@@ -34,12 +34,124 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var path6 = __toESM(require("path"));
-var vscode6 = __toESM(require("vscode"));
+var path7 = __toESM(require("path"));
+var vscode7 = __toESM(require("vscode"));
 
-// src/plotPanel.ts
-var path = __toESM(require("path"));
-var vscode = __toESM(require("vscode"));
+// src/bundleImport.ts
+var path5 = __toESM(require("path"));
+var import_child_process3 = require("child_process");
+var vscode5 = __toESM(require("vscode"));
+
+// src/bundleImportCore.ts
+var BUNDLE_CLI_MODULE = "scistack_gui.bundle_cli";
+function buildInfoArgs(bundle) {
+  return ["-m", BUNDLE_CLI_MODULE, "bundle-info", bundle, "--json"];
+}
+function buildImportArgs(c) {
+  const args = ["-m", BUNDLE_CLI_MODULE, "import", c.bundle, "--into", c.into, "--json"];
+  if (c.schema && c.schema.length > 0)
+    args.push("--schema", ...c.schema);
+  for (const [from, to] of Object.entries(c.keyMap ?? {})) {
+    args.push("--map", `${from}=${to ?? ""}`);
+  }
+  for (const [name, folder] of Object.entries(c.pathRoots ?? {})) {
+    args.push("--path-root", `${name}=${folder}`);
+  }
+  args.push(c.importHistory ? "--history" : "--no-history");
+  return args;
+}
+function parseCliJson(stdout) {
+  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].startsWith("{"))
+      continue;
+    try {
+      return JSON.parse(lines[i]);
+    } catch {
+      break;
+    }
+  }
+  return { ok: false, error: `no JSON answer from ${BUNDLE_CLI_MODULE}; output was:
+${stdout.slice(-2e3)}` };
+}
+function keysNeedingAChoice(exporter, recipient) {
+  return exporter.filter((k) => !recipient.includes(k));
+}
+function formatImportReport(r) {
+  const out = [];
+  out.push(`# Imported \`${r.package}\``, "");
+  out.push(`- Project folder: \`${r.root}\``);
+  out.push(`- Database: \`${r.db_path}\``);
+  out.push(`- Schema: ${r.schema_keys.map((k) => `\`${k}\``).join(" \u2192 ")}`, "");
+  const schema = r.sections.schema ?? {};
+  const renamed = Object.entries(schema.key_map ?? {}).filter(([a, b]) => a !== b);
+  if (renamed.length > 0) {
+    out.push("## Schema keys", "");
+    for (const [a, b] of renamed)
+      out.push(`- \`${a}\` \u2192 ${b === null ? "_dropped_" : `\`${b}\``}`);
+    out.push("");
+  }
+  if ((schema.dropped ?? []).length + (schema.flagged ?? []).length > 0) {
+    out.push("## Review", "");
+    for (const [where, key] of schema.dropped ?? []) {
+      out.push(`- **dropped** ${where}: referred to \`${key}\`, which has no counterpart`);
+    }
+    for (const [where, why] of schema.flagged ?? [])
+      out.push(`- ${where}: ${why}`);
+    out.push("");
+  }
+  const env3 = r.sections.env;
+  if (env3 && env3.install) {
+    out.push("## Environment", "");
+    if (env3.missing.length > 0)
+      out.push(`- Missing: ${env3.missing.join(", ")}`);
+    for (const d of env3.different)
+      out.push(`- ${d.name}: exported ${d.exported}, here ${d.here}`);
+    out.push("", "Install with:", "", "```", env3.install, "```", "");
+  }
+  const history = r.sections.history;
+  if (history) {
+    out.push("## History", "");
+    if (history.live)
+      out.push("- Loaded live, with its data.");
+    else if (history.archived) {
+      out.push(
+        `- Archived to \`${history.archived}\` (not in the live database: its data was not in the bundle, or the schema changed). Kept for reproduction checks.`
+      );
+    } else
+      out.push("- Not imported.");
+    out.push("");
+  }
+  out.push("## Sections", "");
+  for (const [name, section] of Object.entries(r.sections).sort()) {
+    if (name === "schema" || name === "env")
+      continue;
+    const parts = Object.entries(section ?? {}).map(
+      ([k, v]) => Array.isArray(v) || v && typeof v === "object" ? `${k}: ${Array.isArray(v) ? v.length : Object.keys(v).length}` : `${k}: ${String(v)}`
+    );
+    out.push(`- **${name}** ${parts.join(", ") || "_nothing to report_"}`);
+  }
+  out.push("");
+  if (r.warnings.length > 0) {
+    out.push("## Warnings", "");
+    for (const w of r.warnings)
+      out.push(`- ${w}`);
+    out.push("");
+  }
+  out.push(`## Created (${r.created.length})`, "");
+  for (const c of r.created)
+    out.push(`- \`${c}\``);
+  out.push("");
+  return out.join("\n");
+}
+
+// src/session.ts
+var path4 = __toESM(require("path"));
+var vscode4 = __toESM(require("vscode"));
+
+// src/dagPanel.ts
+var vscode2 = __toESM(require("vscode"));
+var path3 = __toESM(require("path"));
 
 // src/panelRegistry.ts
 var PanelRegistry = class {
@@ -172,226 +284,8 @@ function webviewCsp(cspSource, nonce) {
   return webviewCspDirectives(cspSource, nonce).map(([name, sources]) => `${name} ${sources};`).join(" ");
 }
 
-// src/plotPanel.ts
-var PlotPanel = class _PlotPanel {
-  constructor(context, session, target, column) {
-    this.context = context;
-    this.session = session;
-    this.target = target;
-    this.disposables = [];
-    this.unregister = () => {
-    };
-    this.unregisterTheme = () => {
-    };
-    this.panel = vscode.window.createWebviewPanel(
-      "scistack.plot",
-      this.title(),
-      // The pipeline's own group: a sibling tab at full width, not a split.
-      { viewColumn: column, preserveFocus: false },
-      {
-        enableScripts: true,
-        // Plot state (spec, role assignments) is expensive to rebuild and has
-        // no persistence of its own, so keep the webview alive when the tab is
-        // in the background.
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.file(path.join(context.extensionPath, "dist", "webview"))
-        ]
-      }
-    );
-    this.panel.webview.html = this.getHtml();
-    this.unregister = this.session.plots.add(this);
-    this.unregisterTheme = plotThemeHost(context.globalState).add(this);
-    this.panel.onDidChangeViewState(
-      (e) => {
-        if (e.webviewPanel.active)
-          this.session.manager.setActive(this.session.id);
-      },
-      void 0,
-      this.disposables
-    );
-    this.panel.webview.onDidReceiveMessage(
-      async (msg) => {
-        const method = msg.method;
-        if (method === "set_plot_theme") {
-          await answerSetPlotTheme(
-            plotThemeHost(this.context.globalState),
-            msg,
-            this,
-            this.session.log
-          );
-          return;
-        }
-        if (method === "pick_save_path") {
-          try {
-            const params = msg.params ?? {};
-            const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
-            const uri = await vscode.window.showSaveDialog({
-              defaultUri: folder ? vscode.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
-              // The panel sends the ONE format its dropdown selected, so the
-              // dialog cannot offer a second answer to a question already
-              // asked — the backend honours the dropdown either way.
-              filters: { [params.filterName ?? "Images"]: params.formats ?? ["png"] }
-            });
-            this.panel.webview.postMessage({
-              id: msg.id,
-              result: { path: uri?.fsPath ?? null }
-            });
-          } catch (err) {
-            this.panel.webview.postMessage({
-              id: msg.id,
-              error: { message: String(err) }
-            });
-          }
-          return;
-        }
-        if (method === "pick_save_folder") {
-          try {
-            const uris = await vscode.window.showOpenDialog({
-              canSelectFiles: false,
-              canSelectFolders: true,
-              canSelectMany: false,
-              defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
-              openLabel: "Save figures here"
-            });
-            this.panel.webview.postMessage({
-              id: msg.id,
-              result: { path: uris?.[0]?.fsPath ?? null }
-            });
-          } catch (err) {
-            this.panel.webview.postMessage({
-              id: msg.id,
-              error: { message: String(err) }
-            });
-          }
-          return;
-        }
-        try {
-          const result = await this.session.python.request(
-            method,
-            msg.params ?? {}
-          );
-          this.panel.webview.postMessage({ id: msg.id, result });
-        } catch (err) {
-          this.session.log.appendLine(`plot panel: ${method} failed \u2014 ${err}`);
-          this.panel.webview.postMessage({
-            id: msg.id,
-            error: { message: String(err) }
-          });
-        }
-      },
-      void 0,
-      this.disposables
-    );
-    this.panel.onDidDispose(() => this.dispose(), void 0, this.disposables);
-  }
-  static show(context, session, target, options = {}) {
-    return new _PlotPanel(
-      context,
-      session,
-      target,
-      // This session's pipeline group, so the figure is a sibling tab of the
-      // canvas it came from rather than a split the user did not ask for.
-      options.column ?? session.dagPanel?.viewColumn ?? vscode.ViewColumn.One
-    );
-  }
-  /** Post a message into this panel's webview (the `MessageSink` contract). */
-  postMessage(msg) {
-    this.panel.webview.postMessage(msg);
-  }
-  /**
-   * Close this tab. Called when its session closes: a plot tab cannot
-   * outlive the server it sends every `plot_*` RPC to.
-   */
-  close() {
-    this.panel.dispose();
-  }
-  /**
-   * The tab title. It names the database as well as the variable: with plot
-   * tabs open across two databases, "Plot — StepLength" twice over says
-   * nothing about which is which.
-   */
-  title() {
-    if (this.target.csvPath)
-      return `Plot \u2014 ${path.basename(this.target.csvPath)}`;
-    const variable = this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
-    return this.session.isPlotOnly ? variable : `${variable} \xB7 ${this.session.label}`;
-  }
-  dispose() {
-    this.unregister();
-    this.unregisterTheme();
-    while (this.disposables.length)
-      this.disposables.pop()?.dispose();
-  }
-  getHtml() {
-    const webviewDir = path.join(this.context.extensionPath, "dist", "webview");
-    const webview = this.panel.webview;
-    const scriptUri = webview.asWebviewUri(
-      vscode.Uri.file(path.join(webviewDir, "index.js"))
-    );
-    const styleUri = webview.asWebviewUri(
-      vscode.Uri.file(path.join(webviewDir, "index.css"))
-    );
-    const nonce = getNonce();
-    const target = JSON.stringify({
-      view: "plot",
-      variable: this.target.variable ?? null,
-      csvPath: this.target.csvPath ?? null,
-      location: this.target.location ?? null
-    });
-    const session = JSON.stringify({
-      id: this.session.id,
-      dbName: this.session.isPlotOnly ? null : this.session.label,
-      dbPath: this.session.dbPath || null
-    });
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy"
-        content="${webviewCsp(webview.cspSource, nonce)}" />
-  <link rel="stylesheet" href="${styleUri}" />
-  <title>${this.title()}</title>
-  <style>
-    html, body, #root {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-    }
-  </style>
-</head>
-<body>
-  <div id="root"></div>
-  <script nonce="${nonce}">window.__SCISTACK_VIEW__ = ${target};</script>
-  <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
-  <script nonce="${nonce}">${plotThemeHost(this.context.globalState).initScript()}</script>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
-  }
-};
-function getNonce() {
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
-  for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return text;
-}
-
-// src/session.ts
-var path5 = __toESM(require("path"));
-var vscode5 = __toESM(require("vscode"));
-
-// src/dagPanel.ts
-var vscode3 = __toESM(require("vscode"));
-var path4 = __toESM(require("path"));
-
 // src/sessionCore.ts
-var path2 = __toESM(require("path"));
+var path = __toESM(require("path"));
 function prefixedLog(sink, prefix) {
   return {
     appendLine(line) {
@@ -402,11 +296,11 @@ function prefixedLog(sink, prefix) {
   };
 }
 function sessionIdForDb(dbPath, platform = process.platform) {
-  const resolved = path2.resolve(dbPath);
+  const resolved = path.resolve(dbPath);
   return platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 function sessionLabel(dbPath) {
-  return path2.basename(dbPath);
+  return path.basename(dbPath);
 }
 function sessionSlug(id) {
   let hash = 2166136261;
@@ -423,7 +317,7 @@ function projectRootForDb(dbPath, folders, platform = process.platform) {
   let best;
   for (const folder of folders) {
     const root = sessionIdForDb(folder, platform);
-    const prefix = root.endsWith(path2.sep) ? root : root + path2.sep;
+    const prefix = root.endsWith(path.sep) ? root : root + path.sep;
     if (!db.startsWith(prefix))
       continue;
     if (best === void 0 || folder.length > best.length)
@@ -517,17 +411,17 @@ var SessionRegistry = class {
 // src/matlabTerminal.ts
 var fs = __toESM(require("fs"));
 var os = __toESM(require("os"));
-var path3 = __toESM(require("path"));
-var vscode2 = __toESM(require("vscode"));
+var path2 = __toESM(require("path"));
+var vscode = __toESM(require("vscode"));
 function formatStamp(d) {
   const p = (n, w = 2) => String(n).padStart(w, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
 }
 function isMatlabExtensionAvailable() {
-  return vscode2.extensions.getExtension("MathWorks.language-matlab") !== void 0;
+  return vscode.extensions.getExtension("MathWorks.language-matlab") !== void 0;
 }
 function isMatlabTerminalOpen() {
-  return vscode2.window.terminals.some((t) => t.name === "MATLAB");
+  return vscode.window.terminals.some((t) => t.name === "MATLAB");
 }
 async function runInMatlabTerminal(command, outputChannel2, sessionSlug2) {
   if (!isMatlabExtensionAvailable()) {
@@ -535,7 +429,7 @@ async function runInMatlabTerminal(command, outputChannel2, sessionSlug2) {
   }
   try {
     const t0 = Date.now();
-    const scriptPath = path3.join(
+    const scriptPath = path2.join(
       os.tmpdir(),
       sessionSlug2 ? `scistack_run_${sessionSlug2}.m` : "scistack_run.m"
     );
@@ -544,12 +438,12 @@ async function runInMatlabTerminal(command, outputChannel2, sessionSlug2) {
     outputChannel2?.appendLine(
       `runInMatlabTerminal: wrote ${command.length}-char script to ${scriptPath} [timing] write=${tWritten - t0}ms`
     );
-    await vscode2.commands.executeCommand("matlab.openCommandWindow");
+    await vscode.commands.executeCommand("matlab.openCommandWindow");
     const tOpened = Date.now();
     outputChannel2?.appendLine(
       `runInMatlabTerminal: [timing] openCommandWindow=${tOpened - tWritten}ms`
     );
-    const terminal = vscode2.window.terminals.find((t) => t.name === "MATLAB");
+    const terminal = vscode.window.terminals.find((t) => t.name === "MATLAB");
     if (!terminal) {
       outputChannel2?.appendLine(
         "MathWorks extension found but MATLAB terminal not available."
@@ -728,18 +622,18 @@ var DagPanel = class {
     this.matlabRuns = new MatlabRunTracker();
     /** Called when this panel gains or loses focus — see `onDidChangeActive`. */
     this.activeCallbacks = [];
-    this.panel = vscode3.window.createWebviewPanel(
+    this.panel = vscode2.window.createWebviewPanel(
       "scistack.dag",
       // The database is in the tab title because there can be several: with
       // two canvases both called "SciStack Pipeline" the tab bar says
       // nothing about which is which.
       `SciStack \u2014 ${session.label}`,
-      vscode3.ViewColumn.One,
+      vscode2.ViewColumn.One,
       {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [
-          vscode3.Uri.file(path4.join(context.extensionPath, "dist", "webview"))
+          vscode2.Uri.file(path3.join(context.extensionPath, "dist", "webview"))
         ]
       }
     );
@@ -758,7 +652,7 @@ var DagPanel = class {
         const method = msg.method;
         if (method === "restart_python") {
           try {
-            await vscode3.commands.executeCommand("scistack.restartPython");
+            await vscode2.commands.executeCommand("scistack.restartPython");
             this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
           } catch (err) {
             this.panel.webview.postMessage({
@@ -779,7 +673,7 @@ var DagPanel = class {
         }
         if (method === "open_plot_panel") {
           try {
-            await vscode3.commands.executeCommand("scistack.openPlotPanel", {
+            await vscode2.commands.executeCommand("scistack.openPlotPanel", {
               ...msg.params ?? {},
               // Name the database outright. A plot opened from THIS canvas
               // must read THIS database, whatever tab was focused last.
@@ -797,9 +691,9 @@ var DagPanel = class {
         if (method === "pick_save_path") {
           try {
             const params = msg.params ?? {};
-            const folder = vscode3.workspace.workspaceFolders?.[0]?.uri;
-            const uri = await vscode3.window.showSaveDialog({
-              defaultUri: folder ? vscode3.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
+            const folder = vscode2.workspace.workspaceFolders?.[0]?.uri;
+            const uri = await vscode2.window.showSaveDialog({
+              defaultUri: folder ? vscode2.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
               filters: {
                 [params.filterName ?? "Images"]: params.formats ?? ["png", "svg", "pdf"]
               }
@@ -963,7 +857,7 @@ var DagPanel = class {
     this.outputChannel.appendLine(`reveal_in_editor: resolved uri=${uri.toString()}`);
     let doc;
     try {
-      doc = await vscode3.workspace.openTextDocument(uri);
+      doc = await vscode2.workspace.openTextDocument(uri);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.outputChannel.appendLine(
@@ -972,11 +866,11 @@ var DagPanel = class {
       return { ok: false, error: `openTextDocument failed: ${msg}` };
     }
     const zeroBased = Math.max(0, (line ?? 1) - 1);
-    const selection = new vscode3.Range(zeroBased, 0, zeroBased, 0);
+    const selection = new vscode2.Range(zeroBased, 0, zeroBased, 0);
     let editor;
     try {
-      editor = await vscode3.window.showTextDocument(doc, {
-        viewColumn: vscode3.ViewColumn.Beside,
+      editor = await vscode2.window.showTextDocument(doc, {
+        viewColumn: vscode2.ViewColumn.Beside,
         preserveFocus: false,
         selection
       });
@@ -987,7 +881,7 @@ var DagPanel = class {
       );
       return { ok: false, error: `showTextDocument failed: ${msg}` };
     }
-    editor.revealRange(selection, vscode3.TextEditorRevealType.InCenter);
+    editor.revealRange(selection, vscode2.TextEditorRevealType.InCenter);
     return { ok: true };
   }
   /**
@@ -1003,10 +897,10 @@ var DagPanel = class {
       if (slashIdx > 0) {
         const authority = rest.substring(0, slashIdx);
         const pathPart = "/" + rest.substring(slashIdx + 1).replace(/\\/g, "/");
-        return vscode3.Uri.from({ scheme: "file", authority, path: pathPart });
+        return vscode2.Uri.from({ scheme: "file", authority, path: pathPart });
       }
     }
-    return vscode3.Uri.file(file);
+    return vscode2.Uri.file(file);
   }
   /**
    * Gate a MATLAB Run click on MATLAB actually being connected — see
@@ -1023,13 +917,13 @@ var DagPanel = class {
     if (!needsMatlabConnectionPrompt(isMatlabExtensionAvailable(), isMatlabTerminalOpen())) {
       return false;
     }
-    const choice = await vscode3.window.showInformationMessage(
+    const choice = await vscode2.window.showInformationMessage(
       "MATLAB is not connected to VS Code yet. Connect now, then click Run again once MATLAB is ready.",
       "Connect",
       "Cancel"
     );
     if (choice === "Connect") {
-      await vscode3.commands.executeCommand("matlab.openCommandWindow");
+      await vscode2.commands.executeCommand("matlab.openCommandWindow");
       this.outputChannel.appendLine(
         "gateOnMatlabConnection: opened the MATLAB command window \u2014 connecting, not dispatching a run"
       );
@@ -1094,7 +988,7 @@ var DagPanel = class {
     this.outputChannel.appendLine(
       `refuseIfMatlabBusyElsewhere: ${this.session.label} blocked \u2014 MATLAB is held by ${holder}`
     );
-    await vscode3.window.showWarningMessage(message);
+    await vscode2.window.showWarningMessage(message);
     return true;
   }
   /**
@@ -1153,7 +1047,7 @@ var DagPanel = class {
       if (runId)
         this.matlabRuns.noteSharedEngine(runId);
       this.outputChannel.appendLine("dispatchMatlabCommand: sent to MATLAB terminal");
-      vscode3.window.showInformationMessage("Running in MATLAB terminal...");
+      vscode2.window.showInformationMessage("Running in MATLAB terminal...");
       return "terminal";
     }
     if (runId) {
@@ -1166,7 +1060,7 @@ var DagPanel = class {
           this.outputChannel.appendLine(
             "dispatchMatlabCommand: dispatched via standalone MATLAB sidecar"
           );
-          vscode3.window.showInformationMessage(
+          vscode2.window.showInformationMessage(
             "Running via standalone MATLAB sidecar..."
           );
           return "sidecar";
@@ -1182,11 +1076,11 @@ var DagPanel = class {
     }
     if (runId)
       this.matlabRuns.noteSharedEngine(runId);
-    await vscode3.env.clipboard.writeText(command);
+    await vscode2.env.clipboard.writeText(command);
     this.outputChannel.appendLine(
       "dispatchMatlabCommand: no MATLAB terminal or sidecar available, copied to clipboard"
     );
-    vscode3.window.showInformationMessage(
+    vscode2.window.showInformationMessage(
       "MATLAB command copied to clipboard. Paste into MATLAB to run."
     );
     return "clipboard";
@@ -1348,7 +1242,7 @@ var DagPanel = class {
    * disabled or a session is already attached.
    */
   async ensureDebugAttached() {
-    const cfg = vscode3.workspace.getConfiguration("scistack");
+    const cfg = vscode2.workspace.getConfiguration("scistack");
     if (!cfg.get("debug", false))
       return;
     if (this.debugSession)
@@ -1359,8 +1253,8 @@ var DagPanel = class {
       return;
     }
     const port = this.session.debugPort ?? cfg.get("debugPort", 5678);
-    const folder = this.session.projectRoot ? vscode3.workspace.getWorkspaceFolder(vscode3.Uri.file(this.session.projectRoot)) : vscode3.workspace.workspaceFolders?.[0];
-    const started = await vscode3.debug.startDebugging(folder, {
+    const folder = this.session.projectRoot ? vscode2.workspace.getWorkspaceFolder(vscode2.Uri.file(this.session.projectRoot)) : vscode2.workspace.workspaceFolders?.[0];
+    const started = await vscode2.debug.startDebugging(folder, {
       name: this.debugSessionName(),
       type: "debugpy",
       request: "attach",
@@ -1373,7 +1267,7 @@ var DagPanel = class {
       );
       return;
     }
-    this.debugSession = vscode3.debug.activeDebugSession ?? this.findExistingDebugSession();
+    this.debugSession = vscode2.debug.activeDebugSession ?? this.findExistingDebugSession();
   }
   /**
    * Detach the debug session (called when run_done arrives).
@@ -1382,11 +1276,11 @@ var DagPanel = class {
     const session = this.debugSession ?? this.findExistingDebugSession();
     this.debugSession = void 0;
     if (session) {
-      await vscode3.debug.stopDebugging(session);
+      await vscode2.debug.stopDebugging(session);
     }
   }
   findExistingDebugSession() {
-    const active = vscode3.debug.activeDebugSession;
+    const active = vscode2.debug.activeDebugSession;
     if (active && active.name === this.debugSessionName())
       return active;
     return void 0;
@@ -1403,7 +1297,7 @@ var DagPanel = class {
    * column one would move their tab for them.
    */
   reveal() {
-    this.panel.reveal(this.panel.viewColumn ?? vscode3.ViewColumn.One);
+    this.panel.reveal(this.panel.viewColumn ?? vscode2.ViewColumn.One);
   }
   /** Close this canvas. Its dispose callbacks close the session with it. */
   dispose() {
@@ -1426,15 +1320,15 @@ var DagPanel = class {
     this.activeCallbacks.push(callback);
   }
   getHtml() {
-    const webviewDir = path4.join(this.context.extensionPath, "dist", "webview");
+    const webviewDir = path3.join(this.context.extensionPath, "dist", "webview");
     const webview = this.panel.webview;
     const scriptUri = webview.asWebviewUri(
-      vscode3.Uri.file(path4.join(webviewDir, "index.js"))
+      vscode2.Uri.file(path3.join(webviewDir, "index.js"))
     );
     const styleUri = webview.asWebviewUri(
-      vscode3.Uri.file(path4.join(webviewDir, "index.css"))
+      vscode2.Uri.file(path3.join(webviewDir, "index.css"))
     );
-    const nonce = getNonce2();
+    const nonce = getNonce();
     const session = JSON.stringify({
       id: this.session.id,
       dbName: this.session.label,
@@ -1468,7 +1362,7 @@ var DagPanel = class {
 </html>`;
   }
 };
-function getNonce2() {
+function getNonce() {
   let text = "";
   const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   for (let i = 0; i < 32; i++) {
@@ -1480,7 +1374,7 @@ function getNonce2() {
 // src/pythonProcess.ts
 var import_child_process = require("child_process");
 var readline = __toESM(require("readline"));
-var vscode4 = __toESM(require("vscode"));
+var vscode3 = __toESM(require("vscode"));
 
 // src/rpcPending.ts
 var EXPIRED_MEMORY = 100;
@@ -1496,7 +1390,7 @@ var PendingRequests = class {
    * `timeoutMs <= 0` disables the backstop.
    */
   open(id, method, timeoutMs) {
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const startedAt = this.now();
       const timer = timeoutMs > 0 ? setTimeout(() => {
         if (!this.entries.has(id))
@@ -1510,7 +1404,7 @@ var PendingRequests = class {
           `SciStack: no response from the Python server for '${method}' after ${Math.round(elapsed / 1e3)}s.`
         ));
       }, timeoutMs) : null;
-      this.entries.set(id, { resolve: resolve2, reject, method, startedAt, timer });
+      this.entries.set(id, { resolve: resolve3, reject, method, startedAt, timer });
     });
   }
   /** Deliver a response. Returns false when no request was waiting for it. */
@@ -1616,8 +1510,8 @@ var PythonProcess = class {
       env: childEnv,
       cwd: options.cwd
     });
-    this.closed = new Promise((resolve2) => {
-      this.proc.on("close", () => resolve2());
+    this.closed = new Promise((resolve3) => {
+      this.proc.on("close", () => resolve3());
     });
     const rl = readline.createInterface({ input: this.proc.stdout });
     rl.on("line", (line) => this.handleLine(line));
@@ -1669,7 +1563,7 @@ var PythonProcess = class {
   whenClosed(timeoutMs = 2e3) {
     return Promise.race([
       this.closed,
-      new Promise((resolve2) => setTimeout(resolve2, timeoutMs))
+      new Promise((resolve3) => setTimeout(resolve3, timeoutMs))
     ]);
   }
   /** Recent stderr from the child process (oldest first). */
@@ -1701,8 +1595,8 @@ var PythonProcess = class {
    */
   waitForReady(timeoutMs) {
     this.readyTimeoutMs = timeoutMs;
-    return new Promise((resolve2, reject) => {
-      this.readyResolve = resolve2;
+    return new Promise((resolve3, reject) => {
+      this.readyResolve = resolve3;
       this.readyReject = reject;
       this.resetReadyTimer(timeoutMs);
     });
@@ -1744,7 +1638,7 @@ var PythonProcess = class {
       ));
     }
     const id = this.nextId++;
-    const timeoutMs = vscode4.workspace.getConfiguration("scistack").get("rpcTimeoutMs", 3e5);
+    const timeoutMs = vscode3.workspace.getConfiguration("scistack").get("rpcTimeoutMs", 3e5);
     const reply = this.pending.open(id, method, timeoutMs);
     const msg = JSON.stringify({ jsonrpc: "2.0", method, params, id });
     this.proc.stdin?.write(msg + "\n", (err) => {
@@ -1900,14 +1794,14 @@ var PROBE_SCRIPT = [
   "print(json.dumps(info))"
 ].join("\n");
 function probeInterpreter(pythonPath, timeoutMs = 1e4) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     let settled = false;
     const done = (probe) => {
       if (settled)
         return;
       settled = true;
       clearTimeout(timer);
-      resolve2(probe);
+      resolve3(probe);
     };
     let proc;
     try {
@@ -1915,7 +1809,7 @@ function probeInterpreter(pythonPath, timeoutMs = 1e4) {
         stdio: ["ignore", "pipe", "pipe"]
       });
     } catch (err) {
-      resolve2({ ok: false, spawnError: String(err) });
+      resolve3({ ok: false, spawnError: String(err) });
       return;
     }
     const timer = setTimeout(() => {
@@ -2133,11 +2027,11 @@ var Session = class _Session {
     if (this.isPlotOnly)
       return;
     this.stopDbWatcher();
-    const pattern = new vscode5.RelativePattern(
-      path5.dirname(this.dbPath),
-      path5.basename(this.dbPath) + "*"
+    const pattern = new vscode4.RelativePattern(
+      path4.dirname(this.dbPath),
+      path4.basename(this.dbPath) + "*"
     );
-    this.watcher = vscode5.workspace.createFileSystemWatcher(pattern);
+    this.watcher = vscode4.workspace.createFileSystemWatcher(pattern);
     const onChange = () => this.onDbFileChanged();
     this.watcher.onDidChange(onChange);
     this.watcher.onDidCreate(onChange);
@@ -2316,7 +2210,7 @@ var SessionManager = class {
     }
     const label = sessionLabel(dbPath);
     const log = prefixedLog(this.channel, label);
-    const folders = (vscode5.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const folders = (vscode4.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
     const projectRoot = projectRootForDb(dbPath, folders);
     this.warnIfNoProjectRoot(projectRoot, label);
     const debugPort = this.allocateDebugPort();
@@ -2410,7 +2304,7 @@ var SessionManager = class {
    */
   plotOnlyLogFile() {
     const dir = this.context.logUri?.fsPath ?? this.context.globalStorageUri?.fsPath;
-    return dir ? path5.join(dir, "scistack-plot-session.log") : void 0;
+    return dir ? path4.join(dir, "scistack-plot-session.log") : void 0;
   }
   /** Restart a session's server in place, keeping its panels and tabs. */
   async restart(session) {
@@ -2455,7 +2349,7 @@ var SessionManager = class {
   reportDeadAfterRestart(session) {
     const message = `SciStack: ${session.label} has no server after the restart. Close its tab and open the database again.`;
     session.log.appendLine(message);
-    vscode5.window.showErrorMessage(message);
+    vscode4.window.showErrorMessage(message);
     return false;
   }
   /**
@@ -2467,7 +2361,7 @@ var SessionManager = class {
   async spawnReady(args, opts) {
     const interpreter = await resolvePythonPath();
     if (!interpreter) {
-      vscode5.window.showErrorMessage(
+      vscode4.window.showErrorMessage(
         "SciStack: Could not find a Python interpreter. Install the Python extension or set scistack.pythonPath in settings."
       );
       return void 0;
@@ -2482,7 +2376,7 @@ var SessionManager = class {
       debugPort: opts.debugPort
     });
     try {
-      const timeout = vscode5.workspace.getConfiguration("scistack").get("startupTimeoutMs", 6e4);
+      const timeout = vscode4.workspace.getConfiguration("scistack").get("startupTimeoutMs", 6e4);
       const ready = await python.waitForReady(timeout);
       opts.log.appendLine(
         `Server ready \u2014 DB: ${ready.db_name}, schema: [${(ready.schema_keys ?? []).join(", ")}]`
@@ -2507,7 +2401,7 @@ var SessionManager = class {
     );
     if (verdict.kind === "mismatch" && !this.versionWarned) {
       this.versionWarned = true;
-      vscode5.window.showWarningMessage(verdict.message);
+      vscode4.window.showWarningMessage(verdict.message);
     }
   }
   /**
@@ -2518,7 +2412,7 @@ var SessionManager = class {
    * session silently has no debugger at all.
    */
   allocateDebugPort() {
-    const cfg = vscode5.workspace.getConfiguration("scistack");
+    const cfg = vscode4.workspace.getConfiguration("scistack");
     if (!cfg.get("debug", false))
       return void 0;
     const base = cfg.get("debugPort", 5678);
@@ -2545,16 +2439,16 @@ var SessionManager = class {
     if (warnedNoWorkspaceFolder)
       return;
     warnedNoWorkspaceFolder = true;
-    vscode5.window.showWarningMessage(message);
+    vscode4.window.showWarningMessage(message);
   }
 };
 var warnedNoWorkspaceFolder = false;
 async function resolvePythonPath() {
-  const config = vscode5.workspace.getConfiguration("scistack");
+  const config = vscode4.workspace.getConfiguration("scistack");
   const configured = config.get("pythonPath");
   if (configured)
     return { path: configured, source: "scistack.pythonPath setting" };
-  const pythonExt = vscode5.extensions.getExtension("ms-python.python");
+  const pythonExt = vscode4.extensions.getExtension("ms-python.python");
   if (pythonExt) {
     if (!pythonExt.isActive)
       await pythonExt.activate();
@@ -2600,7 +2494,7 @@ var ACTION_LABELS = {
 };
 async function showDiagnosisMessage(diagnosis, channel) {
   const labels = diagnosis.actions.map((a) => ACTION_LABELS[a]);
-  const picked = await vscode5.window.showErrorMessage(diagnosis.message, ...labels);
+  const picked = await vscode4.window.showErrorMessage(diagnosis.message, ...labels);
   if (!picked)
     return;
   const action = diagnosis.actions.find((a) => ACTION_LABELS[a] === picked);
@@ -2609,18 +2503,18 @@ async function showDiagnosisMessage(diagnosis, channel) {
       channel.show(true);
       break;
     case "selectInterpreter":
-      await vscode5.commands.executeCommand("python.setInterpreter");
+      await vscode4.commands.executeCommand("python.setInterpreter");
       break;
     case "openSettings":
-      await vscode5.commands.executeCommand(
+      await vscode4.commands.executeCommand(
         "workbench.action.openSettings",
         "scistack.pythonPath"
       );
       break;
     case "copyInstallCommand":
       if (diagnosis.installCommand) {
-        await vscode5.env.clipboard.writeText(diagnosis.installCommand);
-        vscode5.window.showInformationMessage(
+        await vscode4.env.clipboard.writeText(diagnosis.installCommand);
+        vscode4.window.showInformationMessage(
           `SciStack: copied to clipboard \u2014 ${diagnosis.installCommand}`
         );
       }
@@ -2628,18 +2522,387 @@ async function showDiagnosisMessage(diagnosis, channel) {
   }
 }
 
+// src/bundleImport.ts
+function runCli(pythonPath, args, cwd, log) {
+  log.appendLine(`[bundle] ${pythonPath} ${args.join(" ")}`);
+  return new Promise((resolve3, reject) => {
+    const proc = (0, import_child_process3.spawn)(pythonPath, args, { cwd });
+    let stdout = "";
+    proc.stdout.on("data", (d) => stdout += d.toString());
+    proc.stderr.on("data", (d) => log.append(d.toString()));
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      log.appendLine(`[bundle] exited with code ${code}`);
+      resolve3(stdout);
+    });
+  });
+}
+var DROP = "(drop it \u2014 no counterpart in my schema)";
+var KEEP_ROOT = "Keep the exporter's folder";
+var CHOOSE_ROOT = "Choose my folder\u2026";
+var LATER_ROOT = "Decide later (edit the entities file)";
+async function importProjectBundle(log, openProject) {
+  const picked = await vscode5.window.showOpenDialog({
+    canSelectFiles: true,
+    canSelectMany: false,
+    filters: { "SciStack project bundle": ["scistack"] },
+    title: "Import a SciStack project bundle"
+  });
+  if (!picked || picked.length === 0)
+    return;
+  const bundle = picked[0].fsPath;
+  const interpreter = await resolvePythonPath();
+  if (!interpreter) {
+    vscode5.window.showErrorMessage("SciStack: no Python interpreter found (set scistack.pythonPath).");
+    return;
+  }
+  const python = interpreter.path;
+  log.appendLine(`[bundle] import ${bundle} with ${python} (${interpreter.source})`);
+  const infoAnswer = parseCliJson(
+    await runCli(python, buildInfoArgs(bundle), void 0, log)
+  );
+  if (!infoAnswer.ok) {
+    vscode5.window.showErrorMessage(`SciStack: cannot read ${path5.basename(bundle)}: ${infoAnswer.error}`);
+    return;
+  }
+  const info = infoAnswer.info;
+  const parent = await vscode5.window.showOpenDialog({
+    canSelectFiles: false,
+    canSelectFolders: true,
+    canSelectMany: false,
+    openLabel: "Create the project in here",
+    title: `Where should the new project "${info.package ?? "project"}" go?`,
+    defaultUri: vscode5.workspace.workspaceFolders?.[0]?.uri
+  });
+  if (!parent || parent.length === 0)
+    return;
+  const folderName = await vscode5.window.showInputBox({
+    prompt: "New project folder name (must not hold a project yet)",
+    value: info.package ?? path5.basename(bundle, ".scistack"),
+    validateInput: (v) => v.trim() && !/[\\/]/.test(v) ? null : "A folder name, without separators"
+  });
+  if (!folderName)
+    return;
+  const into = path5.join(parent[0].fsPath, folderName.trim());
+  const schemaInput = await vscode5.window.showInputBox({
+    prompt: "Your schema keys, top-down (the exporter's are suggested)",
+    value: info.schema_keys.join(", "),
+    validateInput: (v) => v.split(",").map((s) => s.trim()).filter(Boolean).length ? null : "At least one key"
+  });
+  if (schemaInput === void 0)
+    return;
+  const schema = schemaInput.split(",").map((s) => s.trim()).filter(Boolean);
+  const keyMap = {};
+  const free = schema.filter((k) => !info.schema_keys.includes(k));
+  for (const key of keysNeedingAChoice(info.schema_keys, schema)) {
+    const choice = await vscode5.window.showQuickPick([...free, DROP], {
+      title: `The exporter's key "${key}" is not in your schema`,
+      placeHolder: `Which of your keys is "${key}"?`
+    });
+    if (choice === void 0)
+      return;
+    if (choice === DROP)
+      keyMap[key] = null;
+    else {
+      keyMap[key] = choice;
+      free.splice(free.indexOf(choice), 1);
+    }
+  }
+  const pathRoots = {};
+  for (const p of info.path_inputs) {
+    const was = p.root_folders.length ? p.root_folders.join(", ") : "(project root)";
+    const choice = await vscode5.window.showQuickPick([CHOOSE_ROOT, KEEP_ROOT, LATER_ROOT], {
+      title: `PathInput "${p.name}": ${p.templates.join(" | ")}`,
+      placeHolder: `Raw files are not in the bundle. The exporter's folder: ${was}`
+    });
+    if (choice === void 0)
+      return;
+    if (choice !== CHOOSE_ROOT)
+      continue;
+    const folder = await vscode5.window.showOpenDialog({
+      canSelectFiles: false,
+      canSelectFolders: true,
+      canSelectMany: false,
+      title: `Your folder for "${p.name}" (${p.templates.join(" | ")})`
+    });
+    if (folder && folder.length > 0)
+      pathRoots[p.name] = folder[0].fsPath;
+  }
+  let importHistory = false;
+  if (info.has_history) {
+    const choice = await vscode5.window.showQuickPick(
+      [
+        { label: "Import history", detail: "Loaded live when the bundle carries its data and the schema is kept; archived otherwise", yes: true },
+        { label: "Skip history", detail: "The new database holds only your own results", yes: false }
+      ],
+      { title: `History (${info.has_data ? "with" : "without"} data)` }
+    );
+    if (choice === void 0)
+      return;
+    importHistory = choice.yes;
+  }
+  const sameSchema = schema.join("\0") === info.schema_keys.join("\0");
+  const args = buildImportArgs({
+    bundle,
+    into,
+    schema: sameSchema ? void 0 : schema,
+    keyMap,
+    pathRoots,
+    importHistory
+  });
+  const answer = await vscode5.window.withProgress(
+    { location: vscode5.ProgressLocation.Notification, title: `Importing ${path5.basename(bundle)}\u2026` },
+    async () => parseCliJson(await runCli(python, args, void 0, log))
+  );
+  if (!answer.ok) {
+    vscode5.window.showErrorMessage(`SciStack import failed: ${answer.error}`);
+    return;
+  }
+  const report = answer.report;
+  const doc = await vscode5.workspace.openTextDocument({
+    language: "markdown",
+    content: formatImportReport(report)
+  });
+  await vscode5.window.showTextDocument(doc, { preview: false });
+  const open = await vscode5.window.showWarningMessage(
+    `Imported "${report.package}" into ${report.root}. Opening it loads the bundle's code, which runs its Python module-level code. Only open code you trust.`,
+    { modal: true },
+    "Trust and Open"
+  );
+  if (open !== "Trust and Open")
+    return;
+  const folders = vscode5.workspace.workspaceFolders ?? [];
+  if (!folders.some((f) => path5.resolve(f.uri.fsPath) === path5.resolve(report.root))) {
+    vscode5.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode5.Uri.file(report.root) });
+    log.appendLine(`[bundle] added ${report.root} to the workspace`);
+  }
+  await openProject(report.db_path);
+}
+
+// src/plotPanel.ts
+var path6 = __toESM(require("path"));
+var vscode6 = __toESM(require("vscode"));
+var PlotPanel = class _PlotPanel {
+  constructor(context, session, target, column) {
+    this.context = context;
+    this.session = session;
+    this.target = target;
+    this.disposables = [];
+    this.unregister = () => {
+    };
+    this.unregisterTheme = () => {
+    };
+    this.panel = vscode6.window.createWebviewPanel(
+      "scistack.plot",
+      this.title(),
+      // The pipeline's own group: a sibling tab at full width, not a split.
+      { viewColumn: column, preserveFocus: false },
+      {
+        enableScripts: true,
+        // Plot state (spec, role assignments) is expensive to rebuild and has
+        // no persistence of its own, so keep the webview alive when the tab is
+        // in the background.
+        retainContextWhenHidden: true,
+        localResourceRoots: [
+          vscode6.Uri.file(path6.join(context.extensionPath, "dist", "webview"))
+        ]
+      }
+    );
+    this.panel.webview.html = this.getHtml();
+    this.unregister = this.session.plots.add(this);
+    this.unregisterTheme = plotThemeHost(context.globalState).add(this);
+    this.panel.onDidChangeViewState(
+      (e) => {
+        if (e.webviewPanel.active)
+          this.session.manager.setActive(this.session.id);
+      },
+      void 0,
+      this.disposables
+    );
+    this.panel.webview.onDidReceiveMessage(
+      async (msg) => {
+        const method = msg.method;
+        if (method === "set_plot_theme") {
+          await answerSetPlotTheme(
+            plotThemeHost(this.context.globalState),
+            msg,
+            this,
+            this.session.log
+          );
+          return;
+        }
+        if (method === "pick_save_path") {
+          try {
+            const params = msg.params ?? {};
+            const folder = vscode6.workspace.workspaceFolders?.[0]?.uri;
+            const uri = await vscode6.window.showSaveDialog({
+              defaultUri: folder ? vscode6.Uri.joinPath(folder, params.defaultName ?? "figure.png") : void 0,
+              // The panel sends the ONE format its dropdown selected, so the
+              // dialog cannot offer a second answer to a question already
+              // asked — the backend honours the dropdown either way.
+              filters: { [params.filterName ?? "Images"]: params.formats ?? ["png"] }
+            });
+            this.panel.webview.postMessage({
+              id: msg.id,
+              result: { path: uri?.fsPath ?? null }
+            });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) }
+            });
+          }
+          return;
+        }
+        if (method === "pick_save_folder") {
+          try {
+            const uris = await vscode6.window.showOpenDialog({
+              canSelectFiles: false,
+              canSelectFolders: true,
+              canSelectMany: false,
+              defaultUri: vscode6.workspace.workspaceFolders?.[0]?.uri,
+              openLabel: "Save figures here"
+            });
+            this.panel.webview.postMessage({
+              id: msg.id,
+              result: { path: uris?.[0]?.fsPath ?? null }
+            });
+          } catch (err) {
+            this.panel.webview.postMessage({
+              id: msg.id,
+              error: { message: String(err) }
+            });
+          }
+          return;
+        }
+        try {
+          const result = await this.session.python.request(
+            method,
+            msg.params ?? {}
+          );
+          this.panel.webview.postMessage({ id: msg.id, result });
+        } catch (err) {
+          this.session.log.appendLine(`plot panel: ${method} failed \u2014 ${err}`);
+          this.panel.webview.postMessage({
+            id: msg.id,
+            error: { message: String(err) }
+          });
+        }
+      },
+      void 0,
+      this.disposables
+    );
+    this.panel.onDidDispose(() => this.dispose(), void 0, this.disposables);
+  }
+  static show(context, session, target, options = {}) {
+    return new _PlotPanel(
+      context,
+      session,
+      target,
+      // This session's pipeline group, so the figure is a sibling tab of the
+      // canvas it came from rather than a split the user did not ask for.
+      options.column ?? session.dagPanel?.viewColumn ?? vscode6.ViewColumn.One
+    );
+  }
+  /** Post a message into this panel's webview (the `MessageSink` contract). */
+  postMessage(msg) {
+    this.panel.webview.postMessage(msg);
+  }
+  /**
+   * Close this tab. Called when its session closes: a plot tab cannot
+   * outlive the server it sends every `plot_*` RPC to.
+   */
+  close() {
+    this.panel.dispose();
+  }
+  /**
+   * The tab title. It names the database as well as the variable: with plot
+   * tabs open across two databases, "Plot — StepLength" twice over says
+   * nothing about which is which.
+   */
+  title() {
+    if (this.target.csvPath)
+      return `Plot \u2014 ${path6.basename(this.target.csvPath)}`;
+    const variable = this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
+    return this.session.isPlotOnly ? variable : `${variable} \xB7 ${this.session.label}`;
+  }
+  dispose() {
+    this.unregister();
+    this.unregisterTheme();
+    while (this.disposables.length)
+      this.disposables.pop()?.dispose();
+  }
+  getHtml() {
+    const webviewDir = path6.join(this.context.extensionPath, "dist", "webview");
+    const webview = this.panel.webview;
+    const scriptUri = webview.asWebviewUri(
+      vscode6.Uri.file(path6.join(webviewDir, "index.js"))
+    );
+    const styleUri = webview.asWebviewUri(
+      vscode6.Uri.file(path6.join(webviewDir, "index.css"))
+    );
+    const nonce = getNonce2();
+    const target = JSON.stringify({
+      view: "plot",
+      variable: this.target.variable ?? null,
+      csvPath: this.target.csvPath ?? null,
+      location: this.target.location ?? null
+    });
+    const session = JSON.stringify({
+      id: this.session.id,
+      dbName: this.session.isPlotOnly ? null : this.session.label,
+      dbPath: this.session.dbPath || null
+    });
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy"
+        content="${webviewCsp(webview.cspSource, nonce)}" />
+  <link rel="stylesheet" href="${styleUri}" />
+  <title>${this.title()}</title>
+  <style>
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script nonce="${nonce}">window.__SCISTACK_VIEW__ = ${target};</script>
+  <script nonce="${nonce}">window.__SCISTACK_SESSION__ = ${session};</script>
+  <script nonce="${nonce}">${plotThemeHost(this.context.globalState).initScript()}</script>
+  <script nonce="${nonce}" src="${scriptUri}"></script>
+</body>
+</html>`;
+  }
+};
+function getNonce2() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let text = "";
+  for (let i = 0; i < 32; i++) {
+    text += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return text;
+}
+
 // src/extension.ts
 var sessions;
 var outputChannel;
 var statusItem = null;
 function activate(context) {
-  outputChannel = vscode6.window.createOutputChannel("SciStack");
+  outputChannel = vscode7.window.createOutputChannel("SciStack");
   sessions = new SessionManager(context, outputChannel);
   sessions.onDidChange(updateStatusBar);
-  const openPipeline = vscode6.commands.registerCommand(
+  const openPipeline = vscode7.commands.registerCommand(
     "scistack.openPipeline",
     async () => {
-      const dbChoice = await vscode6.window.showQuickPick(
+      const dbChoice = await vscode7.window.showQuickPick(
         ["Open existing database", "Create new database"],
         { placeHolder: "SciStack: Open or create a .duckdb file?" }
       );
@@ -2648,30 +2911,30 @@ function activate(context) {
       let dbPath;
       let schemaKeys;
       if (dbChoice === "Open existing database") {
-        const dbUris = await vscode6.window.showOpenDialog({
+        const dbUris = await vscode7.window.showOpenDialog({
           canSelectFiles: true,
           canSelectFolders: false,
           canSelectMany: false,
           filters: { "DuckDB Database": ["duckdb"] },
           title: "Select SciStack Database",
-          defaultUri: vscode6.workspace.workspaceFolders?.[0]?.uri
+          defaultUri: vscode7.workspace.workspaceFolders?.[0]?.uri
         });
         if (!dbUris || dbUris.length === 0)
           return;
         dbPath = dbUris[0].fsPath;
       } else {
-        const folderUris = await vscode6.window.showOpenDialog({
+        const folderUris = await vscode7.window.showOpenDialog({
           canSelectFiles: false,
           canSelectFolders: true,
           canSelectMany: false,
           title: "Select folder for new SciStack database",
           openLabel: "Select Folder",
-          defaultUri: vscode6.workspace.workspaceFolders?.[0]?.uri
+          defaultUri: vscode7.workspace.workspaceFolders?.[0]?.uri
         });
         if (!folderUris || folderUris.length === 0)
           return;
         const folderPath = folderUris[0].fsPath;
-        const nameInput = await vscode6.window.showInputBox({
+        const nameInput = await vscode7.window.showInputBox({
           prompt: "Database filename",
           placeHolder: "e.g. my_pipeline.duckdb",
           validateInput: (v) => {
@@ -2687,8 +2950,8 @@ function activate(context) {
         if (!nameInput)
           return;
         const fileName = nameInput.trim().endsWith(".duckdb") ? nameInput.trim() : `${nameInput.trim()}.duckdb`;
-        dbPath = path6.join(folderPath, fileName);
-        const keysInput = await vscode6.window.showInputBox({
+        dbPath = path7.join(folderPath, fileName);
+        const keysInput = await vscode7.window.showInputBox({
           prompt: "Schema keys (comma-separated, top-down)",
           placeHolder: "e.g. subject, session",
           validateInput: (v) => {
@@ -2704,12 +2967,12 @@ function activate(context) {
       updateStatusBar();
     }
   );
-  const restartPython = vscode6.commands.registerCommand(
+  const restartPython = vscode7.commands.registerCommand(
     "scistack.restartPython",
     async () => {
       const session = sessions.resolveForCommand("restartPython");
       if (!session) {
-        vscode6.window.showWarningMessage(
+        vscode7.window.showWarningMessage(
           'SciStack: No pipeline has been opened yet \u2014 run "SciStack: Open Pipeline" first.'
         );
         return;
@@ -2717,24 +2980,24 @@ function activate(context) {
       outputChannel.appendLine(`Restarting the Python process for ${session.label}...`);
       const ok = await sessions.restart(session);
       if (ok) {
-        vscode6.window.showInformationMessage(
+        vscode7.window.showInformationMessage(
           `SciStack: Python process restarted for ${session.label}.`
         );
       }
     }
   );
-  const switchSession = vscode6.commands.registerCommand(
+  const switchSession = vscode7.commands.registerCommand(
     "scistack.switchSession",
     async () => {
       const open = sessions.all();
       if (open.length === 0) {
-        vscode6.window.showInformationMessage(
+        vscode7.window.showInformationMessage(
           'SciStack: no database is open \u2014 run "SciStack: Open Pipeline".'
         );
         return;
       }
       const active = sessions.active;
-      const picked = await vscode6.window.showQuickPick(
+      const picked = await vscode7.window.showQuickPick(
         open.map((s) => ({
           label: s === active ? `$(check) ${s.label}` : s.label,
           description: s.dbPath,
@@ -2749,7 +3012,7 @@ function activate(context) {
       sessions.setActive(picked.session.id);
     }
   );
-  const showSessions = vscode6.commands.registerCommand(
+  const showSessions = vscode7.commands.registerCommand(
     "scistack.showSessions",
     () => {
       outputChannel.appendLine("");
@@ -2766,12 +3029,12 @@ function activate(context) {
       outputChannel.show(true);
     }
   );
-  const showMatlabRuns = vscode6.commands.registerCommand(
+  const showMatlabRuns = vscode7.commands.registerCommand(
     "scistack.showMatlabRuns",
     async () => {
       const session = sessions.resolveForCommand("showMatlabRuns");
       if (!session) {
-        vscode6.window.showInformationMessage(
+        vscode7.window.showInformationMessage(
           "SciStack: no database is open."
         );
         return;
@@ -2794,11 +3057,11 @@ function activate(context) {
         outputChannel.appendLine("=== end of MATLAB run state ===");
         outputChannel.show(true);
       } catch (err) {
-        vscode6.window.showErrorMessage(`SciStack: could not read MATLAB run state \u2014 ${err}`);
+        vscode7.window.showErrorMessage(`SciStack: could not read MATLAB run state \u2014 ${err}`);
       }
     }
   );
-  const openPlotPanel = vscode6.commands.registerCommand(
+  const openPlotPanel = vscode7.commands.registerCommand(
     "scistack.openPlotPanel",
     async (target = {}) => {
       const session = await sessionForPlot(target);
@@ -2807,30 +3070,39 @@ function activate(context) {
       PlotPanel.show(context, session, target);
     }
   );
-  const plotVariable = vscode6.commands.registerCommand(
+  const plotVariable = vscode7.commands.registerCommand(
     "scistack.plotVariable",
     async () => {
-      const variable = await vscode6.window.showInputBox({
+      const variable = await vscode7.window.showInputBox({
         prompt: "Variable type to plot",
         placeHolder: "e.g. StepLength"
       });
       if (!variable)
         return;
-      await vscode6.commands.executeCommand("scistack.openPlotPanel", {
+      await vscode7.commands.executeCommand("scistack.openPlotPanel", {
         variable: variable.trim()
       });
     }
   );
-  const plotCsv = vscode6.commands.registerCommand(
+  const importBundle = vscode7.commands.registerCommand(
+    "scistack.importProjectBundle",
+    async () => {
+      await importProjectBundle(outputChannel, async (dbPath) => {
+        await sessions.open(dbPath);
+        updateStatusBar();
+      });
+    }
+  );
+  const plotCsv = vscode7.commands.registerCommand(
     "scistack.plotCsv",
     async (uri) => {
-      const target = uri?.fsPath ?? (await vscode6.window.showOpenDialog({
+      const target = uri?.fsPath ?? (await vscode7.window.showOpenDialog({
         canSelectMany: false,
         filters: { "CSV files": ["csv"] }
       }))?.[0]?.fsPath;
       if (!target)
         return;
-      await vscode6.commands.executeCommand("scistack.openPlotPanel", {
+      await vscode7.commands.executeCommand("scistack.openPlotPanel", {
         csvPath: target
       });
     }
@@ -2844,6 +3116,7 @@ function activate(context) {
     openPlotPanel,
     plotVariable,
     plotCsv,
+    importBundle,
     outputChannel
   );
 }
@@ -2853,7 +3126,7 @@ async function sessionForPlot(target) {
   }
   const session = sessions.resolveForCommand("openPlotPanel", target.sessionId);
   if (!session) {
-    vscode6.window.showWarningMessage(
+    vscode7.window.showWarningMessage(
       "SciStack: Open a pipeline first \u2014 plotting a variable needs its database."
     );
     return void 0;
@@ -2868,7 +3141,7 @@ function updateStatusBar() {
     return;
   }
   if (!statusItem) {
-    statusItem = vscode6.window.createStatusBarItem(vscode6.StatusBarAlignment.Left, 100);
+    statusItem = vscode7.window.createStatusBarItem(vscode7.StatusBarAlignment.Left, 100);
     statusItem.command = "scistack.switchSession";
   }
   const others = sessions.size - 1;

@@ -17,6 +17,7 @@ from scistack_gui import __version__
 from scistack_gui.api.artifacts import router as artifacts_router
 from scistack_gui.api.bootstrap import router as bootstrap_router
 from scistack_gui.api.builtin_functions import router as builtin_functions_router
+from scistack_gui.api.bundles import router as bundles_router
 from scistack_gui.api.glue import router as glue_router
 from scistack_gui.api.history import router as history_router
 from scistack_gui.api.layout import router as layout_router
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(provenance_router, prefix="/api")
     app.include_router(variants_router, prefix="/api")
     app.include_router(history_router, prefix="/api")
+    app.include_router(bundles_router, prefix="/api")
     app.include_router(ws_router)
 
     _mount_frontend(app, Path(__file__).parent / "static")
