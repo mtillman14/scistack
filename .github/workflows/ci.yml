@@ -17,7 +17,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The test matrix is built by .github/scripts/test-shards.sh, which owns the
+  # package list and how many parallel shards each package is split into.
+  test-plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every tests/ dir is sharded or explicitly excluded
+        run: bash .github/scripts/test-shards.sh check
+      - id: plan
+        name: Build the shard matrix
+        run: |
+          matrix=$(bash .github/scripts/test-shards.sh matrix)
+          echo "$matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: test-plan
+    name: test (${{ matrix.python-version }}, ${{ matrix.shard.name }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -25,6 +44,7 @@ jobs:
         # Tooling targets py310 (ruff/mypy target-version, classifiers); test the
         # floor, a mid version, and the newest.
         python-version: ['3.10', '3.12', '3.13']
+        shard: ${{ fromJSON(needs.test-plan.outputs.matrix).include }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,60 +79,25 @@ jobs:
           # coverage; name it so the 3.10 job does not depend on that accident.
           pip install "tomli ; python_version < '3.11'"
       - name: Run tests
-        # Inlined from the former run_tests.sh: pytest per package, collecting
-        # pass/fail so every package runs even after one fails.
-        # scimatlab needs a MATLAB licence, so it is skipped unless MATLAB exists.
+        # One matrix entry = one shard: its packages run one pytest process
+        # each (never two tests/ dirs in one session), and a split package
+        # runs only its share of files. --durations feeds shard rebalancing.
         shell: bash
+        run: >-
+          bash .github/scripts/test-shards.sh run
+          "${{ matrix.shard.pkgs }}" "${{ matrix.shard.shard }}" "${{ matrix.shard.of }}"
+
+  # One stable check name for branch protection; the matrix job names change
+  # whenever the shard layout does.
+  tests-passed:
+    if: always()
+    needs: [test-plan, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: All test shards passed
         run: |
-          set -uo pipefail
-
-          PACKAGES=(
-              scistacklog
-              scicanonicalhash
-              path-gen
-              scifor
-              sciduckdb
-              scilineage
-              scidb
-              scihist
-              scistackplot
-              scistackplotdb
-              scistack
-              scistack-gui
-          )
-
-          if command -v matlab &>/dev/null; then
-              PACKAGES+=(scimatlab)
-          fi
-
-          PASS=()
-          FAIL=()
-
-          for pkg in "${PACKAGES[@]}"; do
-              test_dir="$GITHUB_WORKSPACE/$pkg/tests"
-
-              if [[ ! -d "$test_dir" ]]; then
-                  echo "::warning::Skipping $pkg — no tests/ directory found"
-                  continue
-              fi
-
-              echo "::group::$pkg"
-              if pytest "$test_dir"; then
-                  PASS+=("$pkg")
-              else
-                  FAIL+=("$pkg")
-              fi
-              echo "::endgroup::"
-          done
-
-          echo ""
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  Summary"
-          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "  PASSED (${#PASS[@]}): ${PASS[*]:-—}"
-          echo "  FAILED (${#FAIL[@]}): ${FAIL[*]:-—}"
-
-          [[ ${#FAIL[@]} -eq 0 ]]
+          echo "test-plan: ${{ needs.test-plan.result }}, test: ${{ needs.test.result }}"
+          [[ "${{ needs.test-plan.result }}" == success && "${{ needs.test.result }}" == success ]]
 
   build:
     runs-on: ubuntu-latest
