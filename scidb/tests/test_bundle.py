@@ -262,9 +262,11 @@ def test_files_phase_runs_before_init_without_a_database(project, tmp_path):
 
 
 def test_check_environment_reports_missing_and_different(tmp_path):
+    # Dependencies are DISTRIBUTION names: scidb installs as "scistack-db".
+    # "scidb" (the import name) only passed where a stale "scidb" dist lingered.
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "x"\ndependencies = ["pytest", "definitely-not-installed-xyz>=1",'
-        ' "scidb"]\n'
+        ' "scistack-db"]\n'
     )
     import importlib.metadata
 
