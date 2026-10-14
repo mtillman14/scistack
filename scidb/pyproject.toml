@@ -1,14 +1,22 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling", "hatch-vcs", "hatch-dependency-coversion==0.0.1a4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
 raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
 
+# Sibling SciStack packages are pinned to EXACTLY this build's version at build
+# time (lockstep releases), so [project] dependencies lists them unversioned. The
+# extra "dynamic" entry is what makes hatchling run the hook. Every sibling in
+# dependencies must be named here: CI's build job fails a wheel whose internal
+# dependency is not "==<its own version>".
+[tool.hatch.metadata.hooks.dependency-coversion]
+override-versions-of = ["scipathgen", "scicanonicalhash", "sciduckdb", "scifor", "scistacklog", "scilineage"]
+
 [project]
 name = "scistack-db"
-dynamic = ["version"]
+dynamic = ["version", "dependency-coversioning"]
 description = "A lightweight database framework for scientific computing with versioning and provenance tracking"
 readme = "README.md"
 license = {text = "MIT"}
@@ -29,11 +37,13 @@ dependencies = [
     "numpy>=1.20.0",
     "pandas>=1.3.0",
     "duckdb>=0.9.0",
-    "scipathgen>=0.1.0",
-    "scicanonicalhash>=0.1.0",
-    "sciduckdb>=0.1.0",
-    "scifor>=0.1.0",
-    "scistacklog>=0.1.0",
+    "scipathgen",
+    "scicanonicalhash",
+    "sciduckdb",
+    "scifor",
+    "scistacklog",
+    # foreach_config.py imports scilineage.hashing at module import.
+    "scilineage",
     # discover.py and entities.py read TOML at module import. Python 3.11+ has
     # tomllib built in; 3.10 needs the tomli backport it falls back to.
     "tomli>=2.0 ; python_version < '3.11'",

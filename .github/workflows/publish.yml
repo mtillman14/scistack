@@ -37,7 +37,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install build tools
-        run: pip install build
+        run: pip install build packaging
 
       - name: Diagnose git state (hatch-vcs derives the version from this)
         run: |
@@ -68,6 +68,8 @@ jobs:
             python -m build --outdir dist "$pkg"
           done
           ls -la dist
+          # Lockstep: every sibling dependency must be pinned ==<this version>.
+          python .github/scripts/check_lockstep_pins.py dist
 
       - name: Refuse to publish non-release versions
         run: |

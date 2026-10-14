@@ -1,14 +1,22 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling", "hatch-vcs", "hatch-dependency-coversion==0.0.1a4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
 raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
 
+# Sibling SciStack packages are pinned to EXACTLY this build's version at build
+# time (lockstep releases), so [project] dependencies lists them unversioned. The
+# extra "dynamic" entry is what makes hatchling run the hook. Every sibling in
+# dependencies must be named here: CI's build job fails a wheel whose internal
+# dependency is not "==<its own version>".
+[tool.hatch.metadata.hooks.dependency-coversion]
+override-versions-of = ["scistack-db", "scifor", "scimatlab", "scistackplot", "scistackplotdb", "scicanonicalhash", "scistacklog"]
+
 [project]
 name = "scistack-gui"
-dynamic = ["version"]
+dynamic = ["version", "dependency-coversioning"]
 description = "GUI for SciStack pipelines"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -27,9 +35,12 @@ dependencies = [
     # matlab_registry.py, config.py, api/pipeline.py.
     "scimatlab",
     # Plot Studio. [mpl] is required, not optional: the save/export path
-    # calls render_matplotlib(). Both packages first shipped in v0.1.23.
-    "scistackplot[mpl]>=0.1.23",
-    "scistackplotdb>=0.1.23",
+    # calls render_matplotlib().
+    "scistackplot[mpl]",
+    "scistackplotdb",
+    # Imported directly by the GUI, not only through scistack-db.
+    "scicanonicalhash",
+    "scistacklog",
     # plot_service.py imports matplotlib directly for PNG export, on top of
     # whatever scistackplot[mpl] pulls in.
     "matplotlib>=3.8",

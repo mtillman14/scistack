@@ -1,14 +1,22 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling", "hatch-vcs", "hatch-dependency-coversion==0.0.1a4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
 raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
 
+# Sibling SciStack packages are pinned to EXACTLY this build's version at build
+# time (lockstep releases), so [project] dependencies lists them unversioned. The
+# extra "dynamic" entry is what makes hatchling run the hook. Every sibling in
+# dependencies must be named here: CI's build job fails a wheel whose internal
+# dependency is not "==<its own version>".
+[tool.hatch.metadata.hooks.dependency-coversion]
+override-versions-of = ["scicanonicalhash"]
+
 [project]
 name = "scilineage"
-dynamic = ["version"]
+dynamic = ["version", "dependency-coversioning"]
 description = "Lineage tracking for Python data pipelines"
 readme = "README.md"
 license = "MIT"
@@ -39,7 +47,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "scicanonicalhash>=0.1.0",
+    "scicanonicalhash",
 ]
 
 [project.optional-dependencies]

@@ -79,6 +79,29 @@ Consequence worth internalising: **a release is all-or-nothing and version
 numbers carry no per-package meaning.** `scistackplot 0.1.27` and
 `sciduckdb 0.1.27` say only "same commit", not "changed together".
 
+### Sibling pins follow the tag
+
+A sibling dependency is listed **unversioned** in `[project] dependencies`.
+At build time the `hatch-dependency-coversion` metadata hook (pinned in
+`[build-system] requires`) rewrites each one to `==<this build's version>`, so
+the `v0.1.33` wheel of `scihist` requires `scistack-db==0.1.33`. Only
+same-version sets are ever tested together, so exact pins are the honest
+statement. Three things make it work, all per `pyproject.toml`:
+
+- `dynamic = ["version", "dependency-coversioning"]`: the extra entry is
+  arbitrary but needed, or hatchling never calls the hook.
+- `[tool.hatch.metadata.hooks.dependency-coversion] override-versions-of` must
+  list every sibling **exactly as spelled** in `dependencies` (raw string match).
+  A sibling left off ships unversioned.
+- `.github/scripts/check_lockstep_pins.py` runs after every build (the CI build
+  job and `publish.yml`). It treats the wheels in the output folder as the
+  internal set and fails unless each sibling dependency is `==` the version.
+  That makes the build loop the only owner of the list of packages.
+
+In a checkout the version is a `.devN` one, so the pins name versions that
+are on no index: `pip install -e <pkg>` without `--no-deps` cannot resolve its
+siblings. Use `dev-install.sh`.
+
 ## The dev-install contract, and what it hides
 
 `dev-install.sh` installs everything editable in layer order, every line with
@@ -126,16 +149,19 @@ someone doing a real `pip install` of one package.
   because `pytest-cov` → `coverage` → `tomli; python_full_version<="3.11.0a6"`.
   A user's non-test 3.10 install gets `ModuleNotFoundError` from `import scifor`.
   Only `scidb/inspect/cli.py:51` degrades gracefully.
-- **Internal floors nobody resolves.** Every internal pin reads `>=0.1.0` even
-  though `scistackplot` did not exist before `v0.1.23`, and `scistackplotdb`
-  calls `scidb` APIs (`variant_identity_batch`, `code_versions_batch`,
-  `CODE_PIN_PREFIX`, `LATEST_VERSION`) that also first shipped in `v0.1.23`.
-  Under lockstep, pip picking "newest of both" hides it; any pin on one side
-  exposes it.
+- **Internal floors nobody resolves** (fixed: siblings are now pinned `==` the build version, see *Sibling pins follow the tag*). The old `>=0.1.0` floors let pip pair a new `scistackplotdb` with a pre-`v0.1.23` `scidb`.
 
 **Rule of thumb:** a package's `dependencies` must name everything it imports at
 module level, including things a sibling happens to supply. Metadata states
 intent; transitive availability is a coincidence, not a contract.
+
+**Enforced in CI (2026-10-14):** the build job `pip install`s `scistack` and
+`scihist` from the fresh wheels into an EMPTY venv and imports every module of
+every SciStack package (`.github/scripts/smoke_install.py`). A
+`ModuleNotFoundError` naming a sibling fails the build; a missing third-party
+module is a warning (optional extras are absent there). It exists because
+`scistack-db` imported `scilineage` undeclared and v0.1.32 shipped a GUI that
+failed at startup for every fresh install.
 
 ## Python version floor
 

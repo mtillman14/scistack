@@ -1,24 +1,31 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling", "hatch-vcs", "hatch-dependency-coversion==0.0.1a4"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
 raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
 
+# Sibling SciStack packages are pinned to EXACTLY this build's version at build
+# time (lockstep releases), so [project] dependencies lists them unversioned. The
+# extra "dynamic" entry is what makes hatchling run the hook. Every sibling in
+# dependencies must be named here: CI's build job fails a wheel whose internal
+# dependency is not "==<its own version>".
+[tool.hatch.metadata.hooks.dependency-coversion]
+override-versions-of = ["scistack-db", "scimatlab", "scistack-gui"]
+
 [project]
 name = "scistack"
-dynamic = ["version"]
+dynamic = ["version", "dependency-coversioning"]
 description = "Project & environment tooling for the SciStack scientific pipeline framework"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [
-    "scistack-db>=0.1.0",
-    "scimatlab>=0.1.0",
+    "scistack-db",
+    "scimatlab",
     # `pip install scistack` is the one-stop-shop command: it installs the GUI
-    # too. Deliberately unversioned — under lockstep the correct floor is "this
-    # release", which isn't known until the tag is cut. The dependency runs one
+    # too, pinned to this release like every sibling. The dependency runs one
     # way only; scistack-gui must never declare scistack, or the graph cycles.
     "scistack-gui",
     # user_config.py reads TOML at module import. Python 3.11+
