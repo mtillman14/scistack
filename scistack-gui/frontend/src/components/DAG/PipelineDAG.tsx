@@ -75,6 +75,8 @@ interface ContextMenuState {
   y: number
   nodeType: 'functionNode' | 'variableNode' | 'parameterNode'
   fnLabel?: string
+  /** The function node's own id, for "Open in Plot Studio" on a plot_ node. */
+  fnNodeId?: string
   varType?: string
   // Which single direction this variable node's type plays in the
   // current scope's interface — a type produced by a function inside the
@@ -157,7 +159,7 @@ export default function PipelineDAG() {
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   // Browser-mode fallback only: in the extension the studio is its own tab.
   const [plotTarget, setPlotTarget] = useState<
-    { variable: string; csvPath?: string; location?: PathStep[] } | null
+    { variable: string; csvPath?: string; location?: PathStep[]; plotNode?: string } | null
   >(null)
   // Which variable's schema locations are being inspected, or null. Separate
   // from plotTarget: looking at integrity is not the same act as opening a
@@ -299,6 +301,18 @@ export default function PipelineDAG() {
       )
     } else {
       setPlotTarget({ variable, location })
+    }
+  }, [])
+
+  // A plot_ node: the user's own function draws the figure, its edges bind the
+  // inputs (docs/claude/custom-plot-kinds.md). Same funnel as openPlot.
+  const openPlotNode = useCallback((plotNode: string, plotFunction: string) => {
+    if (isVSCodeMode) {
+      callBackend('open_plot_panel', { plotNode, plotFunction }).catch(() =>
+        setPlotTarget({ variable: '', plotNode })
+      )
+    } else {
+      setPlotTarget({ variable: '', plotNode })
     }
   }, [])
 
@@ -473,7 +487,12 @@ export default function PipelineDAG() {
     const bounds = wrapperRef.current?.getBoundingClientRect()
     const base = { x: e.clientX - (bounds?.left ?? 0), y: e.clientY - (bounds?.top ?? 0) }
     if (node.type === 'functionNode') {
-      setContextMenu({ ...base, nodeType: 'functionNode', fnLabel: (node.data as { label: string }).label })
+      setContextMenu({
+        ...base,
+        nodeType: 'functionNode',
+        fnLabel: (node.data as { label: string }).label,
+        fnNodeId: node.id,
+      })
     } else if (node.type === 'parameterNode') {
       const d = node.data as unknown as ParameterNodeData
       if (!d.source_file) return  // nothing declared to open or refresh
@@ -998,6 +1017,18 @@ export default function PipelineDAG() {
           <button style={styles.contextMenuItem} onClick={handleRunUntilHere} type="button">
             ▶ Run until here
           </button>
+          {contextMenu.fnLabel?.startsWith('plot_') && contextMenu.fnNodeId && (
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => {
+                openPlotNode(contextMenu.fnNodeId!, contextMenu.fnLabel!)
+                setContextMenu(null)
+              }}
+              type="button"
+            >
+              📈 Open in Plot Studio
+            </button>
+          )}
         </div>
       )}
       {contextMenu && contextMenu.nodeType === 'variableNode' && (() => {
@@ -1043,6 +1074,7 @@ export default function PipelineDAG() {
           variable={plotTarget.variable}
           csvPath={plotTarget.csvPath}
           initialLocation={plotTarget.location}
+          plotNode={plotTarget.plotNode}
           onClose={() => setPlotTarget(null)}
         />
       )}

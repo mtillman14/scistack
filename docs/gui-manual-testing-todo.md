@@ -11,6 +11,52 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzp. Custom plot kinds: Plot Studio on a `plot_` node — added 2026-10-14
+
+**What changed:** right-click a `plot_` function node ▸ **📈 Open in Plot
+Studio**. Your own function draws the figure, and the node's input edges bind
+its inputs. A function with an `ax` parameter draws one panel per call, so
+every Plot Studio setting applies. Without `ax` it returns a whole matplotlib
+or plotly figure, and only the data settings and the size apply. The Plot type
+grid shows only the function. Below it are the call level, one "as table"
+checkbox per input, the refusal reason if there is one, and notes (for
+example "filename: not wired on the canvas; passed None"). Export code, Add to
+pipeline, Save data, Show sample, Compare and Difference bars are off for
+these figures, each with its reason. Docs: docs/claude/custom-plot-kinds.md.
+
+**Backend**
+1. Reload the VS Code window (backend edits). Both frontend bundles and the
+   extension are already rebuilt.
+2. In a project file, add for example:
+   ```python
+   def plot_two(steps, mass, filename, ax, context=None):
+       for _, row in steps.iterrows():
+           ax.plot([context.x(row)], [row["StepLength"]], "o")
+   ```
+   Wire a trial-level variable to `steps` and a subject-level one to `mass`.
+
+**Frontend**
+1. Right-click the `plot_two` node: **Open in Plot Studio** appears (not on
+   other function nodes). A tab named `Plot — plot_two` opens.
+2. The figure is a PNG of exactly what Save writes. `scidb.log`:
+   `[custom] plot_two: panel-level, layout from steps …` and
+   `[custom] preview: … PNG … (N call(s), …s in the function)`.
+3. Facet by session: one call per panel, and the ticks, legend and text sizes
+   behave as for a built-in kind. Fit pane / Export size redraw at that size.
+4. Untick "as table" for `mass` with subject collapsed: the reason appears
+   in the caution colour ("mass is passed as a value …"), and the figure shows
+   that message. Make subject "Separate figures": it draws, and `mass` is a
+   number.
+5. Make the function raise: the figure area shows `plot_two raised …`, and
+   the traceback is in scidb.log.
+6. A function without `ax` that returns `plotly.graph_objects.Figure`: the
+   preview is an interactive plotly figure. Save image needs kaleido
+   (`pip install 'scistackplot[plotly-export]'`). Without it the save says so.
+7. Save a plot in the Saved plots rail, close the tab, reopen from the node:
+   it is listed under the function, not under the variable.
+
+---
+
 ## 0zzzo. One-dial auto text size + Proportions grid — added 2026-10-14
 
 **What changed:** auto text no longer sizes each element on its own. One

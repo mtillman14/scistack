@@ -159,7 +159,12 @@ def render(resolved: ResolvedPlot):
                 used.add((row, col))
                 at_cell[(row, col)] = panel
                 panel_axes[index] = ax
-                _draw_panel(ax, panel.frame, resolved)
+                if resolved.custom is not None:
+                    # The user's plot_ function draws this panel's marks; the
+                    # layout around them is this renderer's (custom.py).
+                    resolved.custom.draw_panel(ax, panel, resolved)
+                else:
+                    _draw_panel(ax, panel.frame, resolved)
                 _draw_sample(ax, panel, resolved)
                 # No subplot caption: a faceted panel is named by its y-axis title
                 # instead (base.panel_y_title), which buys back the row of vertical
@@ -1901,8 +1906,12 @@ def layout_report(resolved: ResolvedPlot):
     import matplotlib.pyplot as plt
 
     from ..autosize import LayoutReport
+    from ..custom import measuring
 
-    fig = render(resolved)
+    # A custom figure's marks do not move the labels measured here, so a
+    # trial layout does not call the user's function (custom.measuring).
+    with measuring():
+        fig = render(resolved)
     try:
         fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
         ticks, brackets = fits.get("ticks"), fits.get("brackets")

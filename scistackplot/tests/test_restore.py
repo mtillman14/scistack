@@ -24,6 +24,7 @@ from scistackplot import (
     Alias,
     CompareMode,
     Comparison,
+    CustomPlot,
     DifferenceBar,
     ErrorBand,
     FacetOptions,
@@ -174,6 +175,27 @@ def full_spec() -> PlotSpec:
     )
 
 
+def full_custom_spec() -> PlotSpec:
+    """:func:`full_spec` drawn by a ``plot_`` function: covers ``custom``.
+
+    ``full_spec`` cannot carry it — a built-in kind with a function is refused
+    (``roles.custom_kind_problem``) and presets settle the kind from it — so
+    the CUSTOM pairing gets its own fixture, every field non-default.
+    """
+    from dataclasses import replace
+
+    return replace(
+        full_spec(),
+        kind=PlotKind.CUSTOM,
+        custom=CustomPlot(
+            function="plot_speed_vs_mass",
+            as_table=["StepLength"],
+            inputs={"StepLength": "StepLength", "Mass": "Mass"},
+            node="fn__plot_speed_vs_mass__a1b2c3::main",
+        ),
+    )
+
+
 def _defaults_left(obj, path: str = "") -> list[str]:
     """Paths of fields in *obj* (recursively) still at their default."""
     left = []
@@ -209,18 +231,22 @@ def _paths(notes, kind=None) -> list[str]:
 def test_fixture_sets_every_field_to_a_non_default_value():
     # A new PlotSpec field fails HERE first: give it a non-default value in
     # full_spec(), and the round trip below then proves to_dict/restore carry it.
-    assert _defaults_left(full_spec()) == []
+    # `custom` is None on every built-in kind, so full_custom_spec() covers it.
+    assert _defaults_left(full_spec()) == ["custom"]
+    assert _defaults_left(full_custom_spec()) == []
 
 
-def test_every_field_round_trips_with_no_notes():
-    spec = full_spec()
+@pytest.mark.parametrize("make", [full_spec, full_custom_spec])
+def test_every_field_round_trips_with_no_notes(make):
+    spec = make()
     restored = restore_spec(_through_json(spec))
     assert restored.notes == []
     assert restored.spec == spec
 
 
-def test_restore_agrees_with_strict_from_dict_on_a_current_spec():
-    raw = _through_json(full_spec())
+@pytest.mark.parametrize("make", [full_spec, full_custom_spec])
+def test_restore_agrees_with_strict_from_dict_on_a_current_spec(make):
+    raw = _through_json(make())
     assert restore_spec(raw).spec == PlotSpec.from_dict(raw)
 
 

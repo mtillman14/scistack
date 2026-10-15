@@ -21,6 +21,8 @@ export interface PlotViewConfig {
   csvPath: string | null
   /** One schema location to open on — the canvas picker's row click. */
   location: PathStep[] | null
+  /** A plot_ node to open on: its own function draws the figure. */
+  plotNode?: string | null
 }
 
 export default function PlotRoot({ initial }: { initial: PlotViewConfig }) {
@@ -29,6 +31,7 @@ export default function PlotRoot({ initial }: { initial: PlotViewConfig }) {
       variable={initial.variable ?? ''}
       csvPath={initial.csvPath ?? undefined}
       initialLocation={initial.location ?? undefined}
+      plotNode={initial.plotNode ?? undefined}
       embedded
       onClose={() => undefined}
     />

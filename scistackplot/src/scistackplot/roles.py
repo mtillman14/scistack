@@ -957,6 +957,30 @@ def _validate_combines(spec: PlotSpec, table: LongTable) -> None:
             )
 
 
+def custom_kind_problem(spec: PlotSpec) -> str | None:
+    """Why ``spec.kind`` and ``spec.custom`` disagree, or None.
+
+    The one statement of the pairing: a CUSTOM kind is drawn by the function
+    ``spec.custom`` names, and a built-in kind has no function. A built-in
+    kind carrying a function would be ambiguous about which one draws, so it
+    is refused rather than one of them silently winning.
+    """
+    if spec.kind is PlotKind.CUSTOM:
+        if spec.custom is None or not spec.custom.function:
+            return (
+                "Kind 'custom' needs the plot_ function that draws it "
+                "(PlotSpec.custom.function). Open the plot from its plot_ node."
+            )
+        return None
+    if spec.custom is not None:
+        return (
+            f"Kind {spec.kind} is drawn by scistackplot, but the spec also names "
+            f"the function {spec.custom.function!r}. Set kind='custom' to draw "
+            f"with the function, or remove PlotSpec.custom."
+        )
+    return None
+
+
 def validate(spec: PlotSpec, table: LongTable) -> None:
     """Raise :class:`RoleError` if the spec cannot be resolved against the table."""
     # --- measures exist -------------------------------------------------
@@ -976,6 +1000,11 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
                 f"Measure {measure!r} is not in the table. "
                 f"Available measures: {table.measure_names}"
             )
+
+    # --- a custom kind names its function -------------------------------
+    problem = custom_kind_problem(spec)
+    if problem is not None:
+        raise RoleError(problem)
 
     # --- mark weights are positive multipliers ---------------------------
     for name in ("sample_weight", "line_weight"):

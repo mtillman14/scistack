@@ -297,6 +297,13 @@ class ResolvedPlot:
     #: is fixed or not settled yet. Renderers read it through
     #: ``textsize.sizes_for``; ``layout.meta.text_sizes.auto`` reports it.
     auto_text: Any = field(default=None, repr=False, compare=False)
+    #: A ``PlotKind.CUSTOM`` figure's draw (``custom.CustomDraw``): the user's
+    #: ``plot_`` function, ready to be called per panel or for the whole
+    #: figure. None for every built-in kind. ``kind`` above is then the
+    #: LAYOUT's kind (``custom.layout_kind``), which places the panels, ticks
+    #: and legend; the renderer calls the function instead of drawing that
+    #: kind's marks. Not serialised.
+    custom: Any = field(default=None, repr=False, compare=False)
 
     @property
     def figure_label(self) -> str:

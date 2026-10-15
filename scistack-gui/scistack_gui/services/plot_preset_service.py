@@ -100,6 +100,10 @@ def apply(db, preset_id: str, spec: dict, version: int | None = None) -> dict:
 
     caps = None
     table = loaded.get("table")
+    if result.spec.custom is not None:
+        # A plot_ node's figure: its report needs the node's wiring, and the
+        # panel's first resolve asks for it (custom_plot_service).
+        table = None
     if table is not None:
         try:
             caps = capabilities(result.spec, table)

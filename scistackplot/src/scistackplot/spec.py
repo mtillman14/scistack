@@ -84,9 +84,22 @@ class PlotKind(str, Enum):
     BAR = "bar"              # statistic per x position, with error bar
     BAND = "band"            # statistic line + shaded error region (1-D)
     HEATMAP = "heatmap"      # 2-D matrix
+    #: The user's own ``plot_`` function draws the figure
+    #: (:attr:`PlotSpec.custom` names it). Never offered in the kind grid of a
+    #: variable — Plot Studio opens on it from the ``plot_`` node — so the grid
+    #: walks :data:`BUILTIN_KINDS`, not this enum.
+    CUSTOM = "custom"
 
     def __str__(self) -> str:
         return self.value
+
+
+#: The kinds this package draws itself: every kind but ``CUSTOM``. The one
+#: statement of "which kinds a variable's kind grid can offer", so a loop over
+#: the enum never offers the user's function as a built-in.
+BUILTIN_KINDS: tuple[PlotKind, ...] = tuple(
+    kind for kind in PlotKind if kind is not PlotKind.CUSTOM
+)
 
 
 #: Kinds whose y position is ONE value per row.
@@ -780,6 +793,54 @@ class VariantSet:
         )
 
 
+@dataclass
+class CustomPlot:
+    """
+    The user's ``plot_`` function that draws a :attr:`PlotKind.CUSTOM` figure.
+
+    Plot Studio opens on it from the ``plot_`` node on the canvas
+    (``.claude/plan-custom-plot-kinds.md``). The function is named, not stored:
+    it is found by name in the project's discovered functions, the same
+    identity a ``Code:<fn>`` variant axis uses.
+
+    ``inputs`` is ``{parameter: variable}`` as last bound. It is a RECORD, not
+    the authority: the node's edges bind the inputs every time the plot is
+    drawn, and a difference from this record is reported, never obeyed.
+    It also lets a saved plot say what it drew after the node is gone.
+    """
+
+    function: str = ""
+    #: ``for_each``'s ``as_table`` for this call: ``True`` passes every
+    #: variable input as a table with its schema-key columns, ``False`` passes
+    #: the bare values, and a list names the parameters that get a table.
+    as_table: bool | list[str] = True
+    inputs: dict[str, str] = field(default_factory=dict)
+    #: The ``plot_`` node (placement-qualified id) whose edges bind the
+    #: inputs. Which node, not which variables: the edges are read again on
+    #: every request, so a rewired node draws its new inputs.
+    node: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "function": self.function,
+            "node": self.node,
+            "as_table": (
+                list(self.as_table) if isinstance(self.as_table, list) else bool(self.as_table)
+            ),
+            "inputs": dict(self.inputs),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "CustomPlot":
+        as_table = raw.get("as_table", True)
+        return cls(
+            function=str(raw.get("function") or ""),
+            as_table=[str(p) for p in as_table] if isinstance(as_table, list) else bool(as_table),
+            inputs={str(p): str(v) for p, v in (raw.get("inputs") or {}).items()},
+            node=str(raw.get("node") or ""),
+        )
+
+
 @dataclass(frozen=True)
 class Alias:
     """What one thing reads as in a figure: its own name, and its levels'.
@@ -1011,6 +1072,10 @@ class PlotSpec:
     #: name that is not a grouping layer.
     color: str | None = None
     kind: PlotKind = PlotKind.SCATTER
+    #: The ``plot_`` function drawing a :attr:`PlotKind.CUSTOM` figure; None
+    #: for every built-in kind. ``roles.validate`` refuses a CUSTOM kind
+    #: without one.
+    custom: CustomPlot | None = None
     aggregate: Aggregation = field(default_factory=Aggregation)
     #: How a 1-D measure's CELLS are reduced to one value each when a scalar
     #: kind is selected for it — the "measure of centre" a violin of per-trial
@@ -1261,6 +1326,7 @@ class PlotSpec:
         raw["panel_overrides"] = [o.to_dict() for o in self.panel_overrides]
         raw["difference_bars"] = [b.to_dict() for b in self.difference_bars]
         raw["comparison"] = self.comparison.to_dict() if self.comparison else None
+        raw["custom"] = self.custom.to_dict() if self.custom else None
         # Unset text tables are absent, as unset sizes are (null-dropped), so a
         # panel that clears its last ratio matches the saved spec again.
         text = raw["style"]["text"]
@@ -1281,6 +1347,7 @@ class PlotSpec:
             groups=list(raw.get("groups") or []),
             color=raw.get("color"),
             kind=PlotKind(raw.get("kind", PlotKind.SCATTER)),
+            custom=CustomPlot.from_dict(raw["custom"]) if raw.get("custom") else None,
             cell_statistic=Statistic(raw.get("cell_statistic", Statistic.MEAN)),
             aggregate=Aggregation(
                 statistic=Statistic(agg.get("statistic", Statistic.MEAN)),

@@ -18,6 +18,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-cartesian-dist-min'
+import CustomFigure, { customPreviewBlob, customPreviewSize, type CustomPreviewPayload } from './CustomFigure'
 import { callBackend, isVSCodeMode } from '../../api'
 import { UndoStack } from '../../undo'
 import { useHistoryState, useUndoShortcuts } from '../../hooks/useUndo'
@@ -329,6 +330,8 @@ interface KindInfo {
   kind: string
   available: boolean
   reason: string | null
+  /** A plot_ function's name, for its one entry (custom plot kinds). */
+  label?: string
   /** Whether picking this kind reduces a 1-D measure to one value per record
    *  first. The kind IS the request to collapse; there is no separate toggle. */
   collapses?: boolean
@@ -471,7 +474,40 @@ interface DataExport {
   field_factor: string | null
 }
 
+/** `PlotSpec.custom`: the user's plot_ function and how it is called. */
+interface CustomPlotSpec {
+  function: string
+  node: string
+  as_table: boolean | string[]
+  inputs: Record<string, string>
+}
+
+/** `capabilities.custom` (scistackplot.custom.custom_capabilities). */
+interface CustomCapabilities {
+  function: string
+  level: 'panel' | 'figure'
+  layout_input: string
+  layout_kind: string
+  reason: string | null
+  accepts_context: boolean
+  inputs: { param: string; variable: string; shape: string; keys: string[]; as_table: boolean }[]
+  constants: string[]
+  notes?: string[]
+}
+
+/** `describe_function`'s `plot_node`: the node Plot Studio opened on. */
+interface PlotNodeInfo {
+  node_id: string
+  function: string
+  level: 'panel' | 'figure'
+  inputs: Record<string, string>
+  layout_input: string | null
+  notes: string[]
+}
+
 interface Capabilities {
+  /** Set when a plot_ function draws the figure. */
+  custom?: CustomCapabilities
   /** What the FIGURE is: `scalar` while a 1-D measure is being collapsed. The
    *  scalar-only controls key off this, and they apply to the collapsed value. */
   shape: string
@@ -637,6 +673,8 @@ interface Spec {
   /* The grouping layer labelled by the legend, or null. */
   color?: string | null
   kind: string
+  /** The plot_ function drawing a `custom` figure (scistackplot CustomPlot). */
+  custom?: CustomPlotSpec | null
   /* Centre and spread over the SAMPLE — the outermost collapsed key's levels
      after the inner collapses. `pooled` drops every collapsed key in one
      groupby instead ("weight by N"). */
@@ -765,6 +803,8 @@ interface DescribeResponse {
    *  owns the list (`figsize.ASPECT_PRESETS`); the panel only does the
    *  arithmetic (`figureSize.ts`). */
   figure_presets?: AspectPreset[]
+  /** Set when Plot Studio opened on a plot_ node. */
+  plot_node?: PlotNodeInfo
 }
 
 interface FigurePayload {
@@ -773,7 +813,10 @@ interface FigurePayload {
   index: number
   key: Record<string, unknown>
   label: string
-  figure: { data: unknown[]; layout: Record<string, unknown> }
+  /** The plotly figure; null when a plot_ function drew it (`custom_preview`). */
+  figure: { data: unknown[]; layout: Record<string, unknown> } | null
+  /** A plot_ function's figure: a PNG or its own plotly figure. */
+  custom_preview?: CustomPreviewPayload
   row_count: number
   downsampled_from: number | null
 }
@@ -812,6 +855,11 @@ interface Props {
    * does from the picker inside this panel.
    */
   initialLocation?: PathStep[]
+  /**
+   * A plot_ node to open on instead of a variable: the user's own function
+   * draws the figure, and the node's edges bind its inputs.
+   */
+  plotNode?: string
   onClose: () => void
 }
 
@@ -820,6 +868,7 @@ export default function PlotStudio({
   csvPath,
   embedded = false,
   initialLocation,
+  plotNode,
   onClose,
 }: Props) {
   // Threaded into every call: the backend picks CsvSource or ScidbSource from
@@ -964,7 +1013,7 @@ export default function PlotStudio({
   const captureBaseline = useRef(false)
 
   // A CSV has no variable type; name the file instead.
-  const title = describe?.variable ?? variable ?? (csvPath ? csvPath.split('/').pop() ?? 'CSV' : '')
+  const title = describe?.plot_node?.function ?? describe?.variable ?? variable ?? (csvPath ? csvPath.split('/').pop() ?? 'CSV' : '')
 
   // Which database this figure is drawn from. A CSV tab is already named by
   // its file, and the browser build has one database per process, so both
@@ -1006,7 +1055,9 @@ export default function PlotStudio({
     setLoadedPlot(null)
     setRestoreNotes([])
     setSavedError('')
-    callBackend('plot_describe', { variable: variable || undefined, ...sourceParams })
+    ;(plotNode
+      ? callBackend('plot_describe_function', { node_id: plotNode })
+      : callBackend('plot_describe', { variable: variable || undefined, ...sourceParams }))
       .then(raw => {
         if (cancelled) return
         const response = raw as DescribeResponse
@@ -1037,7 +1088,7 @@ export default function PlotStudio({
     // opens its own tab, so a second location from the canvas arrives as a
     // new webview rather than as a new prop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variable, sourceParams])
+  }, [variable, plotNode, sourceParams])
 
   // A plot's named pins over variant space are STATEMENTS about the plotted
   // variable (`variant_selection` in the intent store), so they outlive the
@@ -1341,6 +1392,22 @@ export default function PlotStudio({
         : prev
     )
   }, [capabilities, specKey])
+
+  /** Which of a plot_ function's inputs arrive as a table (`CustomPlot.as_table`):
+   *  one checkbox per input, stored as the list, or `true` when all are on. */
+  const setInputAsTable = useCallback((param: string, on: boolean, all: string[]) => {
+    setSpec(prev => {
+      if (!prev?.custom) return prev
+      const current = prev.custom.as_table
+      const tables = new Set(
+        current === true ? all : current === false ? [] : current.filter(p => all.includes(p))
+      )
+      if (on) tables.add(param)
+      else tables.delete(param)
+      const next = tables.size === all.length ? true : tables.size === 0 ? false : all.filter(p => tables.has(p))
+      return { ...prev, custom: { ...prev.custom, as_table: next } }
+    })
+  }, [])
 
   const setCellStatistic = useCallback((statistic: string) => {
     setSpec(prev => (prev ? { ...prev, cell_statistic: statistic } : prev))
@@ -2074,7 +2141,7 @@ export default function PlotStudio({
     (figures[0]?.figure?.layout?.meta as { comparison?: CompareMeta | null } | undefined)
       ?.comparison ?? null
   const figureDiffMeta = (figure: FigurePayload) =>
-    (figure.figure.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
+    (figure.figure?.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
       ?.difference_bars ?? null
   /** A figure's displayed layout, with the picking highlight added while
    *  "+ Add difference bar" is active: view-only, never in the figure. */
@@ -2256,6 +2323,25 @@ export default function PlotStudio({
   const copyFigure = useCallback(async () => {
     const shown = figures.find(f => f.index === figureIndex) ?? figures[0]
     if (!shown) return
+    if (shown.custom_preview) {
+      // A plot_ function's figure: its PNG as drawn, or its plotly figure.
+      const custom = shown.custom_preview
+      const blob = customPreviewBlob(custom)
+      try {
+        if (blob) {
+          await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })])
+          setNotice('Copied the figure as PNG')
+        } else if (custom.kind === 'plotly') {
+          const size = customPreviewSize(custom) ?? { width: 800, height: 600 }
+          const result = await copyFigurePng(custom.figure, size.width, size.height)
+          setNotice(`Copied ${result.widthPx} × ${result.heightPx} px PNG`)
+        }
+      } catch (err) {
+        setNotice(`Could not copy: ${(err as Error).message}`)
+      }
+      return
+    }
+    if (!shown.figure) return
     const fixed = (shown.figure.layout?.meta as { fixed_size?: [number, number] } | undefined)
       ?.fixed_size
     const drawn = document.querySelector(
@@ -2500,7 +2586,11 @@ export default function PlotStudio({
   // --- saved plots ----------------------------------------------------------
   // Keyed by the variable `describe` resolved (the prop may be empty, meaning
   // "the first plottable measure"). Plots are saved against that variable.
-  const savedVariable = csvPath ? null : describe?.variable ?? null
+  // A plot_ node's figures are saved under its FUNCTION, apart from any
+  // variable's (custom plot kinds): the key is a label, not a variable.
+  const savedVariable = csvPath
+    ? null
+    : describe?.plot_node?.function ?? describe?.variable ?? null
 
   useEffect(() => {
     setSavedPlots([])
@@ -2926,10 +3016,42 @@ export default function PlotStudio({
                       onChange={() => setKind(info.kind)}
                       style={{ marginRight: 6 }}
                     />
-                    {KIND_LABELS[info.kind] ?? info.kind}
+                    {info.label ?? KIND_LABELS[info.kind] ?? info.kind}
                   </label>
                 ))}
               </div>
+              {capabilities?.custom && (() => {
+                // A plot_ function draws this figure (custom plot kinds). What
+                // it is called with, and why it cannot be drawn, come from
+                // scistackplot.custom; the panel only displays them.
+                const custom = capabilities.custom
+                const all = custom.inputs.map(i => i.param)
+                const notes = [...(describe?.plot_node?.notes ?? []), ...(custom.notes ?? [])]
+                return (
+                  <div>
+                    <div style={styles.hint}>
+                      {custom.level === 'panel'
+                        ? `Draws one panel per call onto 'ax'; the panels, ticks, legend and text are laid out from ${custom.layout_input}.`
+                        : `Returns a whole figure per call (no 'ax' parameter): separate panels are not available.`}
+                    </div>
+                    {custom.inputs.map(input => (
+                      <label key={input.param} style={styles.factorRow} title={`${input.variable} — ${input.shape}, keys ${input.keys.join(', ') || 'none'}`}>
+                        <span style={styles.factorName}>{input.param} ← {input.variable}</span>
+                        <input
+                          type="checkbox"
+                          checked={input.as_table}
+                          onChange={e => setInputAsTable(input.param, e.target.checked, all)}
+                        />
+                        <span style={{ marginLeft: 4 }}>as table</span>
+                      </label>
+                    ))}
+                    {custom.reason && <div style={styles.customWarn}>{custom.reason}</div>}
+                    {[...new Set(notes)].map(note => (
+                      <div key={note} style={styles.hint}>{note}</div>
+                    ))}
+                  </div>
+                )
+              })()}
               {/* Shown only for a 1-D measure, because only there is there
                   anything to reduce. No on/off switch beside it: the KIND says
                   whether the vectors are drawn or summarized, so "collapse on,
@@ -3969,15 +4091,17 @@ export default function PlotStudio({
         >
           Save data (CSV)
         </button>
-        <button type="button" style={styles.toolButton} onClick={handleExport}>
-          Export code
-        </button>
+        {!capabilities?.custom && (
+          <button type="button" style={styles.toolButton} onClick={handleExport}>
+            Export code
+          </button>
+        )}
         {/* A CSV tab has no project to write an endpoint into — and on
             the database-less plot-only server the call is refused
             outright, so offering the button would only produce an
             error. "Export code" stays: plot_export is db_optional and
             works from a CSV. */}
-        {!csvPath && (
+        {!csvPath && !capabilities?.custom && (
           <button type="button" style={styles.toolPrimaryButton} onClick={handleAddToPipeline}>
             Add to pipeline
           </button>
@@ -4160,10 +4284,18 @@ export default function PlotStudio({
                 the exported figure uses every point.
               </div>
             )}
+            {figure.custom_preview && (
+              <CustomFigure
+                payload={figure.custom_preview}
+                fillHeight={figureHeight}
+                label={figure.label}
+              />
+            )}
             {(() => {
               // Export-size preview: drawn at the file's size (meta.fixed_size,
               // 1 pt = 1 px), scrolling if the pane is smaller. Otherwise the
               // figure fills the pane as it always has.
+              if (!figure.figure) return null
               const fixed = (figure.figure.layout?.meta as { fixed_size?: [number, number] } | undefined)
                 ?.fixed_size
               if (!fixed) return null
@@ -4193,7 +4325,7 @@ export default function PlotStudio({
                 </div>
               )
             })()}
-            {!(figure.figure.layout?.meta as { fixed_size?: unknown } | undefined)?.fixed_size && (
+            {figure.figure && !(figure.figure.layout?.meta as { fixed_size?: unknown } | undefined)?.fixed_size && (
             <Plot
               data={screenFigure(figure.figure, theme).data}
               layout={withPickingBands(figure, {
@@ -5965,6 +6097,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10, color: 'var(--ps-text-muted-grey)', marginTop: 4,
     borderTop: '1px solid var(--ps-border-neutral)', paddingTop: 4,
   },
+  customWarn: { fontSize: 10, color: 'var(--ps-warn)', marginTop: 4 },
   variantCountEmpty: {
     fontSize: 10, color: 'var(--ps-warn)', marginTop: 4,
     borderTop: '1px solid var(--ps-border-neutral)', paddingTop: 4,

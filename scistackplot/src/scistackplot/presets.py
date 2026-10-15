@@ -39,7 +39,7 @@ from scistacklog import Log
 
 from .panels import PanelOverride
 from .restore import NoteKind, Restored, RestoreNote, reconcile, restore_spec
-from .spec import PlotSpec, StyleOptions, YAxis
+from .spec import PlotKind, PlotSpec, StyleOptions, YAxis
 from .table import LongTable
 
 LAYER = "scistackplot"
@@ -80,6 +80,10 @@ FIELD_CLASSES: dict[str, FieldClass] = {
     "groups": _T,
     "color": _T,
     "kind": _T,
+    # The user's plot_ function belongs to the plot_ node the plot was made
+    # from, like the measure belongs to its variable. The kind follows it
+    # (`_kind_follows_function`).
+    "custom": _D,
     "aggregate": _T,
     "cell_statistic": _T,
     "index_column": _T,
@@ -292,6 +296,7 @@ def apply_preset(
 
     raw = _strip(copy.deepcopy(template), None)
     _take_from_target(raw, target)
+    notes += _kind_follows_function(raw, target)
 
     restored = restore_spec(raw, fallback_measure=target.y_measure)
     spec, notes = restored.spec, notes + list(restored.notes)
@@ -309,6 +314,42 @@ def apply_preset(
 
     _log_apply(label, spec, kind_before, notes, checked=table is not None)
     return Restored(spec=spec, notes=notes)
+
+
+def _kind_follows_function(raw: dict, target: PlotSpec) -> list[RestoreNote]:
+    """Make the applied kind agree with the target's ``custom`` (DATA).
+
+    ``kind`` is template and ``custom`` is data, so without this rule a
+    preset made on a bar plot would turn a ``plot_`` node's figure into a bar
+    plot that still names the function, and a preset made from a ``plot_``
+    node would make a variable's figure CUSTOM with no function to draw it.
+    ``roles.custom_kind_problem`` refuses both; here they are settled:
+    the target's function, when it has one, decides the kind.
+    """
+    template_kind = raw.get("kind")
+    if target.custom is not None:
+        if template_kind != str(PlotKind.CUSTOM):
+            Log.debug(
+                "[preset] kind %s not applied: %s is drawn by %s",
+                template_kind,
+                target.y_measure,
+                target.custom.function,
+                layer=LAYER,
+            )
+        raw["kind"] = str(PlotKind.CUSTOM)
+        return []
+    if template_kind == str(PlotKind.CUSTOM):
+        raw.pop("kind", None)
+        note = RestoreNote(
+            "kind",
+            NoteKind.KIND_UNAVAILABLE,
+            "the preset was made on a plot drawn by a plot_ function, which this "
+            "plot does not have; drawn with the default kind",
+            template_kind,
+        )
+        Log.warn("[apply_preset] kind (%s): %s", note.kind, note.message, layer=LAYER)
+        return [note]
+    return []
 
 
 def _take_from_target(raw: dict, target: PlotSpec) -> None:
@@ -417,10 +458,15 @@ def _load_table(
 def _fit_kind(spec: PlotSpec, table: LongTable) -> tuple[PlotSpec, list[RestoreNote]]:
     """Keep the preset's plot kind if the target can draw it, else fall back
     to the default kind. ``capabilities`` is the one judge of which kinds a
-    spec can draw, so the panel never shows a kind it then greys out."""
-    from .capability import capabilities
-    from .spec import PlotKind
+    spec can draw, so the panel never shows a kind it then greys out.
 
+    A CUSTOM kind is kept: its function is the target's own (``custom`` is
+    DATA), and the kind grid never lists it, so asking the grid would always
+    "fall back"."""
+    from .capability import capabilities
+
+    if spec.kind is PlotKind.CUSTOM:
+        return spec, []
     try:
         caps = capabilities(spec, table)
     except Exception as exc:

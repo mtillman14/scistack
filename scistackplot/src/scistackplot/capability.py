@@ -35,7 +35,7 @@ from .roles import (
     sample_key,
 )
 from .shape import Shape
-from .spec import MAX_X_LAYERS, SCALAR_KINDS, PlotKind, PlotSpec, Role
+from .spec import BUILTIN_KINDS, MAX_X_LAYERS, SCALAR_KINDS, PlotKind, PlotSpec, Role
 from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, LongTable
 
 #: Kinds that summarize several rows per x position into one mark.
@@ -364,7 +364,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     # assignment it brings with it closes that loop: clicking Violin both
     # collapses a factor and draws the distribution, in one click.
     entries = []
-    for kind in PlotKind:
+    for kind in BUILTIN_KINDS:
         suggested = roles_for_kind(spec, derived, kind)
         kind_roles = suggested.roles if suggested else roles
         kind_groups = suggested.groups if suggested else assignment.groups

@@ -97,6 +97,18 @@ from .roles import (
 from .restore import NoteKind, RestoreError, RestoreNote, Restored, reconcile, restore_spec
 from .presets import FieldClass, apply_preset, make_template, shape_warning
 from .compare import CompareMode, Comparison
+from .custom import (
+    CustomCall,
+    CustomFunctionError,
+    CustomSignature,
+    PlotContext,
+    custom_capabilities,
+    custom_requirement,
+    inspect_function,
+    preview_payload as custom_preview,
+    resolve_custom,
+    resolve_custom_one,
+)
 from .diffbars import DifferenceBar, bars_for_panel, slot_endpoints
 from .panels import PanelOverride, override_for
 from .shape import Shape, classify_column, classify_value, is_plottable
@@ -112,6 +124,8 @@ from .spec import (
     LocationFilter,
     MatchOp,
     Matcher,
+    BUILTIN_KINDS,
+    CustomPlot,
     PlotKind,
     PlotSpec,
     Role,
@@ -194,6 +208,8 @@ __all__ = [
     "PlotSpec",
     "Role",
     "PlotKind",
+    "BUILTIN_KINDS",
+    "CustomPlot",
     "Statistic",
     "ErrorBand",
     "Aggregation",
@@ -218,6 +234,17 @@ __all__ = [
     # difference bars (.claude/plan-difference-bars.md)
     "CompareMode",
     "Comparison",
+    # custom plot kinds: a user plot_ function draws the figure
+    "CustomCall",
+    "CustomFunctionError",
+    "CustomSignature",
+    "PlotContext",
+    "custom_capabilities",
+    "custom_requirement",
+    "inspect_function",
+    "custom_preview",
+    "resolve_custom",
+    "resolve_custom_one",
     "DifferenceBar",
     "bars_for_panel",
     "slot_endpoints",

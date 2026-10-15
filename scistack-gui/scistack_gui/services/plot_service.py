@@ -24,6 +24,7 @@ from dataclasses import replace
 from typing import Any
 
 from scistack_gui import history
+from scistack_gui.services import custom_plot_service
 
 # The Parameter input-port handle prefix (``param__{argument}``): the same
 # constant graph_builder writes edges with, so the two cannot drift.
@@ -478,6 +479,9 @@ def capabilities_for(db, spec_payload: dict, *, csv_path: str | None = None) -> 
     """Recompute available plot kinds after the user moves a factor's role."""
     from scistackplot import capabilities
 
+    if custom_plot_service.is_custom(spec_payload):
+        return custom_plot_service.capabilities_for(db, spec_payload)
+
     _, spec, table = _load(
         db, spec_payload, csv_path=csv_path, label="plot_capabilities"
     )
@@ -895,6 +899,12 @@ def resolve_figures(
         resolve_one,
     )
 
+    if custom_plot_service.is_custom(spec_payload):
+        # The user's plot_ function draws it (custom_plot_service).
+        return custom_plot_service.resolve_figures(
+            db, spec_payload, max_points=max_points, figure_index=figure_index, preview=preview
+        )
+
     budget = MAX_TRANSPORT_POINTS if max_points is None else max_points
 
     source_key, request_key = _resolved_keys(
@@ -1006,6 +1016,12 @@ def export_code(
     """Generate the ``plot_`` function and its ``for_each`` call, without writing."""
     from scistackplotdb import generate_endpoint
 
+    if custom_plot_service.is_custom(spec_payload):
+        raise ValueError(
+            "This figure is drawn by your own plot_ function, which is already in the "
+            "pipeline: there is no code to export."
+        )
+
     _, spec, table = _load(db, spec_payload, csv_path=csv_path, label="plot_export")
 
     code = generate_endpoint(
@@ -1087,7 +1103,7 @@ def save_figure(
     """
 
     from scidb.log import Log
-    from scistackplot import RoleError, resolve, resolve_one, write_figure
+    from scistackplot import CustomFunctionError, RoleError, resolve, resolve_one, write_figure
 
     def report(stage: str, done: int, total: int, detail: str | None = None) -> None:
         if on_progress is not None:
@@ -1117,13 +1133,27 @@ def save_figure(
         # rendering — the minutes of a save — leave the file free for MATLAB.
         # Resolving is timed as its own phase because it is what can outlast a
         # client, and narrated figure by figure inside it.
-        with timing.phase("load"):
-            _, spec, table = _load(
-                db, spec_payload, csv_path=csv_path, label="plot_save_start"
-            )
+        custom = custom_plot_service.is_custom(spec_payload)
+        if not custom:
+            with timing.phase("load"):
+                _, spec, table = _load(
+                    db, spec_payload, csv_path=csv_path, label="plot_save_start"
+                )
         with timing.phase("resolve"):
             try:
-                if figure_index is None:
+                if custom:
+                    # Loads too (inside its own hold); `write_figure` below
+                    # calls the user's plot_ function for each figure.
+                    spec, resolved = custom_plot_service.resolve_for_save(
+                        db,
+                        spec_payload,
+                        figure_index=figure_index,
+                        narrate=True,
+                        on_figure=lambda position, total, label: report(
+                            "resolving", position, total, label
+                        ),
+                    )
+                elif figure_index is None:
                     resolved = list(
                         resolve(
                             spec,
@@ -1140,7 +1170,7 @@ def save_figure(
                         spec, table, figure_index, narrate=True
                     )
                     resolved = [figure]
-            except RoleError as exc:
+            except (RoleError, custom_plot_service.CustomPlotError) as exc:
                 # A role conflict is a user-correctable state, not a fault —
                 # same treatment as the resolve path (`_invalid_spec`).
                 logger.info("[plot] save refused an invalid spec: %s", exc)
@@ -1148,7 +1178,7 @@ def save_figure(
 
         # The stem is the only part that needed the spec, which is why it is
         # here and the format check is at the top.
-        stem = named or _slug(spec.y_measure) or "figure"
+        stem = named or _slug(spec.custom.function if spec.custom else spec.y_measure) or "figure"
         directory.mkdir(parents=True, exist_ok=True)
 
         logger.info(
@@ -1217,7 +1247,13 @@ def save_figure(
                 # exactly StyleOptions.width x height. This used to savefig with
                 # bbox_inches="tight", which cropped or grew every file around
                 # whatever stuck out. Rendering and writing are still timed apart.
-                done = write_figure(item, out, dpi=dpi)
+                try:
+                    done = write_figure(item, out, dpi=dpi)
+                except CustomFunctionError as exc:
+                    # The user's plot_ function raised (its traceback is in
+                    # scidb.log); the files already written stay.
+                    logger.info("[plot] save stopped: %s", exc)
+                    return {"ok": False, "error": str(exc), "files": written}
 
                 written.append(str(out))
                 logger.info(
@@ -1287,6 +1323,14 @@ def save_plot_data(
     def report(stage: str, done: int, total: int, detail: str | None = None) -> None:
         if on_progress is not None:
             on_progress(stage, done, total, detail)
+
+    if custom_plot_service.is_custom(spec_payload):
+        # The capability report says so too (data_export unavailable).
+        return {
+            "ok": False,
+            "error": "Save data is not available for a plot_ function's figure yet.",
+            "files": [],
+        }
 
     # The destination FIRST, before the database is touched — the same order
     # as save_figure, for the same reason: an unwritable folder found after

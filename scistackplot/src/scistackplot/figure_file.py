@@ -74,6 +74,10 @@ def write_figure(
     ``bbox_inches`` is refused: it is the one argument that changes the size
     the spec states. Other ``savefig`` arguments (``format``, ``metadata``)
     pass through. The figure is closed afterwards.
+
+    A custom figure (``resolved.custom``) is drawn by the user's function
+    (``custom.draw``). If that function returned a plotly figure, it is written
+    through kaleido at the same size (``custom.write_plotly``).
     """
     if "bbox_inches" in savefig_kwargs:
         raise ValueError(
@@ -85,7 +89,14 @@ def write_figure(
     from .render import render_matplotlib
 
     started = time.perf_counter()
-    fig = render_matplotlib(resolved)
+    if resolved.custom is not None:
+        from .custom import draw, is_plotly_figure, write_plotly
+
+        fig = draw(resolved)
+        if is_plotly_figure(fig):
+            return _write_plotly(fig, target, resolved, dpi, savefig_kwargs, started, write_plotly)
+    else:
+        fig = render_matplotlib(resolved)
     rendered = time.perf_counter()
     try:
         overflow = canvas_overflow(fig)
@@ -123,6 +134,43 @@ def write_figure(
         dpi,
         *written.pixels,
         f" (content overflows by {overflow:.2f}in)" if overflow > OVERFLOW_TOLERANCE_IN else "",
+        layer=LAYER,
+    )
+    return written
+
+
+def _write_plotly(fig, target, resolved, dpi, savefig_kwargs, started, write_plotly) -> WrittenFigure:
+    """:func:`write_figure` for a plotly figure a custom function returned."""
+    style = resolved.spec.style
+    image_format = savefig_kwargs.get("format")
+    if image_format is None and isinstance(target, (str, PathLike)):
+        suffix = str(target).rsplit(".", 1)
+        image_format = suffix[1] if len(suffix) == 2 else None
+    rendered = time.perf_counter()
+    write_plotly(
+        fig,
+        target,
+        width_in=style.width,
+        height_in=style.height,
+        dpi=dpi,
+        image_format=image_format,
+    )
+    finished = time.perf_counter()
+    written = WrittenFigure(
+        width_in=float(style.width),
+        height_in=float(style.height),
+        dpi=float(dpi),
+        pixels=(round(style.width * dpi), round(style.height * dpi)),
+        overflow_in=0.0,
+        render_s=rendered - started,
+        write_s=finished - rendered,
+    )
+    Log.info(
+        "wrote plotly figure %.2f x %.2f in at %g dpi = %d x %d px via kaleido",
+        written.width_in,
+        written.height_in,
+        dpi,
+        *written.pixels,
         layer=LAYER,
     )
     return written

@@ -99,6 +99,11 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
 
     caps = None
     table = loaded.get("table")
+    if saved.spec.custom is not None:
+        # Drawn by a plot_ function: its report needs the node's wiring
+        # (custom_plot_service.capabilities_for), which the panel's first
+        # resolve asks for. The variable report would offer built-in kinds.
+        table = None
     if table is not None:
         try:
             caps = capabilities(saved.spec, table)

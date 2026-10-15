@@ -37,6 +37,7 @@ The design history is in `.claude/plot-studio-sidebar-redesign.md`.
 | | Schema keys | location picker button | `location_filter` |
 | | Filters | level pickers, range | `filters` |
 | **Chart** | Plot type | kind grid | `kind` |
+| | | (opened on a `plot_` node) the function as the only kind; its call level, one "as table" checkbox per input, reason, notes (`capabilities.custom`, docs/claude/custom-plot-kinds.md) | `custom.as_table` |
 | | | Per-record value (1-D only) | `cell_statistic` |
 | **Structure** | Combine | combine rows (one line collapsed, one open at a time; bucket-first editor), + Combine levels of… | `level_groups` (`mapping`, `unmatched`, `active`) |
 | | Grouping | Group by… picker | `factor_variables` |

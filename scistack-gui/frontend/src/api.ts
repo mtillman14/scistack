@@ -313,6 +313,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     // Plot Studio (docs/claude/plotting-library-design.md). All POST + body:
     // a spec is a nested object, not something to squeeze into a query string.
     plot_describe:          { path: '/api/plot/describe', method: 'POST', body: true },
+    plot_describe_function: { path: '/api/plot/describe-function', method: 'POST', body: true },
     plot_capabilities:      { path: '/api/plot/capabilities', method: 'POST', body: true },
     plot_resolve:           { path: '/api/plot/resolve', method: 'POST', body: true },
     plot_variant_graph:     { path: '/api/plot/variant-graph', method: 'POST', body: true },

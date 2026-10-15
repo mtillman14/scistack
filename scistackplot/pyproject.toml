@@ -58,6 +58,13 @@ mpl = [
 interactive = [
     "plotly>=5.0",
 ]
+# Writing a plotly figure a custom plot_ function returned to a file
+# (scistackplot.custom.write_plotly). kaleido 1.x also needs Chrome, which
+# `plotly_get_chrome` installs.
+plotly-export = [
+    "plotly>=6.1",
+    "kaleido>=1.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",

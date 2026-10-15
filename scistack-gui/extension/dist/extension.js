@@ -2856,7 +2856,7 @@ var PlotPanel = class _PlotPanel {
   title() {
     if (this.target.csvPath)
       return `Plot \u2014 ${path6.basename(this.target.csvPath)}`;
-    const variable = this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
+    const variable = this.target.plotFunction ? `Plot \u2014 ${this.target.plotFunction}` : this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
     return this.session.isPlotOnly ? variable : `${variable} \xB7 ${this.session.label}`;
   }
   dispose() {
@@ -2879,7 +2879,8 @@ var PlotPanel = class _PlotPanel {
       view: "plot",
       variable: this.target.variable ?? null,
       csvPath: this.target.csvPath ?? null,
-      location: this.target.location ?? null
+      location: this.target.location ?? null,
+      plotNode: this.target.plotNode ?? null
     });
     const session = JSON.stringify({
       id: this.session.id,

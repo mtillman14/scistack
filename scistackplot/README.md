@@ -400,6 +400,43 @@ key. The exported code writes the merged pins in as literals.
 `render.base.palette_for` stays the one owner of the colour a mark is drawn
 in. See `docs/claude/plot-colors.md`.
 
+## Your own plot function
+
+A `plot_` function of your project can draw the figure instead of a built-in
+kind. Plot Studio opens on it from the `plot_` node, and the node's edges bind
+its inputs. The same works from code:
+
+```python
+from dataclasses import replace
+
+from scistackplot import CustomCall, CustomPlot, PlotKind, resolve_custom, write_figure
+
+def plot_steps(steps, mass, ax, context):
+    for _, row in steps.iterrows():
+        ax.plot([context.x(row)], [row["StepLength"]], "o", color=context.color_of(row["session"]))
+
+call = CustomCall(fn=plot_steps, inputs={"steps": steps_table, "mass": mass_table},
+                  variables={"steps": "StepLength", "mass": "Mass"})
+spec = replace(spec, kind=PlotKind.CUSTOM, custom=CustomPlot(function="plot_steps"))
+for figure in resolve_custom(spec, call):
+    write_figure(figure, f"{figure.figure_label}.png")
+```
+
+**With an `ax` parameter**, the function draws one panel per call, and
+everything else is scistackplot's: panels, ticks, legend, text, size and
+colours. `context.x(...)` places a mark on the tick its group levels name.
+**Without `ax`**, it returns a whole matplotlib or plotly figure; only the
+data settings and the size apply.
+
+**What the function receives:**
+- Each input is its own table: rows selected by the figure's and panel's
+  levels, with the inner collapsed keys averaged away.
+- An input at a coarser level is passed whole to every call.
+- With `as_table` off, an input arrives as the bare value instead of a table.
+
+Writing a plotly figure needs `pip install "scistackplot[plotly-export]"`.
+See `docs/claude/custom-plot-kinds.md`.
+
 ## Export: real code, not a call back into this library
 
 ```python

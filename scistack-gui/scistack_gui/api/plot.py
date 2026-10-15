@@ -9,6 +9,7 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
 ``tests/test_api_handlers.py`` checks that it does.
 
     POST /api/plot/describe                 plot_describe
+    POST /api/plot/describe-function        plot_describe_function
     POST /api/plot/capabilities             plot_capabilities
     POST /api/plot/variant-graph            plot_variant_graph
     POST /api/plot/grouping-graph           plot_grouping_graph
@@ -74,6 +75,12 @@ class DescribeRequest(BaseModel):
     refresh: bool | None = False
     # Set to plot a CSV instead of the project database (the standalone path).
     csv_path: str | None = None
+
+
+class DescribeFunctionRequest(BaseModel):
+    #: The plot_ node Plot Studio opens on (placement-qualified id).
+    node_id: str
+    refresh: bool | None = False
 
 
 class SpecRequest(BaseModel):
@@ -279,6 +286,12 @@ def _describe(db, req: DescribeRequest) -> dict:
     return plot_service.describe(
         db, req.variable, refresh=bool(req.refresh), csv_path=req.csv_path
     )
+
+
+def _describe_function(db, req: DescribeFunctionRequest) -> dict:
+    from scistack_gui.services import custom_plot_service
+
+    return custom_plot_service.describe_function(db, req.node_id, refresh=bool(req.refresh))
 
 
 def _capabilities(db, req: SpecRequest) -> dict:
@@ -492,6 +505,13 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_describe", "/plot/describe", DescribeRequest, _describe,
         holds_db_lock=False, http_errors=_NOT_INSTALLED, db_optional=True, undoable=False,
+    ),
+    # Plot Studio opened on a plot_ node: the user's own function draws the
+    # figure (custom_plot_service). Takes the connection itself, like describe.
+    Handler(
+        "plot_describe_function", "/plot/describe-function", DescribeFunctionRequest,
+        _describe_function, holds_db_lock=False,
+        http_errors={**_BAD_REQUEST, **_NOT_INSTALLED}, undoable=False,
     ),
     Handler(
         "plot_capabilities", "/plot/capabilities", SpecRequest, _capabilities,

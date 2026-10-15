@@ -47,6 +47,14 @@ export interface PlotTarget {
    */
   location?: [string, string][];
   /**
+   * The `plot_` node to open on (placement-qualified id): the user's own
+   * function draws the figure, and its edges bind the inputs
+   * (custom plot kinds, docs/claude/custom-plot-kinds.md). `plotFunction`
+   * only names the tab.
+   */
+  plotNode?: string;
+  plotFunction?: string;
+  /**
    * Which database to plot from, as a session id. The canvas stamps its own
    * (see `dagPanel.ts`), so a plot opened from one pipeline reads that
    * pipeline's database even when another tab was focused last.
@@ -231,7 +239,9 @@ export class PlotPanel {
    */
   private title(): string {
     if (this.target.csvPath) return `Plot — ${path.basename(this.target.csvPath)}`;
-    const variable = this.target.variable ? `Plot — ${this.target.variable}` : 'Plot';
+    const variable = this.target.plotFunction
+      ? `Plot — ${this.target.plotFunction}`
+      : this.target.variable ? `Plot — ${this.target.variable}` : 'Plot';
     return this.session.isPlotOnly ? variable : `${variable} · ${this.session.label}`;
   }
 
@@ -258,6 +268,7 @@ export class PlotPanel {
       variable: this.target.variable ?? null,
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,
+      plotNode: this.target.plotNode ?? null,
     });
     // Which database this figure is drawn from, so the studio can say so —
     // a figure is only interpretable if you know its source.
