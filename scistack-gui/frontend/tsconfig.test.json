@@ -69,6 +69,8 @@
     "src/components/PlotStudio/compare.test.ts",
     "src/components/PlotStudio/differenceBars.ts",
     "src/components/PlotStudio/differenceBars.test.ts",
+    "src/components/PlotStudio/figureCursor.ts",
+    "src/components/PlotStudio/figureCursor.test.ts",
     "src/components/Variants/variantCards.ts",
     "src/components/Variants/variantCards.test.ts",
     "src/components/Sidebar/sourceLocation.ts",

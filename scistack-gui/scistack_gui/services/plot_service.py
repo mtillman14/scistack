@@ -1199,19 +1199,19 @@ def save_figure(
                 # figure it holds — `figure_1.png` for a fan-out the user is
                 # saving one frame of at a time would be a lie.
                 if len(resolved) > 1 or figure_index is not None:
-                    # NUMBERED, not slugged. A figure label carries the
-                    # constants that define the variant, so slugging it put a
-                    # whole `gaitRiteConfig` dict in the filename — 630
-                    # characters against Windows' 260, and three saves died
-                    # with FileNotFoundError (2026-09-22). The number is stable
-                    # per (settings, variant) and the sidecar manifest says
-                    # what each one means.
+                    # Named for the ITERATE values that pick the figure —
+                    # `CosmedData_subject=S01.png` — when they make a short
+                    # name. A label that cannot (a Variant spelling out a whole
+                    # `gaitRiteConfig` dict: 630 characters against Windows'
+                    # 260, 2026-09-22) falls back to `_v{n}`. Either way the
+                    # sidecar manifest says what each file holds.
                     key = _figure_key(spec, item.figure_label)
-                    n = _figure_number(
+                    filename = _figure_filename(
                         directory,
                         stem,
                         suffix,
                         key,
+                        _figure_name(item.figure_key),
                         {
                             "variable": spec.y_measure,
                             "kind": str(spec.kind),
@@ -1219,7 +1219,7 @@ def save_figure(
                             "settings": spec.to_dict(),
                         },
                     )
-                    out = directory / f"{stem}_v{n}{suffix}"
+                    out = directory / filename
                 else:
                     out = directory / f"{stem}{suffix}"
 
@@ -1394,10 +1394,14 @@ def save_plot_data(
 #: a variant label carries the constants that define it, so one
 #: ``gaitRiteConfig`` dict produced a 630-character path and three saves died
 #: with ``FileNotFoundError``, which reads like a missing folder (2026-09-22).
-#: Figure files are numbered rather than slugged now (see
-#: :func:`_figure_number`); this cap is the belt to that pair of braces, and
-#: applies to every remaining generated fragment.
+#: Figure files are named from the figure's ITERATE values only when those are
+#: short, else numbered (see :func:`_figure_filename`); this cap is the belt to
+#: that pair of braces, and applies to every remaining generated fragment.
 MAX_SLUG = 48
+
+#: Longest ``key=value_key=value`` part a figure file may be named with. Past
+#: it the name stops being something a reader scans, and the file is numbered.
+MAX_FIGURE_NAME = 96
 
 
 def _slug(text: str, limit: int = MAX_SLUG) -> str:
@@ -1448,7 +1452,7 @@ def _path_too_long(out) -> "str | None":
     return None
 
 
-#: Sidecar recording what each ``_v{n}`` file in a directory actually holds.
+#: Sidecar recording what each figure file in a directory actually holds.
 #: A JSON file beside the images rather than a row in the database,
 #: deliberately: these figures go into a talk or a paper directory and get
 #: copied around, and "what is v2?" has to be answerable six months later
@@ -1470,9 +1474,9 @@ def _read_manifest(directory, stem: str) -> dict:
         return {"version": 1, "entries": []}
     except (ValueError, OSError) as exc:
         # Never start renumbering from 1 on an unreadable manifest: that would
-        # overwrite figures already in someone's talk. `_figure_number` also
-        # floors on the files actually present, so a lost manifest costs the
-        # LABELS, not the numbering.
+        # overwrite figures already in someone's talk. `_figure_filename` also
+        # never takes a file actually present, so a lost manifest costs the
+        # LABELS, not the figures.
         logger.warning(
             "[plot] could not read %s (%s) — numbering will continue past the "
             "files already in that folder, but their descriptions are lost",
@@ -1502,6 +1506,39 @@ def _figure_key(spec, figure_label: str) -> str:
     )[:16]
 
 
+def _figure_name(figure_key: dict) -> str | None:
+    """``subject=S01_session=2``: the ITERATE values that pick a figure, as a
+    filename part — or None when they do not make a short, readable one.
+
+    None for a figure with no ITERATE values, for a key or value with nothing
+    filename-safe in it, and for anything past :data:`MAX_FIGURE_NAME` — a
+    Variant whose value spells out a constants dict. The caller numbers those.
+    Two values that slug alike (``S 01``, ``S_01``) are told apart by
+    :func:`_figure_filename`, not here.
+    """
+    import re
+
+    parts = []
+    for key, value in (figure_key or {}).items():
+        k = re.sub(r"[^0-9A-Za-z]+", "_", str(key)).strip("_")
+        v = re.sub(r"[^0-9A-Za-z]+", "_", str(value)).strip("_")
+        if not k or not v:
+            return None
+        parts.append(f"{k}={v}")
+    name = "_".join(parts)
+    if not name or len(name) > MAX_FIGURE_NAME:
+        if name:
+            logger.info(
+                "[plot] figure name is %d characters (cap %d) — numbering it "
+                "instead: %s…",
+                len(name),
+                MAX_FIGURE_NAME,
+                name[:60],
+            )
+        return None
+    return name
+
+
 def _existing_numbers(directory, stem: str, suffix: str) -> set:
     """``_v{n}`` numbers already on disk for this stem, manifest or not."""
     import re
@@ -1518,43 +1555,99 @@ def _existing_numbers(directory, stem: str, suffix: str) -> set:
     return found
 
 
-def _figure_number(directory, stem: str, suffix: str, key: str, entry: dict) -> int:
-    """The ``v{n}`` this figure gets, stable across saves.
+def _is_named_file(file: str, stem: str, name: str, suffix: str) -> bool:
+    """Whether ``file`` is one of the names :func:`_figure_filename` gives
+    ``name``: ``{stem}_{name}{suffix}`` or ``{stem}_{name}_v{n}{suffix}``."""
+    import re
 
-    Same key — same variant, same settings — returns the same number, so
+    return bool(
+        re.fullmatch(
+            rf"{re.escape(stem)}_{re.escape(name)}(_v\d+)?{re.escape(suffix)}", file
+        )
+    )
+
+
+def _figure_filename(
+    directory, stem: str, suffix: str, key: str, name: str | None, entry: dict
+) -> str:
+    """The file this figure is saved as, stable across saves.
+
+    Named ``{stem}_{name}{suffix}`` when the figure has a readable ``name``
+    (:func:`_figure_name`), else numbered ``{stem}_v{n}{suffix}``.
+
+    Same key — same variant, same settings — returns the same file, so
     re-rendering after a tweak updates the file already referenced elsewhere
-    instead of littering the folder. A key not seen before takes the next
-    number above everything the manifest knows AND everything already on disk,
-    so a deleted or unreadable manifest can never cause an overwrite.
+    instead of littering the folder. A key not seen before never takes a file
+    the manifest gave another figure or one already on disk: a named figure
+    goes to ``{stem}_{name}_v2{suffix}`` (then v3…), and a numbered one to the
+    next number above everything known, so a deleted or unreadable manifest
+    can never cause an overwrite.
 
     Writes the manifest back as a side effect; a figure that then fails to
-    render leaves a claimed number, which is the harmless direction.
+    render leaves a claimed file, which is the harmless direction.
     """
     import json
+    import re
     from datetime import datetime, timezone
 
     manifest = _read_manifest(directory, stem)
     entries = manifest["entries"]
-    by_key = {e.get("key"): e for e in entries if isinstance(e, dict)}
+    numbered = re.compile(rf"^{re.escape(stem)}_v(\d+){re.escape(suffix)}$")
 
-    known = {e["n"] for e in entries if isinstance(e, dict) and isinstance(e.get("n"), int)}
-    existing = by_key.get(key)
-    if existing is not None and isinstance(existing.get("n"), int):
-        n = existing["n"]
+    def reusable(e) -> bool:
+        if not isinstance(e, dict) or e.get("key") != key:
+            return False
+        file = e.get("file")
+        if not isinstance(file, str):
+            return False
+        # Only a file this scheme would give this figure today: an older
+        # numbered save of a figure that now has a name is left where it is.
+        if name is not None:
+            return _is_named_file(file, stem, name, suffix)
+        return bool(numbered.match(file))
+
+    existing = next((e for e in entries if reusable(e)), None)
+    if existing is not None:
+        filename = existing["file"]
         entries.remove(existing)
+        logger.info("[plot] figure file %s: same figure and settings, re-saved in place", filename)
     else:
-        n = max(known | _existing_numbers(directory, stem, suffix) | {0}) + 1
+        claimed = {e.get("file") for e in entries if isinstance(e, dict)}
+
+        def taken(file: str) -> bool:
+            return file in claimed or (directory / file).exists()
+
+        if name is not None:
+            filename = f"{stem}_{name}{suffix}"
+            n = 2
+            while taken(filename):
+                filename = f"{stem}_{name}_v{n}{suffix}"
+                n += 1
+        else:
+            known = {
+                int(m.group(1))
+                for e in entries
+                if isinstance(e, dict) and isinstance(e.get("file"), str)
+                for m in [numbered.match(e["file"])]
+                if m
+            }
+            n = max(known | _existing_numbers(directory, stem, suffix) | {0}) + 1
+            filename = f"{stem}_v{n}{suffix}"
+        logger.info(
+            "[plot] figure file %s: new (%s)",
+            filename,
+            "named" if name is not None else "numbered — no short figure name",
+        )
 
     entries.append(
         {
-            "n": n,
-            "file": f"{stem}_v{n}{suffix}",
+            "file": filename,
             "key": key,
             "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             **entry,
         }
     )
-    entries.sort(key=lambda e: e.get("n", 0))
+    entries.sort(key=lambda e: str(e.get("file", "")))
     try:
         _manifest_path(directory, stem).write_text(
             json.dumps(manifest, indent=2, default=str) + "\n", encoding="utf-8"
@@ -1562,7 +1655,7 @@ def _figure_number(directory, stem: str, suffix: str, key: str, entry: dict) -> 
     except OSError as exc:
         # A figure written without its description beats no figure at all.
         logger.warning("[plot] could not write the figure manifest: %s", exc)
-    return n
+    return filename
 
 
 def supported_formats() -> list[str]:

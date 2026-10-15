@@ -11,6 +11,49 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzq. Figure arrows under rapid clicking + figure files named for their values — added 2026-10-15
+
+**What changed:**
+- **Arrows:** clicking ◀ ▶ quickly could leave the preview alternating
+  between two neighbouring figures forever. A resolve answer that arrived after
+  you had clicked on dragged the cursor back to the figure it was sent for. That
+  queued a resolve for the old figure, and its answer dragged the cursor forward
+  again. An answer now moves the cursor only if you are still on the figure it
+  was sent for (`PlotStudio/figureCursor.ts`).
+- **Save all figures:** files are named for the ITERATE values that pick each
+  figure, for example `CosmedData_subject=S01.png`, instead of
+  `CosmedData_v1.png`. The value is used only when it makes a short name (96
+  characters or fewer). A Variant that spells out a constants dict still falls
+  back to `_v{n}`, which is the 2026-09-22 path-length fix in §0o. The names are
+  stable: the same figure with the same settings re-saves over its own file.
+  Changed settings give `CosmedData_subject=S01_v2.png`. The manifest is
+  unchanged in purpose.
+
+**Backend:** reload the VS Code window (backend edit in `plot_service.py`).
+Both frontend bundles are rebuilt.
+
+**Steps:**
+1. Open a plot with many figures (subject = ITERATE). Click ▶ as fast as you
+   can about ten times, then stop. The panel should settle on the figure the
+   counter shows, with no flicker afterwards. Do the same with ◀ and with the
+   keyboard arrows. `scidb.log` / the webview console may show
+   `figure_answer_superseded` lines. Those are expected.
+2. **Save all figures** into an empty folder. The files should be named
+   `<variable>_subject=<value>.png`, plus `<variable>.figures.json`.
+3. Save again without changes. The same files should be overwritten, and no
+   `_v2` should appear.
+4. Change a setting and save again. `…_subject=<value>_v2.png` should appear
+   beside the originals, which must be untouched.
+5. Save into a folder that already holds old `<variable>_v1.png` files from
+   before this change. Those files should be left alone, and the new ones
+   should get readable names.
+6. If you have a plot that iterates over Variant, save it. Short variant
+   labels should give named files. A variant whose label is a long config
+   should still give `_v{n}`, with a `numbering it instead` INFO line in
+   `scidb.log`.
+
+---
+
 ## 0zzzp. Custom plot kinds: Plot Studio on a `plot_` node — added 2026-10-14
 
 **What changed:** right-click a `plot_` function node ▸ **📈 Open in Plot

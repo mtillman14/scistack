@@ -81,6 +81,7 @@ import {
   unitInfo,
 } from './figureUnits'
 import { roundTo, stepValue } from './stepper'
+import { adoptedFigureIndex } from './figureCursor'
 import {
   figureOutputSize,
   previewKey,
@@ -921,6 +922,10 @@ export default function PlotStudio({
   // 1's last trial lands on subject 2's first — the backend orders it, this is
   // just a cursor into that list.
   const [figureIndex, setFigureIndex] = useState(0)
+  // The cursor as of the latest render, for a resolve answer to compare its
+  // request against (`adoptedFigureIndex`) — its closure holds the old one.
+  const figureIndexRef = useRef(figureIndex)
+  figureIndexRef.current = figureIndex
   const [figureLabels, setFigureLabels] = useState<string[]>([])
   const [fanoutNotes, setFanoutNotes] = useState<string[]>([])
   const [specError, setSpecError] = useState('')
@@ -1207,11 +1212,22 @@ export default function PlotStudio({
           setFigures(result.figures ?? [])
           setFigureLabels(result.figure_labels ?? [])
           setFanoutNotes(result.notes ?? [])
-          // Adopt the index the backend actually rendered. It clamps a stale
-          // cursor against a fan-out that shrank, and the arrows must never
-          // disagree with the figure on screen. React bails out when the value
-          // is unchanged, so this cannot loop.
-          if (typeof result.figure_index === 'number') setFigureIndex(result.figure_index)
+          // Adopt the index the backend actually rendered — it clamps a stale
+          // cursor against a fan-out that shrank — but ONLY if the user is
+          // still on the figure this was sent for. Adopting an answer they had
+          // clicked past dragged the cursor back and looped between two
+          // figures forever (figureCursor.ts).
+          const adopted = adoptedFigureIndex(
+            nextIndex, figureIndexRef.current, result.figure_index
+          )
+          if (adopted !== null) setFigureIndex(adopted)
+          else if (typeof result.figure_index === 'number') {
+            console.info('[Plot Studio] figure_answer_superseded', {
+              requested: nextIndex,
+              rendered: result.figure_index,
+              cursor: figureIndexRef.current,
+            })
+          }
           if (caps) {
             setCapabilities(caps as Capabilities)
             capsSpecRef.current = nextKey
