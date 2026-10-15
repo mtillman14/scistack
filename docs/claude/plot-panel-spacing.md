@@ -25,6 +25,7 @@ size, with 1 pt = 1 px (`plotly_.PX_PER_IN = 72`).
 | Bracket rows below the ticks | `render/base.py::BracketGeometry` (tick_depth_pt, row_height_pt → rule_pt / label_pt / title_pad_pt / bottom_pt) | `mpl._draw_x_groups` (`_tick_label_depth_pt` per axes; the deepest one is kept) | mpl placement + `labelpad`; plotly `_add_x_groups` (`yshift`, shapes `ysizemode: "pixel"`, title `standoff`) |
 | Text outside each axes | `render/base.py::GridReach` (left/below × outer/inner) | `mpl._grid_reach`: axes box vs `get_tightbbox`, on the FINAL layout | plotly `_frame` |
 | Margins + cell gaps | `plotly_._frame` → `_Frame(margin, gaps)` | — | `layout.margin`, `_cell(..., gaps)` for every axis domain and bracket anchor |
+| Tick values/labels + title distance (every y axis; numeric x axes since 2026-10-14) | `render/base.py::AxisText` (axis, values, texts, title_gap_pt) | `mpl._axis_text` (`drawn_ticks` + title bbox), FINAL layout; decisions `y_axes` / `x_axes` | plotly `_apply_axis_text`: `tickvals`/`ticktext`, `title.standoff` |
 
 `layout_decisions()` returns `bracket_geometry` and `grid_reach` alongside
 `ticks`, `brackets` and `legend`. The figure attributes are `LABEL_FIT_ATTR`
@@ -58,8 +59,14 @@ X_GROUP_ROW * depth`). The brackets use an upright estimate
 
 ## Known gaps
 
-- Plotly's automatic y tick values are not exactly matplotlib's, so their
-  widths differ slightly. `REACH_PAD_PX` absorbs that.
+- Fixed 2026-10-14: plotly used to pick its own y tick values (e.g. `1505`
+  where the export drew `5` + an offset) and its own, larger title standoff,
+  so an inner panel's y text outgrew the gap measured for it and ran into the
+  panel on its left (C-Brace). The preview now copies `AxisText`. Still
+  plotly's own: a panel whose export ticks carry an offset/multiplier label or
+  mathtext (log y) — `texts` is `None` there, logged at DEBUG
+  (`y tick text not copied to the preview`). `REACH_PAD_PX` absorbs font
+  metric differences.
 - For more than one labelled column, the export draws one shared `supxlabel`
   while the preview titles each bottom axis. The x axes keep plotly
   `automargin`, which reserves that title.

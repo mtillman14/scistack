@@ -1400,6 +1400,51 @@ def _html(text: str) -> str:
     return str(text).replace("\n", "<br>")
 
 
+def _apply_axis_text(layout: dict, resolved: ResolvedPlot, items, side: str) -> None:
+    """Give each axis the export's drawn tick values/labels and its title the
+    export's distance from them (``base.AxisText``): every y axis, and every
+    NUMERIC x axis.
+
+    The column gaps (``_frame``) are sized from the export's measured y text.
+    Left to itself, plotly picks its own tick values (wider labels, e.g. no
+    offset) and its own title standoff, which sits the title further out; the
+    preview's y text then outgrew the gap measured for it and ran into the
+    panel on its left. On a numeric x axis the auto text size judged the
+    export's ticks (collisions, at least three labels), so the preview shows
+    those, not a denser set plotly would choose.
+    """
+    if not items:
+        return
+    _rows, n_cols = grid_shape(resolved)
+    ticks = titles = 0
+    for item in items:
+        slot = item.row * n_cols + item.col + 1
+        axis = layout.get(f"{side}axis" if slot == 1 else f"{side}axis{slot}")
+        if not isinstance(axis, dict):
+            continue
+        if side == "x" and (axis.get("type") == "category" or axis.get("categoryarray")):
+            Log.debug(
+                "preview %saxis%s: categorical here, numeric in the export — left as drawn",
+                side, slot, layer=LAYER,
+            )
+            continue
+        if item.texts is not None and item.values:
+            axis.update(
+                tickmode="array",
+                tickvals=list(item.values),
+                ticktext=[_html(t) for t in item.texts],
+            )
+            ticks += 1
+        title = axis.get("title")
+        if item.title_gap_pt is not None and isinstance(title, dict) and title.get("text"):
+            title["standoff"] = item.title_gap_pt
+            titles += 1
+    Log.debug(
+        "preview: export's %s ticks on %d axis/axes, title standoff on %d (of %d measured)",
+        side, ticks, titles, len(items), layer=LAYER,
+    )
+
+
 def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> None:
     """Draw what the export decided, rather than deciding again.
 
@@ -1433,6 +1478,9 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
             axis["tickfont"] = {"size": ticks.font_pt}
             applied += 1
         Log.debug("preview: tick decision applied to %d x axis/axes", applied, layer=LAYER)
+
+    _apply_axis_text(layout, resolved, decisions.get("y_axes"), "y")
+    _apply_axis_text(layout, resolved, decisions.get("x_axes"), "x")
 
     brackets = decisions.get("brackets")
     plan = resolved.x_plan

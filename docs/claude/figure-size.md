@@ -129,10 +129,11 @@ dpi control is added, the readout must read from it.
 *Superseded in detail by `plot-text-and-labels.md`, which covers the
 per-element sizes (`StyleOptions.text`). The notes below are what still holds.*
 
-`TextSizes.base` (points, default **14**; matplotlib's 10 was "far too small"
-at 8 x 6 in) is matplotlib's `font.size`. Every other element is either fixed
-or derived from it with matplotlib's own ratios, by the one owner
-`scistackplot.textsize`. The single `font_size` / `tick_font_size` fields were
+`TextSizes.base` is the reference size and matplotlib's `font.size` (auto by
+default since 2026-10-06; a fixed 14 was the default before, matplotlib's 10
+being "far too small" at 8 x 6 in). Every other element is either fixed or
+reference x its ratio (`textsize.DEFAULT_TEXT_RATIOS`, since 2026-10-14), by
+the one owner `scistackplot.textsize`. The single `font_size` / `tick_font_size` fields were
 replaced as a clean break.
 
 How it is applied:

@@ -8,6 +8,48 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-14-1 — Automatic text size: ONE reference, stored ratios, per-element bands
+
+Supersedes the per-element search of D-2026-10-06-2 (its band-by-destination,
+`ResolvedPlot.auto_text` and `Log.trial` decisions stand).
+
+**Context.** The per-element search let one element shrink alone, so a
+crowded figure drew 8 pt tick labels under 12 pt axis titles: the hierarchy
+the user intended was lost. The user's goals (2026-10-14): panels as large as
+the canvas allows (unchanged), and text as large as possible within
+floor/ceiling WITHOUT text running into text, keeping the intended relative
+sizes.
+
+**Decision (user: option 3, 0.5 pt steps).**
+- One reference size. Auto searches it (binary search, 0.5 pt candidates,
+  first layout at the top); a fixed `TextSizes.base` fixes it and is never
+  clamped.
+- Intended ratios are stored and never altered by sizing. One owner:
+  `textsize.DEFAULT_TEXT_RATIOS` (title 1.44, axis/legend titles 1.2, rest
+  1.0) plus `TextSizes.ratios`. Replaces `MEDIUM/LARGE/SMALL` and
+  `CEILING_RATIOS`, so fixed and auto draw the same proportions.
+- Each element's band is the target band × its ratio, user-editable in pt
+  (`TextSizes.floors` / `ceilings`). Drawn =
+  `clamp(reference × ratio, floor, ceiling)` (`textsize.drawn_sizes`); a clamp
+  changes what is drawn, never the ratio.
+- ANY failing rule steps ALL scaled text down. Rules: no text into text
+  (categorical tick fit, numeric x/y drawn-label collisions, neighbour
+  panels, brackets, legend at the right); nothing off the canvas; ≥ 3 drawn
+  y tick labels per panel and ≥ 3 x labels per numeric x axis; no y title
+  taller than its panel. At the bottom, the fitting handles what still fails
+  and the INFO line names it.
+- Removed: `MIN_DATA_FRACTION` (plot-area share), per-element blame,
+  `VERIFY_ROUNDS`. `LayoutReport.blame()` became `failures()`.
+- The preview copies the export's numeric x ticks (`base.AxisText`, the
+  y-only `YAxisText` generalised).
+
+**Consequences.** About 1 + log2(9) ≈ 5 layouts at print when the top fails;
+1 when it fits. A fixed-Font plot's titles are now 1.2× / 1.44× its base, not
+1.0× / 1.2×, and bracket rows 1.0×, not 0.833× (beta: no migration). Ratios,
+floors and ceilings are settings: presets and saved plots carry them; drawn
+sizes are never stored. Full argument: `docs/claude/plot-text-and-labels.md`,
+"Automatic size"; plan `.claude/plan-dimension-text-sizing.md`.
+
 ## D-2026-10-09-2 — verify compares, never runs; matches by a content-free key
 
 **Context.** A recipient needs to know whether re-running the shared code

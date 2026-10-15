@@ -15,7 +15,7 @@
  * See docs/claude/plotting-library-design.md.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-cartesian-dist-min'
 import { callBackend, isVSCodeMode } from '../../api'
@@ -88,20 +88,28 @@ import {
   type PreviewMode,
 } from './preview'
 import {
+  autoSummary,
   baseTitle,
   basePlaceholder,
+  drawnLabel,
   fixedTickNote,
+  formatPt,
   hasFixedSizes,
+  hasTextTables,
   placeholderFor,
+  proportionRows,
   resetTextSizes,
+  resetTextTables,
   rowTitle,
   textSizeRows,
   textTarget,
   textTargets,
   withTextSize,
+  withTextTable,
   withTextTarget,
   type ResolvedTextSizes,
   type TextSizesValue,
+  type TextTable,
 } from './textSizes'
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
 import ColorsSection, { type ProjectColorEdit } from './ColorsSection'
@@ -1494,6 +1502,25 @@ export default function PlotStudio({
       if (!prev) return prev
       const style = prev.style ?? {}
       return { ...prev, style: { ...style, text: resetTextSizes(style.text) } }
+    })
+  }, [])
+
+  /** Set one element's ratio, floor or ceiling (`style.text.ratios` / `floors` /
+   *  `ceilings`), or clear it (null) back to the default. */
+  const setTextTable = useCallback((table: TextTable, element: string, value: number | null) => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const style = prev.style ?? {}
+      return { ...prev, style: { ...style, text: withTextTable(style.text, table, element, value) } }
+    })
+  }, [])
+
+  /** Every ratio, floor and ceiling back to the defaults; sizes stay. */
+  const resetProportions = useCallback(() => {
+    setSpec(prev => {
+      if (!prev) return prev
+      const style = prev.style ?? {}
+      return { ...prev, style: { ...style, text: resetTextTables(style.text) } }
     })
   }, [])
 
@@ -3654,6 +3681,78 @@ export default function PlotStudio({
                   )
                 })}
               </div>
+              {/* What auto decided (autosize.AutoTextSize): the reference and
+                  the rule that stopped it one step larger. */}
+              {autoSummary(textMeta) && (
+                <div style={styles.textAutoSummary} title={baseTitle(textMeta)}>
+                  {autoSummary(textMeta)}
+                </div>
+              )}
+              {/* The intended proportions (TextSizes.ratios / floors /
+                  ceilings), stored as typed and never altered by sizing.
+                  Placeholders are Python's effective values; Drawn is what
+                  this layout drew, marked when held at a bound. */}
+              <div style={styles.textSizesHeader}>
+                <span style={styles.textProportionsTitle}>Proportions</span>
+                {hasTextTables(spec?.style?.text) && (
+                  <button
+                    type="button"
+                    style={styles.inlineButton}
+                    title="Every ratio, floor and ceiling back to the defaults"
+                    onClick={resetProportions}
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+              <div style={styles.textProportionsGrid}>
+                <span />
+                <span style={styles.textProportionsHead} title="Size over the reference (Font)">Ratio</span>
+                <span style={styles.textProportionsHead} title="Auto never draws it smaller (pt)">Floor</span>
+                <span style={styles.textProportionsHead} title="Auto never draws it larger (pt)">Ceiling</span>
+                <span style={styles.textProportionsHead} title="What this layout drew (pt)">Drawn</span>
+                {proportionRows(textMeta, spec?.style?.text).map(row => (
+                  <Fragment key={row.key}>
+                    <span style={styles.textSizeLabel}>{row.label}</span>
+                    {(['ratios', 'floors', 'ceilings'] as const).map(table => {
+                      const stored = table === 'ratios' ? row.ratio : table === 'floors' ? row.floor : row.ceiling
+                      const effective =
+                        table === 'ratios'
+                          ? row.effectiveRatio
+                          : table === 'floors'
+                            ? row.effectiveFloor
+                            : row.effectiveCeiling
+                      return (
+                        <StepperInput
+                          key={table}
+                          value={stored}
+                          fallback={effective}
+                          step={table === 'ratios' ? 0.1 : 0.5}
+                          min={table === 'ratios' ? 0.1 : 1}
+                          allowBlank
+                          decimals={2}
+                          width={44}
+                          placeholder={effective === null ? '—' : formatPt(effective)}
+                          title={
+                            row.fixed
+                              ? `${row.label} has a fixed size: its ratio and bounds are not used`
+                              : table !== 'ratios' && fontSize !== null
+                                ? 'Font is fixed: bounds apply only to auto'
+                                : undefined
+                          }
+                          onChange={next => setTextTable(table, row.key, next)}
+                        />
+                      )
+                    })}
+                    <span
+                      style={row.clamped ? styles.textProportionsClamped : styles.textProportionsDrawn}
+                      title={row.clamped ? `Held at its ${row.clamped}: the ratio is kept for a larger canvas` : undefined}
+                    >
+                      {drawnLabel(row)}
+                    </span>
+                  </Fragment>
+                ))}
+              </div>
             </Section>
 
             {/* Titles and display aliases. A CSV plot has no project, so it gets
@@ -5678,6 +5777,16 @@ const styles: Record<string, React.CSSProperties> = {
   textSizesGrid: {
     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 10px', marginBottom: 6,
   },
+  // The Proportions grid: element | ratio | floor | ceiling | drawn.
+  textProportionsGrid: {
+    display: 'grid', gridTemplateColumns: 'auto repeat(3, minmax(0, 1fr)) auto',
+    gap: '3px 6px', alignItems: 'center', marginBottom: 6,
+  },
+  textProportionsTitle: { fontSize: 11, color: 'var(--ps-text-secondary)', fontWeight: 600 },
+  textProportionsHead: { fontSize: 10, color: 'var(--ps-text-muted)', textAlign: 'center' as const },
+  textProportionsDrawn: { fontSize: 10, color: 'var(--ps-text-secondary)', whiteSpace: 'nowrap' as const },
+  textProportionsClamped: { fontSize: 10, color: 'var(--ps-caution)', whiteSpace: 'nowrap' as const },
+  textAutoSummary: { fontSize: 10, color: 'var(--ps-text-muted)', lineHeight: 1.4, marginBottom: 6 },
   textSizeLabel: {
     fontSize: 11, color: 'var(--ps-text-secondary)', flex: 1, textAlign: 'right' as const, whiteSpace: 'nowrap' as const,
   },

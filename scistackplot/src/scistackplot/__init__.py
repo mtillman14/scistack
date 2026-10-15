@@ -120,14 +120,23 @@ from .spec import (
     Statistic,
     Alias,
     StyleOptions,
+    TEXT_ELEMENTS,
     TEXT_TARGETS,
     TextSizes,
     VariantSet,
     YAxis,
     grid_shape_for,
 )
-from .textsize import ResolvedSizes, rc_params, resolve_sizes, sizes_for
-from .autosize import AutoTextSize, BANDS, settle as settle_text_size
+from .textsize import (
+    BANDS,
+    DEFAULT_TEXT_RATIOS,
+    ResolvedSizes,
+    drawn_sizes,
+    rc_params,
+    resolve_sizes,
+    sizes_for,
+)
+from .autosize import AutoTextSize, settle as settle_text_size
 from .aliases import AliasError, DisplayText, display_text
 from .colors import ColorError, MarkColors, mark_colors, parse_color
 from .figsize import (
@@ -232,9 +241,12 @@ __all__ = [
     "ResolvedSizes",
     "resolve_sizes",
     "sizes_for",
+    "drawn_sizes",
+    "DEFAULT_TEXT_RATIOS",
     "rc_params",
     # automatic text size (autosize)
     "TEXT_TARGETS",
+    "TEXT_ELEMENTS",
     "BANDS",
     "AutoTextSize",
     "settle_text_size",

@@ -820,23 +820,26 @@ class Alias:
 class TextSizes:
     """Point sizes of the figure's text, one per element.
 
-    ``base`` is matplotlib's ``font.size``. Every other field is a size you FIX:
-    ``None`` means "derived from ``base``" with the ratios matplotlib's own
-    relative names give (``medium``, ``large``, ``small``), so a spec that sets
-    only ``base`` draws exactly what the single ``font_size`` knob drew. A
-    fixed size is also a PIN: automatic fitting (tick labels, brackets, the
-    legend) may rotate, wrap, thin or move the text but never shrinks it.
-    ``scistackplot.textsize`` is the one reader (docs/claude/plot-text-and-labels.md).
+    ONE dial and fixed proportions (user, 2026-10-14): every element is drawn
+    at ``reference x its ratio``, clamped into that element's floor/ceiling.
+    ``base`` is the reference: ``None`` = AUTO (``scistackplot.autosize``
+    searches it), a number fixes it (no clamping). The ratios, floors and
+    ceilings are the user's INTENT and are stored here; the drawn sizes are
+    derived per layout and never written back. An element given its own pt
+    size here is FIXED: outside the scaling, and a PIN — automatic fitting
+    (tick labels, brackets, the legend) may rotate, wrap, thin or move it but
+    never shrinks it. ``scistackplot.textsize`` is the one reader
+    (docs/claude/plot-text-and-labels.md).
     """
 
-    #: ``None`` = AUTO (user, 2026-10-06): the largest size at which the figure
-    #: lays out cleanly, inside the ``target``'s band (``scistackplot.autosize``
-    #: decides it per figure and size; renderers draw the settled number). A
-    #: number fixes it. The plotly preview uses the same number as px.
+    #: The reference size. ``None`` = AUTO: the largest reference at which the
+    #: figure lays out cleanly (``scistackplot.autosize`` decides it per
+    #: figure and size). A number fixes it. The plotly preview uses the same
+    #: numbers as px.
     base: float | None = None
-    #: Where the figure is going, which picks the auto band: ``"print"`` (a
-    #: journal page) or ``"slide"``. Ignored when ``base`` is fixed. The
-    #: values are :data:`TEXT_TARGETS`; the bands are ``autosize.BANDS``.
+    #: Where the figure is going, which picks the default bands: ``"print"``
+    #: (a journal page) or ``"slide"``. The values are :data:`TEXT_TARGETS`;
+    #: the bands are ``textsize.BANDS``.
     target: str = "print"
     #: The figure title (``suptitle``, a heatmap's axes title).
     title: float | None = None
@@ -846,28 +849,75 @@ class TextSizes:
     y_label: float | None = None
     x_ticks: float | None = None
     y_ticks: float | None = None
-    #: The label rows under a nested x axis (brackets). Own size (user,
-    #: 2026-09-24); unset, it is the x ticks' size times ``small``.
+    #: The label rows under a nested x axis (brackets).
     groups: float | None = None
     #: Legend entries.
     legend: float | None = None
-    #: The legend title; unset, it follows the entries (including a shrink).
+    #: The legend title. Unset, it keeps its ratio to the entries wherever
+    #: they end up, including after the legend fit shrank them.
     legend_title: float | None = None
-    #: A difference bar's label ("*"). Own size (user, 2026-09-27); unset,
-    #: it is ``base`` times ``medium``, like the tick labels.
+    #: A difference bar's label ("*").
     differences: float | None = None
+    #: ``{element: ratio}`` over the reference, overriding
+    #: ``textsize.DEFAULT_TEXT_RATIOS`` (the one table) for those elements.
+    ratios: dict[str, float] = field(default_factory=dict)
+    #: ``{element: pt}``: an element's own floor / ceiling, overriding the
+    #: default (the target's band x the element's ratio). Auto only: a fixed
+    #: ``base`` is drawn as typed.
+    floors: dict[str, float] = field(default_factory=dict)
+    ceilings: dict[str, float] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.target not in TEXT_TARGETS:
             raise ValueError(
                 f"text target {self.target!r} is not one of {', '.join(TEXT_TARGETS)}"
             )
+        elements = set(TEXT_ELEMENTS)
+        for name in ("ratios", "floors", "ceilings"):
+            table = getattr(self, name)
+            unknown = sorted(set(table) - elements)
+            if unknown:
+                raise ValueError(
+                    f"text {name}: {', '.join(map(repr, unknown))} is not a text element "
+                    f"({', '.join(TEXT_ELEMENTS)})"
+                )
+            bad = sorted(k for k, v in table.items() if not (isinstance(v, (int, float)) and v > 0))
+            if bad:
+                raise ValueError(f"text {name}: {', '.join(bad)} must be a positive number")
+        crossed = sorted(
+            e for e in set(self.floors) & set(self.ceilings) if self.floors[e] > self.ceilings[e]
+        )
+        if crossed:
+            raise ValueError(f"text floors above ceilings for {', '.join(crossed)}")
+
+    def __hash__(self) -> int:
+        # The dict fields are unhashable; the autosize memo keys on the text.
+        return hash(
+            tuple(
+                tuple(sorted(value.items())) if isinstance(value, dict) else value
+                for value in (getattr(self, f) for f in self.__dataclass_fields__)
+            )
+        )
 
 
 #: Where a figure's text is sized for (``TextSizes.target``). The one list:
-#: ``autosize.BANDS`` has a band per entry (a test pins that), and the GUI
-#: toggle is built from ``layout.meta.text_sizes.auto.targets``.
+#: ``textsize.BANDS`` has a band per entry (a test pins that), and the GUI
+#: toggle is built from ``layout.meta.text_sizes.targets``.
 TEXT_TARGETS: tuple[str, ...] = ("print", "slide")
+
+#: The sized elements: the ``TextSizes`` fields that are a size. The ONE list
+#: (``textsize.DEFAULT_TEXT_RATIOS`` has a ratio per entry; a test pins that).
+TEXT_ELEMENTS: tuple[str, ...] = (
+    "title",
+    "x_label",
+    "y_label",
+    "x_ticks",
+    "y_ticks",
+    "groups",
+    "legend",
+    "legend_title",
+    "differences",
+)
 
 
 @dataclass(frozen=True)
@@ -1211,6 +1261,12 @@ class PlotSpec:
         raw["panel_overrides"] = [o.to_dict() for o in self.panel_overrides]
         raw["difference_bars"] = [b.to_dict() for b in self.difference_bars]
         raw["comparison"] = self.comparison.to_dict() if self.comparison else None
+        # Unset text tables are absent, as unset sizes are (null-dropped), so a
+        # panel that clears its last ratio matches the saved spec again.
+        text = raw["style"]["text"]
+        for name in ("ratios", "floors", "ceilings"):
+            if not text.get(name):
+                text.pop(name, None)
         # TOML has no null; drop empty optionals so a round trip is stable.
         return _drop_nulls(raw)
 

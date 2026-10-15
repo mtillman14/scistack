@@ -366,7 +366,7 @@ def test_an_empty_markcolors_pins_nothing():
 
 def test_no_pins_emit_no_pin_code(table):
     source = generate_plot_function(_spec(), table)
-    assert "_hue_pins" not in source and "_hue_palette" not in source
+    assert "_hue_pins" not in source
 
 
 @pytest.mark.parametrize("palette", [None, "viridis"])

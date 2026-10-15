@@ -1,39 +1,42 @@
 """
-The automatic text size: each element as big as the figure lays it out
-cleanly, inside a band.
+The automatic text size: ONE reference, as large as the figure lays it out
+cleanly, every element keeping its intended ratio to it.
 
 ``TextSizes.base = None`` means AUTO (user, 2026-10-06). This module is the ONE
-owner of the sizes that replace it. :func:`settle` searches, PER ELEMENT
-(x ticks, y ticks, x title, y title, figure title, bracket rows, legend,
-difference labels), for the largest size at which a real matplotlib layout
-needs nothing destructive for THAT element, inside the band of the spec's
-``target`` (:data:`BANDS`). The result rides on ``ResolvedPlot.auto_text``,
-and every renderer reads it through ``textsize.sizes_for``. Nothing else turns
-``None`` into sizes, so the preview, the saved file and the generated code
-cannot choose differently.
+owner of the reference that replaces it. :func:`settle` searches the reference
+(:func:`choose_reference`); every element is then drawn at
+``textsize.drawn_sizes(reference)`` = ``reference x ratio`` clamped into its
+floor/ceiling. The result rides on ``ResolvedPlot.auto_text`` and every
+renderer reads it through ``textsize.sizes_for``. Nothing else turns ``None``
+into sizes, so the preview, the saved file and the generated code cannot
+choose differently.
 
-**Per element, not one shared base** (user, 2026-10-06): a long x title must
-not make the y tick labels small. Each problem a layout reports is blamed on
-the element that has it (:meth:`LayoutReport.blame`), and only that element
-steps down. The one exception is the plot-area rule (the panels keep
-:data:`MIN_DATA_FRACTION` of the canvas): that is all the text at once, so
-every unsettled element steps down.
+**One dial, not a search per element** (user, 2026-10-14; ADR D-2026-10-14-1,
+superseding D-2026-10-06-2's per-element search): one failing rule anywhere
+steps ALL the scaled text down together, so the proportions the user intended
+hold. A clamp (an element held at its floor or ceiling) changes what is drawn,
+never the stored ratio.
 
 **Why a search over real layouts and not a formula:** what makes text too big
 is the labels this figure has, at this size. Long tick names, a 14-entry
 legend, a facet grid's y titles all read out of the layout the export already
-measures (``ticklabels.fit_labels``, the legend fit, ``GridReach``).
+measures (``ticklabels.fit_labels``, the legend fit, ``GridReach``,
+``mpl.drawn_ticks``).
 
-The rules (user, 2026-10-06):
+A layout is clean when every rule passes (:meth:`LayoutReport.failures`):
 
-* The band follows the DESTINATION, not the width. A point is a point on paper
-  because the file is exactly W x H, and a 7.2 in figure may be a journal's
-  double column or half a slide.
-* No text goes below the band's floor. An element's ceiling is the band's
-  ceiling times its usual ratio to the body text (title x1.2, brackets x0.833).
-* Rotating tick labels and moving the legend below are problems, like
-  shrinking and thinning: allowed only when the element's floor still needs
-  them. The floor is then used and the existing fitting handles the rest.
+1. no text runs into text: the categorical x tick fit needs no shrink, thin
+   or rotation; numeric x and y drawn labels do not collide; nothing runs
+   into the neighbouring panel (``GridReach``); the bracket rows fit; the
+   legend fits at the right;
+2. no text runs off the canvas (drawn labels only);
+3. every panel shows at least :data:`MIN_TICK_LABELS` y tick labels;
+4. every numeric x axis shows at least :data:`MIN_TICK_LABELS` x tick labels;
+5. no y title is longer than its panel is tall.
+
+At the bottom of the range with rules still failing, the bottom is drawn, the
+existing fitting (rotate / thin / legend below) handles the rest, and the
+INFO line names the rules that still fail.
 
 The search is pure (the layout is injected as ``measure``), so its rule is
 tested without matplotlib (``tests/test_autosize.py``). See
@@ -51,83 +54,39 @@ from typing import TYPE_CHECKING, Callable, Mapping
 from scistacklog import Log
 
 from .spec import TEXT_TARGETS, TextSizes
+from .textsize import BANDS, ELEMENTS, drawn_sizes, reference_range
 
 if TYPE_CHECKING:
     from .resolved import ResolvedPlot
 
 LAYER = "scistackplot"
 
-
-@dataclass(frozen=True)
-class Band:
-    """The sizes auto may choose, in points at the figure's saved size."""
-
-    #: No text goes below this.
-    floor_pt: float
-    #: The body text (ticks, axis titles, legend) goes no higher than this;
-    #: other elements scale it by :data:`CEILING_RATIOS`.
-    ceiling_pt: float
-
-
-#: One band per :data:`spec.TEXT_TARGETS` entry (user, 2026-10-06). Print: 8 pt
-#: is the ladder's own legibility floor (``LabelPolicy.min_font_pt``), 12 pt the
-#: usual journal maximum. Slide: read from across a room, at slide-scale
-#: widths. The bands assume the figure is placed at its saved size.
-BANDS: dict[str, Band] = {
-    "print": Band(floor_pt=8.0, ceiling_pt=12.0),
-    "slide": Band(floor_pt=14.0, ceiling_pt=28.0),
-}
-
-#: The elements auto sizes, and each one's ceiling over the band's ceiling:
-#: matplotlib's own ratios (``textsize.LARGE`` / ``SMALL``), so an all-auto
-#: figure at the ceiling keeps the hierarchy a fixed base draws. The legend
-#: title follows the legend entries, as it always has.
-CEILING_RATIOS: dict[str, float] = {
-    "title": 1.2,
-    "x_label": 1.0,
-    "y_label": 1.0,
-    "x_ticks": 1.0,
-    "y_ticks": 1.0,
-    "groups": 0.833,
-    "legend": 1.0,
-    "differences": 1.0,
-}
-ELEMENTS: tuple[str, ...] = tuple(CEILING_RATIOS)
-
-#: The candidate sizes are this far apart.
+#: The candidate references are this far apart (user, 2026-10-14).
 STEP_PT = 0.5
 
-#: The panels (the axes boxes, summed) must keep at least this share of the
-#: canvas. Past it, the text is eating the plot (user delegated, 2026-10-06).
-MIN_DATA_FRACTION = 0.55
+#: Rules 3 and 4: a panel's y axis (and a numeric x axis) must keep at least
+#: this many tick labels. matplotlib's locator drops ticks as the label font
+#: grows, so a short panel at a big size can be left with one number.
+MIN_TICK_LABELS = 3
 
-#: Neighbouring panels' text may touch by this much before it counts as overlap.
+#: Neighbouring text may touch by this much before it counts as overlap.
 OVERLAP_TOLERANCE_PT = 0.5
 #: Content past the canvas edge, as ``figure_file.OVERFLOW_TOLERANCE_IN``.
 OVERFLOW_TOLERANCE_IN = 0.01
 
-#: Rounds of "verify the combination, step down whatever still fails" after
-#: the per-element search (the elements interact: smaller y ticks widen the
-#: panels the x ticks sit under).
-VERIFY_ROUNDS = 6
-
 #: Fit steps that change nothing a reader loses: wrapping onto two lines,
 #: dropping a numbered prefix, a wrapped legend title or shorter line samples.
-#: Every OTHER step a fit reports is a problem.
+#: Every OTHER step a fit reports is a failure.
 HARMLESS_STEPS = frozenset({"strip_prefix", "wrap", "wrap_title", "short_handles", "pinned"})
-
-#: Which elements' text sits on which side of a panel, for overlap blame.
-_LEFT_SIDE = ("y_ticks", "y_label")
-_BELOW_SIDE = ("x_ticks", "x_label", "groups")
-#: Blame key meaning "every element still being searched".
-ALL = "*"
 
 
 @dataclass(frozen=True)
 class LayoutReport:
-    """What one layout needed, read off the rendered figure."""
+    """What one layout needed, read off the rendered figure
+    (``render.mpl.layout_report``)."""
 
-    #: ``LabelFit.steps`` of the x ticks / bracket rows, and whether they fit.
+    #: ``LabelFit.steps`` of the categorical x ticks / bracket rows, and
+    #: whether they fit.
     tick_steps: tuple[str, ...] = ()
     ticks_fit: bool = True
     bracket_steps: tuple[str, ...] = ()
@@ -143,42 +102,51 @@ class LayoutReport:
     overflow_by_element: tuple[tuple[str, float], ...] = ()
     #: Overflow by something no element owns (beyond the attributed ones).
     unattributed_overflow_in: float = 0.0
-    #: The visible axes boxes' area over the canvas area.
-    data_fraction: float = 1.0
+    #: Panels (``"(row,col)"``) whose numeric x / y drawn tick labels collide.
+    x_tick_collisions: tuple[str, ...] = ()
+    y_tick_collisions: tuple[str, ...] = ()
+    #: ``(panel, count)`` of the panel showing the fewest drawn y tick labels,
+    #: and of the numeric x axis showing the fewest; None = none measured.
+    fewest_y_ticks: tuple[str, int] | None = None
+    fewest_x_ticks: tuple[str, int] | None = None
+    #: ``(panel, pt)``: a y title longer than its panel is tall, by how much.
+    y_title_overruns: tuple[tuple[str, float], ...] = ()
 
-    def blame(self) -> dict[str, tuple[str, ...]]:
-        """``{element: problems}``, in words for the log; ``ALL`` for a
-        problem every element shares. Empty = the layout is clean."""
-        found: dict[str, list[str]] = {}
-
-        def add(element: str, problem: str) -> None:
-            found.setdefault(element, []).append(problem)
-
-        for problem in _step_problems("x ticks", self.tick_steps, self.ticks_fit):
-            add("x_ticks", problem)
-        for problem in _step_problems("brackets", self.bracket_steps, self.brackets_fit):
-            add("groups", problem)
+    def failures(self) -> tuple[str, ...]:
+        """Every rule this layout breaks, in words for the log. Empty = clean."""
+        found: list[str] = []
+        # 1. Text into text.
+        found.extend(_step_problems("x ticks", self.tick_steps, self.ticks_fit))
+        found.extend(_step_problems("brackets", self.bracket_steps, self.brackets_fit))
         for step in self.legend_steps:
             if step not in HARMLESS_STEPS:
-                add("legend", "legend moves below" if step == "below" else f"legend {step}s")
+                found.append("legend moves below" if step == "below" else f"legend {step}s")
+        if self.x_tick_collisions:
+            found.append(f"x tick labels collide in panel {', '.join(self.x_tick_collisions)}")
+        if self.y_tick_collisions:
+            found.append(f"y tick labels collide in panel {', '.join(self.y_tick_collisions)}")
         if self.left_overlap_pt > OVERLAP_TOLERANCE_PT:
-            for element in _LEFT_SIDE:
-                add(element, f"y-side text overlaps the next panel by {self.left_overlap_pt:.1f}pt")
+            found.append(f"y-side text overlaps the next panel by {self.left_overlap_pt:.1f}pt")
         if self.below_overlap_pt > OVERLAP_TOLERANCE_PT:
-            for element in _BELOW_SIDE:
-                add(element, f"x-side text overlaps the panel below by {self.below_overlap_pt:.1f}pt")
+            found.append(f"x-side text overlaps the panel below by {self.below_overlap_pt:.1f}pt")
+        # 2. Off the canvas.
         for element, inches in self.overflow_by_element:
             if inches > OVERFLOW_TOLERANCE_IN:
-                add(element, f"{element} runs {inches:.2f}in off the canvas")
+                found.append(f"{element} runs {inches:.2f}in off the canvas")
         if self.unattributed_overflow_in > OVERFLOW_TOLERANCE_IN:
-            add(ALL, f"content runs {self.unattributed_overflow_in:.2f}in off the canvas")
-        if self.data_fraction < MIN_DATA_FRACTION:
-            add(
-                ALL,
-                f"plot area {100 * self.data_fraction:.0f}% of the canvas "
-                f"(< {100 * MIN_DATA_FRACTION:.0f}%)",
-            )
-        return {element: tuple(dict.fromkeys(p)) for element, p in found.items()}
+            found.append(f"content runs {self.unattributed_overflow_in:.2f}in off the canvas")
+        # 3. Too tall / 4. too wide.
+        if self.fewest_y_ticks is not None and self.fewest_y_ticks[1] < MIN_TICK_LABELS:
+            panel, count = self.fewest_y_ticks
+            found.append(f"panel {panel} shows {count} y tick label(s) (< {MIN_TICK_LABELS})")
+        if self.fewest_x_ticks is not None and self.fewest_x_ticks[1] < MIN_TICK_LABELS:
+            panel, count = self.fewest_x_ticks
+            found.append(f"panel {panel} shows {count} x tick label(s) (< {MIN_TICK_LABELS})")
+        # 5. A y title taller than its panel.
+        for panel, over in self.y_title_overruns:
+            if over > OVERLAP_TOLERANCE_PT:
+                found.append(f"y title of panel {panel} is {over:.1f}pt taller than the panel")
+        return tuple(dict.fromkeys(found))
 
 
 def _step_problems(what: str, steps: tuple[str, ...], fits: bool) -> list[str]:
@@ -199,20 +167,28 @@ def _step_problems(what: str, steps: tuple[str, ...], fits: bool) -> list[str]:
 
 @dataclass(frozen=True)
 class AutoTextSize:
-    """The sizes an auto spec draws at, and how they were chosen. On
-    ``ResolvedPlot.auto_text``; ``textsize.sizes_for`` reads ``sizes``."""
+    """The reference an auto spec draws at, and how it was chosen. On
+    ``ResolvedPlot.auto_text``; ``textsize.sizes_for`` reads ``reference``."""
 
     target: str
-    #: ``{element: pt}`` for every element auto sized (pinned ones are absent:
-    #: their own number wins), plus ``"base"``: matplotlib's ``font.size`` for
-    #: text that is no element (an annotation, "no data") = the smaller tick size.
-    sizes: Mapping[str, float]
-    #: ``{element: reason}``: why the next size up failed. Absent = at its ceiling.
-    binding: Mapping[str, str] = field(default_factory=dict)
-    #: Elements whose floor still had problems (the fitting handles them).
-    at_floor: tuple[str, ...] = ()
-    #: ``(sizes, blame)`` per layout, in the order tried.
-    tried: tuple[tuple[Mapping[str, float], Mapping[str, tuple[str, ...]]], ...] = ()
+    #: The chosen reference (pt). Every scaled element is drawn at
+    #: ``textsize.drawn_sizes(reference)``.
+    reference: float
+    #: ``(bottom, top)`` searched; None when every element is fixed.
+    span: tuple[float, float] | None = None
+    #: ``{element: pt}`` drawn at ``reference`` (fixed ones as typed), for the
+    #: log and the GUI. Derived; never written into the spec.
+    sizes: Mapping[str, float] = field(default_factory=dict)
+    #: ``{element: "floor" | "ceiling"}`` held at a bound at ``reference``.
+    clamped: Mapping[str, str] = field(default_factory=dict)
+    #: The rules that failed at the next step UP (why it is not larger).
+    #: Empty = at the top of the range.
+    limit: tuple[str, ...] = ()
+    #: The rules that still fail at ``reference`` (only at the bottom: the
+    #: fitting handles them). Empty = clean.
+    failing: tuple[str, ...] = ()
+    #: ``(reference, failures)`` per layout, in the order tried.
+    tried: tuple[tuple[float, tuple[str, ...]], ...] = ()
     width_in: float = 0.0
     height_in: float = 0.0
     elapsed_s: float = 0.0
@@ -221,20 +197,30 @@ class AutoTextSize:
     def layouts(self) -> int:
         return len(self.tried)
 
+    @property
+    def at_bottom(self) -> bool:
+        return self.span is not None and self.reference <= self.span[0] + 1e-9
+
     def describe(self) -> str:
-        """The INFO line's body: each element's size and what limited it."""
+        """The INFO line's body: the reference, each element's drawn size
+        (clamped ones marked), and what limited it."""
         parts = []
         for element in ELEMENTS:
             if element not in self.sizes:
                 continue
-            why = self.binding.get(element)
-            floor = " at floor" if element in self.at_floor else ""
-            parts.append(
-                f"{element}={_num(self.sizes[element])}"
-                + (f" ({why}{floor})" if why else "")
-            )
+            held = f" (clamped {self.clamped[element]})" if element in self.clamped else ""
+            parts.append(f"{element}={_num(self.sizes[element])}{held}")
+        if self.failing:
+            why = f"at the bottom, still failing: {'; '.join(self.failing)}"
+        elif self.limit:
+            why = f"next step up fails: {'; '.join(self.limit)}"
+        else:
+            why = "at the top"
         return (
-            f"{self.target} band at {self.width_in:.2f} x {self.height_in:.2f} in: "
+            f"{self.target} at {self.width_in:.2f} x {self.height_in:.2f} in: "
+            f"reference {_num(self.reference)}pt"
+            + (f" of {_num(self.span[0])}-{_num(self.span[1])}" if self.span else "")
+            + f" ({why}); "
             + ", ".join(parts)
             + f"; {self.layouts} layout(s) in {1000 * self.elapsed_s:.0f} ms"
         )
@@ -243,9 +229,13 @@ class AutoTextSize:
         """``layout.meta.text_sizes.auto`` for the GUI."""
         return {
             "target": self.target,
+            "reference": self.reference,
+            "span": list(self.span) if self.span else None,
             "sizes": dict(self.sizes),
-            "binding": dict(self.binding),
-            "at_floor": list(self.at_floor),
+            "clamped": dict(self.clamped),
+            "limit": list(self.limit),
+            "failing": list(self.failing),
+            "at_bottom": self.at_bottom,
             "layouts": self.layouts,
             "ms": round(1000 * self.elapsed_s),
         }
@@ -255,167 +245,93 @@ class AutoTextSize:
 # The search (pure)
 
 
-def element_band(element: str, target: str) -> tuple[float, float]:
-    """``(floor, ceiling)`` of one element in points."""
-    band = BANDS[target]
-    ceiling = round(band.ceiling_pt * CEILING_RATIOS[element], 3)
-    return min(band.floor_pt, ceiling), ceiling
+def candidates(bottom: float, top: float) -> list[float]:
+    """The references tried, LARGEST first: the top down in :data:`STEP_PT`
+    steps, ending exactly on the bottom."""
+    if bottom >= top:
+        return [top]
+    refs = [top]
+    while refs[-1] - STEP_PT > bottom + 1e-6:
+        refs.append(round(refs[-1] - STEP_PT, 3))
+    refs.append(round(bottom, 3))
+    return refs
 
 
-def candidates(floor: float, ceiling: float) -> list[float]:
-    """The sizes tried, LARGEST first: the ceiling down in :data:`STEP_PT`
-    steps, ending exactly on the floor."""
-    if floor >= ceiling:
-        return [ceiling]
-    sizes = [ceiling]
-    while sizes[-1] - STEP_PT > floor + 1e-6:
-        sizes.append(round(sizes[-1] - STEP_PT, 3))
-    sizes.append(round(floor, 3))
-    return sizes
-
-
-@dataclass
-class _Element:
-    """One element's binary search over its own candidates (largest first).
-
-    ``fail`` is the largest index known to have problems (-1 = none known),
-    ``ok`` the smallest index known clean (``len`` = none known yet). The
-    answer lies in ``(fail, ok]``; done when they are neighbours. With no
-    clean index found, ``ok`` stays ``len`` and the floor is the answer.
-    """
-
-    sizes: list[float]
-    fail: int = -1
-    ok: int = -1  # set in __post_init__
-    reason: str = ""
-    #: The verify pass found problems at the floor itself.
-    floor_failed: bool = False
-
-    def __post_init__(self) -> None:
-        self.ok = len(self.sizes)
-
-    @property
-    def done(self) -> bool:
-        return self.ok - self.fail <= 1
-
-    @property
-    def probe(self) -> int:
-        return self.chosen_index if self.done else (self.fail + self.ok) // 2 if self.fail >= 0 else 0
-
-    @property
-    def chosen_index(self) -> int:
-        return min(self.ok, len(self.sizes) - 1)
-
-    @property
-    def at_floor_with_problems(self) -> bool:
-        return self.ok == len(self.sizes)
-
-
-def choose_sizes(
+def choose_reference(
     *,
-    target: str,
-    elements: tuple[str, ...],
-    measure: Callable[[dict[str, float]], LayoutReport],
+    text: TextSizes,
+    measure: Callable[[float], LayoutReport],
     width_in: float = 0.0,
     height_in: float = 0.0,
-    max_layouts: int = 16,
 ) -> AutoTextSize:
-    """Each element's largest candidate whose layout blames it for nothing.
+    """The largest reference whose layout breaks no rule.
 
-    ``measure(sizes)`` lays the figure out with ``{element: pt}`` and reports.
-    Every element runs its own binary search on the SAME layouts: each layout
-    probes every unfinished element at its midpoint, so the cost is about
-    ``log2(candidates) + 1`` layouts, not that per element. The first layout
-    is everything at its ceiling (most figures fit there: 1 layout). Then the
-    combination is verified, and whatever it still blames steps down one
-    candidate, at most :data:`VERIFY_ROUNDS` times.
+    ``measure(reference)`` lays the figure out at that reference and reports.
+    A binary search over :func:`candidates`: the first layout is the top
+    (most figures fit there: 1 layout), then about ``log2(candidates)`` more.
+    Larger text never makes a layout cleaner, so the clean references are a
+    run at the bottom of the list's order.
     """
     started = time.perf_counter()
-    if not elements:
-        # Every element fixed: only matplotlib's font.size is left to choose.
-        return AutoTextSize(target=target, sizes=with_base({}, target),
-                            width_in=width_in, height_in=height_in)
-    search = {e: _Element(candidates(*element_band(e, target))) for e in elements}
-    tried: list[tuple[dict[str, float], dict[str, tuple[str, ...]]]] = []
+    span = reference_range(text)
+    if span is None:
+        # Every element fixed: the reference only sizes text that is no element.
+        reference = BANDS[text.target].ceiling_pt
+        sizes, clamped = drawn_sizes(reference, text)
+        return AutoTextSize(
+            target=text.target, reference=reference, sizes=sizes, clamped=clamped,
+            width_in=width_in, height_in=height_in,
+        )
+    refs = candidates(*span)
+    tried: list[tuple[float, tuple[str, ...]]] = []
+    seen: dict[int, tuple[str, ...]] = {}
 
-    def layout(sizes: dict[str, float]) -> dict[str, tuple[str, ...]]:
+    def probe(index: int) -> tuple[str, ...]:
         t0 = time.perf_counter()
-        report = measure(dict(sizes))
-        blamed = report.blame()
-        tried.append((dict(sizes), blamed))
+        failures = measure(refs[index]).failures()
+        seen[index] = failures
+        tried.append((refs[index], failures))
         Log.debug(
-            "auto text size layout %d: %s -> %s in %.0f ms",
+            "auto text size layout %d: reference %gpt -> %s in %.0f ms",
             len(tried),
-            _sizes_text(sizes),
-            "; ".join(f"{e}: {', '.join(p)}" for e, p in blamed.items()) or "clean",
+            refs[index],
+            "; ".join(failures) or "clean",
             1000 * (time.perf_counter() - t0),
             layer=LAYER,
         )
-        return blamed
+        return failures
 
-    def problems_of(element: str, blamed: dict) -> tuple[str, ...]:
-        return blamed.get(element, ()) + blamed.get(ALL, ())
-
-    while not all(s.done for s in search.values()) and len(tried) < max_layouts:
-        probes = {e: s.probe for e, s in search.items()}
-        blamed = layout({e: search[e].sizes[i] for e, i in probes.items()})
-        for element, state in search.items():
-            if state.done:
-                continue
-            index = probes[element]
-            found = problems_of(element, blamed)
-            if found:
-                state.fail = index
-                state.reason = found[0]
+    # The answer lies in (fail, ok]: fail = largest index known to fail,
+    # ok = smallest known clean (len = none known).
+    fail, ok = -1, len(refs)
+    if probe(0):
+        fail = 0
+        while ok - fail > 1:
+            mid = (fail + ok) // 2
+            if probe(mid):
+                fail = mid
             else:
-                state.ok = index
-
-    chosen = {e: s.sizes[s.chosen_index] for e, s in search.items()}
-    # The elements interact, so the combination itself is checked. Usually
-    # this is the layout the search already ended on, and then it is free.
-    for _ in range(VERIFY_ROUNDS):
-        last = tried[-1] if tried else None
-        blamed = last[1] if last is not None and last[0] == chosen else layout(chosen)
-        stepped = False
-        for element, state in search.items():
-            found = problems_of(element, blamed)
-            if not found:
-                continue
-            state.reason = found[0]
-            if state.chosen_index < len(state.sizes) - 1:
-                state.fail = state.chosen_index
-                state.ok = state.fail + 1
-                chosen[element] = state.sizes[state.chosen_index]
-                stepped = True
-            else:
-                state.fail = state.ok = len(state.sizes) - 1
-                state.floor_failed = True
-        if not stepped or len(tried) >= max_layouts:
-            break
-
-    binding = {e: s.reason for e, s in search.items() if s.reason}
-    at_floor = tuple(
-        e for e, s in search.items() if s.at_floor_with_problems or s.floor_failed
-    )
-    # Brackets are read with the ticks above them: never larger than they are.
-    if "groups" in chosen and "x_ticks" in chosen:
-        chosen["groups"] = min(chosen["groups"], chosen["x_ticks"])
-    chosen = with_base(chosen, target)
+                ok = mid
+    else:
+        ok = 0
+    chosen = min(ok, len(refs) - 1)
+    reference = refs[chosen]
+    failing = seen.get(chosen, ()) if ok == len(refs) else ()
+    limit = seen.get(chosen - 1, ()) if chosen > 0 else ()
+    sizes, clamped = drawn_sizes(reference, text)
     return AutoTextSize(
-        target=target,
-        sizes=chosen,
-        binding=binding,
-        at_floor=at_floor,
+        target=text.target,
+        reference=reference,
+        span=span,
+        sizes=sizes,
+        clamped=clamped,
+        limit=limit,
+        failing=failing,
         tried=tuple(tried),
         width_in=width_in,
         height_in=height_in,
         elapsed_s=time.perf_counter() - started,
     )
-
-
-def auto_elements(text: TextSizes) -> tuple[str, ...]:
-    """The elements auto sizes: every one the user did not fix."""
-    return tuple(e for e in ELEMENTS if getattr(text, e) is None)
 
 
 # ---------------------------------------------------------------------------
@@ -462,14 +378,14 @@ def settle(
     height_in: float | None = None,
     measure: Callable[["ResolvedPlot"], LayoutReport] | None = None,
 ) -> "ResolvedPlot":
-    """``resolved`` with its auto text sizes chosen (``auto_text`` set).
+    """``resolved`` with its auto reference chosen (``auto_text`` set).
 
     A fixed ``base``, or a plot already settled, comes back unchanged. The
     search lays the figure out at ``width_in x height_in`` (the spec's size
     when omitted); the result keeps the spec's own size. ``measure`` defaults
     to the matplotlib layout (``render.mpl.layout_report``). Without
-    matplotlib nothing can be measured: the ceilings are used and that is
-    WARNed.
+    matplotlib nothing can be measured: the top of the range is used and that
+    is WARNed.
     """
     if not is_auto(resolved) or resolved.auto_text is not None:
         return resolved
@@ -481,34 +397,37 @@ def settle(
     hit = _MEMO.get(key)
     if hit is not None and hit[0]() is resolved:
         _MEMO.move_to_end(key)
-        Log.debug("auto text size: reused (%s)", _sizes_text(hit[1].sizes), layer=LAYER)
+        Log.debug("auto text size: reused (reference %gpt)", hit[1].reference, layer=LAYER)
         return with_sizes(resolved, hit[1])
 
-    elements = auto_elements(text)
     if measure is None:
         try:
             from .render.mpl import layout_report as measure
         except ImportError as exc:
-            ceilings = with_base({e: element_band(e, text.target)[1] for e in elements}, text.target)
+            span = reference_range(text)
+            top = span[1] if span else BANDS[text.target].ceiling_pt
+            sizes, clamped = drawn_sizes(top, text)
             Log.warn(
-                "auto text size: matplotlib is not available (%s); drawing every "
-                "element at its %s ceiling, unmeasured",
+                "auto text size: matplotlib is not available (%s); drawing at the "
+                "%s top reference %gpt, unmeasured",
                 exc,
                 text.target,
+                top,
                 layer=LAYER,
             )
-            return with_sizes(resolved, AutoTextSize(target=text.target, sizes=ceilings))
+            return with_sizes(
+                resolved,
+                AutoTextSize(target=text.target, reference=top, span=span, sizes=sizes, clamped=clamped),
+            )
 
     sized = at_size(resolved, width, height)
 
-    def trial(sizes: dict[str, float]) -> LayoutReport:
-        candidate = with_sizes(sized, AutoTextSize(target=text.target, sizes=with_base(sizes, text.target)))
-        with Log.trial(f"auto-size trial {_sizes_text(sizes)}"):
+    def trial(reference: float) -> LayoutReport:
+        candidate = with_sizes(sized, AutoTextSize(target=text.target, reference=reference))
+        with Log.trial(f"auto-size trial reference {reference:g}pt"):
             return measure(candidate)
 
-    result = choose_sizes(
-        target=text.target, elements=elements, measure=trial, width_in=width, height_in=height
-    )
+    result = choose_reference(text=text, measure=trial, width_in=width, height_in=height)
     Log.info(
         "auto text size%s: %s",
         f" ({resolved.figure_label})" if resolved.figure_label else "",
@@ -530,9 +449,9 @@ def apply(resolved: "ResolvedPlot", result: AutoTextSize | None) -> "ResolvedPlo
 
 
 def text_sizes_meta(resolved: "ResolvedPlot", sizes) -> dict:
-    """``layout.meta.text_sizes``: every element's size (``ResolvedSizes``),
-    how the auto sizes were chosen (null when fixed), the target and the
-    targets the GUI toggle offers."""
+    """``layout.meta.text_sizes``: every element's drawn size
+    (``ResolvedSizes``), how the auto reference was chosen (null when fixed),
+    the target and the targets the GUI toggle offers."""
     auto = resolved.auto_text
     return {
         **sizes.to_dict(),
@@ -540,17 +459,6 @@ def text_sizes_meta(resolved: "ResolvedPlot", sizes) -> dict:
         "target": resolved.spec.style.text.target,
         "targets": list(TEXT_TARGETS),
     }
-
-
-def with_base(sizes: Mapping[str, float], target: str) -> dict[str, float]:
-    """``sizes`` plus ``"base"``: matplotlib's ``font.size`` for text that is no
-    element = the smaller tick size, else the band's ceiling. The one rule."""
-    ticks = [sizes[e] for e in ("x_ticks", "y_ticks") if e in sizes]
-    return {**sizes, "base": min(ticks) if ticks else BANDS[target].ceiling_pt}
-
-
-def _sizes_text(sizes: Mapping[str, float]) -> str:
-    return " ".join(f"{e}={_num(v)}" for e, v in sizes.items() if e != "base")
 
 
 def _num(value: float) -> str:

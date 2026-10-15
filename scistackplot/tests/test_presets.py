@@ -350,6 +350,21 @@ def test_an_auto_preset_carries_auto_and_its_target():
     assert applied.style.text == TextSizes(target="slide")
 
 
+def test_a_preset_carries_ratios_and_bounds():
+    """Ratios, floors and ceilings are settings (the user's intended
+    proportions, 2026-10-14): a preset carries them; drawn sizes never."""
+    text = TextSizes(ratios={"title": 1.8}, floors={"legend": 9.0}, ceilings={"x_ticks": 11.0})
+    template = make_template(_with_text(_box(), text))
+    assert template["style"]["text"] == {
+        "target": "print",
+        "ratios": {"title": 1.8},
+        "floors": {"legend": 9.0},
+        "ceilings": {"x_ticks": 11.0},
+    }
+    applied = apply_preset(template, _with_text(_target(), TextSizes(base=11.0))).spec
+    assert applied.style.text == text
+
+
 def test_a_fixed_preset_fixes_an_auto_target():
     template = make_template(_with_text(_box(), TextSizes(base=12.0, legend=9.0)))
     applied = apply_preset(template, _target()).spec

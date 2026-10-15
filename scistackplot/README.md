@@ -305,16 +305,20 @@ one owner (`resolve_sizes`, `rc_params`). The export, the generated code and
 the plotly preview (as px) all read it, under `rc_context` so nothing leaks
 into the next figure. See `docs/claude/plot-text-and-labels.md`.
 
-**Automatic size (the default).** With `base` unset (`None`), `scistackplot.autosize`
-makes each unfixed element as large as the figure lays it out cleanly, inside
-the band of `TextSizes.target`: `"print"` (8–12 pt, the default) or `"slide"`
-(14–28 pt), in points at the saved size. It searches per element on real
-matplotlib layouts. A rotated or shrunk x tick limits only `x_ticks`, a legend
-moved below limits only `legend`, and a plot area under 55 % of the canvas
-limits all of them. The chosen sizes ride on `ResolvedPlot.auto_text`, and
-every renderer reads them through `textsize.sizes_for`.
-`settle_text_size(resolved)` runs the search by hand. A number in `base`
-turns it off.
+**Automatic size (the default).** `base` is ONE reference size; every unfixed
+element is drawn at reference × its ratio (`DEFAULT_TEXT_RATIOS`: title 1.44,
+axis and legend titles 1.2, the rest 1.0, overridable per element in
+`TextSizes.ratios`), clamped into that element's floor/ceiling (the band of
+`TextSizes.target` × the ratio — `"print"` 8–12 pt, `"slide"` 14–28 pt — or
+`TextSizes.floors` / `ceilings` in pt). With `base` unset (`None`),
+`scistackplot.autosize` searches the largest reference whose real matplotlib
+layout breaks no rule: no text into text (tick fit, numeric tick collisions,
+neighbouring panels, brackets, legend), nothing off the canvas, at least 3
+tick labels per numeric axis, no y title taller than its panel. One failing
+rule steps all the text down together, so the proportions hold. The result
+rides on `ResolvedPlot.auto_text`, and every renderer reads it through
+`textsize.sizes_for`. `settle_text_size(resolved)` runs the search by hand. A
+number in `base` fixes the reference (unclamped).
 
 The figure's **paper** (white background, black text, a black frame round every
 panel, outward ticks, no grid, and the error-bar ink) has one owner,

@@ -98,6 +98,9 @@ def full_spec() -> PlotSpec:
                 legend=9.5,
                 legend_title=10.5,
                 differences=13.0,
+                ratios={"title": 1.6},
+                floors={"legend": 9.0},
+                ceilings={"x_ticks": 11.0},
             ),
             log_x=True,
             log_y=True,
@@ -469,3 +472,14 @@ def test_stale_role_names_is_what_strip_answered_roles_drops(scalar_table):
     stripped = strip_answered_roles(spec, scalar_table, scalar_table)
     assert set(spec.roles) - set(stripped.roles) == set(answered) | set(missing)
     assert missing == ["limb"]
+
+
+def test_an_unknown_ratio_element_defaults_the_text_block_with_a_note():
+    """A ratio for an element this build does not know (a hand edit, or a
+    future element): the text block is refused by TextSizes, so it is noted
+    and the default used rather than a half-read table."""
+    raw = _through_json(full_spec())
+    raw["style"]["text"]["ratios"] = {"subtitle": 1.3}
+    restored = restore_spec(raw)
+    assert _paths(restored.notes) == ["style.text"]
+    assert restored.spec.style.text == TextSizes()

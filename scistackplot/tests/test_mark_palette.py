@@ -149,6 +149,33 @@ def test_exported_bars_are_the_previews_colour(table, frame, palette):
     plt.close(generated)
 
 
+@pytest.mark.parametrize("palette", [None, "viridis"])
+@pytest.mark.parametrize("kind", [PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN])
+def test_the_export_hands_seaborn_one_colour_per_level(table, frame, palette, kind):
+    """Regression (2026-10-14): the export passed the whole 8-colour palette
+    for 2 hue levels and seaborn warned "The palette list has more values (8)
+    than needed (2)" on every hued export. It now passes ``{level: colour}``
+    over ``_hue_order`` — and the colours are still the preview's."""
+    import warnings
+
+    spec = replace(_spec(palette), kind=kind)
+    source = generate_plot_function(spec, table)
+    assert "palette=_hue_palette" in source
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        generated = _run(source, frame)
+    plt.close(generated)
+    palette_warnings = [w for w in caught if "palette" in str(w.message).lower()]
+    assert palette_warnings == [], [str(w.message) for w in palette_warnings]
+    if kind is PlotKind.BAR:
+        drawn = render_matplotlib(_figure(spec, table))
+        preview = _bar_colours(drawn)
+        plt.close(drawn)
+        generated = _run(source, frame)
+        assert _bar_colours(generated) == preview
+        plt.close(generated)
+
+
 def test_an_uncoloured_export_states_the_previews_one_colour(table, frame):
     """No hue: seaborn >= 0.13 reads `palette=` without `hue` as "colour each
     x level", so the export states `color=` — the preview's one colour."""

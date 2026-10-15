@@ -410,8 +410,10 @@ def test_generated_code_paints_with_the_previews_palette(table):
     from scistackplot.render.base import DEFAULT_PALETTE
 
     source = generate_plot_function(_spec("session"), table)
-    assert f"palette={list(DEFAULT_PALETTE)!r}" in source
-    assert f"sns.color_palette({list(DEFAULT_PALETTE)!r}, len(_hue_levels))" in source
+    # One {level: colour} over _hue_order, shared by the call and the overlay.
+    assert f"sns.color_palette({list(DEFAULT_PALETTE)!r}, len(_hue_order))" in source
+    assert "palette=_hue_palette" in source
+    assert "_palette = {str(k): c for k, c in _hue_palette.items()}" in source
 
 
 def test_generated_code_without_the_setting_is_unchanged(table, frame):

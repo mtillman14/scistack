@@ -11,6 +11,75 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzo. One-dial auto text size + Proportions grid — added 2026-10-14
+
+**What changed:** auto text no longer sizes each element on its own. One
+reference size is searched; every element is reference × its ratio (title
+1.44, axis/legend titles 1.2, the rest 1.0), held inside its own floor and
+ceiling. One failing rule anywhere steps ALL text down together. New rules:
+numeric x/y tick labels must not collide, every panel keeps ≥ 3 y tick labels
+(and numeric x), a y title may not be taller than its panel. The preview now
+copies the export's numeric x ticks. A fixed Font uses the same ratios (so a
+fixed-Font plot's titles are now 1.2× / 1.44×, not 1.0× / 1.2×). Text section
+has a **Proportions** grid (Ratio / Floor / Ceiling / Drawn per element).
+
+**Backend**
+1. Reload the VS Code window (backend edits). Bundles already rebuilt.
+
+**Frontend**
+1. Plot Studio, one panel at 8 × 6 in, Font empty: under the size boxes the
+   line should read `Reference 12 pt of 8–12 (the top)`. `scidb.log`:
+   `auto text size: print at 8.00 x 6.00 in: reference 12pt … (at the top); … 1 layout(s)`.
+2. A 2 × 3 grid of 5 panels (facet by a 5-level factor) at 8 × 6 in, then at
+   13.06 × 8.89 in: the larger canvas never shows a smaller reference, and the
+   line names the rule that failed one step up (e.g. `one step larger: panel
+   (1,0) shows 2 y tick label(s)`). All text should shrink together: the axis
+   titles stay visibly ~1.2× the tick labels.
+3. Proportions: set Title Ratio to 2. The title grows; nothing else changes.
+   Set X ticks Ceiling to 9: the Drawn cell shows `9 · ceiling` in the caution
+   colour, the other elements keep their sizes. Clear it: back to the ratio.
+4. Proportions Reset clears every ratio/floor/ceiling; the size-box Reset does
+   not touch them.
+5. Save the plot, reopen it: the proportions are still set and the plot does
+   not read as modified. Make a preset from it and apply it to another
+   variable: the proportions travel.
+6. A scatter with wide x numbers (e.g. 250000) on a narrow figure: the
+   preview's x tick numbers match the saved PNG's, and none overlap.
+
+---
+
+## 0zzzn. MATLAB node stays green after edit + run; preview y text; full-size y ticks — added 2026-10-14
+
+**What changed:** (1) one owner for a MATLAB function's hash
+(`scimatlab.source_hash`, SHA-256 of the file's raw bytes), used by MATLAB and
+the GUI; the GUI re-checks the `.m` on disk at state check and when it builds a
+run command (`matlab_registry.current_matlab_function`). (2) Auto text size
+measures only drawn tick labels. (3) The preview copies the export's y tick
+values and y title distance.
+
+**Backend**
+1. Reload the VS Code window (backend edits) and reinstall scimatlab in the
+   venv MATLAB uses.
+
+**Frontend**
+1. On a MATLAB loader node (C-Brace `load_cbrace`) that has already run, edit
+   the `.m` file (add a comment) and save. Do **not** press Refresh.
+2. Run the node. When it finishes, the node and its output variable should be
+   **green**. In `scidb.log`: `[source_hash] load_cbrace: building its MATLAB
+   command from … a run should record hash X` and, from MATLAB,
+   `[source_hash] load_cbrace: run hashes … -> X (…)` with the SAME X. Before
+   the run, a line `changed on disk since the last scan` should appear.
+3. Edit the file again without running: after the next canvas refresh the node
+   should turn red with
+   "the function's source has changed since it last ran".
+4. Plot Studio, CosmedData, one panel (8 × 6 in): the auto text line in
+   `scidb.log` should show `y_ticks=12` (no "runs …in off the canvas").
+5. Facet by session with per-panel y scales (scope includes session), 2 × 3
+   grid: no panel's y numbers or y title should touch the panel on its left
+   in the preview, and the preview's y numbers should match the saved PNG's.
+
+---
+
 ## 0zzzm. A graduated node without a saved position stays on its canvas — added 2026-10-09
 
 Fix in `domain/scope_filter.resolve_scope_view`: an edge naming a placement

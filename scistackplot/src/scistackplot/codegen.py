@@ -20,7 +20,7 @@ import keyword
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Mapping, NamedTuple
+from typing import NamedTuple
 
 from scistacklog import Log
 
@@ -68,10 +68,11 @@ from .variants import (
 
 LAYER = "scistackplot"
 
-#: The auto text sizes of the function being generated
-#: (``autosize.AutoTextSize.sizes``), set once by :func:`generate_plot_function`
-#: and read by :func:`_export_sizes`; None for a fixed size.
-_EXPORT_AUTO: ContextVar[Mapping[str, float] | None] = ContextVar("export_auto", default=None)
+#: The auto text reference of the function being generated
+#: (``autosize.AutoTextSize.reference``), set once by :func:`generate_plot_function`
+#: and read by :func:`_export_sizes`; None for a fixed size. The generated code
+#: gets the DRAWN sizes it implies as literals (``textsize.resolve_sizes``).
+_EXPORT_AUTO: ContextVar[float | None] = ContextVar("export_auto", default=None)
 
 #: Marker delimiting the embedded spec inside a generated docstring.
 SPEC_BEGIN = "scistackplot-spec:"
@@ -141,7 +142,7 @@ def generate_plot_function(
     are emitted as literals: the generated code does not search.
     """
     auto, note = _export_auto(spec, table)
-    token = _EXPORT_AUTO.set(auto.sizes if auto is not None else None)
+    token = _EXPORT_AUTO.set(auto.reference if auto is not None else None)
     try:
         return _generate_plot_function(spec, table, function_name=function_name, auto_note=note)
     finally:
@@ -178,7 +179,7 @@ def _export_auto(spec: PlotSpec, table: LongTable):
 def _export_sizes(style) -> ResolvedSizes:
     """The sizes the generated code draws at: the spec's, and the auto
     sizes :func:`generate_plot_function` settled. The one reader in codegen."""
-    return resolve_sizes(style, auto=_EXPORT_AUTO.get())
+    return resolve_sizes(style, reference=_EXPORT_AUTO.get())
 
 
 def _generate_plot_function(
@@ -1080,20 +1081,32 @@ def _pins_for(spec, table: LongTable, factor: str | None) -> dict[str, str]:
 
 
 def _hue_palette_lines(spec, table: LongTable, hue: str | None) -> list[str]:
-    """``_hue_palette``: the palette over ``_hue_order`` with the pinned
-    levels' colours substituted — what ``render.base.palette_for`` paints
-    (a pin wins; every other level keeps its palette colour at its
-    position). ``[]`` when nothing is pinned: the call then keeps its
-    ``palette=<name or list>``."""
-    pins = _pins_for(spec, table, hue)
-    if not pins:
+    """``_hue_palette``: ``{level: colour}`` over ``_hue_order``, with the
+    pinned levels' colours substituted — what ``render.base.palette_for``
+    paints (a pin wins; every other level keeps its palette colour at its
+    position). ``[]`` without a hue.
+
+    A mapping, not the palette list: handed the whole list (8 colours for 2
+    levels) seaborn warned "The palette list has more values (8) than needed
+    (2)" on every hued export, and a list only pairs colours with levels by
+    position. ``sns.color_palette(<palette>, n)`` is exactly what seaborn
+    itself resolves a named palette or list to over ``hue_order``, so the
+    colours are unchanged."""
+    if not hue:
         return []
+    pins = _pins_for(spec, table, hue)
+    colours = f"sns.color_palette({_mark_palette(spec.style)}, len(_hue_order)).as_hex()"
+    if not pins:
+        return [
+            "# the preview's palette, one colour per level of _hue_order",
+            f"_hue_palette = dict(zip(_hue_order, {colours}))",
+        ]
     return [
         "# pinned mark colours (the plot's over the project's [colors]); the rest",
         "# keep their palette colour at their position in _hue_order",
         f"_hue_pins = {pins!r}",
-        "_hue_palette = [_hue_pins.get(str(v), c) for v, c in zip("
-        f"_hue_order, sns.color_palette({_mark_palette(spec.style)}, len(_hue_order)).as_hex())]",
+        "_hue_palette = {v: _hue_pins.get(str(v), c) for v, c in zip("
+        f"_hue_order, {colours})}}",
     ]
 
 
@@ -1148,7 +1161,6 @@ def _sample_draw_lines(
     # seaborn keys `axes_dict` by (row, col) when both are set, else by the one.
     facet_names = [facets[1], facets[0]] if len(facets) > 1 else facets[:1]
     nested = _nested_x_order(spec, table, roles, shape)
-    palette = _mark_palette(spec.style)
     weight = sample_weight(spec.style)
     linestyle = "-" if join.join else "none"
 
@@ -1172,10 +1184,9 @@ def _sample_draw_lines(
             [
                 # hue_order was stated on the call, so the palette follows it.
                 "_hue_levels = [str(v) for v in _hue_order]",
-                # The call's own palette, pins substituted (`_hue_palette_lines`).
-                "_palette = dict(zip(_hue_levels, _hue_palette))"
-                if _pins_for(spec, table, hue)
-                else f"_palette = dict(zip(_hue_levels, sns.color_palette({palette}, len(_hue_levels))))",
+                # The call's own {level: colour} (`_hue_palette_lines`), keyed
+                # by text like _hue_levels.
+                "_palette = {str(k): c for k, c in _hue_palette.items()}",
             ]
         )
     else:
@@ -1769,9 +1780,9 @@ def _plot_call(
     # The preview's colours, not seaborn's default: a palette over the hue
     # (with any pinned levels substituted, `_hue_palette_lines`), or the one
     # colour of an uncoloured figure (`_mark_palette`/`_mark_color`).
-    palette_lines = _hue_palette_lines(spec, table, color) if color else []
+    palette_lines = _hue_palette_lines(spec, table, color)
     if color:
-        args.append("palette=_hue_palette" if palette_lines else f"palette={_mark_palette(style)}")
+        args.append("palette=_hue_palette")
     else:
         args.append(f"color={_mark_color(spec, table)}")
     # The fills (render.base.fill_alpha: bar, box, violin) as the preview

@@ -1,54 +1,98 @@
 """
 The size of every piece of text in a figure — the ONE owner.
 
-``StyleOptions.text`` (:class:`~scistackplot.spec.TextSizes`) says what the
-user fixed; :func:`resolve_sizes` turns it into a point size per element, and
-every consumer reads that: ``render_matplotlib`` (through :func:`rc_params`
-plus the few explicit sizes matplotlib has no rc key for), the generated
-seaborn code (the same :func:`rc_params` dict, emitted as a literal), and the
-plotly preview (1 pt = 1 px). Nothing else derives a size from ``base``: a
-renderer that multiplies ``base`` by its own ratio is a second owner, which is
-how the plotly bracket labels came to be ``0.8 x`` while matplotlib's were
-``small`` (0.833 x).
+ONE dial, fixed proportions (user, 2026-10-14; ADR D-2026-10-14-1). Every
+element is drawn at ``reference x its ratio``, clamped into that element's
+floor/ceiling (:func:`drawn_sizes`):
 
-Pure, no matplotlib import: the ratios below ARE matplotlib's
-``font_manager.font_scalings``, pinned by ``tests/test_textsize.py`` against
-the real thing, so an unset size here is exactly what matplotlib's relative
-name would have resolved to.
+* the **reference** is ``TextSizes.base`` when fixed (drawn as typed, never
+  clamped), else the number ``autosize`` searched;
+* the **ratios** are the user's intended relative sizes: :data:`DEFAULT_TEXT_RATIOS`
+  (THE table) overridden per element by ``TextSizes.ratios``. Sizing never
+  alters them: a clamp changes what is drawn, never the stored ratio, so a
+  larger canvas restores the proportions;
+* each element's **floor/ceiling** defaults to the target's band
+  (:data:`BANDS`) x its ratio, overridden in pt by ``TextSizes.floors`` /
+  ``ceilings`` (:func:`element_bounds`);
+* an element given its own pt size is FIXED: drawn as typed, outside the
+  scaling, and pinned against the fitting's shrink.
 
-An AUTO spec (``base`` None) is sized by ``autosize``: it chooses a size per
-element and :func:`resolve_sizes` takes them as ``auto=``. Renderers call
-:func:`sizes_for`, which passes a resolved plot's settled sizes, so no consumer
-ever turns ``None`` into a number of its own. See docs/claude/plot-text-and-labels.md.
+:func:`resolve_sizes` turns a spec (and a settled reference) into a point
+size per element, and every consumer reads that: ``render_matplotlib``
+(through :func:`rc_params` plus the few explicit sizes matplotlib has no rc
+key for), the generated seaborn code (the same :func:`rc_params` dict, emitted
+as a literal), and the plotly preview (1 pt = 1 px). Renderers call
+:func:`sizes_for`, which passes a resolved plot's settled reference, so no
+consumer ever turns ``None`` into a number of its own and no consumer
+multiplies by a ratio of its own. See docs/claude/plot-text-and-labels.md.
+
+Pure, no matplotlib import.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Mapping
 
 from scistacklog import Log
 
-from .spec import StyleOptions, TextSizes
+from .spec import TEXT_ELEMENTS, StyleOptions, TextSizes
 
 if TYPE_CHECKING:
     from .resolved import ResolvedPlot
 
 LAYER = "scistackplot"
 
-#: matplotlib's ``font_scalings`` for the relative names its rc defaults use:
-#: ``axes.labelsize`` / ``x|ytick.labelsize`` / ``legend.fontsize`` are
-#: ``medium``, ``figure.titlesize`` / ``axes.titlesize`` are ``large``, and the
-#: bracket rows were drawn ``small``.
-MEDIUM = 1.0
-LARGE = 1.2
-SMALL = 0.833
+#: Each element's intended size over the reference (user, 2026-10-14). THE
+#: table: a fixed ``base`` and auto both draw these, and every default
+#: floor/ceiling is the band times them. Axis titles and the legend title one
+#: step (x1.2) over the body text, the figure title two (x1.44).
+DEFAULT_TEXT_RATIOS: dict[str, float] = {
+    "title": 1.44,
+    "x_label": 1.2,
+    "y_label": 1.2,
+    "x_ticks": 1.0,
+    "y_ticks": 1.0,
+    "groups": 1.0,
+    "legend": 1.0,
+    "legend_title": 1.2,
+    "differences": 1.0,
+}
+
+#: Every element, in the order the log and the GUI state them.
+ELEMENTS: tuple[str, ...] = TEXT_ELEMENTS
+
+
+@dataclass(frozen=True)
+class Band:
+    """A target's reference band in points: the body text (ratio 1) runs from
+    ``floor_pt`` to ``ceiling_pt``; every element's default band is this
+    times its ratio."""
+
+    floor_pt: float
+    ceiling_pt: float
+
+
+#: One band per :data:`spec.TEXT_TARGETS` entry (user, 2026-10-06). Print: 8 pt
+#: is the ladder's own legibility floor (``LabelPolicy.min_font_pt``), 12 pt the
+#: usual journal maximum. Slide: read from across a room. The bands assume the
+#: figure is placed at its saved size.
+BANDS: dict[str, Band] = {
+    "print": Band(floor_pt=8.0, ceiling_pt=12.0),
+    "slide": Band(floor_pt=14.0, ceiling_pt=28.0),
+}
+
+#: Which side of its band a clamped element was held at.
+FLOOR = "floor"
+CEILING = "ceiling"
 
 
 @dataclass(frozen=True)
 class ResolvedSizes:
-    """Every element's size in points, and which of them the user fixed."""
+    """Every element's DRAWN size in points, and how each was decided."""
 
+    #: The reference (the one dial): matplotlib's ``font.size`` for text that
+    #: is no element (an annotation, "no data"), and ratio 1.
     base: float
     title: float
     x_label: float
@@ -57,108 +101,169 @@ class ResolvedSizes:
     y_ticks: float
     groups: float
     legend: float
-    #: ``None`` when unset: the title follows the legend entries WHEREVER they
-    #: end up, including after the legend fit shrank them — a number fixed
-    #: here would leave a big title over shrunken entries.
-    legend_title: float | None
+    legend_title: float
     #: A difference bar's label (``diffbars``).
     differences: float
     #: The elements set explicitly. Fitting never shrinks these.
     pinned: frozenset[str] = frozenset()
+    #: ``{element: "floor" | "ceiling"}``: held at its bound at this reference.
+    clamped: Mapping[str, str] = field(default_factory=dict)
+    #: The ratios drawn with (defaults + the spec's own), per element.
+    ratios: Mapping[str, float] = field(default_factory=dict)
+    #: ``{element: (floor, ceiling)}`` in points (auto only; empty when fixed).
+    bounds: Mapping[str, tuple[float, float]] = field(default_factory=dict)
 
     def is_pinned(self, element: str) -> bool:
         return element in self.pinned
 
     def legend_title_for(self, entry_pt: float) -> float:
-        """The legend title's size when the entries are drawn at ``entry_pt``."""
-        return self.legend_title if self.legend_title is not None else entry_pt
+        """The legend title's size when the entries are drawn at ``entry_pt``:
+        a fixed title as typed; otherwise it keeps its drawn proportion to
+        the entries, so a legend fit that shrinks them shrinks it too."""
+        if self.is_pinned("legend_title") or self.legend <= 0:
+            return self.legend_title
+        return round(self.legend_title * entry_pt / self.legend, 3)
 
     def to_dict(self) -> dict:
-        """JSON for the GUI (``layout.meta.text_sizes``): every element's size,
-        and which are fixed. ``legend_title`` is null when it follows the
-        entries."""
+        """JSON for the GUI (``layout.meta.text_sizes``): every element's drawn
+        size, and which are fixed / clamped, with the ratios and bounds."""
         return {
-            **{name: getattr(self, name) for name in _ELEMENTS},
+            **{name: getattr(self, name) for name in ("base", *ELEMENTS)},
             "pinned": sorted(self.pinned),
+            "clamped": dict(self.clamped),
+            "ratios": dict(self.ratios),
+            "bounds": {e: list(b) for e, b in self.bounds.items()},
         }
 
     def describe(self) -> str:
-        """One line for the log: every size, pinned ones marked."""
-        parts = []
-        for name in _ELEMENTS:
-            value = getattr(self, name)
-            if value is None:
-                parts.append(f"{name}=legend")
-                continue
+        """One line for the log: every size, pinned and clamped ones marked."""
+        parts = [f"reference={_num(self.base)}"]
+        for name in ELEMENTS:
             mark = "*" if name in self.pinned else ""
-            parts.append(f"{name}={_num(value)}{mark}")
+            held = f"({self.clamped[name]})" if name in self.clamped else ""
+            parts.append(f"{name}={_num(getattr(self, name))}{mark}{held}")
         return " ".join(parts) + ("  (* fixed)" if self.pinned else "")
 
 
-#: ``TextSizes`` fields that are not an element's size: ``base`` is what the
-#: elements derive from, ``target`` picks the auto band. Neither is a pin.
-_NOT_ELEMENTS = frozenset({"base", "target"})
+def text_ratios(text: TextSizes) -> dict[str, float]:
+    """Every element's ratio: :data:`DEFAULT_TEXT_RATIOS` and the spec's own."""
+    return {e: float(text.ratios.get(e, DEFAULT_TEXT_RATIOS[e])) for e in ELEMENTS}
 
-#: Every element, in the order the log states them.
-_ELEMENTS = tuple(f.name for f in fields(ResolvedSizes) if f.name != "pinned")
+
+def default_bounds(text: TextSizes) -> dict[str, tuple[float, float]]:
+    """Each element's default ``(floor, ceiling)``: the target's band x its ratio."""
+    band = BANDS[text.target]
+    return {
+        e: (round(band.floor_pt * r, 3), round(band.ceiling_pt * r, 3))
+        for e, r in text_ratios(text).items()
+    }
+
+
+def element_bounds(text: TextSizes) -> dict[str, tuple[float, float]]:
+    """Each element's ``(floor, ceiling)`` in points: the defaults, with the
+    spec's own pt bounds over them. A user floor above the (default) ceiling
+    lifts the ceiling to it, and a user ceiling under the (default) floor
+    lowers the floor: what the user typed wins (logged at DEBUG)."""
+    out = {}
+    for element, (floor, ceiling) in default_bounds(text).items():
+        floor = float(text.floors.get(element, floor))
+        ceiling = float(text.ceilings.get(element, ceiling))
+        if floor > ceiling:
+            if element in text.floors:
+                ceiling = floor
+            else:
+                floor = ceiling
+            Log.debug(
+                "text %s: floor and ceiling crossed; drawn at %gpt", element, floor, layer=LAYER
+            )
+        out[element] = (floor, ceiling)
+    return out
+
+
+def auto_elements(text: TextSizes) -> tuple[str, ...]:
+    """The elements the reference scales: every one the user did not fix."""
+    return tuple(e for e in ELEMENTS if getattr(text, e) is None)
+
+
+def reference_range(text: TextSizes) -> tuple[float, float] | None:
+    """``(bottom, top)`` of the references that change anything: from the
+    smallest at which some scaled element is still above its floor to the
+    largest at which some is still below its ceiling. None when every
+    element is fixed (the reference then sizes nothing)."""
+    elements = auto_elements(text)
+    if not elements:
+        return None
+    ratios = text_ratios(text)
+    bounds = element_bounds(text)
+    bottom = min(bounds[e][0] / ratios[e] for e in elements)
+    top = max(bounds[e][1] / ratios[e] for e in elements)
+    return round(bottom, 3), round(top, 3)
+
+
+def drawn_sizes(
+    reference: float, text: TextSizes, *, clamp: bool = True
+) -> tuple[dict[str, float], dict[str, str]]:
+    """``({element: pt}, {element: "floor" | "ceiling"})`` at ``reference``.
+
+    The one rule: a fixed element as typed; every other one
+    ``reference x ratio``, clamped into :func:`element_bounds` (``clamp`` off
+    for a fixed ``base``: manual is anything). Never writes anything back.
+    """
+    ratios = text_ratios(text)
+    bounds = element_bounds(text) if clamp else {}
+    sizes: dict[str, float] = {}
+    clamped: dict[str, str] = {}
+    for element in ELEMENTS:
+        fixed = getattr(text, element)
+        if fixed is not None:
+            sizes[element] = float(fixed)
+            continue
+        value = reference * ratios[element]
+        if clamp:
+            floor, ceiling = bounds[element]
+            if value < floor - 1e-9:
+                value, clamped[element] = floor, FLOOR
+            elif value > ceiling + 1e-9:
+                value, clamped[element] = ceiling, CEILING
+        sizes[element] = round(value, 3)
+    return sizes, clamped
 
 
 def resolve_sizes(
-    style: StyleOptions | TextSizes, *, auto: Mapping[str, float] | None = None
+    style: StyleOptions | TextSizes, *, reference: float | None = None
 ) -> ResolvedSizes:
-    """Every element's size in points, derived where the user set none.
+    """Every element's drawn size in points.
 
-    ``auto`` is ``autosize.AutoTextSize.sizes`` for an auto spec (``base``
-    None): ``{element: pt, "base": pt}``. A size the user fixed still wins;
-    an element auto did not size is derived from ``base`` as before. Callers
-    holding a resolved plot use :func:`sizes_for`, which passes it.
+    ``reference`` is the auto reference (``autosize.AutoTextSize.reference``);
+    a fixed ``base`` wins over it and is never clamped. Callers holding a
+    resolved plot use :func:`sizes_for`, which passes it.
     """
     text = style.text if isinstance(style, StyleOptions) else style
-    chosen = dict(auto or {}) if text.base is None else {}
     if text.base is not None:
-        base = float(text.base)
-    elif "base" in chosen:
-        base = float(chosen["base"])
+        ref, clamp = float(text.base), False
+    elif reference is not None:
+        ref, clamp = float(reference), True
     else:
-        base = _unsettled_base(text)
-
-    def pick(name: str, derived: float) -> float:
-        value = getattr(text, name)
-        if value is not None:
-            return float(value)
-        if name in chosen:
-            return float(chosen[name])
-        return round(derived, 3)
-
-    x_ticks = pick("x_ticks", base * MEDIUM)
-    legend = pick("legend", base * MEDIUM)
-    pinned = frozenset(
-        f.name
-        for f in fields(TextSizes)
-        if f.name not in _NOT_ELEMENTS and getattr(text, f.name) is not None
-    )
+        ref, clamp = _unsettled_reference(text), True
+    sizes, clamped = drawn_sizes(ref, text, clamp=clamp)
+    pinned = frozenset(e for e in ELEMENTS if getattr(text, e) is not None)
     return ResolvedSizes(
-        base=base,
-        title=pick("title", base * LARGE),
-        x_label=pick("x_label", base * MEDIUM),
-        y_label=pick("y_label", base * MEDIUM),
-        x_ticks=x_ticks,
-        y_ticks=pick("y_ticks", base * MEDIUM),
-        # Unset brackets scale with the ticks they sit under, so a fixed tick
-        # size moves them too — they are read as one block.
-        groups=pick("groups", x_ticks * SMALL),
-        legend=legend,
-        legend_title=float(text.legend_title) if text.legend_title is not None else None,
-        differences=pick("differences", base * MEDIUM),
+        base=ref,
+        **sizes,
         pinned=pinned,
+        clamped=clamped,
+        ratios=text_ratios(text),
+        bounds=element_bounds(text) if clamp else {},
     )
 
 
 def sizes_for(resolved: "ResolvedPlot") -> ResolvedSizes:
     """The sizes ``resolved`` is drawn at: its spec, and its settled auto
-    sizes (``ResolvedPlot.auto_text``). What every renderer reads."""
+    reference (``ResolvedPlot.auto_text``). What every renderer reads."""
     auto = resolved.auto_text
-    return resolve_sizes(resolved.spec.style, auto=auto.sizes if auto is not None else None)
+    return resolve_sizes(
+        resolved.spec.style, reference=auto.reference if auto is not None else None
+    )
 
 
 def rc_params(sizes: ResolvedSizes) -> dict[str, float]:
@@ -168,10 +273,8 @@ def rc_params(sizes: ResolvedSizes) -> dict[str, float]:
     happens to be in force. ``axes.labelsize`` is the x title's size:
     matplotlib has one key for both axis titles, so the y title is passed
     explicitly (``fontsize=sizes.y_label``) wherever one is set.
-    ``legend.title_fontsize`` is only stated when fixed; matplotlib's own
-    ``None`` already means "the entries' size".
     """
-    params = {
+    return {
         "font.size": sizes.base,
         "figure.titlesize": sizes.title,
         "axes.titlesize": sizes.title,
@@ -179,31 +282,28 @@ def rc_params(sizes: ResolvedSizes) -> dict[str, float]:
         "xtick.labelsize": sizes.x_ticks,
         "ytick.labelsize": sizes.y_ticks,
         "legend.fontsize": sizes.legend,
+        "legend.title_fontsize": sizes.legend_title,
     }
-    if sizes.legend_title is not None:
-        params["legend.title_fontsize"] = sizes.legend_title
-    return params
 
 
 def _num(value: float) -> str:
     return f"{value:g}"
 
 
-def _unsettled_base(text: TextSizes) -> float:
-    """The base for an AUTO size nobody settled: the band's ceiling.
+def _unsettled_reference(text: TextSizes) -> float:
+    """The reference for an AUTO size nobody settled: the top of its range.
 
     Renderers settle first (``autosize.settle``), so this is reached only by a
     caller sizing text outside a render — a size estimate, a test, a describe.
     Logged at DEBUG so a renderer that forgot to settle shows up in scidb.log
     as this line next to its own render line.
     """
-    from .autosize import BANDS
-
-    ceiling = BANDS[text.target].ceiling_pt
+    span = reference_range(text)
+    top = span[1] if span is not None else BANDS[text.target].ceiling_pt
     Log.debug(
-        "text size is auto but unsettled; sizing at the %s ceiling %gpt",
+        "text size is auto but unsettled; sizing at the %s top reference %gpt",
         text.target,
-        ceiling,
+        top,
         layer=LAYER,
     )
-    return ceiling
+    return top

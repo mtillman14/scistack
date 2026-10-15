@@ -53,6 +53,7 @@ from .base import (
     shows_legend,
     BracketGeometry,
     GridReach,
+    AxisText,
     X_GROUP_GAP_PT,
     ruled_bracket_depths,
     shows_x_labels,
@@ -216,6 +217,7 @@ def render(resolved: ResolvedPlot):
             if hidden:
                 Log.debug("y titles hidden: %s", "; ".join(hidden), layer=LAYER)
             setattr(fig, GRID_REACH_ATTR, _grid_reach(fig, axes, n_rows, n_cols))
+            setattr(fig, AXIS_TEXT_ATTR, _axis_text(fig, axes, n_rows, n_cols, resolved))
             return fig
 
 
@@ -871,8 +873,8 @@ def _tick_label_depth_pt(fig, ax, renderer) -> float:
     Measured, so a rotated or wrapped label pushes the brackets down with it."""
     bottoms = [
         text.get_window_extent(renderer).y0
-        for text in ax.xaxis.get_ticklabels()
-        if text.get_visible() and text.get_text()
+        for _value, text in drawn_ticks(ax.xaxis)
+        if text.get_text()
     ]
     if not bottoms:
         return 0.0
@@ -1118,6 +1120,112 @@ def _grid_reach(fig, axes, n_rows: int, n_cols: int) -> GridReach:
     return reach
 
 
+def drawn_ticks(axis) -> list[tuple[float, Any]]:
+    """``(value, label)`` of each major tick label matplotlib actually DRAWS.
+
+    The one owner of "which tick labels exist" for every measurement. NOT
+    ``axis.get_ticklabels()``: that returns a label for every position the
+    locator proposes, and an ``AutoLocator`` steps one tick past each end of
+    the view. Those labels are positioned beyond the axes and never drawn
+    (``Axis._update_ticks`` drops them at draw time), but they measure — so
+    the auto text size read a 1x1 figure's y ticks as running 0.43 in off the
+    canvas and held them at the band's floor (C-Brace, 2026-10-14).
+
+    The in-view rule is matplotlib's own: the tick's transformed position
+    within the transformed view interval, with a relative tolerance.
+    """
+    axis.get_majorticklabels()  # positions every tick at its current loc
+    locs = np.asarray(axis.get_majorticklocs(), dtype=float)
+    if locs.size == 0:
+        return []
+    transform = axis.get_transform()
+    lo, hi = sorted(transform.transform(np.asarray(axis.get_view_interval(), dtype=float)))
+    tol = 1e-10 * max(abs(hi - lo), 1e-300)
+    out = []
+    for loc, loc_t, tick in zip(locs, transform.transform(locs), axis.get_major_ticks(len(locs))):
+        if not (lo - tol <= loc_t <= hi + tol):
+            continue
+        for label in (tick.label1, tick.label2):
+            if label.get_visible():
+                out.append((float(loc), label))
+    return out
+
+
+#: Attribute on a rendered Figure holding ``tuple[base.AxisText, ...]``: every
+#: visible panel's y text, and each NUMERIC x axis's text.
+AXIS_TEXT_ATTR = "scistackplot_axis_text"
+
+
+def _axis_text(fig, axes, n_rows: int, n_cols: int, resolved: ResolvedPlot) -> tuple:
+    """Each visible panel's drawn ticks and its title's distance from them,
+    on the final layout, for the preview to copy (``base.AxisText``): the y
+    axis always, the x axis when it is numeric (``is_numeric_axis``)."""
+    renderer = fig.canvas.get_renderer()
+    out = []
+    copied = kept = 0
+    for row in range(n_rows):
+        for col in range(n_cols):
+            ax = axes[row][col]
+            if not ax.get_visible():
+                continue
+            for side, axis in (("y", ax.yaxis), ("x", ax.xaxis)):
+                if side == "x" and not is_numeric_axis(axis):
+                    continue
+                item, reason = _one_axis_text(fig, renderer, ax, side, axis, row, col, resolved)
+                out.append(item)
+                if reason is None:
+                    copied += 1
+                else:
+                    kept += 1
+                    Log.debug(
+                        "panel (%d,%d): %s tick text not copied to the preview (%s)",
+                        row, col, side, reason, layer=LAYER,
+                    )
+    Log.debug(
+        "axis text: %d axis/axes copied to the preview, %d left to plotly; title gaps %s",
+        copied, kept, [(a.axis, a.title_gap_pt) for a in out], layer=LAYER,
+    )
+    return tuple(out)
+
+
+def _one_axis_text(fig, renderer, ax, side: str, axis, row: int, col: int, resolved):
+    """``(AxisText, reason not copied | None)`` for one axis of one panel."""
+    ticks = drawn_ticks(axis)
+    # One entry per value (label1 and label2 may both be drawn).
+    first = dict(reversed([(v, text.get_text()) for v, text in ticks]))
+    values = tuple(sorted(first))
+    texts = tuple(first[v] for v in values)
+    offset = axis.get_offset_text().get_text()
+    reason = None
+    if resolved.kind is PlotKind.HEATMAP:
+        reason = "heatmap"
+    elif offset:
+        reason = f"offset {offset!r}"
+    elif any("$" in t for t in texts):
+        reason = "mathtext"
+    shown = [text for _, text in ticks if text.get_text()]
+    gap = None
+    title = axis.label
+    if title.get_visible() and title.get_text():
+        box = title.get_window_extent(renderer)
+        if side == "y":
+            edge = (
+                min(t.get_window_extent(renderer).x0 for t in shown)
+                if shown
+                else ax.get_window_extent(renderer).x0
+            )
+            distance = edge - box.x1
+        else:
+            edge = (
+                min(t.get_window_extent(renderer).y0 for t in shown)
+                if shown
+                else ax.get_window_extent(renderer).y0
+            )
+            distance = edge - box.y1
+        gap = round(max(0.0, _pt(fig, distance)), 2)
+    return AxisText(side, row, col, values, texts if reason is None else None, gap), reason
+
+
 def _verify_x_ticks(fig, ticks: list[_XTicks], fit: LabelFit) -> None:
     """Check the DRAWN labels against the decision, and WARN if they collide.
 
@@ -1134,8 +1242,8 @@ def _verify_x_ticks(fig, ticks: list[_XTicks], fit: LabelFit) -> None:
         drawn = sorted(
             (
                 text.get_window_extent(renderer)
-                for text in item.ax.xaxis.get_ticklabels()
-                if text.get_visible() and text.get_text()
+                for _value, text in drawn_ticks(item.ax.xaxis)
+                if text.get_text()
             ),
             key=lambda box: box.x0,
         )
@@ -1738,6 +1846,7 @@ def layout_decisions(
     height_in`` (the spec's own size when omitted), and reads back what
     was decided: ``{"ticks": LabelFit | None, "brackets": LabelFit | None,
     "bracket_geometry": BracketGeometry | None, "grid_reach": GridReach | None,
+    "y_axes": tuple[AxisText, ...] | None, "x_axes": tuple[AxisText, ...] | None,
     "legend": dict | None, "difference_bars": FigurePlacement | None,
     "width_in", "height_in"}``. The plotly preview
     applies these rather than estimating text of its own, so what the preview
@@ -1758,11 +1867,18 @@ def layout_decisions(
         fig = render(target)
         try:
             fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
+            axis_text = getattr(fig, AXIS_TEXT_ATTR, None) or ()
             return {
                 "ticks": fits.get("ticks"),
                 "brackets": fits.get("brackets"),
                 "bracket_geometry": fits.get("bracket_geometry"),
                 "grid_reach": getattr(fig, GRID_REACH_ATTR, None),
+                # tuple[base.AxisText, ...]: the tick values/labels and title
+                # distance the export drew, which the preview copies so the
+                # y text it puts in a column gap is the text measured for it,
+                # and a numeric x axis shows the ticks the auto size judged.
+                "y_axes": tuple(a for a in axis_text if a.axis == "y"),
+                "x_axes": tuple(a for a in axis_text if a.axis == "x"),
                 "legend": getattr(fig, LEGEND_ATTR, None),
                 # diffbars.FigurePlacement, or None: the preview draws these
                 # bars and ranges rather than placing its own.
@@ -1779,8 +1895,9 @@ def layout_decisions(
 
 def layout_report(resolved: ResolvedPlot):
     """What a layout of ``resolved`` needed (``autosize.LayoutReport``): the
-    measurements the auto text size judges a candidate by. Renders, reads
-    what the export already records on the figure, closes it."""
+    measurements the auto text size judges a reference by. Renders, reads
+    what the export already records on the figure, measures the drawn tick
+    labels and y titles, closes it."""
     import matplotlib.pyplot as plt
 
     from ..autosize import LayoutReport
@@ -1792,6 +1909,7 @@ def layout_report(resolved: ResolvedPlot):
         legend = getattr(fig, LEGEND_ATTR, None) or {}
         reach = getattr(fig, GRID_REACH_ATTR, None)
         by_element, unattributed = _overflow_by_element(fig)
+        rules = _tick_and_title_rules(fig)
         return LayoutReport(
             tick_steps=tuple(ticks.steps) if ticks is not None else (),
             ticks_fit=ticks.fits if ticks is not None else True,
@@ -1802,25 +1920,105 @@ def layout_report(resolved: ResolvedPlot):
             below_overlap_pt=reach.below_overlap_pt if reach is not None else 0.0,
             overflow_by_element=by_element,
             unattributed_overflow_in=unattributed,
-            data_fraction=_data_fraction(fig),
+            **rules,
         )
     finally:
         plt.close(fig)
 
 
-def _data_fraction(fig) -> float:
-    """The visible axes boxes' area over the canvas area (colorbars and
-    other non-panel axes excluded: they carry no data of the panels)."""
+#: Drawn tick labels may touch by this much (points) before they collide.
+TICK_COLLISION_TOLERANCE_PT = 0.5
+
+
+def is_numeric_axis(axis) -> bool:
+    """Whether matplotlib places this axis's ticks itself (a numeric scale).
+
+    A categorical axis is drawn at fixed positions (``set_xticks``, a
+    ``FixedLocator``) or by matplotlib's string category locator; its labels
+    are fitted by ``ticklabels.fit_labels`` and judged by that fit."""
+    from matplotlib.category import StrCategoryLocator
+    from matplotlib.ticker import FixedLocator
+
+    return not isinstance(axis.get_major_locator(), (FixedLocator, StrCategoryLocator))
+
+
+def _panel_name(ax, index: int) -> str:
+    spec = ax.get_subplotspec() if hasattr(ax, "get_subplotspec") else None
+    if spec is None:
+        return f"#{index}"
+    return f"({spec.rowspan.start},{spec.colspan.start})"
+
+
+def _shows_tick_labels(axis) -> bool:
+    """Whether any major tick label of ``axis`` is switched on (a shared y
+    axis right of the first column draws none, by design)."""
+    return any(t.label1.get_visible() or t.label2.get_visible() for t in axis.get_major_ticks())
+
+
+def _collides(boxes: list, horizontal: bool, tolerance_px: float) -> bool:
+    """Whether neighbouring boxes overlap along the axis direction."""
+    if horizontal:
+        ordered = sorted(boxes, key=lambda b: b.x0)
+        return any(a.x1 - b.x0 > tolerance_px for a, b in zip(ordered, ordered[1:]))
+    ordered = sorted(boxes, key=lambda b: b.y0)
+    return any(a.y1 - b.y0 > tolerance_px for a, b in zip(ordered, ordered[1:]))
+
+
+def _tick_and_title_rules(fig) -> dict:
+    """The auto size's measured rules on the DRAWN text (``drawn_ticks``):
+    numeric x/y tick labels that collide (rule 1), the fewest y tick labels
+    any panel shows and the fewest x tick labels any numeric x axis shows
+    (rules 3 and 4), and y titles taller than their panel (rule 5).
+
+    Panels whose labels are switched off (shared axes) are not counted, and a
+    categorical x axis is the tick fit's (``fit_labels``), not counted here.
+    """
     renderer = fig.canvas.get_renderer()
-    width_px, height_px = (v * fig.dpi for v in fig.get_size_inches())
-    canvas = (width_px * height_px) or 1.0
-    area = 0.0
-    for ax in fig.axes:
+    tolerance_px = TICK_COLLISION_TOLERANCE_PT * fig.dpi / 72.0
+    x_collide: list[str] = []
+    y_collide: list[str] = []
+    fewest_x: tuple[str, int] | None = None
+    fewest_y: tuple[str, int] | None = None
+    overruns: list[tuple[str, float]] = []
+    counted = 0
+    for index, ax in enumerate(fig.axes):
         if not ax.get_visible() or ax.get_label() == "<colorbar>":
             continue
-        box = ax.get_window_extent(renderer)
-        area += box.width * box.height
-    return area / canvas
+        name = _panel_name(ax, index)
+        for axis, horizontal in ((ax.xaxis, True), (ax.yaxis, False)):
+            if not is_numeric_axis(axis):
+                continue
+            labels = [text for _value, text in drawn_ticks(axis) if text.get_text()]
+            if not labels and not _shows_tick_labels(axis):
+                continue
+            counted += 1
+            count = len({round(v, 12) for v, text in drawn_ticks(axis) if text.get_text()})
+            if horizontal:
+                if fewest_x is None or count < fewest_x[1]:
+                    fewest_x = (name, count)
+            elif fewest_y is None or count < fewest_y[1]:
+                fewest_y = (name, count)
+            boxes = [text.get_window_extent(renderer) for text in labels]
+            if _collides(boxes, horizontal, tolerance_px):
+                (x_collide if horizontal else y_collide).append(name)
+        title = ax.yaxis.label
+        if title.get_visible() and title.get_text():
+            over = title.get_window_extent(renderer).height - ax.get_window_extent(renderer).height
+            if over > 0:
+                overruns.append((name, round(_pt(fig, over), 2)))
+    Log.debug(
+        "auto-size rules: %d numeric axis/axes; fewest y ticks %s, fewest x ticks %s; "
+        "collisions x %s y %s; y title overruns %s",
+        counted, fewest_y, fewest_x, x_collide or "none", y_collide or "none",
+        overruns or "none", layer=LAYER,
+    )
+    return {
+        "x_tick_collisions": tuple(x_collide),
+        "y_tick_collisions": tuple(y_collide),
+        "fewest_y_ticks": fewest_y,
+        "fewest_x_ticks": fewest_x,
+        "y_title_overruns": tuple(overruns),
+    }
 
 
 def _element_artists(fig) -> dict[str, list]:
@@ -1838,14 +2036,25 @@ def _element_artists(fig) -> dict[str, list]:
         out["title"].append(ax.title)
         out["x_label"].append(ax.xaxis.label)
         out["y_label"].append(ax.yaxis.label)
-        out["x_ticks"].extend(ax.get_xticklabels())
-        out["y_ticks"].extend(ax.get_yticklabels())
+        out["x_ticks"].extend(text for _value, text in drawn_ticks(ax.xaxis))
+        out["y_ticks"].extend(text for _value, text in drawn_ticks(ax.yaxis))
         for text in ax.texts:
             gid = text.get_gid()
             if gid == X_GROUP_LABEL_GID:
                 out["groups"].append(text)
             elif gid == DIFF_LABEL_GID:
                 out["differences"].append(text)
+    proposed = sum(
+        len(ax.get_xticklabels()) + len(ax.get_yticklabels())
+        for ax in fig.axes
+        if ax.get_visible()
+    )
+    skipped = proposed - len(out["x_ticks"]) - len(out["y_ticks"])
+    if skipped > 0:
+        Log.debug(
+            "overflow: measuring %d drawn tick label(s); %d proposed outside the view "
+            "are not drawn and not measured", proposed - skipped, skipped, layer=LAYER,
+        )
     out["legend"].extend(fig.legends)
     return out
 

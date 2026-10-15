@@ -179,6 +179,40 @@ class GridReach:
         )
 
 
+@dataclass(frozen=True)
+class AxisText:
+    """One panel axis's text as the export DREW it: the tick values and their
+    labels, and how far the axis title sits from those labels (points).
+
+    ``axis`` is ``"y"`` for every panel, or ``"x"`` for a NUMERIC x axis (a
+    categorical one is the tick fit's, ``LabelFit``). The x side was added
+    with the one-dial auto size (2026-10-14): matplotlib's locator thins a
+    numeric x axis as the font grows, and the preview must show the ticks
+    the export judged, not plotly's own.
+
+    Measured by ``mpl._axis_text`` on the final layout, read by the preview
+    (``plotly_._apply_axis_text``) so its axes carry the same numbers at the
+    same distance. ``GridReach`` sizes the column gaps from the export's text;
+    when plotly picked its own tick values (wider, e.g. ``1505`` where the
+    export drew ``5`` with a ``+1.5e3`` offset) and its own title standoff, the
+    preview's y text was wider than the gap measured for it and ran into the
+    panel on its left (C-Brace, 2026-10-14).
+    """
+
+    axis: str
+    row: int
+    col: int
+    #: Data values of the drawn ticks, low to high.
+    values: tuple[float, ...]
+    #: Their labels, or ``None`` when the export's text cannot be copied
+    #: (an offset/multiplier label, mathtext): the preview then keeps its own.
+    texts: tuple[str, ...] | None
+    #: Gap between the tick labels and the axis title (y: the labels' left
+    #: edge to the title's right edge; x: their bottom to its top), measured
+    #: from the axes edge when there are no labels; ``None`` without a title.
+    title_gap_pt: float | None = None
+
+
 def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
     """Same idea on the other axis: nothing directly to the left.
 

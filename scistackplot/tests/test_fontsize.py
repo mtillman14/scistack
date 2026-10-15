@@ -93,17 +93,19 @@ def test_matplotlib_draws_each_element_at_its_own_size(scalar_table):
         assert matplotlib.rcParams[key] == before[key], key
 
 
-def test_base_alone_scales_everything_like_the_old_single_knob(scalar_table):
-    """Unset elements derive from base with matplotlib's ratios."""
-    from scistackplot import render_matplotlib
+def test_base_alone_scales_everything_by_the_ratio_table(scalar_table):
+    """Unset elements are base x DEFAULT_TEXT_RATIOS (user, 2026-10-14), the
+    same table auto uses; a fixed base is never clamped."""
+    from scistackplot import DEFAULT_TEXT_RATIOS, render_matplotlib
 
     figure = _saved(render_matplotlib(resolve(_spec(TextSizes(base=20.0)), scalar_table)[0]))
     try:
         sizes = _sizes(figure)
-        for name in ("x_label", "y_label", "x_ticks", "y_ticks", "legend", "legend_title"):
-            assert all(v == pytest.approx(20.0) for v in sizes[name]), (name, sizes[name])
-        assert sizes["title"] == [pytest.approx(24.0)]
-        assert all(v == pytest.approx(20.0 * 0.833, abs=1e-2) for v in sizes["groups"])
+        for name, values in sizes.items():
+            expected = 20.0 * DEFAULT_TEXT_RATIOS[name]
+            assert all(v == pytest.approx(expected, abs=1e-2) for v in values), (name, values)
+        assert sizes["title"] == [pytest.approx(28.8)]
+        assert sizes["legend_title"] == [pytest.approx(24.0)]
     finally:
         matplotlib.pyplot.close(figure)
 
