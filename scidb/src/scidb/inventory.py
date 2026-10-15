@@ -26,9 +26,17 @@ CBrace subject from being reported missing at Traditional-only sessions. A
 row NULL at a Within key belongs to no stratum. Limitation: a value only
 counts as expected in a stratum if something in that stratum has it.
 
+**Collapsed blocks.** A view collapses by default: when every combination
+sharing a prefix of the Cross keys (schema order) has one status, the block
+is shown as ONE row with :data:`ALL_LEVELS` in the deeper Cross columns. The
+shallowest uniform block wins, so a subject with no data at all is one row
+``(all), (all)``. ``(all)`` means every level of that key in the stratum.
+Statuses and counts are per combination and do not change.
+
 Owners (CLAUDE.md NOTE 4): :func:`schema_inventory` computes statuses,
 :func:`_strata` the strata and their per-key values, :func:`inventory_table`
-decides which columns and rows a "missing only" / "all" view shows, and
+decides which columns and rows a "missing only" / "all" view shows (and
+collapses them, via :func:`_collapse_rows`), and
 :func:`write_inventory_csv` writes that table. The CLI, the Inspector and the
 GUI only consume these. Design notes: docs/claude/data-inventory.md.
 """
@@ -39,6 +47,7 @@ import csv
 import itertools
 import math
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -52,6 +61,9 @@ PRESENT = "present"
 MISSING = "missing"
 EXCLUDED = "excluded"
 STATUSES = (PRESENT, MISSING, EXCLUDED)
+
+#: Value shown in a Cross column a collapsed row stands for every level of.
+ALL_LEVELS = "(all)"
 
 #: Above this many combinations the product is refused before it is built.
 MAX_COMBINATIONS = 1_000_000
@@ -99,6 +111,11 @@ class SchemaInventory:
     ``levels`` is each column's global value list. ``strata`` is empty when
     there are no Within keys; ``product_size`` and ``counts`` are totals over
     all strata.
+
+    ``row_blocks`` is how ``rows`` is laid out: consecutive runs of
+    ``product_size`` rows, one per block, in order. It equals ``strata`` with
+    Within keys and is one stratum (no values, global levels) without them.
+    :func:`_collapse_rows` reads it.
     """
 
     keys: list[str]
@@ -109,14 +126,20 @@ class SchemaInventory:
     rows: list[tuple] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=_zero_counts)
     product_size: int = 0
+    row_blocks: list[StratumSummary] = field(default_factory=list, repr=False)
 
     def __post_init__(self):
         if not self.columns:
             self.columns = list(self.keys)
 
-    def to_dict(self, missing_only: bool = True, limit: int | None = None) -> dict:
+    def to_dict(
+        self,
+        missing_only: bool = True,
+        limit: int | None = None,
+        collapse: bool = True,
+    ) -> dict:
         """JSON shape shared by ``scidb inventory --json`` and the GUI."""
-        columns, rows = inventory_table(self, missing_only)
+        columns, rows = inventory_table(self, missing_only, collapse=collapse)
         total = len(rows)
         if limit is not None and total > limit:
             rows = rows[:limit]
@@ -132,6 +155,8 @@ class SchemaInventory:
             "product_size": self.product_size,
             "strata": [s.to_dict() for s in self.strata],
             "missing_only": missing_only,
+            "collapse": collapse,
+            "all_marker": ALL_LEVELS,
         }
 
 
@@ -203,6 +228,7 @@ def schema_inventory(
         columns=columns,
         strata=strata if within_keys else [],
         product_size=product_size,
+        row_blocks=strata,
     )
     if product_size == 0:
         Log.info(
@@ -301,7 +327,7 @@ def _strata(
 
 
 def inventory_table(
-    inv: SchemaInventory, missing_only: bool
+    inv: SchemaInventory, missing_only: bool, collapse: bool = True
 ) -> tuple[list[str], list[tuple]]:
     """The columns and rows one view shows: the one owner of both modes.
 
@@ -309,22 +335,106 @@ def inventory_table(
     every row would say the same thing). Otherwise every row plus a
     ``status`` column. Key columns are ``inv.columns`` (Cross and Within keys
     in schema order).
+
+    ``collapse``: each block of combinations that share a prefix of the Cross
+    keys and all have one status is shown as one row, with
+    :data:`ALL_LEVELS` in the deeper Cross columns (:func:`_collapse_rows`).
+    ``False`` = one row per combination.
     """
     n = len(inv.columns)
+    rows = _collapse_rows(inv) if collapse else inv.rows
     if missing_only:
-        return list(inv.columns), [r[:n] for r in inv.rows if r[n] == MISSING]
-    return [*inv.columns, "status"], list(inv.rows)
+        return list(inv.columns), [r[:n] for r in rows if r[n] == MISSING]
+    return [*inv.columns, "status"], list(rows)
+
+
+def _collapse_rows(inv: SchemaInventory) -> list[tuple]:
+    """``inv.rows`` with every uniform block folded into one row.
+
+    Per row block (stratum), a *block* is every combination sharing a prefix
+    of the Cross-key values. Walking prefixes shallow-to-deep in level order,
+    the first prefix whose rows all have one status becomes one row: its own
+    values, :data:`ALL_LEVELS` in the deeper Cross columns (the value itself
+    for a key with one level in the stratum), the Within values of the
+    stratum, and that status. Otherwise it recurses one key deeper. A
+    single combination is always uniform, so every row is accounted for, and
+    rows keep product order. O(rows × Cross keys).
+    """
+    n = len(inv.columns)
+    cross = list(inv.keys)
+    m = len(cross)
+    cross_pos = [inv.columns.index(k) for k in cross]
+    blocks = inv.row_blocks or [
+        StratumSummary(values={}, levels={k: inv.levels[k] for k in cross},
+                       product_size=len(inv.rows))
+    ]
+
+    clash = [k for k in cross if ALL_LEVELS in inv.levels.get(k, ())]
+    if clash:
+        Log.warn(
+            f"inventory_table: schema key(s) {clash} have a real level "
+            f"{ALL_LEVELS!r}; collapsed rows use the same text"
+        )
+
+    out: list[tuple] = []
+    collapsed_at: Counter = Counter()  # first collapsed key -> blocks
+    start = 0
+    for block in blocks:
+        block_rows = inv.rows[start:start + block.product_size]
+        start += block.product_size
+        if not block_rows:
+            continue
+        levels = [block.levels[k] for k in cross]
+        # Rows still to come at depth d, for one prefix: product of the
+        # remaining level counts.
+        remaining = [math.prod(len(lv) for lv in levels[d:]) for d in range(m + 1)]
+        tally: Counter = Counter()
+        for r in block_rows:
+            values = tuple(r[p] for p in cross_pos)
+            for d in range(m + 1):
+                tally[(values[:d], r[n])] += 1
+
+        def walk(prefix: tuple, depth: int) -> None:
+            for status in STATUSES:
+                if tally[(prefix, status)] == remaining[depth]:
+                    row = [None] * n
+                    for k, v in block.values.items():
+                        row[inv.columns.index(k)] = v
+                    for d, p in enumerate(cross_pos):
+                        row[p] = prefix[d] if d < depth else _all_of(levels[d])
+                    out.append((*row, status))
+                    folded = [k for k, lv in zip(cross[depth:], levels[depth:]) if len(lv) > 1]
+                    if folded:
+                        collapsed_at[folded[0]] += 1
+                    return
+            for v in levels[depth]:
+                walk((*prefix, v), depth + 1)
+
+        walk((), 0)
+
+    if collapsed_at:
+        Log.debug(
+            f"inventory_table: collapse rows {len(inv.rows)} -> {len(out)} "
+            f"(blocks collapsed from key: {dict(collapsed_at)})"
+        )
+    return out
+
+
+def _all_of(levels: list[str]) -> str:
+    """A collapsed cell: :data:`ALL_LEVELS`, or the value itself when the key
+    has only one level in the stratum (nothing was folded, so say which)."""
+    return levels[0] if len(levels) == 1 else ALL_LEVELS
 
 
 def write_inventory_csv(
-    inv: SchemaInventory, path: str | Path, missing_only: bool
+    inv: SchemaInventory, path: str | Path, missing_only: bool, collapse: bool = True
 ) -> int:
     """Write the inventory as long-format CSV; return the number of data rows.
 
     One column per chosen key (schema order), plus ``status`` unless
-    ``missing_only`` — exactly :func:`inventory_table`.
+    ``missing_only`` — exactly :func:`inventory_table`, collapsed the same way.
     """
-    columns, rows = inventory_table(inv, missing_only)
+    columns, rows = inventory_table(inv, missing_only, collapse=collapse)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:

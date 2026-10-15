@@ -57,6 +57,8 @@ class InventoryRequest(BaseModel):
     #: Schema keys to run the inventory within (one stratum per combination).
     within: list[str] | None = None
     missing_only: bool = True
+    #: Fold uniform blocks into one row with "(all)" (scidb.inventory).
+    collapse: bool = True
     limit: int = INVENTORY_ROW_LIMIT
 
 
@@ -64,6 +66,8 @@ class ExportInventory(BaseModel):
     keys: list[str] | None = None
     within: list[str] | None = None
     missing_only: bool = True
+    #: Fold uniform blocks into one row with "(all)" (scidb.inventory).
+    collapse: bool = True
     out_path: str
 
 
@@ -75,10 +79,12 @@ def _schema_inventory(db, req: InventoryRequest) -> dict:
     from scidb.inventory import schema_inventory
 
     inv = schema_inventory(db, req.keys, req.within)
-    out = inv.to_dict(missing_only=req.missing_only, limit=max(0, req.limit))
+    out = inv.to_dict(
+        missing_only=req.missing_only, limit=max(0, req.limit), collapse=req.collapse
+    )
     logger.info(
-        "[schema] schema_inventory keys=%s within=%s strata=%d missing_only=%s -> %d/%d row(s) sent%s",
-        out["keys"], out["within"], len(out["strata"]), req.missing_only, len(out["rows"]), out["total_rows"],
+        "[schema] schema_inventory keys=%s within=%s strata=%d missing_only=%s collapse=%s -> %d/%d row(s) sent%s",
+        out["keys"], out["within"], len(out["strata"]), req.missing_only, req.collapse, len(out["rows"]), out["total_rows"],
         " (truncated)" if out["truncated"] else "",
     )
     return out
@@ -92,8 +98,12 @@ def _export_schema_inventory(db, req: ExportInventory) -> dict:
     if not out.is_absolute():
         raise ValueError(f"export path must be absolute, got {req.out_path!r}")
     inv = schema_inventory(db, req.keys, req.within)
-    n = write_inventory_csv(inv, out, missing_only=req.missing_only)
-    logger.info("[schema] export_schema_inventory -> %s (%d row(s))", out, n)
+    n = write_inventory_csv(
+        inv, out, missing_only=req.missing_only, collapse=req.collapse
+    )
+    logger.info(
+        "[schema] export_schema_inventory collapse=%s -> %s (%d row(s))", req.collapse, out, n
+    )
     return {"path": str(out), "rows": n}
 
 

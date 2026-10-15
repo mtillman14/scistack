@@ -36,7 +36,7 @@ def test_missing_only(inv_client):
 
 def test_all_is_truncated_to_the_limit_with_full_counts(inv_client):
     r = inv_client.post(
-        "/api/inventory", json={"keys": None, "missing_only": False, "limit": 2}
+        "/api/inventory", json={"keys": None, "missing_only": False, "collapse": False, "limit": 2}
     )
     assert r.status_code == 200, r.text
     d = r.json()
@@ -57,7 +57,8 @@ def test_export_writes_every_row(inv_client, tmp_path):
     out = tmp_path / "exports" / "inventory.csv"
     r = inv_client.post(
         "/api/inventory/export",
-        json={"keys": ["subject", "session"], "missing_only": False, "out_path": str(out)},
+        json={"keys": ["subject", "session"], "missing_only": False, "collapse": False,
+              "out_path": str(out)},
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"path": str(out), "rows": 6}
@@ -104,7 +105,8 @@ def test_export_with_within(inv_client, tmp_path):
     out = tmp_path / "within.csv"
     r = inv_client.post(
         "/api/inventory/export",
-        json={"within": ["subject"], "missing_only": False, "out_path": str(out)},
+        json={"within": ["subject"], "missing_only": False, "collapse": False,
+              "out_path": str(out)},
     )
     assert r.status_code == 200, r.text
     assert r.json() == {"path": str(out), "rows": 5}
@@ -112,3 +114,23 @@ def test_export_with_within(inv_client, tmp_path):
         rows = list(csv.reader(fh))
     assert rows[0] == ["subject", "session", "status"]
     assert ["3", "pre", "present"] in rows
+
+
+def test_collapse_passes_through(inv_client, tmp_path):
+    # Subjects 1 and 2 are wholly present: one row each, session "(all)".
+    r = inv_client.post("/api/inventory", json={"keys": None, "missing_only": False})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["collapse"] is True
+    assert sorted(d["rows"]) == sorted([
+        ["1", d["all_marker"], "present"],
+        ["2", d["all_marker"], "present"],
+        ["3", "pre", "present"],
+        ["3", "post", "missing"],
+    ])
+    out = tmp_path / "collapsed.csv"
+    r = inv_client.post(
+        "/api/inventory/export",
+        json={"keys": None, "missing_only": False, "out_path": str(out)},
+    )
+    assert r.json() == {"path": str(out), "rows": 4}

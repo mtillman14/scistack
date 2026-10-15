@@ -385,13 +385,14 @@ def _cmd_inventory(insp: Inspector, args) -> None:
 
     inv = insp.inventory(_split(args.keys), _split(args.within))
     missing_only = not args.all
+    collapse = not args.expand
     if args.csv:
-        n = write_inventory_csv(inv, args.csv, missing_only=missing_only)
+        n = write_inventory_csv(inv, args.csv, missing_only=missing_only, collapse=collapse)
         print(f"wrote {n} row(s) to {args.csv}", file=sys.stderr)
     if args.json:
-        print(json.dumps(inv.to_dict(missing_only=missing_only), indent=2))
+        print(json.dumps(inv.to_dict(missing_only=missing_only, collapse=collapse), indent=2))
     else:
-        print(render.render_inventory(inv, missing_only=missing_only))
+        print(render.render_inventory(inv, missing_only=missing_only, collapse=collapse))
 
 
 def _cmd_exclude(mut: Mutator, args) -> None:
@@ -1158,10 +1159,17 @@ def _add_commands(
         "not only the missing ones.",
     )
     p.add_argument(
+        "--expand",
+        action="store_true",
+        help="One row per combination. By default a block whose combinations "
+        "all have one status (e.g. every minute of a missing session) is one "
+        "row with '(all)' in the deeper key columns.",
+    )
+    p.add_argument(
         "--csv",
         default=None,
         metavar="PATH",
-        help="Also write the table as CSV (follows --all).",
+        help="Also write the table as CSV (follows --all and --expand).",
     )
     p.set_defaults(_handler=_cmd_inventory)
 

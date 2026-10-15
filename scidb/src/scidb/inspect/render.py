@@ -1074,7 +1074,7 @@ def render_exclusions(exclusions: list[ExclusionRecord], schema_keys: list[str])
     )
 
 
-def render_inventory(inv, missing_only: bool) -> str:
+def render_inventory(inv, missing_only: bool, collapse: bool = True) -> str:
     """``scidb inventory``: a counts line, then the table the chosen view shows
     (columns and rows from ``scidb.inventory.inventory_table``)."""
     from ..inventory import EXCLUDED, MISSING, PRESENT, inventory_table
@@ -1097,7 +1097,7 @@ def render_inventory(inv, missing_only: bool) -> str:
             f"{inv.product_size} combination(s) of {sizes or '(none)'}: "
             f"{tally(inv.counts)}"
         )
-    columns, rows = inventory_table(inv, missing_only)
+    columns, rows = inventory_table(inv, missing_only, collapse=collapse)
     if not rows:
         empty = "(nothing missing)" if missing_only else "(no combinations)"
         return f"{head}\n{empty}"

@@ -45,6 +45,9 @@ interface InventoryResult {
   counts: { present: number; missing: number; excluded: number }
   product_size: number
   missing_only: boolean
+  collapse: boolean
+  // Text of a collapsed Cross cell ("(all)"); owned by scidb.inventory.ALL_LEVELS.
+  all_marker: string
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -74,6 +77,7 @@ export default function InventoryPopup({
     () => Object.fromEntries(schemaKeys.map(k => [k, 'cross' as Role])),
   )
   const [missingOnly, setMissingOnly] = useState(true)
+  const [collapse, setCollapse] = useState(true)
   const [result, setResult] = useState<InventoryResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -90,7 +94,7 @@ export default function InventoryPopup({
     const id = ++queryId.current
     setLoading(true)
     setError('')
-    callBackend('schema_inventory', { keys, within, missing_only: missingOnly })
+    callBackend('schema_inventory', { keys, within, missing_only: missingOnly, collapse })
       .then(d => {
         if (id === queryId.current) setResult(d as InventoryResult)
       })
@@ -104,7 +108,7 @@ export default function InventoryPopup({
       })
     // keys/within are derived from roles; joining keeps the dependency stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys.join('\u0000'), within.join('\u0000'), missingOnly])
+  }, [keys.join('\u0000'), within.join('\u0000'), missingOnly, collapse])
 
   useEffect(() => { run() }, [run])
 
@@ -130,6 +134,7 @@ export default function InventoryPopup({
         keys,
         within,
         missing_only: missingOnly,
+        collapse,
         out_path: path,
       }) as { path: string; rows: number }
       setMessage(`Wrote ${r.rows.toLocaleString()} row(s) to ${r.path}`)
@@ -185,6 +190,13 @@ export default function InventoryPopup({
           <label style={styles.check}>
             <input type="radio" checked={!missingOnly} onChange={() => setMissingOnly(false)} />
             <span>All, with status</span>
+          </label>
+          <label
+            style={styles.check}
+            title="One row per block whose combinations all have one status, with (all) in the deeper key columns"
+          >
+            <input type="checkbox" checked={collapse} onChange={e => setCollapse(e.target.checked)} />
+            <span>Collapse uniform blocks</span>
           </label>
           <span style={{ flex: 1 }} />
           <button
@@ -251,6 +263,9 @@ export default function InventoryPopup({
                             style={{
                               ...styles.td,
                               ...(j === statusCol ? { color: STATUS_COLORS[cell] ?? '#ccc' } : {}),
+                              ...(j !== statusCol && cell === result.all_marker
+                                ? { fontStyle: 'italic', color: '#aaa' }
+                                : {}),
                             }}
                           >
                             {cell}

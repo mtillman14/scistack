@@ -11,6 +11,37 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzy. Data inventory collapses uniform blocks to "(all)" — added 2026-10-15
+
+What changed: the 📋 Inventory table now shows one row per block of
+combinations that all have the same status, with *(all)* (italic, grey) in
+the deeper key columns. For example, a session missing at every minute is one
+row with `minute=(all)`, and a subject with no data is one row with
+`session=(all), minute=(all)`. A new "Collapse uniform blocks" checkbox
+(on by default) turns this off.
+
+Backend: reload the VS Code window.
+
+1. Open 📋 Inventory. Set group to Within, and subject, session and minute
+   to Cross. Leave Show on "Missing only".
+2. Expect: a wholly missing session is one row with minute *(all)*. A
+   partly missing session lists each missing minute. The counts line still
+   counts combinations, not rows.
+3. Switch to "All, with status". Expect: wholly present subjects are one
+   green `present` row with session/minute *(all)*. A fully present group is
+   one row with every Cross column *(all)*.
+4. Untick "Collapse uniform blocks". Expect: one row per combination, the
+   same as before this change.
+5. Export CSV… with the box ticked, then again with it unticked. Expect: the
+   CSV matches the table each time (it contains the `(all)` text when
+   collapsed).
+
+`scidb.log`: `[schema] schema_inventory … collapse=True -> N/N row(s) sent`
+and, at DEBUG, `inventory_table: collapse rows A -> B (blocks collapsed from
+key: {…})`.
+
+---
+
 ## 0zzzx. Multi-variable plots default to current code — added 2026-10-15
 
 What changed: in a plot with rows over two variables ("+ Add series"), a row

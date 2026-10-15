@@ -90,6 +90,41 @@ there. So only design keys (arm, site, protocol) should be Within; a key whose
 gaps you want to find must be Cross. A second nesting level ("minute nested in
 session") is out of scope.
 
+## Collapsed blocks
+
+Plan: `.claude/plan-inventory-collapse.md`. Usually a missing session is
+missing at every minute, so the per-combination table repeats one gap many
+times. Views therefore collapse by default (`collapse=True`; CLI `--expand`,
+GUI "Collapse uniform blocks" checkbox to turn it off).
+
+**The rule.** Inside each stratum, a *block* is every combination that shares
+a prefix of the Cross keys (schema order). Walking shallow to deep, the first
+block whose combinations all have **one status** becomes one row: the prefix
+values, `(all)` (`ALL_LEVELS`) in every deeper Cross column, the stratum's
+Within values, and that status. Otherwise the walk goes one key deeper. The
+rule is recursive: a subject with no sessions at all gives one row
+`subject=C03, session=(all), minute=(all)`.
+
+- `(all)` means every level of that key **in the stratum**
+  (`StratumSummary.levels`). CBrace `session=(all)` is BL, FIT and POST;
+  Traditional's is BL and POST. Without Within keys it means every global
+  level.
+- A key with only one level in the stratum shows that value, not `(all)`,
+  because nothing was folded.
+- The Missing view collapses only all-missing blocks, so one excluded or
+  present row stops the collapse and the remaining rows are listed. The All
+  view collapses any uniform status (a fully present subject is one
+  `present` row; a whole uniform stratum is one row with `(all)` in every
+  Cross column).
+- Within keys never collapse. They are always the stratum's value.
+- Only the display changes. `counts`, `product_size` and per-stratum counts
+  stay per combination, while `total_rows` / the CSV row count count
+  displayed rows. `to_dict` adds `collapse` and `all_marker`, and the GUI
+  styles cells equal to `all_marker` and never hard-codes the text.
+- `SchemaInventory.row_blocks` records the layout of `rows` (consecutive
+  `product_size` runs per stratum; one global block without Within keys), so
+  `_collapse_rows` never re-queries the database.
+
 ## Size guard
 
 The product size is computed from the per-key value counts **before**
@@ -107,7 +142,7 @@ the per-stratum products, and the message names the largest strata. Tests pass
 | Combinations that exist | `DatabaseManager.distinct_schema_combinations` | inventory |
 | Is a combination excluded? | `scidb.exclusions.exclusion_status` | `filter_excluded_combos` (`for_each`), inventory |
 | Statuses | `scidb.inventory.schema_inventory` | `Inspector.inventory`, CLI, GUI handlers |
-| Which columns/rows a view shows | `scidb.inventory.inventory_table` | `SchemaInventory.to_dict`, `write_inventory_csv`, `render.render_inventory` |
+| Which columns/rows a view shows, collapsed or not | `scidb.inventory.inventory_table` (collapse: `_collapse_rows`) | `SchemaInventory.to_dict`, `write_inventory_csv`, `render.render_inventory` |
 | CSV layout | `scidb.inventory.write_inventory_csv` | CLI `--csv`, GUI export |
 
 There are two views. **Missing only** shows only the missing rows, with key
@@ -123,7 +158,7 @@ both views from `inventory_table` and never filter or format rows themselves.
 
 - Python: `schema_inventory(db, keys, within)` and
   `db.inspect.inventory(keys, within)`.
-- CLI: `scidb inventory [--keys a,b] [--within g] [--all] [--csv PATH] [--json]`.
+- CLI: `scidb inventory [--keys a,b] [--within g] [--all] [--expand] [--csv PATH] [--json]`.
   With `--within`, the counts line is followed by one line per stratum
   (`group=CBrace: 12 combination(s): 11 present, 1 missing, 0 excluded`). Also
   available as `scistack db inventory`. It opens the database read-only, like
@@ -144,6 +179,8 @@ both views from `inventory_table` and never filter or format rows themselves.
   values={key: n} product=… present=… missing=… excluded=…`
 - WARNING `schema_inventory: refused — …` comes before the size-guard raise.
 - INFO `write_inventory_csv: N row(s), columns=[…] -> path`
+- DEBUG `inventory_table: collapse rows N -> M (blocks collapsed from key:
+  {session: a, minute: b})`. WARNING if a key has a real level `(all)`.
 - GUI: `[schema] schema_inventory keys=… within=… strata=N … ->
   sent/total row(s) (truncated)`.
 - GUI popup: each key has a Cross / Within / Off segmented control (all Cross

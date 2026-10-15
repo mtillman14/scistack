@@ -26,6 +26,7 @@ from scidb import (
     schema_order,
 )
 from scidb.inventory import (
+    ALL_LEVELS,
     EXCLUDED,
     MISSING,
     PRESENT,
@@ -223,13 +224,13 @@ class TestValidation:
 class TestTableAndCsv:
     def test_missing_only_view_has_no_status_column(self, db):
         inv = schema_inventory(db, ["subject", "session"])
-        columns, rows = inventory_table(inv, missing_only=True)
+        columns, rows = inventory_table(inv, missing_only=True, collapse=False)
         assert columns == ["subject", "session"]
         assert rows == [("S02", "POST"), ("S03", "BL"), ("S03", "POST")]
 
     def test_all_view_has_status(self, db):
         inv = schema_inventory(db, ["subject", "session"])
-        columns, rows = inventory_table(inv, missing_only=False)
+        columns, rows = inventory_table(inv, missing_only=False, collapse=False)
         assert columns == ["subject", "session", "status"]
         assert len(rows) == 6
         assert rows[0] == ("S01", "BL", PRESENT)
@@ -237,7 +238,7 @@ class TestTableAndCsv:
     def test_csv_missing_only(self, db, tmp_path):
         inv = schema_inventory(db, ["subject", "session"])
         out = tmp_path / "out" / "missing.csv"
-        assert write_inventory_csv(inv, out, missing_only=True) == 3
+        assert write_inventory_csv(inv, out, missing_only=True, collapse=False) == 3
         with out.open(newline="", encoding="utf-8") as fh:
             got = list(csv.reader(fh))
         assert got == [
@@ -251,7 +252,7 @@ class TestTableAndCsv:
         exclude_schema("bad", db=db, subject="S02")
         inv = schema_inventory(db, ["subject", "session"])
         out = tmp_path / "all.csv"
-        assert write_inventory_csv(inv, out, missing_only=False) == 6
+        assert write_inventory_csv(inv, out, missing_only=False, collapse=False) == 6
         with out.open(newline="", encoding="utf-8") as fh:
             got = list(csv.reader(fh))
         assert got[0] == ["subject", "session", "status"]
@@ -261,7 +262,7 @@ class TestTableAndCsv:
 
     def test_to_dict_truncates_but_keeps_counts(self, db):
         inv = schema_inventory(db)
-        d = inv.to_dict(missing_only=False, limit=5)
+        d = inv.to_dict(missing_only=False, limit=5, collapse=False)
         assert len(d["rows"]) == 5
         assert d["total_rows"] == 12
         assert d["truncated"] is True
@@ -282,7 +283,7 @@ class TestCli:
     def test_json_missing_only_by_default(self, db_path, capsys):
         from scidb.inspect.cli import main
 
-        rc = main(["--db", str(db_path), "inventory", "--keys", "subject,session", "--json"])
+        rc = main(["--db", str(db_path), "inventory", "--keys", "subject,session", "--expand", "--json"])
         out = capsys.readouterr().out
         assert rc == 0, out
         payload = json.loads(out)
@@ -303,7 +304,7 @@ class TestCli:
         from scidb.inspect.cli import main
 
         out_csv = tmp_path / "inv.csv"
-        rc = main(["--db", str(db_path), "inventory", "--keys", "subject,session", "--all", "--csv", str(out_csv)])
+        rc = main(["--db", str(db_path), "inventory", "--keys", "subject,session", "--all", "--expand", "--csv", str(out_csv)])
         captured = capsys.readouterr()
         assert rc == 0, captured.err
         assert "2 present, 3 missing, 1 excluded" in captured.out
@@ -523,7 +524,7 @@ class TestWithinTableAndCsv:
     def test_csv_includes_the_within_column(self, arm_db, tmp_path):
         inv = schema_inventory(arm_db, within=["group"])
         out = tmp_path / "arms.csv"
-        assert write_inventory_csv(inv, out, missing_only=False) == 20
+        assert write_inventory_csv(inv, out, missing_only=False, collapse=False) == 20
         with out.open(newline="", encoding="utf-8") as fh:
             got = list(csv.reader(fh))
         assert got[0] == [*ARM_SCHEMA, "status"]
@@ -585,3 +586,186 @@ class TestWithinCli:
         rc = main(["--db", str(db_path), "inventory", "--keys", "group,subject", "--within", "group"])
         assert rc == 1
         assert "both Cross and Within" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Collapsed blocks (.claude/plan-inventory-collapse.md)
+# ---------------------------------------------------------------------------
+
+ALL = ALL_LEVELS
+
+
+def populate_gaps():
+    """Traditional: T01, T02 × {BL, POST} × minutes {1, 2}, all present.
+
+    CBrace: C01 × {BL, FIT, POST} × {1, 2} all present; C02 has BL (both
+    minutes) and POST minute 1 only, so FIT is wholly missing and POST is
+    half missing; C03 exists only at subject level, so every session and
+    minute is missing.
+    """
+    for subject in ("T01", "T02"):
+        for session in ("BL", "POST"):
+            for minute in ("1", "2"):
+                ArmMinute.save(1.0, group="Traditional", subject=subject,
+                               session=session, minute=minute)
+    for session in ("BL", "FIT", "POST"):
+        for minute in ("1", "2"):
+            ArmMinute.save(1.0, group="CBrace", subject="C01",
+                           session=session, minute=minute)
+    for session, minute in (("BL", "1"), ("BL", "2"), ("POST", "1")):
+        ArmMinute.save(1.0, group="CBrace", subject="C02",
+                       session=session, minute=minute)
+    ArmSubject.save(1.0, group="CBrace", subject="C03")
+
+
+@pytest.fixture
+def gap_db(tmp_path):
+    database = configure_database(tmp_path / "gaps.duckdb", ARM_SCHEMA)
+    populate_gaps()
+    yield database
+    database.close()
+
+
+class TestCollapse:
+    def test_missing_session_and_subject_collapse(self, gap_db):
+        inv = schema_inventory(gap_db, within=["group"])
+        columns, rows = inventory_table(inv, missing_only=True)
+        assert columns == ARM_SCHEMA
+        assert rows == [
+            ("CBrace", "C02", "FIT", ALL),    # every minute of FIT
+            ("CBrace", "C02", "POST", "2"),   # half a block: listed per row
+            ("CBrace", "C03", ALL, ALL),      # recursive: whole subject
+        ]
+
+    def test_counts_stay_per_combination(self, gap_db):
+        inv = schema_inventory(gap_db, within=["group"])
+        assert inv.counts == {PRESENT: 17, MISSING: 9, EXCLUDED: 0}
+        assert len(inventory_table(inv, missing_only=True, collapse=False)[1]) == 9
+
+    def test_expand_is_one_row_per_combination(self, gap_db):
+        inv = schema_inventory(gap_db, within=["group"])
+        _, rows = inventory_table(inv, missing_only=False, collapse=False)
+        assert rows == inv.rows
+
+    def test_all_view_collapses_every_uniform_status(self, gap_db):
+        inv = schema_inventory(gap_db, within=["group"])
+        _, rows = inventory_table(inv, missing_only=False)
+        assert rows == [
+            ("CBrace", "C01", ALL, ALL, PRESENT),
+            ("CBrace", "C02", "BL", ALL, PRESENT),
+            ("CBrace", "C02", "FIT", ALL, MISSING),
+            ("CBrace", "C02", "POST", "1", PRESENT),
+            ("CBrace", "C02", "POST", "2", MISSING),
+            ("CBrace", "C03", ALL, ALL, MISSING),
+            # A whole stratum: every Cross column collapses, Within stays.
+            ("Traditional", ALL, ALL, ALL, PRESENT),
+        ]
+
+    def test_all_is_per_stratum(self, gap_db):
+        # Traditional's (all) covers BL and POST only; CBrace's covers FIT too.
+        inv = schema_inventory(gap_db, within=["group"])
+        cb, trad = inv.strata
+        assert trad.levels["session"] == ["BL", "POST"]
+        assert cb.levels["session"] == ["BL", "FIT", "POST"]
+        assert trad.counts[PRESENT] == trad.product_size == 8
+
+    def test_without_within(self, gap_db):
+        # Crossing group: C03 is missing everywhere, including Traditional.
+        inv = schema_inventory(gap_db)
+        _, rows = inventory_table(inv, missing_only=True)
+        assert ("CBrace", "C03", ALL, ALL) in rows
+        assert ("Traditional", "C01", ALL, ALL) in rows
+        assert ("Traditional", "T01", "FIT", ALL) in rows
+        expanded = inventory_table(inv, missing_only=True, collapse=False)[1]
+        assert len(rows) < len(expanded) == inv.counts[MISSING]
+
+    def test_a_single_level_key_shows_its_value(self, gap_db):
+        # Within subject × session, C02/POST has only minute 1: the
+        # collapsed row says "1", not "(all)"; C01/BL has 1 and 2.
+        inv = schema_inventory(gap_db, ["minute"], within=["subject", "session"])
+        _, rows = inventory_table(inv, missing_only=False)
+        assert ("C02", "POST", "1", PRESENT) in rows
+        assert ("C01", "BL", ALL, PRESENT) in rows
+
+    def test_excluded_row_blocks_a_missing_collapse(self, gap_db):
+        exclude_schema("bad", db=gap_db, subject="C02", session="FIT", minute="1")
+        inv = schema_inventory(gap_db, within=["group"])
+        _, rows = inventory_table(inv, missing_only=True)
+        assert ("CBrace", "C02", "FIT", "2") in rows
+        assert ("CBrace", "C02", "FIT", ALL) not in rows
+        _, all_rows = inventory_table(inv, missing_only=False)
+        assert ("CBrace", "C02", "FIT", "1", EXCLUDED) in all_rows
+
+    def test_excluded_subject_collapses_as_excluded(self, gap_db):
+        exclude_schema("withdrew", db=gap_db, subject="C03")
+        inv = schema_inventory(gap_db, within=["group"])
+        _, rows = inventory_table(inv, missing_only=False)
+        assert ("CBrace", "C03", ALL, ALL, EXCLUDED) in rows
+        assert all(r[1] != "C03" for r in inventory_table(inv, missing_only=True)[1])
+
+    def test_nonadjacent_within_column_keeps_its_value(self, tmp_path):
+        database = configure_database(tmp_path / "gaps2.duckdb", ARM_SCHEMA_NONADJACENT)
+        populate_gaps()
+        try:
+            inv = schema_inventory(database, within=["group"])
+            columns, rows = inventory_table(inv, missing_only=True)
+        finally:
+            database.close()
+        assert columns == ARM_SCHEMA_NONADJACENT
+        assert rows == [
+            ("C02", "CBrace", "FIT", ALL),
+            ("C02", "CBrace", "POST", "2"),
+            ("C03", "CBrace", ALL, ALL),
+        ]
+
+    def test_csv_and_to_dict_follow_the_flag(self, gap_db, tmp_path):
+        inv = schema_inventory(gap_db, within=["group"])
+        out = tmp_path / "c.csv"
+        assert write_inventory_csv(inv, out, missing_only=True) == 3
+        assert write_inventory_csv(inv, out, missing_only=True, collapse=False) == 9
+        d = inv.to_dict()
+        assert d["collapse"] is True
+        assert d["all_marker"] == ALL
+        assert d["total_rows"] == 3
+        assert d["rows"][2] == ["CBrace", "C03", ALL, ALL]
+        assert d["counts"][MISSING] == 9
+        assert inv.to_dict(collapse=False)["total_rows"] == 9
+
+
+class TestCollapseCli:
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        path = tmp_path / "gaps_cli.duckdb"
+        database = configure_database(path, ARM_SCHEMA)
+        populate_gaps()
+        database.close()
+        return path
+
+    def test_collapsed_by_default(self, db_path, capsys):
+        from scidb.inspect.cli import main
+
+        rc = main(["--db", str(db_path), "inventory", "--within", "group", "--json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 0
+        assert payload["rows"] == [
+            ["CBrace", "C02", "FIT", ALL],
+            ["CBrace", "C02", "POST", "2"],
+            ["CBrace", "C03", ALL, ALL],
+        ]
+
+    def test_expand(self, db_path, capsys):
+        from scidb.inspect.cli import main
+
+        rc = main(["--db", str(db_path), "inventory", "--within", "group", "--expand", "--json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert rc == 0
+        assert payload["collapse"] is False
+        assert len(payload["rows"]) == 9
+
+    def test_human_table_shows_the_marker(self, db_path, capsys):
+        from scidb.inspect.cli import main
+
+        rc = main(["--db", str(db_path), "inventory", "--within", "group"])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert ALL in out
