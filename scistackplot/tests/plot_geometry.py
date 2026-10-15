@@ -277,7 +277,7 @@ def despaced(positions, resolved: ResolvedPlot) -> list[float]:
     the positions seaborn's export draws at.
 
     The preview's nested axis leaves an empty slot between groups
-    (``xaxis.plan_x_axis``); the export cannot (``codegen._nested_x_args``
+    (``xaxis.plan_x_axis``); the export cannot (``codegen._nested_x_order``
     drops the spacers from ``order=``), so a mark at preview position 3.2
     (two leaves, a spacer, then the third leaf) is at 2.2 in the export.
     A test comparing the two maps the preview through this first. Offsets

@@ -30,7 +30,15 @@ from .cell import cell_collapses, effective_shape
 from .compare import comparison_title, plan_comparison
 from .groups import active_level_groups, apply_level_groups, effective_mapping
 from .panels import Y_TITLES_FIRST_COLUMN, overrides_by_key, panel_key_text
-from .reduce import plan_layout, planned_y_limits, x_axis_title
+from .reduce import (
+    apply_filters,
+    axis_combinations,
+    axis_values,
+    nested_layer_orders,
+    plan_layout,
+    planned_y_limits,
+    x_axis_title,
+)
 from .resolved import DASH_CYCLE
 from .roles import (
     collapse_steps,
@@ -847,15 +855,23 @@ def _spaghetti_position_lines(spec, table: LongTable, roles, shape) -> list[str]
     if layers:
         # The composed, spacer-free order the nested axis is exported with.
         declared = _nested_x_order(spec, table, roles, shape)
+        plot_levels = declared
     elif x == _X_CONSTANT:
         declared = [""]
+        plot_levels = []
     else:
         declared = [str(level) for level in table.factor(x).levels]
+        plot_levels = [str(v) for v in axis_values(_plot_frame(spec, table), x)]
+    # PlotSpec.show_missing_levels: a level another figure of the plot holds
+    # keeps its (empty) slot here too, as the preview's tick does.
+    present = f"set(df[{x!r}].astype(str))"
+    if spec.show_missing_levels and plot_levels:
+        present = f"{present} | set({plot_levels!r})"
     return [
         "# spaghetti: each level at its index, each series shifted a fixed",
         "# fraction of a tick so every line ends on its own markers",
         f"_declared = {declared!r}",
-        f"_present = set(df[{x!r}].astype(str))",
+        f"_present = {present}",
         "_order = [v for v in _declared if v in _present]",
         "_natural = lambda s: [(0, int(c)) if c.isdigit() else (1, c) "
         'for c in re.split(r"(\\d+)", s) if c]',
@@ -1173,7 +1189,7 @@ def _sample_draw_lines(
         # (`_order`), the nested order catplot was given, the declared order
         # it was given (`_level_order_lines`), or — with neither — the order
         # of appearance seaborn infers.
-        "_x_levels = list(_order)" if spaghetti else f"_x_levels = {nested!r}" if nested else (
+        "_x_levels = list(_order)" if spaghetti else "_x_levels = list(_x_order)" if nested else (
             "_x_levels = [str(v) for v in _x_order]"
             if _emits_x_order(spec, table, roles, shape, _seaborn_call(spec, table, roles, shape))
             else f"_x_levels = list(dict.fromkeys(df[{x!r}].astype(str)))"
@@ -1436,46 +1452,75 @@ def _facet_layout_args(spec, table: LongTable, facets: list[str]) -> list[str]:
     return args
 
 
-def _nested_x_args(spec, table: LongTable, roles, shape) -> list[str]:
-    """``order=[...]`` reproducing the composed nested axis.
-
-    The RESOLVED order, computed by the same :func:`~scistackplot.xaxis.plan_x_axis`
-    the preview used, rather than the nesting rules re-applied in generated
-    code. A second implementation is a second thing that can drift, and the
-    failure would be a re-ordered axis nobody notices.
-
-    Spacers are dropped: seaborn has no concept of an empty category, so the
-    exported figure groups by ordering alone. The docstring says so — the
-    interactive view's gaps are the one thing the export cannot reproduce.
-    """
-    order = _nested_x_order(spec, table, roles, shape)
-    return [f"order={order!r}"] if order else []
-
-
 def _nested_x_order(spec, table: LongTable, roles, shape) -> list[str]:
-    """The composed nested-axis order, spacers dropped (see ``_nested_x_args``)."""
+    """The composed nested-axis order over the PLOT's filtered rows: every
+    leaf any figure of the fan-out holds, in the RESOLVED order the same
+    :func:`~scistackplot.xaxis.plan_x_axis` gave the preview — never the
+    nesting rules replayed in generated code, a second thing that can drift.
+
+    Spacers are dropped: seaborn has no empty category, so the export groups
+    by ordering alone (the docstring says so). The generated ``_x_order``
+    keeps every leaf under ``PlotSpec.show_missing_levels`` and the frame's
+    own leaves otherwise (``_x_order_lines``) — the preview's
+    ``reduce._x_axis_levels``."""
     layers = _nested_x_layers(spec, table, roles, shape)
     if not layers:
         return []
 
     from .xaxis import LEAF_SEPARATOR, is_spacer, plan_x_axis
 
-    frame = table.frame
-    present = [name for name in layers if name in frame.columns]
-    if len(present) != len(layers):
+    combinations = axis_combinations(_plot_frame(spec, table), layers)
+    if not combinations:
         return []
-    combinations = list(
-        frame[layers].astype(str).drop_duplicates().itertuples(index=False, name=None)
-    )
-    plan = plan_x_axis(
-        combinations,
-        [[str(level) for level in table.factor(name).levels] for name in layers],
-    )
+    plan = plan_x_axis(combinations, nested_layer_orders(table, layers))
     return [
         key.replace(LEAF_SEPARATOR, _NESTED_JOIN)
         for key in plan.order
         if not is_spacer(key)
     ]
+
+
+def _plot_frame(spec, table: LongTable):
+    """The plot's rows after the spec's filters — every figure of the fan-out,
+    which is what a "missing" x level is missing FROM (``_Plan.frame`` in the
+    preview, cut by the same ``apply_filters``)."""
+    return apply_filters(table.frame, spec)
+
+
+def _x_order_lines(spec, table: LongTable, roles, shape, x: str) -> list[str]:
+    """``_x_order = …`` for a categorical x the call orders: the nested
+    composed order, or a flat factor's levels through ``_in_order``.
+
+    ``PlotSpec.show_missing_levels`` on: the levels of the whole PLOT, baked
+    in, so a figure of an ITERATE fan-out keeps an empty slot for a level
+    another figure has (the preview's empty tick). Off: only what this
+    frame holds. One variable, read by the call, the sample overlay and the
+    difference bars alike.
+    """
+    nested = _nested_x_order(spec, table, roles, shape)
+    Log.info(
+        "generated code: x order over %s — %s",
+        "the nested leaves" if nested else repr(x),
+        "the plot's levels baked in (show_missing_levels: a figure keeps "
+        "empty slots for the others')"
+        if spec.show_missing_levels
+        else "each frame's own levels (show_missing_levels off)",
+        layer=LAYER,
+    )
+    if nested:
+        if spec.show_missing_levels:
+            return [f"_x_order = {nested!r}"]
+        return [
+            f"_x_present = set(df[{_X_NESTED!r}])",
+            f"_x_order = [_k for _k in {nested!r} if _k in _x_present]",
+        ]
+    declared = _declared_levels(table, x)
+    if spec.show_missing_levels:
+        plot_levels = axis_values(_plot_frame(spec, table), x)
+        return [
+            f"_x_order = {_IN_ORDER}(pd.Series([*df[{x!r}], *{plot_levels!r}]), {declared!r})"
+        ]
+    return [f"_x_order = {_IN_ORDER}(df[{x!r}], {declared!r})"]
 
 
 def _seaborn_can_express_layout(spec, table: LongTable, roles) -> bool:
@@ -1681,9 +1726,6 @@ def _plot_call(
     if len(facets) > 1:
         args.append(f"row={facets[1]!r}")
     args.extend(_facet_layout_args(spec, table, facets))
-    if kind is not PlotKind.SPAGHETTI:
-        # relplot has no `order=`; the spaghetti preamble applies it itself.
-        args.extend(_nested_x_args(spec, table, roles, shape))
 
     estimator = (
         '"median"' if spec.aggregate.statistic is Statistic.MEDIAN else '"mean"'
@@ -2061,7 +2103,7 @@ def _seaborn_call(spec, table, roles, shape) -> str:
 def _emits_x_order(spec, table, roles, shape, call: str) -> bool:
     """Whether the call gets ``order=_x_order`` — a flat categorical x.
 
-    Nested x has its own composed ``order=`` (``_nested_x_args``) and the
+    Nested x has its own composed order (``_x_order_lines``) and the
     constant x has one level; spaghetti places levels itself.
     """
     if call not in _ORDERED_X_CALLS or _nested_x_layers(spec, table, roles, shape):
@@ -2090,8 +2132,11 @@ def _level_order_lines(
         lines.append(f"{variable} = {_IN_ORDER}(df[{column!r}], {declared!r})")
         call_args.append(f"{arg}={variable}")
 
-    if _emits_x_order(spec, table, roles, shape, call):
-        order("_x_order", x, "order")
+    if _emits_x_order(spec, table, roles, shape, call) or (
+        call in _ORDERED_X_CALLS and _nested_x_order(spec, table, roles, shape)
+    ):
+        lines.extend(_x_order_lines(spec, table, roles, shape, x))
+        call_args.append("order=_x_order")
     if color:
         order("_hue_order", color, "hue_order")
     # A RULED layout is `_facet_layout_args`' business: it emits its own
@@ -2383,7 +2428,7 @@ def _difference_bar_export(
     if spec.kind is PlotKind.SPAGHETTI:
         order_expr: str | None = "_order"
     elif nested:
-        order_expr = repr(_nested_x_order(spec, table, roles, shape))
+        order_expr = "_x_order"
     elif _emits_x_order(spec, table, roles, shape, _seaborn_call(spec, table, roles, shape)):
         order_expr = "_x_order"
     else:

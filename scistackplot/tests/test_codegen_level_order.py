@@ -50,7 +50,7 @@ NESTED = [f"{s} · {g}" for s in SESSIONS for g in GROUPS]
 def _coloured_bar() -> PlotSpec:
     # group ticks inside session brackets, group coloured. Colour is paint
     # (2026-09-21): group stays a tick layer, so the x is NESTED and its order
-    # is the composed one (`_nested_x_args`), while `hue_order` still names
+    # is the composed one (`codegen._x_order_lines`), while `hue_order` still names
     # the group levels for the palette and legend.
     return PlotSpec(
         measures=["StepLength"],
@@ -78,7 +78,8 @@ def _run(source: str, table: LongTable):
 
 def test_x_and_hue_orders_are_stated(table):
     source = generate_plot_function(_coloured_bar(), table)
-    assert f"order={NESTED!r}" in source, "the nested x order, composed, declared first"
+    assert f"_x_order = {NESTED!r}" in source, "the nested x order, composed, declared first"
+    assert "order=_x_order" in source
     assert "hue_order=_hue_order" in source
     assert "['stim', 'sham']" in source
     assert "dodge=False" in source
@@ -102,7 +103,7 @@ def test_a_flat_x_order_is_stated(table):
 def test_the_preview_agrees(table):
     """The reference the export is checked against: the same composed leaves
     in the same order (the preview also holds spacers between groups, which
-    seaborn cannot draw — see `_nested_x_args`)."""
+    seaborn cannot draw — see `codegen._nested_x_order`)."""
     from scistackplot.xaxis import LEAF_SEPARATOR, is_spacer
 
     figure = resolve(_coloured_bar(), table)[0]

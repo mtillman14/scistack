@@ -1129,6 +1129,14 @@ class PlotSpec:
     #: shown — the points keep their colours. ``roles.overlay_in_legend`` is
     #: the one reader.
     sample_in_legend: bool = True
+    #: Whether an x level this figure has no data for keeps its (empty) tick.
+    #: "Missing" means present in the plot's FILTERED data but absent from
+    #: this figure — a subject's figure without session 2 under a fan-out —
+    #: never a level a filter removed. On (the default), the empty tick says
+    #: the data is missing, at the cost of narrower marks; off, the axis holds
+    #: only the figure's own levels. ``reduce._x_axis_levels`` is the one
+    #: reader; ``ResolvedPlot.missing_x`` lists the levels either way.
+    show_missing_levels: bool = True
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
@@ -1359,6 +1367,7 @@ class PlotSpec:
             join_sample=_optional_bool(raw.get("join_sample")),
             sample_color=raw.get("sample_color"),
             sample_in_legend=bool(raw.get("sample_in_legend", True)),
+            show_missing_levels=bool(raw.get("show_missing_levels", True)),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions.from_dict(raw.get("style")),

@@ -331,7 +331,7 @@ def test_generated_code_builds_the_same_axis(grouped_table):
 
     source = generate_plot_function(_nested_spec(), grouped_table)
 
-    assert "order=[" in source
+    assert "order=_x_order" in source
     assert "stim · pre" in source
     # Groups are separated by ordering; seaborn has no empty category.
     assert "seaborn has no" in source
@@ -874,7 +874,7 @@ def test_the_capability_report_publishes_the_same_answer(depth_table):
 #
 # `_summarize` (BAR and BAND) groups the panel frame down to centre + error and
 # `reset_index`es the keys back. Anything not in the keys is gone — which for a
-# while included the nested axis's LAYER columns, so `_plan_nested_x` found no
+# while included the nested axis's LAYER columns, so `_x_axis_levels` found no
 # panel carrying every layer, composed an empty plan, and bar figures lost
 # their order, their ticks and their brackets. Box never summarizes, and every
 # nested test used box.

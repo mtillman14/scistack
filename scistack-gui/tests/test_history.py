@@ -300,7 +300,7 @@ _WRITE_ALLOWLIST = {
     ("services/portability_service.py", "export_pipeline_to_file"): "export",
     ("bundle_section.py", "import_"): "writes a NEW project's code (bundle import), not an edit to undo",
     ("bundle_section.py", "_verbatim_import"): "writes a NEW project's layout (bundle import), not an edit to undo",
-    ("services/plot_service.py", "_figure_number"): "export manifest",
+    ("services/plot_service.py", "_figure_filename"): "export manifest",
     ("layout.py", "_replace_with_retry"): "helper; its caller _save notes the write",
 }
 
@@ -374,3 +374,24 @@ def test_every_file_write_notes_history():
         "these functions write files without history.note_write — undo would "
         f"miss them: {missing}"
     )
+
+
+def test_write_allowlist_names_existing_functions():
+    """Every ``_WRITE_ALLOWLIST`` entry names a function that still exists, so a
+    rename fails here ("stale entry") rather than as a confusing missing
+    ``note_write`` in the test above."""
+    stale: list[str] = []
+    for rel, name in sorted(_WRITE_ALLOWLIST):
+        path = GUI_PKG / rel
+        if not path.exists():
+            stale.append(f"{rel} {name} (file gone)")
+            continue
+        tree = ast.parse(path.read_text())
+        defined = {
+            fn.name
+            for fn in ast.walk(tree)
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        if name not in defined:
+            stale.append(f"{rel} {name}")
+    assert stale == [], f"_WRITE_ALLOWLIST entries name no existing function: {stale}"

@@ -639,6 +639,10 @@ interface GridMeta {
    *  `spec.roles` mentions. */
   panel_factors?: string[]
   y_scope?: string[]
+  /** The plot's x levels this figure has no data for
+   *  (ResolvedPlot.missing_x); the "Show missing levels" box appears only
+   *  when this is non-empty. */
+  missing_x?: string[]
 }
 
 interface VariantSet {
@@ -693,6 +697,9 @@ interface Spec {
   /** Whether the overlay's own colour levels are listed in the legend
    *  (`roles.overlay_in_legend`); absent = true. */
   sample_in_legend?: boolean
+  /** Whether an x level the plot holds but this figure has no data for
+   *  keeps an empty tick (PlotSpec.show_missing_levels); absent = true. */
+  show_missing_levels?: boolean
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
@@ -1453,6 +1460,11 @@ export default function PlotStudio({
   /** Unticked, the legend reads as though no key were shown. */
   const setSampleInLegend = useCallback((on: boolean) => {
     setSpec(prev => (prev ? { ...prev, sample_in_legend: on } : prev))
+  }, [])
+
+  /** Unticked, the x axis holds only this figure's own levels. */
+  const setShowMissingLevels = useCallback((on: boolean) => {
+    setSpec(prev => (prev ? { ...prev, show_missing_levels: on } : prev))
   }, [])
 
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
@@ -3656,6 +3668,28 @@ export default function PlotStudio({
                 a fixed value is kept even where it overlaps, and the notice
                 below says so. */}
             <Section title="X tick labels">
+              {(() => {
+                // Offered only when it would change something: the plot holds
+                // x levels this figure has no data for (ResolvedPlot.missing_x).
+                const missing = gridMeta.missing_x ?? []
+                if (missing.length === 0) return null
+                const shown = missing.slice(0, 6).join(', ') + (missing.length > 6 ? ', …' : '')
+                return (
+                  <label
+                    style={styles.checkRow}
+                    title={`Keep an empty tick for each level the rest of the plot has but this figure does not (${shown}), so the gap reads as missing data. Unticked, the axis holds only this figure's levels and the marks get wider.`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={spec?.show_missing_levels !== false}
+                      onChange={e => setShowMissingLevels(e.target.checked)}
+                    />
+                    <span style={styles.checkLabel}>
+                      Show missing levels ({missing.length}: {shown})
+                    </span>
+                  </label>
+                )
+              })()}
               <label
                 style={styles.factorRow}
                 title="Auto rotates only when the labels would overlap upright"

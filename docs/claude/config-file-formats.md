@@ -160,7 +160,8 @@ workspace folder), then the database file's folder.
 | `DatabaseManager._sort_by_schema_keys` | every loaded DataFrame (`load(as_df=True)`, `load_all_as_df`, CSV export) |
 | `DatabaseManager.distinct_schema_values` | `for_each(key=[])` iteration, hence for_each result frames; GUI `get_schema` level lists |
 | `scidb.locations._build_tree` | the location picker's tree |
-| `ScidbSource._ordered` → `LongTable.level_order` | plot x axis, colour/legend, facet panels, nested-x plan (plotly + matplotlib) |
+| `ScidbSource._ordered` → `LongTable.level_order` | plot x axis, colour, facet panels, nested-x plan (plotly + matplotlib) |
+| `render.base.legend_entry_labels` | legend entry order in both renderers (plotly `legendrank`, matplotlib handle order) — NOT draw order, which is panel by panel |
 | `ScidbSource._cache_generation` | drops built plot tables when the declaration changes |
 | `scistackplot.codegen._level_order_lines` | exported seaborn code: `order=`, `hue_order=`, `col_order=`, `row_order=` (filtered to the levels each figure's `df` holds) |
 

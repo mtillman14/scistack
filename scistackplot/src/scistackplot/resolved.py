@@ -194,6 +194,12 @@ class ResolvedPlot:
     #: so every existing consumer keeps working; renderers read this only to
     #: draw the group labels and brackets beneath the ticks.
     x_plan: Any = None
+    #: x levels of the plot (its filtered data, every figure of the fan-out)
+    #: this figure has no data for, in axis order — a nested leaf as its
+    #: layer values joined by ``reduce.MISSING_X_JOIN``. Listed whether or not
+    #: ``PlotSpec.show_missing_levels`` draws them, so the GUI can offer the
+    #: toggle exactly when it would change something.
+    missing_x: list[str] = field(default_factory=list)
     #: The factors sharing the x axis, outermost first: ``x_plan`` depth ``d``
     #: is ``x_layers[d]`` and the last entry is the tick labels' own layer.
     #: With ``color_factor``, how a renderer knows which labelled row repeats
@@ -353,6 +359,7 @@ class ResolvedPlot:
                 "layout_notes": list(self.layout_notes),
             },
             "x_order": [_jsonable(v) for v in (self.x_order or [])] or None,
+            "missing_x": list(self.missing_x),
             "x_groups": [
                 {
                     "label": group.label,

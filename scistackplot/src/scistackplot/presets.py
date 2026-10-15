@@ -91,6 +91,7 @@ FIELD_CLASSES: dict[str, FieldClass] = {
     "join_sample": _T,
     "sample_color": _T,
     "sample_in_legend": _T,
+    "show_missing_levels": _T,
     "facet": _T,
     "y_axis.scope": _T,
     "y_axis.minimum": _V,

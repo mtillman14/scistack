@@ -223,6 +223,18 @@ that looks like a data problem. `LongTable` carries each factor's real level
 order; sources that know better (SciDB knows its declared `schema_key_types`)
 supply it explicitly, and everything else falls back to a natural sort.
 
+## Missing levels stay visible
+
+A figure with no data for an x level that the rest of the plot has keeps an
+empty tick for it: under `subject=ITERATE`, the figure of a subject who never
+ran session 2 still shows a session 2 slot, so the gap reads as missing data.
+`PlotSpec.show_missing_levels=False` leaves those ticks off, which makes the
+remaining marks wider. "Missing" is measured against the plot's filtered
+rows, so a level you filtered out never comes back as an empty tick. Leaves
+of a nested axis work the same way, and no position is ever made for a
+combination no figure has. Either way `ResolvedPlot.missing_x` lists the
+levels, and the exported code draws the same ticks as the preview.
+
 ## Rendering
 
 Two backends translate the same reduced plot, so the interactive view and the

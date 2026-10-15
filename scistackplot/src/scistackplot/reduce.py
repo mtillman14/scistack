@@ -371,6 +371,7 @@ def resolve(
                     y_limits=plan.y_limits,
                     text=text,
                     colors=colors,
+                    axis_frame=plan.frame,
                 )
             )
         for figure in figures:
@@ -807,6 +808,7 @@ def resolve_one(
             y_limits=plan.y_limits,
             text=text,
             colors=colors,
+            axis_frame=plan.frame,
         )
         figure.fanout_notes = plan.notes
         siblings = _difference_sibling_indices(plan, position)
@@ -827,6 +829,7 @@ def resolve_one(
                         y_limits=plan.y_limits,
                         text=text,
                         colors=colors,
+                        axis_frame=plan.frame,
                     )
                     for other in siblings
                 ]
@@ -1236,6 +1239,7 @@ def _build_figure(
     y_limits: dict | None = None,
     text: DisplayText | None = None,
     colors: MarkColors | None = None,
+    axis_frame: pd.DataFrame | None = None,
 ) -> ResolvedPlot:
     # ``narrate`` makes this function announce each phase as it starts. A
     # full-resolution figure is minutes of work (scidb.log 2026-09-11: 1543s for
@@ -1402,7 +1406,6 @@ def _build_figure(
             color,
             layer=LAYER,
         )
-        x_factor = x_layers[0] if x_layers else None
         # Several factors may be faceted at once; their combined levels are the
         # panels, and FacetOptions decides how those panels are arranged.
         facet_names = [
@@ -1557,11 +1560,25 @@ def _build_figure(
             # renderers draw the same brackets and codegen can replay the result
             # instead of re-deriving it (same bargain as plan_layout).
             # Its TEXT is aliased; its `order` (the keys marks are placed by) is not.
-            x_plan = (
-                figure_text.x_plan(_plan_nested_x(panels, table, x_layers))
-                if len(x_layers) > 1
+            x_axis = (
+                _x_axis_levels(
+                    panels, table, x_layers, axis_frame, spec.show_missing_levels
+                )
+                if x_layers
                 else None
             )
+            x_plan = figure_text.x_plan(x_axis.plan) if x_axis and x_axis.plan else None
+            if x_axis is not None and x_axis.missing:
+                Log.info(
+                    "x axis: %d level(s) of the plot have no data in this figure "
+                    "(%s): %s",
+                    len(x_axis.missing),
+                    "drawn as empty ticks"
+                    if spec.show_missing_levels
+                    else "left off the axis (show_missing_levels=False)",
+                    _describe_missing(x_axis.missing),
+                    layer=LAYER,
+                )
 
         # The FIGURE's limits: the panels' own, when they all agree. Not a
         # second computation — every consumer that reads one number per figure
@@ -1642,12 +1659,16 @@ def _build_figure(
                 list(x_plan.order)
                 if x_plan
                 else (
-                    _level_order(table, x_factor, [p.frame for p in panels], X)
-                    if x_factor
+                    x_axis.order
+                    if x_axis is not None
                     else _unlabelled_x_order(panels)
                 )
             ),
             x_plan=x_plan,
+            missing_x=[
+                MISSING_X_JOIN.join(values)
+                for values in (x_axis.missing if x_axis is not None else [])
+            ],
             x_layers=list(x_layers),
             color_factor=color,
             color_order=color_order,
@@ -1981,7 +2002,7 @@ def _panel_frame(
         # Carry the nested axis's LAYER columns through the summary. They are a
         # function of the composed key, so grouping by them as well changes no
         # group — but without them `_summarize`'s `reset_index` returns three
-        # columns and the layer values are gone, and `_plan_nested_x` (which
+        # columns and the layer values are gone, and `_x_axis_levels` (which
         # requires every layer to be present in a panel) then skips every panel
         # and composes an EMPTY axis: no order, no ticks, no brackets.
         #
@@ -2120,7 +2141,7 @@ def _summarize(
     functionally determined by ``__x`` (the composed leaf key IS their
     combination), so grouping by them splits nothing that was not already
     split; it only keeps them from being dropped by the ``reset_index`` below,
-    which is what the renderers and ``_plan_nested_x`` read the group labels
+    which is what the renderers and ``_x_axis_levels`` read the group labels
     from.
 
     ``__color`` is carried the same way, and for the same reason: the
@@ -2255,33 +2276,115 @@ def _level_rank(table: LongTable, column: str, value: Any) -> tuple:
     return (1,) + natural_sort_key(value)
 
 
-def _plan_nested_x(
-    panels: list[Panel], table: LongTable, x_layers: list[str]
-) -> XPlan:
-    """Compose the nested axis from the combinations the panels actually hold.
+def axis_combinations(frame: pd.DataFrame, layers: list[str]) -> list[tuple[str, ...]]:
+    """The distinct combinations of ``layers`` in ``frame``, as text, in
+    order of appearance — ``[]`` when a layer is absent or the frame empty.
 
-    Observed combinations, never the Cartesian product: real designs are ragged
-    — a sham group with no post session — and reserving a position for a
-    combination nobody ran leaves a hole that reads as missing data.
-
-    Taken across ALL panels so a faceted figure shares one axis; a panel missing
-    a combination gets a gap in the same place as its neighbours rather than a
-    differently-shaped axis.
+    THE rule for which leaves a nested x axis can hold, read by the preview
+    (over a figure's panels, and over the plot's filtered frame for the
+    missing ones) and by ``codegen`` (over the same filtered frame). Observed
+    combinations, never the Cartesian product: real designs are ragged — a
+    sham group with no post session — and a position for a combination
+    nobody ran anywhere in the plot is not "missing data", it is no data.
     """
-    combinations: list[tuple] = []
-    for panel in panels:
-        present = [name for name in x_layers if name in panel.frame.columns]
-        if len(present) != len(x_layers) or panel.frame.empty:
-            continue
-        combinations.extend(
-            panel.frame[x_layers].astype(str).drop_duplicates().itertuples(
-                index=False, name=None
+    if not layers or frame.empty or any(name not in frame.columns for name in layers):
+        return []
+    return list(
+        frame[layers].astype(str).drop_duplicates().itertuples(index=False, name=None)
+    )
+
+
+def axis_values(frame: pd.DataFrame, column: str) -> list[Any]:
+    """The distinct non-null values of a flat x factor in ``frame``, as the
+    frame holds them (a numeric level stays a number). The flat-axis twin of
+    :func:`axis_combinations`, with the same two readers."""
+    if column not in frame.columns or frame.empty:
+        return []
+    return frame[column].dropna().unique().tolist()
+
+
+def nested_layer_orders(table: LongTable, x_layers: list[str]) -> list[list[str]]:
+    """Each nested layer's declared level order, as text (``plan_x_axis``)."""
+    return [[str(level) for level in _factor_levels(table, name)] for name in x_layers]
+
+
+@dataclass(frozen=True)
+class _XAxis:
+    """What :func:`_x_axis_levels` decided for one figure."""
+
+    #: The flat axis' levels in order (natives), or None for a nested axis.
+    order: list[Any] | None
+    #: The composed nested axis, or None for a flat one.
+    plan: XPlan | None
+    #: Leaves of the plot this figure has no data for, as text, outermost
+    #: layer first — listed whether or not they are drawn.
+    missing: list[tuple[str, ...]]
+
+
+def _x_axis_levels(
+    panels: list[Panel],
+    table: LongTable,
+    x_layers: list[str],
+    axis_frame: pd.DataFrame | None,
+    show_missing: bool,
+) -> _XAxis:
+    """The figure's x levels: its own, plus — under
+    ``PlotSpec.show_missing_levels`` — the plot's levels it has no data for.
+
+    ``axis_frame`` is the plot's post-filter frame (``_Plan.frame``, every
+    figure of the fan-out), so "missing" is relative to what the plot holds
+    after the user's filters: a filtered-out level never returns as an empty
+    tick. Taken across ALL panels so a faceted figure shares one axis; a
+    panel missing a combination gets a gap in the same place as its
+    neighbours rather than a differently-shaped axis.
+    """
+    plot_frame = axis_frame if axis_frame is not None else pd.DataFrame()
+    if len(x_layers) > 1:
+        own: list[tuple[str, ...]] = []
+        for panel in panels:
+            own.extend(axis_combinations(panel.frame, x_layers))
+        held = set(own)
+        missing = list(
+            dict.fromkeys(
+                combo
+                for combo in axis_combinations(plot_frame, x_layers)
+                if combo not in held
             )
         )
-    layer_orders = [
-        [str(level) for level in _factor_levels(table, name)] for name in x_layers
+        combinations = own + missing if show_missing else own
+        return _XAxis(
+            order=None,
+            plan=plan_x_axis(combinations, nested_layer_orders(table, x_layers)),
+            missing=sorted(missing, key=lambda combo: _combo_rank(table, x_layers, combo)),
+        )
+
+    x_factor = x_layers[0]
+    present = _level_order(table, x_factor, [p.frame for p in panels], X) or []
+    held_text = {str(value) for value in present}
+    missing_values = [
+        value for value in axis_values(plot_frame, x_factor) if str(value) not in held_text
     ]
-    return plan_x_axis(combinations, layer_orders)
+    order = present + missing_values if show_missing else present
+    order = sorted(order, key=lambda v: _level_rank(table, x_factor, v))
+    missing_values = sorted(missing_values, key=lambda v: _level_rank(table, x_factor, v))
+    return _XAxis(order=order, plan=None, missing=[(str(v),) for v in missing_values])
+
+
+#: Joins a missing nested leaf's layer values (outermost first) into the one
+#: string ``ResolvedPlot.missing_x`` lists it as.
+MISSING_X_JOIN = " / "
+
+
+def _describe_missing(missing: list[tuple[str, ...]], limit: int = 8) -> str:
+    names = [MISSING_X_JOIN.join(values) for values in missing]
+    more = f" … +{len(names) - limit} more" if len(names) > limit else ""
+    return ", ".join(names[:limit]) + more
+
+
+def _combo_rank(table: LongTable, layers: list[str], combo: tuple[str, ...]) -> tuple:
+    return tuple(
+        _level_rank(table, name, value) for name, value in zip(layers, combo, strict=True)
+    )
 
 
 def _factor_levels(table: LongTable, name: str) -> list[Any]:

@@ -436,6 +436,21 @@ def legend_levels(resolved: ResolvedPlot) -> list[Any]:
     return ordered
 
 
+def legend_entry_labels(resolved: ResolvedPlot) -> list[str]:
+    """
+    The colour entries' TEXT, in legend order: :func:`legend_levels` as the
+    renderers label them.
+
+    The one place a legend's order comes from. Both renderers used to list
+    entries in the order they first met them while drawing panel after panel,
+    so a facet grid whose first panel lacked a level (no ``BL`` in the sham
+    group) listed that level after the others — the declared ``[schema_keys]``
+    order held in every panel and in the colours, but not in the legend
+    (2026-10-15).
+    """
+    return [resolved.text.color_level(level) for level in legend_levels(resolved)]
+
+
 def shares_y_axis(resolved: ResolvedPlot) -> bool:
     """Whether every panel draws the same y range, so one axis can serve them.
 

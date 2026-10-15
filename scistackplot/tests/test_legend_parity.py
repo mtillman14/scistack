@@ -30,7 +30,8 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.render.base import legend_levels
+from scistackplot.render.base import legend_entry_labels, legend_levels
+from scistackplot.table import LongTable
 from scistackplot.variants import VARIANT_FACTOR, set_name
 
 matplotlib = pytest.importorskip("matplotlib")
@@ -159,3 +160,70 @@ def test_the_legend_is_the_resolved_colour_levels(stacked_table, two_variable_sp
     finally:
         matplotlib.pyplot.close(figure)
     assert _plotly_legend_labels(render_plotly(resolved)) == shared
+
+
+# --- legend order follows the declared level order (2026-10-15) -------------
+#
+# Reported: the legend ignored the [schema_keys] order in scistack.toml. Each
+# panel drew its series in declared order and the colours were right, but both
+# renderers listed legend entries as they first met them, panel by panel — so
+# a facet grid whose FIRST panel lacked an early level listed it late.
+
+
+def _plotly_legend_order(payload: dict) -> list[str]:
+    """What plotly.js DISPLAYS: entries sorted by ``legendrank`` (plotly's
+    default 1000), ties in trace order."""
+    entries = [
+        (trace.get("legendrank", 1000), position, trace["name"])
+        for position, trace in enumerate(payload["data"])
+        if trace.get("showlegend")
+    ]
+    return [name for _, _, name in sorted(entries)]
+
+
+@pytest.fixture
+def first_panel_lacks_pre():
+    """Facet A has no ``pre``; facet B has both. Declared ``pre, post`` is
+    the reverse of alphabetical, so a sorted legend is wrong too."""
+    rows = [
+        {"subject": subject, "group": group, "session": session, "M": float(i)}
+        for i, (group, sessions) in enumerate([("A", ["post"]), ("B", ["pre", "post"])])
+        for session in sessions
+        for subject in ("01", "02")
+    ]
+    return LongTable.from_frame(
+        pd.DataFrame(rows),
+        factors=["subject", "group", "session"],
+        measures=["M"],
+        name="M",
+        schema_levels=["subject", "group", "session"],
+        level_order={"session": ["pre", "post"], "group": ["A", "B"]},
+    )
+
+
+@pytest.mark.parametrize("kind", [PlotKind.BAR, PlotKind.SCATTER])
+def test_legend_lists_levels_in_declared_order(first_panel_lacks_pre, kind):
+    spec = PlotSpec(
+        measures=["M"],
+        roles={"group": Role.FACET, "session": Role.GROUP, "subject": Role.COLLAPSE},
+        groups=["session"],
+        color="session",
+        kind=kind,
+    )
+    resolved = resolve(spec, first_panel_lacks_pre)[0]
+    # Panel frames name columns by ROLE (`encoding.color` is "__color"), not
+    # by factor.
+    first = resolved.panels[0].frame[resolved.encoding.color]
+    assert first.astype(str).unique().tolist() == ["post"], (
+        "the fixture's point: the first panel draws no pre"
+    )
+
+    expected = ["pre", "post"]
+    assert legend_entry_labels(resolved) == expected
+
+    figure = render_matplotlib(resolved)
+    try:
+        assert _mpl_legend_labels(figure) == expected
+    finally:
+        matplotlib.pyplot.close(figure)
+    assert _plotly_legend_order(render_plotly(resolved)) == expected

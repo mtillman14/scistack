@@ -75,6 +75,7 @@ def full_spec() -> PlotSpec:
         join_sample=True,
         sample_color="subject",
         sample_in_legend=False,
+        show_missing_levels=False,
         facet=FacetOptions(
             n_rows=2,
             n_cols=3,

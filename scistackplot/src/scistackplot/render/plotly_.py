@@ -55,6 +55,7 @@ from .base import (
     dash_style,
     grid_shape,
     is_categorical_x,
+    legend_entry_labels,
     legend_levels,
     colorable,
     palette_for,
@@ -174,6 +175,10 @@ def render(
                 # from this, never from `spec.roles`.
                 "panel_factors": list(resolved.panel_factors),
                 "y_scope": list(resolved.y_scope),
+                # The plot's x levels this figure has no data for
+                # (ResolvedPlot.missing_x): the GUI offers "Show missing
+                # levels" only when this is non-empty, and says which.
+                "missing_x": list(resolved.missing_x),
                 # The size the SAVED figure will have. The preview fills its
                 # pane regardless, so this is how the panel states what the
                 # export produces — the same numbers `render_mpl` logs.
@@ -236,6 +241,18 @@ def render(
             panel_position(resolved, index) for index in range(len(resolved.panels))
         ]
         seen_legend: set[str] = set()
+        # plotly lists legend entries in TRACE order, which is panel order —
+        # a level missing from the first panel would be listed late. A rank
+        # per entry pins the legend to `legend_entry_labels` instead. Below
+        # plotly's default 1000, so dash entries (unranked) follow the colours
+        # and the overlay (2000) stays last.
+        legend_ranks = (
+            {label: rank for rank, label in enumerate(legend_entry_labels(resolved))}
+            if legend_on
+            else {}
+        )
+        if legend_ranks:
+            Log.debug("preview legend order: %s", list(legend_ranks), layer=LAYER)
 
         for index, panel in enumerate(resolved.panels):
             row, col = positions[index]
@@ -245,7 +262,8 @@ def render(
 
             traces.extend(
                 _panel_traces(
-                    panel.frame, resolved, x_axis, y_axis, seen_legend, legend_on
+                    panel.frame, resolved, x_axis, y_axis, seen_legend, legend_on,
+                    legend_ranks,
                 )
             )
             traces.extend(_sample_traces(panel, resolved, x_axis, y_axis, seen_legend, legend_on))
@@ -472,6 +490,7 @@ def _panel_traces(
     y_axis: str,
     seen_legend: set[str],
     legend_on: bool = True,
+    legend_ranks: dict[str, int] | None = None,
 ) -> list[dict]:
     if frame.empty:
         return []
@@ -506,6 +525,8 @@ def _panel_traces(
             "xaxis": x_axis,
             "yaxis": y_axis,
         }
+        if legend_ranks and label in legend_ranks:
+            base["legendrank"] = legend_ranks[label]
         if _positional_x(resolved):
             # A linear axis of level indices (see `_positional_x`): every mark
             # is placed by index so the overlay can shift beside it, and the

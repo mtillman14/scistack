@@ -113,7 +113,7 @@ def _overlay_lines(drawn):
 
 
 def _overlay_traces(payload):
-    return [t for t in payload["data"] if t["type"] == "scatter" and "legendrank" in t]
+    return [t for t in payload["data"] if t["type"] == "scatter" and t.get("legendrank") == 2000]
 
 
 # --- the spec and the rule --------------------------------------------------

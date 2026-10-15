@@ -41,6 +41,7 @@ from .base import (
     dash_style,
     grid_shape,
     is_categorical_x,
+    legend_entry_labels,
     legend_levels,
     mark_width,
     palette_for,
@@ -1269,89 +1270,6 @@ def _verify_x_ticks(fig, ticks: list[_XTicks], fit: LabelFit) -> None:
 #: figure width.
 LEGEND_PAD = 0.02
 
-#: Widest the legend strip may get, however long the level names are: past this
-#: the labels have eaten the figure, and truncating the panels is worse than
-#: truncating the legend.
-MAX_LEGEND_FRACTION = 0.4
-
-
-def _apply_legend(fig, resolved: ResolvedPlot) -> float:
-    """
-    Draw the legend to the right of the panels; return the width it claimed.
-
-    The return value is a fraction of the figure width, for ``tight_layout``'s
-    ``rect`` — see the call site. Zero means no legend was drawn, which is the
-    answer for a single colour level (``base.shows_legend``) as well as for no
-    colour at all.
-    """
-    if not shows_legend(resolved):
-        Log.debug(
-            "legend omitted: %d colour level(s) drawn for %r",
-            len(legend_levels(resolved)),
-            resolved.labels.color,
-            layer=LAYER,
-        )
-        return 0.0
-    # Every VISIBLE axes, not just the first: with facets, a level can be
-    # absent from panel 1 and present in panel 5, and reading one panel's
-    # handles would drop it from the legend of a figure that draws it.
-    unique: dict[str, Any] = {}
-    for ax in fig.axes:
-        if not ax.get_visible():
-            continue
-        handles, labels = ax.get_legend_handles_labels()
-        for handle, label in zip(handles, labels, strict=False):
-            unique.setdefault(label, handle)
-    if not unique:
-        return 0.0
-    # The overlay's block goes LAST, in its levels' order. matplotlib lists
-    # an axes' Line2D handles before its bar containers, so gathered as-is
-    # the subjects would precede the bars they sit on.
-    sample_labels = [resolved.text.sample_level(level) for level in sample_legend_levels(resolved)]
-    if len(sample_labels) > 1:
-        unique = {
-            **{k: v for k, v in unique.items() if k not in sample_labels},
-            **{k: unique[k] for k in sample_labels if k in unique},
-        }
-
-    # One title naming every block: the colours, the dash styles, and the
-    # overlay's own colour key when its levels are listed too.
-    blocks = (
-        resolved.labels.color,
-        resolved.labels.dash,
-        resolved.labels.sample if len(sample_legend_levels(resolved)) > 1 else None,
-    )
-    title = " / ".join(t for t in blocks if t) or None
-    legend = fig.legend(
-        unique.values(),
-        unique.keys(),
-        title=title,
-        loc="center right",
-        frameon=False,
-    )
-    return _legend_width_fraction(fig, legend, unique.keys(), title)
-
-
-def _legend_width_fraction(fig, legend, labels, title) -> float:
-    """How much of the figure's width the legend needs, measured if possible."""
-    figure_width = fig.get_size_inches()[0] or 1.0
-    try:
-        inches = legend.get_window_extent(fig.canvas.get_renderer()).width / fig.dpi
-    except Exception:  # a backend without a usable renderer
-        # Estimate rather than reserve nothing: a wrong-by-a-little strip still
-        # keeps the legend off the panels, an unmeasured one does not.
-        longest = max((len(str(text)) for text in [*labels, title or ""]), default=0)
-        inches = 0.55 + 0.085 * longest
-        Log.debug(
-            "legend width not measurable; estimating %.2fin from %d labels",
-            inches,
-            len(list(labels)),
-            layer=LAYER,
-        )
-#: Breathing room between the panels and the legend strip, as a fraction of the
-#: figure width.
-LEGEND_PAD = 0.02
-
 #: Share of the figure width a legend at the right may take. Past it the
 #: legend is narrowed (title wrapped, shorter line samples, smaller text) and,
 #: if still too wide, moved below the panels. The old cap was 0.4, and at it a
@@ -1431,6 +1349,15 @@ def _legend_entries(fig, resolved: ResolvedPlot):
             unique.setdefault(label, handle)
     if not unique:
         return None
+    # The colour block FIRST, in legend order (`legend_entry_labels`): handles
+    # are gathered axes by axes, so a level missing from the first panel
+    # would otherwise be listed after levels declared later.
+    colour_labels = [label for label in legend_entry_labels(resolved) if label in unique]
+    unique = {
+        **{label: unique[label] for label in colour_labels},
+        **{k: v for k, v in unique.items() if k not in colour_labels},
+    }
+    Log.debug("export legend order: %s", list(unique), layer=LAYER)
     # The overlay's block goes LAST, in its levels' order. matplotlib lists
     # an axes' Line2D handles before its bar containers, so gathered as-is
     # the subjects would precede the bars they sit on.

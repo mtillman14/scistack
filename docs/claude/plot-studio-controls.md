@@ -51,7 +51,7 @@ The design history is in `.claude/plot-studio-sidebar-redesign.md`.
 | **Appearance** (starts closed) | Size | Aspect | `style.{width,height}` via `commitSize` (aspect is DERIVED from the size; Custom is a disabled readout; the toolbar's Lock aspect checkbox → `figureSize.resizeFigure`) |
 | | Y axis | scope ticks, Min/Max | `y_axis.{scope,minimum,maximum}` |
 | | Panels (only with 2+ faceted panels, from `layout.meta.panel_overrides`) | Y titles (every panel / first column only); Panel dropdown (+ "Not in this figure"); Min/Max, Y title, Show (follow/show/hide), Clear | `style.y_titles`; `panel_overrides` via `panelOverrides.ts` (docs/claude/per-panel-overrides.md) |
-| | X tick labels | Rotation, Show, Hide labels the legend repeats | `style.{tick_rotation,tick_every,hide_legend_ticks}` |
+| | X tick labels | Show missing levels (only when the figure lacks some of the plot's x levels; `meta.missing_x`), Rotation, Show, Hide labels the legend repeats | `show_missing_levels`, `style.{tick_rotation,tick_every,hide_legend_ticks}` |
 | | Marks | Line weight, Sample weight | `style.{line_weight,sample_weight}` |
 | | Text | Font (empty = auto), Print / Slide, per-element sizes, Reset | `style.text` (`base` = Font, `target` = Print/Slide; auto: `autosize`) |
 | | Labels | titles, aliases, ↑/✕ project | `style.{title,x_label,y_label}`, `aliases`, project `[aliases]` |

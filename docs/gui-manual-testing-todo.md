@@ -11,6 +11,60 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzs. Show missing levels (empty x ticks) — added 2026-10-15
+
+**What changed:** when a figure has no data for an x level that the rest of
+the plot has (e.g. one subject never ran a session, under Separate figures),
+the figure now keeps an EMPTY tick for it by default, so the gap reads as
+missing data. A new checkbox in **X tick labels**, *Show missing levels
+(n: …)*, turns that off. The box only appears when the figure on screen is
+missing something. Levels you filtered out never come back as empty ticks.
+
+**Backend**
+1. Reload the VS Code window so it picks up the backend edit.
+
+**Frontend**
+1. Open a bar or box plot with `session` on x and `subject` set to
+   **Separate figures**. Pick a subject who is missing a session.
+2. That subject's figure should show an empty tick for the missing session,
+   in its declared place. The checkbox should read *Show missing levels (1:
+   …)* and be ticked.
+3. Untick it. The empty tick goes and the remaining marks get wider. Tick it
+   again and the empty tick comes back.
+4. Switch to a subject with every session: the checkbox is gone.
+5. Filter that session out (Filters or the location picker): no subject's
+   figure shows it, and the checkbox is gone.
+6. Nested axis (two grouping layers, e.g. side inside session): the missing
+   session keeps its bracket with empty leaves under it.
+7. Save the figure, and export the code. Both should draw the same ticks as
+   the preview, ticked and unticked.
+8. `grep "no data in this figure" scidb.log` shows the missing levels and
+   which way they were drawn.
+
+---
+
+## 0zzzr. Legend follows the `[schema_keys]` level order — added 2026-10-15
+
+**What changed:** both legends (the Plot Studio preview and the saved figure)
+now list colour levels in the order `scistack.toml`'s `[schema_keys]`
+declares. Before, they were listed in the order they first appeared, panel by
+panel, so a level missing from the first facet panel was listed late.
+
+**Backend**
+1. Declare an order that is not alphabetical, e.g. `session = ["BL", "POST", "FU"]`.
+2. Reload the VS Code window so it picks up the backend edit.
+
+**Frontend**
+1. Open a plot coloured by `session` and faceted by something whose FIRST
+   panel has no `BL` rows (or filter `BL` out of one subject or group).
+2. The legend should read `BL, POST, FU`, whichever panel each level first
+   appears in.
+3. Save the figure. The PNG's legend should have the same order.
+4. `grep "legend order" scidb.log` (DEBUG) shows the `preview legend order:`
+   and `export legend order:` lists.
+
+---
+
 ## 0zzzq. Figure arrows under rapid clicking + figure files named for their values — added 2026-10-15
 
 **What changed:**
