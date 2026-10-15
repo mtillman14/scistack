@@ -9,6 +9,9 @@ expected to reproduce.
 
 from __future__ import annotations
 
+import threading
+import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -72,9 +75,48 @@ from .base import (
 
 LAYER = "scistackplot"
 
+#: One matplotlib figure at a time, process-wide. The GUI answers every RPC
+#: on its own thread, and a render sets text sizes through ``rc_context`` —
+#: GLOBAL rcParams, saved on entry and restored on exit — so two renders
+#: overlapping (a pane resize while the previous resolve still lays out;
+#: scidb.log 2026-10-15 12:23:50, three at once) read each other's sizes and
+#: the last to exit can leave the wrong ones behind. Re-entrant: a layout
+#: decision settles the auto text size, whose trials render.
+_MPL_LOCK = threading.RLock()
+
+#: A wait for the lock longer than this is logged (INFO): a slow figure is
+#: then told apart from a figure queued behind another one.
+_LOCK_WAIT_LOG_S = 0.25
+
+
+@contextmanager
+def _one_figure_at_a_time(what: str):
+    t0 = time.perf_counter()
+    with _MPL_LOCK:
+        waited = time.perf_counter() - t0
+        if waited > _LOCK_WAIT_LOG_S:
+            Log.info(
+                "%s waited %.2fs for another figure's matplotlib layout to finish "
+                "(matplotlib lays out one figure at a time)",
+                what,
+                waited,
+                layer=LAYER,
+            )
+        yield
+
+
+def _artist_count(fig) -> int:
+    """Every artist a layout pass walks: each axes' children, the figure's own."""
+    return len(fig.get_children()) + sum(len(ax.get_children()) for ax in fig.axes)
+
 
 def render(resolved: ResolvedPlot):
     """Draw ``resolved`` and return the Figure (caller owns closing it)."""
+    with _one_figure_at_a_time(f"render_mpl({resolved.kind})"):
+        return _render(resolved)
+
+
+def _render(resolved: ResolvedPlot):
     import matplotlib
 
     if matplotlib.get_backend().lower() not in ("agg", "template"):
@@ -88,7 +130,18 @@ def render(resolved: ResolvedPlot):
     # An auto text size is chosen before anything is drawn (autosize owns
     # it; a trial layout arrives here already settled, so this never recurses).
     resolved = settle(resolved)
-    with Log.timer("render_mpl", layer=LAYER, extra=str(resolved.kind)):
+    with Log.timer("render_mpl", layer=LAYER, extra=str(resolved.kind)) as timer:
+        # Consecutive laps rather than nested phases: the body is one long
+        # sequence, and which pass of it is slow is the question a slow
+        # figure asks (scidb.log 2026-10-15: 6.6 s with no breakdown).
+        mark = time.perf_counter()
+
+        def lap(name: str) -> None:
+            nonlocal mark
+            now = time.perf_counter()
+            timer.phases.append((name, now - mark))
+            mark = now
+
         style = resolved.spec.style
         # rc_context, not rcParams: text reads the size at CREATION, so this
         # has to be open while every label, tick and legend entry is made —
@@ -129,7 +182,12 @@ def render(resolved: ResolvedPlot):
                 # panel was drawn last.
                 sharey=shares_y_axis(resolved),
             )
+            lap("subplots")
 
+            # Marks and overlay alternate per panel: summed apart, so the
+            # overlay's share is its own phase.
+            marks_s = sample_s = 0.0
+            sample_runs_drawn = sample_artists = 0
             used: set[tuple[int, int]] = set()
             # (row, col) -> panel, so the cosmetics pass can ask a CELL for its
             # panel's limits. It walks the grid rather than the panel list (blank
@@ -160,16 +218,25 @@ def render(resolved: ResolvedPlot):
                 used.add((row, col))
                 at_cell[(row, col)] = panel
                 panel_axes[index] = ax
+                t0 = time.perf_counter()
                 if resolved.custom is not None:
                     # The user's plot_ function draws this panel's marks; the
                     # layout around them is this renderer's (custom.py).
                     resolved.custom.draw_panel(ax, panel, resolved)
                 else:
                     _draw_panel(ax, panel.frame, resolved)
-                _draw_sample(ax, panel, resolved)
+                t1 = time.perf_counter()
+                runs, drawn = _draw_sample(ax, panel, resolved)
+                sample_runs_drawn += runs
+                sample_artists += drawn
+                marks_s += t1 - t0
+                sample_s += time.perf_counter() - t1
                 # No subplot caption: a faceted panel is named by its y-axis title
                 # instead (base.panel_y_title), which buys back the row of vertical
                 # space a title costs in every row of the grid.
+            timer.phases.append(("marks", marks_s))
+            timer.phases.append(("sample_overlay", sample_s))
+            mark = time.perf_counter()
 
             # Blank out grid cells no panel landed in (a wrapped grid's remainder).
             for row in range(n_rows):
@@ -178,6 +245,21 @@ def render(resolved: ResolvedPlot):
                         axes[row][col].set_visible(False)
 
             _apply_axes_cosmetics(fig, axes, resolved, n_rows, n_cols, at_cell)
+            lap("cosmetics")
+            # What every layout pass below walks. Thousands here is the cause
+            # of a slow figure, whatever the row count says (the overlay drew
+            # one artist per run until 2026-10-15).
+            Log.info(
+                "drew %d artist(s) over %d panel(s)%s",
+                _artist_count(fig),
+                len(resolved.panels),
+                (
+                    f"; sample overlay {sample_runs_drawn} run(s) as {sample_artists} artist(s)"
+                    if sample_runs_drawn
+                    else ""
+                ),
+                layer=LAYER,
+            )
 
             if resolved.labels.title:
                 fig.suptitle(resolved.labels.title)
@@ -204,13 +286,16 @@ def render(resolved: ResolvedPlot):
                     rect = _arrange(fig, labelled, resolved, legend)
                     fig.tight_layout(rect=rect)
             setattr(fig, LEGEND_ATTR, legend.describe() if legend is not None else None)
+            lap("legend_and_layout")
             # After a layout pass: the room each label has is the laid-out
             # panel width (spec/images/graph1.png, graph2.png).
             _fit_x_labels(fig, [ax for _, _, ax in labelled], resolved, rect)
+            lap("x_labels")
             # Difference bars need the laid-out panel heights (their sizes are
             # points), so they come after every other layout pass, and before
             # the reach is measured (a raised top can widen the tick numbers).
             _draw_difference_bars(fig, panel_axes, resolved, rect)
+            lap("difference_bars")
             # Last, on the final layout: what the preview sizes its margins
             # and cell gaps from. Hidden y titles are named next to it, so a
             # gap that did not shrink can be explained from scidb.log (the
@@ -223,7 +308,9 @@ def render(resolved: ResolvedPlot):
             if hidden:
                 Log.debug("y titles hidden: %s", "; ".join(hidden), layer=LAYER)
             setattr(fig, GRID_REACH_ATTR, _grid_reach(fig, axes, n_rows, n_cols))
+            lap("grid_reach")
             setattr(fig, AXIS_TEXT_ATTR, _axis_text(fig, axes, n_rows, n_cols, resolved))
+            lap("axis_text")
             return fig
 
 
@@ -491,7 +578,7 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
     ax.set_xticklabels([resolved.text.x_tick(v) for v in order])
 
 
-def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
+def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
     """The "Show sample" overlay: one point per row of ``panel.sample`` inside
     the mark it belongs to, joined into a line per identity when
     ``ResolvedPlot.sample_join`` says so.
@@ -503,18 +590,36 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
     (``ResolvedPlot.sample_color``, the legend lists the levels —
     ``_sample_legend_handles``), or each point its mark's, with a line that
     crosses mark colours drawn neutral under points painted one by one.
-    Drawn after the marks, on top.
+    Drawn after the marks, on top. Joined runs are one line each; lone
+    points are one scatter per colour per panel. Returns ``(runs, artists)``
+    for the render's log line.
     """
     sample = getattr(panel, "sample", None)
     if sample is None or sample.empty or sample_dropped_reason(panel, resolved):
-        return
+        return 0, 0
     weight = sample_weight(resolved.spec.style)
-    for run in sample_runs(sample, resolved):
+    runs = sample_runs(sample, resolved)
+    # Lone points (a points-only overlay, or a one-point run of a joined
+    # one) gathered per colour and drawn as ONE scatter each, after the
+    # lines: one artist per run made a figure whose innermost tick is a
+    # between-subject factor (group) draw ~1400 scatters, and every layout
+    # pass walks every artist — 6.6 s per render, 46 s with the auto text
+    # size's trials (scidb.log 2026-10-15 12:21). Same points, same paint.
+    lone: dict[str, tuple[list[float], list[float]]] = {}
+    artists = 0
+    for run in runs:
         positions = sample_positions(run.rows, resolved, run.identity)
         order = np.argsort(positions, kind="stable")
         values = run.rows[resolved.encoding.y].to_numpy(dtype=float)[order]
         joined = resolved.sample_join and len(run.rows) > 1
-        if joined and run.uniform:
+        if not joined:
+            for x, y, i in zip(positions[order], values, order):
+                xs, ys = lone.setdefault(run.point_colors[i], ([], []))
+                xs.append(float(x))
+                ys.append(float(y))
+            continue
+        artists += 2 if not run.uniform else 1
+        if run.uniform:
             ax.plot(
                 positions[order],
                 values,
@@ -528,18 +633,17 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
                 zorder=3,
             )
             continue
-        if joined:
-            # The points sit on marks of different colours: the line (the
-            # run, zorder 3) in the neutral colour, the points on top of it
-            # each in its own mark's colour (gid: part of the line's run).
-            ax.plot(
-                positions[order],
-                values,
-                color=run.line_color,
-                alpha=SAMPLE_ALPHA,
-                linewidth=weight.line_pt,
-                zorder=3,
-            )
+        # The points sit on marks of different colours: the line (the
+        # run, zorder 3) in the neutral colour, the points on top of it
+        # each in its own mark's colour (gid: part of the line's run).
+        ax.plot(
+            positions[order],
+            values,
+            color=run.line_color,
+            alpha=SAMPLE_ALPHA,
+            linewidth=weight.line_pt,
+            zorder=3,
+        )
         ax.scatter(
             positions[order],
             values,
@@ -548,10 +652,23 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> None:
             alpha=SAMPLE_ALPHA,
             edgecolors=SAMPLE_EDGE_COLOR,
             linewidths=0.5,
-            zorder=3.1 if joined else 3,
-            gid=SAMPLE_LINE_POINTS_GID if joined else None,
+            zorder=3.1,
+            gid=SAMPLE_LINE_POINTS_GID,
         )
+    for color, (xs, ys) in lone.items():
+        ax.scatter(
+            xs,
+            ys,
+            s=weight.marker_area,
+            color=color,
+            alpha=SAMPLE_ALPHA,
+            edgecolors=SAMPLE_EDGE_COLOR,
+            linewidths=0.5,
+            zorder=3,
+        )
+    artists += len(lone)
     _sample_legend_handles(ax, resolved)
+    return len(runs), artists
 
 
 def _sample_legend_handles(ax, resolved: ResolvedPlot) -> None:
@@ -1791,7 +1908,9 @@ def layout_decisions(
     style = resolved.spec.style
     width = float(width_in or style.width)
     height = float(height_in or style.height)
-    with Log.timer("layout_decisions", layer=LAYER, extra=f"{width:.2f}x{height:.2f}in"):
+    with _one_figure_at_a_time("layout_decisions"), Log.timer(
+        "layout_decisions", layer=LAYER, extra=f"{width:.2f}x{height:.2f}in"
+    ):
         # Auto text is chosen at the size being decided (the pane's, in Fit
         # pane), keyed on the caller's object so the preview's later
         # render_plotly and a Save of the same resolve reuse it.
@@ -1830,6 +1949,11 @@ def layout_report(resolved: ResolvedPlot):
     measurements the auto text size judges a reference by. Renders, reads
     what the export already records on the figure, measures the drawn tick
     labels and y titles, closes it."""
+    with _one_figure_at_a_time("layout_report"):
+        return _layout_report(resolved)
+
+
+def _layout_report(resolved: ResolvedPlot):
     import matplotlib.pyplot as plt
 
     from ..autosize import LayoutReport

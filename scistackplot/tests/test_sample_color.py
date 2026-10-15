@@ -243,6 +243,81 @@ def test_mpl_draws_points_only_when_the_coloured_group_is_the_innermost_tick(tab
     plt.close(drawn)
 
 
+@pytest.mark.parametrize("sample_color", ["subject", None])
+def test_lone_points_are_one_artist_per_colour_not_one_per_run(table, sample_color):
+    """Regression (scidb.log 2026-10-15): with a between-subject factor as
+    the innermost tick every run is ONE point, and each run was its own
+    scatter / plotly trace — ~1400 of them on the user's CosmedData figure,
+    6.6 s per matplotlib render and 46 s with the auto text size's trials.
+    Lone points are now one scatter per colour per panel (mpl) and one
+    markers trace per legend group and colour (plotly): the same points, in
+    the same paint, in a handful of artists."""
+    from plot_geometry import mpl_sample_runs, plotly_sample_runs
+
+    figure = _figure(_spec("group", sample_color), table)
+    assert figure.sample_join is False
+    drawn = render_matplotlib(figure)
+    try:
+        scatters = [
+            c
+            for ax in drawn.axes
+            for c in ax.collections
+            if isinstance(c, PathCollection) and c.get_zorder() == 3
+        ]
+        colours = 4 if sample_color else 2  # subjects 01-04, or groups A/B
+        assert len(scatters) == colours, "one scatter per colour, not one per run (8)"
+        assert sum(len(c.get_offsets()) for c in scatters) == 8, "4 subjects x 2 sessions"
+        payload = render_plotly(figure)
+        traces = _overlay_traces(payload)
+        assert len(traces) == colours and {t["mode"] for t in traces} == {"markers"}
+        assert sum(len(t["x"]) for t in traces) == 8
+        assert len({t["legendgroup"] for t in traces}) == colours
+        # Both renderers still place the same points.
+        assert mpl_sample_runs(drawn, figure) == plotly_sample_runs(payload, figure)
+    finally:
+        plt.close(drawn)
+
+
+def test_joined_runs_are_still_one_line_each(table):
+    """The batching is for lone points only: a joined run keeps its own
+    polyline (a subject's s1 -> s2 line inside its group)."""
+    figure = _figure(_spec("session", "subject"), table)
+    assert figure.sample_join is True
+    drawn = render_matplotlib(figure)
+    try:
+        assert len(_overlay_lines(drawn)) == 4, "one line per subject"
+    finally:
+        plt.close(drawn)
+
+
+def test_concurrent_renders_do_not_leak_text_sizes(table):
+    """The GUI renders on one thread per RPC; ``rc_context`` saves and
+    restores GLOBAL rcParams, so two overlapping renders could leave one's
+    sizes behind (three at once in scidb.log 2026-10-15 12:23:50). Renders
+    are one at a time (``render.mpl._MPL_LOCK``): the rcParams after a burst
+    of threaded renders are the ones before it."""
+    import threading
+
+    before = {k: matplotlib.rcParams[k] for k in ("font.size", "xtick.labelsize", "axes.labelsize")}
+    figures = [_figure(_spec("session", "subject"), table) for _ in range(4)]
+    errors: list[BaseException] = []
+
+    def draw(figure):
+        try:
+            plt.close(render_matplotlib(figure))
+        except BaseException as exc:  # noqa: BLE001 — reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=draw, args=(f,)) for f in figures]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not errors, errors
+    after = {k: matplotlib.rcParams[k] for k in before}
+    assert after == before
+
+
 def test_mpl_line_runs_between_the_two_session_ticks_when_the_colour_is_session(table):
     """Colour = session on a [session, group] grouping: session stays a tick
     inside its group bracket (colour is paint), so subject 01's line runs

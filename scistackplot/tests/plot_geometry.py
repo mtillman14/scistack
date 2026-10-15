@@ -340,8 +340,11 @@ def mpl_sample_runs(figure, resolved: ResolvedPlot) -> list[Run]:
         for collection in ax.collections:
             if not isinstance(collection, PathCollection) or collection.get_zorder() != 3:
                 continue
-            offsets = collection.get_offsets()
-            runs.append(Run(panel, False, _run_points(resolved, offsets[:, 0], offsets[:, 1])))
+            # Lone points are batched per colour (one scatter per panel and
+            # colour, 2026-10-15), so a point is its own Run — the same
+            # reading `plotly_sample_runs` gives, whatever the batching.
+            for x, y in collection.get_offsets():
+                runs.append(Run(panel, False, _run_points(resolved, [x], [y])))
     return sorted(runs)
 
 
@@ -370,15 +373,19 @@ def mpl_sample_colors(figure) -> list[tuple[str | None, list[str]]]:
             runs.append((color, [color] * len(line.get_xdata())))
         for collection in ax.collections:
             if isinstance(collection, PathCollection) and collection.get_zorder() == 3:
+                # Lone points, batched per colour: one entry per point, so a
+                # per-run drawing (the generated code) reads the same.
                 faces = [to_hex(c) for c in collection.get_facecolors()]
-                runs.append((None, faces * (len(collection.get_offsets()) // max(len(faces), 1))))
+                for i in range(len(collection.get_offsets())):
+                    runs.append((None, [faces[i % len(faces)]] if faces else []))
     return runs
 
 
 def plotly_sample_runs(payload: dict, resolved: ResolvedPlot) -> list[Run]:
     """The overlay runs a plotly payload draws (``plotly_._sample_traces``:
-    one trace per run, ``legendrank`` 2000) — the same shape as
-    :func:`mpl_sample_runs`."""
+    one trace per joined run, lone points batched into one markers trace per
+    legend group and colour; ``legendrank`` 2000) — the same shape as
+    :func:`mpl_sample_runs`, each lone point its own Run."""
     runs: list[Run] = []
     axes = sorted({trace.get("xaxis", "x") for trace in payload["data"]})
     for trace in payload["data"]:
@@ -387,7 +394,11 @@ def plotly_sample_runs(payload: dict, resolved: ResolvedPlot) -> list[Run]:
         panel = axes.index(trace.get("xaxis", "x"))
         xs = [float(v) for v in trace["x"]]
         ys = [float(v) for v in trace["y"]]
-        runs.append(Run(panel, trace["mode"] == "lines+markers", _run_points(resolved, xs, ys)))
+        if trace["mode"] == "lines+markers":
+            runs.append(Run(panel, True, _run_points(resolved, xs, ys)))
+            continue
+        for x, y in zip(xs, ys, strict=True):
+            runs.append(Run(panel, False, _run_points(resolved, [x], [y])))
     return sorted(runs)
 
 

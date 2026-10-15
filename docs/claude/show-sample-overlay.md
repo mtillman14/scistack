@@ -143,6 +143,19 @@ now is **inert** (kept, reported under `sample_overlay.color`) —
   layer" above: points in their mark's colour, a crossing line neutral
   (mpl: a marker-less Line2D plus a scatter with gid
   `SAMPLE_LINE_POINTS_GID`; plotly: `marker.color` a per-point list).
+* **Lone points are batched (2026-10-15).** A run that is not joined (a
+  points-only overlay, or a one-point run — every run, when the innermost
+  tick is a between-subject factor like `group`) is NOT its own artist:
+  mpl draws one scatter per point colour per panel (zorder 3, after the
+  lines), plotly one `markers` trace per (legend group, colour). One
+  artist per run was ~1400 scatters on the user's CosmedData figure — 6.6 s
+  per render, 46 s with the auto text size's trials — and as many SVG
+  traces in the browser. Joined runs stay one line each. Test read-back
+  (`tests/plot_geometry.py`) reports each lone point as its own `Run`, so
+  mpl, plotly and the per-run generated code compare equal. The render
+  logs `drew N artist(s) ... sample overlay R run(s) as A artist(s)` and
+  `render_mpl`'s timing has per-pass phases (`marks`, `sample_overlay`,
+  `legend_and_layout`, `x_labels`, `grid_reach`, …).
 * **Legend:** the levels become a second block in the one legend, the way
   the dash styles are (`mpl._sample_legend_handles`, plotly `sample:<level>`
   legend groups with `legendrank` 2000, title `session / subject`);

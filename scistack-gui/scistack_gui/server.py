@@ -269,6 +269,10 @@ def _summarize_result(result, max_len: int = 160) -> "str | None":
 # transient, self-explanatory condition it is rather than a crash.
 ERR_DATABASE_LOCKED = -32010
 
+#: An RPC that is not a read but took at least this long is answered at
+#: INFO, so a slow plot or write is visible without DEBUG logging.
+SLOW_RPC_MS = 1000.0
+
 
 def _handle_request(req: dict) -> None:
     """Process a single JSON-RPC request.
@@ -361,6 +365,11 @@ def _handle_request(req: dict) -> None:
             )
             if counts is not None:
                 Log.info(f"RPC << {method} -> {counts} ({elapsed_ms:.1f}ms)")
+            elif elapsed_ms >= SLOW_RPC_MS:
+                # A slow write or plot call is the one the user waited on;
+                # at DEBUG, plot_resolve's end-to-end time (load + layout +
+                # serialise) was absent from scidb.log (2026-10-15).
+                Log.info(f"RPC << {method} OK ({elapsed_ms:.1f}ms) — slow")
             else:
                 Log.debug(f"RPC << {method} OK ({elapsed_ms:.1f}ms)")
             _answer(lambda: _respond(req_id, result))

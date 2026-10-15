@@ -24,6 +24,8 @@ import pandas as pd
 from scistacklog import Log
 from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX
 from scistackplot.framesize import format_extent, frame_extent
+from scistackplot.shape import Shape, classify_value
+from scistackplot.table import natural_sort_key
 
 LAYER = "scistackplotdb"
 
@@ -425,7 +427,8 @@ def load_variable(
     ) as timer:
         with timer.phase("column_metadata"):
             keys = schema_keys(db)
-            columns = data_columns_for(db, variable)
+            column_types = data_column_types_for(db, variable)
+            columns = list(column_types)
         if not columns:
             Log.warn("variable %r has no data columns", variable, layer=LAYER)
             return VariableFrame(name=variable, frame=pd.DataFrame())
@@ -513,6 +516,9 @@ def load_variable(
             variant_columns or "none",
             layer=LAYER,
         )
+        if columns and len(frame):
+            with timer.phase("field_coverage"):
+                _log_field_coverage(variable, frame, column_types, levels)
         if len(frame) > 1:
             with timer.phase("identical_content"):
                 _log_identical_content(db, variable, frame, keys)
@@ -525,6 +531,157 @@ def load_variable(
             variant_axes=variant_axes,
             latest_column=latest_column,
         )
+
+
+#: A scalar field that holds a number in fewer than this share of its
+#: records is WARNed, with where its numbers are.
+SPARSE_FIELD_SHARE = 0.5
+
+#: How many distinct levels of a key, and how many text examples, a coverage
+#: line names before it says "+N more".
+_COVERAGE_LEVELS_SHOWN = 6
+
+
+@dataclass(frozen=True)
+class FieldCoverage:
+    """What one scalar data column holds, record by record: how many cells
+    are a number, NULL/NaN, text (with a few examples), or something else."""
+
+    column: str
+    declared_type: str
+    records: int
+    numeric: int
+    null: int
+    text: int
+    other: int
+    text_examples: tuple[str, ...] = ()
+
+    @property
+    def missing(self) -> int:
+        return self.records - self.numeric
+
+    def describe(self) -> str:
+        parts = [f"{self.null} NULL"] if self.null else []
+        if self.text:
+            examples = ", ".join(repr(t) for t in self.text_examples)
+            parts.append(f"{self.text} text (e.g. {examples})")
+        if self.other:
+            parts.append(f"{self.other} other")
+        return (
+            f"{self.column} ({self.declared_type}) {self.numeric}/{self.records} numeric"
+            + (f" ({', '.join(parts)})" if parts else "")
+        )
+
+
+def field_coverage(
+    frame: pd.DataFrame, column_types: dict[str, str]
+) -> tuple[list[FieldCoverage], pd.DataFrame]:
+    """Per scalar column of ``frame``: what its cells hold. Array (1-D/2-D)
+    columns are skipped — a signal is not "missing a number". Also returns a
+    boolean frame, one column per covered field, True where the cell is a
+    number (for :func:`_log_field_coverage` to say WHERE the numbers are)."""
+
+    out: list[FieldCoverage] = []
+    is_number = pd.DataFrame(index=frame.index)
+    for column, declared in column_types.items():
+        if column not in frame.columns:
+            continue
+        values = frame[column]
+        if pd.api.types.is_numeric_dtype(values) and not pd.api.types.is_bool_dtype(values):
+            mask = values.notna()
+            out.append(
+                FieldCoverage(column, declared, len(values), int(mask.sum()), int((~mask).sum()), 0, 0)
+            )
+            is_number[column] = mask.to_numpy()
+            continue
+        numeric = null = text = other = 0
+        arrays = False
+        examples: list[str] = []
+        mask = []
+        for value in values.to_numpy():
+            if value is None or (isinstance(value, float) and value != value):
+                null += 1
+                mask.append(False)
+            elif classify_value(value) is Shape.SCALAR:
+                numeric += 1
+                mask.append(True)
+            elif isinstance(value, str):
+                text += 1
+                mask.append(False)
+                if value not in examples and len(examples) < 3:
+                    examples.append(value)
+            elif isinstance(value, (list, tuple, np.ndarray)):
+                arrays = True
+                break
+            else:
+                other += 1
+                mask.append(False)
+        if arrays:
+            continue
+        out.append(
+            FieldCoverage(column, declared, len(values), numeric, null, text, other, tuple(examples))
+        )
+        is_number[column] = mask
+    return out, is_number
+
+
+def _levels_text(values: pd.Series) -> str:
+    levels = sorted({str(v) for v in values if v is not None}, key=natural_sort_key)
+    shown = levels[:_COVERAGE_LEVELS_SHOWN]
+    more = len(levels) - len(shown)
+    return "{" + ", ".join(shown) + (f", +{more} more" if more else "") + "}"
+
+
+def _log_field_coverage(
+    variable: str, frame: pd.DataFrame, column_types: dict[str, str], levels: list[str]
+) -> None:
+    """INFO: every scalar field that is not a number in every record. WARN,
+    per field, when fewer than :data:`SPARSE_FIELD_SHARE` of its records hold
+    one — naming the levels those records sit at, because a plot of such a
+    field shows only them and reads as a broken grouping ("Dist_m showed one
+    group/one subject": 6 of 714 records held a number, scidb.log
+    2026-10-15). The plot is right; the data is what to look at.
+
+    Never raises: a diagnostic must not break a load.
+    """
+    try:
+        coverage, is_number = field_coverage(frame, column_types)
+        gaps = [c for c in coverage if c.missing]
+        if not gaps:
+            return
+        Log.info(
+            "field coverage of %s: %d of %d scalar field(s) are not a number in every "
+            "record — %s",
+            variable,
+            len(gaps),
+            len(coverage),
+            "; ".join(c.describe() for c in gaps),
+            layer=LAYER,
+        )
+        for c in gaps:
+            if c.numeric >= SPARSE_FIELD_SHARE * c.records:
+                continue
+            where = frame.loc[is_number[c.column].to_numpy(dtype=bool)]
+            located = ", ".join(
+                f"{key} ∈ {_levels_text(where[key])}"
+                for key in levels
+                if key in where.columns
+            )
+            Log.warn(
+                "%s.%s holds a number in only %d of %d record(s) — %s. A plot of it can "
+                "show only those records%s. If the source has values for the others, "
+                "they were not saved as numbers: check what the loader wrote for "
+                "this column.",
+                variable,
+                c.column,
+                c.numeric,
+                c.records,
+                c.describe(),
+                f", at {located}" if c.numeric and located else "",
+                layer=LAYER,
+            )
+    except Exception as exc:  # noqa: BLE001 — diagnostic only
+        Log.debug("field coverage of %s failed: %s", variable, exc, layer=LAYER)
 
 
 def _log_identical_content(db, variable: str, frame: pd.DataFrame, keys) -> None:

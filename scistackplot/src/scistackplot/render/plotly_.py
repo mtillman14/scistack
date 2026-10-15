@@ -698,7 +698,14 @@ def _sample_traces(
     listed = overlay_in_legend(resolved.spec, resolved.sample_color)
     weight = sample_weight(resolved.spec.style)
     traces: list[dict] = []
-    for run in sample_runs(sample, resolved):
+    # Lone points (not joined: a points-only overlay, or a one-point run)
+    # of one legend group and colour share ONE markers trace — one trace per
+    # run was ~1400 traces when the innermost tick is a between-subject
+    # factor (scidb.log 2026-10-15), each one an SVG group in the browser.
+    # Same points, same legend group (hiding a level still hides them).
+    lone: dict[tuple[str, str], dict] = {}
+    runs = sample_runs(sample, resolved)
+    for run in runs:
         level, rows, identity = run.level, run.rows, run.identity
         # The overlay's own colour key when it has one, else the mark's
         # colour — none when the run crosses the marks' colours.
@@ -714,22 +721,36 @@ def _sample_traces(
         levels = [
             str(v).replace(LEAF_SEPARATOR, " · ") for v in rows[resolved.encoding.x].to_numpy()
         ]
+        xs = [None if np.isnan(v) else float(v) for v in positions[order]]
+        ys = _values(rows[resolved.encoding.y].iloc[order])
+        custom = [f"{levels[i]}<br>{hover[i]}" if hover[i] else levels[i] for i in order]
+        name = label if own_color else (str(identity) if identity is not None else label)
+        joined_run = resolved.sample_join and len(rows) > 1
+        batch = lone.get((legend_group, run.line_color)) if not joined_run and run.uniform else None
+        if batch is not None:
+            batch["x"].extend(xs)
+            batch["y"].extend(ys)
+            batch["customdata"].extend(custom)
+            if batch["name"] != name:
+                # Several identities in one trace: name the trace by its level.
+                batch["name"] = label
+            continue
         show_legend = listed and legend_on and legend_group not in seen
         if show_legend:
             seen.add(legend_group)
         traces.append(
             {
                 "type": "scatter",
-                "mode": "lines+markers" if resolved.sample_join and len(rows) > 1 else "markers",
-                "name": label if own_color else (str(identity) if identity is not None else label),
+                "mode": "lines+markers" if joined_run else "markers",
+                "name": name,
                 "legendgroup": legend_group,
                 "showlegend": show_legend,
                 # After every mark entry whatever panel first drew it.
                 "legendrank": 2000,
                 "xaxis": x_axis,
                 "yaxis": y_axis,
-                "x": [None if np.isnan(v) else float(v) for v in positions[order]],
-                "y": _values(rows[resolved.encoding.y].iloc[order]),
+                "x": xs,
+                "y": ys,
                 "marker": {
                     # One colour, or each point its own mark's when the
                     # run crosses the marks' colours (base.sample_runs).
@@ -742,23 +763,24 @@ def _sample_traces(
                 "line": {"color": run.line_color, "width": weight.line_pt},
                 "opacity": SAMPLE_ALPHA,
                 # Hover-only (see `_level_hover` on why not `text`).
-                "customdata": [
-                    f"{levels[i]}<br>{hover[i]}" if hover[i] else levels[i] for i in order
-                ],
+                "customdata": custom,
                 "hovertemplate": "%{customdata}<br>%{y}<extra>" + label + "</extra>",
             }
         )
+        if not joined_run and run.uniform:
+            lone[(legend_group, run.line_color)] = traces[-1]
     # The one line that tells "no lines" apart: joined runs vs one-point runs
     # (a run is one identity inside one bracket — base.sample_runs — never
     # split by the marks' colour), and what decided the join.
     joined = sum(1 for t in traces if t["mode"] == "lines+markers")
     Log.debug(
-        "sample overlay panel %s: %d run(s), %d joined, %d single-point; "
+        "sample overlay panel %s: %d run(s) as %d trace(s), %d joined, %d single-point; "
         "join=%s (%s), own colour=%r, mark colour=%r",
         panel.title or "unfaceted",
+        len(runs),
         len(traces),
         joined,
-        sum(1 for t in traces if len(t["x"]) == 1),
+        sum(1 for run in runs if len(run.rows) == 1),
         resolved.sample_join,
         resolved.sample_join_reason,
         resolved.sample_color,
