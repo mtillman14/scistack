@@ -1510,6 +1510,14 @@ class Inspector:
         return out
 
     @_timed
+    def inventory(self, keys: list[str] | None = None):
+        """Every combination of the chosen schema keys with its status
+        (present / missing / excluded). Owner: ``scidb.inventory``."""
+        from ..inventory import schema_inventory
+
+        return schema_inventory(self._db, keys)
+
+    @_timed
     def sql(self, query: str) -> SqlResult:
         """Read-only escape hatch: arbitrary SQL, rendered/serialized as a
         table. Writes fail at the DuckDB level (read-only connection)."""

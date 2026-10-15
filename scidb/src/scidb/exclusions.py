@@ -179,12 +179,15 @@ def get_schema_overrides_hash(db: DatabaseManager) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
-def filter_excluded_combos(
+def exclusion_status(
     combos: list[dict],
     schema_keys_order: list[str],
     db: DatabaseManager,
-) -> list[dict]:
-    """Remove excluded combos from the list.
+) -> list[bool]:
+    """Is each combo excluded? One bool per combo, in order.
+
+    The one owner of "does an exclusion apply here" — ``filter_excluded_combos``
+    (for_each) and ``scidb.inventory`` both ask this.
 
     Resolution algorithm (per design doc):
     1. Collect all rows in ``__scidb_schema_overrides`` whose non-NULL columns
@@ -194,28 +197,22 @@ def filter_excluded_combos(
     3. The combo is excluded iff that row's ``status = FALSE``.  A combo with
        no matching row is included (default state).
 
-    Combos that contain schema-key columns not present in the combo dict
-    (e.g., wider exclusions when only a subset of keys is iterated) are
-    matched via wildcard: a NULL for that key in the override row will
-    still match.
+    A combo may name only some of the schema keys (a coarser iteration). An
+    override row that names a key the combo lacks does NOT match it: excluding
+    ``trial=3`` never excludes the whole ``subject/session`` above it.
 
-    Args:
-        combos: List of combo dicts (e.g., ``[{"subject": "1", "trial": "2"}]``).
-            Values should already be stringified (as produced by Step 9 in
-            ``_for_each_prepare``).
-        schema_keys_order: Ordered list of all schema keys from the DB.
-        db: DatabaseManager.
-
-    Backends without a DuckDB layer (no ``_duck``) cannot store overrides, so
-    the combos are returned unchanged.
-
-    Returns:
-        Filtered list with excluded combos removed.
+    Backends without a DuckDB layer (no ``_duck``), and databases that predate
+    the overrides table, have no exclusions: every combo reads ``False``.
     """
-    # Load all override rows once
     duck = _overrides_backend(db)
     if duck is None:
-        return combos
+        return [False] * len(combos)
+    table_exists = getattr(duck, "_table_exists", None)
+    if table_exists is not None and not table_exists(_TABLE):
+        from .log import Log
+
+        Log.debug(f"[scidb] schema overrides: no {_TABLE} table; no exclusions")
+        return [False] * len(combos)
     key_cols_sql = ", ".join(f'"{k}"' for k in schema_keys_order)
     rows = duck._fetchall(
         f"SELECT {key_cols_sql}, status, changed_at FROM {_TABLE} "
@@ -223,7 +220,7 @@ def filter_excluded_combos(
     )
 
     if not rows:
-        return combos
+        return [False] * len(combos)
 
     n_keys = len(schema_keys_order)
 
@@ -240,7 +237,7 @@ def filter_excluded_combos(
         specificity = len(key_values)
         override_rows.append((specificity, changed_at, key_values, is_included))
 
-    result = []
+    excluded: list[bool] = []
     for combo in combos:
         combo_str = {k: str(v) for k, v in combo.items() if k in schema_keys_order}
 
@@ -259,9 +256,31 @@ def filter_excluded_combos(
                 best_changed_at = changed_at
                 best_included = is_included
 
-        if best_specificity == -1 or best_included:
-            result.append(combo)
-        # else: excluded — drop
+        excluded.append(best_specificity != -1 and not best_included)
+
+    return excluded
+
+
+def filter_excluded_combos(
+    combos: list[dict],
+    schema_keys_order: list[str],
+    db: DatabaseManager,
+) -> list[dict]:
+    """Remove excluded combos from the list (``for_each``'s consumer of
+    :func:`exclusion_status`, which owns the matching rules).
+
+    Args:
+        combos: List of combo dicts (e.g., ``[{"subject": "1", "trial": "2"}]``).
+            Values should already be stringified (as produced by Step 9 in
+            ``_for_each_prepare``).
+        schema_keys_order: Ordered list of all schema keys from the DB.
+        db: DatabaseManager.
+
+    Returns:
+        Filtered list with excluded combos removed.
+    """
+    flags = exclusion_status(combos, schema_keys_order, db)
+    result = [c for c, ex in zip(combos, flags) if not ex]
 
     removed = len(combos) - len(result)
     if removed > 0:

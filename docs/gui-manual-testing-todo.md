@@ -11,6 +11,44 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzt. Data inventory popup (📋 Inventory) — added 2026-10-15
+
+**What changed:** a new **📋 Inventory** button in the header, next to
+📁 Paths, opens a popup that lists the schema-key combinations with no data.
+You check which keys to cross (all by default) and choose *Missing only* or
+*All, with status*. Each combination is **present** (some row in the database,
+at any depth), **missing**, or **excluded** (an active `exclude_schema` matches
+it; excluded wins over present). **Export CSV…** writes the whole table.
+
+**Backend**
+1. Reload the VS Code window so it picks up the backend edit.
+2. Optional cross-check in a terminal, with the GUI closed (it holds the
+   database lock): `scidb inventory --all` (and `--keys subject,session`)
+   should print the same counts as the popup.
+
+**Frontend**
+1. Click **📋 Inventory**. With every key checked and *Missing only*, the
+   counts line shows `N combination(s): a present, b missing, c excluded`, and
+   the table lists only the missing combinations (no status column).
+2. Switch to *All, with status*. Every combination appears, with a status
+   column coloured green (present), red (missing) or grey (excluded).
+3. Uncheck the deepest key (e.g. `trial`). The counts shrink, and
+   combinations that only have deeper rows now read **present**.
+4. Uncheck every key: the table goes, *Check at least one schema key.* shows,
+   and ↻ Run and Export CSV… are disabled.
+5. If a key with many values makes the table longer than 5,000 rows, a note
+   says *Showing the first 5,000 of N rows*.
+6. Exclude a subject. The GUI holds the database, so close it first, run
+   `scidb exclude subject=S02 --reason test`, and reopen. Every S02 row now
+   reads **excluded**, including ones that have data. Undo it the same way
+   afterwards (`scidb include subject=S02 --reason test`).
+7. **Export CSV…**: pick a path; the message says how many rows were written.
+   Open the file: one column per checked key, plus `status` only in *All* mode.
+8. `grep schema_inventory scidb.log` shows the keys, per-key value counts and
+   the present/missing/excluded counts for each run.
+
+---
+
 ## 0zzzs. Show missing levels (empty x ticks) — added 2026-10-15
 
 **What changed:** when a figure has no data for an x level that the rest of

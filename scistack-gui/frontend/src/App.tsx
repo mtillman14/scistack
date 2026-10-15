@@ -4,7 +4,7 @@
  * Layout:
  *   ┌───────────────────────────────┬─────────────┐
  *   │  header: SciStack + db name   │             │
- *   │  + Restart/Report/📁 Paths    │             │
+ *   │  + Restart/Report/📁 Paths/📋 │             │
  *   ├────────────────────────────────┤  sidebar    │
  *   │  HypothesisTabs: tab strip +  │  (right 1/4,│
  *   │  Research Question row        │  full       │
@@ -33,6 +33,7 @@ import PipelineDAG from "./components/DAG/PipelineDAG";
 import Breadcrumb from "./components/DAG/Breadcrumb";
 import HypothesisTabs from "./components/HypothesisTabs";
 import PathsPopup from "./components/PathsPopup";
+import InventoryPopup from "./components/InventoryPopup";
 import Sidebar from "./components/Sidebar/Sidebar";
 import PipelineRunController from "./components/PipelineRunController";
 import { RunLogProvider } from "./context/RunLogContext";
@@ -207,6 +208,7 @@ export default function App() {
   const [reporting, setReporting] = useState(false);
   const [startupErrors, setStartupErrors] = useState<StartupError[]>([]);
   const [pathsOpen, setPathsOpen] = useState(false);
+  const [inventoryOpen, setInventoryOpen] = useState(false);
 
   // Endpoint report: db.inspect.write_report → self-contained index.html
   // (figures embedded). Standalone opens it via the artifacts file route;
@@ -367,6 +369,14 @@ export default function App() {
                       >
                         📁 Paths
                       </button>
+                      <button
+                        style={styles.pathsBtn}
+                        onClick={() => setInventoryOpen(true)}
+                        disabled={schema.keys.length === 0}
+                        title="Which schema-key combinations have no data"
+                      >
+                        📋 Inventory
+                      </button>
                       {schema.keys.length > 0 && (
                         <span style={styles.schemaKeys}>
                           schema: [{schema.keys.join(", ")}]
@@ -386,6 +396,9 @@ export default function App() {
               </ReactFlowProvider>
               <PipelineRunController />
               {pathsOpen && <PathsPopup onClose={() => setPathsOpen(false)} />}
+              {inventoryOpen && (
+                <InventoryPopup schemaKeys={schema.keys} onClose={() => setInventoryOpen(false)} />
+              )}
               {blockingErrors.length > 0 && (
                 <StartupErrorDialog errors={blockingErrors} />
               )}

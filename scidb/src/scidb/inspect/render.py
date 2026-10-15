@@ -1074,6 +1074,24 @@ def render_exclusions(exclusions: list[ExclusionRecord], schema_keys: list[str])
     )
 
 
+def render_inventory(inv, missing_only: bool) -> str:
+    """``scidb inventory``: a counts line, then the table the chosen view shows
+    (columns and rows from ``scidb.inventory.inventory_table``)."""
+    from ..inventory import EXCLUDED, MISSING, PRESENT, inventory_table
+
+    c = inv.counts
+    sizes = " × ".join(f"{len(inv.levels[k])} {k}" for k in inv.keys)
+    head = (
+        f"{inv.product_size} combination(s) of {sizes or '(none)'}: "
+        f"{c[PRESENT]} present, {c[MISSING]} missing, {c[EXCLUDED]} excluded"
+    )
+    columns, rows = inventory_table(inv, missing_only)
+    if not rows:
+        empty = "(nothing missing)" if missing_only else "(no combinations)"
+        return f"{head}\n{empty}"
+    return f"{head}\n{format_table(columns, [list(r) for r in rows])}"
+
+
 def render_delete_plan(plan) -> str:
     """``scidb delete-variant`` without ``--yes``: what WOULD be deleted."""
     lines = [

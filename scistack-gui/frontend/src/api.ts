@@ -186,6 +186,8 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     get_pipeline:           { path: (p) => `/api/pipeline?pipeline_id=${encodeURIComponent((p.pipeline_id as string) ?? 'main')}${p.run_states === false ? '&run_states=false' : ''}` },
     get_layout:             { path: (p) => `/api/layout?pipeline_id=${encodeURIComponent((p.pipeline_id as string) ?? 'main')}` },
     get_schema:             { path: '/api/schema' },
+    schema_inventory:       { path: '/api/inventory', method: 'POST', body: true },
+    export_schema_inventory: { path: '/api/inventory/export', method: 'POST', body: true },
     get_info:               { path: '/api/info' },
     create_project:         { path: '/api/bootstrap/create', method: 'POST', body: true },
     open_project:           { path: '/api/bootstrap/open', method: 'POST', body: true },

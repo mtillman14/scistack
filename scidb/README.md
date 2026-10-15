@@ -77,6 +77,33 @@ RawSignal.save(np.array([1, 2, 3]), subject=1, session="A")
 (raw,) = RawSignal.load(subject=1, session="A")  # generator; unpack for single result
 all_versions = list(RawSignal.load(subject=1, session="A", version="all"))
 ```
+
+## Data Inventory (missing schema-key combinations)
+
+"Which combinations of these schema keys have no data?" The inventory crosses
+every value each chosen key has anywhere in `_schema` (in the declared
+`[schema_keys]` order) and gives each combination a status: `present`,
+`missing`, or `excluded` (an active `exclude_schema` matches it; excluded wins
+over present). A deeper row counts for its projection onto the chosen keys,
+and only the database is consulted, never a Variable.
+
+```python
+from scidb.inventory import schema_inventory, write_inventory_csv
+
+inv = schema_inventory(db, ["subject", "session"])   # None = every key
+inv.counts            # {"present": 10, "missing": 2, "excluded": 0}
+write_inventory_csv(inv, "missing.csv", missing_only=True)
+```
+
+```bash
+scidb inventory --keys subject,session          # counts + missing table
+scidb inventory --all --csv inventory.csv       # every combination + status
+```
+
+Above 1,000,000 combinations the call raises before building the product. The
+GUI's 📋 Inventory button shows the same table. Details:
+`docs/claude/data-inventory.md`.
+
 ## Logging
 
 Every scidb operation logs through the shared [`scistacklog`](../scistacklog/README.md) facade. `configure_database()` points the file sink at `scidb.log` next to the database file and writes a run-context header (package versions, Python version, pid), so each log file is self-describing.

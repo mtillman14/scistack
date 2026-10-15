@@ -1,7 +1,7 @@
 """``scidb`` CLI — thin rendering shell over scidb.inspect.
 
 Read commands (status, vars, schema, pipeline, variants, trace, runs,
-state, locations, show, sql, exclusions) open the database strictly read-only via
+state, locations, show, sql, exclusions, inventory) open the database strictly read-only via
 ``Inspector``. Write commands (exclude, include — and future declarative
 writes) are registered with ``_write_handler`` instead of ``_handler``,
 which routes them through ``mutate.Mutator`` (a per-invocation read-write
@@ -375,6 +375,23 @@ def _cmd_exclusions(insp: Inspector, args) -> None:
         _emit_json(exclusions)
     else:
         print(render.render_exclusions(exclusions, insp._db.dataset_schema_keys))
+
+
+def _cmd_inventory(insp: Inspector, args) -> None:
+    from ..inventory import write_inventory_csv
+
+    keys = None
+    if args.keys is not None:
+        keys = [k.strip() for k in args.keys.split(",") if k.strip()]
+    inv = insp.inventory(keys)
+    missing_only = not args.all
+    if args.csv:
+        n = write_inventory_csv(inv, args.csv, missing_only=missing_only)
+        print(f"wrote {n} row(s) to {args.csv}", file=sys.stderr)
+    if args.json:
+        print(json.dumps(inv.to_dict(missing_only=missing_only), indent=2))
+    else:
+        print(render.render_inventory(inv, missing_only=missing_only))
 
 
 def _cmd_exclude(mut: Mutator, args) -> None:
@@ -1114,6 +1131,31 @@ def _add_commands(
         help="List currently-excluded schema combinations.",
     )
     p.set_defaults(_handler=_cmd_exclusions)
+
+    p = sub.add_parser(
+        "inventory",
+        parents=[parent],
+        help="Schema-key combinations with no data (the product of each "
+        "key's values minus what _schema holds).",
+    )
+    p.add_argument(
+        "--keys",
+        default=None,
+        help="Comma-separated schema keys to cross (default: every schema key).",
+    )
+    p.add_argument(
+        "--all",
+        action="store_true",
+        help="Every combination with a status column (present/missing/excluded), "
+        "not only the missing ones.",
+    )
+    p.add_argument(
+        "--csv",
+        default=None,
+        metavar="PATH",
+        help="Also write the table as CSV (follows --all).",
+    )
+    p.set_defaults(_handler=_cmd_inventory)
 
     p = sub.add_parser(
         "exclude",
