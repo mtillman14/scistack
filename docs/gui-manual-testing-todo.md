@@ -11,6 +11,37 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzu. Data inventory: Cross / Within / Off per key — added 2026-10-15
+
+**What changed:** in the 📋 Inventory popup each schema key's checkbox is now a
+3-way control: **Cross** (every value expected at every combination; the old
+"checked"), **Within** (the inventory runs separately for each value, e.g. a
+study arm, crossing only the values found in that arm), or **Off** (the old
+"unchecked"). With a Within key, one line per stratum appears under the
+counts line.
+
+**Backend**
+1. Reload the VS Code window so it picks up the backend edit.
+2. Optional cross-check with the GUI closed: `scidb inventory --within group`
+   should print the same total and per-group lines as the popup.
+
+**Frontend**
+1. Open **📋 Inventory**. Every key reads **Cross** (highlighted), and the
+   result matches what the popup showed before this change.
+2. Set `group` (or another design key) to **Within**. The counts drop: a
+   subject of one arm is no longer missing at the other arm's sessions. One
+   sub-line per group appears, e.g. `group=CBrace: N combination(s): …`.
+3. The `group` column is still in the table, in schema position; rows are
+   grouped by group.
+4. Set a key to **Off**: it leaves the table, as unchecking did before.
+5. Set every key to Within or Off: *Make at least one schema key Cross.*
+   shows, and ↻ Run and Export CSV… are disabled.
+6. **Export CSV…** with a Within key: the CSV has the Within column and the
+   same rows as the popup (all of them).
+7. `grep schema_inventory scidb.log` shows `within=['group'] strata=2`.
+
+---
+
 ## 0zzzt. Data inventory popup (📋 Inventory) — added 2026-10-15
 
 **What changed:** a new **📋 Inventory** button in the header, next to
@@ -34,7 +65,7 @@ it; excluded wins over present). **Export CSV…** writes the whole table.
    column coloured green (present), red (missing) or grey (excluded).
 3. Uncheck the deepest key (e.g. `trial`). The counts shrink, and
    combinations that only have deeper rows now read **present**.
-4. Uncheck every key: the table goes, *Check at least one schema key.* shows,
+4. Set every key to Off: the table goes, *Make at least one schema key Cross.* shows,
    and ↻ Run and Export CSV… are disabled.
 5. If a key with many values makes the table longer than 5,000 rows, a note
    says *Showing the first 5,000 of N rows*.

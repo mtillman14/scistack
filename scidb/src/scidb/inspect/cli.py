@@ -380,10 +380,10 @@ def _cmd_exclusions(insp: Inspector, args) -> None:
 def _cmd_inventory(insp: Inspector, args) -> None:
     from ..inventory import write_inventory_csv
 
-    keys = None
-    if args.keys is not None:
-        keys = [k.strip() for k in args.keys.split(",") if k.strip()]
-    inv = insp.inventory(keys)
+    def _split(text):
+        return None if text is None else [k.strip() for k in text.split(",") if k.strip()]
+
+    inv = insp.inventory(_split(args.keys), _split(args.within))
     missing_only = not args.all
     if args.csv:
         n = write_inventory_csv(inv, args.csv, missing_only=missing_only)
@@ -1141,7 +1141,15 @@ def _add_commands(
     p.add_argument(
         "--keys",
         default=None,
-        help="Comma-separated schema keys to cross (default: every schema key).",
+        help="Comma-separated schema keys to cross (default: every schema key "
+        "not in --within).",
+    )
+    p.add_argument(
+        "--within",
+        default=None,
+        help="Comma-separated schema keys to run the inventory within: one "
+        "stratum per existing combination of their values (e.g. a study arm), "
+        "never crossed. Each stratum crosses only the values found in it.",
     )
     p.add_argument(
         "--all",

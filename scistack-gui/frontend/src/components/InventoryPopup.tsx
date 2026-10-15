@@ -7,14 +7,36 @@
  * handlers; this component only draws what it is sent
  * (docs/claude/data-inventory.md). The backend sends at most 5,000 rows; the
  * CSV export always writes every row.
+ *
+ * Each key has one role: Cross (every value expected at every combination),
+ * Within (the inventory runs separately per combination of these keys'
+ * values, e.g. a study arm), or Off (projected out).
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { callBackend, isVSCodeMode } from '../api'
 import * as modalStyles from './modalStyles'
 
+type Role = 'cross' | 'within' | 'off'
+
+const ROLES: { role: Role; label: string; title: string }[] = [
+  { role: 'cross', label: 'Cross', title: 'Every value is expected at every combination' },
+  { role: 'within', label: 'Within', title: 'Run the inventory separately for each value (e.g. a study arm); never crossed' },
+  { role: 'off', label: 'Off', title: 'Projected out' },
+]
+
+interface StatusCounts { present: number; missing: number; excluded: number }
+
+interface StratumSummary {
+  values: Record<string, string>
+  product_size: number
+  counts: StatusCounts
+}
+
 interface InventoryResult {
   keys: string[]
+  within: string[]
+  strata: StratumSummary[]
   levels: Record<string, string[]>
   columns: string[]
   rows: string[][]
@@ -31,6 +53,16 @@ const STATUS_COLORS: Record<string, string> = {
   excluded: '#888',
 }
 
+function Tally({ counts }: { counts: StatusCounts }) {
+  return (
+    <>
+      <span style={{ color: STATUS_COLORS.present }}>{counts.present.toLocaleString()} present</span>,{' '}
+      <span style={{ color: STATUS_COLORS.missing }}>{counts.missing.toLocaleString()} missing</span>,{' '}
+      <span style={{ color: STATUS_COLORS.excluded }}>{counts.excluded.toLocaleString()} excluded</span>
+    </>
+  )
+}
+
 export default function InventoryPopup({
   schemaKeys,
   onClose,
@@ -38,8 +70,8 @@ export default function InventoryPopup({
   schemaKeys: string[]
   onClose: () => void
 }) {
-  const [checked, setChecked] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(schemaKeys.map(k => [k, true])),
+  const [roles, setRoles] = useState<Record<string, Role>>(
+    () => Object.fromEntries(schemaKeys.map(k => [k, 'cross' as Role])),
   )
   const [missingOnly, setMissingOnly] = useState(true)
   const [result, setResult] = useState<InventoryResult | null>(null)
@@ -50,14 +82,15 @@ export default function InventoryPopup({
   // must not overwrite the table for the current one.
   const queryId = useRef(0)
 
-  const keys = schemaKeys.filter(k => checked[k])
+  const keys = schemaKeys.filter(k => roles[k] === 'cross')
+  const within = schemaKeys.filter(k => roles[k] === 'within')
 
   const run = useCallback(() => {
     if (keys.length === 0) return
     const id = ++queryId.current
     setLoading(true)
     setError('')
-    callBackend('schema_inventory', { keys, missing_only: missingOnly })
+    callBackend('schema_inventory', { keys, within, missing_only: missingOnly })
       .then(d => {
         if (id === queryId.current) setResult(d as InventoryResult)
       })
@@ -69,9 +102,9 @@ export default function InventoryPopup({
       .finally(() => {
         if (id === queryId.current) setLoading(false)
       })
-    // keys is derived from checked; joining keeps the dependency stable.
+    // keys/within are derived from roles; joining keeps the dependency stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keys.join('\u0000'), missingOnly])
+  }, [keys.join('\u0000'), within.join('\u0000'), missingOnly])
 
   useEffect(() => { run() }, [run])
 
@@ -95,6 +128,7 @@ export default function InventoryPopup({
     try {
       const r = await callBackend('export_schema_inventory', {
         keys,
+        within,
         missing_only: missingOnly,
         out_path: path,
       }) as { path: string; rows: number }
@@ -115,21 +149,31 @@ export default function InventoryPopup({
           <button style={styles.closeBtn} onClick={onClose} title="Close" type="button">×</button>
         </div>
         <div style={styles.note}>
-          Every combination of the checked schema keys' values, against the rows
-          the database holds. A deeper row counts for the keys you check.
+          Every combination of the Cross keys' values, against the rows the
+          database holds. A deeper row counts for the keys you choose. Within
+          keys (e.g. a study arm) run the inventory separately for each of
+          their values, crossing only the values found there.
         </div>
 
         <div style={styles.controls}>
-          <span style={styles.label}>Cross:</span>
+          <span style={styles.label}>Keys:</span>
           {schemaKeys.map(k => (
-            <label key={k} style={styles.check}>
-              <input
-                type="checkbox"
-                checked={!!checked[k]}
-                onChange={e => setChecked(c => ({ ...c, [k]: e.target.checked }))}
-              />
+            <span key={k} style={styles.keyRole}>
               <span>{k}</span>
-            </label>
+              <span style={styles.segment}>
+                {ROLES.map(({ role, label, title }) => (
+                  <button
+                    key={role}
+                    type="button"
+                    title={title}
+                    style={roles[k] === role ? styles.segOn : styles.segOff}
+                    onClick={() => setRoles(r => ({ ...r, [k]: role }))}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </span>
+            </span>
           ))}
         </div>
         <div style={styles.controls}>
@@ -163,7 +207,7 @@ export default function InventoryPopup({
           </button>
         </div>
 
-        {keys.length === 0 && <div style={styles.hint}>Check at least one schema key.</div>}
+        {keys.length === 0 && <div style={styles.hint}>Make at least one schema key Cross.</div>}
         {error && <div style={styles.errorBlock}>{error}</div>}
         {message && <div style={styles.message}>{message}</div>}
 
@@ -171,10 +215,15 @@ export default function InventoryPopup({
           <>
             <div style={styles.counts}>
               {result.product_size.toLocaleString()} combination(s):{' '}
-              <span style={{ color: STATUS_COLORS.present }}>{result.counts.present.toLocaleString()} present</span>,{' '}
-              <span style={{ color: STATUS_COLORS.missing }}>{result.counts.missing.toLocaleString()} missing</span>,{' '}
-              <span style={{ color: STATUS_COLORS.excluded }}>{result.counts.excluded.toLocaleString()} excluded</span>
+              <Tally counts={result.counts} />
             </div>
+            {result.within.length > 0 && result.strata.map(s => (
+              <div key={Object.values(s.values).join('\u0000')} style={styles.stratum}>
+                {Object.entries(s.values).map(([k, v]) => `${k}=${v}`).join(', ')}:{' '}
+                {s.product_size.toLocaleString()} combination(s):{' '}
+                <Tally counts={s.counts} />
+              </div>
+            ))}
             {result.truncated && (
               <div style={styles.hint}>
                 Showing the first {result.rows.length.toLocaleString()} of{' '}
@@ -236,6 +285,25 @@ const styles: Record<string, React.CSSProperties> = {
   label: { color: '#aaa', minWidth: 44 },
   check: { display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' },
   counts: { marginTop: 10, marginBottom: 4, color: '#ddd' },
+  stratum: { marginLeft: 14, marginBottom: 2, color: '#bbb', fontSize: 11 },
+  keyRole: { display: 'flex', alignItems: 'center', gap: 4 },
+  segment: { display: 'inline-flex', border: '1px solid #3a3a5a', borderRadius: 3, overflow: 'hidden' },
+  segOn: {
+    background: '#7b68ee',
+    border: 'none',
+    color: '#fff',
+    padding: '1px 6px',
+    fontSize: 11,
+    cursor: 'pointer',
+  },
+  segOff: {
+    background: 'transparent',
+    border: 'none',
+    color: '#aaa',
+    padding: '1px 6px',
+    fontSize: 11,
+    cursor: 'pointer',
+  },
   hint: { color: '#888', fontSize: 11, margin: '6px 0' },
   message: { marginTop: 6, color: '#9ae6b4', wordBreak: 'break-all' },
   errorBlock: { marginTop: 6, color: '#f87171', wordBreak: 'break-word' },

@@ -17,11 +17,20 @@ value it has anywhere in ``_schema`` (``DatabaseManager.distinct_schema_values``
 which also applies the declared ``[schema_keys]`` level order), so a subject
 that exists only at subject level shows every deeper combination as missing.
 
+**Within keys.** Each chosen key is either *crossed* (``keys``) or *within*
+(``within``). The inventory runs separately for every combination of the
+Within keys' values that exists in ``_schema`` (a *stratum*); inside a
+stratum the universe is the product of each Cross key's values **found in
+that stratum's rows**. So in a two-arm study, ``within=["group"]`` stops a
+CBrace subject from being reported missing at Traditional-only sessions. A
+row NULL at a Within key belongs to no stratum. Limitation: a value only
+counts as expected in a stratum if something in that stratum has it.
+
 Owners (CLAUDE.md NOTE 4): :func:`schema_inventory` computes statuses,
-:func:`inventory_table` decides which columns and rows a "missing only" / "all"
-view shows, and :func:`write_inventory_csv` writes that table. The CLI, the
-Inspector and the GUI only consume these. Design notes:
-docs/claude/data-inventory.md.
+:func:`_strata` the strata and their per-key values, :func:`inventory_table`
+decides which columns and rows a "missing only" / "all" view shows, and
+:func:`write_inventory_csv` writes that table. The CLI, the Inspector and the
+GUI only consume these. Design notes: docs/claude/data-inventory.md.
 """
 
 from __future__ import annotations
@@ -48,22 +57,62 @@ STATUSES = (PRESENT, MISSING, EXCLUDED)
 MAX_COMBINATIONS = 1_000_000
 
 
+def _zero_counts() -> dict[str, int]:
+    return {s: 0 for s in STATUSES}
+
+
+@dataclass
+class StratumSummary:
+    """One combination of the Within keys' values and its own inventory.
+
+    ``levels`` holds each Cross key's values seen in this stratum, in the
+    global (declared) order.
+    """
+
+    values: dict[str, str]
+    levels: dict[str, list[str]]
+    product_size: int = 0
+    counts: dict[str, int] = field(default_factory=_zero_counts)
+
+    def label(self) -> str:
+        return ", ".join(f"{k}={v}" for k, v in self.values.items())
+
+    def to_dict(self) -> dict:
+        return {
+            "values": dict(self.values),
+            "product_size": self.product_size,
+            "counts": dict(self.counts),
+        }
+
+
 @dataclass
 class SchemaInventory:
     """Every combination of the chosen keys, each with its status.
 
-    ``rows`` holds one tuple per combination: the chosen keys' values (in
-    ``keys`` order, as stored — always strings) followed by the status. Rows
-    are in product order of ``levels``, i.e. the declared level order.
+    ``keys`` are the Cross keys and ``within`` the Within keys (both in schema
+    order). ``columns`` — every Cross and Within key, in schema order — is the
+    one owner of column order. ``rows`` holds one tuple per combination: the
+    values in ``columns`` order (as stored — always strings) followed by the
+    status. Rows are grouped by stratum, then in product order of the
+    declared level order.
+
+    ``levels`` is each column's global value list. ``strata`` is empty when
+    there are no Within keys; ``product_size`` and ``counts`` are totals over
+    all strata.
     """
 
     keys: list[str]
     levels: dict[str, list[str]]
+    within: list[str] = field(default_factory=list)
+    columns: list[str] = field(default_factory=list)
+    strata: list[StratumSummary] = field(default_factory=list)
     rows: list[tuple] = field(default_factory=list)
-    counts: dict[str, int] = field(
-        default_factory=lambda: {s: 0 for s in STATUSES}
-    )
+    counts: dict[str, int] = field(default_factory=_zero_counts)
     product_size: int = 0
+
+    def __post_init__(self):
+        if not self.columns:
+            self.columns = list(self.keys)
 
     def to_dict(self, missing_only: bool = True, limit: int | None = None) -> dict:
         """JSON shape shared by ``scidb inventory --json`` and the GUI."""
@@ -73,6 +122,7 @@ class SchemaInventory:
             rows = rows[:limit]
         return {
             "keys": list(self.keys),
+            "within": list(self.within),
             "levels": {k: list(v) for k, v in self.levels.items()},
             "columns": columns,
             "rows": [list(r) for r in rows],
@@ -80,6 +130,7 @@ class SchemaInventory:
             "truncated": len(rows) < total,
             "counts": dict(self.counts),
             "product_size": self.product_size,
+            "strata": [s.to_dict() for s in self.strata],
             "missing_only": missing_only,
         }
 
@@ -87,6 +138,7 @@ class SchemaInventory:
 def schema_inventory(
     db: DatabaseManager,
     keys: list[str] | None = None,
+    within: list[str] | None = None,
     *,
     max_combinations: int = MAX_COMBINATIONS,
 ) -> SchemaInventory:
@@ -94,51 +146,91 @@ def schema_inventory(
 
     Args:
         db: DatabaseManager.
-        keys: Schema keys to cross. ``None`` = every schema key. Returned in
-            schema order whatever order they are given in.
-        max_combinations: Refuse (ValueError) when the product would be larger.
+        keys: Schema keys to cross. ``None`` = every schema key not in
+            ``within``. Returned in schema order whatever order they are
+            given in.
+        within: Schema keys to run the inventory within (one stratum per
+            existing combination of their values). ``None``/empty = no strata.
+        max_combinations: Refuse (ValueError) when the product (summed over
+            strata) would be larger.
 
     Raises:
-        ValueError: ``keys`` is empty, names an unknown key, or the product
-            exceeds ``max_combinations``.
+        ValueError: ``keys`` is empty, names an unknown key, a key is both
+            Cross and Within, no Cross key is left, or the product exceeds
+            ``max_combinations``.
     """
     from .exclusions import exclusion_status
 
     t0 = time.perf_counter()
     schema_keys = list(db.dataset_schema_keys)
-    chosen = _resolve_keys(schema_keys, keys)
+    within_keys = _resolve_within(schema_keys, within)
+    chosen = _resolve_cross(schema_keys, keys, within_keys)
+    columns = [k for k in schema_keys if k in chosen or k in within_keys]
 
-    levels = {k: [str(v) for v in db.distinct_schema_values(k)] for k in chosen}
-    sizes = {k: len(v) for k, v in levels.items()}
-    product_size = math.prod(sizes.values())
+    levels = {k: [str(v) for v in db.distinct_schema_values(k)] for k in columns}
+    sizes = {k: len(levels[k]) for k in chosen}
+
+    if within_keys:
+        strata = _strata(db, within_keys, chosen, levels)
+    else:
+        strata = [StratumSummary(values={}, levels={k: levels[k] for k in chosen})]
+    for s in strata:
+        s.product_size = math.prod(len(s.levels[k]) for k in chosen)
+    product_size = sum(s.product_size for s in strata)
+
     if product_size > max_combinations:
+        if within_keys:
+            largest = sorted(strata, key=lambda s: -s.product_size)[:3]
+            detail = (
+                f"{len(strata)} strata of {within_keys}; largest: "
+                + "; ".join(f"{s.label()}: {s.product_size:,}" for s in largest)
+            )
+        else:
+            detail = f"values per key: {sizes}"
         msg = (
             f"Inventory of {chosen} would have {product_size:,} combinations "
-            f"(values per key: {sizes}), above the limit of "
-            f"{max_combinations:,}. Uncheck a key to cross fewer."
+            f"({detail}), above the limit of {max_combinations:,}. "
+            f"Uncheck a key to cross fewer"
+            + (", or make a key Within." if not within_keys else ".")
         )
         Log.warn(f"schema_inventory: refused — {msg}")
         raise ValueError(msg)
 
-    inv = SchemaInventory(keys=chosen, levels=levels, product_size=product_size)
+    inv = SchemaInventory(
+        keys=chosen,
+        levels=levels,
+        within=within_keys,
+        columns=columns,
+        strata=strata if within_keys else [],
+        product_size=product_size,
+    )
     if product_size == 0:
         Log.info(
-            f"schema_inventory: keys={chosen} values={sizes} product=0 "
+            f"schema_inventory: keys={chosen} within={within_keys} "
+            f"strata={len(inv.strata)} values={sizes} product=0 "
             f"(no _schema values) in {(time.perf_counter() - t0) * 1000:.1f} ms"
         )
         return inv
 
     present = {
         tuple(str(v) for v in combo)
-        for combo in db.distinct_schema_combinations(chosen)
+        for combo in db.distinct_schema_combinations(columns)
     }
-    combos = list(itertools.product(*(levels[k] for k in chosen)))
+
+    # Every combination, in columns order, tagged with its stratum.
+    combos: list[tuple] = []
+    owners: list[StratumSummary] = []
+    for s in strata:
+        for cross_combo in itertools.product(*(s.levels[k] for k in chosen)):
+            values = {**s.values, **dict(zip(chosen, cross_combo))}
+            combos.append(tuple(values[k] for k in columns))
+            owners.append(s)
     excluded = exclusion_status(
-        [dict(zip(chosen, combo)) for combo in combos], schema_keys, db
+        [dict(zip(columns, combo)) for combo in combos], schema_keys, db
     )
 
     rows = []
-    for combo, is_excluded in zip(combos, excluded):
+    for combo, stratum, is_excluded in zip(combos, owners, excluded):
         if is_excluded:
             status = EXCLUDED
         elif combo in present:
@@ -146,16 +238,66 @@ def schema_inventory(
         else:
             status = MISSING
         inv.counts[status] += 1
+        stratum.counts[status] += 1
         rows.append((*combo, status))
     inv.rows = rows
 
+    for s in inv.strata:
+        Log.debug(
+            f"schema_inventory: stratum {s.label()} "
+            f"values={ {k: len(v) for k, v in s.levels.items()} } "
+            f"product={s.product_size} present={s.counts[PRESENT]} "
+            f"missing={s.counts[MISSING]} excluded={s.counts[EXCLUDED]}"
+        )
     Log.info(
-        f"schema_inventory: keys={chosen} values={sizes} product={product_size} "
+        f"schema_inventory: keys={chosen} within={within_keys} "
+        f"strata={len(inv.strata)} values={sizes} product={product_size} "
         f"present={inv.counts[PRESENT]} missing={inv.counts[MISSING]} "
         f"excluded={inv.counts[EXCLUDED]} "
         f"in {(time.perf_counter() - t0) * 1000:.1f} ms"
     )
     return inv
+
+
+def _strata(
+    db: DatabaseManager,
+    within: list[str],
+    cross: list[str],
+    levels: dict[str, list[str]],
+) -> list[StratumSummary]:
+    """The strata (existing combinations of the Within keys' values) and each
+    one's Cross-key values. The one owner of both.
+
+    Strata are in product order of the Within keys' global values; a stratum's
+    values for a key keep the global (declared) order. A row NULL at a Within
+    key or at the Cross key belongs to no stratum (``distinct_schema_combinations``
+    skips NULLs).
+    """
+    existing = {
+        tuple(str(v) for v in combo)
+        for combo in db.distinct_schema_combinations(within)
+    }
+    keys_in_stratum: dict[tuple, dict[str, set[str]]] = {
+        combo: {k: set() for k in cross} for combo in existing
+    }
+    n = len(within)
+    for key in cross:
+        for combo in db.distinct_schema_combinations([*within, key]):
+            combo = tuple(str(v) for v in combo)
+            keys_in_stratum[combo[:n]][key].add(combo[n])
+
+    strata = []
+    for combo in itertools.product(*(levels[k] for k in within)):
+        if combo not in existing:
+            continue
+        seen = keys_in_stratum[combo]
+        strata.append(
+            StratumSummary(
+                values=dict(zip(within, combo)),
+                levels={k: [v for v in levels[k] if v in seen[k]] for k in cross},
+            )
+        )
+    return strata
 
 
 def inventory_table(
@@ -165,12 +307,13 @@ def inventory_table(
 
     ``missing_only``: only ``missing`` rows, key columns only (no status —
     every row would say the same thing). Otherwise every row plus a
-    ``status`` column.
+    ``status`` column. Key columns are ``inv.columns`` (Cross and Within keys
+    in schema order).
     """
-    n = len(inv.keys)
+    n = len(inv.columns)
     if missing_only:
-        return list(inv.keys), [r[:n] for r in inv.rows if r[n] == MISSING]
-    return [*inv.keys, "status"], list(inv.rows)
+        return list(inv.columns), [r[:n] for r in inv.rows if r[n] == MISSING]
+    return [*inv.columns, "status"], list(inv.rows)
 
 
 def write_inventory_csv(
@@ -194,9 +337,28 @@ def write_inventory_csv(
     return len(rows)
 
 
-def _resolve_keys(schema_keys: list[str], keys: list[str] | None) -> list[str]:
+def _resolve_within(schema_keys: list[str], within: list[str] | None) -> list[str]:
+    if not within:
+        return []
+    unknown = [k for k in within if k not in schema_keys]
+    if unknown:
+        raise ValueError(
+            f"Unknown Within schema key(s): {unknown}. Schema keys: {schema_keys}"
+        )
+    return [k for k in schema_keys if k in within]
+
+
+def _resolve_cross(
+    schema_keys: list[str], keys: list[str] | None, within: list[str]
+) -> list[str]:
     if keys is None:
-        return list(schema_keys)
+        chosen = [k for k in schema_keys if k not in within]
+        if not chosen:
+            raise ValueError(
+                f"Every schema key is Within {within}; at least one must be "
+                f"crossed. Schema keys: {schema_keys}"
+            )
+        return chosen
     keys = list(keys)
     if not keys:
         raise ValueError(
@@ -206,5 +368,10 @@ def _resolve_keys(schema_keys: list[str], keys: list[str] | None) -> list[str]:
     if unknown:
         raise ValueError(
             f"Unknown schema key(s): {unknown}. Schema keys: {schema_keys}"
+        )
+    both = [k for k in schema_keys if k in keys and k in within]
+    if both:
+        raise ValueError(
+            f"Schema key(s) {both} are both Cross and Within; choose one role."
         )
     return [k for k in schema_keys if k in keys]

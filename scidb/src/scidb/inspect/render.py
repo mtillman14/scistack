@@ -1079,12 +1079,24 @@ def render_inventory(inv, missing_only: bool) -> str:
     (columns and rows from ``scidb.inventory.inventory_table``)."""
     from ..inventory import EXCLUDED, MISSING, PRESENT, inventory_table
 
-    c = inv.counts
-    sizes = " × ".join(f"{len(inv.levels[k])} {k}" for k in inv.keys)
-    head = (
-        f"{inv.product_size} combination(s) of {sizes or '(none)'}: "
-        f"{c[PRESENT]} present, {c[MISSING]} missing, {c[EXCLUDED]} excluded"
-    )
+    def tally(c):
+        return f"{c[PRESENT]} present, {c[MISSING]} missing, {c[EXCLUDED]} excluded"
+
+    if inv.within:
+        head = (
+            f"{inv.product_size} combination(s) of {', '.join(inv.keys)} within "
+            f"{', '.join(inv.within)} ({len(inv.strata)} strata): {tally(inv.counts)}"
+        )
+        head += "".join(
+            f"\n  {s.label()}: {s.product_size} combination(s): {tally(s.counts)}"
+            for s in inv.strata
+        )
+    else:
+        sizes = " × ".join(f"{len(inv.levels[k])} {k}" for k in inv.keys)
+        head = (
+            f"{inv.product_size} combination(s) of {sizes or '(none)'}: "
+            f"{tally(inv.counts)}"
+        )
     columns, rows = inventory_table(inv, missing_only)
     if not rows:
         empty = "(nothing missing)" if missing_only else "(no combinations)"

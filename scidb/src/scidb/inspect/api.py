@@ -1510,12 +1510,15 @@ class Inspector:
         return out
 
     @_timed
-    def inventory(self, keys: list[str] | None = None):
+    def inventory(
+        self, keys: list[str] | None = None, within: list[str] | None = None
+    ):
         """Every combination of the chosen schema keys with its status
-        (present / missing / excluded). Owner: ``scidb.inventory``."""
+        (present / missing / excluded), optionally run separately within each
+        combination of the ``within`` keys. Owner: ``scidb.inventory``."""
         from ..inventory import schema_inventory
 
-        return schema_inventory(self._db, keys)
+        return schema_inventory(self._db, keys, within)
 
     @_timed
     def sql(self, query: str) -> SqlResult:

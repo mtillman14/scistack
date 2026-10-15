@@ -98,7 +98,13 @@ write_inventory_csv(inv, "missing.csv", missing_only=True)
 ```bash
 scidb inventory --keys subject,session          # counts + missing table
 scidb inventory --all --csv inventory.csv       # every combination + status
+scidb inventory --within group                  # one inventory per study arm
 ```
+
+`within=["group"]` (CLI `--within group`) runs the inventory separately for
+each `group` value and crosses only the values found in that arm, so a subject
+of one arm is never reported missing at the other arm's sessions. Use it for
+design keys (arm, site, protocol).
 
 Above 1,000,000 combinations the call raises before building the product. The
 GUI's 📋 Inventory button shows the same table. Details:

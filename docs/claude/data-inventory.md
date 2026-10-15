@@ -32,13 +32,72 @@ there is no per-Variable mode.
    the same rule `for_each` applies when it iterates a subset of keys.
 5. **Missing.** Neither of the above.
 
+## Within keys
+
+Plan: `.claude/plan-inventory-within.md`. Each schema key has one role:
+
+| Role | Meaning | Argument |
+|---|---|---|
+| **Cross** | Every value is expected at every combination. | `keys` |
+| **Within** | The inventory runs separately for each existing combination of these keys' values (a *stratum*). The key is a column but is never crossed. | `within` |
+| **Off** | Projected out. | (neither) |
+
+**The rule.** The strata are the distinct combinations of the Within keys
+that exist in `_schema`. Inside a stratum, the expected set is the product of
+each Cross key's values **found in rows of that stratum**.
+
+**Worked example (two-arm study).** Schema `[group, subject, session,
+minute]`. Traditional subjects T01/T02 have sessions BL and POST; CBrace
+subjects C01/C02 have BL, FIT and POST; minutes are 1 and 2. Crossing every
+key gives 2 × 4 × 3 × 2 = 48 combinations and 29 false gaps (C01 "missing" in
+Traditional, T01 "missing" at FIT). Unchecking `group` doesn't help: T01 is
+still crossed with FIT. With `within=["group"]`, CBrace crosses
+2 × 3 × 2 = 12 and Traditional 2 × 2 × 2 = 8, so only real gaps show.
+
+Details:
+- `within=None` (or empty) means no strata: exactly the behaviour without it,
+  and `inv.strata == []`. With `keys=None` and `within` given, every schema
+  key not in `within` is crossed.
+- `ValueError` for an unknown Within key, a key that is both Cross and
+  Within, or no Cross key left.
+- Strata are ordered by product order over the Within keys' global values,
+  keeping only combinations that exist. A stratum's values for a key are the
+  global `distinct_schema_values(key)` list filtered to the values it has, so
+  declared order still has one owner.
+- A row NULL at any Within key belongs to no stratum and adds nothing (the
+  same rule as a NULL at a Cross key).
+- Exclusions need nothing new: each combination includes the Within keys, so
+  `exclude_schema(group="CBrace")` excludes that whole stratum and
+  `exclude_schema(subject="C02")` only that subject.
+- Columns (`SchemaInventory.columns`, the one owner of column order): every
+  Cross and Within key in schema order, then `status` in the All view. Rows
+  are grouped by stratum, then in product order. With schema
+  `[subject, group, ...]` the `group` column is second although rows are
+  grouped by it.
+- `levels` stays the global per-column list; `product_size` and `counts` are
+  totals; each `StratumSummary` has its own `values`, `levels`,
+  `product_size` and `counts`. `to_dict` adds `within` and `strata`
+  (values, product_size, counts per stratum).
+- Owner of the strata: `scidb.inventory._strata` (private, called only by
+  `schema_inventory`). It uses one `distinct_schema_combinations(within)` call
+  plus one `distinct_schema_combinations(within + [key])` call per Cross key,
+  grouped in Python. No new SQL or tables.
+
+**Limitation (documented, not solved).** A value counts as expected in a
+stratum only if something in that stratum has it. If no Traditional subject
+ever recorded session 3, the inventory can't know session 3 was expected
+there. So only design keys (arm, site, protocol) should be Within; a key whose
+gaps you want to find must be Cross. A second nesting level ("minute nested in
+session") is out of scope.
+
 ## Size guard
 
 The product size is computed from the per-key value counts **before**
 anything is built. Above `MAX_COMBINATIONS` (1,000,000) the call logs a
 WARNING and raises `ValueError`. The message names the size and the per-key
-counts and suggests unchecking a key. Tests pass `max_combinations=` to
-exercise this.
+counts and suggests unchecking a key. With Within keys the size is the sum of
+the per-stratum products, and the message names the largest strata. Tests pass
+`max_combinations=` to exercise this.
 
 ## Owners (CLAUDE.md NOTE 4)
 
@@ -57,12 +116,16 @@ every row plus a `status` column. The CLI, the GUI and the CSV export all get
 both views from `inventory_table` and never filter or format rows themselves.
 `SchemaInventory.to_dict(missing_only, limit)` is the JSON shape used by both
 `scidb inventory --json` and the GUI. It returns `columns`, `rows`,
-`total_rows`, `truncated`, `counts`, `product_size`, `levels` and `keys`.
+`total_rows`, `truncated`, `counts`, `product_size`, `levels`, `keys`,
+`within` and `strata`.
 
 ## Entry points
 
-- Python: `schema_inventory(db, keys)` and `db.inspect.inventory(keys)`.
-- CLI: `scidb inventory [--keys a,b] [--all] [--csv PATH] [--json]`, also
+- Python: `schema_inventory(db, keys, within)` and
+  `db.inspect.inventory(keys, within)`.
+- CLI: `scidb inventory [--keys a,b] [--within g] [--all] [--csv PATH] [--json]`.
+  With `--within`, the counts line is followed by one line per stratum
+  (`group=CBrace: 12 combination(s): 11 present, 1 missing, 0 excluded`). Also
   available as `scistack db inventory`. It opens the database read-only, like
   every Inspector command.
 - GUI: the 📋 Inventory header button opens `InventoryPopup.tsx`. It calls the
@@ -75,11 +138,17 @@ both views from `inventory_table` and never filter or format rows themselves.
 
 ## Observability
 
-- INFO `schema_inventory: keys=… values={key: n} product=… present=…
-  missing=… excluded=… in … ms`
+- INFO `schema_inventory: keys=… within=[…] strata=N values={key: n}
+  product=… present=… missing=… excluded=… in … ms`
+- DEBUG, one per stratum: `schema_inventory: stratum group=CBrace
+  values={key: n} product=… present=… missing=… excluded=…`
 - WARNING `schema_inventory: refused — …` comes before the size-guard raise.
 - INFO `write_inventory_csv: N row(s), columns=[…] -> path`
-- GUI: `[schema] schema_inventory … -> sent/total row(s) (truncated)`.
+- GUI: `[schema] schema_inventory keys=… within=… strata=N … ->
+  sent/total row(s) (truncated)`.
+- GUI popup: each key has a Cross / Within / Off segmented control (all Cross
+  by default), sent as `keys` and `within`; one sub-line per stratum under the
+  counts line.
 
 ## Notes
 

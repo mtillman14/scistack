@@ -318,3 +318,270 @@ class TestCli:
 
         assert main(["--db", str(db_path), "inventory", "--keys", "visit"]) == 1
         assert "Unknown schema key" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Within keys (.claude/plan-inventory-within.md)
+# ---------------------------------------------------------------------------
+
+ARM_SCHEMA = ["group", "subject", "session", "minute"]
+#: Subject order puts ``group`` second: rows are still grouped by it.
+ARM_SCHEMA_NONADJACENT = ["subject", "group", "session", "minute"]
+
+
+class ArmMinute(BaseVariable):
+    pass
+
+
+class ArmSubject(BaseVariable):
+    pass
+
+
+def populate_arms():
+    """Two arms with different sessions; each subject belongs to one arm.
+
+    Traditional: T01, T02 × {BL, POST} × minutes {1, 2} — all present.
+    CBrace:      C01, C02 × {BL, FIT, POST} × minutes {1, 2} — except
+    C02/FIT/minute 2, the one real gap.
+    """
+    arms = {
+        "Traditional": (["T01", "T02"], ["BL", "POST"]),
+        "CBrace": (["C01", "C02"], ["BL", "FIT", "POST"]),
+    }
+    for group, (subjects, sessions) in arms.items():
+        for subject in subjects:
+            for session in sessions:
+                for minute in ("1", "2"):
+                    if (subject, session, minute) == ("C02", "FIT", "2"):
+                        continue
+                    ArmMinute.save(
+                        1.0, group=group, subject=subject,
+                        session=session, minute=minute,
+                    )
+
+
+def by_values(inv) -> dict[frozenset, str]:
+    """Status keyed by {column: value}, independent of column order."""
+    n = len(inv.columns)
+    return {frozenset(zip(inv.columns, r[:n])): r[n] for r in inv.rows}
+
+
+def at(**values) -> frozenset:
+    return frozenset(values.items())
+
+
+@pytest.fixture
+def arm_db(tmp_path):
+    database = configure_database(tmp_path / "arms.duckdb", ARM_SCHEMA)
+    populate_arms()
+    yield database
+    database.close()
+
+
+class TestWithin:
+    def test_without_within_the_arms_cross_into_false_gaps(self, arm_db):
+        # Why Within exists: crossing group reports CBrace subjects missing
+        # in Traditional, and Traditional subjects missing at FIT.
+        inv = schema_inventory(arm_db)
+        s = by_values(inv)
+        assert inv.product_size == 2 * 4 * 3 * 2
+        assert s[at(group="Traditional", subject="C01", session="BL", minute="1")] == MISSING
+        assert s[at(group="Traditional", subject="T01", session="FIT", minute="1")] == MISSING
+        assert inv.counts == {PRESENT: 19, MISSING: 29, EXCLUDED: 0}
+
+    def test_within_group_reports_only_the_real_gap(self, arm_db):
+        inv = schema_inventory(arm_db, within=["group"])
+        assert inv.within == ["group"]
+        assert inv.keys == ["subject", "session", "minute"]
+        assert inv.columns == ARM_SCHEMA
+        assert inv.product_size == 8 + 12
+        assert inv.counts == {PRESENT: 19, MISSING: 1, EXCLUDED: 0}
+        _, rows = inventory_table(inv, missing_only=True)
+        assert rows == [("CBrace", "C02", "FIT", "2")]
+
+    def test_per_stratum_values_and_counts(self, arm_db):
+        inv = schema_inventory(arm_db, within=["group"])
+        # Strata in the group key's global order; values keep the global order.
+        assert [s.values for s in inv.strata] == [
+            {"group": "CBrace"}, {"group": "Traditional"},
+        ]
+        cb, trad = inv.strata
+        assert cb.levels == {
+            "subject": ["C01", "C02"],
+            "session": ["BL", "FIT", "POST"],
+            "minute": ["1", "2"],
+        }
+        assert trad.levels["session"] == ["BL", "POST"]
+        assert trad.levels["subject"] == ["T01", "T02"]
+        assert (cb.product_size, trad.product_size) == (12, 8)
+        assert cb.counts == {PRESENT: 11, MISSING: 1, EXCLUDED: 0}
+        assert trad.counts == {PRESENT: 8, MISSING: 0, EXCLUDED: 0}
+        # levels stays the global per-column list.
+        assert inv.levels["session"] == ["BL", "FIT", "POST"]
+        assert inv.levels["group"] == ["CBrace", "Traditional"]
+
+    def test_rows_are_grouped_by_stratum(self, arm_db):
+        inv = schema_inventory(arm_db, within=["group"])
+        groups = [r[0] for r in inv.rows]
+        assert groups == ["CBrace"] * 12 + ["Traditional"] * 8
+        assert inv.rows[0][:4] == ("CBrace", "C01", "BL", "1")
+
+    def test_keys_none_with_within_crosses_every_other_key(self, arm_db):
+        explicit = schema_inventory(
+            arm_db, ["subject", "session", "minute"], within=["group"]
+        )
+        default = schema_inventory(arm_db, within=["group"])
+        assert default.keys == explicit.keys
+        assert default.rows == explicit.rows
+
+    def test_within_with_fewer_cross_keys(self, arm_db):
+        inv = schema_inventory(arm_db, ["session"], within=["group"])
+        assert inv.columns == ["group", "session"]
+        assert inv.product_size == 3 + 2
+        assert inv.counts[MISSING] == 0
+
+    def test_no_within_has_no_strata(self, arm_db):
+        inv = schema_inventory(arm_db, ["subject"])
+        assert inv.within == []
+        assert inv.strata == []
+        assert inv.columns == ["subject"]
+
+
+class TestWithinNonAdjacent:
+    @pytest.fixture
+    def db2(self, tmp_path):
+        database = configure_database(tmp_path / "arms2.duckdb", ARM_SCHEMA_NONADJACENT)
+        populate_arms()
+        yield database
+        database.close()
+
+    def test_same_statuses_and_columns_in_schema_order(self, arm_db, db2):
+        a = schema_inventory(arm_db, within=["group"])
+        b = schema_inventory(db2, within=["group"])
+        assert b.columns == ARM_SCHEMA_NONADJACENT
+        assert by_values(a) == by_values(b)
+        columns, rows = inventory_table(b, missing_only=True)
+        assert columns == ["subject", "group", "session", "minute"]
+        assert rows == [("C02", "CBrace", "FIT", "2")]
+        # Grouped by stratum even though group is the second column.
+        assert [r[1] for r in b.rows] == ["CBrace"] * 12 + ["Traditional"] * 8
+
+    def test_row_null_at_the_within_key_adds_nothing(self, db2):
+        # X99 exists only at subject level: group is NULL, so no stratum.
+        ArmSubject.save(1.0, subject="X99")
+        inv = schema_inventory(db2, within=["group"])
+        assert all("X99" not in s.levels["subject"] for s in inv.strata)
+        assert inv.product_size == 20
+        assert inv.counts == {PRESENT: 19, MISSING: 1, EXCLUDED: 0}
+        # Without Within it is a subject like any other.
+        assert "X99" in schema_inventory(db2).levels["subject"]
+
+
+class TestWithinExclusions:
+    def test_group_exclusion_marks_the_whole_stratum(self, arm_db):
+        exclude_schema("arm dropped", db=arm_db, group="CBrace")
+        inv = schema_inventory(arm_db, within=["group"])
+        cb, trad = inv.strata
+        assert cb.counts == {PRESENT: 0, MISSING: 0, EXCLUDED: 12}
+        assert trad.counts == {PRESENT: 8, MISSING: 0, EXCLUDED: 0}
+
+    def test_subject_exclusion_marks_only_that_subject(self, arm_db):
+        exclude_schema("withdrew", db=arm_db, subject="C02")
+        inv = schema_inventory(arm_db, within=["group"])
+        s = by_values(inv)
+        assert s[at(group="CBrace", subject="C02", session="FIT", minute="2")] == EXCLUDED
+        assert s[at(group="CBrace", subject="C01", session="FIT", minute="2")] == PRESENT
+        cb, trad = inv.strata
+        assert cb.counts == {PRESENT: 6, MISSING: 0, EXCLUDED: 6}
+        assert trad.counts[EXCLUDED] == 0
+
+
+class TestWithinValidation:
+    def test_key_both_cross_and_within(self, arm_db):
+        with pytest.raises(ValueError, match="both Cross and Within"):
+            schema_inventory(arm_db, ["group", "subject"], within=["group"])
+
+    def test_unknown_within_key(self, arm_db):
+        with pytest.raises(ValueError, match="Unknown Within schema key"):
+            schema_inventory(arm_db, within=["arm"])
+
+    def test_no_cross_key_left(self, arm_db):
+        with pytest.raises(ValueError, match="at least one must be crossed"):
+            schema_inventory(arm_db, within=ARM_SCHEMA)
+
+    def test_size_guard_sums_the_strata(self, arm_db):
+        # The largest stratum (12) fits; the sum (20) does not.
+        with pytest.raises(ValueError, match="20 combinations") as err:
+            schema_inventory(arm_db, within=["group"], max_combinations=15)
+        assert "group=CBrace: 12" in str(err.value)
+        assert schema_inventory(
+            arm_db, within=["group"], max_combinations=20
+        ).product_size == 20
+
+
+class TestWithinTableAndCsv:
+    def test_csv_includes_the_within_column(self, arm_db, tmp_path):
+        inv = schema_inventory(arm_db, within=["group"])
+        out = tmp_path / "arms.csv"
+        assert write_inventory_csv(inv, out, missing_only=False) == 20
+        with out.open(newline="", encoding="utf-8") as fh:
+            got = list(csv.reader(fh))
+        assert got[0] == [*ARM_SCHEMA, "status"]
+        assert ["CBrace", "C02", "FIT", "2", MISSING] in got
+
+    def test_to_dict_has_within_and_strata(self, arm_db):
+        d = schema_inventory(arm_db, within=["group"]).to_dict()
+        assert d["within"] == ["group"]
+        assert d["columns"] == ARM_SCHEMA
+        assert d["rows"] == [["CBrace", "C02", "FIT", "2"]]
+        assert d["strata"] == [
+            {"values": {"group": "CBrace"}, "product_size": 12,
+             "counts": {PRESENT: 11, MISSING: 1, EXCLUDED: 0}},
+            {"values": {"group": "Traditional"}, "product_size": 8,
+             "counts": {PRESENT: 8, MISSING: 0, EXCLUDED: 0}},
+        ]
+        json.dumps(d)
+
+    def test_to_dict_without_within(self, db):
+        d = schema_inventory(db).to_dict()
+        assert d["within"] == []
+        assert d["strata"] == []
+
+
+class TestWithinCli:
+    @pytest.fixture
+    def db_path(self, tmp_path):
+        path = tmp_path / "arms_cli.duckdb"
+        database = configure_database(path, ARM_SCHEMA)
+        populate_arms()
+        database.close()
+        return path
+
+    def test_within_json(self, db_path, capsys):
+        from scidb.inspect.cli import main
+
+        rc = main(["--db", str(db_path), "inventory", "--within", "group", "--json"])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        payload = json.loads(out)
+        assert payload["within"] == ["group"]
+        assert payload["keys"] == ["subject", "session", "minute"]
+        assert payload["rows"] == [["CBrace", "C02", "FIT", "2"]]
+        assert len(payload["strata"]) == 2
+
+    def test_human_render_has_one_line_per_stratum(self, db_path, capsys):
+        from scidb.inspect.cli import main
+
+        rc = main(["--db", str(db_path), "inventory", "--within", "group"])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "within group (2 strata): 19 present, 1 missing, 0 excluded" in out
+        assert "group=CBrace: 12 combination(s): 11 present, 1 missing, 0 excluded" in out
+        assert "group=Traditional: 8 combination(s): 8 present, 0 missing, 0 excluded" in out
+
+    def test_cross_and_within_overlap_is_an_error(self, db_path, capsys):
+        from scidb.inspect.cli import main
+
+        rc = main(["--db", str(db_path), "inventory", "--keys", "group,subject", "--within", "group"])
+        assert rc == 1
+        assert "both Cross and Within" in capsys.readouterr().err

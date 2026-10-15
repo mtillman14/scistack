@@ -74,3 +74,41 @@ def test_export_refuses_a_relative_path(inv_client):
     )
     assert r.status_code == 400
     assert "absolute" in r.text
+
+
+def test_within_passes_through(inv_client):
+    # Within subject: each subject crosses only its own sessions, so subject
+    # 3 (only "pre") has nothing missing.
+    r = inv_client.post("/api/inventory", json={"keys": None, "within": ["subject"]})
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["within"] == ["subject"]
+    assert d["keys"] == ["session"]
+    assert d["columns"] == ["subject", "session"]
+    assert d["rows"] == []
+    assert d["product_size"] == 5
+    assert [s["values"] for s in d["strata"]] == [
+        {"subject": "1"}, {"subject": "2"}, {"subject": "3"},
+    ]
+
+
+def test_within_overlap_is_a_400(inv_client):
+    r = inv_client.post(
+        "/api/inventory", json={"keys": ["subject", "session"], "within": ["subject"]}
+    )
+    assert r.status_code == 400
+    assert "both Cross and Within" in r.text
+
+
+def test_export_with_within(inv_client, tmp_path):
+    out = tmp_path / "within.csv"
+    r = inv_client.post(
+        "/api/inventory/export",
+        json={"within": ["subject"], "missing_only": False, "out_path": str(out)},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"path": str(out), "rows": 5}
+    with out.open(newline="", encoding="utf-8") as fh:
+        rows = list(csv.reader(fh))
+    assert rows[0] == ["subject", "session", "status"]
+    assert ["3", "pre", "present"] in rows
