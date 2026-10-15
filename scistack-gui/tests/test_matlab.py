@@ -2358,6 +2358,7 @@ class TestMatlabFnProxyHash:
 
         class FakeInfo:
             source_hash = "a" * 64
+            file_path = None  # no file: current_matlab_function returns it as is
             n_outputs = 3
             params = ("x",)
             output_names = ("a", "b", "c")
@@ -2377,6 +2378,7 @@ class TestMatlabFnProxyHash:
 
         class FakeInfo:
             source_hash = "b" * 64
+            file_path = None  # no file: current_matlab_function returns it as is
             n_outputs = 1
             params = ()
             output_names = ("only",)

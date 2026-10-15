@@ -38,9 +38,9 @@ SRC = "function out = calculateSymmetryOneVector(v, formulaNum)\n    out = v;\ne
 
 
 def test_matching_source_is_captured_under_its_hash():
-    from scimatlab.bridge import compute_matlab_function_hash
+    from scimatlab.source_hash import hash_source_bytes
 
-    digest = compute_matlab_function_hash(SRC)
+    digest = hash_source_bytes(SRC.encode("utf-8"))
     sentinel = _make_matlab_fn_sentinel("calculateSymmetryOneVector", digest, SRC)
     assert function_sources_for(sentinel) == (
         digest,
@@ -64,7 +64,6 @@ def test_prepare_carries_the_source_to_the_save(tmp_path):
 
     from scimatlab import bridge
     from scimatlab.bridge import (
-        compute_matlab_function_hash,
         for_each_prepare,
         register_matlab_variable,
     )
@@ -74,7 +73,9 @@ def test_prepare_carries_the_source_to_the_save(tmp_path):
         Raw = register_matlab_variable("RawSrc_F35")
         register_matlab_variable("OutSrc_F35")
         db.save_variable(Raw, 1.0, subject=1)
-        digest = compute_matlab_function_hash(SRC)
+        from scimatlab.source_hash import hash_source_bytes
+
+        digest = hash_source_bytes(SRC.encode("utf-8"))
         prep = for_each_prepare(
             "calculateSymmetryOneVector",
             digest,

@@ -9,10 +9,10 @@ configured .m file paths.
 import logging
 import re
 from dataclasses import dataclass, field
-from hashlib import sha256
 from pathlib import Path
 
 from scidb.source_edit import Span
+from scimatlab.source_hash import hash_source_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -195,10 +195,11 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
         )
         return None
 
-    # Hash raw bytes so the digest matches MATLAB's fileread() which
-    # preserves \r\n line endings (read_text would normalise them away).
+    # The ONE recipe (scimatlab.source_hash): MATLAB's hash_function.m asks
+    # the same function, so the hash a run records and the hash the canvas
+    # compares against cannot be computed two ways.
     logger.debug("[matlab_parser] Computing source hash")
-    source_hash = sha256(raw).hexdigest()
+    source_hash = hash_source_bytes(raw)
     text = _preprocess_for_parsing(raw.decode("utf-8", errors="replace"))
 
     # A file containing ANY classdef declaration — not just a BaseVariable

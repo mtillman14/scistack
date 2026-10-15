@@ -174,8 +174,10 @@ all**. Expected ≡ present, unconditionally, forever.
 For MATLAB the read side did not compute the MATLAB hash at all:
 
 - **Save**: `_invocation.function_hash` ← `__fn_hash` ←
-  `scidb.internal.hash_function` → `compute_matlab_function_hash(fileread(...))`
-  = `sha256(source.encode("utf-8"))`.
+  `scidb.internal.hash_function` → `scimatlab.source_hash.matlab_function_source(which(...))`
+  = `sha256(raw file bytes)` (the one owner since 2026-10-14; it used to be
+  `sha256(fileread(...).encode("utf-8"))`, which diverged from the GUI's
+  raw-bytes hash on non-UTF-8-decoded files).
 - **Read**: `check_node_state` did `_compute_fn_hash(fn.fcn)`. For a
   `MatlabLineageFcn`, `fn.fcn` is a `_FunctionProxy` carrying only `__name__`,
   so `compute_function_hash` fails `inspect.getsource` and falls back to

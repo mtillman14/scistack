@@ -184,8 +184,8 @@ Nothing about §3's fossil problem is fundamental. `_invocation` stores
 `function_hash` and no source (`provenance.py:406-413`) — but the source text is
 **in hand at the moment the hash is computed**, in both languages:
 
-- MATLAB: `compute_matlab_function_hash(source_text, ...)`
-  (`scimatlab/bridge.py:1444`) is literally handed the text.
+- MATLAB: `scimatlab.source_hash.matlab_function_source(path)` reads the
+  bytes and returns the text with the hash.
 - Python: `compute_function_hash` (`scilineage/hashing.py:180`) AST-hashes the
   live callable, so `inspect.getsource` is available at that point.
 

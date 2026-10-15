@@ -760,6 +760,57 @@ def get_matlab_function(name: str) -> MatlabFunctionInfo:
     return info
 
 
+def current_matlab_function(name: str, *, purpose: str) -> MatlabFunctionInfo:
+    """:func:`get_matlab_function`, re-validated against the ``.m`` on disk.
+
+    The registry is filled by a scan, and nothing rescans when the user saves
+    an ``.m`` file. A hash read from it can therefore be the file as it was
+    hours ago, while a MATLAB run hashes the file as it is NOW — the node then
+    reads "the function's source has changed since it last ran" right after a
+    clean run (C-Brace, 2026-10-14). Every reader whose answer depends on the
+    file's CURRENT content (the state check's hash, the run dispatch's
+    signature) asks here instead.
+
+    Cheap: ``classify_matlab_file`` is keyed on ``(mtime_ns, size)``, so an
+    unchanged file costs one ``stat``. A changed file is re-parsed with the
+    one hash recipe (``scimatlab.source_hash``) and replaces the registry
+    entry, so later plain reads see it too. *purpose* names the caller in the
+    log line.
+    """
+    info = get_matlab_function(name)
+    if info.file_path is None:  # a builtin/toolbox reference: no file
+        return info
+    result = classify_matlab_file(Path(info.file_path))
+    if result is None or result[0] != "function" or result[1].name != name:
+        logger.warning(
+            "[matlab_registry] %s: %s no longer defines function %s (%s); "
+            "keeping the last scan's entry for the %s",
+            name,
+            info.file_path,
+            name,
+            "unreadable or not a function" if result is None else result[0],
+            purpose,
+        )
+        return info
+    fresh = result[1]
+    if fresh is info:
+        return info
+    if fresh.source_hash != info.source_hash:
+        logger.info(
+            "[matlab_registry] %s: %s changed on disk since the last scan "
+            "(hash %s -> %s, params %s -> %s); registry updated for the %s",
+            name,
+            info.file_path,
+            info.source_hash[:12],
+            fresh.source_hash[:12],
+            info.params,
+            fresh.params,
+            purpose,
+        )
+    _matlab_functions[name] = fresh
+    return fresh
+
+
 def is_matlab_function(name: str) -> bool:
     """Return True if *name* is a registered MATLAB function."""
     return name in _matlab_functions

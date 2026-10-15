@@ -222,8 +222,8 @@ def _compute_glue_hash(spec: GlueSpec) -> str:
     Python glue reuses ``compute_function_hash`` (the AST-recursive hash every
     other function identity in the stack uses) so an edit to a helper the glue
     calls invalidates the glue too. MATLAB glue hashes its source text — the
-    same formula ``scimatlab.bridge.compute_matlab_function_hash`` uses,
-    truncated; it is spelled out here rather than imported because scidb sits
+    same recipe ``scimatlab.source_hash`` owns for .m files (SHA-256 of the
+    UTF-8 bytes), truncated; it is spelled out here rather than imported because scidb sits
     *below* scimatlab and must not depend on it.
     """
     if spec.language == "python" and spec.fn is not None:

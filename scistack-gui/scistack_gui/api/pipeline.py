@@ -81,7 +81,9 @@ def _build_matlab_fn_proxy(fn_name: str):
 
     from scistack_gui import matlab_registry
 
-    info = matlab_registry.get_matlab_function(fn_name)
+    # The file's CURRENT hash, not the last scan's: a run hashes the file as
+    # it is now, so a scan-time hash false-reds a just-run node after an edit.
+    info = matlab_registry.current_matlab_function(fn_name, purpose="state check")
     # unpack_output MUST match scimatlab/.../+scihist/for_each.m's default.
     # Native MATLAB multi-output (`[a,b,c] = fn(...)`) uses unpack_output=False
     # and is unpacked at runtime via LineageFcn's n_out>1 branch. unpack_output=True

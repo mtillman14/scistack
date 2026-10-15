@@ -57,7 +57,7 @@ class MatlabLineageFcn:
         self.unpack_output = unpack_output
         #: The digest of the .m source, EXACTLY as the save path stored it in
         #: ``_invocation.function_hash`` (MATLAB's ``scidb.internal.hash_function``
-        #: → ``compute_matlab_function_hash``). Read-side hash lookups must use
+        #: → ``scimatlab.source_hash``). Read-side hash lookups must use
         #: this: ``fcn`` is a bare name-holder with no source, so AST-hashing it
         #: yields a constant unrelated to the .m file and every comparison
         #: against a stored hash fails. See ``foreach_config.function_hash_for``.
@@ -375,12 +375,14 @@ def _make_matlab_fn_sentinel(
         # The .m text behind that digest, so the save stores the CODE under
         # the hash (cleanup-audit F35) — duck-typed as ``source_text``, read
         # by scidb's function_sources_for. Attached only when it re-hashes to
-        # the digest with the one recipe (compute_matlab_function_hash):
+        # the digest with the one recipe (scimatlab.source_hash):
         # filing text under a hash it does not produce would return the wrong
         # code for that version later.
         if source_text:
             text = str(source_text)
-            if compute_matlab_function_hash(text, fn_name) == str(fn_hash):
+            from .source_hash import text_hashes_to
+
+            if text_hashes_to(text, str(fn_hash)):
                 _sentinel.source_text = text
             else:
                 from scidb.log import Log
@@ -1393,38 +1395,6 @@ def ensure_variable_classdefs(names, project_start=None) -> dict:
             layer="matlab",
         )
     return write_variable_classdefs(wanted, project_start=project_start)
-
-
-def compute_matlab_function_hash(
-    source_text: str, name: str = "", unpack_output: bool = False
-) -> str:
-    """SHA-256 hash for a MATLAB function.
-
-    Owned in Python so the format can be tweaked centrally (e.g. to strip
-    comments or normalize line endings) without divergence between
-    MATLAB-side and GUI-side consumers. Today it hashes the raw UTF-8
-    bytes of the source; the ``name`` and ``unpack_output`` parameters
-    are accepted for traceability and forward compatibility with future
-    format tweaks, but do not affect the returned hash. The proxy hash
-    that's actually stored in ``_lineage.function_hash`` is computed by
-    ``MatlabLineageFcn.__init__`` from this source hash plus the unpack
-    flag — keeping that combining step in one place.
-
-    Parameters
-    ----------
-    source_text : str
-        Source code of the MATLAB function (typically the full ``.m`` file).
-    name : str
-        Function name, for logging only.
-    unpack_output : bool
-        Multi-output flag, accepted for forward compatibility.
-
-    Returns
-    -------
-    str
-        64-character lowercase hex SHA-256 digest of ``source_text``.
-    """
-    return sha256(source_text.encode("utf-8")).hexdigest()
 
 
 def split_flat_to_lists(flat_array, lengths):

@@ -6,16 +6,16 @@ function [hash, source] = hash_function(fcn)
 %
 %   SOURCE is the exact .m text that was hashed, so the save can store the
 %   code behind the hash (cleanup-audit F35: MATLAB source was never
-%   captured, only its digest).
+%   captured, only its digest). '' when the file is not UTF-8.
 %
 %   For named functions, hashes the full source code of the .m file.
 %   Anonymous functions are not supported (error).
 %
-%   The hashing format itself lives in Python
-%   (scimatlab.bridge.compute_matlab_function_hash) so it can be tweaked
-%   centrally without divergence between MATLAB-side and GUI-side
-%   consumers. MATLAB only reads the source file and forwards the bytes
-%   across the bridge.
+%   The hash has ONE owner: scimatlab.source_hash (SHA-256 of the file's raw
+%   bytes), which the GUI uses too. MATLAB only resolves WHICH file — it
+%   never reads or decodes it for hashing, because fileread's decoding
+%   (Windows code pages, a BOM) is exactly what used to make the two
+%   readers disagree.
 %
 %   Returns a 64-character hex string.
 
@@ -36,8 +36,7 @@ function [hash, source] = hash_function(fcn)
             'Cannot locate source file for function "%s".', func_name);
     end
 
-    % Read source and forward to Python for hashing
-    source = fileread(fpath);
-    hash = char(py.scimatlab.bridge.compute_matlab_function_hash( ...
-        source, func_name, false));
+    result = cell(py.scimatlab.source_hash.matlab_function_source(fpath, func_name));
+    hash = char(result{1});
+    source = char(result{2});
 end
