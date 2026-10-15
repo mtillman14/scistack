@@ -278,8 +278,8 @@ def test_export_selection_matches_the_preview_rule():
 
 
 def test_export_selection_adds_nothing_when_the_table_has_no_default():
-    """A stacked multi-variable table has no default pin; the preview draws
-    its rows as written, so the export must too (it once added
+    """A table with no default pin (nothing superseded) draws its rows as
+    written in the preview, so the export must too (it once added
     code_version='latest' here — test_variant_rows_multivariable caught it)."""
     assert export_selection(VariantSet(), latest_column=LATEST, default_pin=None) == {}
     assert export_selection(

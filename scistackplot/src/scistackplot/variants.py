@@ -390,8 +390,7 @@ def export_selection(
     ``latest_column`` and ``default_pin`` are the TABLE's (the same facts
     :func:`effective_selection_with_source` reads), so the export adds the
     latest flag exactly when the preview does. A table with no default — a
-    stacked multi-variable table, a single-generation variable — exports the
-    row as written, as the preview draws it. A freeze comes back as the frozen
+    single-generation variable, a CSV — exports the row as written, as the preview draws it. A freeze comes back as the frozen
     ordinal(s) on their ``Code:`` columns.
 
     Known limit: a freeze of SEVERAL ordinals is "per location, the highest of

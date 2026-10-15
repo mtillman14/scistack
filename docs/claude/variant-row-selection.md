@@ -55,6 +55,18 @@ axes that the default answered then leave the factor list, so a leftover
 `Code:fn` no longer picks up ITERATE and the title no longer reads
 `Code:fn=v2`.
 
+### Multi-variable (stacked) plots: the same default (2026-10-15)
+
+`ScidbSource._stacked_table` gives the stacked frame ONE `CodeIsLatest`
+column and `default_pin={CodeIsLatest: True}`, just like a single variable.
+Each variable's flag is its own per-location `is_latest`. A variable that
+attached no flag has nothing superseded, so its rows are filled `True`. A bare
+concat would leave `NaN` there, which the mask reads as `False`, dropping the
+variable. Until this date the stacked table had `default_pin=None`, so a row
+naming no code pooled every version of its variable. Each row still pins its
+own variable to a specific version by naming that `Code:` axis, because a
+stated selection gets no default.
+
 ## What counts as "saying something"
 
 | Predicate | True when | Used by |
@@ -99,7 +111,8 @@ which applies `variants.export_selection`. That is the same `_effective` core
 as above, fed the TABLE's `default_pin` and `latest_column` (the endpoint
 generator has the table). So a row that names no code exports
 `code_version='latest'` exactly when the preview adds the flag, a table with
-no default (a stacked multi-variable table) exports its rows as written, and a
+no default (a single-generation variable: nothing superseded) exports its rows
+as written, and a
 frozen row exports its ordinal. Grouping
 variables keep their raw selection (empty means unfiltered).
 

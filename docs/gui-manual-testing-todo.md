@@ -11,6 +11,31 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzx. Multi-variable plots default to current code — added 2026-10-15
+
+What changed: in a plot with rows over two variables ("+ Add series"), a row
+that names no code version now draws that variable's CURRENT records only. It
+used to pool every version. A row can still pin its own variable to an older
+version.
+
+Backend: reload the VS Code window.
+
+1. Open Plot Studio on a variable whose producing function has two versions
+   (e.g. CosmedData after the `load_cbrace.m` edit). Add a second series for
+   another variable at the same schema level.
+2. Expect: the first row has no "pools 2 versions" tag and no "mixes" banner.
+   Its points match the single-variable plot of the current version, and the
+   row count is half what it was before this change.
+3. On the first row, click Select and pick the OLD version (v1). Expect: that
+   row draws v1. The other row is unchanged.
+
+`scidb.log`: `stacked [...]: one CodeIsLatest flag ({…: 'CodeIsLatest',
+…: 'no flag: all current'}), so rows naming no code draw current code`, and
+`variant rows' effective selections: '…': source default {'CodeIsLatest':
+True} …`.
+
+---
+
 ## 0zzzw. Saved plots keep their code version; "Newer data exists" prompt; no false "mixes" banner — added 2026-10-15
 
 What changed: saving a plot now records which code version drew it (the

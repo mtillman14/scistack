@@ -1135,6 +1135,36 @@ class ScidbSource(BaseSource):
                 named = self._named_frame(frame, primary)
             named[VARIABLE_COLUMN] = frame.name
             stacked.append(named)
+        # One latest flag for the stacked frame, so the source default
+        # (current code) applies to multi-variable plots too — variants are
+        # never pooled by default (user, 2026-10-15). Each variable's flag is
+        # its OWN per-location `is_latest`, so it means the same thing on
+        # every row: "this record is current for its variable here". A
+        # variable that attached no flag has nothing superseded
+        # (`load.attach_variants`), so every one of its rows is current —
+        # True, never the NaN a bare concat leaves, which `variant_set_mask`
+        # would read as False and drop the whole variable.
+        flagged = any(frame.latest_column for frame in frames)
+        if flagged:
+            for frame, named in zip(frames, stacked, strict=True):
+                own_flag = frame.latest_column
+                if own_flag and own_flag in named.columns:
+                    named[LATEST_COLUMN] = named[own_flag].fillna(True).astype(bool)
+                    if own_flag != LATEST_COLUMN:
+                        named.drop(columns=[own_flag], inplace=True)
+                else:
+                    named[LATEST_COLUMN] = True
+            Log.info(
+                "stacked %s: one %s flag (%s), so rows naming no code draw "
+                "current code",
+                measures,
+                LATEST_COLUMN,
+                {
+                    frame.name: frame.latest_column or "no flag: all current"
+                    for frame in frames
+                },
+                layer=LAYER,
+            )
         combined = pd.concat(stacked, ignore_index=True, sort=False)
         combined, group_depths = self._attach_groupings(
             combined, levels, list(factor_variables or []), own
@@ -1174,9 +1204,14 @@ class ScidbSource(BaseSource):
             # and that must hold whether one dict variable is plotted or two.
             field_factors=field_columns,
             name=primary,
-            # No latest pin: the flag means different things per variable, and
-            # the rows the user named are what selects here.
-            default_pin=None,
+            # The same default as a single variable: a row naming no code
+            # draws each variable's current records. Until 2026-10-15 this was
+            # None ("the flag means different things per variable"), which let
+            # a multi-variable plot pool every version by default. A row can
+            # still pin its own variable to a specific version — naming a
+            # `Code:` axis makes its selection "stated" and the default does
+            # not apply (variants.effective_selection).
+            default_pin={latest_column: True} if latest_column else None,
             latest_column=latest_column,
             factor_origins={axis["column"]: axis for axis in variant_axes},
             factor_depths=group_depths,

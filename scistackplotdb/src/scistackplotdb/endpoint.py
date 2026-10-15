@@ -154,8 +154,8 @@ def row_expression(input_variable: str, variant_set, table=None) -> str:
 
     from scistackplot.variants import export_selection
 
-    # The TABLE's default, exactly what the preview applied: a stacked
-    # multi-variable table has none, so its rows export as written.
+    # The TABLE's default, exactly what the preview applied: a table with
+    # none (nothing superseded) exports its rows as written.
     selection = export_selection(
         variant_set,
         latest_column=(table.latest_column if table is not None else None) or LATEST_COLUMN,

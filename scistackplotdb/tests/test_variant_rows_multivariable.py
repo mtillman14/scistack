@@ -370,3 +370,88 @@ def test_an_x_measure_cannot_pair_with_stacked_variables(scaled):
     source = ScidbSource(scaled)
     with pytest.raises(ValueError, match="pairs with ONE y measure"):
         source.get_table(["StepLength", "Scaled"], x_measure="Mass")
+
+
+# --- multi-variable plots default to current code (2026-10-15) --------------
+#
+# Variants are never pooled by default, in a multi-variable plot too. Each row
+# still pins its own variable to a specific version when it names one.
+
+
+@pytest.fixture
+def scaled_two_versions(seeded):
+    """`Scaled` produced by two bodies of `double_it` (v1 superseded by v2);
+    `StepLength` saved directly, one generation, no flag of its own."""
+    from scidb import for_each
+
+    from conftest import Scaled, StepLength
+
+    def double_v1(value):
+        return float(value) * 2.0
+
+    def double_v2(value):
+        return float(value) * 2.0 + 100.0
+
+    for body in (double_v1, double_v2):
+        body.__name__ = "double_it"
+        for_each(
+            body,
+            inputs={"value": StepLength},
+            outputs=[Scaled],
+            subject=[],
+            session=[],
+            trial=[],
+        )
+    return seeded
+
+
+CODE = "Code:double_it"
+
+
+def test_a_stacked_table_defaults_to_current_code(scaled_two_versions):
+    table = ScidbSource(scaled_two_versions).get_table(["StepLength", "Scaled"])
+
+    assert table.default_pin == {"CodeIsLatest": True}
+    flags = table.frame.groupby(VARIABLE_COLUMN)["CodeIsLatest"]
+    # A variable with no flag of its own is all current — never NaN/False,
+    # which would drop it from every pinned figure.
+    assert flags.all()["StepLength"]
+    assert flags.sum()["Scaled"] == 12
+
+
+def test_rows_naming_no_code_draw_each_variables_current_records(scaled_two_versions):
+    table = ScidbSource(scaled_two_versions).get_table(["StepLength", "Scaled"])
+
+    derived = apply_variant_sets(_two_variable_spec(), table).frame
+
+    scaled_rows = derived[derived[VARIABLE_COLUMN] == "Scaled"]
+    assert set(scaled_rows[CODE]) == {"v2"}, "never v1 and v2 pooled by default"
+    assert len(scaled_rows) == 12
+    assert len(derived[derived[VARIABLE_COLUMN] == "StepLength"]) == 12
+
+
+def test_one_row_can_still_pin_its_own_variable_to_an_old_version(scaled_two_versions):
+    table = ScidbSource(scaled_two_versions).get_table(["StepLength", "Scaled"])
+    spec = _spec(
+        variant_sets=[
+            VariantSet(name="Raw", variable="StepLength"),
+            VariantSet(name="Scaled v1", variable="Scaled", selection={CODE: "v1"}),
+        ]
+    )
+
+    derived = apply_variant_sets(spec, table).frame
+
+    scaled_rows = derived[derived[VARIABLE_COLUMN] == "Scaled"]
+    assert set(scaled_rows[CODE]) == {"v1"}
+    assert len(derived[derived[VARIABLE_COLUMN] == "StepLength"]) == 12
+
+
+def test_the_stacked_export_loads_current_code_like_the_preview(scaled_two_versions):
+    from scistackplotdb import generate_endpoint
+
+    table = ScidbSource(scaled_two_versions).get_table(["StepLength", "Scaled"])
+
+    code = generate_endpoint(_two_variable_spec(), table, input_variable="StepLength")
+
+    assert '"scaled": Variant(Scaled, code_version=\'latest\'),' in code.foreach_source
+    assert '"raw": Variant(StepLength, code_version=\'latest\'),' in code.foreach_source
