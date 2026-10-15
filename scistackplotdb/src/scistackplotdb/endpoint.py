@@ -81,6 +81,7 @@ def generate_endpoint(
     function_source = generate_plot_function(spec, table, function_name=name)
     foreach_source = _foreach_call(
         spec=spec,
+        table=table,
         function_name=name,
         input_variable=input_variable,
         x_variable=x_variable,
@@ -140,6 +141,29 @@ def _pin_literal(value) -> str:
     return repr(list(value) if isinstance(value, tuple) else value)
 
 
+def row_expression(input_variable: str, variant_set, table=None) -> str:
+    """One variant ROW as a ``Variant(...)`` load — through the row's
+    EFFECTIVE selection (``scistackplot.variants.export_selection``), so the
+    exported code loads what the preview drew: current code for a row that
+    names none, the frozen version for a reopened saved plot.
+
+    Grouping variables keep calling :func:`variant_expression` with their raw
+    selection: an empty grouping pin means "nothing filtered", not "current".
+    """
+    from types import SimpleNamespace
+
+    from scistackplot.variants import export_selection
+
+    # The TABLE's default, exactly what the preview applied: a stacked
+    # multi-variable table has none, so its rows export as written.
+    selection = export_selection(
+        variant_set,
+        latest_column=(table.latest_column if table is not None else None) or LATEST_COLUMN,
+        default_pin=table.default_pin if table is not None else None,
+    )
+    return variant_expression(input_variable, SimpleNamespace(selection=selection))
+
+
 def variant_expression(input_variable: str, variant_set) -> str:
     """A ``Variant(...)`` call selecting one named variant's records.
 
@@ -191,7 +215,7 @@ def variant_expression(input_variable: str, variant_set) -> str:
     return expression
 
 
-def _single_variant_expression(input_variable: str, spec) -> str:
+def _single_variant_expression(input_variable: str, spec, table=None) -> str:
     """The lone variant's pin, or the bare variable when nothing is selected.
 
     The row may name its own variable, in which case that is what the endpoint
@@ -200,12 +224,13 @@ def _single_variant_expression(input_variable: str, spec) -> str:
     sets = defined_sets(spec.variant_sets)
     if len(sets) != 1:
         return input_variable
-    return variant_expression(sets[0].variable or input_variable, sets[0])
+    return row_expression(sets[0].variable or input_variable, sets[0], table)
 
 
 def _foreach_call(
     *,
     spec: PlotSpec,
+    table: LongTable | None = None,
     function_name: str,
     input_variable: str,
     x_variable: str | None,
@@ -223,14 +248,14 @@ def _foreach_call(
         # the wrong variant's selection.
         inputs = [
             f'        "{generated.param}": '
-            f"{variant_expression(generated.variable, variant)},"
+            f"{row_expression(generated.variable, variant, table)},"
             for generated, variant in zip(
                 variant_inputs, defined_sets(spec.variant_sets), strict=True
             )
         ]
         table_inputs = [generated.param for generated in variant_inputs]
     else:
-        pinned = _single_variant_expression(input_variable, spec)
+        pinned = _single_variant_expression(input_variable, spec, table)
         inputs = [f'        "df": {pinned},']
         table_inputs = ["df"]
     if x_variable:

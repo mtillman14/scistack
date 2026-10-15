@@ -168,10 +168,39 @@ def test_each_variant_becomes_its_own_input(table, comparison_spec):
     assert '"baseline": Variant(StepLength, fn=\'bandpass\', code_version=\'v1\')' in (
         code.foreach_source
     )
+    # `new_filter` names no code version. This table (StepLength, saved
+    # directly, one generation) has no default pin, so — exactly like the
+    # preview (variants.effective_selection) — the row exports as written.
+    # A table WITH a default adds code_version='latest' (see
+    # test_a_row_naming_no_code_exports_current_code_when_the_table_has_a_default).
     assert '"new_filter": Variant(StepLength, fn=\'bandpass\', low_hz=[\'20\', \'50\'])' in (
         code.foreach_source
     )
     assert "as_table=['baseline', 'new_filter']" in code.foreach_source
+
+
+def test_a_row_naming_no_code_exports_current_code_when_the_table_has_a_default(
+    table, comparison_spec
+):
+    """Where the preview adds the source default (a variable holding several
+    generations), the export adds it too: `new_filter` names no code, so it
+    loads current code, never every version at once (2026-10-15)."""
+    from dataclasses import replace
+
+    versioned = replace(
+        table, default_pin={"CodeIsLatest": True}, latest_column="CodeIsLatest"
+    )
+
+    code = generate_endpoint(comparison_spec, versioned, input_variable="StepLength")
+
+    assert (
+        '"new_filter": Variant(Variant(StepLength, fn=\'bandpass\', '
+        "low_hz=['20', '50']), code_version='latest')"
+    ) in code.foreach_source
+    # An explicit version is used as written — no flag beside it.
+    assert '"baseline": Variant(StepLength, fn=\'bandpass\', code_version=\'v1\')' in (
+        code.foreach_source
+    )
 
 
 def test_the_generated_function_labels_and_stacks_them(table, comparison_spec):

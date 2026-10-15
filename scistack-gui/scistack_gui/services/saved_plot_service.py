@@ -9,10 +9,12 @@ panel's cached source (``plot_service.get_source``), so a saved plot opens on
 the same frames the panel draws from.
 
 What this module deliberately does NOT do: write the variable's Variants pins
-(`variant_selection` in the intent store) when a plot is opened. The panel
-already persists pins whenever its spec's ``variant_sets`` change
-(``PlotStudio.tsx``), and loading a saved plot is such a change. A second
-writer here would give that concept two owners.
+(`variant_selection` in the intent store) when a plot is opened. Neither does
+the panel any more (2026-10-15): opening a saved plot re-baselines its pin
+effect instead of persisting the opened rows, because a reopened plot's rows
+can carry a FROZEN code version (docs/claude/variant-row-selection.md) that
+must not become every new plot's default. Only a user's edit of the Variants
+section writes pins.
 
 Saved plots need a database, so none of these calls accept a ``csv_path``.
 See ``.claude/plan-saved-plots.md``.
@@ -58,6 +60,13 @@ def save(
     """
     from scistackplotdb import SavedPlotExists, save_plot
 
+    source = plot_service.get_source(db)
+
+    def table_for(parsed_spec):
+        # The table the panel draws from (cached), so the save freezes the
+        # code version the user is looking at (scistackplotdb.saved.freeze_code).
+        return plot_service._table_for(source, parsed_spec)
+
     try:
         info = save_plot(
             db,
@@ -67,6 +76,7 @@ def save(
             view or {},
             overwrite=overwrite,
             current_plot_id=current_plot_id,
+            table_for=table_for,
         )
     except SavedPlotExists as exists:
         return {"ok": False, "exists": exists.existing.to_dict(), "message": str(exists)}
@@ -127,6 +137,27 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
         "" if caps is not None else " (no capability report)",
     )
     return {"plot": saved.to_dict(), "capabilities": caps}
+
+
+def follow_latest(db, plot_id: str) -> dict:
+    """Answer "switch to latest" for a saved plot whose data has a newer code
+    version: appends a version whose rows follow latest from now on
+    (``scistackplotdb.follow_latest_saved_plot``), then reopens it so the panel
+    gets the new spec and capabilities in the same reply as ``open_plot``."""
+    from scistackplotdb import follow_latest_saved_plot
+
+    from scistack_gui.db import db_connection
+
+    with db_connection("plot_saved_follow_latest"):
+        info = follow_latest_saved_plot(db, plot_id)
+        plots = list_plots(db, info.variable)
+    logger.info(
+        "[saved_plot] %s / %r switched to follow latest (now v%d)",
+        info.variable,
+        info.name,
+        info.version,
+    )
+    return {**open_plot(db, plot_id), **plots}
 
 
 def rename(db, plot_id: str, name: str) -> dict:

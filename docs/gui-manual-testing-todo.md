@@ -11,6 +11,83 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzw. Saved plots keep their code version; "Newer data exists" prompt; no false "mixes" banner — added 2026-10-15
+
+What changed: saving a plot now records which code version drew it (the
+function hash), even when only one version exists. Reopening after the code
+changed shows that version and asks whether to switch to the latest. An empty
+variant row now means "current code" everywhere, so the "… mixes v1 | v2"
+banner no longer appears over a figure that draws only v2. A single variant is
+no longer named in the figure title. Opening a saved plot no longer overwrites
+the variable's stored Variants rows.
+
+Backend: reload the VS Code window (backend edits). Bundles were rebuilt.
+
+1. **Old plots (saved before this change).** Open `bar graph excl 2 subjects`
+   on CosmedData. Expect: **no** "mixes v1 | v2" banner, no prompt, and a
+   title that does not contain `Code:load_cbrace=v2` or `Variant=…`. The
+   figure shows v2 data. (These plots recorded no version, so they open on
+   latest.)
+2. **New freeze.** Re-save that plot under a new name, e.g. `freeze test`.
+   Edit `load_cbrace.m` trivially (add a comment), re-run `load_cbrace`.
+   Open `freeze test` again. Expect: the figure still shows the **v2** data
+   (the version it was saved with), its Variants row is tagged **SAVED
+   VERSION**, and a dialog "Newer data exists for 'freeze test'" names
+   `load_cbrace: this plot shows v2; v3 exists (N locations).`
+3. Click **Keep saved version**. Expect: the dialog closes, the figure is
+   unchanged, nothing is written (the saved-plot version number does not go
+   up in the rail).
+4. Reopen it and click **Switch to latest**. Expect: the figure redraws on v3,
+   the rail shows the plot's version increased by one, and the row is tagged
+   **FOLLOWS LATEST**. Edit and re-run `load_cbrace` once more, then reopen:
+   **no** dialog, and the newest version is drawn.
+5. **Variants rows untouched by Open.** Open a fresh (unsaved) Plot Studio
+   tab on CosmedData. Its Variants rows should be whatever you last edited by
+   hand, not the saved plot's frozen row.
+6. **Single variant, no title.** Pin one version in the Variants popup and
+   set `Variant` to Separate figures: the title has no `Variant=…`. Add a
+   second row: each figure's title is `Variant=<row name>`.
+
+`scidb.log` should show: on save `[saved_plot] froze code for 1 row(s) over N
+record(s): {'0': {'load_cbrace': ['<hash>']}}`; on open `[saved_plot] … frozen
+code -> {0: {'Code:load_cbrace': ['v2']}}; newer: ['row 0 load_cbrace ['v2'] <
+['v3']']`; on every resolve `variant rows' effective selections: … frozen …`
+(or `source default {'CodeIsLatest': True}` for an unfrozen row); on Yes
+`… now follows latest code (version a -> b)`; and **no**
+`intent_store … variant pin(s) stored` line from just opening a saved plot.
+
+---
+
+## 0zzzv. Show sample overlay fast with a between-subject innermost tick; sparse-field WARN — added 2026-10-15
+
+What changed: the overlay's lone points (every point, when the innermost x
+tick is `group`) are one scatter/trace per colour instead of one per
+subject×bracket. matplotlib renders are serialised (no rcParams races).
+`load_variable` reports fields that are not a number in every record.
+
+Backend: reload the VS Code window (backend edits).
+
+Frontend:
+1. Open the C-Brace CosmedData bar plot (`bar graph excl 2 subjects`), Show
+   sample = subject, colour = minute. Reorder groups so `group` is the
+   innermost tick (`minute, group, session`).
+2. It should redraw in a few seconds, not ~45 s. Points sit in the same bars,
+   in the same colours as before; hovering a point still names its subject.
+3. Drag the pane wider and narrower a few times: the last size wins, and the
+   text sizes stay right (no plot drawn at another plot's font sizes).
+4. Switch the field to `Dist_m`.
+
+`scidb.log` should show: `drew N artist(s) … sample overlay R run(s) as A
+artist(s)` with A far smaller than R; `render_mpl` timing with phases
+(`marks`, `sample_overlay`, `legend_and_layout`, `x_labels`, …);
+`RPC << plot_resolve OK (…ms) — slow` for any plot call over 1 s; possibly
+`… waited …s for another figure's matplotlib layout`. At the first load of
+CosmedData: `field coverage of CosmedData: …` and a WARN
+`CosmedData.Dist_m holds a number in only 6 of 714 record(s) — … at group ∈ …,
+subject ∈ …` naming where the distances are.
+
+---
+
 ## 0zzzu. Data inventory: Cross / Within / Off per key — added 2026-10-15
 
 **What changed:** in the 📋 Inventory popup each schema key's checkbox is now a

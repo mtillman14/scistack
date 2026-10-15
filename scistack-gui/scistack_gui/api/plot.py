@@ -28,6 +28,7 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/plot/saved/rename             plot_saved_rename
     POST /api/plot/saved/hide               plot_saved_hide
     POST /api/plot/saved/history            plot_saved_history
+    POST /api/plot/saved/follow-latest      plot_saved_follow_latest
     POST /api/plot/presets/list             plot_preset_list
     POST /api/plot/presets/save             plot_preset_save
     POST /api/plot/presets/apply            plot_preset_apply
@@ -230,6 +231,10 @@ class SavedHideRequest(BaseModel):
 
 
 class SavedHistoryRequest(BaseModel):
+    plot_id: str
+
+
+class SavedFollowLatestRequest(BaseModel):
     plot_id: str
 
 
@@ -440,6 +445,10 @@ def _saved_history(db, req: SavedHistoryRequest) -> dict:
     return saved_plot_service.history(db, req.plot_id)
 
 
+def _saved_follow_latest(db, req: SavedFollowLatestRequest) -> dict:
+    return saved_plot_service.follow_latest(db, req.plot_id)
+
+
 def _preset_list(db, req: PresetListRequest) -> dict:
     return plot_preset_service.list_presets(db, req.shape)
 
@@ -599,6 +608,14 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "plot_saved_history", "/plot/saved/history", SavedHistoryRequest,
         _saved_history, http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    # "Switch to latest?" answered Yes: appends a saved version that follows
+    # latest, then reopens it (loads frames), so it takes the connection itself
+    # like `plot_saved_open`.
+    Handler(
+        "plot_saved_follow_latest", "/plot/saved/follow-latest",
+        SavedFollowLatestRequest, _saved_follow_latest,
+        holds_db_lock=False, http_errors={**_BAD_REQUEST, **_NOT_INSTALLED}, undoable=False,
     ),
     # Plot presets (.claude/plan-plot-presets.md): the same policy as saved
     # plots. `plot_preset_apply` loads the target's data frames, so it takes

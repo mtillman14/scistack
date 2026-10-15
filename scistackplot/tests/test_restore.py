@@ -171,6 +171,8 @@ def full_spec() -> PlotSpec:
                 name="baseline",
                 selection={"Code:bandpass": "v1", "bandpass.low_hz": ["20", "50"]},
                 variable="Filtered",
+                frozen={"Code:load": ["v1", "v2"]},
+                follow_latest=True,
             )
         ],
     )

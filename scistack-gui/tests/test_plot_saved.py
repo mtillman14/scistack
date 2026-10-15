@@ -184,6 +184,8 @@ def test_only_open_takes_its_own_connection():
     from scistack_gui import server
 
     assert "plot_saved_open" in server.SELF_MANAGED_DB_METHODS
+    # Reopens the plot (loads frames), so it manages its own hold too.
+    assert "plot_saved_follow_latest" in server.SELF_MANAGED_DB_METHODS
     for method in (
         "plot_saved_list",
         "plot_saved_save",
@@ -193,3 +195,94 @@ def test_only_open_takes_its_own_connection():
     ):
         assert method in server.METHODS
         assert method not in server.SELF_MANAGED_DB_METHODS
+
+
+# --- frozen code versions (docs/claude/variant-row-selection.md) --------------
+
+
+def _rerun_bandpass_with_an_edited_body():
+    """A body EDIT of the fixture's `bandpass_filter`: same name, new hash."""
+    import numpy as np
+    from scidb import for_each
+
+    from conftest import FilteredSignal, RawSignal
+
+    def bandpass_filter(signal, low_hz):
+        return np.asarray(signal, dtype=float) * float(low_hz) + 1.0
+
+    for_each(
+        bandpass_filter,
+        inputs={"signal": RawSignal, "low_hz": 20},
+        outputs=[FilteredSignal],
+        subject=[1, 2],
+        session=["pre", "post"],
+    )
+    plot_service.invalidate()
+
+
+def test_a_saved_plot_reopens_on_its_version_and_reports_newer(populated_db):
+    spec = plot_service.describe(populated_db, "FilteredSignal")["spec"]
+    plot_id = saved_plot_service.save(populated_db, "FilteredSignal", "F", spec, None)[
+        "plot"
+    ]["plot_id"]
+    assert saved_plot_service.open_plot(populated_db, plot_id)["plot"]["newer"] == []
+
+    _rerun_bandpass_with_an_edited_body()
+    opened = saved_plot_service.open_plot(populated_db, plot_id)
+
+    newer = opened["plot"]["newer"]
+    assert [(n["function"], n["frozen"], n["newest"]) for n in newer] == [
+        ("bandpass_filter", ["v1"], "v2")
+    ]
+    assert opened["plot"]["spec"]["variant_sets"][0]["frozen"] == {
+        "Code:bandpass_filter": ["v1"]
+    }
+    json.dumps(opened)
+
+
+def test_switching_to_latest_appends_a_version_and_stops_asking(populated_db):
+    spec = plot_service.describe(populated_db, "FilteredSignal")["spec"]
+    plot_id = saved_plot_service.save(populated_db, "FilteredSignal", "F", spec, None)[
+        "plot"
+    ]["plot_id"]
+    _rerun_bandpass_with_an_edited_body()
+
+    switched = saved_plot_service.follow_latest(populated_db, plot_id)
+
+    assert switched["plot"]["version"] == 2
+    assert switched["plot"]["newer"] == []
+    assert switched["plot"]["spec"]["variant_sets"][0]["follow_latest"] is True
+    assert [p["version"] for p in switched["plots"]] == [2]
+    reopened = saved_plot_service.open_plot(populated_db, plot_id)
+    assert reopened["plot"]["newer"] == []
+
+
+def test_follow_latest_over_both_transports(client, populated_db):
+    from scistack_gui.server import METHODS
+
+    spec = plot_service.describe(populated_db, "FilteredSignal")["spec"]
+    plot_id = saved_plot_service.save(populated_db, "FilteredSignal", "F", spec, None)[
+        "plot"
+    ]["plot_id"]
+    _rerun_bandpass_with_an_edited_body()
+
+    http = client.post("/api/plot/saved/follow-latest", json={"plot_id": plot_id})
+    assert http.status_code == 200
+    assert http.json()["plot"]["version"] == 2
+    rpc = METHODS["plot_saved_follow_latest"]({"plot_id": plot_id})
+    assert rpc["plot"]["version"] == 3
+
+
+def test_stored_variant_pins_never_carry_a_freeze(populated_db):
+    """Pins are every NEW plot's default; a saved plot's frozen version must
+    not leak into them."""
+    from scistack_gui import intent_store
+
+    intent_store.set_variant_selections(
+        populated_db,
+        "FilteredSignal",
+        [{"name": None, "selection": {}, "frozen": {"Code:f": ["v1"]}, "follow_latest": True}],
+    )
+
+    stored = intent_store.variant_selections(populated_db, "FilteredSignal")
+    assert stored == [{"name": None, "selection": {}}]

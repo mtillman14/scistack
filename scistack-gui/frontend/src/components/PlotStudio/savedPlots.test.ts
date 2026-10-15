@@ -6,10 +6,12 @@ import {
   isModified,
   iterateSignature,
   modifiedKey,
+  newerVersionsText,
   notesSummary,
   readView,
   savedAtLabel,
   stableStringify,
+  variantSetsKey,
   viewState,
 } from './savedPlots.js'
 
@@ -85,4 +87,36 @@ test('an unparseable timestamp is shown as stored', () => {
 
 test('a new plot previews fitted to the pane', () => {
   assert.equal(DEFAULT_VIEW.previewMode, 'pane')
+})
+
+test('nothing newer asks nothing', () => {
+  assert.equal(newerVersionsText([]), '')
+})
+
+test('a newer version is named with what the plot shows and where it exists', () => {
+  const text = newerVersionsText([
+    { row: 0, column: 'Code:load_cbrace', function: 'load_cbrace', frozen: ['v1'], newer: ['v2'], newest: 'v2', locations: 26 },
+  ])
+  assert.equal(text, 'load_cbrace: this plot shows v1; v2 exists (26 locations).')
+})
+
+test('the same function reported by two rows is said once', () => {
+  const entry = { column: 'Code:f', function: 'f', frozen: ['v1'], newer: ['v2'], newest: 'v2', locations: 1 }
+  assert.equal(
+    newerVersionsText([{ row: 0, ...entry }, { row: 1, ...entry }]),
+    'f: this plot shows v1; v2 exists (1 location).'
+  )
+})
+
+test('a deleted frozen version still reads as a sentence', () => {
+  const text = newerVersionsText([
+    { row: 0, column: 'Code:f', function: 'f', frozen: [], newer: ['v2', 'v3'], newest: 'v3', locations: 2 },
+  ])
+  assert.equal(text, 'f: this plot shows a version that no longer exists; v3 exists (2 locations).')
+})
+
+test('the pin baseline serialises rows the way the pin effect compares them', () => {
+  const rows = [{ name: null, selection: {}, frozen: { 'Code:f': ['v1'] } }]
+  assert.equal(variantSetsKey(rows), JSON.stringify(rows))
+  assert.equal(variantSetsKey(undefined), 'null')
 })

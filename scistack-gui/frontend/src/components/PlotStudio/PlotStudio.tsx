@@ -43,8 +43,11 @@ import {
   iterateSignature as iterateSignatureOf,
   DEFAULT_VIEW,
   modifiedKey,
+  newerVersionsText,
   readView,
+  variantSetsKey,
   viewState,
+  type NewerVersion,
   type RestoreNote,
   type SavedPlotInfo,
 } from './savedPlots'
@@ -652,6 +655,13 @@ interface VariantSet {
    *  Rows over different variables stack into the same `Variant` factor, which
    *  is how "Raw vs Filtered" and "v1 vs v2" become one mechanism. */
   variable?: string | null
+  /** A reopened saved plot's code versions, `{"Code:fn": ["v1"]}` — filled in by
+   *  the backend on open (scistackplotdb.saved.thaw_code), never by the panel.
+   *  Cleared when the user edits the row's selection: their choice then rules.
+   *  docs/claude/variant-row-selection.md */
+  frozen?: Record<string, string[]>
+  /** True once the user answered "switch to latest": never frozen again. */
+  follow_latest?: boolean
 }
 
 /** The `StyleOptions` fields this panel edits. The tick settings are null
@@ -1004,6 +1014,10 @@ export default function PlotStudio({
   // "modified" comparison. A CSV has no database, so none of this applies.
   const [savedPlots, setSavedPlots] = useState<SavedPlotInfo[]>([])
   const [savedRailCollapsed, setSavedRailCollapsed] = useState(false)
+  // "Newer code than this saved plot was saved with" (see switchSavedToLatest).
+  const [newerPrompt, setNewerPrompt] = useState<
+    { plotId: string; name: string; text: string } | null
+  >(null)
   const [loadedPlot, setLoadedPlot] = useState<SavedPlotInfo | null>(null)
   const [restoreNotes, setRestoreNotes] = useState<RestoreNote[]>([])
   const [savedBusy, setSavedBusy] = useState(false)
@@ -1107,7 +1121,7 @@ export default function PlotStudio({
   // panel. Persisted on every change after the opening spec has landed —
   // the opening spec already carries whatever was stored, so re-saving it
   // is a no-op, and a CSV source has no database to state anything in.
-  const variantSetsJson = JSON.stringify(spec?.variant_sets ?? null)
+  const variantSetsJson = variantSetsKey(spec?.variant_sets)
   const openedVariantSets = useRef<string | null>(null)
   // Kept keyed on `variable` for the browser build, where this component
   // is a modal that really can be reopened on another variable in place. In
@@ -1930,7 +1944,8 @@ export default function PlotStudio({
         if (!prev) return prev
         const sets = [...(prev.variant_sets ?? [])]
         if (!sets[index]) return prev
-        sets[index] = { ...sets[index], selection: { ...combination } }
+        // An explicit choice also replaces a reopened plot's frozen version.
+        sets[index] = { ...sets[index], selection: { ...combination }, frozen: undefined }
         return { ...prev, variant_sets: sets }
       })
     },
@@ -1942,7 +1957,14 @@ export default function PlotStudio({
       if (!prev) return prev
       const sets = [...(prev.variant_sets ?? [])]
       if (!sets[index]) return prev
-      sets[index] = { ...sets[index], ...patch }
+      sets[index] = {
+        ...sets[index],
+        ...patch,
+        // Editing the SELECTION is an explicit choice of what to draw, so a
+        // reopened plot's frozen version (which would override it,
+        // variants.effective_selection) goes. Renaming the row keeps it.
+        ...('selection' in patch ? { frozen: undefined } : {}),
+      }
       return { ...prev, variant_sets: sets }
     })
   }, [])
@@ -2074,11 +2096,16 @@ export default function PlotStudio({
           autoLabel: info?.auto_label ?? '(not set)',
           // Naming a variable is saying something, so such a row is defined
           // even with nothing selected: "also plot FilteredEMG, all of it".
+          // A frozen version is a statement too (variants.says_something).
           defined:
-            Object.keys(set.selection ?? {}).length > 0 || Boolean(set.variable),
+            Object.keys(set.selection ?? {}).length > 0 ||
+            Boolean(set.variable) ||
+            Object.keys(set.frozen ?? {}).length > 0,
           rowCount: info?.row_count,
           spans: info?.spans ?? {},
           variable: set.variable ?? null,
+          frozen: set.follow_latest ? {} : set.frozen ?? {},
+          followLatest: Boolean(set.follow_latest),
         }
       }),
     [spec?.variant_sets, capabilities]
@@ -2677,25 +2704,40 @@ export default function PlotStudio({
     [spec, savedVariable, previewMode, figureIndex, loadedPlot]
   )
 
-  const openSaved = useCallback((plotId: string) => {
-    setSavedBusy(true)
-    setSavedError('')
-    callBackend('plot_saved_open', { plot_id: plotId })
-      .then(raw => {
+  /** Put an opened saved plot on screen — shared by Open and by answering
+   *  "switch to latest", which replies with the reopened plot. */
+  const applyOpened = useCallback((raw: unknown) => {
         const result = raw as {
-          plot: SavedPlotInfo & { spec: Spec; view: unknown; notes: RestoreNote[] }
+          plot: SavedPlotInfo & {
+            spec: Spec
+            view: unknown
+            notes: RestoreNote[]
+            newer?: NewerVersion[]
+          }
           capabilities: Capabilities | null
+          plots?: SavedPlotInfo[]
         }
-        const { spec: restored, view, notes, ...info } = result.plot
+        const { spec: restored, view, notes, newer = [], ...info } = result.plot
         const shown = readView(view)
         console.info(
           `[PlotStudio] opened saved plot "${info.name}" v${info.version}: ` +
-            `${notes.length} note(s)`, notes
+            `${notes.length} note(s), ${newer.length} newer code version(s)`, notes, newer
         )
         // Keep the restored figure index through the fan-out reset its roles
         // would otherwise trigger (see `restoredSignature`).
         restoredSignature.current = iterateSignatureOf(restored.roles)
+        // Opening is not an edit of the Variants section: re-baseline the pin
+        // effect so these rows (which may carry a FROZEN code version) are
+        // not written as this variable's default pins.
+        openedVariantSets.current = variantSetsKey(restored.variant_sets)
         setSpec(restored)
+        if (result.plots) setSavedPlots(result.plots)
+        // Newer code than the plot was saved with: ask, never switch silently.
+        setNewerPrompt(
+          newer.length > 0
+            ? { plotId: info.plot_id, name: info.name, text: newerVersionsText(newer) }
+            : null
+        )
         setPreviewMode(shown.previewMode)
         setFigureIndex(shown.figureIndex)
         if (result.capabilities) {
@@ -2713,12 +2755,37 @@ export default function PlotStudio({
           captureBaseline.current = true
           setBaseline(null)
         }
-      })
-      .catch(err => setSavedError(`Could not open: ${(err as Error).message}`))
-      .finally(() => setSavedBusy(false))
   }, [])
 
-  const renameSaved = useCallback(async (plotId: string, name: string): Promise<boolean> => {
+  const openSaved = useCallback((plotId: string) => {
+    setSavedBusy(true)
+    setSavedError('')
+    callBackend('plot_saved_open', { plot_id: plotId })
+      .then(applyOpened)
+      .catch(err => setSavedError(`Could not open: ${(err as Error).message}`))
+      .finally(() => setSavedBusy(false))
+  }, [applyOpened])
+
+  // "Newer data exists — switch this saved plot to the latest version?"
+  // Yes appends a saved version that follows latest from now on and reopens
+  // it (scistackplotdb.follow_latest_saved_plot); No keeps the frozen version
+  // on screen and writes nothing.
+  const switchSavedToLatest = useCallback((plotId: string) => {
+    setSavedBusy(true)
+    setSavedError('')
+    setNewerPrompt(null)
+    console.info(`[PlotStudio] saved plot ${plotId}: switching to follow latest`)
+    callBackend('plot_saved_follow_latest', { plot_id: plotId })
+      .then(applyOpened)
+      .catch(err => setSavedError(`Could not switch to latest: ${(err as Error).message}`))
+      .finally(() => setSavedBusy(false))
+  }, [applyOpened])
+  const keepSavedVersion = useCallback(() => {
+    console.info('[PlotStudio] kept the saved plot on its frozen code version')
+    setNewerPrompt(null)
+  }, [])
+
+  const renameSaved =useCallback(async (plotId: string, name: string): Promise<boolean> => {
     setSavedError('')
     try {
       const result = (await callBackend('plot_saved_rename', { plot_id: plotId, name })) as {
@@ -4250,6 +4317,35 @@ export default function PlotStudio({
             this state, so pointing at the canvas would mislead in the one case
             where this banner is the only signal
             (.claude/plan-pathinput-loader-staleness-gap.md). */}
+        {/* A reopened saved plot whose data now has newer code. The figure
+            below already shows the version it was saved with; this asks
+            whether to move the saved plot to latest for good. Modal because
+            it is a decision about the saved plot, not a passing notice. */}
+        {newerPrompt && (
+          <div style={styles.newerOverlay} role="dialog" aria-modal="true">
+            <div style={styles.newerDialog}>
+              <div style={styles.newerTitle}>Newer data exists for “{newerPrompt.name}”</div>
+              <div style={styles.newerText}>{newerPrompt.text}</div>
+              <div style={styles.newerText}>
+                Switch this saved plot to the latest version? It will then follow
+                the latest code automatically.
+              </div>
+              <div style={styles.newerButtons}>
+                <button
+                  type="button"
+                  style={styles.newerPrimary}
+                  disabled={savedBusy}
+                  onClick={() => switchSavedToLatest(newerPrompt.plotId)}
+                >
+                  Switch to latest
+                </button>
+                <button type="button" style={styles.newerSecondary} onClick={keepSavedVersion}>
+                  Keep saved version
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {spanningSets.map(({ set, index }) => (
           <div key={`span-${index}`} style={styles.spanBanner}>
             <strong>{set.name}</strong> mixes{' '}
@@ -4986,6 +5082,10 @@ interface VariantRow {
   /** Code axes it leaves open and disagrees on, with which locations hold
    *  which version. See `SpanInfo`. */
   spans: Record<string, SpanInfo>
+  /** A reopened saved plot's code versions (`{"Code:fn": ["v1"]}`), empty when none. */
+  frozen: Record<string, string[]>
+  /** The row always draws current code (answered "switch to latest"). */
+  followLatest: boolean
 }
 
 interface VariantRowsProps {
@@ -5095,6 +5195,30 @@ function VariantRows({
           {!row.defined && (
             <span style={styles.variantUnsetTag} title="Nothing chosen yet — this row does not affect the figure. Pick a variable, or Select a variant on the graph.">
               not set
+            </span>
+          )}
+          {/* A reopened saved plot drawing the code version it was saved with.
+              Grey: a deliberate state, not a problem. */}
+          {Object.keys(row.frozen).length > 0 && (
+            <span
+              style={styles.variantUnsetTag}
+              title={
+                'This saved plot shows the code version it was saved with: ' +
+                Object.entries(row.frozen)
+                  .map(([column, levels]) => `${column.replace(/^Code:/, '')} ${levels.join('+')}`)
+                  .join(', ') +
+                '. Select a variant to change it.'
+              }
+            >
+              saved version
+            </span>
+          )}
+          {row.followLatest && (
+            <span
+              style={styles.variantUnsetTag}
+              title="This saved plot always shows the latest code version"
+            >
+              follows latest
             </span>
           )}
           {row.defined && row.rowCount === 0 && (
@@ -6334,6 +6458,27 @@ const styles: Record<string, React.CSSProperties> = {
   // fact about what is drawn, not a warning that something broke. Colouring it
   // like an error would train the user to dismiss the one message that says
   // their subjects were computed by different code.
+  // "Newer data exists — switch to latest?" (switchSavedToLatest).
+  newerOverlay: {
+    position: 'fixed', inset: 0, background: 'var(--ps-scrim)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100,
+  },
+  newerDialog: {
+    maxWidth: 460, background: 'var(--ps-bg)', color: 'var(--ps-text-body)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 8, padding: 16,
+    display: 'flex', flexDirection: 'column', gap: 10, lineHeight: 1.5,
+  },
+  newerTitle: { fontSize: 13, fontWeight: 600 },
+  newerText: { fontSize: 12 },
+  newerButtons: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 },
+  newerPrimary: {
+    padding: '4px 12px', background: 'var(--ps-control)', color: 'var(--ps-accent-text-light)',
+    border: '1px solid var(--ps-accent-border)', borderRadius: 4, cursor: 'pointer', fontSize: 12,
+  },
+  newerSecondary: {
+    padding: '4px 12px', background: 'transparent', color: 'var(--ps-text-body)',
+    border: '1px solid var(--ps-border-strong)', borderRadius: 4, cursor: 'pointer', fontSize: 12,
+  },
   spanBanner: {
     fontSize: 11, color: 'var(--ps-info-text)', background: 'var(--ps-info-bg)',
     border: '1px solid var(--ps-info-border)', borderRadius: 4, padding: 8, marginBottom: 8,

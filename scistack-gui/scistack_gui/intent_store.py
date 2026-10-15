@@ -1084,6 +1084,10 @@ def pending_constants(db) -> dict[str, set[str]]:
 # records.
 
 
+#: VariantSet keys that only a saved plot may carry (see set_variant_selections).
+_SAVED_PLOT_ONLY_KEYS = frozenset({"frozen", "follow_latest"})
+
+
 def set_variant_selections(db, variable: str, variant_sets, scope: str = GLOBAL_SCOPE) -> int:
     """Replace the pins stored for *variable* with *variant_sets* (the
     ``VariantSet.to_dict()`` list a spec carries). An unnamed set is keyed by
@@ -1100,12 +1104,25 @@ def set_variant_selections(db, variable: str, variant_sets, scope: str = GLOBAL_
         if not isinstance(raw, dict):
             continue
         name = raw.get("name")
+        # `frozen` / `follow_latest` belong to a SAVED plot (its code version,
+        # docs/claude/variant-row-selection.md). Pins are every new plot's
+        # default, so a freeze stored here would open every future plot of
+        # this variable on an old version.
+        value = {k: v for k, v in raw.items() if k not in _SAVED_PLOT_ONLY_KEYS}
+        dropped = sorted(k for k in raw if k in _SAVED_PLOT_ONLY_KEYS)
+        if dropped:
+            logger.info(
+                "[intent_store] %s: pin %s stored without its saved-plot-only %s",
+                variable,
+                name or f"#{i}",
+                dropped,
+            )
         statements.append(
             Statement(
                 subject_kind=SUBJECT_VARIABLE_TYPE,
                 subject_ref=variable,
                 aspect=ASPECT_VARIANT_SELECTION,
-                value=dict(raw),
+                value=value,
                 key=str(name) if name else f"#{i}",
                 scope=scope,
                 stated_at=_now(),

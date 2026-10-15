@@ -135,3 +135,47 @@ export function savedAtLabel(savedAt: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())} ${pad(when.getHours())}:${pad(when.getMinutes())}`
 }
+
+/** One code version newer than a saved plot's frozen one
+ *  (`scistackplotdb.saved.thaw_code` -> `SavedPlot.newer`). */
+export interface NewerVersion {
+  row: number
+  column: string
+  function: string
+  /** The ordinals the plot was saved with (may be empty if they were deleted). */
+  frozen: string[]
+  newer: string[]
+  newest: string
+  /** Schema locations holding a newer version. */
+  locations: number
+}
+
+/** The "switch to latest?" question for a reopened saved plot, or '' when
+ *  there is nothing newer. One sentence per function, so a chain of two
+ *  edited functions reads as two facts rather than one blur. */
+export function newerVersionsText(newer: readonly NewerVersion[]): string {
+  if (newer.length === 0) return ''
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const entry of newer) {
+    const key = `${entry.function}|${entry.newest}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const was = entry.frozen.length ? entry.frozen.join(', ') : 'a version that no longer exists'
+    const where = entry.locations === 1 ? '1 location' : `${entry.locations} locations`
+    lines.push(`${entry.function}: this plot shows ${was}; ${entry.newest} exists (${where}).`)
+  }
+  return lines.join(' ')
+}
+
+/**
+ * The variant rows as the pin effect compares them. Opening a saved plot sets
+ * the effect's baseline to THIS, so the opened rows are not mistaken for an
+ * edit and written to the variable's stored pins (2026-10-15): a reopened
+ * plot can carry a frozen code version that must not become every new plot's
+ * default. One function, so the baseline and the effect cannot serialise the
+ * rows two ways.
+ */
+export function variantSetsKey(variantSets: unknown): string {
+  return JSON.stringify(variantSets ?? null)
+}

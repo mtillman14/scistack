@@ -289,22 +289,209 @@ def variant_set_mask(
     return mask
 
 
-def row_mask(
-    frame: pd.DataFrame,
-    spec: PlotSpec,
+#: Where a row's effective selection came from — the third field of every
+#: ``log_effective_selections`` entry, so a log reader can tell "the user said
+#: this" from "nothing was said, so the source's current records".
+SOURCE_STATED = "stated"
+SOURCE_DEFAULT = "source default"
+SOURCE_FROZEN = "frozen"
+
+
+def _names_function_choice(selection: dict[str, Any], latest_column: str | None) -> bool:
+    """Whether a selection already says which CODE to draw: a code/run axis,
+    or the source's latest flag."""
+    return any(
+        is_function_axis(key) or (latest_column is not None and key == latest_column)
+        for key in selection
+    )
+
+
+def active_frozen(variant: VariantSet, table: LongTable) -> dict[str, list[str]]:
+    """The row's frozen columns that this table can apply.
+
+    ``follow_latest`` wins over a freeze: the user asked for current code.
+    A frozen column the frame does not carry (the function is back to one
+    version, so there is no axis) is ignored — there is nothing to choose
+    between, and ``scistackplotdb.saved`` only writes columns that exist.
+    """
+    if variant.follow_latest or not variant.frozen:
+        return {}
+    columns = table.frame.columns
+    return {
+        column: list(levels)
+        for column, levels in variant.frozen.items()
+        if column in columns and levels
+    }
+
+
+def effective_selection_with_source(
+    variant: VariantSet, table: LongTable
+) -> tuple[dict[str, Any], str]:
+    """``(selection, source)`` — what this row's selection really is.
+
+    The single answer to "which code does a row draw?", consumed by
+    :func:`row_mask` (and so by the figure AND the row counts/banner),
+    :func:`_answered`, and the no-rows path. Until 2026-10-15 an empty row 0
+    meant "the source default" to the figure and "everything" to the banner,
+    which reported pooling the figure never did. See
+    ``docs/claude/variant-row-selection.md``.
+
+    * **frozen** — a reopened saved plot's code versions. The frozen columns
+      and the latest flag leave the selection (``frozen_mask`` answers them;
+      "current" AND "v1" would select nothing).
+    * **stated** — the selection already names a code/run axis or the latest
+      flag, or the source has no default: used as written. Pooling versions
+      is reachable only this way, by naming them.
+    * **source default** — the selection says nothing about code, so the
+      source's ``default_pin`` (the per-location latest flag) is added. A row
+      that only says ``low_hz=20``, or nothing at all, draws current code —
+      never every version at once.
+    """
+    return _effective(
+        variant.selection,
+        active_frozen(variant, table),
+        latest_column=table.latest_column,
+        default_pin=table.default_pin,
+    )
+
+
+def _effective(
+    raw: dict[str, Any],
+    frozen: dict[str, list[str]],
+    *,
+    latest_column: str | None,
+    default_pin: dict[str, Any] | None,
+) -> tuple[dict[str, Any], str]:
+    """The rule itself, with the table's facts passed in — shared by the
+    table-bound reader above and by :func:`export_selection`, which has no
+    table, so the preview and the exported code cannot apply two rules."""
+    selection = dict(raw)
+    if frozen:
+        for column in frozen:
+            selection.pop(column, None)
+        if latest_column:
+            selection.pop(latest_column, None)
+        return selection, SOURCE_FROZEN
+    pin = dict(default_pin or {})
+    if not pin or _names_function_choice(selection, latest_column):
+        return selection, SOURCE_STATED
+    return {**pin, **selection}, SOURCE_DEFAULT
+
+
+def export_selection(
     variant: VariantSet,
     *,
-    latest_column: str | None = None,
+    latest_column: str | None,
+    default_pin: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The selection exported code loads one row through — what the preview
+    applies, spelled for a ``Variant(...)`` wrapper.
+
+    ``latest_column`` and ``default_pin`` are the TABLE's (the same facts
+    :func:`effective_selection_with_source` reads), so the export adds the
+    latest flag exactly when the preview does. A table with no default — a
+    stacked multi-variable table, a single-generation variable — exports the
+    row as written, as the preview draws it. A freeze comes back as the frozen
+    ordinal(s) on their ``Code:`` columns.
+
+    Known limit: a freeze of SEVERAL ordinals is "per location, the highest of
+    these" in the preview (:func:`frozen_mask`); a ``Variant`` list is "any
+    of". The WARN below says so in the log whenever that happens.
+    """
+    frozen = (
+        {}
+        if variant.follow_latest
+        else {column: list(levels) for column, levels in variant.frozen.items() if levels}
+    )
+    selection, _source = _effective(
+        variant.selection,
+        frozen,
+        latest_column=latest_column,
+        default_pin=default_pin,
+    )
+    for column, levels in frozen.items():
+        selection[column] = levels[0] if len(levels) == 1 else list(levels)
+        if len(levels) > 1:
+            Log.warn(
+                "export: %s is frozen to %s — the preview keeps the highest of "
+                "these per schema location, the exported Variant(...) keeps any "
+                "of them; re-save the plot on one version for an exact export",
+                column,
+                levels,
+                layer=LAYER,
+            )
+    return selection
+
+
+def effective_selection(variant: VariantSet, table: LongTable) -> dict[str, Any]:
+    """The selection half of :func:`effective_selection_with_source`."""
+    return effective_selection_with_source(variant, table)[0]
+
+
+def _ordinal_rank(value: str) -> int:
+    match = _ORDINAL.match(value)
+    return int(match.group(1)) if match else 0
+
+
+def frozen_mask(
+    frame: pd.DataFrame,
+    frozen: dict[str, list[str]],
+    table: LongTable,
+    *,
+    within: pd.Series | None = None,
 ) -> pd.Series:
-    """Rows one variant ROW claims: its selection, within its own variable.
+    """Rows a freeze keeps: per frozen column, only the frozen ordinals, and
+    within each schema location only the HIGHEST of them present.
+
+    That is "latest as of the save" reproduced from ordinals alone: a save
+    made while subject 01 was on v2 and subject 02 still on v1 froze
+    ``[v1, v2]``; reopened after a v3 run, 01 draws v2 and 02 draws v1 — not
+    both at 01, which a plain "any of" would pool.
+
+    ``within`` restricts which rows compete (the row's selection and variable
+    have already narrowed them), so the per-location best is picked among
+    rows the row could draw at all. Locations are the table's schema levels
+    plus the stacked ``Variable`` column, so two variables never compete.
+    """
+    within = within if within is not None else pd.Series(True, index=frame.index)
+    mask = pd.Series(True, index=frame.index)
+    keys = [key for key in table.schema_levels if key in frame.columns]
+    if VARIABLE_COLUMN in frame.columns:
+        keys.append(VARIABLE_COLUMN)
+    for column, ordinals in frozen.items():
+        if column not in frame.columns:
+            continue
+        values = frame[column].astype(str)
+        allowed = values.isin({str(level) for level in ordinals})
+        rank = values.map(_ordinal_rank).where(allowed & within & mask, -1)
+        if keys:
+            best = rank.groupby(
+                [frame[key].astype(str) for key in keys], sort=False
+            ).transform("max")
+        else:
+            best = pd.Series(rank.max(), index=frame.index)
+        mask &= allowed & (rank == best)
+    return mask
+
+
+def row_mask(
+    table: LongTable,
+    spec: PlotSpec,
+    variant: VariantSet,
+) -> pd.Series:
+    """Rows one variant ROW claims: its effective selection, its freeze, within
+    its own variable.
 
     The single definition, called by :func:`apply_variant_sets` (which builds
     the figure) and by ``capability.variant_summary`` (which reports how many
-    rows each variant matched). Those two disagreeing would put a number on
-    screen the figure contradicts — the same reason
-    :func:`variant_set_mask` is public.
+    rows each variant matched, and whether it spans versions). Those two
+    disagreeing put a "mixes v1 | v2" banner above a figure drawing v2 only
+    (2026-10-15) — the same reason :func:`variant_set_mask` is public.
     """
-    mask = variant_set_mask(frame, variant.selection, latest_column=latest_column)
+    frame = table.frame
+    mask = variant_set_mask(
+        frame, effective_selection(variant, table), latest_column=table.latest_column
+    )
     if VARIABLE_COLUMN in frame.columns:
         # A row claims only its own variable's rows. Without this, a row
         # pinning `Code:filterEMG=v1` names nothing about a second variable —
@@ -314,6 +501,9 @@ def row_mask(
         mask &= frame[VARIABLE_COLUMN].astype(str) == (
             variant.variable or spec.y_measure
         )
+    frozen = active_frozen(variant, table)
+    if frozen:
+        mask &= frozen_mask(frame, frozen, table, within=mask)
     return mask
 
 
@@ -323,6 +513,7 @@ def auto_label(
     index: int = 0,
     variable: str | None = None,
     latest_column: str | None = None,
+    frozen: dict[str, list[str]] | None = None,
 ) -> str:
     """The name a variant gets until the user types over it.
 
@@ -342,9 +533,17 @@ def auto_label(
     An empty selection with no variable is ``(not set)``, not "all variants":
     an unfilled row is inert (:func:`defined_sets`), so a label promising every
     variant would describe a row that contributes nothing.
+
+    ``frozen`` (a reopened saved plot's versions) is spelled ``load_cbrace v1
+    (saved)``, and replaces the latest flag and the frozen columns' own
+    selection keys, exactly as :func:`effective_selection_with_source` does —
+    "current · load_cbrace v1" would describe something the row does not draw.
     """
     parts: list[str] = []
+    frozen = {column: levels for column, levels in (frozen or {}).items() if levels}
     for column, value in selection.items():
+        if frozen and (column in frozen or (latest_column and column == latest_column)):
+            continue
         text = _level_text(value)
         if latest_column and column == latest_column:
             # A False flag is "not the current code", which is a real thing to
@@ -357,6 +556,8 @@ def auto_label(
             # function is usually obvious from context in a legend, the
             # parameter never is.
             parts.append(f"{column.rsplit('.', 1)[-1]}={text}")
+    for column, levels in frozen.items():
+        parts.append(f"{function_of_axis(column)} {_level_text(levels)} (saved)")
 
     if variable:
         return f"{variable} · {' · '.join(parts)}" if parts else variable
@@ -392,9 +593,16 @@ def label_variable(
     """
     if variant_set.variable:
         return variant_set.variable
-    if variant_set.selection or index == 0:
+    if variant_set.selection or variant_set.frozen or index == 0:
         return primary
     return None
+
+
+def says_something(variant_set: VariantSet) -> bool:
+    """A selection, a variable, or a frozen pin — any of them is a statement
+    about the data. A freeze especially: a reopened saved plot's empty row 0
+    with ``frozen={"Code:f": ["v1"]}`` must not fall back to "current"."""
+    return bool(variant_set.selection or variant_set.variable or variant_set.frozen)
 
 
 def is_stated(variant_set: VariantSet, index: int) -> bool:
@@ -407,7 +615,7 @@ def is_stated(variant_set: VariantSet, index: int) -> bool:
     empty row 0 states "the primary measure" and needs no ``Variant`` factor to
     express, so it is stated but not a defined set.
     """
-    return index == 0 or bool(variant_set.selection) or bool(variant_set.variable)
+    return index == 0 or says_something(variant_set)
 
 
 def set_name(
@@ -429,6 +637,7 @@ def set_name(
         index=index,
         variable=label_variable(variant_set, index, primary),
         latest_column=latest_column,
+        frozen=None if variant_set.follow_latest else variant_set.frozen,
     )
 
 
@@ -462,7 +671,7 @@ def defined_sets(sets: list[VariantSet]) -> list[VariantSet]:
     With no concrete row anywhere there is nothing to fold: one unnarrowed
     series needs no ``Variant`` factor to express.
     """
-    if not any(variant.selection or variant.variable for variant in sets):
+    if not any(says_something(variant) for variant in sets):
         return []
     return [
         variant for index, variant in enumerate(sets) if is_stated(variant, index)
@@ -529,12 +738,17 @@ def _answered(table: LongTable, sets: list[VariantSet]) -> set[str]:
     # WITHIN a variable and never across.
     per_variant: list[set[str]] = []
     for variant in sets:
+        # The EFFECTIVE selection (and the freeze), not the raw one: what a row
+        # answers is what it draws, by the same owner `row_mask` uses.
         per_variant.append(
             set(
                 resolve_selection(
-                    frame, variant.selection, latest_column=table.latest_column
+                    frame,
+                    effective_selection(variant, table),
+                    latest_column=table.latest_column,
                 )
             )
+            | set(active_frozen(variant, table))
         )
     return answered | set.intersection(*per_variant)
 
@@ -744,10 +958,20 @@ def _apply_default_pin(table: LongTable) -> LongTable:
     record and its superseded whole-table record together, 17 rows where there
     should be one. An unnamed plot now reads what an unnamed load reads.
 
+    The selection comes from :func:`effective_selection_with_source` for an
+    empty row — the SAME owner a stated row goes through, so the figure and
+    the row counts/banner (``capability.variant_summary``) cannot disagree
+    about what an empty row draws again (2026-10-15).
+
+    The function axes the pin answered **leave the factor list**, as they do
+    for any defined row (:func:`_answered`). Left in, a ``Code:fn`` column
+    whose rows were already filtered to one version got no role, defaulted to
+    ITERATE, and titled the figure ``Code:fn=v2``.
+
     No pin (one generation, a CSV source) leaves the table untouched, so a
     project with nothing superseded behaves exactly as before.
     """
-    pin = dict(table.default_pin or {})
+    pin, _source = effective_selection_with_source(VariantSet(), table)
     frame = table.frame
     if not pin:
         Log.info(
@@ -758,18 +982,23 @@ def _apply_default_pin(table: LongTable) -> LongTable:
         return table
     mask = variant_set_mask(frame, pin, latest_column=table.latest_column)
     kept = int(mask.sum())
+    answered = [
+        factor.name for factor in table.factors if is_function_axis(factor.name)
+    ]
     Log.info(
         "variant selection: no variant rows — the source default %s keeps %d of "
-        "%d row(s)%s",
+        "%d row(s)%s; answers %s",
         pin,
         kept,
         len(frame),
         "" if kept == len(frame) else f" ({len(frame) - kept} superseded row(s) dropped)",
+        answered or "no function axis",
         layer=LAYER,
     )
-    if kept == len(frame):
+    factors = [f for f in table.factors if f.name not in answered]
+    if kept == len(frame) and not answered:
         return table
-    return replace(table, frame=frame[mask].copy())
+    return replace(table, frame=frame[mask].copy(), factors=factors)
 
 
 def apply_variant_sets(spec: PlotSpec, table: LongTable) -> LongTable:
@@ -805,7 +1034,7 @@ def apply_variant_sets(spec: PlotSpec, table: LongTable) -> LongTable:
     counts: list[int] = []
 
     for name, variant in zip(names, sets, strict=True):
-        mask = row_mask(frame, spec, variant, latest_column=table.latest_column)
+        mask = row_mask(table, spec, variant)
         fresh = mask & assigned.isna()
         counts.append(int(fresh.sum()))
         assigned[fresh] = name
@@ -813,7 +1042,9 @@ def apply_variant_sets(spec: PlotSpec, table: LongTable) -> LongTable:
         # Code axes leave the factor list unconditionally, so a variant that
         # quietly straddles two versions has to say so here — this is the log
         # half of what the GUI shows on the row.
-        spans = spanned_code_axes(frame[fresh], variant.selection, table)
+        spans = spanned_code_axes(
+            frame[fresh], effective_selection(variant, table), table
+        )
         if spans:
             Log.warn(
                 "variant %r was built by MORE THAN ONE version of the code — "
@@ -858,5 +1089,36 @@ def apply_variant_sets(spec: PlotSpec, table: LongTable) -> LongTable:
         dict(zip(names, counts, strict=True)),
         layer=LAYER,
     )
+    log_effective_selections(names, sets, counts, table)
 
     return replace(table, frame=kept, factors=factors)
+
+
+def log_effective_selections(
+    names: list[str],
+    sets: list[VariantSet],
+    counts: list[int],
+    table: LongTable,
+) -> None:
+    """One INFO naming, per row, what it REALLY selected and why.
+
+    ``name: stated|source default|frozen <selection> [frozen <cols>] -> N
+    row(s)``. The diagnostic for the 2026-10-15 class of bug: if a banner or
+    a count ever disagrees with the figure again, this line shows which
+    selection the figure applied, beside whatever the other reader claims.
+    """
+    parts = []
+    for name, variant, count in zip(names, sets, counts, strict=True):
+        selection, source = effective_selection_with_source(variant, table)
+        frozen = active_frozen(variant, table)
+        parts.append(
+            f"{name!r}: {source} {selection}"
+            + (f" frozen {frozen}" if frozen else "")
+            + (" (follow latest)" if variant.follow_latest else "")
+            + f" -> {count} row(s)"
+        )
+    Log.info(
+        "variant rows' effective selections: %s",
+        "; ".join(parts),
+        layer=LAYER,
+    )

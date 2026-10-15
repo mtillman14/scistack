@@ -147,8 +147,19 @@ Once "baseline" *means* `Code:bandpass == v1`, `apply_variant_sets` removes
   plot, so a variant that leaves `low_hz` open still owes the user a decision.
 
 Because code axes leave unconditionally, a variant whose rows were built by two
-versions is pooling code silently. `spanned_code_axes` catches that and reports
-it — the fix is on the row (pin it, or split it), not in Factors.
+versions would be pooling code silently. `spanned_code_axes` catches that and
+reports it. The fix is on the row (pin it, or split it), not in Factors.
+
+**A row that names no code draws current code (2026-10-15).** What a row
+selects is decided by one owner, `variants.effective_selection` (consumed by
+`row_mask`, so by the figure *and* the banner). A row whose selection names no
+`Code:`/`Run:` axis and not the latest flag gets the source's `default_pin`.
+That covers an empty row 0, and a row that only says `low_hz=20`. Pooling
+versions happens only when a selection explicitly names several. Until then,
+an empty row 0 meant "current" to the figure and "everything" to the banner,
+so a saved plot showed "CosmedData mixes v1 | v2" above a figure drawing v2
+only. Full rules, including frozen rows from saved plots:
+`variant-row-selection.md`.
 
 ### The latest flag is no longer exempt (reversed 2026-09-11)
 
@@ -228,9 +239,15 @@ attached. Clicking "+" is not a statement about the data.
 The row still appears in the sidebar, labelled `(not set)` with a grey tag
 (grey, not amber: "not yet said" is a state, not a problem — the amber "no data"
 tag means a *defined* selection matched nothing, which is a real warning). If
-every row is unfilled, that is the same as having none: the code axis returns to
-Factors and the pooling guard fires, because now nothing has been selected at
-all.
+every row is unfilled, that is the same as having none: the figure draws an
+empty row's effective selection, which is the source default (current code).
+
+> **Changed 2026-10-15.** This used to say the code axis then "returns to
+> Factors and the pooling guard fires". It no longer does. The default pin
+> answers the code axes, so they leave the factor list
+> (`variants._apply_default_pin`). The old behaviour left a `Code:fn` column,
+> already filtered to one version, with no role. It defaulted to ITERATE and
+> titled the figure `Code:fn=v2`.
 
 Rows matching no selection are dropped; a row matching several goes to the
 **first** (overlapping selections are legal, and duplicating a row would
@@ -450,6 +467,7 @@ beats one that guesses.
 | which node supplies an axis | `scistack_gui.services.plot_service.axis_node_bindings` | Needs the canvas graph, so it cannot live in scistackplot — but it is still a rule about scidb's namespacing, and a rule in TSX has no test. See `variant-axis-node-binding.md`. |
 | what can be plotted alongside, **and why not** | `ScidbSource.stackable_report` | The refusals were always computed and only logged. The picker draws every variable node, so one it cannot offer has to say why in place. |
 | one span as a sentence | `scistackplot.variants.describe_span` (+ its TS mirror) | The log, the row tag and the figure banner must not word the same span three ways. |
+| what a row selects (effective selection, freeze) | `scistackplot.variants.effective_selection` / `row_mask` | The figure, the row counts, the span banner, `_answered` and the export (`export_selection`) — two readers once disagreed about an empty row 0 (2026-10-15). |
 
 ## 7. Known limits
 

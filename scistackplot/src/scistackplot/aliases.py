@@ -156,11 +156,21 @@ class DisplayText:
         """A panel's facet values, the way ``Panel.title`` joins them."""
         return " · ".join(self.level(factor, value) for factor, value in key.items())
 
-    def figure_title(self, key: dict[str, Any]) -> str:
-        """An ITERATE figure's ``name=value`` title."""
+    def figure_title(self, key: dict[str, Any], table: "LongTable | None" = None) -> str:
+        """An ITERATE figure's ``name=value`` title.
+
+        **A variant factor with ONE level is left out** (user, 2026-10-15):
+        one series needs no name in the title, and the legend/Variants row
+        already says which variant it is — ``Variant=CosmedData · load_cbrace
+        v2`` over a figure that could not be anything else is noise. Only the
+        TITLE: ``figure_key`` keeps the entry, because save-all file names and
+        the endpoint's ``for_each`` keys are built from it. A single-level
+        schema key (``subject=03``) stays — it says which figure this is.
+        """
         return ", ".join(
             f"{self.name(factor, factor)}={self.level(factor, value)}"
             for factor, value in key.items()
+            if not _lone_variant(table, factor)
         )
 
     def x_plan(self, plan):
@@ -206,6 +216,15 @@ def _raw(value: Any) -> str:
 # ---------------------------------------------------------------------------
 # Building it
 # ---------------------------------------------------------------------------
+
+
+def _lone_variant(table: LongTable | None, factor: str) -> bool:
+    """A variant factor (``Variant``, ``Code:*``) holding a single level —
+    the rule :meth:`DisplayText.figure_title` leaves out of a title."""
+    if table is None or not table.has_factor(factor):
+        return False
+    info = table.factor(factor)
+    return bool(info.is_variant) and len(info.levels) == 1
 
 
 def display_text(spec: PlotSpec, table: LongTable) -> DisplayText:

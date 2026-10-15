@@ -341,6 +341,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     plot_saved_rename:      { path: '/api/plot/saved/rename', method: 'POST', body: true },
     plot_saved_hide:        { path: '/api/plot/saved/hide', method: 'POST', body: true },
     plot_saved_history:     { path: '/api/plot/saved/history', method: 'POST', body: true },
+    plot_saved_follow_latest: { path: '/api/plot/saved/follow-latest', method: 'POST', body: true },
     // Plot presets: settings without the data, project-wide; applied to any
     // variable (.claude/plan-plot-presets.md). "hide" is Remove.
     plot_preset_list:       { path: '/api/plot/presets/list', method: 'POST', body: true },

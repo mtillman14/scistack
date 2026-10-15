@@ -776,13 +776,36 @@ class VariantSet:
     #: would claim every ``Force`` row too, drawing it once per variant. Naming
     #: the variable makes "not applicable here" and "stale" distinguishable.
     variable: str | None = None
+    #: Code versions this row is FROZEN to: ``{"Code:fn": ["v1", ...]}``. Per
+    #: schema location the row keeps the highest of these ordinals, so a save
+    #: spanning v1/v2 across locations reopens exactly as drawn.
+    #:
+    #: Filled in by ``scistackplotdb.saved`` when a saved plot is reopened,
+    #: translated from the function HASHES stored at save time (ordinals
+    #: renumber after a real delete; hashes do not). Plain data so this
+    #: package stays scidb-free. A frozen column overrides the row's own
+    #: selection key for that column and its latest flag — "current" AND
+    #: "v1" would select nothing. See docs/claude/variant-row-selection.md.
+    frozen: dict[str, list[str]] = field(default_factory=dict)
+    #: True: this row always draws the current code and a saved plot never
+    #: freezes it. Set by answering "switch to latest" when a saved plot finds
+    #: newer data (``scistackplotdb.saved.follow_latest_saved_plot``).
+    follow_latest: bool = False
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "name": self.name,
             "selection": dict(self.selection),
             "variable": self.variable,
         }
+        # Written only when set, so the common row (and every generated
+        # docstring, plan-cache diff and stored spec that holds one) reads
+        # exactly as it did before these existed.
+        if self.frozen:
+            out["frozen"] = {column: list(levels) for column, levels in self.frozen.items()}
+        if self.follow_latest:
+            out["follow_latest"] = True
+        return out
 
     @classmethod
     def from_dict(cls, raw: dict) -> "VariantSet":
@@ -790,6 +813,11 @@ class VariantSet:
             name=raw.get("name"),
             selection=dict(raw.get("selection") or {}),
             variable=raw.get("variable"),
+            frozen={
+                str(column): [str(level) for level in (levels or [])]
+                for column, levels in (raw.get("frozen") or {}).items()
+            },
+            follow_latest=bool(raw.get("follow_latest", False)),
         )
 
 

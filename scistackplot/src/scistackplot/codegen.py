@@ -2855,7 +2855,20 @@ def _script_inputs(spec: PlotSpec) -> tuple[str, list[str]]:
             )
         else:
             lines.append(f"{param} = df")
-        for column, value in variant.selection.items():
+        selection = dict(variant.selection)
+        if variant.frozen and not variant.follow_latest:
+            # A reopened saved plot's versions (variants.frozen_mask). The
+            # frozen columns replace the row's own keys for them; several
+            # ordinals export as "any of" — the per-location "highest of"
+            # needs provenance a flat table does not carry.
+            selection.update(
+                {
+                    column: levels[0] if len(levels) == 1 else list(levels)
+                    for column, levels in variant.frozen.items()
+                    if levels
+                }
+            )
+        for column, value in selection.items():
             if isinstance(value, str) and value == LATEST:
                 lines.append(
                     f"# NOTE: {column!r} asked for the latest version, which "

@@ -2776,7 +2776,7 @@ def _labels_for(
 
     title = style.title
     if title is None and figure_key:
-        title = text.figure_title(figure_key)
+        title = text.figure_title(figure_key, table)
 
     def named(factor: str) -> str:
         return text.name(factor, table.factor(factor).display)

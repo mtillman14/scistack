@@ -717,8 +717,10 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
     import pandas as pd
 
     from .variants import (
+        VariantSet,
         auto_label,
         defined_sets,
+        effective_selection,
         is_stated,
         label_variable,
         resolve_selection,
@@ -731,9 +733,14 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
     names = [f.name for f in table.variant_factors if f.name in frame.columns]
 
     sets = []
-    # With nothing selected — no rows, or none filled in yet — every row is on
-    # screen, which is what the figure is showing too.
-    kept_mask = pd.Series(not defined_sets(spec.variant_sets), index=frame.index)
+    # With nothing selected — no rows, or none filled in yet — the figure draws
+    # what an EMPTY row selects (the source default: current code), so that is
+    # what is "on screen" here too. Measured by the same owner, `row_mask`.
+    kept_mask = (
+        row_mask(table, spec, VariantSet())
+        if not defined_sets(spec.variant_sets)
+        else pd.Series(False, index=frame.index)
+    )
     claimed = pd.Series(False, index=frame.index)
     for index, variant in enumerate(spec.variant_sets):
         # "Says something", which row 0 always does — it is the figure's
@@ -743,9 +750,7 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
         # and folds to nothing, because one series needs no factor.
         defined = is_stated(variant, index)
         if defined:
-            mask = row_mask(
-                frame, spec, variant, latest_column=table.latest_column
-            )
+            mask = row_mask(table, spec, variant)
             # First-match-wins, mirroring apply_variant_sets: the count shown
             # must be the number of rows this variant contributes to the figure,
             # not the number it would match on its own.
@@ -772,8 +777,13 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
                     index=index,
                     variable=label_variable(variant, index, spec.y_measure),
                     latest_column=table.latest_column,
+                    frozen=None if variant.follow_latest else variant.frozen,
                 ),
                 "explicit_name": variant.name,
+                # A reopened saved plot's versions, and whether the row follows
+                # latest instead (docs/claude/variant-row-selection.md).
+                "frozen": {c: list(v) for c, v in variant.frozen.items()},
+                "follow_latest": variant.follow_latest,
                 "selection": dict(variant.selection),
                 # None means the primary measure; the GUI shows that as the
                 # dropdown's default rather than inventing a name for it.
@@ -784,7 +794,9 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
                 # per row because that is where the fix is (pin a version, or
                 # split the row), and because the column itself is no longer
                 # offered as a factor.
-                "spans": spanned_code_axes(frame[fresh], variant.selection, table)
+                "spans": spanned_code_axes(
+                    frame[fresh], effective_selection(variant, table), table
+                )
                 if defined
                 else {},
                 # What this selection actually resolved to, and — when it
@@ -803,7 +815,9 @@ def variant_summary(spec: PlotSpec, table: LongTable) -> dict:
                 # I get" is nothing.
                 "resolved": _jsonable_selection(
                     resolve_selection(
-                        frame, variant.selection, latest_column=table.latest_column
+                        frame,
+                        effective_selection(variant, table),
+                        latest_column=table.latest_column,
                     )
                 )
                 if defined

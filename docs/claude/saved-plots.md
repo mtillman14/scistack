@@ -24,16 +24,46 @@ out into several figures (ITERATE) is still one saved plot.
 | Storage rules: versions, names, hiding (shared with presets, 2026-10-06) | `scistackplotdb/_versioned.py`: `VersionedStore` | `scistackplotdb/saved.py`, `scistackplotdb/presets.py` |
 | Saved-plot rows, envelope, opening | `scistackplotdb/saved.py` | GUI service, scripts |
 | What a valid name is, and whether it clashes | `scistackplotdb.saved.check_name`, `SavedPlotExists` | GUI (displays the answer) |
-| JSON adapter + loading the table with the panel's cached source | `scistack_gui/services/saved_plot_service.py` | the six `plot_saved_*` handlers in `api/plot.py` |
+| JSON adapter + loading the table with the panel's cached source | `scistack_gui/services/saved_plot_service.py` | the seven `plot_saved_*` handlers in `api/plot.py` |
 | View settings (preview mode, aspect choice, figure index): meaning + lenient read | `frontend/.../PlotStudio/savedPlots.ts` | `PlotStudio.tsx` |
 | "Has the panel changed since open/save?" | `savedPlots.ts`: `modifiedKey`/`isModified` | `PlotStudio.tsx`, `SavedPlotsRail.tsx` |
 | When the figure cursor resets | `savedPlots.ts`: `iterateSignature` | `PlotStudio.tsx` |
-| The Variants pins for a variable (intent store) | the panel's `plot_variant_sets_save` effect | **not** the saved-plot code |
+| The Variants pins for a variable (intent store) | the panel's `plot_variant_sets_save` effect, on a user EDIT only | **not** the saved-plot code |
+| Which code version a saved plot shows (freeze on save, thaw on open, "switch to latest") | `scistackplotdb/saved.py`: `freeze_code`, `thaw_code`, `follow_latest_saved_plot` | GUI service (`follow_latest`), `PlotStudio.tsx` prompt |
+| The prompt's sentence | `savedPlots.ts`: `newerVersionsText` | `PlotStudio.tsx` |
 
-The last row is deliberate. Loading a saved plot changes the panel's
-`variant_sets`, and the existing effect persists that like any other edit. A
-backend write on open would be a second owner. `test_opening_writes_no_variant_pins`
-pins it.
+The pins row is deliberate, and it was **reversed on 2026-10-15**. Until then,
+opening a saved plot counted as an edit of `variant_sets`, so the panel
+persisted the opened rows as the variable's pins. A reopened plot's rows can
+now carry a *frozen* code version. Persisting them would open every new plot
+of that variable on an old version, and the CosmedData session showed this
+overwriting the user's pins with a saved plot's empty row. Now opening
+re-baselines the effect (`variantSetsKey`), and
+`intent_store.set_variant_selections` drops `frozen`/`follow_latest` as a
+second guard. The backend still never writes pins on open
+(`test_opening_writes_no_variant_pins`).
+
+## Which code version a saved plot shows (added 2026-10-15)
+
+Full rules: `variant-row-selection.md`. In short:
+
+- **Save freezes.** `save_plot(table=…|table_for=…)` stores
+  `frozen_code = {row: {fn: [hash]}}` in the envelope: the hashes of the
+  rows each non-follow-latest row drew. This works with one version, which is
+  the usual case. The GUI passes its cached table, and a script must pass one
+  too, or nothing is frozen (logged).
+- **Open thaws.** `thaw_code` turns hashes into today's ordinals on
+  `VariantSet.frozen`, for functions that are currently an axis. It also
+  returns `SavedPlot.newer` when the data holds something newer. A plot with
+  no `frozen_code` (saved before this) opens on current code with no prompt.
+  Nothing is back-filled.
+- **The prompt.** A non-empty `newer` makes the panel ask "Newer data exists …
+  switch to latest?". **Keep** writes nothing. **Switch**
+  (`plot_saved_follow_latest`) appends a version whose rows have
+  `follow_latest=True`, no freeze and no code keys of their own, then
+  reopens it. A follow-latest row is never frozen again.
+- The stored spec never holds `frozen` ordinals (`_strip_frozen`), because
+  ordinals renumber after a delete and hashes do not.
 
 **Why not the intent store:** a saved plot is *display intent*. Changing
 it changes nothing a run computes, so by `intent-and-fact.md` §1 it is out
