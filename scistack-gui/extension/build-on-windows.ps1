@@ -77,12 +77,23 @@ try {
     Write-Host ""
     Write-Host "Building webview bundle..."
     $env:VITE_BUILD_TARGET = "webview"
+    # The %TEMP% copy has no .git and no sibling extension/, so hand vite the
+    # bundle stamp it would otherwise read itself (frontend/vite.config.ts).
+    $env:SCISTACK_BUNDLE_VERSION = (Get-Content (Join-Path $SourceDir "package.json") -Raw | ConvertFrom-Json).version
+    try {
+        $sha = (git -C $SourceDir rev-parse --short HEAD 2>$null)
+        $dirty = (git -C $FrontendSourceDir status --porcelain -- . 2>$null)
+        if ($sha) { $env:SCISTACK_BUNDLE_COMMIT = if ($dirty) { "$sha-dirty" } else { "$sha" } }
+    } catch { }
+    Write-Host "Bundle stamp: version $env:SCISTACK_BUNDLE_VERSION, commit $env:SCISTACK_BUNDLE_COMMIT"
     # Override outDir to write into the extension build's dist/webview.
     $WebviewOutDir = Join-Path (Join-Path $BuildDir "dist") "webview"
     npx vite build --outDir $WebviewOutDir --emptyOutDir
     if ($LASTEXITCODE -ne 0) { throw "vite build (webview) failed" }
 } finally {
     $env:VITE_BUILD_TARGET = $null
+    $env:SCISTACK_BUNDLE_VERSION = $null
+    $env:SCISTACK_BUNDLE_COMMIT = $null
     Pop-Location
 }
 

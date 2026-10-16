@@ -38,6 +38,7 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/plot/project-alias            plot_project_alias_set
     POST /api/plot/project-color            plot_project_color_set
     POST /api/client-error                  report_client_error
+    POST /api/client-build                  report_client_build
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
 time in pandas and matplotlib, with the database touched only while the
@@ -60,6 +61,7 @@ from pydantic import BaseModel
 
 from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.services import plot_preset_service, plot_service, saved_plot_service
+from scistack_gui.services.client_build import report_client_build
 from scistack_gui.services.client_errors import report_client_error
 
 logger = logging.getLogger(__name__)
@@ -284,6 +286,23 @@ class ClientErrorRequest(BaseModel):
     component_stack: str | None = None
 
 
+class ClientBuildRequest(BaseModel):
+    """A webview's bundle build (frontend/src/bundleBuild.ts), plus what the
+    VS Code host added (extension/src/webviewBuild.ts) — absent in the
+    standalone browser build."""
+
+    version: str | None = None
+    commit: str | None = None
+    built_at: str | None = None
+    target: str | None = None
+    view: str | None = None
+    extension_version: str | None = None
+    extension_path: str | None = None
+    extension_mode: str | None = None
+    verdict: str | None = None
+    verdict_detail: str | None = None
+
+
 # --- the calls ---------------------------------------------------------------
 
 
@@ -499,6 +518,11 @@ def _client_error(req: ClientErrorRequest) -> dict:
     return report_client_error(req.model_dump())
 
 
+def _client_build(req: ClientBuildRequest) -> dict:
+    """A webview says which bundle it runs; write it into the shared log."""
+    return report_client_build(req.model_dump())
+
+
 # ``db_optional=True`` on every row whose request model carries a
 # ``csv_path``: with one set, the service builds a ``CsvSource`` and the
 # database is never opened (each entry point is already written as
@@ -663,6 +687,12 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "report_client_error", "/client-error", ClientErrorRequest,
         _client_error, holds_db_lock=False, needs_db=False, undoable=False,
+    ),
+    # Same shape: a log line, no database, works in a plot-only server and
+    # while MATLAB holds the file.
+    Handler(
+        "report_client_build", "/client-build", ClientBuildRequest,
+        _client_build, holds_db_lock=False, needs_db=False, undoable=False,
     ),
 )
 

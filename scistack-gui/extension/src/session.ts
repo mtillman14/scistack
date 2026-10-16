@@ -29,6 +29,7 @@ import { PanelRegistry } from './panelRegistry';
 import { PlotPanel } from './plotPanel';
 import { PythonProcess } from './pythonProcess';
 import { checkServerVersion } from './versionCheck';
+import { ExtensionIdentity, prepareBuildReport } from './webviewBuild';
 import { buildPlotOnlyServerArgs, buildServerArgs } from './serverArgs';
 import {
   LogSink,
@@ -108,6 +109,23 @@ export class Session {
       args.debugPort,
       args.python,
     );
+  }
+
+  /**
+   * A panel's `report_client_build`: log which bundle it runs and where it
+   * was loaded from, warn if it is from another release than this session's
+   * server, and return the params to forward to Python for scidb.log.
+   * Both panels call this; neither words the line or decides the verdict.
+   */
+  reportWebviewBuild(raw: Record<string, unknown> | undefined): Record<string, unknown> {
+    const report = prepareBuildReport(
+      raw, this.manager.extensionIdentity(), this.python.serverVersion,
+    );
+    this.log.appendLine(report.line);
+    if (report.verdict.kind === 'mismatch') {
+      this.manager.warnStaleWebviewOnce(report.verdict.message);
+    }
+    return report.params;
   }
 
   /**
@@ -275,6 +293,8 @@ export class SessionManager {
   private readonly changeHandlers: (() => void)[] = [];
   /** One version-mismatch warning per extension host, not one per session. */
   private versionWarned = false;
+  /** The same, for a webview bundle from another release (`webviewBuild.ts`). */
+  private webviewWarned = false;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -601,6 +621,25 @@ export class SessionManager {
       this.versionWarned = true;
       vscode.window.showWarningMessage(verdict.message);
     }
+  }
+
+  /** The extension that is running — what loaded every panel's bundle. */
+  extensionIdentity(): ExtensionIdentity {
+    return {
+      version: this.context.extension.packageJSON.version,
+      path: this.context.extensionPath,
+      mode: vscode.ExtensionMode[this.context.extensionMode] ?? String(this.context.extensionMode),
+    };
+  }
+
+  /**
+   * Warn about a stale webview bundle once per extension host: every panel
+   * of every session loads the same `dist/webview/`, so one warning says it.
+   */
+  warnStaleWebviewOnce(message: string): void {
+    if (this.webviewWarned) return;
+    this.webviewWarned = true;
+    vscode.window.showWarningMessage(message);
   }
 
   /**

@@ -11,6 +11,35 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzz. Which webview bundle is running (scidb.log + SciStack output) — added 2026-10-16
+
+What changed: every panel now reports which frontend bundle it loaded, and
+which copy of the extension loaded it. Before this, a stale hand-built 0.1.0
+extension hid Copy PNG under scistack-gui 0.1.37 and no log said so.
+
+**Backend**
+1. Open the **SciStack** output channel (View → Output → SciStack). The first
+   line should read `SciStack extension <version> (<mode>) loaded from <path>`.
+   On a Marketplace install, `<mode>` should be `Production` and `<path>`
+   should be the `...\.vscode\extensions\scistack.scistack-gui-<version>` folder.
+2. Open a pipeline, then a Plot Studio tab. The output channel should show one
+   `[webview] pipeline view: bundle ...` line and one `[webview] plot view: bundle ...`
+   line, each with a commit, a build time, the path, and `— match` (or `— skipped`
+   with a reason for a dev build).
+3. `scidb.log` should have the matching `[client] <view> view runs bundle ...`
+   INFO lines.
+4. Mismatch check (optional): run a dev-built extension whose `package.json`
+   version you set by hand to an older release (e.g. `0.1.30`) against
+   scistack-gui 0.1.37. Expect one VS Code warning ("webview bundle from release
+   0.1.30 …"), shown once only, and a `[client] stale webview bundle` WARNING
+   in `scidb.log`.
+
+**Frontend**
+1. Open **Developer: Open Webview Developer Tools** on a Plot tab. Its console
+   should show `[SciStack] webview bundle {version, commit, built_at, target, view}`.
+
+---
+
 ## 0zzzy. Data inventory collapses uniform blocks to "(all)" — added 2026-10-15
 
 What changed: the 📋 Inventory table now shows one row per block of

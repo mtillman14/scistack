@@ -66,6 +66,12 @@ export class PythonProcess {
   private closed: Promise<void>;
   /** The spawn args, kept for the diagnostic report on a failed start. */
   readonly args: string[];
+  /**
+   * The version this server reported in its `ready` frame — null when it
+   * predates the handshake, undefined until ready. Per process, so a restart
+   * that swaps in a different interpreter is judged by what is running now.
+   */
+  serverVersion: string | null | undefined;
 
   constructor(
     readonly pythonPath: string,
@@ -328,6 +334,7 @@ export class PythonProcess {
         clearTimeout(this.readyTimer);
         this.readyTimer = null;
       }
+      this.serverVersion = (params as unknown as ReadyParams).version ?? null;
       this.readyResolve(params as unknown as ReadyParams);
       this.readyResolve = null;
       this.readyReject = null;

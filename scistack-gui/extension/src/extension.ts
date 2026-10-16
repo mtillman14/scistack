@@ -27,6 +27,11 @@ export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('SciStack');
   sessions = new SessionManager(context, outputChannel);
   sessions.onDidChange(updateStatusBar);
+  // Which copy of the extension is running. VS Code's own UI never shows the
+  // path, and a development copy silently wins over the installed release
+  // (2026-10-16: a hand-built 0.1.0 under the Marketplace 0.1.37).
+  const me = sessions.extensionIdentity();
+  outputChannel.appendLine(`SciStack extension ${me.version} (${me.mode}) loaded from ${me.path}`);
 
   const openPipeline = vscode.commands.registerCommand(
     'scistack.openPipeline',

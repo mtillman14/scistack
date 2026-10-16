@@ -24,6 +24,8 @@
   "include": [
     "src/webviewRpc.ts",
     "src/webviewRpc.test.ts",
+    "src/bundleBuild.ts",
+    "src/bundleBuild.test.ts",
     "src/history.ts",
     "src/history.test.ts",
     "src/undo.ts",

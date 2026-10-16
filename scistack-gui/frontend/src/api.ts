@@ -355,6 +355,8 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     plot_project_color_set: { path: '/api/plot/project-color', method: 'POST', body: true },
     // An error boundary's report — see components/ClientErrorBoundary.tsx.
     report_client_error:    { path: '/api/client-error', method: 'POST', body: true },
+    // Which bundle this webview runs, once on load — see bundleBuild.ts.
+    report_client_build:    { path: '/api/client-build', method: 'POST', body: true },
     // Undo / redo (docs/claude/undo-redo.md). The change id is in the body;
     // a request's own undo metadata travels in the X-SciStack-Change header.
     history_status:         { path: '/api/history/status' },

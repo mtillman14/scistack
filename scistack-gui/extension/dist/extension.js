@@ -662,6 +662,9 @@ var DagPanel = class {
     this.panel.webview.onDidReceiveMessage(
       async (msg) => {
         const method = msg.method;
+        if (method === "report_client_build") {
+          msg = { ...msg, params: this.session.reportWebviewBuild(msg.params) };
+        }
         if (method === "restart_python") {
           try {
             await vscode2.commands.executeCommand("scistack.restartPython");
@@ -1186,10 +1189,10 @@ var DagPanel = class {
     this.outputChannel.appendLine(
       `handleMatlabPipelineRun: requesting generate_matlab_pipeline_command for ${pipelineId ?? "<?>"} (run_id=${runId})`
     );
-    const emit = (text) => {
+    const emit = (text2) => {
       this.panel.webview.postMessage({
         method: "run_output",
-        params: { run_id: runId, text }
+        params: { run_id: runId, text: text2 }
       });
     };
     const finish = (success, cancelled = false) => {
@@ -1375,12 +1378,12 @@ var DagPanel = class {
   }
 };
 function getNonce() {
-  let text = "";
+  let text2 = "";
   const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   for (let i = 0; i < 32; i++) {
-    text += possible.charAt(Math.floor(Math.random() * possible.length));
+    text2 += possible.charAt(Math.floor(Math.random() * possible.length));
   }
-  return text;
+  return text2;
 }
 
 // src/pythonProcess.ts
@@ -1528,9 +1531,9 @@ var PythonProcess = class {
     const rl = readline.createInterface({ input: this.proc.stdout });
     rl.on("line", (line) => this.handleLine(line));
     this.proc.stderr?.on("data", (data) => {
-      const text = data.toString().trimEnd();
-      this.outputChannel.appendLine(text);
-      for (const line of text.split("\n")) {
+      const text2 = data.toString().trimEnd();
+      this.outputChannel.appendLine(text2);
+      for (const line of text2.split("\n")) {
         this.stderrTail.push(line);
       }
       if (this.stderrTail.length > STDERR_TAIL_LINES) {
@@ -1706,6 +1709,7 @@ var PythonProcess = class {
         clearTimeout(this.readyTimer);
         this.readyTimer = null;
       }
+      this.serverVersion = params.version ?? null;
       this.readyResolve(params);
       this.readyResolve = null;
       this.readyReject = null;
@@ -1732,24 +1736,67 @@ var PythonProcess = class {
 
 // src/versionCheck.ts
 var DEV_VERSION = "0.0.0";
-function checkServerVersion(extensionVersion, serverVersion) {
-  if (extensionVersion === DEV_VERSION) {
-    return { kind: "skipped", reason: "extension is an unstamped dev build" };
+function compareRelease(clientLabel, clientVersion, serverVersion) {
+  if (clientVersion === DEV_VERSION) {
+    return { kind: "skipped", reason: `${clientLabel} is an unstamped dev build` };
   }
-  if (!serverVersion) {
+  if (!serverVersion)
+    return { kind: "server-unreported" };
+  if (serverVersion === DEV_VERSION || /\.dev\d|\+/.test(serverVersion)) {
+    return { kind: "skipped", reason: `scistack-gui ${serverVersion} is a dev build` };
+  }
+  return serverVersion === clientVersion ? { kind: "match" } : { kind: "differ" };
+}
+function checkServerVersion(extensionVersion, serverVersion) {
+  const cmp = compareRelease("extension", extensionVersion, serverVersion);
+  if (cmp.kind === "server-unreported") {
     return {
       kind: "mismatch",
       message: `SciStack extension ${extensionVersion} is talking to a scistack-gui Python package that did not report its version (older than this extension). Run: pip install scistack-gui==${extensionVersion}`
     };
   }
-  if (serverVersion === DEV_VERSION || /\.dev\d|\+/.test(serverVersion)) {
-    return { kind: "skipped", reason: `scistack-gui ${serverVersion} is a dev build` };
+  if (cmp.kind === "differ") {
+    return {
+      kind: "mismatch",
+      message: `SciStack extension ${extensionVersion} does not match the installed scistack-gui Python package ${serverVersion}. Things may break. Run: pip install scistack-gui==${extensionVersion}`
+    };
   }
-  if (serverVersion === extensionVersion)
-    return { kind: "match" };
+  return cmp;
+}
+function checkWebviewVersion(bundleVersion, serverVersion) {
+  if (!bundleVersion) {
+    return { kind: "skipped", reason: "webview bundle did not report a version" };
+  }
+  const cmp = compareRelease("webview bundle", bundleVersion, serverVersion);
+  if (cmp.kind === "server-unreported" || cmp.kind === "differ") {
+    return {
+      kind: "mismatch",
+      message: `The SciStack view is running a webview bundle from release ${bundleVersion}, but the scistack-gui Python package is ${serverVersion ?? "(older than the version handshake)"}. Check "Developer: Show Running Extensions" for a second SciStack copy, or rebuild both frontend bundles in a dev checkout.`
+    };
+  }
+  return cmp;
+}
+
+// src/webviewBuild.ts
+function text(value, fallback) {
+  return typeof value === "string" && value ? value : fallback;
+}
+function prepareBuildReport(raw, extension, serverVersion) {
+  const bundle = raw ?? {};
+  const bundleVersion = typeof bundle.version === "string" ? bundle.version : null;
+  const verdict = checkWebviewVersion(bundleVersion, serverVersion);
+  const line = `[webview] ${text(bundle.view, "unknown")} view: bundle ${bundleVersion ?? "(not reported)"} (commit ${text(bundle.commit, "unknown")}, built ${text(bundle.built_at, "unknown")}) from ${extension.path} [extension ${extension.version}, ${extension.mode}]; scistack-gui ${serverVersion ?? "(not reported)"} \u2014 ${verdict.kind}` + (verdict.kind === "skipped" ? ` (${verdict.reason})` : "");
   return {
-    kind: "mismatch",
-    message: `SciStack extension ${extensionVersion} does not match the installed scistack-gui Python package ${serverVersion}. Things may break. Run: pip install scistack-gui==${extensionVersion}`
+    params: {
+      ...bundle,
+      extension_version: extension.version,
+      extension_path: extension.path,
+      extension_mode: extension.mode,
+      verdict: verdict.kind,
+      verdict_detail: verdict.kind === "mismatch" ? verdict.message : verdict.kind === "skipped" ? verdict.reason : ""
+    },
+    line,
+    verdict
   };
 }
 
@@ -1861,9 +1908,9 @@ function missingModuleFromStderr(stderr) {
   const m = /No module named ['"]?([\w.]+)['"]?/.exec(stderr);
   return m ? m[1] : void 0;
 }
-function isUnrunnable(text) {
+function isUnrunnable(text2) {
   return /ENOENT|not found|cannot find the (file|path) specified|No such file or directory|Microsoft Store/i.test(
-    text
+    text2
   );
 }
 function pipInstallCommand(pythonPath) {
@@ -2010,6 +2057,24 @@ var Session = class _Session {
     );
   }
   /**
+   * A panel's `report_client_build`: log which bundle it runs and where it
+   * was loaded from, warn if it is from another release than this session's
+   * server, and return the params to forward to Python for scidb.log.
+   * Both panels call this; neither words the line or decides the verdict.
+   */
+  reportWebviewBuild(raw) {
+    const report = prepareBuildReport(
+      raw,
+      this.manager.extensionIdentity(),
+      this.python.serverVersion
+    );
+    this.log.appendLine(report.line);
+    if (report.verdict.kind === "mismatch") {
+      this.manager.warnStaleWebviewOnce(report.verdict.message);
+    }
+    return report.params;
+  }
+  /**
    * Deliver a push notification from this session's server to this
    * session's panels — and to nothing else.
    */
@@ -2140,6 +2205,8 @@ var SessionManager = class {
     this.changeHandlers = [];
     /** One version-mismatch warning per extension host, not one per session. */
     this.versionWarned = false;
+    /** The same, for a webview bundle from another release (`webviewBuild.ts`). */
+    this.webviewWarned = false;
   }
   /** Called whenever the set of sessions, or the active one, changes. */
   onDidChange(handler) {
@@ -2415,6 +2482,24 @@ var SessionManager = class {
       this.versionWarned = true;
       vscode4.window.showWarningMessage(verdict.message);
     }
+  }
+  /** The extension that is running — what loaded every panel's bundle. */
+  extensionIdentity() {
+    return {
+      version: this.context.extension.packageJSON.version,
+      path: this.context.extensionPath,
+      mode: vscode4.ExtensionMode[this.context.extensionMode] ?? String(this.context.extensionMode)
+    };
+  }
+  /**
+   * Warn about a stale webview bundle once per extension host: every panel
+   * of every session loads the same `dist/webview/`, so one warning says it.
+   */
+  warnStaleWebviewOnce(message) {
+    if (this.webviewWarned)
+      return;
+    this.webviewWarned = true;
+    vscode4.window.showWarningMessage(message);
   }
   /**
    * A debugpy port no other session is using.
@@ -2755,6 +2840,9 @@ var PlotPanel = class _PlotPanel {
     this.panel.webview.onDidReceiveMessage(
       async (msg) => {
         const method = msg.method;
+        if (method === "report_client_build") {
+          msg = { ...msg, params: this.session.reportWebviewBuild(msg.params) };
+        }
         if (method === "set_plot_theme") {
           await answerSetPlotTheme(
             plotThemeHost(this.context.globalState),
@@ -2918,11 +3006,11 @@ var PlotPanel = class _PlotPanel {
 };
 function getNonce2() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  let text = "";
+  let text2 = "";
   for (let i = 0; i < 32; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
+    text2 += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return text;
+  return text2;
 }
 
 // src/extension.ts
@@ -2933,6 +3021,8 @@ function activate(context) {
   outputChannel = vscode7.window.createOutputChannel("SciStack");
   sessions = new SessionManager(context, outputChannel);
   sessions.onDidChange(updateStatusBar);
+  const me = sessions.extensionIdentity();
+  outputChannel.appendLine(`SciStack extension ${me.version} (${me.mode}) loaded from ${me.path}`);
   const openPipeline = vscode7.commands.registerCommand(
     "scistack.openPipeline",
     async () => {
