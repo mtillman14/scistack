@@ -151,6 +151,50 @@ def variable_variants(db, variable: str) -> dict:
     return payload
 
 
+#: The card fields a Variable node reads — enough for ``variantCards.ts``'s
+#: ``cardHeading`` / ``statusBadge``, which the node reuses.
+_NODE_CARD_FIELDS = (
+    "card_id", "ordinal", "distinguishing", "record_count",
+    "current_location_count", "verdict", "is_default", "is_pinned",
+)
+
+
+def canvas_variants(db, names, pooled_counts: dict[str, int]) -> dict[str, dict]:
+    """``{variable: node payload}``: what each Variable node says about its
+    variants. Called inside the canvas build (which already holds the
+    connection).
+
+    "Current" is the Variants popup's: the cards scidb marks ``is_default``
+    (``_mark_defaults``), in the cards' own newest-first order. Nothing here
+    decides it; this only keeps the current cards and trims them to what the
+    node prints. ``current`` can hold several (a sweep with no pin) or none
+    (a pin whose variant has no records left).
+    """
+    from scidb.inspect.variant_cards import current_variants
+
+    built = current_variants(db, sorted(names))
+    out: dict[str, dict] = {}
+    for name, result in built.items():
+        current = [c for c in result.cards if c.is_default]
+        out[name] = {
+            "variant_count": len(result.cards),
+            "has_default": result.default_selection is not None,
+            "default_sources": list(result.default_sources),
+            "pooled_record_count": pooled_counts.get(name, 0),
+            "current": [
+                _jsonable({f: getattr(c, f) for f in _NODE_CARD_FIELDS}) for c in current
+            ],
+        }
+        logger.debug(
+            "[variants] canvas %s: %d variant(s), current=%s%s",
+            name,
+            len(result.cards),
+            [f"V{c.ordinal}" for c in current] or "none",
+            f" (pinned via {result.default_sources})" if result.default_selection else "",
+        )
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Write: pins
 # ---------------------------------------------------------------------------

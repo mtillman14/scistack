@@ -53,6 +53,34 @@ instant (one run's batch) keep a stable order by producer, then selection text.
 scidb owns the order (`build_variant_cards`); the popup and `scidb variants
 --cards` show it as given.
 
+**V-numbers** (2026-10-16). Each card has an `ordinal`: the variable's
+variants numbered by FIRST save, oldest = V1 (`_assign_ordinals`). Variants
+one run saved at the same instant number in the stable tie order (low_hz
+10/20/30 → V1/V2/V3). A new variant takes the next number. Deleting one
+renumbers the later ones; that is accepted, and `card_id` stays the identity.
+The popup card header, `scidb variants --cards` (`[V2]`) and the canvas node
+all print this one number. Display order stays newest first, so V-numbers
+read descending down the popup.
+
+**The canvas Variable node shows the current card(s)** (2026-10-16). Before
+this it printed every record of the type: all variants pooled, plus replaced
+saves.
+- The flow: `api/pipeline._build_graph` → `variant_cards_service.canvas_variants`
+  → scidb `current_variants`.
+- `current_variants` calls `build_variant_cards(detail=False)` per variable.
+  That is the SAME build with the per-location lists, runs and upstream DAG
+  skipped. Grouping, the `latest` verdict and `_mark_defaults` run unchanged,
+  so `is_default` is the popup's. `TestLightBuildParity` pins that.
+- The node keeps the `is_default` cards in card order. With one current card:
+  `★ V3 of 3 · 48 records` plus `cardHeading`. With several (a sweep, no pin):
+  the first one plus "+N more current". With one variant: just "48 records".
+- The text comes from `frontend/.../DAG/variableNodeText.ts`, which reuses the
+  popup's `cardHeading` / `statusBadge`.
+- The pooled count stays in `total_records` for the tooltip.
+- Timing: INFO `[pipeline] canvas_variants: N variable(s) in X ms`, and scidb's
+  `current_variants: ... (slowest Foo Y ms)`. If the canvas gets slow, batch
+  the closure across variables. Measure first.
+
 ## 2. Pins: "current" means the DEFAULT, never "the only one"
 
 *Built 2026-09-30 (Stage 2), pytest not yet run. `scidb/variant_pins.py`

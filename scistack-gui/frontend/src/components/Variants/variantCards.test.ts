@@ -34,6 +34,7 @@ const step: UpstreamStep = {
 function card(over: Partial<VariantCard> = {}): VariantCard {
   return {
     card_id: 'c1',
+    ordinal: 1,
     function_name: 'detect',
     selection: { 'bandpass.low_hz': 20, '__code__.bandpass': 'v2' },
     distinguishing: { 'bandpass.low_hz': '20' },

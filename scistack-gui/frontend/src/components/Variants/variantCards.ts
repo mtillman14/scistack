@@ -91,6 +91,8 @@ export interface VariantCard {
   is_default: boolean
   is_pinned: boolean
   pin_conflict: string | null
+  /** "V{ordinal}", numbered by first save (scidb `_assign_ordinals`). */
+  ordinal: number
   parameter_offers: ParameterOffer[]
 }
 
@@ -165,7 +167,7 @@ function valueText(value: unknown): string {
 }
 
 /** The collapsed card's headline: only what tells it apart from its siblings. */
-export function cardHeading(card: VariantCard): string {
+export function cardHeading(card: Pick<VariantCard, 'distinguishing'>): string {
   const entries = Object.entries(card.distinguishing ?? {})
   if (entries.length === 0) return 'the only variant'
   return entries.map(([k, v]) => `${axisLabel(k)} = ${v}`).join(' · ')
@@ -183,7 +185,10 @@ export type Badge = { code: 'pinned' | 'default' | 'current' | 'partial' | 'supe
  * the default?"; with none, every current variant flows downstream and the
  * question is only whether a load still returns it.
  */
-export function statusBadge(card: VariantCard, hasDefault: boolean): Badge {
+export function statusBadge(
+  card: Pick<VariantCard, 'is_pinned' | 'is_default' | 'verdict'>,
+  hasDefault: boolean,
+): Badge {
   if (card.is_pinned) return { code: 'pinned', label: '★ current (pinned)' }
   if (hasDefault && card.is_default) return { code: 'default', label: '☆ current (via an upstream pin)' }
   if (card.verdict === 'superseded') return { code: 'superseded', label: 'replaced by a newer run' }

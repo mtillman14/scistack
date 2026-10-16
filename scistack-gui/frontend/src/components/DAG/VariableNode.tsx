@@ -1,12 +1,14 @@
 /**
  * VariableNode — represents a named variable type in the pipeline.
  *
- * Shows the variable type name and its total record count.
+ * Shows the variable type name, and the record count of the variant the
+ * Variants popup marks current with its V-number (variableNodeText.ts).
  * Variant selection (which constants produced this variable) now lives
  * on the upstream ConstantNode.
  */
 
 import { Handle, Position } from '@xyflow/react'
+import { variableNodeText, type NodeVariants } from './variableNodeText'
 
 export interface Variant {
   constants: Record<string, unknown>
@@ -15,7 +17,10 @@ export interface Variant {
 
 export interface VariableNodeData {
   label: string
+  /** Every record of the type, all variants pooled (the tooltip's "in all"). */
   total_records: number
+  /** The Variants popup's current card(s) — what the node shows (variableNodeText.ts). */
+  variant?: NodeVariants
   // 'pending' is GUI-only: a staged (unrun) constant value — not in the DB.
   run_state?: 'green' | 'pending' | 'red'
 }
@@ -34,6 +39,7 @@ const STATE_STYLES: Record<string, { border: string; background: string }> = {
 
 export default function VariableNode({ data }: Props) {
   const stateStyle = data.run_state ? STATE_STYLES[data.run_state] : null
+  const text = variableNodeText(data.total_records, data.variant)
 
   return (
     <div style={{
@@ -44,11 +50,12 @@ export default function VariableNode({ data }: Props) {
 
       <div style={styles.label}>{data.label}</div>
 
-      <div style={styles.count}>
-        {data.total_records > 0
-          ? `${data.total_records} record${data.total_records !== 1 ? 's' : ''}`
-          : <span style={styles.empty}>empty</span>
-        }
+      <div title={text.tooltip}>
+        <div style={styles.count}>
+          {text.countLine ?? <span style={styles.empty}>empty</span>}
+          {text.more && <span style={styles.more}> {text.more}</span>}
+        </div>
+        {text.heading && <div style={styles.heading}>{text.heading}</div>}
       </div>
 
       <Handle type="source" position={Position.Right} />
@@ -78,5 +85,17 @@ const styles: Record<string, React.CSSProperties> = {
   empty: {
     fontStyle: 'italic',
     color: '#bbb',
+  },
+  more: {
+    color: '#999',
+  },
+  // The current variant's settings; full text in the tooltip.
+  heading: {
+    fontSize: 10,
+    color: '#888',
+    maxWidth: 220,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
 }

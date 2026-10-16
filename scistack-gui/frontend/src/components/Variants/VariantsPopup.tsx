@@ -147,10 +147,9 @@ export default function VariantsPopup({
             {reply.cards.length === 0 && (
               <div style={styles.note}>No records of {variable}.</div>
             )}
-            {reply.cards.map((card, index) => (
+            {reply.cards.map(card => (
               <CardView
                 key={card.card_id}
-                index={index + 1}
                 card={card}
                 variable={variable}
                 hasDefault={hasDefault}
@@ -239,7 +238,6 @@ export default function VariantsPopup({
 // ---------------------------------------------------------------------------
 
 function CardView({
-  index,
   card,
   variable,
   hasDefault,
@@ -250,7 +248,6 @@ function CardView({
   onDelete,
   onDeleteRecords,
 }: {
-  index: number
   card: VariantCard
   variable: string
   hasDefault: boolean
@@ -269,7 +266,7 @@ function CardView({
         <button type="button" style={styles.expander} onClick={onToggle} aria-expanded={expanded}>
           {expanded ? '▾' : '▸'}
         </button>
-        <span style={styles.ordinal}>[{index}]</span>
+        <span style={styles.ordinal} title="Variant number, by first save">V{card.ordinal}</span>
         <span style={badgeStyle} title={card.verdict_label}>
           {badge.label}
         </span>

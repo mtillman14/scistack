@@ -422,3 +422,140 @@ class TestCli:
         assert "] vc_bandpass.low_hz=10" in out
         assert "] vc_bandpass.low_hz=20" in out
         assert "step  vc_bandpass -> VcFiltered" in out
+
+
+# ---------------------------------------------------------------------------
+# 5. V-numbers and the canvas's light build (current_variants)
+# ---------------------------------------------------------------------------
+#
+# The Variable node on the canvas shows the variant the Variants popup marks
+# current (``is_default``, owned by ``_mark_defaults``) and its "V{n}". These
+# pin that the light build the canvas uses (``detail=False``) cannot diverge
+# from the popup's full build, and how the numbers are assigned.
+
+from scidb.inspect.variant_cards import (  # noqa: E402
+    _assign_ordinals,
+    build_variant_cards,
+    current_variants,
+)
+from scidb.variant_pins import pin_variant, release_pin  # noqa: E402
+
+#: What the node reads. Everything else may be empty in the light build.
+_IDENTITY_FIELDS = (
+    "card_id", "ordinal", "selection", "distinguishing", "record_count",
+    "verdict", "current_location_count", "is_default", "is_pinned",
+    "first_saved", "last_saved",
+)
+
+
+def _identity(cards):
+    return [{f: getattr(c, f) for f in _IDENTITY_FIELDS} for c in cards.cards]
+
+
+class TestOrdinals:
+    def test_numbered_by_first_save_oldest_first(self, upstream_split):
+        by_hz = {
+            c.selection["vc_bandpass.low_hz"]: c.ordinal
+            for c in upstream_split.inspect.variant_cards("VcFiltered").cards
+        }
+        assert by_hz == {10: 1, 20: 2}
+
+    def test_a_newer_code_version_takes_the_next_number(self, two_code_versions):
+        cards = two_code_versions.inspect.variant_cards("VcScaled").cards
+        assert sorted(c.ordinal for c in cards) == [1, 2]
+        newest = cards[0]  # cards stay newest first
+        assert newest.ordinal == 2
+
+    def test_a_batch_saved_together_numbers_in_tie_order(self):
+        """One run saves several variants at one instant: they number in the
+        cards' stable tie order, never by hash."""
+        same = "2026-10-16T10:00:00"
+        tie_ordered = [
+            ("k10", {"first": same}),
+            ("k20", {"first": same}),
+            ("k30", {"first": same}),
+            ("never", {"first": None}),
+            ("old", {"first": "2026-10-15T09:00:00"}),
+        ]
+        assert _assign_ordinals(tie_ordered) == {
+            "old": 1, "k10": 2, "k20": 3, "k30": 4, "never": 5,
+        }
+
+    def test_deleting_a_variant_renumbers_the_later_ones(self, upstream_split):
+        from scidb.variant_delete import delete_variant
+
+        db = upstream_split
+        first = next(
+            c for c in db.inspect.variant_cards("VcFiltered").cards
+            if c.selection["vc_bandpass.low_hz"] == 10
+        )
+        delete_variant(db, [{"variable": "VcFiltered", "card_id": first.card_id}], "test")
+        (left,) = db.inspect.variant_cards("VcFiltered").cards
+        assert left.selection["vc_bandpass.low_hz"] == 20
+        assert left.ordinal == 1
+
+
+class TestLightBuildParity:
+    @pytest.mark.parametrize(
+        "fixture, variable",
+        [
+            ("upstream_split", "VcFiltered"),
+            ("upstream_split", "VcSteps"),
+            ("two_code_versions", "VcScaled"),
+            ("two_run_option_sets", "VcLoaded"),
+        ],
+    )
+    def test_light_build_marks_the_same_cards_current(self, request, fixture, variable):
+        db = request.getfixturevalue(fixture)
+        full = build_variant_cards(db, variable)
+        light = build_variant_cards(db, variable, include_runs=False, detail=False)
+        assert _identity(light) == _identity(full)
+        assert light.default_selection == full.default_selection
+
+    def test_parity_holds_under_a_pin(self, upstream_split):
+        db = upstream_split
+        older = next(
+            c for c in db.inspect.variant_cards("VcFiltered").cards
+            if c.selection["vc_bandpass.low_hz"] == 10
+        )
+        pin_variant(db, "VcFiltered", older.selection, "test")
+        for variable in ("VcFiltered", "VcSteps"):  # the pin flows downstream
+            full = build_variant_cards(db, variable)
+            light = build_variant_cards(db, variable, include_runs=False, detail=False)
+            assert _identity(light) == _identity(full), variable
+
+    def test_light_build_skips_only_the_display_detail(self, upstream_split):
+        light = build_variant_cards(upstream_split, "VcSteps", detail=False)
+        for card in light.cards:
+            assert card.locations == [] and card.location_record_ids == []
+            assert card.runs == [] and card.upstream.steps == []
+
+
+class TestCurrentVariants:
+    def test_without_a_pin_every_live_variant_is_current(self, upstream_split):
+        cards = current_variants(upstream_split, ["VcFiltered"])["VcFiltered"]
+        assert sorted(c.ordinal for c in cards.cards if c.is_default) == [1, 2]
+
+    def test_a_superseded_code_version_is_not_current(self, two_code_versions):
+        cards = current_variants(two_code_versions, ["VcScaled"])["VcScaled"]
+        assert [c.ordinal for c in cards.cards if c.is_default] == [2]
+
+    def test_a_pin_makes_the_older_variant_the_only_current_one(self, upstream_split):
+        db = upstream_split
+        older = next(
+            c for c in db.inspect.variant_cards("VcFiltered").cards
+            if c.selection["vc_bandpass.low_hz"] == 10
+        )
+        pin_variant(db, "VcFiltered", older.selection, "test")
+        got = current_variants(db, ["VcFiltered", "VcSteps"])
+        for variable in ("VcFiltered", "VcSteps"):
+            current = [c for c in got[variable].cards if c.is_default]
+            assert [c.selection["vc_bandpass.low_hz"] for c in current] == [10], variable
+        assert [c.is_pinned for c in got["VcFiltered"].cards if c.is_default] == [True]
+        release_pin(db, "VcFiltered", "test")
+        again = current_variants(db, ["VcFiltered"])["VcFiltered"]
+        assert sum(c.is_default for c in again.cards) == 2
+
+    def test_an_unknown_variable_is_left_out_not_raised(self, upstream_split):
+        got = current_variants(upstream_split, ["VcFiltered", "NoSuchVariable"])
+        assert set(got) == {"VcFiltered"}

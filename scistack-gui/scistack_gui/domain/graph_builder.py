@@ -1233,8 +1233,14 @@ def build_variable_nodes(
     all_var_types: set[str],
     record_counts: dict[str, int],
     run_states: dict[str, str],
+    variants: dict[str, dict] | None = None,
 ) -> list[dict]:
-    """Build React Flow variable nodes."""
+    """Build React Flow variable nodes.
+
+    ``total_records`` stays the pooled count of every variant; ``variant``
+    (``variant_cards_service.canvas_variants``) carries the current card(s)
+    the node shows instead, when there is one.
+    """
     logger.info(
         "[graph_builder] build_variable_nodes: building %d variable node(s)",
         len(all_var_types),
@@ -1245,6 +1251,8 @@ def build_variable_nodes(
             "label": vtype,
             "total_records": record_counts.get(vtype, 0),
         }
+        if variants and vtype in variants:
+            data["variant"] = variants[vtype]
         state = run_states.get(var_node_id(vtype), "green")
         data["run_state"] = state
         nodes.append(

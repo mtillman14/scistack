@@ -1010,7 +1010,20 @@ def _build_graph(
 
     # --- Build nodes (pure) ---
     logger.info("[pipeline] Building nodes (delegating to graph_builder)")
-    nodes = gb.build_variable_nodes(agg.all_var_types, record_counts, run_states)
+    # Which variant each Variable node shows: the popup's "current" card(s)
+    # (scidb _mark_defaults), never re-derived here.
+    from scistack_gui.services.variant_cards_service import canvas_variants
+
+    t_variants = time.perf_counter()
+    node_variants = canvas_variants(
+        db, [v for v in agg.all_var_types if record_counts.get(v, 0) > 0], record_counts
+    )
+    logger.info(
+        "[pipeline] canvas_variants: %d variable(s) in %.1f ms",
+        len(node_variants),
+        (time.perf_counter() - t_variants) * 1000.0,
+    )
+    nodes = gb.build_variable_nodes(agg.all_var_types, record_counts, run_states, node_variants)
     var_node_count = len(nodes)
     hidden_const_values: dict[str, set] = {}
     for row in _ps.list_hidden_parameter_values(db, pipeline_id):

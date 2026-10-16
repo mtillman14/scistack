@@ -158,6 +158,10 @@ class VariantCard:
     #: Set on a pinned card whose selection disagrees with a pin upstream
     #: (allowed, the nearer pin wins, D5): ``"key: upstream=… here=…; …"``.
     pin_conflict: str | None = None
+    #: "V{ordinal}": this variable's variants numbered by FIRST save, oldest =
+    #: 1 (:func:`_assign_ordinals`). What the popup header and the canvas node
+    #: both print. Deleting a variant renumbers the later ones.
+    ordinal: int = 0
 
 
 @dataclass
@@ -185,6 +189,22 @@ class VariantCards:
 # ---------------------------------------------------------------------------
 # Pure helpers (no database): kept separate so the rules are testable alone
 # ---------------------------------------------------------------------------
+
+
+def _assign_ordinals(tie_ordered: list) -> dict:
+    """``{card key: n}``: the "V{n}" numbers, by FIRST save, oldest = 1.
+
+    ``tie_ordered`` is ``[(key, group), ...]`` already in the cards' stable
+    tie order (producer, then selection text), so variants one run saved at
+    the same instant number in that order (low_hz=10/20/30 → V1/V2/V3).
+    Never-saved groups come last. A new variant takes the next number; a
+    deleted one renumbers the later ones (documented, accepted).
+    """
+    by_first = sorted(
+        tie_ordered,
+        key=lambda kv: (kv[1]["first"] is None, str(kv[1]["first"] or "")),
+    )
+    return {key: n for n, (key, _g) in enumerate(by_first, start=1)}
 
 _ABSENT = object()
 
@@ -286,11 +306,18 @@ def _card_id(function_name, chain_fns, selection) -> str:
 
 
 def build_variant_cards(
-    db: "DatabaseManager", variable, *, include_runs: bool = True
+    db: "DatabaseManager", variable, *, include_runs: bool = True, detail: bool = True
 ) -> VariantCards:
     """Every full-chain variant of ``variable``, newest (most recently saved)
     first. See the module
-    docstring for what a card is and why."""
+    docstring for what a card is and why.
+
+    ``detail=False`` is the canvas's light build (``current_variants``): the
+    same grouping, ``latest`` verdict and ``_mark_defaults``, so ``card_id`` /
+    ``ordinal`` / ``record_count`` / ``verdict`` / ``is_default`` /
+    ``is_pinned`` are identical. Only the display detail is skipped: the
+    per-location lists, runs and upstream DAG come back empty.
+    """
     from .. import provenance_query as pq
     from ..provenance import SAVE_FUNCTION_NAME
 
@@ -389,6 +416,7 @@ def build_variant_cards(
             kv[0],
         ),
     )
+    ordinal_of = _assign_ordinals(ordered)
     ordered.sort(key=lambda kv: str(kv[1]["last"] or ""), reverse=True)
     Log.debug(
         f"variant_cards({name}): newest first: "
@@ -409,17 +437,20 @@ def build_variant_cards(
     t0 = time.perf_counter()
     schema_keys = list(db.dataset_schema_keys)
     all_sids = {sid for _k, g in ordered for sid in g["schema_ids"]}
-    loc_map = pq._schema_locations(duck, all_sids, schema_keys)
+    loc_map = pq._schema_locations(duck, all_sids, schema_keys) if detail else {}
     lap("locations", t0)
 
     # -- upstream wiring + runs, batched over every invocation in the closure
     t0 = time.perf_counter()
-    every_inv = sorted({inv[0] for inv in rec_to_inv.values()})
-    edges_map = pq.invocation_edges_batch(duck, every_inv)
-    direct_invs = sorted({rec_to_inv[r][0] for r in rids if r in rec_to_inv})
-    inv_runs = (
-        pq.runs_for_invocations_batch(duck, direct_invs) if include_runs else {}
-    )
+    if detail:
+        every_inv = sorted({inv[0] for inv in rec_to_inv.values()})
+        edges_map = pq.invocation_edges_batch(duck, every_inv)
+        direct_invs = sorted({rec_to_inv[r][0] for r in rids if r in rec_to_inv})
+        inv_runs = (
+            pq.runs_for_invocations_batch(duck, direct_invs) if include_runs else {}
+        )
+    else:
+        edges_map, inv_runs = {}, {}
     lap("wiring_and_runs", t0)
 
     t0 = time.perf_counter()
@@ -430,11 +461,15 @@ def build_variant_cards(
         rids_at: dict = {}
         for r in g["rids"]:
             rids_at.setdefault(rid_sid[r], []).append(r)
-        located = [
-            (loc_map.get(sid, {}), sorted(rids_at.get(sid, [])))
-            for sid in sids
-            if sid is not None
-        ]
+        located = (
+            [
+                (loc_map.get(sid, {}), sorted(rids_at.get(sid, [])))
+                for sid in sids
+                if sid is not None
+            ]
+            if detail
+            else []
+        )
         location_keys = [k for k in schema_keys if any(k in loc for loc, _r in located)]
         located.sort(
             key=lambda pair: tuple(str(pair[0].get(k, "")) for k in location_keys)
@@ -463,10 +498,13 @@ def build_variant_cards(
             for other_key, other in ordered
             if other_key != key and selection_matches(g["selection"], other["selection"])
         ]
-        runs = _card_runs(g["rids"], rec_to_inv, inv_runs, inv_fn_hash, inv_run)
-        upstream = _card_upstream(
-            name, g["rids"], rec_to_inv, edges_map, inv_fn_hash, inv_run, ordinals
-        )
+        if detail:
+            runs = _card_runs(g["rids"], rec_to_inv, inv_runs, inv_fn_hash, inv_run)
+            upstream = _card_upstream(
+                name, g["rids"], rec_to_inv, edges_map, inv_fn_hash, inv_run, ordinals
+            )
+        else:
+            runs, upstream = [], VariantUpstream(variables=[], steps=[], edges=[])
         cards.append(
             VariantCard(
                 card_id=key,
@@ -490,6 +528,7 @@ def build_variant_cards(
                 location_record_ids=location_record_ids,
                 runs=runs,
                 upstream=upstream,
+                ordinal=ordinal_of[key],
             )
         )
     lap("cards", t0)
@@ -505,7 +544,9 @@ def build_variant_cards(
         f"variant_cards({name}): {len(cards)} card(s) over {len(rids)} record(s)"
         f" ({excluded} excluded); varying axes={axes or 'none'}"
         f"{'; producer varies' if producer_varies else ''}; "
-        f"records per card={[c.record_count for c in cards]}; timings_ms={timings}"
+        f"records per card={[c.record_count for c in cards]}; "
+        f"current=[{', '.join(f'V{c.ordinal}' for c in cards if c.is_default)}]"
+        f"{'' if detail else ' (light build)'}; timings_ms={timings}"
     )
     if inexact:
         Log.warn(
@@ -525,6 +566,41 @@ def build_variant_cards(
         default_selection=default_selection,
         default_sources=default_sources,
     )
+
+
+def current_variants(db: "DatabaseManager", names) -> dict:
+    """``{variable: VariantCards}`` for the canvas: the light build
+    (``detail=False``) of each variable, so its Variable node can show the
+    variant the Variants popup marks current (``is_default``) and its V-number.
+
+    A loop with timing, not a rule: "current" is ``_mark_defaults``'s, the
+    order and numbering are ``build_variant_cards``'s. A variable whose cards
+    cannot be built is left out with a WARN naming it, so one bad variable
+    cannot blank the whole canvas; the caller shows that node without a
+    variant.
+    """
+    t_all = time.perf_counter()
+    out: dict = {}
+    took: dict[str, float] = {}
+    for name in names:
+        t0 = time.perf_counter()
+        try:
+            out[name] = build_variant_cards(db, name, include_runs=False, detail=False)
+        except NotFoundError:
+            Log.debug(f"current_variants: {name!r} has no records yet")
+        except Exception as exc:  # noqa: BLE001 - reported, never swallowed silently
+            Log.warn(
+                f"current_variants: could not build variant cards for {name!r} "
+                f"({type(exc).__name__}: {exc}); its node shows no variant"
+            )
+        took[name] = round((time.perf_counter() - t0) * 1000.0, 1)
+    total = round((time.perf_counter() - t_all) * 1000.0, 1)
+    slowest = max(took.items(), key=lambda kv: kv[1]) if took else None
+    Log.info(
+        f"current_variants: {len(out)} of {len(took)} variable(s) in {total} ms"
+        + (f" (slowest {slowest[0]} {slowest[1]} ms)" if slowest else "")
+    )
+    return out
 
 
 def _mark_defaults(db, name: str, cards: list[VariantCard]):

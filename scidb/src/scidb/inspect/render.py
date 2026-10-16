@@ -535,7 +535,7 @@ def render_variant_cards(result, max_locations: int | None = 4) -> str:
             f"  default (pin(s) on {', '.join(result.default_sources)}): "
             + ", ".join(f"{k}={v}" for k, v in result.default_selection.items())
         )
-    for i, card in enumerate(result.cards, start=1):
+    for card in result.cards:
         head = (
             ", ".join(f"{k}={v}" for k, v in card.distinguishing.items())
             or "only variant"
@@ -549,7 +549,8 @@ def render_variant_cards(result, max_locations: int | None = 4) -> str:
             else ("DEFAULT " if pinned_view and card.is_default else "")
         )
         lines.append("")
-        lines.append(f"  [{i}] {mark}{head}   ({card.card_id})")
+        # V{n}: the variant number the GUI popup and canvas node print too.
+        lines.append(f"  [V{card.ordinal}] {mark}{head}   ({card.card_id})")
         if card.pin_conflict:
             lines.append(f"      note: {card.pin_conflict}")
         lines.append(

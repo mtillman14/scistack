@@ -11,6 +11,37 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzza. Variable node shows the current variant's count and its V-number — added 2026-10-16
+
+What changed: a Variable node used to show every record of its type, all
+variants pooled. It now shows the variant the Variants popup marks
+**current**, its number (V1 = first saved), and what sets it apart. The
+popup's card headers and `scidb variants X --cards` show the same V-number in
+place of the old [1]/[2] position.
+
+**Backend**
+1. Open a pipeline. `scidb.log` should show
+   `[pipeline] canvas_variants: N variable(s) in X ms` and
+   `current_variants: ... (slowest <Var> Y ms)`. Note X: is the canvas
+   noticeably slower than before?
+
+**Frontend**
+1. A variable with ONE variant: the node shows just `48 records`, as before.
+2. Run a step with a new parameter value (e.g. low_hz 20 → 30) so the
+   variable has two variants. With no pin, both are current: the node shows
+   `V2 of 2 · 4 records` + `low_hz (…) = 30` + `+1 more current`. The tooltip
+   lists V1 and gives the pooled total.
+3. Right-click → Variants. Card headers read `V2` (top) and `V1`, and both
+   chips say "current".
+4. **Make current** on V1. The node changes to `★ V1 of 2 · …` with no
+   "+1 more". A node downstream shows `☆ …`, and its tooltip says
+   "via the pin on …".
+5. Release the pin. The node goes back to step 2's text.
+6. Change a function's code and re-run it. The old code version is replaced,
+   so only the new one is current: `V2 of 2`, with no "+1 more".
+
+---
+
 ## 0zzzz. Which webview bundle is running (scidb.log + SciStack output) — added 2026-10-16
 
 What changed: every panel now reports which frontend bundle it loaded, and
