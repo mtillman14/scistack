@@ -1900,6 +1900,14 @@ def layout_decisions(
     "width_in", "height_in"}``. The plotly preview
     applies these rather than estimating text of its own, so what the preview
     shows and what the file gets cannot come from two different rules.
+
+    One layout, not two: the auto text size search already lays the figure
+    out at every reference it tries, and a layout depends on the auto result
+    only through its ``reference`` (``textsize.sizes_for``). So the trial at
+    the chosen reference IS the final layout, and its decisions are kept
+    rather than drawn again (scidb.log 2026-10-16: the redraw was ~0.4 s of
+    every ~0.85 s next/previous click). A custom kind's trial skips the
+    user's function (``custom.measuring``), so it is always drawn again.
     """
     import matplotlib.pyplot as plt
 
@@ -1911,37 +1919,87 @@ def layout_decisions(
     with _one_figure_at_a_time("layout_decisions"), Log.timer(
         "layout_decisions", layer=LAYER, extra=f"{width:.2f}x{height:.2f}in"
     ):
+        # {reference: decisions} of each auto-size trial laid out here.
+        trials: dict[float, dict] = {}
+
+        def measure(candidate: ResolvedPlot):
+            decisions: dict = {}
+            report = _layout_report(candidate, decisions_out=decisions)
+            trials[candidate.auto_text.reference] = decisions
+            return report
+
+        reusable = resolved.kind is not PlotKind.CUSTOM
         # Auto text is chosen at the size being decided (the pane's, in Fit
         # pane), keyed on the caller's object so the preview's later
         # render_plotly and a Save of the same resolve reuse it.
-        target = at_size(settle(resolved, width_in=width, height_in=height), width, height)
-        fig = render(target)
-        try:
-            fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
-            axis_text = getattr(fig, AXIS_TEXT_ATTR, None) or ()
-            return {
-                "ticks": fits.get("ticks"),
-                "brackets": fits.get("brackets"),
-                "bracket_geometry": fits.get("bracket_geometry"),
-                "grid_reach": getattr(fig, GRID_REACH_ATTR, None),
-                # tuple[base.AxisText, ...]: the tick values/labels and title
-                # distance the export drew, which the preview copies so the
-                # y text it puts in a column gap is the text measured for it,
-                # and a numeric x axis shows the ticks the auto size judged.
-                "y_axes": tuple(a for a in axis_text if a.axis == "y"),
-                "x_axes": tuple(a for a in axis_text if a.axis == "x"),
-                "legend": getattr(fig, LEGEND_ATTR, None),
-                # diffbars.FigurePlacement, or None: the preview draws these
-                # bars and ranges rather than placing its own.
-                "difference_bars": getattr(fig, DIFF_BARS_ATTR, None),
-                # autosize.AutoTextSize, or None when the size is fixed: the
-                # preview draws at these sizes rather than searching again.
-                "auto_text": target.auto_text,
-                "width_in": width,
-                "height_in": height,
-            }
-        finally:
-            plt.close(fig)
+        target = at_size(
+            settle(
+                resolved,
+                width_in=width,
+                height_in=height,
+                measure=measure if reusable else None,
+            ),
+            width,
+            height,
+        )
+        auto = target.auto_text
+        decisions = trials.get(auto.reference) if auto is not None else None
+        if decisions is not None:
+            Log.info(
+                "layout_decisions%s: kept the %gpt auto-size trial's layout "
+                "(%d trial(s)); no second matplotlib layout",
+                f" ({resolved.figure_label})" if resolved.figure_label else "",
+                auto.reference,
+                len(trials),
+                layer=LAYER,
+            )
+        else:
+            # Why a full draw: a fixed text size, a memo hit (the search did
+            # not run here), or a custom kind.
+            Log.debug(
+                "layout_decisions: drawing (%s)",
+                "custom kind" if not reusable
+                else "fixed text size" if auto is None
+                else "auto size reused, no trial here",
+                layer=LAYER,
+            )
+            fig = render(target)
+            try:
+                decisions = _figure_decisions(fig)
+            finally:
+                plt.close(fig)
+        return {
+            **decisions,
+            # autosize.AutoTextSize, or None when the size is fixed: the
+            # preview draws at these sizes rather than searching again.
+            "auto_text": auto,
+            "width_in": width,
+            "height_in": height,
+        }
+
+
+def _figure_decisions(fig) -> dict:
+    """What a drawn export decided, as ``layout_decisions`` returns it (less
+    the size and ``auto_text``). The one reader of the figure's records, for
+    both the final draw and a kept auto-size trial."""
+    fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
+    axis_text = getattr(fig, AXIS_TEXT_ATTR, None) or ()
+    return {
+        "ticks": fits.get("ticks"),
+        "brackets": fits.get("brackets"),
+        "bracket_geometry": fits.get("bracket_geometry"),
+        "grid_reach": getattr(fig, GRID_REACH_ATTR, None),
+        # tuple[base.AxisText, ...]: the tick values/labels and title
+        # distance the export drew, which the preview copies so the
+        # y text it puts in a column gap is the text measured for it,
+        # and a numeric x axis shows the ticks the auto size judged.
+        "y_axes": tuple(a for a in axis_text if a.axis == "y"),
+        "x_axes": tuple(a for a in axis_text if a.axis == "x"),
+        "legend": getattr(fig, LEGEND_ATTR, None),
+        # diffbars.FigurePlacement, or None: the preview draws these
+        # bars and ranges rather than placing its own.
+        "difference_bars": getattr(fig, DIFF_BARS_ATTR, None),
+    }
 
 
 def layout_report(resolved: ResolvedPlot):
@@ -1953,7 +2011,10 @@ def layout_report(resolved: ResolvedPlot):
         return _layout_report(resolved)
 
 
-def _layout_report(resolved: ResolvedPlot):
+def _layout_report(resolved: ResolvedPlot, *, decisions_out: dict | None = None):
+    """``layout_report``'s body. ``decisions_out``, when given, is filled
+    with the figure's ``_figure_decisions`` before it closes, so a trial at
+    the chosen reference serves as the final layout too."""
     import matplotlib.pyplot as plt
 
     from ..autosize import LayoutReport
@@ -1964,6 +2025,8 @@ def _layout_report(resolved: ResolvedPlot):
     with measuring():
         fig = render(resolved)
     try:
+        if decisions_out is not None:
+            decisions_out.update(_figure_decisions(fig))
         fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
         ticks, brackets = fits.get("ticks"), fits.get("brackets")
         legend = getattr(fig, LEGEND_ATTR, None) or {}

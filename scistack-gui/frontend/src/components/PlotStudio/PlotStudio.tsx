@@ -85,6 +85,7 @@ import {
 } from './figureUnits'
 import { roundTo, stepValue } from './stepper'
 import { adoptedFigureIndex } from './figureCursor'
+import { FigureStepTimer } from './figureStepTiming'
 import {
   figureOutputSize,
   previewKey,
@@ -943,7 +944,11 @@ export default function PlotStudio({
   // request against (`adoptedFigureIndex`) — its closure holds the old one.
   const figureIndexRef = useRef(figureIndex)
   figureIndexRef.current = figureIndex
+  // Times one ◀ ▶ step, click to drawn, for scidb.log (figureStepTiming.ts).
+  const stepTimer = useRef(new FigureStepTimer())
   const [figureLabels, setFigureLabels] = useState<string[]>([])
+  const figureLabelsRef = useRef(figureLabels)
+  figureLabelsRef.current = figureLabels
   const [fanoutNotes, setFanoutNotes] = useState<string[]>([])
   const [specError, setSpecError] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -1213,6 +1218,7 @@ export default function PlotStudio({
       sentPreview.current = previewKey(previewRef.current)
       setBusy(true)
       const needCapabilities = capsSpecRef.current !== nextKey
+      stepTimer.current.sent(nextIndex, performance.now())
       Promise.all([
         callBackend('plot_resolve', {
           spec: nextSpec,
@@ -1229,6 +1235,8 @@ export default function PlotStudio({
         .then(([resolved, caps]) => {
           if (mine !== generation.current) return
           const result = resolved as ResolveResponse
+          if (result.ok) stepTimer.current.answered(nextIndex, performance.now())
+          else stepTimer.current.reset()
           setSpecError(result.ok ? '' : (result.error ?? 'Could not resolve this plot.'))
           setFigures(result.figures ?? [])
           setFigureLabels(result.figure_labels ?? [])
@@ -1256,6 +1264,7 @@ export default function PlotStudio({
         })
         .catch(err => {
           if (mine !== generation.current) return
+          stepTimer.current.reset()
           setSpecError((err as Error).message)
         })
         .finally(() => {
@@ -1333,13 +1342,34 @@ export default function PlotStudio({
 
   // --- figure navigation --------------------------------------------------
   const figureCount = figureLabels.length
+  // From the ref, not a state updater: the click is timed here, and StrictMode
+  // runs an updater twice. A click or key event re-renders before the next
+  // one is dispatched, so the ref is current for every press.
   const stepFigure = useCallback(
-    (delta: number) =>
-      setFigureIndex(current =>
-        Math.max(0, Math.min(current + delta, Math.max(0, figureCount - 1)))
-      ),
+    (delta: number) => {
+      const current = figureIndexRef.current
+      const next = Math.max(0, Math.min(current + delta, Math.max(0, figureCount - 1)))
+      if (next === current) return
+      stepTimer.current.stepped(next, performance.now())
+      setFigureIndex(next)
+    },
     [figureCount]
   )
+
+  // Plotly finished drawing `index` (onInitialized / onUpdate). The frame
+  // after is when it is on screen; a finished ◀ ▶ step goes to scidb.log.
+  const onFigureDrawn = useCallback((index: number) => {
+    requestAnimationFrame(() => {
+      const step = stepTimer.current.drawn(index, performance.now())
+      if (step === null) return
+      console.info('[Plot Studio] figure_step', step)
+      callBackend('report_client_timing', {
+        where: 'Plot Studio figure_step',
+        label: figureLabelsRef.current[step.figure_index] ?? '',
+        ...step,
+      }).catch(() => undefined)
+    })
+  }, [])
 
   useEffect(() => {
     if (figureCount < 2) return
@@ -4461,6 +4491,8 @@ export default function PlotStudio({
                     onClick={event => onFigureClick(figure.index, figureDiffMeta(figure), event)}
                     onHover={event => onFigureHover(figure.index, figureDiffMeta(figure), event)}
                     onUnhover={() => setHoverTick(null)}
+                    onInitialized={() => onFigureDrawn(figure.index)}
+                    onUpdate={() => onFigureDrawn(figure.index)}
                     config={{
                       displaylogo: false,
                       responsive: false,
@@ -4485,6 +4517,8 @@ export default function PlotStudio({
               onClick={event => onFigureClick(figure.index, figureDiffMeta(figure), event)}
               onHover={event => onFigureHover(figure.index, figureDiffMeta(figure), event)}
               onUnhover={() => setHoverTick(null)}
+              onInitialized={() => onFigureDrawn(figure.index)}
+              onUpdate={() => onFigureDrawn(figure.index)}
               config={{
                 displaylogo: false,
                 responsive: true,

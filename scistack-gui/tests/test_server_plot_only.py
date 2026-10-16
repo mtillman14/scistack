@@ -38,6 +38,7 @@ CSV_TAB_METHODS = {
     "plot_save_start",
     "plot_location_tree",
     "report_client_error",
+    "report_client_timing",
 }
 
 #: Methods that write into the project. A CSV has nowhere to put any of

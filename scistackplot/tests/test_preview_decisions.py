@@ -185,3 +185,93 @@ def test_rotated_ticks_push_the_preview_brackets_down(gait_table, rotation):
         assert layout["margin"]["b"] >= geometry.bottom_pt(depth)
         shifts[name] = min(a["yshift"] for a in labels)
     assert shifts["rotated"] < shifts["upright"]
+
+
+# ---------------------------------------------------------------------------
+# One layout per click: the auto-size trial at the chosen reference is kept
+# as the final layout (scidb.log 2026-10-16: the redraw was ~0.4 s of every
+# ~0.85 s next/previous click).
+
+
+def _auto(spec):
+    from scistackplot import TextSizes
+
+    return replace(spec, style=replace(spec.style, text=TextSizes()))
+
+
+def _auto_cases(gait_table):
+    ids = [f"SS{i:02d}" for i in range(1, 41)]
+    return {
+        # Fits at the top: one trial.
+        "graph2": _one(_auto(_graph2(width=16.0)), gait_table),
+        # Too narrow for the top: the search steps down, so the chosen
+        # reference need not be the last one tried.
+        "narrow": _one(_auto(_single_axis_spec(4.0)), _single_axis_table(ids)),
+    }
+
+
+def _count_renders(monkeypatch):
+    from scistackplot.render import mpl
+
+    calls = []
+    real = mpl.render
+
+    def counting(resolved):
+        calls.append(resolved.auto_text.reference if resolved.auto_text else None)
+        return real(resolved)
+
+    monkeypatch.setattr(mpl, "render", counting)
+    return calls
+
+
+@pytest.mark.parametrize("case", ["graph2", "narrow"])
+def test_auto_size_draws_each_trial_once_and_no_more(gait_table, monkeypatch, case):
+    resolved = _auto_cases(gait_table)[case]
+    calls = _count_renders(monkeypatch)
+    decisions = layout_decisions(resolved)
+    auto = decisions["auto_text"]
+    assert auto is not None and auto.layouts >= 1
+    # One matplotlib layout per trial; none after the search.
+    assert len(calls) == auto.layouts
+    assert auto.reference in calls
+
+
+@pytest.mark.parametrize("case", ["graph2", "narrow"])
+def test_kept_trial_decisions_equal_a_fresh_draw(gait_table, case):
+    import matplotlib.pyplot as plt
+
+    from scistackplot.autosize import at_size, with_sizes
+    from scistackplot.render.mpl import _figure_decisions, render
+
+    resolved = _auto_cases(gait_table)[case]
+    decisions = layout_decisions(resolved)
+    target = at_size(
+        with_sizes(resolved, decisions["auto_text"]),
+        decisions["width_in"],
+        decisions["height_in"],
+    )
+    fig = render(target)
+    try:
+        fresh = _figure_decisions(fig)
+    finally:
+        plt.close(fig)
+    assert {k: decisions[k] for k in fresh} == fresh
+
+
+def test_fixed_text_size_draws_once(gait_table, monkeypatch):
+    resolved = _one(_graph2(), gait_table)
+    calls = _count_renders(monkeypatch)
+    decisions = layout_decisions(resolved)
+    assert decisions["auto_text"] is None
+    assert calls == [None]
+
+
+def test_kept_trial_is_logged(gait_table, caplog):
+    import logging
+
+    resolved = _auto_cases(gait_table)["graph2"]
+    from scistackplot.render.mpl import LAYER
+
+    with caplog.at_level(logging.INFO, logger=LAYER):
+        layout_decisions(resolved)
+    assert any("auto-size trial's layout" in r.getMessage() for r in caplog.records)

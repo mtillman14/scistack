@@ -73,6 +73,8 @@
     "src/components/PlotStudio/differenceBars.test.ts",
     "src/components/PlotStudio/figureCursor.ts",
     "src/components/PlotStudio/figureCursor.test.ts",
+    "src/components/PlotStudio/figureStepTiming.ts",
+    "src/components/PlotStudio/figureStepTiming.test.ts",
     "src/components/Variants/variantCards.ts",
     "src/components/Variants/variantCards.test.ts",
     "src/components/DAG/variableNodeText.ts",

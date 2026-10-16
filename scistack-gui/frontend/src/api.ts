@@ -357,6 +357,8 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     report_client_error:    { path: '/api/client-error', method: 'POST', body: true },
     // Which bundle this webview runs, once on load — see bundleBuild.ts.
     report_client_build:    { path: '/api/client-build', method: 'POST', body: true },
+    // How long one figure step took, click to drawn — see PlotStudio/figureStepTiming.ts.
+    report_client_timing:   { path: '/api/client-timing', method: 'POST', body: true },
     // Undo / redo (docs/claude/undo-redo.md). The change id is in the body;
     // a request's own undo metadata travels in the X-SciStack-Change header.
     history_status:         { path: '/api/history/status' },

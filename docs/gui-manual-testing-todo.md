@@ -11,6 +11,39 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzb. Faster figure arrows (one layout per figure) + click-to-drawn timing in scidb.log — added 2026-10-16
+
+What changed: each ◀ ▶ step used to lay the figure out twice in matplotlib
+(once in the auto text size search, then again for the preview's decisions,
+at the same size and text). The search's layout is now reused, which saves
+~0.4 s of a ~0.85 s step. Each step's click-to-drawn time now goes to
+`scidb.log` too.
+
+**Backend**
+1. Reload the VS Code window so the backend edits load.
+2. Open a Plot Studio figure with several iterated figures and auto text
+   size. Press ▶. `scidb.log` should show
+   `layout_decisions (...): kept the 12pt auto-size trial's layout (1 trial(s)); no second matplotlib layout`.
+   There should be NO INFO `render_mpl` / `x tick labels` lines for that
+   step (those are now DEBUG, inside the trial), and `layout_decisions TOTAL`
+   should be about half what it was (~0.45 s instead of ~0.85 s on the
+   CosmedData bar plot).
+3. After the backend lines, one line should read
+   `[client] Plot Studio figure_step figure N (<label>): T ms click->drawn = queued Q + round trip R + draw D (1 click(s))`.
+   Q should be about 180 (the debounce), and R should be about the backend's
+   time.
+4. Click ▶ three times fast: one line with `(3 click(s))`, for the last
+   figure only.
+
+**Frontend**
+1. The arrows should feel noticeably quicker. Each figure should look
+   exactly as before: same text sizes, tick fitting, legend, brackets.
+2. Save the figure. The file should match the preview, as before.
+3. A fixed text size (Text → a typed size) still works. Its log shows no
+   "kept the ... trial" line, because no search runs.
+
+---
+
 ## 0zzzza. Variable node shows the current variant's count and its V-number — added 2026-10-16
 
 What changed: a Variable node used to show every record of its type, all

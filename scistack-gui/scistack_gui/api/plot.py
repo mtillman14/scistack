@@ -39,6 +39,7 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/plot/project-color            plot_project_color_set
     POST /api/client-error                  report_client_error
     POST /api/client-build                  report_client_build
+    POST /api/client-timing                 report_client_timing
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
 time in pandas and matplotlib, with the database touched only while the
@@ -63,6 +64,7 @@ from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.services import plot_preset_service, plot_service, saved_plot_service
 from scistack_gui.services.client_build import report_client_build
 from scistack_gui.services.client_errors import report_client_error
+from scistack_gui.services.client_timing import report_client_timing
 
 logger = logging.getLogger(__name__)
 
@@ -303,6 +305,19 @@ class ClientBuildRequest(BaseModel):
     verdict_detail: str | None = None
 
 
+class ClientTimingRequest(BaseModel):
+    """One timed webview step (frontend PlotStudio/figureStepTiming.ts)."""
+
+    where: str | None = "webview"
+    label: str | None = None
+    figure_index: int | None = None
+    clicks: int | None = None
+    queued_ms: float | None = None
+    round_trip_ms: float | None = None
+    draw_ms: float | None = None
+    total_ms: float | None = None
+
+
 # --- the calls ---------------------------------------------------------------
 
 
@@ -523,6 +538,11 @@ def _client_build(req: ClientBuildRequest) -> dict:
     return report_client_build(req.model_dump())
 
 
+def _client_timing(req: ClientTimingRequest) -> dict:
+    """A webview timed a step (click to drawn); write it into the shared log."""
+    return report_client_timing(req.model_dump())
+
+
 # ``db_optional=True`` on every row whose request model carries a
 # ``csv_path``: with one set, the service builds a ``CsvSource`` and the
 # database is never opened (each entry point is already written as
@@ -693,6 +713,11 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "report_client_build", "/client-build", ClientBuildRequest,
         _client_build, holds_db_lock=False, needs_db=False, undoable=False,
+    ),
+    # Same shape again: one timing line, no database.
+    Handler(
+        "report_client_timing", "/client-timing", ClientTimingRequest,
+        _client_timing, holds_db_lock=False, needs_db=False, undoable=False,
     ),
 )
 
