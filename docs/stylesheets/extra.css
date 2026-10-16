@@ -15,3 +15,101 @@
   opacity: 0.7;
   transform: none;
 }
+
+/* Hover dropdowns on header tabs (see overrides/partials/tabs-item.html).
+
+   The theme clips the tab bar (overflow:auto + contain:content) so it can
+   scroll horizontally; that would also clip the dropdowns, so the bar is
+   allowed to overflow. Tabs only render on wide screens, where they fit. */
+
+.md-tabs,
+.md-tabs__list {
+  overflow: visible;
+  contain: none;
+}
+
+.md-tabs__item--menu {
+  position: relative;
+}
+
+.md-tabs__menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 10;
+  min-width: 12rem;
+  margin: 0;
+  padding: 0.4rem 0;
+  list-style: none;
+  background-color: var(--md-default-bg-color);
+  border-radius: 0.2rem;
+  box-shadow: var(--md-shadow-z2);
+}
+
+.md-tabs__item--menu:hover .md-tabs__menu,
+.md-tabs__item--menu:focus-within .md-tabs__menu {
+  display: block;
+}
+
+.md-tabs__menu-link {
+  display: block;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.7rem;
+  color: var(--md-default-fg-color);
+}
+
+.md-tabs__menu-link:hover,
+.md-tabs__menu-link:focus {
+  color: var(--md-accent-fg-color);
+  background-color: var(--md-default-fg-color--lightest);
+}
+
+.md-tabs__menu-item--active > .md-tabs__menu-link {
+  color: var(--md-primary-fg-color);
+  font-weight: 700;
+}
+
+/* Code / With GUI variant toggle in the header
+   (see overrides/partials/alternate.html). */
+
+.md-variant-toggle {
+  display: flex;
+  margin: 0 0.4rem;
+  border: 0.05rem solid currentcolor;
+  border-radius: 1rem;
+  overflow: hidden;
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.md-variant-toggle__link {
+  padding: 0.2rem 0.6rem;
+  color: inherit;
+  opacity: 0.7;
+}
+
+.md-variant-toggle__link:hover,
+.md-variant-toggle__link:focus {
+  color: inherit;
+  opacity: 1;
+}
+
+.md-variant-toggle__link--active {
+  background-color: var(--md-primary-bg-color);
+  color: var(--md-primary-fg-color);
+  opacity: 1;
+}
+
+.md-variant-toggle__link--active:hover,
+.md-variant-toggle__link--active:focus {
+  color: var(--md-primary-fg-color);
+}
+
+/* Body of a numbered "### N. Step" heading, indented under it. Use in pages as
+   <div class="step-body" markdown> ... </div> (needs md_in_html). Markdown
+   can't indent under a heading: 4+ leading spaces there make a code block. */
+
+.md-typeset .step-body {
+  margin-left: 1.6rem;
+}

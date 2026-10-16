@@ -1,0 +1,54 @@
+{#-
+  Override of mkdocs-material's partials/tabs-item.html.
+
+  A top-level nav section renders as a header tab that links to its first page
+  (as upstream) plus a dropdown of its children, opened on hover/focus. The
+  dropdown styling lives in docs/stylesheets/extra.css (.md-tabs__menu).
+  Leaf top-level entries (e.g. Installation) render as plain tabs.
+-#}
+{% macro render_content(nav_item, ref) %}
+  {% set ref = ref or nav_item %}
+  {% if nav_item == ref or "navigation.indexes" in features %}
+    {% if nav_item.is_index and nav_item.meta.icon %}
+      {% include ".icons/" ~ nav_item.meta.icon ~ ".svg" %}
+    {% endif %}
+  {% endif %}
+  {{ ref.title }}
+{% endmacro %}
+
+{#- URL of the first page reachable under a nav item (descends into sections). -#}
+{% macro first_url(nav_item) -%}
+  {%- if nav_item.children -%}
+    {{ first_url(nav_item.children | first) }}
+  {%- else -%}
+    {{ nav_item.url | url }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro render(nav_item, ref) %}
+  {% set ref = ref or nav_item %}
+  {% set class = "md-tabs__item" %}
+  {% if ref.active %}
+    {% set class = class ~ " md-tabs__item--active" %}
+  {% endif %}
+  {% if nav_item.children %}
+    <li class="{{ class }} md-tabs__item--menu">
+      <a href="{{ first_url(nav_item) }}" class="md-tabs__link" aria-haspopup="true">
+        {{ render_content(nav_item, ref) }}
+      </a>
+      <ul class="md-tabs__menu">
+        {% for child in nav_item.children %}
+          <li class="md-tabs__menu-item{% if child.active %} md-tabs__menu-item--active{% endif %}">
+            <a href="{{ first_url(child) }}" class="md-tabs__menu-link">{{ child.title }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    </li>
+  {% else %}
+    <li class="{{ class }}">
+      <a href="{{ nav_item.url | url }}" class="md-tabs__link">
+        {{ render_content(nav_item) }}
+      </a>
+    </li>
+  {% endif %}
+{% endmacro %}

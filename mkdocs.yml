@@ -7,6 +7,7 @@ repo_url: https://github.com/mtillman14/scistack
 
 theme:
   name: material
+  custom_dir: overrides
   palette:
     primary: indigo
     accent: indigo
@@ -24,55 +25,58 @@ theme:
     - content.code.annotate
     - content.tabs.link
 
+# Header tabs. Sections render as tabs with a hover dropdown of their pages
+# (overrides/partials/tabs-item.html). Home (index.md) is the site root and is
+# reached via the logo rather than a tab.
+#
+# This is the code-only ("en") nav. The "With GUI" variant has its own nav
+# under plugins > i18n below; shared sections are YAML anchors (&name / *name)
+# so each section's page list has one owner. Getting Started and Example Projects
+# are not shared: the GUI variant adds GUI-only pages (*.ui.md with no plain
+# .md) to Getting Started, and shows one GUI-only page per example
+# ("Best Popcorn", "Best Player") in place of the code-only scifor/scidb pairs.
 nav:
-  - Home: index.md
+  - Installation: getting-started/installation.md
   - Getting Started:
-    - Installation: getting-started/installation.md
-    - Quickstart: quickstart.md
-    - Choosing Your Layer: getting-started/choosing-a-layer.md
-    - MATLAB Setup: matlab-setup.md
-  - Concepts:
-    - concepts/index.md
-    - Architecture & Layers: concepts/architecture.md
-    - Variables & Storage: concepts/variables.md
-    - Lineage & Provenance: concepts/lineage.md
-    - Computation Caching: concepts/caching.md
-    - Node States: concepts/node-states.md
-    - Versioning & Content Hashing: concepts/hashing.md
-    - Glossary: concepts/glossary.md
-  - User Guide:
-    - guide/index.md
-    - Defining Variables: guide/variables.md
-    - Database & Configuration: guide/database.md
-    - Tracking Lineage: guide/lineage.md
-    - Caching Computations: guide/caching.md
-    - Batch Processing (for_each): guide/for_each.md
-    - Filtering & Selection: guide/filters.md
-    - Browsing & Exporting: guide/browsing.md
-    - Inspecting a Database (scidb CLI): guide/inspect.md
-  - Walkthroughs:
-    - VO2 Max Pipeline: guide/walkthrough.md
-  - API Reference:
-    - api/index.md
-    - Variables (BaseVariable): api/variables.md
-    - Database: api/database.md
-    - Lineage & Provenance: api/lineage.md
-    - Batch Processing (for_each): api/for-each.md
-    - Filters: api/filters.md
-  - Internals:
-    - internals/index.md
-    - Lineage Engine (scilineage): internals/scilineage.md
-    - DuckDB Layer (sciduckdb): internals/sciduckdb.md
-    - Content Hashing (scicanonicalhash): internals/scicanonicalhash.md
-    - Path Generation (scipathgen): internals/scipathgen.md
-    - MATLAB Bridge (scimatlab): internals/scimatlab.md
-    - Networking (scidb-net): internals/scidb-net.md
-  - Project:
-    - project/index.md
-    - Roadmap: project/roadmap.md
-    - Contributing & Dev Setup: project/contributing.md
-    - Building These Docs: project/building-docs.md
-    - FAQ & Troubleshooting: project/faq.md
+    - What's a Schema?: getting-started/whats-a-schema.md
+    - Create New Project: getting-started/create-new-project.md
+    - Current State of the Art: getting-started/state-of-the-art.md
+  - Example Projects:
+    - Best Popcorn - scifor: examples/best-popcorn-scifor.md
+    - Best Popcorn - scidb: examples/best-popcorn-scidb.md
+    - Best Player - scifor: examples/best-player-scifor.md
+    - Best Player - scidb: examples/best-player-scidb.md
+  - API: &nav_api
+    - scifor: api/scifor.md
+    - scidb: api/scidb.md
+    - scihist: api/scihist.md
+    - scilineage: internals/scilineage.md
+    - sciduckdb: internals/sciduckdb.md
+    - scimatlab: internals/scimatlab.md
+    - scidb-net: internals/scidb-net.md
+
+# Pages kept in the repo and still built (linked from other pages), but not in
+# the header nav. Listed here so `mkdocs build` doesn't report them.
+not_in_nav: |
+  /index.md
+  /quickstart.md
+  /matlab-setup.md
+  /gui-manual-testing-todo.md
+  getting-started/choosing-a-layer.md
+  getting-started/example-project-walkthroughs.md
+  concepts/
+  guide/
+  api/
+  internals/
+  project/
+
+# Material keeps the reader's content-tab choice (e.g. Python / MATLAB, linked
+# site-wide by content.tabs.link) in localStorage keyed by `scope`, which
+# defaults to each build's root. The GUI variant is a separate build under
+# /ui/, so without a shared scope the choice would reset when toggling
+# Code <-> With GUI. Tabs link by exact label: always "Python" and "MATLAB".
+extra:
+  scope: /
 
 extra_css:
   - stylesheets/extra.css
@@ -84,6 +88,21 @@ markdown_extensions:
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
+  # Fenced "blocks" syntax for callouts and content tabs:
+  #   /// note | Title            /// tab | Python
+  #   body, not indented          body, not indented
+  #   ///                         ///
+  # Preferred over `!!! note` / `=== "Python"`, whose bodies must be indented
+  # 4 spaces; Markdown formatters strip that indent on save (CommonMark reads it
+  # as paragraph continuation), silently emptying the callout. The older syntax
+  # still works. `types` lists every Material callout style (the extension's
+  # default list lacks info, success, question, example, bug, ...).
+  - pymdownx.blocks.admonition:
+      types: [note, abstract, info, tip, success, question, warning, failure, danger, bug, example, quote]
+  - pymdownx.blocks.tab:
+      alternate_style: true
+  # Collapsible sections in the same fenced syntax:  /// details | Title
+  - pymdownx.blocks.details
   - pymdownx.tasklist:
       custom_checkbox: true
   - pymdownx.emoji:
@@ -98,6 +117,54 @@ markdown_extensions:
 
 plugins:
   - search
+  # Two mirrored sites in one build: "Code" (no GUI) and "With GUI".
+  # mkdocs-static-i18n is used for this, with each variant treated as a
+  # "language". A page `foo.md` is shared; `foo.ui.md` replaces it in the GUI
+  # variant only; a page that exists only as `foo.ui.md` is GUI-only. Missing
+  # GUI pages fall back to the shared one (fallback_to_default). The header
+  # toggle (overrides/partials/alternate.html) switches to the same page in the
+  # other variant.
+  #
+  # Gotchas (why the GUI variant is "ui" and sets theme.language):
+  # - The plugin validates `locale` against a language-code regex
+  #   (^[a-z]{2}(-[A-Za-z]{4})?(-[A-Z]{2})?$), so "gui" is rejected. "ui" is
+  #   not an assigned ISO 639-1 code. It is also the URL folder (/ui/...) and
+  #   the file suffix (.ui.md).
+  # - The plugin sets Material's theme.language to the locale, and Material
+  #   imports partials/languages/<language>.html with no fallback, so "ui"
+  #   would fail to render. Each variant pins theme.language back to en.
+  # - extra.variant tells the toggle which variant is being built (the plugin
+  #   exposes no current-locale variable to templates); per-language `extra`
+  #   is shallow-merged into the top-level `extra`.
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: true
+      languages:
+        - locale: en
+          name: Code
+          default: true
+          build: true
+          extra:
+            variant: en
+        - locale: ui
+          name: With GUI
+          build: true
+          theme:
+            language: en
+          extra:
+            variant: ui
+          nav:
+            - Installation: getting-started/installation.md
+            - Getting Started:
+              - What's a Schema?: getting-started/whats-a-schema.md
+              - Create New Project: getting-started/create-new-project.md
+              - Open Existing Project: getting-started/open-existing-project.md
+            - Using the GUI:
+              - The Canvas: gui/canvas.md
+            - Example Projects:
+              - Best Popcorn: examples/best-popcorn.md
+              - Best Player: examples/best-player.md
+            - API: *nav_api
 
 # Internal engineering notes: kept in the repo but excluded from the published
 # site (they were never in nav).
