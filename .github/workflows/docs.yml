@@ -2,7 +2,7 @@ name: Build Docs
 
 # Strict MkDocs build as a CI gate: fails on broken internal links, missing
 # nav pages, or bad references — the same checks Read the Docs applies.
-# Build-only; publishing is handled by Read the Docs.
+# On push to main it then triggers a Read the Docs build (the publish step).
 
 on:
   push:
@@ -36,3 +36,24 @@ jobs:
 
       - name: Build (strict)
         run: mkdocs build --strict
+
+      # Publish: ask Read the Docs to rebuild `latest` from this commit, so the
+      # site updates even when RTD's own GitHub webhook is missing or silent.
+      # Push to main only (never PRs). Needs the RTD_TOKEN repo secret: an API
+      # token from readthedocs.org -> Settings -> API Tokens.
+      - name: Trigger Read the Docs build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          RTD_TOKEN: ${{ secrets.RTD_TOKEN }}
+        run: |
+          if [ -z "$RTD_TOKEN" ]; then
+            echo "::error::RTD_TOKEN secret is not set (repo Settings -> Secrets and variables -> Actions)"
+            exit 1
+          fi
+          echo "Triggering RTD build: project=scistack version=latest commit=$GITHUB_SHA"
+          curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Token $RTD_TOKEN" \
+            https://readthedocs.org/api/v3/projects/scistack/versions/latest/builds/
+          echo
+          echo "Build queued: https://readthedocs.org/projects/scistack/builds/"
