@@ -27,7 +27,9 @@ theme:
 
 # Header tabs. Sections render as tabs with a hover dropdown of their pages
 # (overrides/partials/tabs-item.html). Home (index.md) is the site root and is
-# reached via the logo rather than a tab.
+# reached via the logo rather than a tab: it is listed first in each nav (the
+# i18n plugin only finds a locale's homepage among nav pages, and mkdocs build
+# --strict fails without one), and tabs-item.html skips it so no tab renders.
 #
 # This is the code-only ("en") nav. The "With GUI" variant has its own nav
 # under plugins > i18n below; shared sections are YAML anchors (&name / *name)
@@ -36,6 +38,7 @@ theme:
 # .md) to Getting Started, and shows one GUI-only page per example
 # ("Best Popcorn", "Best Player") in place of the code-only scifor/scidb pairs.
 nav:
+  - Home: index.md
   - Installation: getting-started/installation.md
   - Getting Started:
     - What's a Schema?: getting-started/whats-a-schema.md
@@ -58,7 +61,6 @@ nav:
 # Pages kept in the repo and still built (linked from other pages), but not in
 # the header nav. Listed here so `mkdocs build` doesn't report them.
 not_in_nav: |
-  /index.md
   /quickstart.md
   /matlab-setup.md
   /gui-manual-testing-todo.md
@@ -154,6 +156,7 @@ plugins:
           extra:
             variant: ui
           nav:
+            - Home: index.md
             - Installation: getting-started/installation.md
             - Getting Started:
               - What's a Schema?: getting-started/whats-a-schema.md

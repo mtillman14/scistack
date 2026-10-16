@@ -25,7 +25,10 @@
   {%- endif -%}
 {%- endmacro %}
 
+{#- The homepage is in nav only so mkdocs/i18n can find it (see mkdocs.yml);
+    it is reached via the logo, so it renders no tab. -#}
 {% macro render(nav_item, ref) %}
+  {% if not (nav.homepage and nav_item.url == nav.homepage.url) %}
   {% set ref = ref or nav_item %}
   {% set class = "md-tabs__item" %}
   {% if ref.active %}
@@ -50,5 +53,6 @@
         {{ render_content(nav_item) }}
       </a>
     </li>
+  {% endif %}
   {% endif %}
 {% endmacro %}
