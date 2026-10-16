@@ -36,11 +36,12 @@ theme:
 # --strict fails without one), and tabs-item.html skips it so no tab renders.
 #
 # This is the code-only ("en") nav. The "With GUI" variant has its own nav
-# under plugins > i18n below; shared sections are YAML anchors (&name / *name)
-# so each section's page list has one owner. Getting Started and Example Projects
-# are not shared: the GUI variant adds GUI-only pages (*.ui.md with no plain
+# under plugins > i18n below. No section is shared any more (share one with a
+# YAML anchor, &name / *name, so its page list keeps one owner). Getting
+# Started and Example Projects differ: the GUI variant adds GUI-only pages (*.ui.md with no plain
 # .md) to Getting Started, and shows one GUI-only page per example
 # ("Best Popcorn", "Best Player") in place of the code-only scifor/scidb pairs.
+# API is Code-only: the GUI nav omits it entirely.
 nav:
   - Home: index.md
   - Installation: getting-started/installation.md
@@ -53,7 +54,7 @@ nav:
     - Best Popcorn - scidb: examples/best-popcorn-scidb.md
     - Best Player - scifor: examples/best-player-scifor.md
     - Best Player - scidb: examples/best-player-scidb.md
-  - API: &nav_api
+  - API:
     - scifor: api/scifor.md
     - scidb: api/scidb.md
     - scihist: api/scihist.md
@@ -171,7 +172,8 @@ plugins:
             - Example Projects:
               - Best Popcorn: examples/best-popcorn.md
               - Best Player: examples/best-player.md
-            - API: *nav_api
+            # No API tab: the API reference is Code-only (see the toggle in
+            # overrides/partials/alternate.html for how API pages link here).
 
 # Internal engineering notes: kept in the repo but excluded from the published
 # site (they were never in nav).

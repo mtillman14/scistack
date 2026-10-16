@@ -1,32 +1,26 @@
-# scilineage — provenance engine
+# scilineage
 
-!!! info "Internal package"
-    You normally use lineage through **`scihist`**, which re-exports the
-    `lineage_fcn` decorator and wraps your functions automatically. Import it as
-    `from scihist import lineage_fcn`. This page describes the underlying engine.
+/// info | Internal package
+You don't call `scilineage` directly. `scidb.for_each` uses it to decide whether a function has changed since it last ran.
+///
 
-`scilineage` is the provenance engine behind SciStack's lineage features. It
-captures the full computational lineage of each result — which function ran, what
-its inputs were, and a version stamp of the function itself — building a graph
-that doubles as a cache key. It is **Python-only** and depends only on
-[`scicanonicalhash`](scicanonicalhash.md).
+`scilineage` computes a **function hash**: a short, stable fingerprint of a function's code. `scidb` stores this hash with every run. It is how `skip_computed=True` notices that you edited a function and need to re-run it, and how the GUI marks a step as out of date.
 
-## What it owns
+/// note | Changed
+Earlier versions of `scilineage` provided a `@lineage_fcn` decorator and a `LineageFcnResult` wrapper. Both were removed. Provenance is now recorded by `scidb.for_each` directly, and the optional `@scistack` marker lives in [`scidb`](../api/scidb.md#batch-processing).
+///
 
-- **Automatic lineage tracking** — decorate a function with `@lineage_fcn` and
-  each call captures its inputs and a hash of the function, returning a
-  `LineageFcnResult` (the value lives on `.data`).
-- **Input classification** — distinguishes genuine data dependencies from literal
-  constants so the recorded lineage is accurate.
-- **Pluggable caching** — register a backend via `configure_backend()` to serve
-  repeated computations from cache by their lineage hash.
-- **Manual interventions** — `manual()` records an out-of-band correction as a
-  first-class lineage step instead of a silent hand-edit.
+## API
 
-## Where it sits
+| Name | Purpose |
+|---|---|
+| `compute_function_hash(fn, *, truncate=16, recursive=True)` | The hash of `fn`. |
+| `compute_function_hash_with_sources(fn, *, truncate=16)` → `(hash, {qualname: source})` | The same hash, plus the source text behind it. Use this whenever you store source alongside a hash, so that the two always agree. |
+| `canonical_hash(value)` | A stable content hash of any value (arrays, DataFrames, dicts, ...). Used for constants and data. |
 
-`scidb` imports `scilineage` only behind a `HAS_LINEAGE` flag, so the database
-works without it. The full provenance graph and automatic function wrapping come
-from `scihist`. For the user-facing model and examples, see
-[Lineage & Provenance](../concepts/lineage.md) and the
-[Lineage guide](../guide/lineage.md).
+## What changes the hash
+
+- **Changes it:** any edit to the function's logic, *and* any edit to a function it calls that is defined in your own code (helpers are hashed recursively).
+- **Doesn't change it:** whitespace, formatting, comments and docstrings, which are removed before hashing. Calls into the standard library or installed packages are treated as opaque, so upgrading numpy does not invalidate your results.
+
+MATLAB functions are hashed from their source file by [`scimatlab`](scimatlab.md). Python and MATLAB hashes are therefore never equal, even for equivalent code.

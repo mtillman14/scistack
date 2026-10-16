@@ -8,12 +8,24 @@
   otherwise at the variant's home page. config.extra.variant is the variant
   being built (set per language in mkdocs.yml), used to mark the active button.
   Styling lives in docs/stylesheets/extra.css (.md-variant-toggle).
+
+  The API reference (api/, internals/) is Code-only: it is absent from the
+  "ui" nav in mkdocs.yml. Those pages still get built in the ui variant (by
+  fallback, since legacy concept/guide pages link to them), so from an API
+  page the "With GUI" button goes to the GUI home rather than to an orphaned
+  GUI copy. The home link is alt.link with this page's own url stripped off
+  (alt.link is "<variant root><page.url>" whenever the page exists there).
 -#}
+{% set code_only = page and page.url and (page.url.startswith("api/") or page.url.startswith("internals/")) %}
 <div class="md-header__option">
   <nav class="md-variant-toggle" aria-label="Documentation variant">
     {% for alt in config.extra.alternate %}
       {% set active = alt.lang == config.extra.variant %}
-      <a href="{{ alt.link | url }}"
+      {% set link = alt.link %}
+      {% if code_only and alt.lang == "ui" and not active and link.endswith(page.url) %}
+        {% set link = link[:link | length - page.url | length] %}
+      {% endif %}
+      <a href="{{ link | url }}"
          class="md-variant-toggle__link{% if active %} md-variant-toggle__link--active{% endif %}"
          {% if active %}aria-current="true"{% endif %}>
         {{ alt.name }}
