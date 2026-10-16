@@ -37,6 +37,23 @@ jobs:
       - name: Build (strict)
         run: mkdocs build --strict
 
+      # Regression guard: the Code <-> With GUI toggle must never link to the
+      # domain root ("/" or "/ui/"). Those links 404 on Read the Docs, which
+      # serves the site under /<lang>/<version>/ (site_url in mkdocs.yml owns
+      # that path). Relative links, or links under site_url's path, are fine.
+      - name: Check variant toggle links
+        run: |
+          base_path="/en/latest/"   # site_url fallback path (no RTD env var in CI)
+          links=$(grep -rh -B1 'class="md-variant-toggle__link' site --include=index.html \
+                  | grep -o 'href="[^"]*"' | sort | uniq -c)
+          echo "Variant toggle links in the built site (count href):"
+          echo "$links"
+          bad=$(echo "$links" | grep -o 'href="/[^"]*"' | grep -v "href=\"$base_path" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Variant toggle links point at the domain root, not $base_path: $bad"
+            exit 1
+          fi
+
       # Publish: ask Read the Docs to rebuild `latest` from this commit, so the
       # site updates even when RTD's own GitHub webhook is missing or silent.
       # Push to main only (never PRs). Needs the RTD_TOKEN repo secret: an API

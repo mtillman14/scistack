@@ -1,6 +1,10 @@
 site_name: SciStack
 site_description: Scientific Data Versioning Framework
-site_url: https://scistack.readthedocs.io
+# The full published URL, including Read the Docs' /<lang>/<version>/ path: the
+# i18n plugin builds the Code <-> With GUI toggle links from site_url's path, so
+# without it they point at the domain root (/ui/) and 404. RTD sets
+# READTHEDOCS_CANONICAL_URL during its builds; the fallback (local, CI) is latest.
+site_url: !ENV [READTHEDOCS_CANONICAL_URL, 'https://scistack.readthedocs.io/en/latest/']
 
 repo_name: scistack
 repo_url: https://github.com/mtillman14/scistack
