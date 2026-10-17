@@ -11,6 +11,37 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzd. Difference bars: both legs always show and never touch the data — added 2026-10-16
+
+What changed: before, the leg over the taller of a bar's two ticks was about
+half a line width long, so the bar looked like it had no leg on that side.
+Every leg is now at least 5 pt long, measured in points. That means it looks
+the same whatever the y range is. The rule's owner is `diffbars._place_once`,
+with the length set by `MIN_LEG_PT`.
+Each leg's foot now also stops at least 6 pt above the data under it
+(`FOOT_GAP_PT`). Before, the gap was 3 pt and the leg looked like it touched
+the mark.
+
+**Backend:** reload the VS Code window so the backend edit loads.
+
+**Frontend**
+1. In Plot Studio, add a difference bar between two ticks of different
+   heights. Both legs should be visible, and the one over the taller tick
+   should be short but clearly there. Neither foot should touch its bar,
+   error bar, box, or sample points: there should be a clear gap of about
+   6 pt, the same at any zoom or y range.
+2. Change the y range a lot, for example by typing a much larger Max or
+   switching the scale to log. The short leg should keep the same on-screen
+   length.
+3. Add a second bar that shares a tick with the first, so the two stack. The
+   upper bar's legs should drop visibly toward the lower bar's label.
+4. Save or export the figure. The exported legs should match the preview.
+5. In `scidb.log`, the line `difference bars placed: ...` should end with
+   `shortest leg 5.0 pt, lowest foot 6.0 pt above the data`, or larger
+   numbers.
+
+---
+
 ## 0zzzzb. Faster figure arrows (one layout per figure) + click-to-drawn timing in scidb.log — added 2026-10-16
 
 What changed: each ◀ ▶ step used to lay the figure out twice in matplotlib

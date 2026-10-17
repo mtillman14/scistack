@@ -26,6 +26,8 @@ from scistackplot.diffbars import (
     PanelProblem,
     ResolvedBar,
     _place_once,
+    foot_clearances_pt,
+    leg_lengths_pt,
     panel_obstacles,
     place_figure,
     place_group,
@@ -125,10 +127,16 @@ def violations(
                 found.append(f"bar {index}: label sits on a mark")
             for x_pt, foot, _ in ((leg[0], leg[2], leg[3]) for leg in legs):
                 mark = under(x_pt / per_x, x_pt / per_x)
-                if mark is not None and foot < mark + sizes.gap_pt - EPS:
+                if mark is not None and foot < mark + sizes.foot_gap_pt - EPS:
                     found.append(f"bar {index}: leg at {x_pt / per_x:g} reaches into a mark")
                 if foot > y + EPS:
                     found.append(f"bar {index}: leg foot above its line")
+                # A leg reaching the axis bottom may be shorter (nothing
+                # under its end); every other leg is visibly a leg.
+                if foot > EPS and y - foot < sizes.min_leg_pt - EPS:
+                    found.append(
+                        f"bar {index}: leg at {x_pt / per_x:g} only {y - foot:.2f} pt long"
+                    )
             rects.append((index, "line", *line))
             rects.append((index, "label", *label))
             rects.extend((index, "leg", *leg) for leg in legs)
@@ -232,8 +240,10 @@ def test_the_top_is_a_fixed_point():
 
 
 def test_bars_that_fit_the_headroom_keep_the_data_top():
-    """One bar over marks at 6 and 9 on 0..10 needs ~9.75: the top stays."""
-    result, problems = _place([_pair(0, 1)], _boxes({0: 6.0, 1: 9.0}))
+    """One bar over marks at 6 and 8.5 on 0..10 (20 pt per unit) needs
+    8.5 + 22.5 pt (foot gap 6 + leg 5 + label 1.5 + 8 + pad 2) ~ 9.63: the
+    top stays. (9.0 fitted before the foot gap and minimum leg, 2026-10-16.)"""
+    result, problems = _place([_pair(0, 1)], _boxes({0: 6.0, 1: 8.5}))
     assert result.limits == (0.0, 10.0)
     _, _, need = _place_once(problems[0], bottom=0.0, top=10.0, sizes=SIZES, pinned=False)
     assert need <= 10.0
@@ -255,7 +265,9 @@ def test_a_top_floor_raises_the_range():
 
 
 def test_a_short_panel_gives_most_of_its_height_to_the_bars():
-    short = PanelFrame(height_pt=40.0, width_pt=300.0, x_range=(-0.5, 4.5))
+    # Two stacked bars need ~43 pt (foot gap + minimum leg); 60 pt holds
+    # them with most of the height (40 pt did before 2026-10-16).
+    short = PanelFrame(height_pt=60.0, width_pt=300.0, x_range=(-0.5, 4.5))
     bars = [_pair(0, 1), _pair(1, 2)]
     problems = [_problem(bars, _boxes({x: 9.0 for x in range(3)}), short)]
     result = place_group(problems, limits=(0.0, 10.0), pinned_top=False, sizes=SIZES)
@@ -264,7 +276,7 @@ def test_a_short_panel_gives_most_of_its_height_to_the_bars():
 
 
 def test_bars_taller_than_the_panel_warn_that_the_top_never_settles(caplog):
-    """Three stacked bars need ~40 pt; the panel has 40 pt in all: no top holds them."""
+    """Three stacked bars need ~65 pt; the panel has 40 pt in all: no top holds them."""
     short = PanelFrame(height_pt=40.0, width_pt=300.0, x_range=(-0.5, 4.5))
     bars = [_pair(0, 1), _pair(1, 2), _pair(0, 2)]
     problems = [_problem(bars, _boxes({x: 9.0 for x in range(3)}), short)]
@@ -428,3 +440,103 @@ def test_placing_is_logged(gait_table, caplog):
         placement = place_figure(figure, _frames(figure), SIZES)
     assert "labels measured" in caplog.text
     assert placement.notes and "1 placed, 0 unfit" in placement.notes[0]
+
+
+# --- minimum leg length (2026-10-16) -------------------------------------------
+# The leg over the taller end used to drop only to the gap above its mark,
+# which is where the line also sat: half a line width, so the bar looked like
+# it had no leg. Legs are now at least ``min_leg_pt``, in points.
+
+
+def _legs_pt(result: GroupPlacement, log: bool = False) -> list[float]:
+    return leg_lengths_pt(result, [FRAME], log)
+
+
+def test_the_taller_ends_leg_is_at_least_the_minimum():
+    result, problems = _place([_pair(0, 1)], _boxes({0: 6.0, 1: 9.8}))
+    assert violations(result, problems) == []
+    assert min(_legs_pt(result)) == pytest.approx(SIZES.min_leg_pt)
+
+
+def test_equal_ends_both_get_the_minimum_leg():
+    result, problems = _place([_pair(0, 1)], _boxes({0: 9.0, 1: 9.0}))
+    assert violations(result, problems) == []
+    assert _legs_pt(result) == pytest.approx([SIZES.min_leg_pt] * 2)
+
+
+@pytest.mark.parametrize("scale", [0.001, 1.0, 1000.0, 1e6])
+def test_the_minimum_leg_does_not_change_with_the_y_range(scale):
+    marks = _boxes({0: 6.0 * scale, 1: 9.8 * scale})
+    result, problems = _place([_pair(0, 1)], marks, limits=(0.0, 10.0 * scale))
+    assert violations(result, problems) == []
+    assert min(_legs_pt(result)) == pytest.approx(SIZES.min_leg_pt)
+
+
+def test_a_stacked_bar_keeps_the_minimum_leg_over_the_bar_below():
+    result, problems = _place([_pair(0, 1), _pair(1, 2)], _boxes({0: 5.0, 1: 5.0, 2: 5.0}))
+    assert violations(result, problems) == []
+    assert min(_legs_pt(result)) >= SIZES.min_leg_pt - EPS
+
+
+def test_the_minimum_leg_holds_on_a_log_axis():
+    marks = _boxes({0: 100.0, 1: 1000.0})
+    problems = [_problem([_pair(0, 1)], marks)]
+    result = place_group(problems, limits=(1.0, 2000.0), pinned_top=False, sizes=SIZES, log=True)
+    assert violations(result, problems, log=True) == []
+    assert min(_legs_pt(result, log=True)) == pytest.approx(SIZES.min_leg_pt)
+
+
+def test_the_minimum_leg_is_a_size():
+    sizes = BarSizes(label_font_pt=10.0, label_boxes=SIZES.label_boxes, min_leg_pt=12.0)
+    result, problems = _place([_pair(0, 1)], _boxes({0: 6.0, 1: 9.8}), sizes=sizes)
+    assert violations(result, problems, sizes) == []
+    assert min(_legs_pt(result)) == pytest.approx(12.0)
+
+
+def test_the_shortest_leg_is_logged(gait_table):
+    figure = resolve(_gait(_side_bar("R", "pre", "follow"), style=StyleOptions()), gait_table)[0]
+    placement = place_figure(figure, _frames(figure), SIZES)
+    assert "shortest leg" in placement.notes[0]
+
+
+# --- foot clearance above the data (2026-10-16) --------------------------------
+# A foot at GAP_PT over a mark read as touching it; feet stop
+# ``foot_gap_pt`` above the data, in points.
+
+
+@pytest.mark.parametrize("scale", [0.001, 1.0, 1000.0, 1e6])
+def test_each_foot_clears_its_data_by_the_foot_gap_at_any_range(scale):
+    marks = _boxes({0: 6.0 * scale, 1: 9.8 * scale})
+    result, problems = _place([_pair(0, 1)], marks, limits=(0.0, 10.0 * scale))
+    assert violations(result, problems) == []
+    assert foot_clearances_pt(result, problems) == pytest.approx([SIZES.foot_gap_pt] * 2)
+
+
+def test_the_foot_gap_holds_on_a_log_axis():
+    marks = _boxes({0: 100.0, 1: 1000.0})
+    problems = [_problem([_pair(0, 1)], marks)]
+    result = place_group(problems, limits=(1.0, 2000.0), pinned_top=False, sizes=SIZES, log=True)
+    assert violations(result, problems, log=True) == []
+    assert foot_clearances_pt(result, problems, log=True) == pytest.approx(
+        [SIZES.foot_gap_pt] * 2
+    )
+
+
+def test_the_foot_gap_is_a_size_and_the_leg_keeps_its_minimum():
+    sizes = BarSizes(label_font_pt=10.0, label_boxes=SIZES.label_boxes, foot_gap_pt=15.0)
+    result, problems = _place([_pair(0, 1)], _boxes({0: 6.0, 1: 9.8}), sizes=sizes)
+    assert violations(result, problems, sizes) == []
+    assert min(foot_clearances_pt(result, problems)) == pytest.approx(15.0)
+    assert min(_legs_pt(result)) == pytest.approx(sizes.min_leg_pt)
+
+
+def test_a_stacked_bars_feet_clear_the_data_by_more_than_the_gap():
+    result, problems = _place([_pair(0, 1), _pair(1, 2)], _boxes({0: 5.0, 1: 5.0, 2: 5.0}))
+    assert violations(result, problems) == []
+    assert min(foot_clearances_pt(result, problems)) >= SIZES.foot_gap_pt - EPS
+
+
+def test_the_lowest_foot_is_logged(gait_table):
+    figure = resolve(_gait(_side_bar("R", "pre", "follow"), style=StyleOptions()), gait_table)[0]
+    placement = place_figure(figure, _frames(figure), SIZES)
+    assert "pt above the data" in placement.notes[0]

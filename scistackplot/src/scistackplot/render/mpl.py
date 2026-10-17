@@ -25,7 +25,7 @@ from ..spec import PlotKind
 from ..table import natural_sort_key
 from ..paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
 from ..textsize import ResolvedSizes, sizes_for
-from ..weights import describe_weights, sample_weight, spaghetti_weight
+from ..weights import SAMPLE_EDGE_WIDTH, describe_weights, sample_weight, spaghetti_weight
 from ..ticklabels import (
     BRACKET_POLICY,
     TICK_POLICY,
@@ -396,6 +396,7 @@ def _draw_spaghetti(ax, frame, resolved) -> None:
                 # A diameter in pt (weights.spaghetti_weight): at 1x the same
                 # visual size as the scatter kinds' `s` area.
                 markersize=weight.marker_pt,
+                markeredgewidth=weight.marker_edge_pt,
                 label=(
                     resolved.text.color_level(level)
                     if (level is not None and position == 0)
@@ -629,7 +630,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
                 marker="o",
                 markersize=weight.marker_pt,
                 markeredgecolor=SAMPLE_EDGE_COLOR,
-                markeredgewidth=0.5,
+                markeredgewidth=weight.marker_edge_pt,
                 zorder=3,
             )
             continue
@@ -651,7 +652,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
             color=[run.point_colors[i] for i in order],
             alpha=SAMPLE_ALPHA,
             edgecolors=SAMPLE_EDGE_COLOR,
-            linewidths=0.5,
+            linewidths=weight.marker_edge_pt,
             zorder=3.1,
             gid=SAMPLE_LINE_POINTS_GID,
         )
@@ -663,7 +664,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
             color=color,
             alpha=SAMPLE_ALPHA,
             edgecolors=SAMPLE_EDGE_COLOR,
-            linewidths=0.5,
+            linewidths=weight.marker_edge_pt,
             zorder=3,
         )
     artists += len(lone)
@@ -687,7 +688,7 @@ def _sample_legend_handles(ax, resolved: ResolvedPlot) -> None:
             linestyle="-" if resolved.sample_join else "none",
             marker="o",
             markeredgecolor=SAMPLE_EDGE_COLOR,
-            markeredgewidth=0.5,
+            markeredgewidth=SAMPLE_EDGE_WIDTH,
             label=resolved.text.sample_level(level),
         )
 

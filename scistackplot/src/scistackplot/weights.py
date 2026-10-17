@@ -29,6 +29,14 @@ SAMPLE_MARKER_FRACTION = 0.45
 SAMPLE_LINE_WIDTH = 1.0
 #: A spaghetti's own polylines at 1x.
 SPAGHETTI_LINE_WIDTH = 1.2
+#: The edge stroke round a marker, in points, at every weight (it outlines;
+#: it does not scale). It widens the marker by half its width on each side,
+#: which ``diffbars.panel_obstacles`` must count (2026-10-16: a leg touched a
+#: spaghetti marker the obstacle model thought it cleared).
+SAMPLE_EDGE_WIDTH = 0.5
+#: matplotlib's ``lines.markeredgewidth`` default, which the spaghetti drew
+#: before it was stated here.
+SPAGHETTI_EDGE_WIDTH = 1.0
 #: The plotly preview draws a marker of ``d`` pt at ``d x 4/3`` px — the
 #: 96/72 pt-to-px ratio. Pinned so 1x reproduces the preview as it was (8 px
 #: markers where matplotlib draws 6 pt). Lines are 1 pt = 1 px, as before.
@@ -54,6 +62,13 @@ class ResolvedWeight:
     marker_pt: float
     #: Line width in points (and px in the preview).
     line_pt: float
+    #: The marker's edge stroke in points (``markeredgewidth``).
+    marker_edge_pt: float
+
+    @property
+    def marker_reach_pt(self) -> float:
+        """How far a marker reaches from its centre, edge included."""
+        return self.marker_pt / 2.0 + self.marker_edge_pt / 2.0
 
     @property
     def marker_area(self) -> float:
@@ -83,6 +98,7 @@ def sample_weight(style: StyleOptions) -> ResolvedWeight:
         weight=w,
         marker_pt=math.sqrt(style.marker_size * SAMPLE_MARKER_FRACTION) * w,
         line_pt=SAMPLE_LINE_WIDTH * w,
+        marker_edge_pt=SAMPLE_EDGE_WIDTH,
     )
 
 
@@ -94,6 +110,7 @@ def spaghetti_weight(style: StyleOptions) -> ResolvedWeight:
         weight=w,
         marker_pt=math.sqrt(style.marker_size) * w,
         line_pt=SPAGHETTI_LINE_WIDTH * w,
+        marker_edge_pt=SPAGHETTI_EDGE_WIDTH,
     )
 
 

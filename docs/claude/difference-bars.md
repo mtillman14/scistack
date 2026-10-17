@@ -76,8 +76,21 @@ segments straight) and returned in data units.
 3. **Stacking** (`_place_once`): narrowest span first, then leftmost. A
    bar's line sits `GAP_PT` (+ half its width) above the highest obstacle
    over its WHOLE span (ticks between its ends included); its label must
-   also clear whatever is under the label's own width. Each leg drops to
-   `GAP_PT` above what is under its end. Then the bar's whole level (line +
+   also clear whatever is under the label's own width. Each leg stops
+   `FOOT_GAP_PT` (6 pt, `BarSizes.foot_gap_pt`) above what is under its end
+   (at `GAP_PT` it read as touching the data, 2026-10-16), and the line rises until every
+   leg is at least `MIN_LEG_PT` (5 pt, `BarSizes.min_leg_pt`) long: in
+   points, so the same at any y range (before 2026-10-16 the leg over the
+   taller end was half a line width, so the bar looked legless). A leg with
+   nothing under its end drops `max(2 GAP_PT, MIN_LEG_PT)`, stopping at the
+   axis bottom. The INFO note reports the shortest leg and the lowest foot
+   above the data (`leg_lengths_pt`, `foot_clearances_pt`). A leg clears
+   what is under its WHOLE width (half `LINE_PT` each side), and a marker
+   reaches its radius plus half its edge stroke
+   (`weights.ResolvedWeight.marker_reach_pt`; edge widths owned by
+   `weights.SAMPLE_EDGE_WIDTH` / `SPAGHETTI_EDGE_WIDTH`). Before 2026-10-16
+   both were missed, and a leg could touch a spaghetti marker offset 3 pt
+   from its tick. Then the bar's whole level (line +
    label height across the full span, and the label's width) becomes an
    obstacle. Inclusive ends, so bars sharing a tick always stack (reserving
    only the label's width let the next bar sit a gap above with a zero-length

@@ -19,6 +19,7 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 from matplotlib.collections import PathCollection  # noqa: E402
+from matplotlib.markers import MarkerStyle  # noqa: E402
 
 import scistackplot.reduce as reduce_mod  # noqa: E402
 from scistackplot import (  # noqa: E402
@@ -30,7 +31,7 @@ from scistackplot import (  # noqa: E402
     YAxis,
     resolve,
 )
-from scistackplot.diffbars import GAP_PT, DifferenceBar  # noqa: E402
+from scistackplot.diffbars import FOOT_GAP_PT, GAP_PT, LINE_PT, DifferenceBar  # noqa: E402
 from scistackplot.render.mpl import (  # noqa: E402
     DIFF_BAR_GID,
     DIFF_BARS_ATTR,
@@ -168,6 +169,118 @@ def _check_clearance(fig, ax, placed) -> list[str]:
     return problems
 
 
+def _marker_half_heights_px(marker, size_pt: np.ndarray, edge_pt: float, px_per_pt: float):
+    """How far a marker reaches above its centre (and sideways), in px: from
+    its real path, so a flat cap (``"_"``) adds only its edge width, not a
+    disc's radius. ``size_pt`` is the marker's size (a Line2D markersize; for
+    a scatter, the side of its area)."""
+    style = MarkerStyle(marker)
+    vertices = style.get_path().transformed(style.get_transform()).vertices
+    up = float(np.abs(vertices[:, 1]).max()) if len(vertices) else 0.0
+    side = float(np.abs(vertices[:, 0]).max()) if len(vertices) else 0.0
+    edge = edge_pt / 2 * px_per_pt
+    return up * size_pt * px_per_pt + edge, side * size_pt * px_per_pt + edge
+
+
+def _column_tops(ax, x_px: float, px_per_pt: float) -> list[tuple[float, str]]:
+    """The top (display px) of every drawn thing in the column a leg at
+    *x_px* occupies, bars excluded, each with what drew it: where each
+    segment or edge crosses that x (a line adds half its width), and each
+    marker whose real extent reaches it. Sideways neighbours — sample points
+    at their offsets, a jittered strip — are not under the leg."""
+    tops: list[tuple[float, str]] = []
+    # The leg is a line: its column is its width, not its centre.
+    half_leg_px = LINE_PT / 2 * px_per_pt
+
+    def crossings(xy: np.ndarray, what: str, half_width_px: float = 0.0) -> None:
+        xy = np.asarray(xy, dtype=float)
+        for (x0, y0), (x1, y1) in zip(xy[:-1], xy[1:]):
+            if not np.isfinite([x0, y0, x1, y1]).all():
+                continue
+            reach = SLACK_PX + half_leg_px
+            if not (min(x0, x1) - reach <= x_px <= max(x0, x1) + reach):
+                continue
+            if abs(x1 - x0) < 1e-9:
+                y = max(y0, y1)
+            else:
+                t = min(max((x_px - x0) / (x1 - x0), 0.0), 1.0)
+                y = y0 + t * (y1 - y0)
+            tops.append((y + half_width_px, what))
+
+    def markers(centres, up_px, side_px, what: str) -> None:
+        for (mx, my), up, side in zip(centres, up_px, side_px):
+            if np.isfinite([mx, my]).all() and abs(mx - x_px) <= side + half_leg_px + SLACK_PX:
+                tops.append((my + up, what))
+
+    for line in ax.lines:
+        if line.get_gid() == DIFF_BAR_GID:
+            continue
+        name = f"line {line.get_label()!r}"
+        xy = ax.transData.transform(np.column_stack(line.get_data()).astype(float))
+        if line.get_linestyle() not in ("None", "none", "", " "):
+            crossings(xy, name, line.get_linewidth() * px_per_pt / 2)
+        marker = line.get_marker()
+        if marker not in (None, "None", "none", "", " ") and line.get_markersize():
+            up, side = _marker_half_heights_px(
+                marker,
+                np.asarray(line.get_markersize(), float),
+                line.get_markeredgewidth(),
+                px_per_pt,
+            )
+            n = len(xy)
+            markers(xy, np.full(n, up), np.full(n, side), f"{name} marker {marker!r}")
+    # Path.to_polygons(transform) applies only a transform's AFFINE part, so
+    # on a log axis it misplaces every vertex: transform the vertices here.
+    for patch in ax.patches:
+        for polygon in patch.get_path().to_polygons():
+            crossings(patch.get_transform().transform(polygon), type(patch).__name__)
+    for collection in ax.collections:
+        name = type(collection).__name__
+        if isinstance(collection, PathCollection):
+            centres = collection.get_offset_transform().transform(collection.get_offsets())
+            sides = np.sqrt(
+                np.broadcast_to(np.asarray(collection.get_sizes(), float), (len(centres),))
+            )
+            widths = collection.get_linewidths()
+            edge = float(widths[0]) if len(widths) else 0.0
+            path = collection.get_paths()[0] if collection.get_paths() else None
+            vertices = path.vertices if path is not None else np.zeros((0, 2))
+            up_unit = float(np.abs(vertices[:, 1]).max()) if len(vertices) else 0.5
+            side_unit = float(np.abs(vertices[:, 0]).max()) if len(vertices) else 0.5
+            ups = up_unit * sides * px_per_pt + edge / 2 * px_per_pt
+            reach = side_unit * sides * px_per_pt + edge / 2 * px_per_pt
+            markers(centres, ups, reach, f"{name} marker")
+            continue
+        transform = collection.get_transform()
+        for path in collection.get_paths():
+            for polyline in path.to_polygons(closed_only=False):
+                crossings(transform.transform(polyline), name)
+    return tops
+
+
+def _check_feet(fig, ax, placed) -> list[str]:
+    """Every leg's foot is at least FOOT_GAP_PT above whatever is drawn in
+    the leg's own column, so a leg never reads as touching the data. Each
+    failure names the artist, so a miss in ``diffbars.panel_obstacles`` shows
+    which mark it forgot."""
+    px_per_pt = fig.dpi / 72.0
+    problems = []
+    for bar in placed:
+        for x, foot in ((bar.left, bar.left_foot), (bar.right, bar.right_foot)):
+            x_px, foot_px = ax.transData.transform([(x, foot)])[0]
+            tops = _column_tops(ax, x_px, px_per_pt)
+            if not tops:
+                continue
+            top_px, what = max(tops)
+            room = foot_px - top_px
+            if room < FOOT_GAP_PT * px_per_pt - SLACK_PX:
+                problems.append(
+                    f"{bar.bar.describe()}: foot at {x:g} only "
+                    f"{room / px_per_pt:.2f} pt above {what}"
+                )
+    return problems
+
+
 @pytest.mark.parametrize("kind", [PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.STRIP])
 def test_every_bar_clears_every_drawn_mark(gait_table, kind):
     figure, fig = _render(_spec(*BARS, kind=kind), gait_table)
@@ -175,6 +288,7 @@ def test_every_bar_clears_every_drawn_mark(gait_table, kind):
     index, ax = _axes_for(fig, figure, "R")
     assert len(placement.bars[index]) == len(BARS)
     assert _check_clearance(fig, ax, placement.bars[index]) == []
+    assert _check_feet(fig, ax, placement.bars[index]) == []
 
 
 def test_bars_clear_the_sample_overlay(gait_table):
@@ -182,6 +296,7 @@ def test_bars_clear_the_sample_overlay(gait_table):
     placement = getattr(fig, DIFF_BARS_ATTR)
     index, ax = _axes_for(fig, figure, "R")
     assert _check_clearance(fig, ax, placement.bars[index]) == []
+    assert _check_feet(fig, ax, placement.bars[index]) == []
 
 
 def test_bars_clear_a_spaghetti(gait_table):
@@ -197,6 +312,7 @@ def test_bars_clear_a_spaghetti(gait_table):
     index, ax = _axes_for(fig, figure, "R")
     placement = getattr(fig, DIFF_BARS_ATTR)
     assert _check_clearance(fig, ax, placement.bars[index]) == []
+    assert _check_feet(fig, ax, placement.bars[index]) == []
 
 
 def test_one_line_and_one_label_per_bar_as_placed(gait_table):
@@ -269,6 +385,7 @@ def test_a_log_axis_draws_the_bars(gait_table):
     placement = getattr(fig, DIFF_BARS_ATTR)
     assert len(placement.bars[index]) == len(BARS)
     assert _check_clearance(fig, ax, placement.bars[index]) == []
+    assert _check_feet(fig, ax, placement.bars[index]) == []
 
 
 def test_the_label_size_is_the_differences_text_size(gait_table):

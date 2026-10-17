@@ -43,7 +43,7 @@ from ..diffbars import (
     sibling_floors,
 )
 from ..textsize import sizes_for
-from ..weights import mark_weights_meta, sample_weight, spaghetti_weight
+from ..weights import SAMPLE_EDGE_WIDTH, mark_weights_meta, sample_weight, spaghetti_weight
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
     MARK_OFFSET_GROUP,
@@ -758,7 +758,7 @@ def _sample_traces(
                     if run.uniform
                     else [run.point_colors[i] for i in order],
                     "size": weight.marker_px,
-                    "line": {"color": SAMPLE_EDGE_COLOR, "width": 0.5},
+                    "line": {"color": SAMPLE_EDGE_COLOR, "width": SAMPLE_EDGE_WIDTH},
                 },
                 "line": {"color": run.line_color, "width": weight.line_pt},
                 "opacity": SAMPLE_ALPHA,

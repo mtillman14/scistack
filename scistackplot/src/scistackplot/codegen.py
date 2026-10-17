@@ -64,7 +64,7 @@ from .spec import (
 from .table import MISSING_LEVEL, LongTable
 from .paper import PAPER, figure_rc_params, paper_axes_code, seaborn_err_kws
 from .textsize import ResolvedSizes, resolve_sizes
-from .weights import sample_weight, spaghetti_weight
+from .weights import SAMPLE_EDGE_WIDTH, sample_weight, spaghetti_weight
 from .ylimits import GLOBAL_KEY, pinned_ends
 from .variants import (
     LATEST,
@@ -1309,7 +1309,7 @@ def _sample_draw_lines(
                     ),
                     f"            _ax.scatter(_part[{_X_POSITION!r}], _part[{y!r}], "
                     f"s={weight.marker_area:.3f}, color=_point_colors, alpha={SAMPLE_ALPHA}, "
-                    f"edgecolors={SAMPLE_EDGE_COLOR!r}, linewidths=0.5, "
+                    f"edgecolors={SAMPLE_EDGE_COLOR!r}, linewidths={SAMPLE_EDGE_WIDTH:g}, "
                     + (
                         # Over the line, and marked as part of its run
                         # (render.base.SAMPLE_LINE_POINTS_GID), as the preview.
@@ -1325,7 +1325,8 @@ def _sample_draw_lines(
             "        _ax.plot(",
             f"            _part[{_X_POSITION!r}], _part[{y!r}],",
             f"            linestyle={linestyle!r}, marker='o', markersize={weight.marker_pt:.3f},",
-            f"            markeredgecolor={SAMPLE_EDGE_COLOR!r}, markeredgewidth=0.5,",
+            f"            markeredgecolor={SAMPLE_EDGE_COLOR!r}, "
+            f"markeredgewidth={SAMPLE_EDGE_WIDTH:g},",
             f"            color={paint}, alpha={SAMPLE_ALPHA}, "
             f"linewidth={weight.line_pt:.3f}, zorder=3,",
             "        )",
@@ -1363,7 +1364,7 @@ def _sample_legend_lines(
         "    for _lvl in _sample_levels:",
         "        _entries[_lvl] = Line2D([], [], color=_sample_palette[_lvl], "
         f"linestyle={linestyle!r}, marker='o', markeredgecolor={SAMPLE_EDGE_COLOR!r}, "
-        "markeredgewidth=0.5)",
+        f"markeredgewidth={SAMPLE_EDGE_WIDTH:g})",
         f"    g.add_legend(legend_data=_entries, title={title!r})",
     ]
 

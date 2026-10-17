@@ -428,8 +428,15 @@ def log_figure(resolved: "ResolvedPlot") -> None:
 # bars need depends on ``u``, which depends on the top, so the top is found
 # by iterating to a fixed point (:func:`place_group`).
 
-#: Clearance between whatever is below and a bar's line (or a leg's foot).
+#: Clearance between whatever is below and a bar's line.
 GAP_PT = 3.0
+#: Clearance between the data under an end and that leg's foot (2026-10-16:
+#: at GAP_PT the leg read as touching the data). Larger than GAP_PT: the line
+#: only spans, a leg points AT a mark.
+FOOT_GAP_PT = 6.0
+#: The shortest a leg is drawn, from its foot to the line (2026-10-16:
+#: before, the leg over the taller end was half a line width — no leg).
+MIN_LEG_PT = 5.0
 #: A bar's line width.
 LINE_PT = 1.0
 #: Between the line and the bottom of its label's box.
@@ -560,6 +567,8 @@ class BarSizes:
     #: The label's font size (``TextSizes.differences``).
     label_font_pt: float
     gap_pt: float = GAP_PT
+    foot_gap_pt: float = FOOT_GAP_PT
+    min_leg_pt: float = MIN_LEG_PT
     line_pt: float = LINE_PT
     label_gap_pt: float = LABEL_GAP_PT
     pad_pt: float = PAD_PT
@@ -703,18 +712,30 @@ def _place_once(
             floors.append(under_label - above_line)
         floor = max(floors) if floors else bottom
         y = floor + (sizes.gap_pt + half_line) / per_y
+
+        # Each leg stops ``foot_gap_pt`` above what is under its end, so it
+        # never reads as touching the data. The line rises until every leg is
+        # at least ``min_leg_pt`` long (the end under the span's highest mark,
+        # or a lower bar's level, would otherwise get no visible leg). Both in
+        # points, so neither changes with the y range.
+        min_leg = sizes.min_leg_pt / per_y
+        foot_gap = sizes.foot_gap_pt / per_y
+        # A leg is a line: what it must clear is under its whole width, not
+        # its centre (a marker 3.01 pt off a leg of half-width 0.5 pt with a
+        # 3.5 pt reach was missed at the centre and touched, 2026-10-16).
+        half_leg = half_line / per_x
+        unders = [height(x - half_leg, x + half_leg) for x in (left, right)]
+        raised = [under + foot_gap + min_leg for under in unders if under is not None]
+        if raised:
+            y = max(y, max(raised))
+        feet = [
+            under + foot_gap
+            if under is not None
+            else max(bottom, y - max(2 * sizes.gap_pt / per_y, min_leg))
+            for under in unders
+        ]
         label_bottom = y + above_line
         label_top = label_bottom + height_pt / per_y
-
-        feet = []
-        for x in (left, right):
-            under = height(x, x)
-            foot = (
-                min(y, under + sizes.gap_pt / per_y)
-                if under is not None
-                else max(bottom, y - 2 * sizes.gap_pt / per_y)
-            )
-            feet.append(foot)
 
         if pinned and label_top > top:
             unfit.append(item)
@@ -842,6 +863,59 @@ def place_group(
     )
 
 
+def leg_lengths_pt(
+    result: GroupPlacement, frames: list[PanelFrame], log: bool = False
+) -> list[float]:
+    """Every placed leg's length in points on the final axis — what
+    ``MIN_LEG_PT`` guarantees (unless a leg reaches the axis bottom)."""
+    axis = (lambda v: math.log10(v)) if log else (lambda v: v)
+    bottom, top = axis(result.limits[0]), axis(result.limits[1])
+    lengths = []
+    for placed, frame in zip(result.placed, frames):
+        per_y = frame.height_pt / (top - bottom) if top > bottom else 0.0
+        for bar in placed:
+            for foot in (bar.left_foot, bar.right_foot):
+                lengths.append((axis(bar.y) - axis(foot)) * per_y)
+    return lengths
+
+
+def foot_clearances_pt(
+    result: GroupPlacement, problems: list[PanelProblem], log: bool = False
+) -> list[float]:
+    """Every placed foot's height above the data under it, in points on the
+    final axis — what ``FOOT_GAP_PT`` guarantees. *problems* hold the data's
+    obstacles only (no bars), so a foot resting over a lower bar reports
+    its height above the data, which is more than the gap. A foot with no
+    data under it is left out."""
+    axis = (lambda v: math.log10(v)) if log else (lambda v: v)
+    bottom, top = axis(result.limits[0]), axis(result.limits[1])
+    clearances = []
+    for placed, problem in zip(result.placed, problems):
+        if top <= bottom:
+            continue
+        per_y = problem.frame.height_pt / (top - bottom)
+        per_x = problem.frame.per_unit_x
+        obstacles = problem.obstacles.to_axis(log)
+        half_leg = (LINE_PT / 2.0) / per_x
+        for bar in placed:
+            for x, foot in ((bar.left, bar.left_foot), (bar.right, bar.right_foot)):
+                under = obstacles.top_over(
+                    x - half_leg, x + half_leg, per_unit_y=per_y, per_unit_x=per_x
+                )
+                if under is not None:
+                    clearances.append((axis(foot) - under) * per_y)
+    return clearances
+
+
+def _legs_note(result: GroupPlacement, problems: list[PanelProblem], log: bool) -> str:
+    lengths = leg_lengths_pt(result, [p.frame for p in problems], log)
+    clearances = foot_clearances_pt(result, problems, log)
+    note = f", shortest leg {min(lengths):.1f} pt" if lengths else ""
+    if clearances:
+        note += f", lowest foot {min(clearances):.1f} pt above the data"
+    return note
+
+
 # ---------------------------------------------------------------------------
 # A resolved figure -> problems
 
@@ -859,9 +933,10 @@ def panel_obstacles(resolved: "ResolvedPlot", panel: "Panel") -> Obstacles:
       ``spanmode: "hard"`` stop at the data); a box's flier adds its radius;
     - strip: every point, jittered ``±STRIP_JITTER``, plus the marker radius;
     - scatter: every point plus the marker radius;
-    - spaghetti: every point at its line's offset plus the marker radius,
+    - spaghetti: every point at its line's offset plus the marker's reach
+      (radius + half its edge stroke, ``weights.ResolvedWeight.marker_reach_pt``),
       and every segment of every run plus half the line width;
-    - overlay: every point at ``sample_positions`` plus its radius, and the
+    - overlay: every point at ``sample_positions`` plus its reach, and the
       joining segments when joined.
     """
     from .render.base import (
@@ -918,7 +993,7 @@ def panel_obstacles(resolved: "ResolvedPlot", panel: "Panel") -> Obstacles:
                 xs, _ = x_positions(run[encoding.x], resolved)
                 xs = xs + offsets.get(str(series_id), 0.0)
                 ys = pd.to_numeric(run[encoding.y], errors="coerce").to_numpy(dtype=float)
-                rows.extend(_polyline(xs, ys, weight.marker_pt / 2.0, weight.line_pt / 2.0, True))
+                rows.extend(_polyline(xs, ys, weight.marker_reach_pt, weight.line_pt / 2.0, True))
         else:  # scatter, and anything else drawn as points
             rows.extend((p, p, v, v, marker_radius) for p, v in zip(positions, values))
 
@@ -929,7 +1004,7 @@ def panel_obstacles(resolved: "ResolvedPlot", panel: "Panel") -> Obstacles:
             xs = sample_positions(run.rows, resolved, run.identity)
             ys = pd.to_numeric(run.rows[encoding.y], errors="coerce").to_numpy(dtype=float)
             joined = resolved.sample_join and len(run.rows) > 1
-            rows.extend(_polyline(xs, ys, weight.marker_pt / 2.0, weight.line_pt / 2.0, joined))
+            rows.extend(_polyline(xs, ys, weight.marker_reach_pt, weight.line_pt / 2.0, joined))
     return Obstacles.build(rows)
 
 
@@ -1106,7 +1181,9 @@ def place_figure(
         notes.append(
             f"{names}: {sum(len(p) for p in result.placed)} placed, {n_unfit} unfit, "
             f"top {shared[1]:.6g} -> {result.limits[1]:.6g} "
-            f"({result.iterations} iteration(s), bars {result.bar_fraction:.0%} of the height)"
+            f"({result.iterations} iteration(s), bars {result.bar_fraction:.0%} of the height"
+            + _legs_note(result, problems, log)
+            + ")"
             + (f", raised to at least {top_floor:.6g} for other figures" if top_floor is not None else "")
         )
         Log.debug(
