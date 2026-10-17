@@ -1,9 +1,9 @@
 # Statistics — Design
 
-Status: **design decided** (2026-09-27; StatStudio decisions S10–S21 added
-2026-10-17). All open questions resolved. The component inventory below is the scope checklist. No code yet.
-Blocked on csv-stats v1 ([csv-stats-v1-requirements.md](csv-stats-v1-requirements.md)).
-Next step: a `.claude/plan-*.md` per scistack stage.
+Status: **built** through plan Stage 14 (2026-10-17); design decided 2026-09-27 (StatStudio decisions S10–S21 added
+2026-10-17). All open questions resolved. How it is built: [statistics.md](statistics.md).
+csv-stats is grown alongside ([csv-stats-v1-requirements.md](csv-stats-v1-requirements.md), "Progress").
+The component inventory below is the scope checklist; deferred items are listed in S19 and statistics.md.
 
 ## Where this sits
 

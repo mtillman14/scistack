@@ -204,7 +204,22 @@ Frontend: `differenceBars.test.ts`, plus `plotTheme` and `sidebarGroups`.
 - The Panels section's Min/Max placeholders still show the range computed
   before bars raise it (the Y axis readout shows the drawn range).
 
-## Next: bars driven by statistical tests (assessed 2026-09-27)
+## Derived bars (built 2026-10-17)
+
+Bars from StatStudio's comparisons are built as assessed below.
+`DifferenceBar.origin` (`manual` by default and not written; `test` for a
+derived bar) and `diffbars.with_derived_bars(spec, derived)` is the one
+merge: derived first, manual after, so a manual bar wins a duplicate pair.
+They are never stored. The GUI sends `derived_bars` with resolve, export,
+save and add-to-pipeline (`scistack_gui/api/plot._with_derived`), so a saved
+file draws what the preview drew. The stored request is `StatsSpec.overlay`
+(show; pairs `significant` / `all` / `adjacent`; label `stars` / `p`; hidden
+comparison ids), and `scistackstats.overlays.bars_for` converts results. It
+refuses when the stats and plot designs differ, or when compare-to-reference
+is active (S9). Tests: `scistackplot/tests/test_derived_bars.py`,
+`scistackstats/tests/test_overlays.py`.
+
+## The assessment that led there (2026-09-27)
 
 The goal: the user picks a test, and the pairs it finds significant become
 bars automatically. What carries over, and what has to change first.

@@ -212,3 +212,14 @@ figure = render(source.get_table(saved.spec.variant_variables()), saved.spec)
 - If a fresh or just-loaded plot shows "● modified" without any edit,
   something is adjusting the spec after it is applied. Find that, don't
   weaken `modifiedKey`.
+
+## Saved stats tables (2026-10-17)
+
+StatStudio's saved tables (`_stats_spec`) and stats presets
+(`_stats_preset`) use this same `VersionedStore`, so they follow every rule
+above (id = identity, re-save = version, hide never delete, strict save,
+salvaging open). A stats table may link to a saved plot by its `plot_id`
+(`StatsSpec.linked_plot`). The link is stored only on the stats side, and
+`scistackstatsdb.linked_stats_for(plot_id)` finds a plot's tables. Both
+stores travel in project bundles (`scistackstatsdb.bundle_section`, the
+`stats` section). See [statistics.md](statistics.md).

@@ -14,4 +14,4 @@ Run `SciStack: Open Pipeline` in the Command Palette.
 
 ![Blank canvas](../images/open_pipeline_flow/blank_canvas.png)
 
-See {using the GUI link} for an explanation of the UI elements in the GUI.
+See [Process](../gui/process.md) for a tour of the canvas and how to build your first pipeline.

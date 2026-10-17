@@ -167,8 +167,12 @@ plugins:
               - What's a Schema?: getting-started/whats-a-schema.md
               - Create New Project: getting-started/create-new-project.md
               - Open Existing Project: getting-started/open-existing-project.md
-            - Using the GUI:
-              - The Canvas: gui/canvas.md
+            # The GUI counterpart of the Code nav's API tab: one page per
+            # studio, in the order an analysis uses them.
+            - GUI Tutorial:
+              - Process: gui/process.md
+              - Visualize: gui/visualize.md
+              - Summarize: gui/summarize.md
             - Example Projects:
               - Best Popcorn: examples/best-popcorn.md
               - Best Player: examples/best-player.md

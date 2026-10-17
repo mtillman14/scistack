@@ -8,6 +8,38 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-17-3 — Generated `stat_` code calls scistackstats, it does not restate it
+
+**Context.** Plot codegen emits literal seaborn so exported figures are
+editable. Doing the same for statistics would copy design derivation, test
+selection and correction families into generated text: a second owner.
+**Decision.** The `stat_` function embeds the StatsSpec and calls
+`scistackstats.run` / `describe_table` on the `for_each` table. A parity
+test pins it (`scistackstats/tests/test_codegen.py`). Unsupported inputs
+(ColName DVs, joined factors, variants, x variable) are refused with the
+reason. **Doc:** [statistics.md](statistics.md).
+
+## D-2026-10-17-2 — Derived difference bars join a request, never a spec
+
+**Context.** Test brackets are intent computed from results (P6); storing
+them in the plot spec would make them stale facts. **Decision.**
+`DifferenceBar.origin`; `scistackplot.diffbars.with_derived_bars` is the one
+merge (derived first, manual wins a duplicate pair). The GUI sends
+`derived_bars` on resolve, export, save and add-to-pipeline, so the export
+matches the preview. **Doc:** [difference-bars.md](difference-bars.md).
+
+## D-2026-10-17-1 — csv-stats owns every descriptive formula; StatStudio is its own studio
+
+**Context.** The preview drew 1.96·SEM and the export drew a bootstrap CI.
+A plan to let scistackplot own "statistics a figure draws" would have given
+mean/SD/CI two owners (csv-stats' test results carry them too).
+**Decision (user).** `csvstats.descriptive` is the one owner. scistackplot
+decides which rows, and how to draw "no interval". StatStudio is a separate
+tab with two-way design sync (`scistackplot.design`), banners in both
+studios, and the link stored on the stats side only. **Docs:**
+[statistics-design.md](statistics-design.md) S10–S21,
+[statistics.md](statistics.md).
+
 ## D-2026-10-14-1 — Automatic text size: ONE reference, stored ratios, per-element bands
 
 Supersedes the per-element search of D-2026-10-06-2 (its band-by-destination,

@@ -1,146 +1,214 @@
 # SciStack
 
+**Spend more time on your science, and less time on the code around it.**
+
+SciStack is made for scientists by scientists. It takes the analysis functions you already write in Python or MATLAB and handles everything around them: looping over every subject, session, or trial; saving and loading results; and keeping a record of how each result was produced.
+
 ```bash
-pip install scistack # Installs tools for Python and MATLAB
+pip install scistack   # one install for Python, MATLAB, the CLI, and the GUI backend
 ```
 
-# Better Research Tools, Better Research Outcomes
+SciStack does not do any analysis itself. It helps you run code-based analyses more effectively, whether you use your own code or build on someone else's.
 
-SciStack is a suite of tools built by scientists for scientists of nearly any discipline to enhance data analysis pipelines. SciStack focuses on the common case of [embarrassingly parallel](https://en.wikipedia.org/wiki/Embarrassingly_parallel) workflows used to process nested datasets. It has three core goals:
+📖 **Documentation:** [Code](https://scistack.readthedocs.io/en/latest/) · [With GUI](https://scistack.readthedocs.io/en/latest/ui/)
 
-1. **Minimalism:** Minimize wasted time and effort, with a focus on reducing boilerplate code and offering advanced capabilities.
-2. **Reusability:** With a near-zero boilerplate format and support for cookie-cutter pipelines, SciStack pipelines are highly interoperable between projects. Thus, SciStack encourages scientific code reuse, an essential yet underutilized scientific work product.
-3. **Openness:** Minimize lock-in to the SciStack framework. SciStack code never touches scientific code, so you can easily change your data processing pipeline architecture at any time.
+---
 
-# SciStack Design
+## Who is SciStack for?
 
-For any project, it's essential to pick the right tool for the job. SciStack - as the name implies - contains a suite of tools in a "stack" of increasing complexity and weight. There are three main tools in this stack:
+SciStack is for researchers who use code to get to their results but don't want to become software engineers. It suits you if:
 
-- `scifor`: The lightest-weight level. Syntactical sugar around nested `for` loops. Operates on in-memory variables only (no file IO) just like standard functions.
-- `scidb`: Wraps `scifor`, adds a SQL database for data save/load and an auditable data processing history
-- `scistack` GUI: Wraps `scidb`, adds a GUI to manage complex pipelines.
+- Your data is **nested**:
+  - participants have sessions, sessions have trials
+  - players have seasons, seasons have games.
+- You run a **series of steps on every piece** of that data: load, filter, compute a metric, summarize.
+- You work in **Python, MATLAB, or both**.
+- You've ever found a file called `results_v2_final_FINAL.csv` and weren't sure what made it.
 
-## `scifor`: syntactic sugar around `for` loops
+No database or software background is needed. If you can write a function, you can use SciStack.
 
-Imagine you are conducting a study of human subjects walking. Each Subject comes in to the lab for multiple Sessions, and in each Session they perform multiple Trials of walking. During each Trial, you measure their speed every 0.1 seconds and store that data to one .csv file for each trial.
+## The problem
 
-### Example `scifor` Pipeline Data Loading Step
+Most analysis code starts out like this:
+
+```python
+for subject in ["S01", "S02", "S03"]:
+    for session in ["pre", "post"]:
+        data = scipy.io.loadmat(f"data/{subject}/{session}/raw.mat")
+        filtered = lowpass_filter(data["force"], cutoff_hz=10)
+        peak = np.max(filtered)
+        np.save(f"results/{subject}_{session}_peak_v2_final.npy", peak)
+```
+
+That works for a while. Then the script grows to hundreds of lines. The analysis gets tangled up with loops, file paths, and naming conventions. Change the cutoff and the old results are overwritten, or you end up with another `_v3` file. Six months later, nobody can say which settings produced the figure in the paper. Sharing the code means sharing hard-coded paths that only work on your computer.
+
+## What SciStack gives you
+
+The same analysis with SciStack:
+
+```python
+def peak_force(force, cutoff_hz):
+    return np.max(lowpass_filter(force, cutoff_hz))
+
+scidb.for_each(peak_force,
+               inputs={"force": RawForce, "cutoff_hz": 10},
+               outputs=[PeakForce],
+               subject=[], session=[])   # [] means "every subject and session"
+```
+
+Your function only contains the science. SciStack:
+
+- **Runs it once for every subject and session**, handing it one piece of data at a time.
+- **Saves each result** in a database file, at its subject and session.
+- **Records how each result was made:** which function, which inputs, and which settings.
+- **Keeps both versions** when you change `cutoff_hz` to 15, instead of overwriting the first.
+- **Lets you load any result later** by asking for it: `PeakForce.load(subject="S01", session="pre")`.
+
+## Three ways to use it
+
+SciStack is a _stack_ of tools. Start with the lightest one that does the job, and move up when you want more.
+
+| Tool             | What it does                                                                                           | Good for                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| **`scifor`**     | Replaces nested `for` loops. Works on tables in memory, with no database.                              | Quick analyses, or adding structure to an existing script                |
+| **`scidb`**      | Everything in `scifor`, plus a database that saves every result along with how it was made.            | Real projects you'll come back to, change, and share                     |
+| **SciStack GUI** | A VS Code extension that draws your `scidb` pipeline as a diagram you can run, inspect, and plot from. | Seeing the whole pipeline at once, and working without writing loop code |
+
+All three work from **Python and MATLAB**. Data saved from one language can be loaded in the other.
+
+## Quick start: the GUI
+
+1. Install the [SciStack Pipeline GUI](https://marketplace.visualstudio.com/items?itemName=scistack.scistack-gui) extension in VS Code.
+2. Pick a Python environment (`Python: Select Interpreter` in the Command Palette) and run `pip install scistack` in it.
+3. Run **`SciStack: Open Pipeline`** from the Command Palette.
+4. Create a new database: give it a name and list your **schema keys**, the levels your data is organized by, such as `subject, session, trial`.
+
+That's it. You'll see a blank canvas, ready for your first function. The [With GUI docs](https://scistack.readthedocs.io/en/latest/ui/) walk through the rest.
+
+## Quick start: code
+
+### Step 1: Replace your loops with `scifor`
+
+No database and no setup beyond naming your schema keys:
 
 ```python
 import scifor
-import pandas as pd
 
-# Tell `scifor` about the structure of this dataset
-scifor.set_schema(["subject", "session", "trial"]) # ordered one-to-many
+scifor.set_schema(["subject", "session"])
 
-def load_data(file_path: str) -> pd.DataFrame:
-    """Example logic to load the data"""
-    return pd.read_csv(file_path)
-
-path_template = scifor.PathInput("path/to/data/{subject}/{session}/{trial}.csv", name="trial_data")
-loaded_df = scifor.for_each(load_data,
-    file_path=path_template,
-    subject=[], session=[], trial=[],
-    output_names=["Loaded"]
+results = scifor.for_each(
+    peak_force,
+    inputs={"force": force_table, "cutoff_hz": 10},
+    subject=[1, 2, 3],
+    session=["pre", "post"],
 )
 ```
 
-In this example step, after defining a basic `load_data()` function, we:
+For each of the 6 combinations, `scifor` takes the matching rows of `force_table`, passes the `force` column to `peak_force`, and collects the answers into one table with `subject`, `session`, and result columns.
 
-1. Defined a `scifor.PathInput`, providing a template to load all of the files of interest.
-2. Invoked the main command `scifor.for_each()`, providing `load_data` as the function, `file_path` as the input variable, and specifying to run `load_data` once over every combination of `subject`, `session`, and `trial` that match the `scifor.PathInput` path template.
-3. `loaded_df` is a `pd.DataFrame` with one row per `subject`, `session`, and `trial` combination. The data is stored into the `"Loaded"` field specified in the optional `output_names` parameter (default output name: `"value"`).
+```matlab
+scifor.set_schema(["subject", "session"]);
 
-### Example `scifor` Pipeline Data Processing Step
+results = scifor.for_each(@peak_force, ...
+    struct("force", force_table, "cutoff_hz", 10), ...
+    subject=[1, 2, 3], session=["pre", "post"]);
+```
+
+### Step 2: Keep your results with `scidb`
+
+One hundred shoppers each rated three brands of popcorn from 1 to 10. Which brand is best?
 
 ```python
 import numpy as np
+import pandas as pd
+import scidb
+from scidb import BaseVariable
 
-def process_data(speed: np.ndarray) -> np.ndarray:
-    """Square every data point"""
-    return np.square(speed)
+# A variable is a named kind of data. Declaring one takes one line.
+class Rating(BaseVariable):
+    """One participant's rating of one brand."""
 
-squared_df = scifor.for_each(process_data,
-    speed=loaded_df,
-    subject=[], session=[], trial=[]
-)
+class BrandSummary(BaseVariable):
+    """The mean and SD of one brand's ratings."""
+
+def load_ratings(csv_path):
+    return pd.read_csv(csv_path)
+
+def summarize(ratings):
+    r = np.ravel(ratings)
+    return pd.DataFrame({"mean": [r.mean()], "sd": [r.std(ddof=1)]})
+
+# Create (or open) the database. Each rating lives at a participant and a brand.
+scidb.configure_database("popcorn.duckdb", ["participant", "brand"])
+
+# Import the CSV: each row becomes its own Rating record
+scidb.for_each(load_ratings, inputs={"csv_path": "popcorn_ratings.csv"}, outputs=[Rating])
+
+# One summary per brand
+scidb.for_each(summarize, inputs={"ratings": Rating["rating"]},
+               outputs=[BrandSummary], brand=[])
 ```
 
-`scifor.for_each` automatically parses `loaded_df`, repeatedly inputting only the `speed` values for one combination of `subject`, `session`, `trial`, allowing `process_data()` to remain very simple and ignore the structure of this project's dataset.
+Close Python, come back next week, and everything is still there:
 
-To see more, refer to the `scifor` docs.
+```python
+db = scidb.configure_database("popcorn.duckdb", ["participant", "brand"])
 
-## `scidb`
-
-## `scistack` GUI
-
-<!--
-## Three Layers, Use What You Need
-
-SciStack replaces all of it with three ideas:
-
-- **Named variable types** — instead of files on disk, your data lives in typed database tables you can query by metadata
-- **Automatic lineage** — a simple decorator records exactly what function and inputs produced each result
-- **Computation caching** — if you've already computed something, SciStack knows and skips it
-
-And because analysis doesn't end at processing, **figures and statistics are pipeline steps too**: `plot_`/`stat_` functions get the same caching and lineage, every figure carries an embedded provenance stamp back to its exact data, and `scidb report` collects everything into a shareable page ([details below](#from-pipeline-to-paper-visualization--statistics)).
-
-With SciStack, your analysis scripts contain _only_ analysis logic. The infrastructure is handled for you.
-
-## Package Architecture
-
-SciStack is a stack of libraries. You can enter at any level — each layer adds more features at the cost of a bit more setup.
-
+BrandSummary.load(brand="KettleKing").data         # the saved result
+db.get_provenance(BrandSummary, brand="KettleKing")  # how it was made
 ```
 
-┌────────────────────────────────────────────────────────────────────┐
-│ scihist │
-│ One-import entry point: for_each() with automatic DB load/save │
-│ and lineage tracking. Re-exports everything from the layers below │
-│ deps: scidb + scilineage │
-├───────────────────────────────┬────────────────────────────────────┤
-│ scidb │ scilineage │
-│ Typed variable storage; │ Wraps any function to record its │
-│ configure_database(), │ full computational lineage. │
-│ for_each() that loads from │ Enables caching and provenance │
-│ DB and saves results back │ queries — no DB required. │
-│ deps: scifor + sciduck + │ deps: canonical-hash │
-│ canonical-hash + │ │
-│ path-gen │ │
-├───────────────────────────────┴────────────────────────────────────┤
-│ scifor │
-│ Batch execution on plain tables / DataFrames — iterates over │
-│ condition combinations, slices data, collects results. │
-│ No database, no tracking, no dependencies. │
-└────────────────────────────────────────────────────────────────────┘
+Running the script again doesn't create duplicates, so you can re-run after any change without cleaning up first.
 
-````
+The [Best Popcorn](https://scistack.readthedocs.io/en/latest/examples/best-popcorn-scidb/) and [Best Player](https://scistack.readthedocs.io/en/latest/examples/best-player-scidb/) examples go through complete analyses, in both Python and MATLAB.
 
-**scifor** is the foundation: a standalone batch execution engine that works with plain MATLAB tables or pandas DataFrames. There is no setup overhead — just give it a function, your data, and the experimental conditions to iterate over.
+## Big wins, small effort
 
-**scidb** adds typed, versioned database storage so your variables live in queryable DuckDB tables instead of scattered files on disk. It provides `configure_database()`, `BaseVariable`, and a `for_each()` that automatically loads inputs from the database and saves results back.
+These features take a line or two of code (or a click) and save the most time:
 
-**scilineage** is an independent parallel track that has no database dependency. It wraps functions with `@lineage_fcn` to record exactly what function and inputs produced each result. This unlocks caching (skip re-running a computation whose inputs haven't changed) and provenance queries.
+| You write...                                         | You get...                                                                                                                               |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `subject=[], session=[]`                             | Your function runs on every combination, with no loops to maintain. Add a subject and it's included on the next run.                     |
+| `outputs=[MyResult]`                                 | Every result is saved at its subject, session, or trial. No file names, no folders, no overwriting.                                      |
+| _Nothing extra_                                      | Every result records the function, inputs, and settings that produced it, so you can trace any number back to the raw file it came from. |
+| `EachOf(10, 15, 20)`                                 | One run tries every setting. All the results are kept and labelled with their settings, so you can compare them side by side.            |
+| `scidb.exclude_schema(subject=3, reason="withdrew")` | Subject 3 is skipped by every step, including ones you write later. Nothing is deleted, the reason is saved, and you can undo it.        |
+| `scidb inventory --keys subject,session`             | A list of which subject and session combinations have data and which are missing.                                                        |
+| `scidb trace PeakForce subject=S01 session=pre`      | The full history of one result, from the terminal.                                                                                       |
 
-**scihist** brings everything together. Its `for_each()` automatically wraps your functions in `@lineage_fcn`, loads inputs from the database, and saves outputs back with full lineage attached. It also re-exports the entire API from the layers below, so most users can `from scihist import *` and have everything they need.
+## Your data isn't locked away
 
-Each layer can be used independently. `scifor` is useful when your data is already in memory and you just want structured batch processing. `scilineage` can be dropped into any pipeline to add provenance without touching your storage layer. `scidb` gives you the database without requiring lineage tracking. `scihist` is the recommended starting point for new pipelines that want the full feature set.
+Everything (your data and its history) lives in **one [DuckDB](https://duckdb.org/) file** next to your code. Each variable gets a readable table you can open in [DBeaver](https://dbeaver.io/), the DuckDB command line, or any SQL tool:
 
-## Quick Start
-
-### Installation
-
-```bash
-pip install scistack
-````
-
-This installs `scistack-db` (the `scidb` package) and `scimatlab` directly, which in turn pull in `sciduckdb`, `scipathgen`, `scicanonicalhash`, `scifor`, and `scistacklog`. `scihist` is a separate, higher-level package (it depends on `scidb` + `scilineage`) and is not installed automatically — install it explicitly if you want its `for_each()` with automatic lineage tracking:
-
-```bash
-pip install scihist
+```sql
+SELECT participant, brand, rating FROM Rating;
 ```
 
-For development (editable installs of all packages):
+You don't need Python or MATLAB to look at your results, and you're not tied to SciStack to get them back out. Your functions are plain functions: they take normal arrays and tables and return normal values, so they work with or without SciStack.
+
+## The GUI at a glance
+
+The SciStack GUI runs inside VS Code, next to your code:
+
+- **See the whole pipeline.** Functions and variables are drawn as a diagram, connected by what feeds into what.
+- **Know what's up to date.** Each step is coloured by whether its results are current, so you can see what needs re-running after you edit a function.
+- **Run from the canvas.** Run one step or the whole pipeline, and watch the progress.
+- **Plot without writing plotting code.** Plot Studio turns any variable into a publication-ready figure: group by condition, split into panels, choose colours, and save.
+- **Compare versions.** When a change in settings or code produces several versions of a result, the Variants view lists them side by side.
+- **Find missing data.** The Inventory shows which combinations of your schema keys have no data.
+- **Share a project.** Export the project as a bundle that a colleague can import and re-run.
+
+## Learn more
+
+- **[Installation](https://scistack.readthedocs.io/en/latest/getting-started/installation/)**, including one-time MATLAB setup
+- **[What's a schema?](https://scistack.readthedocs.io/en/latest/getting-started/whats-a-schema/)**: the one design decision to make before you start
+- **[Create a new project](https://scistack.readthedocs.io/en/latest/getting-started/create-new-project/)** (or [with the GUI](https://scistack.readthedocs.io/en/latest/ui/getting-started/create-new-project/))
+- **[Example projects](https://scistack.readthedocs.io/en/latest/examples/best-popcorn-scifor/)**: complete analyses, start to finish
+- **[API reference](https://scistack.readthedocs.io/en/latest/api/scifor/)**
+
+## Contributing
+
+SciStack is in beta and under active development. To work on it locally:
 
 ```bash
 git clone https://github.com/mtillman14/scistack
@@ -148,433 +216,4 @@ cd scistack
 ./dev-install.sh
 ```
 
-### One-Time Setup
-
-Every project starts by configuring a database. You do this once.
-
-```python
-from scifor import set_schema, for_each
-
-set_schema(["subject", "session"])
-
-results = for_each(
-    bandpass_filter,
-    inputs={"signal": raw_df, "low_hz": 20},
-    subject=[1, 2, 3],
-    session=["pre", "post"],
-)
-```
-
-`dataset_schema_keys` describes the structure of your experiment. If your data is organized by subject and session, say so — SciStack uses this to let you save and query data naturally.
-
-results = scifor.for_each(@bandpass_filter, ...
-struct('signal', raw_tbl, 'low_hz', 20), ...
-subject=[1, 2, 3], session=["pre", "post"]);
-
-````
-
-You tell scifor which columns identify your experimental conditions (the "schema"), and it loops over every combination, filters each table to matching rows, calls your function, and collects the results into a clean output table.
-
-scifor is standalone and has no dependencies beyond standard data structures. It can be dropped into any project.
-
-See the [scifor README](scifor/README.md) for more.
-
-### Layer 2: scidb — Database Storage
-
-Wraps scifor with a database layer. Instead of working with tables you've already loaded, scidb loads inputs from a DuckDB database and saves results back. You define named variable types for each kind of data in your pipeline, and scidb gives you structured, queryable storage with metadata-based addressing.
-
-```python
-from scidb import BaseVariable, configure_database, for_each
-
-# One-time setup
-db = configure_database("experiment.duckdb", ["subject", "session"])
-
-# Define variable types (one-liners)
-class RawEMG(BaseVariable):
-    pass
-
-class FilteredEMG(BaseVariable):
-    pass
-
-class MaxActivation(BaseVariable):
-    pass
-````
-
-That's it. No configuration, no serialization code. SciStack handles numpy arrays, scalars, lists, dicts, and DataFrames natively.
-
-### Save and Load Data
-
-```python
-import numpy as np
-RawEMG.save(np.random.randn(1000), subject=1, session="pre")
-
-# Load it back
-raw = RawEMG.load(subject=1, session="pre")
-print(raw.data)  # your numpy array
-
-# Batch processing — loads from DB, runs function, saves results
-for_each(
-    bandpass_filter,
-    inputs={"signal": RawEMG, "low_hz": 20},
-    outputs=[FilteredEMG],
-    subject=[1, 2, 3],
-    session=["pre", "post"],
-)
-```
-
-````matlab
-scidb.configure_database("experiment.duckdb", ["subject", "session"]);
-
-RawEMG().save(randn(1000, 1), subject=1, session="pre");
-raw = RawEMG().load(subject=1, session="pre");
-
-Wrap your analysis functions with `@lineage_fcn` and SciStack records which functions produced what **and the input variable values** — automatically:
-
-```python
-from scilineage import lineage_fcn
-
-@lineage_fcn
-def bandpass_filter(signal, low_hz, high_hz):
-    # your filtering logic
-    return filtered_signal
-
-# Run the pipeline — lineage is tracked automatically
-raw = RawEMG.load(subject=1, session="pre")
-filtered = bandpass_filter(raw, low_hz=20, high_hz=450)
-FilteredEMG.save(filtered, subject=1, session="pre")
-
-# Later: "What function produced this?"
-provenance = db.get_provenance(FilteredEMG, subject=1, session="pre")
-print(provenance["function_name"])  # "bandpass_filter"
-print(provenance["constants"])      # {"low_hz": 20, "high_hz": 450}
-
-# Run the same pipeline again — cache hit, no recomputation
-filtered = bandpass_filter(raw, low_hz=20, high_hz=450)  # returns instantly
-````
-
-Your functions stay clean, no boilerplate required. They receive normal numpy arrays and return normal values. The `@lineage_fcn` decorator handles all the bookkeeping at the boundary.
-
-If the `@lineage_fcn` decorator is still too close to your code for your test, wrap it in a `Thunk()` call later on:
-
-```python
-
-from scidb.thunk import Thunk
-
-compute_max = Thunk(compute_max)
-```
-
-**Run the same pipeline again and every step is skipped** — SciStack recognizes the same function + same inputs and returns the cached result instantly.
-
-## Scaling Up with `for_each()`
-
-Real experiments can have dozens of subjects and conditions, or thousands. SciStack can handle it all, using `for_each()` runs your pipeline over every combination automatically:
-
-```python
-from scidb import for_each
-
-# 5 subjects
-for_each(
-    bandpass_filter,
-    inputs={"signal": RawEMG},
-    outputs=[FilteredEMG],
-    subject=[1, 2, 3, 4, 5],
-    session=["baseline", "post"],
-)
-
-# 10,000 subjects
-for_each(
-    bandpass_filter,
-    inputs={"signal": RawEMG},
-    outputs=[FilteredEMG],
-    subject=range(1,10000),
-    session=["baseline", "post"],
-)
-
-# Specify subject list of any size
-subject_list = config["subjects"] # Load from some configuration file
-for_each(
-    bandpass_filter,
-    inputs={"signal": RawEMG},
-    outputs=[FilteredEMG],
-    subject=subject_list,
-    session=["baseline", "post"],
-)
-```
-
-This loads `RawEMG` for each subject/session combination, runs `bandpass_filter`, and saves the result as `FilteredEMG` — multiple iterations, zero boilerplate. If a subject is missing data, that iteration is skipped gracefully, and every run is documented as it happens: the console shows a concise narrative (run banner, periodic progress, and an end-of-run summary of what completed, what failed and why, and what was skipped as already up to date), while `scidb.log` next to the database records the same story with timestamps and the originating scistack layer on every line. For debugging, set `SCIDB_LOG_LEVEL=DEBUG` (or `Log.set_level("DEBUG", sink="file")`) to capture the full execution trace — per-iteration detail, internal steps with durations, and `[timing]` breakdowns of the hot paths.
-
-Need one input to stay fixed while others iterate? Use `Fixed`:
-
-```python
-from scidb import Fixed
-
-for_each(
-    compare_to_baseline,
-    inputs={
-        "baseline": Fixed(RawEMG, session="baseline"),  # always load baseline
-        "current": RawEMG,                               # iterates normally
-    },
-    outputs=[Delta],
-    subject=[1, 2, 3, 4, 5],
-    session=["post_1", "post_2", "post_3"],
-)
-```
-
-## Powerful Querying
-
-Because your data lives in a real database (not scattered files), querying is simple and powerful:
-
-```python
-# Load one specific record
-emg = FilteredEMG.load(subject=3, session="post")
-
-# Load all sessions for a subject — returns a list
-all_sessions = FilteredEMG.load(subject=3)
-for var in all_sessions:
-    print(var.metadata["session"], var.data.shape)
-
-# Load everything as a DataFrame for analysis
-import pandas as pd
-df = MaxActivation.load(as_df=True)
-#   subject  session    data
-#   1        baseline   0.82
-#   1        post       1.47
-#   2        baseline   0.91
-#   ...
-```
-
-No folder traversal. No filename parsing. No `results_v2_final_FINAL.csv`. Just ask for what you want by the metadata that matters.
-
-### Your Data Is Not Locked Away
-
-Worried that putting data in a database means you can't see or inspect it? Don't be. SciStack uses [DuckDB](https://duckdb.org/) under the hood, and every variable type gets a human-readable **view** that you can query directly with SQL — in DBeaver, the DuckDB CLI, or any tool that speaks SQL.
-
-For example, the `MaxActivation` view looks like this:
-
-| subject | session  | value |
-| ------- | -------- | ----- |
-| 1       | baseline | 0.82  |
-| 1       | post     | 1.47  |
-| 2       | baseline | 0.91  |
-| 2       | post     | 1.38  |
-| 3       | baseline | 0.76  |
-| 3       | post     | 1.22  |
-
-You can query it directly:
-
-```sql
-SELECT subject, session, value
-FROM MaxActivation;
-```
-
-Or use database viewer tools like [DBeaver](https://dbeaver.com) to view the database directly.
-
-Your data is always one SQL query or visualization away — no Python or MATLAB required.
-
-## Works in MATLAB Too
-
-SciStack isn't Python-only. The entire framework works in MATLAB with a nearly identical API:
-
-```matlab
-db = scihist.configure_database("experiment.duckdb", ["subject", "session"]);
-
-filter_fn = scidb.Thunk(@bandpass_filter);
-raw = RawEMG().load(subject=1, session="pre");
-filtered = filter_fn(raw, 20, 450);
-FilteredEMG().save(filtered, subject=1, session="pre");
-```
-
-Your functions stay as plain functions — they receive normal arrays and return normal values. The `@lineage_fcn` decorator handles the bookkeeping at the boundary.
-
-## What a Full Pipeline Looks Like
-
-Here's a complete pipeline using all three layers:
-
-```python
-from scidb import BaseVariable, configure_database, for_each
-from scilineage import lineage_fcn
-
-# --- Setup ---
-db = configure_database("gait_study.duckdb", ["subject", "session", "trial"])
-
-# --- Variable types ---
-class RawKinematicData(BaseVariable):
-    pass
-
-class StepLength(BaseVariable):
-    pass
-
-class MeanStepLength(BaseVariable):
-    pass
-
-# --- Processing functions ---
-@lineage_fcn
-def extract_step_length(kinematic_data):
-    # your biomechanics logic here
-    return step_lengths
-
-@lineage_fcn
-def compute_mean(values):
-    return float(np.mean(values))
-
-# --- Run the pipeline ---
-for_each(
-    extract_step_length,
-    inputs={"kinematic_data": RawKinematicData},
-    outputs=[StepLength],
-    subject=[1, 2, 3],
-    session=["pre", "post"],
-    trial=[1, 2, 3, 4, 5],
-)
-
-for_each(
-    compute_mean,
-    inputs={"values": StepLength},
-    outputs=[MeanStepLength],
-    subject=[1, 2, 3],
-    session=["pre", "post"],
-)
-
-# --- Analyze results ---
-df = MeanStepLength.load(as_df=True)
-print(df.groupby("session")["data"].mean())
-```
-
-No file I/O code. No path management. No version tracking logic.
-
-Want to change the function logic? SciStack will automatically detect the change, and will re-run that processing step on the next run of the script. Want to change a setting to the function? SciStack will detect that too, and re-run the processing step. Data will be saved to the database, **and the previous data will be preserved**. Understanding the effect of analysis decisions on our results has never been easier.
-
-```python
-# Load one record
-emg = FilteredEMG.load(subject=3, session="post")
-
-# Load all sessions for a subject
-all_sessions = FilteredEMG.load(subject=3)
-
-# Load everything as a DataFrame
-df = FilteredEMG.load(as_df=True)
-```
-
-```sql
-SELECT subject, session, value
-FROM FilteredEMG;
-```
-
-By abstracting away all infrastructure — file paths, storage formats, naming conventions — SciStack decouples your analysis logic from your local environment. Your pipeline code contains _only_ the scientific computation.
-
-Data saved from Python can be loaded in MATLAB and vice versa. The MATLAB API mirrors the Python API closely:
-
-Today, sharing a pipeline means sharing a pile of scripts with hardcoded paths and implicit assumptions. With SciStack, the pipeline _is_ the science, and the infrastructure adapts to wherever it runs.
-
-## From Pipeline to Paper: Visualization & Statistics
-
-Data analysis is more than processing — it ends in **figures** and
-**statistics**. SciStack treats both as first-class pipeline endpoints: your
-plotting and stats functions run through the same `for_each`, with the same
-caching, lineage, and variant tracking as every other step.
-
-### Figures (`plot_` functions)
-
-Name a function with the `plot_` prefix, return a figure, and tell SciStack
-where the file goes. The framework renders, saves, and tracks it:
-
-```python
-def plot_timeseries(signal, filename):
-    fig, ax = plt.subplots()
-    ax.plot(signal)
-    return fig    # SciStack saves it to `filename` and closes it
-
-for_each(
-    plot_timeseries,
-    inputs={"signal": FilteredEMG,
-            "filename": PathOutput("plots/{subject}_{trial}.png")},
-    outputs=[EMGFigure],
-    subject=[1, 2, 3], trial=[1, 2, 3],
-)
-```
-
-**Draft by default.** Styling a figure takes dozens of iterations — so by
-default nothing is recorded while you tweak. When the figure is right, add
-`finalized=True` and the path is stored as a queryable record with full
-lineage (and `skip_computed=True` skips unchanged figures on re-runs).
-
-**Every figure knows where it came from.** SciStack embeds a provenance
-stamp _inside_ the image file (PNG/SVG/PDF): the record it belongs to, the
-function and exact input records that produced it. Find a figure in a paper
-draft two years from now and trace it straight back to its data:
-
-```python
-from scidb import read_artifact_stamp
-read_artifact_stamp("plots/1_2.png")
-# {'record_id': 'a1b2c3…', 'function': 'plot_timeseries',
-#  'inputs': {'signal': ['9e4bdc…']}, 'schema': {'subject': '1', 'trial': '2'}, …}
-```
-
-### Statistics (`stat_` functions)
-
-Name a function with the `stat_` prefix and return a result dict — it is
-stored as a queryable JSON record. Your stats receive the **long-format
-table** (schema keys as columns), which is exactly what stats packages
-expect:
-
-```python
-def stat_step_length(df, filename):
-    from csvstats.ttest import ttest_dep
-    return ttest_dep(df, "session", "StepLength",
-                     repeated_measures_column="subject", filename=filename)
-
-for_each(stat_step_length,
-         inputs={"df": StepLength,
-                 "filename": PathOutput("reports/step_length_ttest.pdf")},
-         outputs=[StepLengthTTest],
-         finalized=True)        # no iteration keys: all subjects fan in
-```
-
-Drafts print the result instead of saving it — explore interactively, then
-finalize.
-
-### One result per analysis decision — automatically
-
-Ran your filter at two cutoffs? SciStack already keeps both variants of the
-data. Every endpoint (and every aggregation) runs **once per variant**: two
-`low_hz` settings mean two t-tests and two figures, each labeled with its
-settings — never silently pooled. Path templates can name the variant so
-files don't collide:
-
-```python
-PathOutput("plots/{subject}_{low_hz}.png")   # one file per filter setting
-```
-
-(and if a template _would_ make two variants overwrite each other's file,
-SciStack refuses and tells you the one-line fix). To deliberately pool
-variants — e.g. a robustness/multiverse analysis across all your pipeline
-decisions — wrap the input in `AcrossVariants(...)` and the settings arrive
-as columns.
-
-### Your report, one command
-
-When the figures and stats are finalized, collect them all:
-
-```bash
-scidb report db experiment.duckdb -o reports/paper1
-```
-
-This writes a self-contained HTML page — every figure (grouped by function,
-labeled with its subject/session and settings), every stats result as a
-table, plus a `stats.csv` you can paste into a manuscript and a
-`manifest.json` for tooling. Artifacts are copied in and stamp-verified: if
-a figure file was overwritten since its record was saved, the report flags
-it as **stale** instead of letting you publish it.
-
-All of it works identically from MATLAB — `plot_`/`stat_` functions,
-`finalized`, `scifor.PathOutput`, `scidb.AcrossVariants`, and the same
-report command.
-
-## Learn More
-
-- [Quickstart Guide](docs/quickstart.md) — Get running in 5 minutes
-- [VO2 Max Walkthrough](docs/guide/walkthrough.md) — Full example pipeline with design explanations
-- [Variables Guide](docs/guide/variables.md) — Deep dive into variable types
-- [Lineage Guide](docs/guide/lineage.md) — How provenance tracking works
-- [Batch Processing Guide](docs/guide/for_each.md) — for_each in depth
-- [API Reference](docs/api.md) — Complete API documentation -->
+See the [contributing guide](https://github.com/mtillman14/scistack/blob/main/docs/project/contributing.md) for details. Bug reports and feature requests are welcome on the [issue tracker](https://github.com/mtillman14/scistack/issues).

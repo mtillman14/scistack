@@ -249,7 +249,7 @@ post-hoc tests are a csv-stats gap).
 - Tests: family membership per scope, refusals not raised, determinism, and
   primary comparisons present when the interaction p > α.
 
-### Stage 8 — Format, caption, export ✅ built 2026-10-17, tests unrun
+### Stage 8 — Format, caption, export ✅ built 2026-10-17, tests pass, committed 26ac16ee
 
 As built: `format.py` turns results into `Grid`s (header rows with spans,
 string cells, caption, notes). `export.py` renders a Grid as txt, md, csv,
@@ -271,7 +271,12 @@ metadata yet.
 - Tests: golden strings; LaTeX and HTML escaping; the caption names the unit
   and the collapse.
 
-### Stage 9 — Persistence: saved stats + presets + link
+### Stage 9 — Persistence: saved stats + presets + link ✅ built 2026-10-17, tests unrun
+
+As built: `scistackstats.restore` (salvage + `STATS_SETTINGS`),
+`scistackstatsdb.saved` (`_stats_spec`, `_stats_preset`), and a bundle
+section registered in `scistack_gui.headless.bundle_providers`.
+
 
 - `scistackstatsdb/saved.py` on `VersionedStore`, in its own table.
   `linked_stats_for(saved_plot_id)`. Stats presets (settings minus DVs)
@@ -280,7 +285,12 @@ metadata yet.
 - Tests: a round trip with every field non-default; an unknown test id is
   kept inert with a note; the link query.
 
-### Stage 10 — Overlays (closing the cycle, part 1)
+### Stage 10 — Overlays ✅ built 2026-10-17, tests unrun
+
+As built: `DifferenceBar.origin` + `with_derived_bars` (no `resolve(...,
+derived_bars=)` signature change); `StatsSpec.overlay`;
+`scistackstats.overlays.bars_for`. `SpanShade` (SPM shading) is deferred.
+
 
 - scistackplot generic hooks: `DifferenceBar.origin`, `resolve(...,
   derived_bars=)` (manual wins on a duplicate pair, with a WARN), and
@@ -290,7 +300,12 @@ metadata yet.
 - Tests: preview/export parity for derived bars; the guard; the import
   direction is still clean.
 
-### Stage 11 — Endpoint + code export (closing the cycle, part 2)
+### Stage 11 — Endpoint + code export ✅ built 2026-10-17, tests unrun
+
+As built (D-2026-10-17-3): the generated `stat_` function embeds the spec
+and CALLS scistackstats. It does not restate the statistics. It refuses
+ColName DVs, joined factors, variants and an x variable.
+
 
 - `codegen.generate_stats_function`, reusing scistackplot's `_preamble`
   (made public). Parity: running the generated code gives JSON equal to
@@ -298,7 +313,14 @@ metadata yet.
 - `scistackstatsdb.endpoint`: `stat_<name>` with no iteration keys (P7).
   Lineage and staleness come for free.
 
-### Stage 12 — GUI
+### Stage 12 — GUI ✅ built 2026-10-17 (frontend + extension tests pass, bundles rebuilt; pytest unrun)
+
+As built: StatStudio is the `stat` view of the same webview tab
+(`extension/src/plotPanel.ts`: `open_stat_panel`, `broadcast_panels`);
+`api/stats.py` + `services/stats_service.py`; `StatStudio/` +
+`PlotStudio/StatsLink.tsx`; plot resolve/export/save take `derived_bars`.
+Compute is one RPC (P8 job deferred). Manual testing §0zzzzg.
+
 
 Backend (`scistack-gui`): `api/stats.py` + `services/stats_service.py`
 - handlers: `stats_open` (seed or saved), `stats_catalog`, `stats_describe`,
@@ -322,13 +344,24 @@ Frontend: a new `StatStudio/` webview tab (one per spec)
   shared token set). Rebuild **both** vite targets. Manual-testing doc
   entries per section.
 
-### Stage 13 — Sweep, SPM (after the core works)
+### Stage 13 — Sweep, SPM ✅ built 2026-10-17, tests unrun
+
+As built: `variant_mode="sweep"` (variant axes become strata), a `variants`
+correction family, and `format.sweep_grid` (the specification curve as a
+table; the plot is deferred). SPM: `scistackplot.export.sample_curves`,
+`csvstats.core.spm_ttest` (needs spm1d), family `spm` (pairwise only; SPM
+ANOVA and figure shading deferred).
+
 
 - The variant sweep (S3/S7) over `scistackplotdb.variants`, and
   `sample_curves` + SPM through csv-stats (S4, O8). Both are mostly blocked
   on csv-stats, so they come last.
 
-### Stage 14 — Docs
+### Stage 14 — Docs ✅ 2026-10-17
+
+`docs/claude/statistics.md`, `stat-studio-controls.md`, ADRs
+D-2026-10-17-1..3, difference-bars.md "Derived bars", saved-plots.md.
+
 
 - `docs/claude/statistics.md` (owners, data flow, traps) and
   `stat-studio-controls.md` (a control map like plot-studio-controls).

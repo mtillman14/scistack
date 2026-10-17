@@ -11,6 +11,57 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzg. StatStudio: open from a figure, tables, sync, brackets, pipeline — added 2026-10-17
+
+What changed (statistics plan Stages 9–13; control map
+`docs/claude/stat-studio-controls.md`): StatStudio is its own tab
+(Descriptives | Comparisons). It opens from Plot Studio, has a design banner
+and two-way Sync, saved tables and presets, test brackets on the linked
+figure, export (Word-pasteable HTML), Add to pipeline, the variant sweep and
+SPM.
+
+**Backend:** `.venv/bin/pip install -e ./scistackstats ./scistackstatsdb --no-deps`
+(and `-e "./csv-stats[full]"` if not done), then reload the VS Code window.
+For SPM also `pip install spm1d`.
+
+**Frontend**
+1. Open Plot Studio on a scalar variable (Better Popcorn ratings). Make a
+   bar plot: brand grouped, subject collapsed, mean ± SD. **Save** the plot,
+   then click **StatStudio** in the figure toolbar. A "Stats — Ratings" tab
+   opens with a note "Set up from the figure: ± SD in the figure: mean (SD)".
+2. **Descriptives** shows a table: one column per brand, a Mean (SD) row and
+   an n row, and a caption saying one value per subject (trials averaged
+   within subject first) and "SD uses n − 1."
+3. **Comparisons** shows paired t-tests (brand is within-subject) with a
+   Δ [95% CI] column, Holm-adjusted p, Cohen's d_z, an omnibus table with
+   Generalized η², and sentences. The rail ▸ Design readout says
+   "brand: within".
+4. Change **Cell** to Median [Q1, Q3], and tick Skewness. The table updates.
+   Change the Family to nonparametric: the tests become Wilcoxon and Friedman.
+5. Rail ▸ Design: set brand to "Separate tables". A **banner** appears:
+   "This table's design differs from the figure …". Click **Sync to
+   PlotStudio**: the saved plot gets a new version, and the open Plot Studio
+   tab (same plot) changes to the same roles.
+6. Name the table, click **Save**. In Plot Studio (saved plot open), change a
+   grouping. The toolbar shows "Stats table … differs" and **Sync to
+   StatStudio**. Click it: StatStudio's design follows.
+7. In StatStudio tick **Draw test brackets on the linked figure**, then
+   **Save**. In Plot Studio the significant brand pairs get * / ** brackets.
+   **Save figure** / **Export code**: the brackets are in the file too.
+8. Format = html, **Copy**, paste into Word: a table with rules, a caption
+   and notes. Try md / csv / latex with **Save to file…**.
+9. **Add to pipeline**: writes `stat_ratings` to `scistack_stats.py` and
+   declares `RatingsStats`; the message shows the `for_each` call.
+10. A variable with variants: rail ▸ Variants = Sweep. Comparisons gains a
+    "Variant sweep" table (one row per variant per pair).
+11. (spm1d installed) a 1-D variable, Family = spm: comparisons list
+    supra-threshold clusters ("nodes 34.0–58.0 (p = .003)") and t*.
+12. `scidb.log`: `[stats rows]`, `[design]`, `[stats] … family statement`,
+    `[timing] stats_run`, `[stats] compute … in …s`, `difference bars: N
+    derived (test)`.
+
+---
+
 ## 0zzzzf. 95% CI error bars are t-based, in the preview and in exported code — added 2026-10-17
 
 What changed (statistics plan Stage 1, `.claude/plan-statistics.md`): the
