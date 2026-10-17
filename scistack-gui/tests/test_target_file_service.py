@@ -190,6 +190,39 @@ class TestCreateWritesToml:
         assert '"StepLength"' in entities.read_text()
         assert "StepLength" in BaseVariable._all_subclasses
 
+    def test_create_into_a_file_without_a_final_newline(self, populated_db, tmp_path):
+        """scidb.log 2026-10-17: creating `popcorn_path` glued it onto the
+        last line of a hand-edited file and every declaration in it vanished."""
+        from scidb.entities import load
+
+        from scistack_gui.services.path_input_service import create_path_input
+
+        entities = self._project(tmp_path)
+        entities.write_text('variables = []\n\n[path_inputs]\nOLD = "a.xlsx"')
+        _registry.reload_entities_file()
+
+        assert create_path_input("NEW", "")["ok"]
+
+        result = load(entities)
+        assert result.errors == []
+        assert set(result.path_inputs) == {"OLD", "NEW"}
+
+    def test_a_write_that_would_not_parse_is_refused(self, populated_db, tmp_path):
+        """The gate in _atomic_write: an unparseable result never reaches
+        disk, and the caller gets an error instead of a silent success."""
+        from scistack_gui.services.target_file_service import write_entity
+
+        entities = self._project(tmp_path)
+        before = entities.read_text()
+
+        error = write_entity(
+            entities, section="parameters", name="BAD", rendered='"unterminated'
+        )
+
+        assert error is not None and not error["ok"]
+        assert "nothing was written" in error["error"]
+        assert entities.read_text() == before
+
     def test_two_creates_land_in_one_valid_file(self, populated_db, tmp_path):
         """Each write re-parses the whole file, so a second create must not
         corrupt what the first wrote."""

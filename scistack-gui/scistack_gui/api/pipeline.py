@@ -454,6 +454,7 @@ def _compute_run_states(
     *,
     propagation_input_params: dict[tuple, dict] | None = None,
     hidden_fkeys: set[tuple] | None = None,
+    unproduced_outputs: dict[tuple, list[str]] | None = None,
 ) -> dict[str, str]:
     """
     Compute run_state for every function and variable node.
@@ -477,6 +478,11 @@ def _compute_run_states(
       question is "has this call site done its recorded work", which the drawn
       edge does not change — and neither does anything that derives an id, since
       ``wiring_id`` hashes these params. Defaults to ``fn_input_params``.
+
+      ``unproduced_outputs`` (graph_builder.unproduced_output_fkeys) are call
+      sites whose node is DRAWN to write a variable it has never recorded. Pass
+      1 answers from the recorded outputs only, so those are forced red here,
+      before the cascade, which then carries the red downstream.
 
     Returns {node_id: "green"|"red"} for fn__ and var__ nodes — real,
     recorded call sites only. "pending" (an unrun staged constant value)
@@ -563,6 +569,18 @@ def _compute_run_states(
             )
         else:
             # Function not in results (no outputs or error) → mark as red
+            fn_own_state[fkey] = "red"
+
+    for fkey, missing in (unproduced_outputs or {}).items():
+        if fkey in fn_own_state and fn_own_state[fkey] != "red":
+            logger.info(
+                "state(%s call_id=%s): %s -> red — drawn output(s) %s never "
+                "recorded (graph_builder.unproduced_output_fkeys)",
+                fkey[0],
+                fkey[1],
+                fn_own_state[fkey],
+                missing,
+            )
             fn_own_state[fkey] = "red"
 
     # --- Pass 2: DAG propagation (pure) ---
@@ -868,6 +886,14 @@ def _build_graph(
                 agg.path_inputs,
                 hidden_ids,
                 token_for,
+            ),
+            unproduced_outputs=gb.unproduced_output_fkeys(
+                agg.fn_input_params,
+                agg.fn_outputs,
+                agg.path_inputs,
+                manual_edges_for_fn_lookup,
+                token_for,
+                manual_nodes=manual_nodes,
             ),
         )
         logger.info("[pipeline] computed run states for %d nodes", len(run_states))

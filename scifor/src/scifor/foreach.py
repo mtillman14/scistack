@@ -2259,6 +2259,43 @@ def _spread_decision(
     return spread, sorted(discriminating), sorted(collisions), max_rows
 
 
+def _crowded_addresses(
+    collected_rows: list[tuple[dict, tuple]],
+    disc_keys: list[str],
+    schema_keys: "list | tuple",
+) -> tuple[int, int, list[str]]:
+    """After a spread, how many addresses still receive SEVERAL rows.
+
+    Returns ``(crowded, max_per_address, absent_keys)``: the number of
+    ``(combination, discriminating-key values)`` addresses that more than one
+    row lands at, the most rows any one of them gets, and the unpinned schema
+    keys no returned DataFrame carries -- the usual reason. A spread by
+    ``brand`` alone of a 300-row ratings table whose person column is named
+    ``participant`` files 100 records at each brand (scidb.log 2026-10-17);
+    each is distinguishable only by its contents, the same silent
+    multiplication :func:`_spread_decision` refuses for a table with NO
+    discriminating key.
+    """
+    crowded = 0
+    max_per = 0
+    seen_cols: set[str] = set()
+    pinned_any: set[str] = set()
+    for metadata, result_tuple in collected_rows:
+        pinned_any |= set(metadata.keys())
+        for value in result_tuple:
+            cols = [k for k in disc_keys if k in value.columns]
+            seen_cols |= {str(c) for c in value.columns}
+            if not cols or len(value) <= 1:
+                continue
+            counts = value.groupby(cols, dropna=False).size()
+            crowded += int((counts > 1).sum())
+            max_per = max(max_per, int(counts.max()))
+    absent = [
+        k for k in (schema_keys or []) if k not in seen_cols and k not in pinned_any
+    ]
+    return crowded, max_per, absent
+
+
 def _strip_pinned_key_columns(
     df: "pd.DataFrame", pinned: list[str]
 ) -> "pd.DataFrame":
@@ -2340,6 +2377,28 @@ def _results_to_output_dataframe(
                 disc_keys,
                 layer="scifor",
             )
+            crowded, max_per, absent = _crowded_addresses(
+                collected_rows, disc_keys, schema_keys
+            )
+            if crowded:
+                Log.warn(
+                    "output %s: spreading by %s still files several rows at one "
+                    "address — %d location(s) get up to %d record(s) each, "
+                    "told apart only by their contents. %s",
+                    _out,
+                    disc_keys,
+                    crowded,
+                    max_per,
+                    (
+                        f"Schema key(s) {absent} are not a column of the "
+                        "returned DataFrame; if one of its columns holds them "
+                        "under another name, rename it to the schema key."
+                        if absent
+                        else "Check that the returned columns name every "
+                        "schema key the rows differ by."
+                    ),
+                    layer="scifor",
+                )
         elif not spread:
             Log.info(
                 "output %s: %d DataFrame(s), up to %d row(s) each, carry no "

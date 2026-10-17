@@ -131,6 +131,7 @@ import {
   highlightShapes,
   panelForAxis,
   pickStep,
+  setMalformedReporter,
   targetAt,
   type DifferenceBar,
   type DifferenceMeta,
@@ -178,6 +179,24 @@ import {
   type GroupId,
   type RailWidth,
 } from './sidebarGroups'
+
+// A difference bar or panel that arrives without one of its dicts goes to
+// scidb.log (2026-10-17: one crashed the tab and the log could not say which).
+setMalformedReporter((what, owner) => {
+  console.warn('[Plot Studio] difference bars: missing', what, owner)
+  let shape = ''
+  try {
+    shape = JSON.stringify(owner) ?? String(owner)
+  } catch {
+    shape = String(owner)
+  }
+  callBackend('report_client_error', {
+    where: 'Plot Studio difference bars',
+    message: `${what} is missing; drawn as {} instead`,
+    stack: '',
+    component_stack: shape.slice(0, 2000),
+  }).catch(() => undefined)
+})
 
 /** The dpi `plot_save` renders a raster at when the request names none
  *  (`api/plot.py` SaveRequest). Only the readout uses it; the save itself

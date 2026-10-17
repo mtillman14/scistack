@@ -2034,6 +2034,40 @@ def test_spread_nested_results_spreads_labelled_table(caplog):
     assert "discriminated by unpinned schema key(s)" in caplog.text
 
 
+def test_spread_that_leaves_several_rows_per_address_warns(caplog):
+    """scidb.log 2026-10-17: schema keys (person, brand), but the CSV named
+    its person column 'participant'. The spread by brand alone filed many
+    records at each brand; the WARN must name the absent key."""
+    from scifor.foreach import spread_nested_results
+
+    inner = pd.DataFrame(
+        {
+            "participant": ["P1", "P1", "P2", "P2"],
+            "brand": ["A", "B", "A", "B"],
+            "rating": [1, 2, 3, 4],
+        }
+    )
+    with caplog.at_level(logging.WARNING):
+        out = spread_nested_results(_nested([{"Out": inner}]), ["Out"], ["person", "brand"])
+
+    assert len(out) == 4  # behaviour unchanged: still spread
+    assert "still files several rows at one address" in caplog.text
+    assert "2 location(s) get up to 2 record(s)" in caplog.text
+    assert "['person']" in caplog.text
+
+
+def test_spread_with_unique_addresses_does_not_warn(caplog):
+    from scifor.foreach import spread_nested_results
+
+    inner = pd.DataFrame(
+        {"person": ["P1", "P1", "P2"], "brand": ["A", "B", "A"], "rating": [1, 2, 3]}
+    )
+    with caplog.at_level(logging.WARNING):
+        spread_nested_results(_nested([{"Out": inner}]), ["Out"], ["person", "brand"])
+
+    assert "several rows at one address" not in caplog.text
+
+
 def test_spread_nested_results_keeps_metadata_per_row():
     """Pinned metadata (an iterated subject, a __rid_* column) is replicated
     onto every spread row; the unpinned key comes from the data."""

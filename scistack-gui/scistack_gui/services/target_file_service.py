@@ -124,6 +124,8 @@ def write_variable(target_file: Path, name: str) -> "dict | None":
         _atomic_write(target_file, add_variable(text, name))
     except OSError as e:
         return {"ok": False, "error": f"Failed to write to entities file: {e}"}
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
 
     logger.info("[target_file_service] Wrote variable %s to %s", name, target_file)
     error = _reload_after_write(target_file)
@@ -535,6 +537,9 @@ def update_declaration(
         _atomic_write(path, updated)
     except OSError as e:
         return {"ok": False, "error": f"Failed to write {path}: {e}"}
+    except ValueError as e:
+        # checked_text: the edit would leave invalid TOML; nothing written.
+        return {"ok": False, "error": str(e), "reason": "invalid_toml"}
 
     refresh_error = _reload_after_write(path)
     if refresh_error is None and not _resolves_as_any_kind(name):
@@ -547,7 +552,7 @@ def update_declaration(
             "[target_file_service] Rolling back edit to %s: %s", path, refresh_error
         )
         try:
-            _atomic_write(path, original)
+            _atomic_write(path, original, check=False)
         except OSError as e:
             return {
                 "ok": False,
@@ -681,6 +686,9 @@ def rename_declaration(kind: str, old: str, new: str) -> dict:
         _atomic_write(path, updated)
     except OSError as e:
         return {"ok": False, "error": f"Failed to write {path}: {e}"}
+    except ValueError as e:
+        # checked_text: the edit would leave invalid TOML; nothing written.
+        return {"ok": False, "error": str(e), "reason": "invalid_toml"}
 
     refresh_error = _reload_after_write(path)
     if refresh_error is None and not _resolves_as_any_kind(new):
@@ -696,7 +704,7 @@ def rename_declaration(kind: str, old: str, new: str) -> dict:
             "[target_file_service] Rolling back rename in %s: %s", path, refresh_error
         )
         try:
-            _atomic_write(path, original)
+            _atomic_write(path, original, check=False)
         except OSError as e:
             return {
                 "ok": False,
@@ -791,10 +799,20 @@ def _record_current_path_input_value(name: str) -> None:
             )
 
 
-def _atomic_write(path: Path, text: str) -> None:
+def _atomic_write(path: Path, text: str, *, check: bool = True) -> None:
     """Replace *path*'s contents via a temp file in the same directory, so a
     crash mid-write can never leave a half-written entities file (which the
-    scanner would then fail to parse, taking every entity in it down)."""
+    scanner would then fail to parse, taking every entity in it down).
+
+    A TOML target is first passed through :func:`scidb.entities.checked_text`
+    (``ValueError`` when the new text would not parse; nothing is written).
+    ``check=False`` is for rollbacks only: restoring the original bytes must
+    never be refused.
+    """
+    if check and is_toml_target(path):
+        from scidb.entities import checked_text
+
+        checked_text(text, path)
     history.note_write(path)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
     try:

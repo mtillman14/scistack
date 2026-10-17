@@ -11,6 +11,45 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzze. scidb.log triage fixes: entities-file write, node colour, Plot Studio crash — added 2026-10-17
+
+What changed (plan `.claude/scidb-log-triage-2026-10-17.md`):
+- **Entities file:** adding a PathInput/Parameter to a `scistack_entities.toml`
+  that does not end in a newline no longer glues the new entry onto the last
+  line. Any GUI write that would leave invalid TOML is refused, and the file
+  is left untouched.
+- **Node colour:** a recorded function node drawn to a new output variable
+  that it has never written is red until it runs. Doc
+  `docs/claude/function-node-colour.md`.
+- **Plot Studio:** a difference bar or panel missing its `match` no longer
+  crashes the tab. It is reported to scidb.log instead.
+- **scifor:** a DataFrame spread that still files several rows at one address
+  logs a WARN that names the missing schema key.
+
+**Backend:** reload the VS Code window. The frontend fix is in both rebuilt
+bundles. An installed Marketplace extension (0.1.39) does not have it until
+the next release.
+
+**Frontend**
+1. Delete the trailing newline from `scistack_entities.toml` by hand, then
+   add a PathInput in the GUI. The new PathInput and every existing one
+   should still be listed. scidb.log should show no `is not valid TOML`.
+2. Take a function node that has run, hide its output variable, drag in a
+   NEW variable and wire the function to it. The function node should turn
+   red, and scidb.log should show `drawn output(s) ['<New>'] never recorded`.
+   Run it: it should turn green.
+3. In Plot Studio, add a difference bar, then do what you did on
+   2026-10-17 at 00:16:30. The tab should not go blank. If the case
+   reproduces, scidb.log shows `render error in Plot Studio difference bars:
+   bar.match is missing` (or `panel.match`) with the object's contents.
+   Report that line.
+4. Load a CSV whose ID column is NOT named after a schema key (for example
+   `participant` while the schema key is `person`). scidb.log should show a
+   WARN `still files several rows at one address ... Schema key(s)
+   ['person'] are not a column`.
+
+---
+
 ## 0zzzzd. Difference bars: both legs always show and never touch the data — added 2026-10-16
 
 What changed: before, the leg over the taller of a bar's two ticks was about

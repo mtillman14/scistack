@@ -3766,3 +3766,53 @@ class TestDeclaredOnlyNodesStartOffCanvas:
         nodes, edges = self._root_view(self._declared_graph() + [fn], [edge])
         assert sorted(n["id"] for n in nodes) == ["fn__f__abc", "pathInput__raw"]
         assert edges == [edge]
+
+
+class TestUnproducedOutputs:
+    """graph_builder.unproduced_output_fkeys — the output-side mirror of
+    input_params_with_manual_edges. scidb.log 2026-10-17: pandas.read_csv,
+    rewired from the hidden RatingsData to a new empty Rating, stayed green."""
+
+    FN = "pandas.read_csv"
+    KEY = (FN, "call_csv")
+    RATING = "var__Rating__pfh2a8"
+    MANUAL_NODES = {RATING: {"type": "variableNode", "label": "Rating"}}
+
+    def _site(self, outputs):
+        return {self.KEY: {}}, {self.KEY: set(outputs)}
+
+    def _edge_to(self, target, outputs):
+        wid = wiring_id(self.FN, {}, set(outputs), {})
+        return [{"id": "manual__o", "source": fn_node_id(self.FN, wid), "target": target}]
+
+    def _unproduced(self, outputs, edges):
+        from scistack_gui.domain.graph_builder import unproduced_output_fkeys
+
+        fn_input_params, fn_outputs = self._site(outputs)
+        return unproduced_output_fkeys(
+            fn_input_params, fn_outputs, {}, edges, identity_token, self.MANUAL_NODES
+        )
+
+    def test_a_drawn_output_never_recorded_is_unproduced(self):
+        edges = self._edge_to(self.RATING, {"RatingsData"})
+        assert self._unproduced({"RatingsData"}, edges) == {self.KEY: ["Rating"]}
+
+    def test_a_drawn_output_already_recorded_is_fine(self):
+        edges = self._edge_to("var__RatingsData::main", {"RatingsData"})
+        assert self._unproduced({"RatingsData"}, edges) == {}
+
+    def test_no_manual_edges_means_nothing_forced(self):
+        assert self._unproduced({"RatingsData"}, []) == {}
+
+    def test_the_forced_red_cascades_downstream(self):
+        """Fed into pass 1 as a red own state, the ordinary cascade carries
+        it to the recorded output too."""
+        from scistack_gui.domain.run_state import propagate_run_states
+
+        fn_input_params, fn_outputs = self._site({"RatingsData"})
+        forced = self._unproduced(
+            {"RatingsData"}, self._edge_to(self.RATING, {"RatingsData"})
+        )
+        own = {k: ("red" if k in forced else "green") for k in fn_input_params}
+        states = propagate_run_states(own, fn_input_params, fn_outputs)
+        assert states[fn_node_id(*self.KEY)] == "red"

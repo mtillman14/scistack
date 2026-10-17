@@ -392,6 +392,16 @@ class TestUpsert:
 
         assert updated == "[parameters]\nA = 1\nB = 2\n\n[path_inputs]\nP = \"x.csv\"\n"
 
+    def test_new_entry_starts_its_own_line_when_the_file_lacks_a_final_newline(self):
+        """scidb.log 2026-10-17: a hand-edited file ending `P = "x.csv"` with
+        no newline got the new entry glued on -- `P = "x.csv"Q = ""` -- and
+        the whole file stopped parsing ("line 12, column 79")."""
+        text = 'variables = []\n\n[path_inputs]\nP = "x.csv"'
+        updated = entities.upsert_entry(text, "path_inputs", "Q", '""')
+
+        assert updated == 'variables = []\n\n[path_inputs]\nP = "x.csv"\nQ = ""\n'
+        assert entities.tomllib.loads(updated)["path_inputs"] == {"P": "x.csv", "Q": ""}
+
     def test_section_is_created_when_absent(self):
         text = 'variables = ["A"]\n'
         updated = entities.upsert_entry(text, "parameters", "B", "2")
@@ -681,3 +691,26 @@ class TestRenameEntry:
         span = entities.find_entry_span(text, "parameters", "A")
 
         assert text[span.start : span.end] == "[\n    1,\n]"
+
+
+class TestCheckedText:
+    """The gate every GUI write of the entities file passes before disk."""
+
+    def test_valid_text_is_returned_unchanged(self):
+        text = '[path_inputs]\nP = "x.csv"\n'
+        assert entities.checked_text(text) is text
+
+    def test_invalid_text_is_refused_and_the_line_is_logged(self, caplog):
+        text = '[path_inputs]\nP = "x.csv"Q = ""\n'
+        with caplog.at_level("ERROR", logger="scidb"):
+            with pytest.raises(ValueError, match="nothing was written"):
+                entities.checked_text(text, "ents.toml")
+
+        assert "refusing to write ents.toml" in caplog.text
+        assert 'P = "x.csv"Q = ""' in caplog.text
+
+    def test_error_line_is_read_from_the_message_when_lineno_is_absent(self):
+        # Python 3.11-3.13 tomllib and tomli 2.0 (3.10) set no `lineno`.
+        exc = ValueError("Expected newline (at line 7, column 12)")
+        assert entities._decode_error_line(exc) == 7
+        assert entities._decode_error_line(ValueError("no location")) == 0

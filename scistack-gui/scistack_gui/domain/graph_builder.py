@@ -2550,6 +2550,81 @@ def input_params_with_manual_edges(
     return out
 
 
+def unproduced_output_fkeys(
+    fn_input_params: dict[FnKey, dict],
+    fn_outputs: dict[FnKey, set],
+    path_inputs: dict,
+    manual_edges: "list[dict] | tuple",
+    token_for,
+    manual_nodes: "dict[str, dict] | None" = None,
+) -> dict[FnKey, list[str]]:
+    """``{fkey: [variable, ...]}`` — call sites whose canvas node has a DRAWN
+    output edge to a variable that none of the node's call sites has ever
+    recorded. **For run state only**; the output-side mirror of
+    :func:`input_params_with_manual_edges`.
+
+    Own state (``scidb.check_multiple_nodes_state``) is asked about the
+    RECORDED outputs, so a node rewired to a new, empty output kept the colour
+    of the output it used to write. scidb.log 2026-10-17: ``pandas.read_csv``
+    stayed green with its only visible output ``Rating`` holding 0 records,
+    because the hidden ``RatingsData`` it had written was complete. The edges
+    visible on the DAG are the ground truth
+    (docs/claude/manual-edges-on-history-nodes.md), so an output the node is
+    drawn to write but has never written means it has not done its work.
+
+    Per NODE, not per call site: a node grouping several call sites (variants,
+    or sub-sites split by Run claims) has done the drawn output's work when
+    ANY of them recorded it — a run of the node writes every drawn output.
+    *manual_edges* are the visible ones (``edge_view.effective_edges``); this
+    filters nothing itself.
+    """
+    if not manual_edges:
+        return {}
+    drawn: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for edge in manual_edges:
+        parsed = parse_fn_node_id(edge.get("source") or "")
+        if parsed is None:
+            continue
+        ref = endpoint_ref(edge.get("target") or "", manual_nodes)
+        if ref.startswith("var:"):
+            drawn[(parsed[0], parsed[1])].add(ref[len("var:"):])
+    if not drawn:
+        return {}
+
+    pi_by_fkey = path_input_bindings_by_fkey(path_inputs)
+    fkeys_by_node: dict[tuple[str, str], list[FnKey]] = defaultdict(list)
+    for fkey, params in fn_input_params.items():
+        fn, _ = fkey
+        token = token_for(
+            fn,
+            wiring_id(
+                fn, params, fn_outputs.get(fkey, set()), pi_by_fkey.get(fkey, {})
+            ),
+        )
+        fkeys_by_node[(fn, token)].append(fkey)
+
+    out: dict[FnKey, list[str]] = {}
+    for node_key, wired in drawn.items():
+        fkeys = fkeys_by_node.get(node_key)
+        if not fkeys:
+            continue  # a never-run manual node: api/pipeline colours it
+        recorded = set().union(*(fn_outputs.get(f, set()) for f in fkeys))
+        missing = sorted(wired - recorded)
+        if not missing:
+            continue
+        for fkey in fkeys:
+            out[fkey] = missing
+        logger.info(
+            "[graph_builder] %s: drawn output(s) %s never recorded by its %d "
+            "call site(s) (recorded %s) — run state forced red until it runs",
+            fn_node_id(*node_key),
+            missing,
+            len(fkeys),
+            sorted(recorded),
+        )
+    return out
+
+
 def stated_wiring_claims(
     fn_input_params: dict[FnKey, dict],
     fn_outputs: dict[FnKey, set],

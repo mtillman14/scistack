@@ -15,8 +15,10 @@ import {
   pickStep,
   pickingPrompt,
   removeBar,
+  resetMalformedReports,
   samePair,
   setLabel,
+  setMalformedReporter,
   targetAt,
   type DiffPanelMeta,
   type DiffTarget,
@@ -198,4 +200,22 @@ test('the first pick stays shaded, stronger, and hovering it adds nothing', () =
 test('no meta or an unknown tick shades nothing', () => {
   assert.deepEqual(highlightShapes(null, { panelIndex: 1, slot: 1 }, null, 'blue'), [])
   assert.deepEqual(highlightShapes(META, { panelIndex: 1, slot: 9 }, null, 'blue'), [])
+})
+
+test('a bar or panel without its match does not throw, and is reported once', () => {
+  // scidb.log 2026-10-17: Object.keys(undefined) in dictId crashed the tab.
+  const reports: string[] = []
+  setMalformedReporter(what => reports.push(what))
+  resetMalformedReports()
+  const broken = { a: { session: 'pre' }, b: { session: 'post' } } as unknown as DifferenceBar
+  const good: DifferenceBar = { match: {}, a: { session: 'pre' }, b: { session: 'post' } }
+
+  assert.deepEqual(barsForPanel([broken, good], {}), [broken, good])
+  assert.deepEqual(
+    barsForPanel([good], undefined as unknown as Record<string, string>),
+    [good],
+  )
+  barsForPanel([broken], {})
+
+  assert.deepEqual(reports, ['bar.match', 'panel.match'])
 })

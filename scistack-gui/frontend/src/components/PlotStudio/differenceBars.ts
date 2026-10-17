@@ -73,9 +73,54 @@ export interface DifferenceMeta {
 
 export const DEFAULT_LABEL = '*'
 
+// ---------------------------------------------------------------------------
+// Malformed input: a dict that should be there and is not
+
+/** Receives `(what, owner)` once per `what` when a bar or panel arrives
+ *  without one of its dicts. PlotStudio points it at `report_client_error`
+ *  so it lands in scidb.log; this module stays free of the API import. */
+export type MalformedReporter = (what: string, owner: unknown) => void
+
+let reportMalformed: MalformedReporter = (what, owner) =>
+  console.warn('[Plot Studio] difference bars: missing', what, owner)
+const reportedMalformed = new Set<string>()
+
+export function setMalformedReporter(reporter: MalformedReporter): void {
+  reportMalformed = reporter
+}
+
+/** Test seam: forget what was already reported. */
+export function resetMalformedReports(): void {
+  reportedMalformed.clear()
+}
+
+/**
+ * *values*, or `{}` when it is missing — reported once per *what*.
+ *
+ * Python always sends every dict (a single panel's `match` is `{}`), so a
+ * missing one means something on the client lost it. scidb.log 2026-10-17:
+ * `Object.keys(undefined)` here took down the whole Plot Studio tab, and
+ * the stack could not say which bar or panel it was. Rendering on with `{}`
+ * keeps the tab; the report names the object, so the next one names its
+ * source.
+ */
+function dictOr(
+  values: Record<string, string> | null | undefined,
+  what: string,
+  owner: unknown,
+): Record<string, string> {
+  if (values && typeof values === 'object') return values
+  if (!reportedMalformed.has(what)) {
+    reportedMalformed.add(what)
+    reportMalformed(what, owner)
+  }
+  return {}
+}
+
 /** A stable identity for a `{name: text}` dict, independent of key order. */
-export function dictId(values: Record<string, string>): string {
-  return JSON.stringify(Object.keys(values).sort().map(name => [name, values[name]]))
+export function dictId(values: Record<string, string> | null | undefined): string {
+  const dict = dictOr(values, 'dict', values)
+  return JSON.stringify(Object.keys(dict).sort().map(name => [name, dict[name]]))
 }
 
 export function sameDict(a: Record<string, string>, b: Record<string, string>): boolean {
@@ -131,7 +176,8 @@ export function barsForPanel(
   bars: DifferenceBar[] | undefined,
   match: Record<string, string>,
 ): DifferenceBar[] {
-  return (bars ?? []).filter(bar => sameDict(bar.match, match))
+  const panelMatch = dictOr(match, 'panel.match', match)
+  return (bars ?? []).filter(bar => sameDict(dictOr(bar?.match, 'bar.match', bar), panelMatch))
 }
 
 /**

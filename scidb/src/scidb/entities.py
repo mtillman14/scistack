@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import keyword
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -285,10 +286,17 @@ def _warn_shadowed_names(result: EntitiesFile) -> None:
 
 
 def _decode_error_line(exc: Exception) -> int:
-    """``tomllib``'s decode errors carry a ``lineno`` on 3.11+; older
-    backports only put it in the message. Missing is 0, meaning "no
-    location", never a misleading line 1."""
-    return int(getattr(exc, "lineno", 0) or 0)
+    """The line a ``tomllib`` decode error points at.
+
+    Python 3.14+ and tomli 2.1+ (the 3.10 fallback) set ``lineno`` on the
+    exception; Python 3.11-3.13 and tomli 2.0 put it in the message alone,
+    as ``(at line N, column M)``. Missing is 0, meaning "no location",
+    never a misleading line 1."""
+    lineno = getattr(exc, "lineno", None)
+    if lineno:
+        return int(lineno)
+    match = re.search(r"\(at line (\d+), column \d+\)", str(exc))
+    return int(match.group(1)) if match else 0
 
 
 def _load_variables(data: dict, text: str, result: EntitiesFile) -> None:
@@ -1128,7 +1136,42 @@ def upsert_entry(text: str, section: str, name: str, rendered: str) -> str:
     if insert_at is None:
         prefix = "" if text.endswith("\n") or not text else "\n"
         return f"{text}{prefix}\n[{section}]\n{line}"
+    # The entry must start its own line. A section that ends the file
+    # without a trailing newline puts the insertion point at the END of its
+    # last entry, and gluing onto it -- `a = "x"b = ""` -- made the whole
+    # file unparseable (scidb.log 2026-10-17, "line 12, column 79").
+    if insert_at > 0 and text[insert_at - 1] != "\n":
+        line = "\n" + line
     return text[:insert_at] + line + text[insert_at:]
+
+
+def checked_text(text: str, path: "Path | str | None" = None) -> str:
+    """*text*, after confirming it still parses as TOML; ``ValueError`` if not.
+
+    The one gate every GUI write of the entities file passes before the
+    bytes reach disk. An unparseable file is rejected whole by :func:`load`,
+    so writing one silently drops EVERY declaration in it, not just the one
+    being edited. Refusing here leaves the file as it was.
+    """
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        line = _decode_error_line(e)
+        lines = text.splitlines()
+        offending = lines[line - 1] if 0 < line <= len(lines) else ""
+        Log.error(
+            "[entities] refusing to write %s: the result would not be valid "
+            "TOML (%s); line %d would read %r",
+            path or "the entities file",
+            e,
+            line,
+            offending,
+        )
+        raise ValueError(
+            f"The edit would make the entities file invalid TOML ({e}), so "
+            "nothing was written."
+        ) from e
+    return text
 
 
 def _section_insert_offset(text: str, section: str) -> "int | None":
