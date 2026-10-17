@@ -47,6 +47,7 @@ from .numeric import coerce_numeric
 from .panels import PanelOverride
 from .shape import Shape
 from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic
+from .spread import QUANTILE_METHOD, SD_DDOF, ci95_spread, sem_spread
 from .table import LongTable
 
 LAYER = "scistackplot"
@@ -730,15 +731,18 @@ def spread_bounds(grouped, centre, spec: PlotSpec):
     if error is ErrorBand.NONE:
         return centre, centre
     if error is ErrorBand.IQR:
-        return grouped.quantile(0.25), grouped.quantile(0.75)
-    sd = grouped.std(ddof=1).fillna(0.0)
+        return (
+            grouped.quantile(0.25, interpolation=QUANTILE_METHOD),
+            grouped.quantile(0.75, interpolation=QUANTILE_METHOD),
+        )
+    sd = grouped.std(ddof=SD_DDOF).fillna(0.0)
     count = grouped.count()
     if error is ErrorBand.SD:
         spread = sd
     elif error is ErrorBand.SEM:
-        spread = sd / np.sqrt(count.where(count > 0, 1))
-    else:  # CI95
-        spread = 1.96 * sd / np.sqrt(count.where(count > 0, 1))
+        spread = sem_spread(sd, count)
+    else:  # CI95 — t-based, csvstats.descriptive via spread
+        spread = ci95_spread(sd, count)
     return centre - spread, centre + spread
 
 
@@ -751,16 +755,20 @@ def _summary_bounds(values: pd.Series, spec: PlotSpec):
     if error is ErrorBand.NONE:
         return centre, centre, centre
     if error is ErrorBand.IQR:
-        return centre, values.quantile(0.25), values.quantile(0.75)
-    sd = values.std(ddof=1)
+        return (
+            centre,
+            values.quantile(0.25, interpolation=QUANTILE_METHOD),
+            values.quantile(0.75, interpolation=QUANTILE_METHOD),
+        )
+    sd = values.std(ddof=SD_DDOF)
     sd = 0.0 if pd.isna(sd) else sd
     count = max(len(values), 1)
     if error is ErrorBand.SD:
         spread = sd
     elif error is ErrorBand.SEM:
-        spread = sd / np.sqrt(count)
-    else:
-        spread = 1.96 * sd / np.sqrt(count)
+        spread = sem_spread(sd, count)
+    else:  # CI95 — t-based, csvstats.descriptive via spread
+        spread = ci95_spread(sd, count)
     return centre, centre - spread, centre + spread
 
 

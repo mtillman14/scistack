@@ -3504,7 +3504,7 @@ export default function PlotStudio({
                     >
                       <option value="sd">SD</option>
                       <option value="sem">SEM</option>
-                      <option value="ci95">95% CI</option>
+                      <option value="ci95" title="t-based: centre ± t(0.975, n−1)·SD/√n">95% CI (t-based)</option>
                       <option value="iqr">IQR</option>
                       <option value="none">None</option>
                     </select>

@@ -11,6 +11,32 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzf. 95% CI error bars are t-based, in the preview and in exported code — added 2026-10-17
+
+What changed (statistics plan Stage 1, `.claude/plan-statistics.md`): the
+preview drew `1.96·SEM`, and exported code drew seaborn's bootstrap
+`("ci", 95)`. Both now draw `centre ± t(0.975, n−1)·SD/√n`. The one owner of
+the formula is csv-stats (`csvstats.descriptive`); scistackplot's
+`spread.py` only draws "no interval" (n < 2) as zero width. Bars at small n get **wider**: about 6.5× at n = 2
+and 1.4× at n = 5. Saved CI95 plots change with no migration.
+
+**Backend:** run `.venv/bin/pip install -e "./csv-stats[full]"` from the
+scistack root (csv-stats 0.2.0 is now a scistackplot dependency), then reload
+the VS Code window.
+
+**Frontend**
+1. Open Plot Studio on a bar plot with few subjects per bar (Better Popcorn
+   works). Set Spread to **95% CI (t-based)**. Hovering the option shows the
+   formula.
+2. The bars should be visibly wider than before at small n.
+3. Export the code. It should import `ci_interval` from
+   `csvstats.descriptive`, bind `_ci95 = ci_interval` and pass
+   `errorbar=_ci95`, not `("ci", 95)`. Its docstring says `error bars: ci95 (t-based) across …`.
+4. Run the exported code. Its error bars should match the preview.
+5. `scidb.log` at DEBUG shows `spread ci95: t-based (csvstats.descriptive), n …`.
+
+---
+
 ## 0zzzze. scidb.log triage fixes: entities-file write, node colour, Plot Studio crash — added 2026-10-17
 
 What changed (plan `.claude/scidb-log-triage-2026-10-17.md`):

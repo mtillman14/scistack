@@ -68,6 +68,10 @@ jobs:
           #            tomli-w sit behind importorskip, so leaving them out
           #            silently skips real coverage instead of failing.
           pip install pandas numpy duckdb
+          # csv-stats (scistackplot's descriptive formulas; StatStudio's engine)
+          # is its own repo and not cloned here, so install it from GitHub main.
+          # Switch to a PyPI pin once csv-stats 0.2 is released.
+          pip install "csv-stats[full] @ git+https://github.com/mtillman14/csv-stats@main"
           pip install pytest pytest-cov matplotlib seaborn plotly tomli-w
           # scistack-gui: fastapi/uvicorn are runtime deps; httpx is what
           # fastapi.testclient.TestClient runs on, and conftest.py builds one

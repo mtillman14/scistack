@@ -38,6 +38,7 @@ from typing import Any
 import numpy as np
 
 from .spec import ErrorBand, Statistic
+from .spread import SD_DDOF, ci95_spread, sem_spread
 
 
 def cell_array(value: Any) -> np.ndarray:
@@ -187,18 +188,19 @@ def position_stats(
                 low[start:stop] = c
                 high[start:stop] = c
             elif error is ErrorBand.IQR:
+                # numpy's default interpolation is linear, csv-stats'
+                # QUANTILE_METHOD (pinned by tests/test_ci95.py).
                 low[start:stop] = np.nanpercentile(padded, 25, axis=0)
                 high[start:stop] = np.nanpercentile(padded, 75, axis=0)
             else:
-                sd = np.nanstd(padded, axis=0, ddof=1)
+                sd = np.nanstd(padded, axis=0, ddof=SD_DDOF)
                 sd = np.where(n >= 2, sd, 0.0)  # std(ddof=1).fillna(0.0)
-                denominator = np.where(n > 0, n, 1)  # count.where(count > 0, 1)
                 if error is ErrorBand.SD:
                     spread = sd
                 elif error is ErrorBand.SEM:
-                    spread = sd / np.sqrt(denominator)
-                else:  # CI95
-                    spread = 1.96 * sd / np.sqrt(denominator)
+                    spread = sem_spread(sd, n)
+                else:  # CI95 — t-based, csvstats.descriptive via spread
+                    spread = ci95_spread(sd, n)
                 low[start:stop] = c - spread
                 high[start:stop] = c + spread
     return centre, low, high, count

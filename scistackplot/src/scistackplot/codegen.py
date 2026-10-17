@@ -88,7 +88,9 @@ SPEC_BEGIN = "scistackplot-spec:"
 _SEABORN_ERRORBAR = {
     ErrorBand.SD: '"sd"',
     ErrorBand.SEM: '"se"',
-    ErrorBand.CI95: '("ci", 95)',
+    # Not seaborn's ("ci", 95): that is a bootstrap; the preview is t-based.
+    # `_ci95` is csvstats.descriptive.ci_interval, bound by `_ci95_lines`.
+    ErrorBand.CI95: "_ci95",
     ErrorBand.IQR: '("pi", 50)',
     ErrorBand.NONE: "None",
 }
@@ -227,6 +229,7 @@ def _generate_plot_function(
             else []
         ),
         *(["    import numpy as np"] if collapsing else []),
+        *(["    from csvstats.descriptive import ci_interval"] if _uses_ci95(spec, shape) else []),
         *(
             ["    import re"]
             if spec.kind is PlotKind.SPAGHETTI
@@ -484,7 +487,8 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict, y_plan: _YLimitPla
         chain = " -> ".join([*steps.pre, " x ".join(steps.sample)])
         if spec.kind in (PlotKind.BAR, PlotKind.BAND):
             what = (
-                f"error bars: {spec.aggregate.error} across "
+                f"error bars: {spec.aggregate.error}"
+                f"{' (t-based)' if spec.aggregate.error is ErrorBand.CI95 else ''} across "
                 f"{' x '.join(steps.sample)}{' (pooled)' if len(steps.sample) > 1 else ''}"
             )
         elif spec.kind in (PlotKind.BOX, PlotKind.VIOLIN):
@@ -1695,6 +1699,32 @@ def _alias_relabel_lines(aliases: _ExportAliases, x_categorical: bool) -> list[s
     return lines
 
 
+def _uses_ci95(spec, shape) -> bool:
+    """True when the plot call passes `errorbar=_ci95` (bar and band only)."""
+    return (
+        shape is not Shape.MATRIX_2D
+        and spec.kind in (PlotKind.BAR, PlotKind.BAND)
+        and spec.aggregate.error is ErrorBand.CI95
+    )
+
+
+def _ci95_lines(spec, shape) -> list[str]:
+    """Bind `_ci95`, the errorbar callable: csv-stats' t-based CI.
+
+    The preview gets its CI95 from `csvstats.descriptive` (via `spread`), so
+    the exported code calls the same function rather than restating it.
+    """
+    if not _uses_ci95(spec, shape):
+        return []
+    if spec.aggregate.statistic is Statistic.MEDIAN:
+        return [
+            "# t-based 95% CI (csvstats.descriptive), on the median like the bars",
+            '_ci95 = lambda values: ci_interval(values, centre="median")',
+            "",
+        ]
+    return ["# t-based 95% CI of the mean (csvstats.descriptive)", "_ci95 = ci_interval", ""]
+
+
 def _plot_call(
     spec, table, roles, shape, y_plan: _YLimitPlan, base: LongTable | None = None
 ) -> list[str]:
@@ -1865,6 +1895,7 @@ def _plot_call(
     aliases = _export_aliases(spec, table, roles, shape)
     lines = [
         *order_lines,
+        *_ci95_lines(spec, shape),
         *palette_lines,
         *_alias_definition_lines(aliases),
         f"g = {call}(",

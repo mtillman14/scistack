@@ -14,7 +14,13 @@ pip install -e $SCRIPT_DIR/path-gen --no-deps
 pip install -e $SCRIPT_DIR/scifor --no-deps
 pip install -e $SCRIPT_DIR/sciduckdb --no-deps
 
-# Layer 0.5: depends on scistacklog only (plotting, in-memory)
+# csv-stats: its own repo (github.com/mtillman14/csv-stats), the owner of every
+# descriptive formula. Editable when cloned beside the packages (gitignored).
+if [ -d "$SCRIPT_DIR/csv-stats" ]; then
+    pip install -e "$SCRIPT_DIR/csv-stats[full]"
+fi
+
+# Layer 0.5: depends on scistacklog + csv-stats (plotting, in-memory)
 pip install -e $SCRIPT_DIR/scistackplot --no-deps
 
 # Layer 1: depends on scicanonicalhash

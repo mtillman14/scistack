@@ -47,6 +47,9 @@ classifiers = [
 dependencies = [
     "pandas>=1.5",
     "numpy>=1.21",
+    # The one owner of every descriptive formula (error bars: spread.py).
+    # Core only: numpy, pandas, scipy. Not a scistack sibling, so not coversioned.
+    "csv-stats>=0.2",
     "scistacklog",
 ]
 

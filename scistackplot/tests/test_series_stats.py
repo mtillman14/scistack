@@ -54,8 +54,11 @@ def _reference(cells, statistic, error):
         else:
             sd = np.where(count >= 2, np.nanstd(padded, 0, ddof=1), 0.0)
             n = np.where(count > 0, count, 1)
-            k = {ErrorBand.SD: 1.0, ErrorBand.SEM: None, ErrorBand.CI95: 1.96}[error]
-            spread = sd if error is ErrorBand.SD else (1.0 if k is None else k) * sd / np.sqrt(n)
+            from scipy import stats
+
+            t = np.where(count >= 2, stats.t.ppf(0.975, np.maximum(count - 1, 1)), 0.0)
+            k = {ErrorBand.SD: None, ErrorBand.SEM: 1.0, ErrorBand.CI95: t}[error]
+            spread = sd if error is ErrorBand.SD else k * sd / np.sqrt(n)
             low, high = centre - spread, centre + spread
     return centre, low, high, count
 

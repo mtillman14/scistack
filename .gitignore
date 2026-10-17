@@ -32,3 +32,6 @@ scistack-gui/frontend/dist/
 *.log
 output.txt
 scimatlab/tests/matlab/test-failures.txt
+
+# csv-stats is its own repo (github.com/mtillman14/csv-stats), cloned here for editable dev
+/csv-stats/
