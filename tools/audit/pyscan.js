@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const files = fs.readFileSync(process.argv[2], 'utf8').split('\n').filter(f => f.endsWith('.py'));
 const ROOT = process.env.AUDIT_ROOT || process.cwd();
-const PKGS = new Set(['scifor','scimatlab','sciduckdb','scidb','scilineage','scihist','scistack','scistacklog','scistackplot','scistackplotdb','scicanonicalhash']);
+const PKGS = new Set(['scifor','scimatlab','sciduckdb','scidb','scilineage','scihist','scistack','scistacklog','scistackplot','scistackplotdb','scistackstats','scistackstatsdb','scicanonicalhash']);
 const ownerOf = f => ({'scidb-net':'scidbnet','scistack-gui':'scistack_gui'}[f.split('/')[0]] || f.split('/')[0]);
 
 const out = { functions: [], imports: [], markers: [], lazyImports: {}, broadExcept: [] };

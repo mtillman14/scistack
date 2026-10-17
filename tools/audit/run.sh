@@ -8,7 +8,7 @@ ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
 OUT="$(mkdir -p "${1:-$HERE/out}" && cd "${1:-$HERE/out}" && pwd)"
 cd "$ROOT"
 
-PKGS="scifor scimatlab sciduckdb scidb scilineage scihist scistack scistacklog scistackplot scistackplotdb scicanonicalhash scidb-net scistack-gui"
+PKGS="scifor scimatlab sciduckdb scidb scilineage scihist scistack scistacklog scistackplot scistackplotdb scistackstats scistackstatsdb scicanonicalhash scidb-net scistack-gui"
 TEST_RE='(^|/)tests?/|\.test\.'
 EXCLUDE_RE='(\.d\.ts$|/dist/|/out/|/media/|^examples/|^docs/|^build/|^site/|^spec/|^path-gen/|^csv-data|^tmp\.py$|^\.claude/|^tools/)'
 

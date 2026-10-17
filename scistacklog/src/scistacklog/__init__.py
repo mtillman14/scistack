@@ -57,6 +57,8 @@ LAYERS = (
     "scistack_gui",
     "scistackplot",
     "scistackplotdb",
+    "scistackstats",
+    "scistackstatsdb",
     "matlab",
 )
 

@@ -45,7 +45,7 @@ banner is computed in the GUI service, which can see both.
 
 | Concept | Owner | Consumers |
 |---|---|---|
-| CI95 half-width (t-based) | `scistackplot.spread` ✅ | ylimits, series_stats, codegen, stats Descriptives |
+| CI95 half-width (t-based), every descriptive formula | `csvstats.descriptive` (plot adapter: `scistackplot.spread`) ✅ | ylimits, series_stats, codegen, stats Descriptives |
 | Which PlotSpec fields are "design" | `scistackplot.design.DESIGN_FIELDS` | sync both ways, banner diff, StatsSpec.design |
 | Divergence between plot and stats | `scistackplot.design.design_diff` | Plot Studio banner, StatStudio banner, logs |
 | Plot → table settings | `scistackstats.seed.seed_from_plot` | StatStudio button, code users |
@@ -78,9 +78,11 @@ banner is computed in the GUI service, which can see both.
   Every other test runs at the sample.
 - **P4. Within/between is derived, with an override.** Mixed membership is
   refused until it's overridden.
-- **P5. Family scopes:** `comparison`, `dv` (default, S16), `stratum`,
-  `table`, and `variants` under a sweep. The family sentence comes from the
-  backend.
+- **P5. Family scopes:** `none`, `context` (one combination of the outer
+  layers), `stratum` (one DV × one figure/panel; **the default**, per S13),
+  `dv`, `table`, and later `variants` under a sweep. Omnibus terms are not
+  adjusted. The family sentence comes from the backend
+  (`run.family_statement`).
 - **P6. Derived bars are intent:** StatsSpec stores the rule. Bars are
   computed at resolve with `origin="test"`; hidden, never deleted; blocked
   while `spec.comparison` is active (S9).
@@ -110,7 +112,7 @@ banner is computed in the GUI service, which can see both.
 Each stage lists its files, the logging it adds (NOTE 2) and its tests.
 **The user runs the tests, one package per pytest invocation.**
 
-### Stage 1 — CI95 is t-based everywhere ✅ built 2026-10-17, tests unrun
+### Stage 1 — CI95 is t-based everywhere ✅ built 2026-10-17, tests pass, committed d4fe6b35
 
 - **csv-stats owns every descriptive formula** (user decision, 2026-10-17).
   The new `csvstats.descriptive` module (numpy, pandas and scipy only) has
@@ -137,7 +139,15 @@ Each stage lists its files, the logging it adds (NOTE 2) and its tests.
   scistackplot, the numpy twin, preview bars, the export source, preview ==
   export at n = 2, 5, 30). `test_series_stats.py` reference updated.
 
-### Stage 2 — Packages + engine seam
+### Stage 2 — Packages + engine seam ✅ built 2026-10-17, tests unrun
+
+As built: no static `engine.GAPS`. A csv-stats gap is `core.NotSupported`,
+turned into `EngineRefusal(kind="gap")` and logged `csv-stats gap: …`.
+csv-stats gained `csvstats.core` (C3 records) instead of an adapter over the
+old API. `scistackstatsdb` is only `load_stats_tables` so far. `publish.yml`
+is NOT updated yet: add both packages there when scistack-gui first depends
+on them (stage 12), after PyPI publishing is set up for the new names.
+
 
 - `scistackstats/` and `scistackstatsdb/` scaffolding, registered in every
   package list: `dev-install.sh`, `tools/audit/run.sh`, scistacklog layer
@@ -153,7 +163,12 @@ Each stage lists its files, the logging it adds (NOTE 2) and its tests.
   only `engine.py` imports `csvstats`); adapter golden tests for what 0.1.10
   does map.
 
-### Stage 3 — The design owner in scistackplot + sync primitives
+### Stage 3 — The design owner in scistackplot + sync primitives ✅ built 2026-10-17, tests unrun
+
+As built: the stats spec carries a whole `PlotSpec` as its design (no
+separate `PlotDesign` type). `design_of` / `design_fingerprint` /
+`design_diff` / `copy_design` read `DESIGN_FIELDS`.
+
 
 - `scistackplot/design.py`: `DESIGN_FIELDS` (every PlotSpec field classed as
   `design` or `display`; an exhaustiveness test like the presets one),
@@ -165,7 +180,13 @@ Each stage lists its files, the logging it adds (NOTE 2) and its tests.
 - Tests: exhaustiveness; diff labels; round trip; apply with a stale role →
   a note.
 
-### Stage 4 — StatsSpec, DVs (including ColName), seeding
+### Stage 4 — StatsSpec, DVs (including ColName), seeding ✅ built 2026-10-17, tests unrun
+
+As built: DV loading and the rows owner live in `scistackstats.tables`
+(any `DataSource`), not in scistackstatsdb. Rows are read at
+`ANALYSIS_KIND` = bar, and the unit id composes the sample key with the
+schema keys above it.
+
 
 - `scistackstats/spec.py`: `StatsSpec(format=1, design: PlotDesign, dvs:
   list[DV(variable, columns: list[str] | None)], linked_plot: str | None,
@@ -179,7 +200,8 @@ Each stage lists its files, the logging it adds (NOTE 2) and its tests.
 - Tests: one test per S12 row; ColName expansion; compare-to-reference
   refusal.
 
-### Stage 5 — Descriptives (no csv-stats tests needed)
+### Stage 5 — Descriptives ✅ built 2026-10-17, tests unrun
+
 
 - `scistackstats/describe.py`: `STATISTICS` catalog (id, label, owner
   plot|engine, needs n ≥ k). `describe_table(spec, tables) ->
@@ -192,7 +214,12 @@ Each stage lists its files, the logging it adds (NOTE 2) and its tests.
   across people; the nested two-layer header; a CI95 parity test against
   the plot preview bars.
 
-### Stage 6 — Design derivation, tiers, catalog, effects
+### Stage 6 — Design derivation, tiers, catalog, effects ✅ built 2026-10-17, tests unrun
+
+As built: the catalog checks statistical requirements only. What csv-stats
+does not support yet comes back from the engine, so the support matrix
+has one owner.
+
 
 - `design.py`: `derive_design` (within/between with evidence; P4) and
   `comparison_tiers(design) -> {primary: simple effects of the innermost
@@ -207,7 +234,12 @@ Each stage lists its files, the logging it adds (NOTE 2) and its tests.
 - Tests: aim2 fixtures, the unbalanced case, mixed membership, tiers for 1,
   2 and 3 layers, and effect defaults per design.
 
-### Stage 7 — Runner + families (against FakeEngine)
+### Stage 7 — Runner + families ✅ built 2026-10-17, tests unrun
+
+As built: tested against FakeEngine and against the real csv-stats end to
+end. Primary = pairwise two-sample tests per outer-level context (EMM
+post-hoc tests are a csv-stats gap).
+
 
 - `run.py`: DVs × strata × analyses → engine → families (`dv` default) →
   `StatsReport` (strata, the primary table with the interaction p beside it,

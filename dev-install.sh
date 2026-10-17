@@ -23,6 +23,9 @@ fi
 # Layer 0.5: depends on scistacklog + csv-stats (plotting, in-memory)
 pip install -e $SCRIPT_DIR/scistackplot --no-deps
 
+# Layer 0.6: statistics on top of scistackplot + csv-stats (pure, in-memory)
+pip install -e $SCRIPT_DIR/scistackstats --no-deps
+
 # Layer 1: depends on scicanonicalhash
 pip install -e $SCRIPT_DIR/scilineage --no-deps
 
@@ -31,6 +34,7 @@ pip install -e $SCRIPT_DIR/scidb --no-deps
 
 # Layer 3: depends on scidb
 pip install -e $SCRIPT_DIR/scistackplotdb --no-deps
+pip install -e $SCRIPT_DIR/scistackstatsdb --no-deps
 pip install -e $SCRIPT_DIR/scimatlab --no-deps
 pip install -e $SCRIPT_DIR/scihist --no-deps
 pip install -e $SCRIPT_DIR/scidb-net --no-deps

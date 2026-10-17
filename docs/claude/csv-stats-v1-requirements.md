@@ -12,6 +12,43 @@ Baseline: the csv-stats installed in scistack's `.venv` (dist 0.1.10;
 copy. **Check each item against csv-stats HEAD before starting.** Some may
 already be fixed.
 
+## Progress — 2026-10-17 (csv-stats 0.2.0, grown alongside StatStudio)
+
+csv-stats is now cloned at `/workspace/csv-stats` (editable install) and
+grown with StatStudio. Gaps are filled there directly; they are no longer
+handed off. Built so far:
+
+- **`csvstats.descriptive`**: the one owner of every descriptive formula
+  (§3.1 in spirit): `summarize`, `t_critical`, `sem`, `ci_half_width`,
+  `ci_interval`, plus the `SD_DDOF` / `QUANTILE_METHOD` conventions.
+  scistackplot's error bars call it too. Bug fixed: summary-statistics `count`
+  counted NaN.
+- **`csvstats.core`**: new functions on the C4 signature that return the C3
+  core in full precision, are pure (C1, C2) and state a − b (C7):
+  `ttest` (Welch / Student / paired), `rank_test` (Mann–Whitney / Wilcoxon
+  with Hodges–Lehmann + CI), `anova` (between-only type II; within 1–2
+  factors with Greenhouse–Geisser above 2 levels; mixed 1 + 1), `kruskal`,
+  `friedman`, and `correct_pvalues` (C9). Each effect carries
+  `effect_sizes`, every computed variant named exactly (S15). An
+  unsupported design raises `core.NotSupported`, which scistack shows as
+  "not yet in csv-stats: …".
+- The old `ttest_ind` / `anova1way` / … API is untouched (it still rounds,
+  writes PDFs and so on). scistack never calls it.
+
+Open gaps (the next things to add in csv-stats, as StatStudio needs them):
+- effect-size CIs (C8): d_av, d_rm, Glass's Δ, rank-biserial r, η²p, η²G,
+  ω²p, ε², Kendall's W are point estimates only (`"ci": None`). d_s, g_s and
+  d_z have noncentral-t CIs;
+- ANOVA beyond the supported shapes: 2+ between with within, 3+ within, and
+  covariates (ANCOVA);
+- estimated-marginal-means post-hoc tests (scistack runs pairwise two-sample
+  tests per outer-level context for now);
+- rank-based factorial omnibus tests (none exist; pairwise rank tests run);
+- LMM (§3.5), correlation / regression (§3.6), reliability (§3.7),
+  categorical (§3.8), SPM1d (§3.9);
+- C5 warning codes not yet emitted: `unbalanced_design`, `empty_cell`,
+  `convergence_failure`, `singular_fit`, `exact_p_unavailable`.
+
 ---
 
 ## 1. Context: what scistack will do with csv-stats

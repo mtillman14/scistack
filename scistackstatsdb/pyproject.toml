@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs", "hatch-dependency-coversion==0.0.1a4"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
+
+# Sibling SciStack packages are pinned to EXACTLY this build's version at build
+# time (lockstep releases), so [project] dependencies lists them unversioned. The
+# extra "dynamic" entry is what makes hatchling run the hook. Every sibling in
+# dependencies must be named here: CI's build job fails a wheel whose internal
+# dependency is not "==<its own version>".
+[tool.hatch.metadata.hooks.dependency-coversion]
+override-versions-of = ["scistackstats", "scistackplot", "scistackplotdb", "scistack-db", "scistacklog"]
+
+[project]
+name = "scistackstatsdb"
+dynamic = ["version", "dependency-coversioning"]
+description = "scidb-backed statistics: saved StatStudio specs, linked plots and stat_ endpoints"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "SciStack Contributors" }
+]
+keywords = [
+    "statistics",
+    "visualization",
+    "scidb",
+    "scistack",
+    "provenance",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
+dependencies = [
+    "scistackstats",
+    "scistackplot",
+    "scistackplotdb",
+    "scistack-db",
+    "scistacklog",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scistackstatsdb"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

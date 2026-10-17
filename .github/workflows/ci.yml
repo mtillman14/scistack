@@ -119,8 +119,8 @@ jobs:
           set -euo pipefail
           rm -rf dist_ci && mkdir dist_ci
           for pkg in scicanonicalhash path-gen scistacklog scifor sciduckdb \
-                     scilineage scistackplot scidb \
-                     scimatlab scihist scistackplotdb scidb-net scistack \
+                     scilineage scistackplot scistackstats scidb \
+                     scimatlab scihist scistackplotdb scistackstatsdb scidb-net scistack \
                      scistack-gui; do
             echo "== build $pkg =="
             python -m build --outdir dist_ci "$pkg"

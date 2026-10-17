@@ -1,0 +1,181 @@
+"""The statistical design of one stratum, derived from its rows (S2, P4, S13).
+
+Factor kinds are **derived, with evidence, and overridable**:
+
+- **within**: every unit appears at two or more of the factor's levels;
+- **between**: every unit sits at exactly one level;
+- **mixed_membership**: some units at one level, some at several. Tests
+  refuse it until the analysis overrides the kind (P4). With "within", units
+  missing a level are dropped by csv-stats and reported.
+
+With no experimental unit (nothing collapsed, or pooled), every factor is
+between, and the design carries a ``no_unit`` warning: the rows are treated as
+independent, which may be pseudoreplication.
+
+**Tiers** (S13): the *primary* comparisons are the pairs of the innermost
+grouping layer's levels, inside each combination of the outer layers (simple
+effects). The *secondary* results are the omnibus model's main effects and
+interactions. Primary comparisons are always run, whatever the interaction
+shows.
+"""
+
+from __future__ import annotations
+
+import itertools
+from dataclasses import dataclass, field
+from typing import Any
+
+import pandas as pd
+from scistacklog import Log
+
+from .tables import UNIT, AnalysisFrame
+
+LAYER = "scistackstats"
+
+WITHIN, BETWEEN, MIXED = "within", "between", "mixed_membership"
+
+
+@dataclass
+class Factor:
+    name: str
+    levels: list[Any]
+    kind: str
+    derived: str
+    overridden: bool = False
+    #: Units seen at several levels / at exactly one level.
+    units_multi: int = 0
+    units_single: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name, "levels": [str(v) for v in self.levels], "kind": self.kind,
+            "derived": self.derived, "overridden": self.overridden,
+            "units_multi": self.units_multi, "units_single": self.units_single,
+        }
+
+
+@dataclass
+class Design:
+    dv: str
+    y: str
+    stratum: dict[str, Any]
+    #: Innermost first.
+    factors: list[Factor]
+    unit: str | None
+    n_units: int | None
+    n_rows: int
+    warnings: list[dict[str, str]] = field(default_factory=list)
+
+    @property
+    def between(self) -> list[str]:
+        return [f.name for f in self.factors if f.kind == BETWEEN]
+
+    @property
+    def within(self) -> list[str]:
+        return [f.name for f in self.factors if f.kind == WITHIN]
+
+    @property
+    def mixed(self) -> list[str]:
+        return [f.name for f in self.factors if f.kind == MIXED]
+
+    def factor(self, name: str) -> Factor:
+        return next(f for f in self.factors if f.name == name)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dv": self.dv, "stratum": {k: str(v) for k, v in self.stratum.items()},
+            "factors": [f.to_dict() for f in self.factors], "unit": self.unit,
+            "n_units": self.n_units, "n_rows": self.n_rows, "warnings": list(self.warnings),
+        }
+
+
+def _classify(rows: pd.DataFrame, name: str) -> tuple[str, int, int]:
+    per_unit = rows.groupby(UNIT)[name].nunique()
+    multi = int((per_unit > 1).sum())
+    single = int((per_unit == 1).sum())
+    if multi == 0:
+        return BETWEEN, multi, single
+    if single == 0:
+        return WITHIN, multi, single
+    return MIXED, multi, single
+
+
+def derive_design(
+    frame: AnalysisFrame,
+    stratum: dict[str, Any],
+    rows: pd.DataFrame,
+    overrides: dict[str, str] | None = None,
+) -> Design:
+    """The design of one stratum's rows (module docstring)."""
+    overrides = dict(overrides or {})
+    factors: list[Factor] = []
+    warnings: list[dict[str, str]] = []
+    for name in frame.factors:
+        levels = [lv for lv in frame.levels[name] if lv in set(rows[name])]
+        if frame.unit is None:
+            derived, multi, single = BETWEEN, 0, 0
+        else:
+            derived, multi, single = _classify(rows, name)
+        kind = overrides.get(name, derived)
+        factors.append(Factor(name, levels, kind, derived, name in overrides, multi, single))
+        Log.debug(
+            "[design] %s %s: %s (units at several levels %d, at one %d)%s",
+            frame.dv.key, name, derived, multi, single,
+            f" -> overridden to {kind}" if name in overrides else "", layer=LAYER,
+        )
+        if derived == MIXED and name not in overrides:
+            warnings.append({
+                "code": "mixed_membership",
+                "message": f"{name}: {multi} unit(s) at several levels and {single} at one; "
+                           f"set it to within or between",
+            })
+    if frame.unit is None:
+        warnings.append({"code": "no_unit", "message": "no experimental unit: rows are treated as independent"})
+    for stale in sorted(set(overrides) - {f.name for f in factors}):
+        warnings.append({"code": "stale_override", "message": f"override for {stale!r} names no grouping layer"})
+    design = Design(
+        dv=frame.dv.key, y=frame.y, stratum=dict(stratum), factors=factors, unit=frame.unit,
+        n_units=int(rows[UNIT].nunique()) if frame.unit is not None else None,
+        n_rows=int(len(rows)), warnings=warnings,
+    )
+    Log.info(
+        "[design] %s %s: within=%s, between=%s, mixed=%s, unit=%s, n=%s",
+        frame.dv.key, stratum or "(one stratum)", design.within, design.between, design.mixed,
+        frame.unit, design.n_units if design.n_units is not None else design.n_rows, layer=LAYER,
+    )
+    return design
+
+
+@dataclass
+class Tiers:
+    #: The innermost grouping layer, or None with no layers.
+    primary: str | None
+    #: One ``{outer factor: level}`` per combination of the outer layers that
+    #: has rows; ``[{}]`` when the primary is the only layer.
+    contexts: list[dict[str, Any]]
+    #: Level pairs ``(a, b)`` of the primary, in level order.
+    pairs: list[tuple[Any, Any]]
+    #: The omnibus terms: every main effect and interaction, outer first.
+    secondary: list[str]
+
+
+def comparison_tiers(design: Design, rows: pd.DataFrame) -> Tiers:
+    if not design.factors:
+        return Tiers(primary=None, contexts=[], pairs=[], secondary=[])
+    primary = design.factors[0]
+    outer = design.factors[1:][::-1]
+    contexts: list[dict[str, Any]] = []
+    if outer:
+        for combo in itertools.product(*(f.levels for f in outer)):
+            context = dict(zip([f.name for f in outer], combo))
+            mask = pd.Series(True, index=rows.index)
+            for name, level in context.items():
+                mask &= rows[name] == level
+            if mask.any():
+                contexts.append(context)
+    else:
+        contexts = [{}]
+    pairs = list(itertools.combinations(primary.levels, 2))
+    names = [f.name for f in design.factors][::-1]
+    secondary = [":".join(c) for r in range(1, len(names) + 1) for c in itertools.combinations(names, r)]
+    return Tiers(primary=primary.name, contexts=contexts, pairs=pairs, secondary=secondary)

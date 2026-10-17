@@ -53,6 +53,8 @@ _SCANNED_PACKAGES = (
     "scistacklog",
     "scistackplot",
     "scistackplotdb",
+    "scistackstats",
+    "scistackstatsdb",
 )
 
 _SKIP_DIR_PARTS = {".venv", "node_modules", "__pycache__", ".git", "build", "dist"}

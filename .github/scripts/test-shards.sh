@@ -23,6 +23,7 @@ SHARD_GROUPS=(
     "scifor|scifor|1"
     "scihist|scihist|1"
     "scistackplotdb|scistackplotdb|1"
+    "scistackstats|scistackstats scistackstatsdb|1"
     "scistackplot|scistackplot|3"
     "scidb|scidb|4"
     "scistack-gui|scistack-gui|4"
