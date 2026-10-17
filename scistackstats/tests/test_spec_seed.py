@@ -9,7 +9,7 @@ import pytest
 from conftest import bar_spec
 from scistackplot import PlotKind
 from scistackplot.spec import Aggregation, ErrorBand, Statistic
-from scistackstats import DV, Analysis, DescriptiveSpec, SeedError, StatsSpec, StatsSpecError, seed_from_plot
+from scistackstats import DV, Analysis, DescriptiveSpec, FormatSpec, SeedError, StatsSpec, StatsSpecError, seed_from_plot
 
 
 def _full() -> StatsSpec:
@@ -24,6 +24,7 @@ def _full() -> StatsSpec:
             correction="fdr_bh", family_scope="dv", effect_size="rank_biserial",
             difference_spread="se", overrides={"brand": "between"},
         ),),
+        formatting=FormatSpec(decimals=3, p_decimals=4, effect_decimals=3, stars=True),
     )
 
 

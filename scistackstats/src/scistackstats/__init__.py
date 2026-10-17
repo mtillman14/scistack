@@ -18,6 +18,7 @@ by csv-stats (``csvstats``), through :mod:`scistackstats.engine`.
     tables = load_tables(source, spec)          # any scistackplot DataSource
     descriptives = describe_table(spec, tables)  # mean (SD) per brand, across subjects
     report = run(spec, tables)                   # paired comparisons of the brands, Holm-adjusted
+    print(export_comparisons(report, spec, "md", tables=tables))  # txt md csv latex html json
 
 Design: ``docs/claude/statistics-design.md``; plan ``.claude/plan-statistics.md``.
 """
@@ -29,9 +30,11 @@ from .describe import CELL_LAYOUTS, STATISTICS, DescriptivesTable, describe_tabl
 from .design import Design, Factor, Tiers, comparison_tiers, derive_design
 from .effects import EFFECT_SIZES, DifferenceSpec, default_effect_size, difference_spec
 from .engine import CsvStatsEngine, EngineRefusal, FakeEngine, get_engine, use_engine
+from .export import FORMATS, export_comparisons, export_descriptives, render
+from .format import Grid, Labels, apa_sentence, comparisons_grid, descriptives_grids, labels_for, omnibus_grid
 from .run import Comparison, StatsReport, run
 from .seed import SeedError, Seeded, seed_from_plot
-from .spec import DV, Analysis, DescriptiveSpec, StatsSpec, StatsSpecError
+from .spec import DV, Analysis, DescriptiveSpec, FormatSpec, StatsSpec, StatsSpecError
 from .tables import ANALYSIS_KIND, UNIT, AnalysisFrame, AnalysisFrameError, analysis_frame, load_tables
 
 __all__ = [
@@ -42,4 +45,6 @@ __all__ = [
     "available_tests", "comparison_tiers", "default_effect_size", "derive_design", "describe_table",
     "difference_spec", "get_engine", "load_tables", "run", "seed_from_plot", "select_tests",
     "use_engine", "why_unavailable",
+    "FORMATS", "FormatSpec", "Grid", "Labels", "apa_sentence", "comparisons_grid", "descriptives_grids",
+    "export_comparisons", "export_descriptives", "labels_for", "omnibus_grid", "render",
 ]

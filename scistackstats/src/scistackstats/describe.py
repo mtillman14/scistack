@@ -119,11 +119,14 @@ class DVBlock:
     sections: list[Section] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     refused: str | None = None
+    #: ``AnalysisFrame.summary()``: unit, averaged keys, strata (for captions).
+    rows: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "dv": self.dv, "layers": self.layers, "columns": self.columns, "unit": self.unit,
             "sections": [s.to_dict() for s in self.sections], "notes": self.notes, "refused": self.refused,
+            "rows": dict(self.rows),
         }
 
 
@@ -159,7 +162,7 @@ def describe_frame(frame: AnalysisFrame) -> DVBlock:
     block = DVBlock(
         dv=frame.dv.key, layers=layers,
         columns=[{k: str(v) for k, v in c.items()} for c in columns],
-        unit=frame.unit, notes=list(frame.notes),
+        unit=frame.unit, notes=list(frame.notes), rows=frame.summary(),
     )
     for stratum, rows in frame.stratum_groups():
         cells = []

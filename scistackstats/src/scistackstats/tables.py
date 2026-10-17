@@ -73,6 +73,17 @@ class AnalysisFrame:
     #: The analysis spec the rows were read with (for logs and codegen).
     spec: PlotSpec
     notes: list[str] = field(default_factory=list)
+    #: Collapsed keys averaged away before the unit, deepest first (the
+    #: caption's "trials averaged within subject first").
+    averaged: list[str] = field(default_factory=list)
+
+    def summary(self) -> dict[str, Any]:
+        """What a caption needs to say about these rows."""
+        return {
+            "dv": self.dv.key, "variable": self.dv.variable, "unit": self.unit,
+            "unit_keys": list(self.unit_keys), "averaged": list(self.averaged),
+            "factors": list(self.factors), "strata": list(self.strata), "notes": list(self.notes),
+        }
 
     @property
     def outer_first(self) -> list[str]:
@@ -191,6 +202,7 @@ def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable) -> AnalysisF
     frame = AnalysisFrame(
         dv=dv, y=dv.variable, rows=rows, factors=factors, strata=strata, unit=unit,
         unit_keys=unit_keys, levels=levels, spec=spec, notes=notes,
+        averaged=list(steps.pre) if unit is not None else [],
     )
     Log.info(
         "[stats rows] %s: %d row(s), factors (inner first) %s, strata %s, unit %s%s",

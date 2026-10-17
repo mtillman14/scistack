@@ -404,7 +404,8 @@ too).
   (`format.py`)
 - project and plot `[aliases]` and the live schema level order (reuse
   `aliases.display_text` and `legend_entry_labels`; no copies)
-- units in headers where the variable has them
+- units in headers where the variable has them (deferred 2026-10-17:
+  measures carry no unit metadata yet; needs a unit source first)
 - n per cell in the header or footnote, and the S17 caption
 - a p column in Descriptives
 - copy as a **rich table** (HTML on the clipboard, pastes into Word with

@@ -177,10 +177,14 @@ class StatsReport:
     #: ``scistackplot.design.design_fingerprint`` of the design the report
     #: ran on, so a GUI can tell when the results are stale against the spec.
     design_digest: str
+    #: ``AnalysisFrame.summary()`` per DV that had rows (for captions).
+    dvs: list[dict[str, Any]] = field(default_factory=list)
+    #: DVs whose rows could not be built: ``{dv, reason}``.
+    refusals: list[dict[str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {"analyses": [a.to_dict() for a in self.analyses], "engine": self.engine,
-                "design_digest": self.design_digest}
+                "design_digest": self.design_digest, "dvs": self.dvs, "refusals": self.refusals}
 
 
 # ---------------------------------------------------------------------------
@@ -391,4 +395,7 @@ def run(stats_spec: StatsSpec, tables: dict[str, LongTable]) -> StatsReport:
                 reports.append(run_analysis(analysis, frames, refusals))
     for refusal in refusals:
         Log.warn("[stats] %s refused: %s", refusal["dv"], refusal["reason"], layer=LAYER)
-    return StatsReport(analyses=reports, engine=engine.versions(), design_digest=design_fingerprint(stats_spec.design))
+    return StatsReport(
+        analyses=reports, engine=engine.versions(), design_digest=design_fingerprint(stats_spec.design),
+        dvs=[f.summary() for f in frames], refusals=refusals,
+    )

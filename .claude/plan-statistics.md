@@ -139,7 +139,7 @@ Each stage lists its files, the logging it adds (NOTE 2) and its tests.
   scistackplot, the numpy twin, preview bars, the export source, preview ==
   export at n = 2, 5, 30). `test_series_stats.py` reference updated.
 
-### Stage 2 — Packages + engine seam ✅ built 2026-10-17, tests unrun
+### Stage 2 — Packages + engine seam ✅ built 2026-10-17, tests pass, committed 5bf77f7f
 
 As built: no static `engine.GAPS`. A csv-stats gap is `core.NotSupported`,
 turned into `EngineRefusal(kind="gap")` and logged `csv-stats gap: …`.
@@ -163,7 +163,7 @@ on them (stage 12), after PyPI publishing is set up for the new names.
   only `engine.py` imports `csvstats`); adapter golden tests for what 0.1.10
   does map.
 
-### Stage 3 — The design owner in scistackplot + sync primitives ✅ built 2026-10-17, tests unrun
+### Stage 3 — The design owner in scistackplot + sync primitives ✅ built 2026-10-17, tests pass, committed 5bf77f7f
 
 As built: the stats spec carries a whole `PlotSpec` as its design (no
 separate `PlotDesign` type). `design_of` / `design_fingerprint` /
@@ -180,7 +180,7 @@ separate `PlotDesign` type). `design_of` / `design_fingerprint` /
 - Tests: exhaustiveness; diff labels; round trip; apply with a stale role →
   a note.
 
-### Stage 4 — StatsSpec, DVs (including ColName), seeding ✅ built 2026-10-17, tests unrun
+### Stage 4 — StatsSpec, DVs (including ColName), seeding ✅ built 2026-10-17, tests pass, committed 5bf77f7f
 
 As built: DV loading and the rows owner live in `scistackstats.tables`
 (any `DataSource`), not in scistackstatsdb. Rows are read at
@@ -200,7 +200,7 @@ schema keys above it.
 - Tests: one test per S12 row; ColName expansion; compare-to-reference
   refusal.
 
-### Stage 5 — Descriptives ✅ built 2026-10-17, tests unrun
+### Stage 5 — Descriptives ✅ built 2026-10-17, tests pass, committed 5bf77f7f
 
 
 - `scistackstats/describe.py`: `STATISTICS` catalog (id, label, owner
@@ -214,7 +214,7 @@ schema keys above it.
   across people; the nested two-layer header; a CI95 parity test against
   the plot preview bars.
 
-### Stage 6 — Design derivation, tiers, catalog, effects ✅ built 2026-10-17, tests unrun
+### Stage 6 — Design derivation, tiers, catalog, effects ✅ built 2026-10-17, tests pass, committed 5bf77f7f
 
 As built: the catalog checks statistical requirements only. What csv-stats
 does not support yet comes back from the engine, so the support matrix
@@ -234,7 +234,7 @@ has one owner.
 - Tests: aim2 fixtures, the unbalanced case, mixed membership, tiers for 1,
   2 and 3 layers, and effect defaults per design.
 
-### Stage 7 — Runner + families ✅ built 2026-10-17, tests unrun
+### Stage 7 — Runner + families ✅ built 2026-10-17, tests pass, committed 5bf77f7f
 
 As built: tested against FakeEngine and against the real csv-stats end to
 end. Primary = pairwise two-sample tests per outer-level context (EMM
@@ -249,7 +249,17 @@ post-hoc tests are a csv-stats gap).
 - Tests: family membership per scope, refusals not raised, determinism, and
   primary comparisons present when the interaction p > α.
 
-### Stage 8 — Format, caption, export
+### Stage 8 — Format, caption, export ✅ built 2026-10-17, tests unrun
+
+As built: `format.py` turns results into `Grid`s (header rows with spans,
+string cells, caption, notes). `export.py` renders a Grid as txt, md, csv,
+latex, html or json, and the GUI will render the same Grid. `FormatSpec`
+(decimals: auto per DV = two significant digits of the smallest spread; p
+decimals; effect decimals; stars) is on `StatsSpec.formatting`. Descriptives
+can take a report for a p column (the omnibus main effect of the innermost
+layer, unadjusted). Units in headers are deferred: measures carry no unit
+metadata yet.
+
 
 - `format.py`: significant figures, APA p, the statistic strings,
   effect-size names, and **`caption(report)`** (S17). Aliases and level order

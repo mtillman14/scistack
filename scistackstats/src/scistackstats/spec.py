@@ -107,6 +107,38 @@ class DescriptiveSpec:
 
 
 @dataclass(frozen=True)
+class FormatSpec:
+    """How numbers read in every table and export (one owner: ``format``)."""
+
+    #: Decimals for values, spreads and differences. None = automatic per
+    #: DV: enough to show two significant digits of its smallest spread
+    #: (``format.auto_decimals``), so a table of metres and milliseconds
+    #: both read well.
+    decimals: int | None = None
+    #: Decimals of p-values (APA: 3, with "< .001" below).
+    p_decimals: int = 3
+    #: Decimals of effect sizes.
+    effect_decimals: int = 2
+    #: Append * / ** / *** (p < .05 / .01 / .001) to adjusted p-values.
+    stars: bool = False
+
+    def __post_init__(self) -> None:
+        if self.decimals is not None and not (0 <= self.decimals <= 8):
+            raise StatsSpecError(f"formatting.decimals must be 0-8 or None, got {self.decimals!r}")
+        if not (1 <= self.p_decimals <= 6) or not (0 <= self.effect_decimals <= 6):
+            raise StatsSpecError("formatting: p_decimals must be 1-6 and effect_decimals 0-6")
+
+    def to_dict(self) -> dict[str, Any]:
+        out = {f.name: getattr(self, f.name) for f in fields(self)}
+        return {k: v for k, v in out.items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "FormatSpec":
+        _only(raw, {f.name for f in fields(cls)}, "formatting")
+        return cls(**raw)
+
+
+@dataclass(frozen=True)
 class Analysis:
     """One analysis on the Comparisons tab.
 
@@ -173,6 +205,7 @@ class StatsSpec:
     descriptives: DescriptiveSpec = field(default_factory=DescriptiveSpec)
     comparisons: tuple[Analysis, ...] = ()
     variant_mode: str = "pinned"
+    formatting: FormatSpec = field(default_factory=FormatSpec)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dvs", tuple(self.dvs))
@@ -201,6 +234,7 @@ class StatsSpec:
             "descriptives": self.descriptives.to_dict(),
             "comparisons": [a.to_dict() for a in self.comparisons],
             "variant_mode": self.variant_mode,
+            "formatting": self.formatting.to_dict(),
         }
         if self.linked_plot is not None:
             out["linked_plot"] = self.linked_plot
@@ -210,7 +244,7 @@ class StatsSpec:
     def from_dict(cls, raw: dict) -> "StatsSpec":
         if not isinstance(raw, dict):
             raise StatsSpecError(f"a stats spec must be a table, got {type(raw).__name__}")
-        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot"}, "stats spec")
+        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting"}, "stats spec")
         if raw.get("format") != FORMAT:
             raise StatsSpecError(f"stats spec format {raw.get('format')!r} is not {FORMAT}")
         if "design" not in raw:
@@ -222,6 +256,7 @@ class StatsSpec:
             descriptives=DescriptiveSpec.from_dict(raw.get("descriptives", {})),
             comparisons=tuple(Analysis.from_dict(a) for a in raw.get("comparisons", [])),
             variant_mode=raw.get("variant_mode", "pinned"),
+            formatting=FormatSpec.from_dict(raw.get("formatting", {})),
         )
 
 
