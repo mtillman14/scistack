@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
+import ResizeHandle, { useResizablePanel } from '../ResizeHandle'
 import { notesSummary, savedAtLabel, type RestoreNote, type SavedPlotInfo } from './savedPlots'
 
 export interface SaveResult {
@@ -73,6 +74,9 @@ export default function SavedPlotsRail({
   // A different plot loaded: questions about the previous one no longer apply.
   useEffect(() => { setPending(null) }, [loaded?.plot_id])
   useEffect(() => { setShowNotes(false) }, [notes])
+  // Drags from its left edge; the reserve keeps room for the figure and the
+  // controls rail. Collapsed, it is only its vertical label.
+  const resize = useResizablePanel({ panel: 'plotStudio.savedPlots', edge: 'left', min: 180, reserve: 520 })
 
   if (collapsed) {
     return (
@@ -105,7 +109,9 @@ export default function SavedPlotsRail({
   }
 
   return (
-    <div style={railStyles.rail}>
+    <>
+    <ResizeHandle {...resize.handleProps} />
+    <div ref={resize.panelRef} style={{ ...railStyles.rail, ...resize.widthStyle }}>
       <div style={railStyles.header}>
         <span style={railStyles.title}>Saved plots</span>
         <button type="button" style={railStyles.headerButton} onClick={onToggle} title="Hide saved plots">
@@ -253,6 +259,7 @@ export default function SavedPlotsRail({
         {children}
       </div>
     </div>
+    </>
   )
 }
 

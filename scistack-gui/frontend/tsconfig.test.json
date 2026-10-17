@@ -30,6 +30,8 @@
     "src/history.test.ts",
     "src/undo.ts",
     "src/undo.test.ts",
+    "src/panelResize.ts",
+    "src/panelResize.test.ts",
     "src/components/PlotStudio/locationSelection.ts",
     "src/components/PlotStudio/locationSelection.test.ts",
     "src/components/PlotStudio/groups.ts",

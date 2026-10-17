@@ -25,6 +25,9 @@
  * tab switch — see components/RunsDock.tsx and components/PathsPopup.tsx.
  * The sidebar itself no longer has its own tab bar either — see
  * components/Sidebar/Sidebar.tsx.
+ *
+ * The sidebar's left edge drags to resize it (components/ResizeHandle.tsx);
+ * "right 1/4" is only its width until it is first dragged.
  */
 
 import { useEffect, useState, useCallback } from "react";
@@ -35,6 +38,7 @@ import HypothesisTabs from "./components/HypothesisTabs";
 import PathsPopup from "./components/PathsPopup";
 import InventoryPopup from "./components/InventoryPopup";
 import Sidebar from "./components/Sidebar/Sidebar";
+import ResizeHandle, { useResizablePanel } from "./components/ResizeHandle";
 import PipelineRunController from "./components/PipelineRunController";
 import { RunLogProvider } from "./context/RunLogContext";
 import { SelectedNodeProvider } from "./context/SelectedNodeContext";
@@ -209,6 +213,14 @@ export default function App() {
   const [startupErrors, setStartupErrors] = useState<StartupError[]>([]);
   const [pathsOpen, setPathsOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  // Drag the sidebar's left edge to resize it; until then it keeps its
+  // quarter of the window (styles.sidebar). The canvas keeps >= 320 px.
+  const sidebarResize = useResizablePanel({
+    panel: "sidebar",
+    edge: "left",
+    min: 240,
+    reserve: 320,
+  });
 
   // Endpoint report: db.inspect.write_report → self-contained index.html
   // (figures embedded). Standalone opens it via the artifacts file route;
@@ -389,7 +401,11 @@ export default function App() {
                       <PipelineDAG />
                     </div>
                   </div>
-                  <div style={styles.sidebar}>
+                  <ResizeHandle {...sidebarResize.handleProps} />
+                  <div
+                    ref={sidebarResize.panelRef}
+                    style={{ ...styles.sidebar, ...sidebarResize.widthStyle }}
+                  >
                     <Sidebar />
                   </div>
                 </div>

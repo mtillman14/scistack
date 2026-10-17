@@ -42,6 +42,42 @@ the mark.
 
 ---
 
+## 0zzzzc. Drag-resizable side panels — added 2026-10-16
+
+What changed: four side panels now resize by click-and-drag on their inner
+edge. They are the canvas sidebar, the Plot Studio controls rail, the Plot
+Studio Saved-plots rail, and the sidebar of the DAG picker popups (variant and
+grouping pickers). All four share one owner: the width rule is in
+`frontend/src/panelResize.ts` and the drag wiring is in
+`components/ResizeHandle.tsx`. Each panel's width is remembered per viewer in
+browser storage.
+
+**Backend:** none. Reload the VS Code window so the rebuilt webview bundle loads.
+
+**Frontend**
+1. Hover the canvas sidebar's left border. The cursor should change to ↔ and a
+   faint blue strip should show. Drag it left and right. The sidebar should
+   follow the pointer, stop at about 240 px, and always leave the canvas at
+   least 320 px.
+2. Drag fast across the React Flow canvas. The resize should keep tracking
+   and nodes should not pan or select.
+3. Double-click the border. The sidebar should snap back to its quarter-window
+   default.
+4. Close and reopen the GUI tab. The width you dragged to should come back.
+5. In Plot Studio, drag the controls rail's right border wider than 300 px and
+   then 420 px. The text-size rows should go from one column to two. Collapse
+   the rail with ❮: it should shrink to the toggle and the handle should
+   disappear. Expand it with ❯: the dragged width should come back.
+6. Drag the Saved-plots rail's left border. Collapse it with ❯: there should be
+   no handle on the vertical label.
+7. Open a variant or grouping DAG picker and drag its sidebar's left border.
+   Letting go outside the dialog should NOT close the popup.
+8. Click a handle and press ←/→. Each press should move the panel by 16 px.
+9. In the webview devtools console, each drag should log
+   `[panel] resized {panel, why, from, to}`.
+
+---
+
 ## 0zzzzb. Faster figure arrows (one layout per figure) + click-to-drawn timing in scidb.log — added 2026-10-16
 
 What changed: each ◀ ▶ step used to lay the figure out twice in matplotlib

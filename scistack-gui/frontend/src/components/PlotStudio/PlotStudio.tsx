@@ -19,6 +19,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-cartesian-dist-min'
 import CustomFigure, { customPreviewBlob, customPreviewSize, type CustomPreviewPayload } from './CustomFigure'
+import ResizeHandle, { useResizablePanel } from '../ResizeHandle'
 import { callBackend, isVSCodeMode } from '../../api'
 import { UndoStack } from '../../undo'
 import { useHistoryState, useUndoShortcuts } from '../../hooks/useUndo'
@@ -996,8 +997,8 @@ export default function PlotStudio({
     (id: GroupId) => setOpenGroups(prev => ({ ...prev, [id]: !prev[id] })),
     []
   )
-  // The rail's width class. Measured, never assumed: the rail is 280 px today
-  // and may become user-resizable, and rows such as the text sizes lay out by
+  // The rail's width class. Measured, never assumed: the rail is 280 px until
+  // it is dragged (Shell's ResizeHandle), and rows such as the text sizes lay out by
   // it. A callback ref for the same reason as canvasRef below.
   const [railWidth, setRailWidth] = useState<RailWidth>('narrow')
   const railObserverRef = useRef<ResizeObserver | null>(null)
@@ -4649,6 +4650,14 @@ function Shell({
   rightRail,
 }: ShellProps) {
   const theme = usePlotTheme()
+  // The controls rail drags from its right edge. The reserve keeps room for
+  // the figure and the Saved-plots rail beside it.
+  const railResize = useResizablePanel({
+    panel: 'plotStudio.controls',
+    edge: 'right',
+    min: 240,
+    reserve: 520,
+  })
   return (
     // No overlay click-to-close: a stray click on the backdrop while dragging a
     // plotly selection would throw the panel away mid-exploration.
@@ -4663,7 +4672,14 @@ function Shell({
       {/* A row, not a column: the title bar caps the controls rail rather than
           spanning the panel, so the figure keeps the tab's full height. */}
       <div ref={panelRef} style={embedded ? styles.embeddedPanel : styles.panel}>
-        <div style={{ ...styles.rail, ...(controlsHidden ? styles.railCollapsed : null) }}>
+        <div
+          ref={railResize.panelRef}
+          style={{
+            ...styles.rail,
+            // Collapsed is as wide as its toggle, whatever it was dragged to.
+            ...(controlsHidden ? styles.railCollapsed : railResize.widthStyle),
+          }}
+        >
           <div style={styles.header}>
             {/* The toggle sits over the rail it collapses, so the control is
                 where the thing it controls is. */}
@@ -4715,6 +4731,7 @@ function Shell({
           </div>
           {sidebar}
         </div>
+        {!controlsHidden && <ResizeHandle {...railResize.handleProps} />}
         {children}
         {rightRail}
       </div>
@@ -6061,8 +6078,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   // The title bar and the controls share one column, so the figure column
   // starts at the very top of the panel.
-  // 280 px today; nothing inside may assume it (railWidthClass reads the
-  // measured width), so it can become user-resizable.
+  // 280 px until dragged (Shell's ResizeHandle); nothing inside may assume it
+  // (railWidthClass reads the measured width).
   rail: {
     width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column',
     minHeight: 0, borderRight: '1px solid var(--ps-border)',

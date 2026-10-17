@@ -32,6 +32,7 @@ import {
 import '@xyflow/react/dist/style.css'
 
 import { applyDagreLayout } from '../../layout'
+import ResizeHandle, { useResizablePanel } from '../ResizeHandle'
 import { callBackend } from '../../api'
 import {
   VariantSelectionProvider,
@@ -138,6 +139,8 @@ export function PickerDialog({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancel])
+  // The sidebar drags from its left edge; both pickers share one width.
+  const sidebarResize = useResizablePanel({ panel: 'dagPicker.sidebar', edge: 'left', min: 200, reserve: 320 })
 
   return (
     <div style={pickerStyles.backdrop} onClick={onCancel}>
@@ -186,7 +189,12 @@ export function PickerDialog({
               </VariantSelectionProvider>
             )}
           </div>
-          {sidebar && <div style={pickerStyles.sidebar}>{sidebar}</div>}
+          {sidebar && <ResizeHandle {...sidebarResize.handleProps} />}
+          {sidebar && (
+            <div ref={sidebarResize.panelRef} style={{ ...pickerStyles.sidebar, ...sidebarResize.widthStyle }}>
+              {sidebar}
+            </div>
+          )}
         </div>
 
         {below}

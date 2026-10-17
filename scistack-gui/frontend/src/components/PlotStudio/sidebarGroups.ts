@@ -6,8 +6,8 @@
  * React-free, so `npm test` can run it. Three things live here:
  * - which groups exist and which start open, and the tolerant reader for the
  *   per-viewer open state (localStorage can hold anything, or nothing);
- * - the rail's width class, which the responsive rows read (the rail may
- *   become user-resizable; nothing may assume 260 px);
+ * - the rail's width class, which the responsive rows read (the rail is
+ *   user-resizable by drag; nothing may assume a width);
  * - the one-line summary each collapsed group shows. Summaries only DISPLAY
  *   the spec; they never decide anything the backend decides.
  */
