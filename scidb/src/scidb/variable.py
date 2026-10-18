@@ -98,6 +98,12 @@ class BaseVariable(metaclass=VariableMeta):
 
     schema_version: int = 1  # Default schema version. Change whenever the structure of a variable changes.
 
+    #: Result-table column this type's output lands in when named in
+    #: ``for_each(outputs=[...])``. ``None`` = the class name. Only applies
+    #: when the output fills one cell; DataFrame outputs whose rows spread
+    #: keep their own columns. Rule owner: ``scifor.output_column_name``.
+    column_name: "str | None" = None
+
     # Reserved metadata keys that users cannot use
     _reserved_keys = frozenset(
         {"record_id", "id", "created_at", "schema_version", "index", "loc", "iloc"}

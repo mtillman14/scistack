@@ -181,14 +181,14 @@ classdef TestSciforForEachCategorical < matlab.unittest.TestCase
         end
 
         function test_categorical_with_output_names(tc)
-        %   categorical + output_names: metadata is categorical, named
+        %   categorical + outputs: metadata is categorical, named
         %   output column is not.
             scifor.set_schema(["subject"]);
 
             tbl = table([1;2], [10;20], 'VariableNames', {'subject','value'});
             result = scifor.for_each(@(x) x, ...
                 struct('x', tbl), subject=[1 2], ...
-                categorical=true, output_names={"result"});
+                categorical=true, outputs={"result"});
 
             tc.verifyTrue(iscategorical(result.subject));
             tc.verifyTrue(ismember('result', result.Properties.VariableNames));
@@ -374,7 +374,7 @@ classdef TestSciforForEachCategorical < matlab.unittest.TestCase
                 'VariableNames', {'FileNum', 'CycleNum', 'Seg'});
             result = scifor.for_each(@(s) s, ...
                 struct('tableIn', scifor.ColumnSelection(tbl, 'Seg')), ...
-                output_names={'Seg_Out'}, FileNum=[], CycleNum=[]);
+                outputs={'Seg_Out'}, FileNum=[], CycleNum=[]);
 
             tc.verifyClass(result.FileNum, 'categorical');
             tc.verifyClass(result.CycleNum, 'categorical');

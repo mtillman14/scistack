@@ -50,8 +50,9 @@ from .foreach import (
     for_each,
     spread_nested_results,
 )
-from .locations import LocationFilter, filter_combos
+from .locations import LocationFilter, filter_combo_indices, filter_combos
 from .merge import Merge
+from .outputs import COLUMN_NAME_ATTR, DB_ONLY_KWARGS, output_column_name
 from .pathinput import (
     PathInput,
     clear_listing_cache,
@@ -83,6 +84,9 @@ __all__ = [
     "ForColumnsError",
     "NoDataError",
     "spread_nested_results",
+    "DB_ONLY_KWARGS",
+    "output_column_name",
+    "COLUMN_NAME_ATTR",
     # Input wrappers
     "Fixed",
     "Merge",
@@ -95,6 +99,7 @@ __all__ = [
     # Location selection
     "LocationFilter",
     "filter_combos",
+    "filter_combo_indices",
     # Rootless-PathInput resolution base
     "set_project_root",
     "get_project_root",

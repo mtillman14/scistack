@@ -20,6 +20,6 @@ result = scifor.for_each(
 #     inputs={
 #         "session_val": session_val, "bl_val": scifor.Fixed(bl_val, session="BL")
 #     },
-#     output_names=["delta_from_bl"],
+#     outputs=["delta_from_bl"],
 #     subject= [], session = []
 # )

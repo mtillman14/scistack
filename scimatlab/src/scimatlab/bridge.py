@@ -396,16 +396,11 @@ def _make_matlab_fn_sentinel(
 
 def _locations_from_matlab(locations):
     """``+scidb/for_each.m``'s ``locations`` (JSON text, a mapping, or None)
-    -> the mapping ``scifor.locations`` reads, or None. JSON because a ragged
-    include list does not survive MATLAB->Python struct conversion."""
-    import json
+    -> the mapping ``scifor.locations`` reads, or None. Owner:
+    ``scifor.locations.locations_from_text`` (shared with ``+scifor/for_each.m``)."""
+    from scifor.locations import locations_from_text
 
-    if locations is None:
-        return None
-    if isinstance(locations, (str, bytes)):
-        text = locations.decode() if isinstance(locations, bytes) else locations
-        return json.loads(text) if text.strip() else None
-    return dict(locations)
+    return locations_from_text(locations)
 
 
 def _parameter_names_from_matlab(names) -> "dict[str, str] | None":
@@ -1766,7 +1761,11 @@ def register_matlab_variable(type_name: str, schema_version: int = 1):
     if existing is not None:
         return existing
 
-    surrogate = type(type_name, (BaseVariable,), {"schema_version": schema_version})
+    surrogate = type(
+        type_name,
+        (BaseVariable,),
+        {"schema_version": schema_version, "_matlab_surrogate": True},
+    )
 
     try:
         from scidb.database import get_database
@@ -1776,6 +1775,31 @@ def register_matlab_variable(type_name: str, schema_version: int = 1):
         pass  # Database not yet configured; will register on configure_database
 
     return surrogate
+
+
+def sync_output_column_name(type_name: str, column_name=None) -> str:
+    """Set (or clear) ``column_name`` on a MATLAB type's Python surrogate.
+
+    ``+scidb/for_each.m`` calls this for every output on every call with the
+    MATLAB class's ``column_name`` Constant property (``None`` when the class
+    has none), so a property added, changed or removed in MATLAB takes effect
+    on the next run. Empty text counts as unset, as in both languages'
+    ``output_column_name``. Returns the resulting column name.
+    """
+    from scidb.log import Log as _BridgeLog
+    from scifor import output_column_name
+
+    surrogate = register_matlab_variable(type_name)
+    # A Python-defined class of the same name owns its own column_name; only
+    # a surrogate (which exists to mirror the MATLAB class) is overwritten.
+    if getattr(surrogate, "_matlab_surrogate", False) or column_name:
+        surrogate.column_name = column_name if column_name else None
+    resolved = output_column_name(surrogate)
+    _BridgeLog.debug(
+        f"[bridge] sync_output_column_name: {type_name} -> column {resolved!r} "
+        f"(column_name={surrogate.column_name!r})"
+    )
+    return resolved
 
 
 def save_batch_bridge(

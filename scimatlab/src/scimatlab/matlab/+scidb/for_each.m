@@ -25,7 +25,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                 scidb.Fixed wrappers, scidb.Variant wrappers,
 %                 scidb.Merge wrappers, scifor.PathInput instances, or
 %                 constant values.
-%       outputs - Cell array of BaseVariable instances for output types
+%       outputs - Cell array of BaseVariable instances for output types.
+%                 May also be passed as outputs={...} (scifor.for_each
+%                 style). A class's Constant property column_name, if
+%                 set, names its result column (scifor.output_column_name).
 %
 %   Name-Value Arguments:
 %       dry_run       - If true, preview without executing (default: false)
@@ -66,6 +69,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       hold fixed; each group's [min max] is appended as a
 %                       trailing positional arg (declare `<input>_limits`
 %                       trailing parameters in share_limits field order).
+%       categorical   - If true, convert metadata columns of the RETURNED
+%                       table to categorical (scifor.categorize_metadata),
+%                       after saving. (default: false)
 %       (any other)   - Metadata iterables (numeric or string arrays)
 %
 %   Returns:
@@ -74,6 +80,18 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
     % Default return value
     result_tbl = [];
+
+    % --- outputs= as a name-value pair (scifor.for_each style): MATLAB's
+    %     name=value syntax lands 'outputs' in the OUTPUTS slot and the value
+    %     in varargin{1}. Accepted so a scifor call runs here unchanged. ---
+    if (ischar(outputs) || (isstring(outputs) && isscalar(outputs))) ...
+            && strcmpi(string(outputs), "outputs") && ~isempty(varargin)
+        outputs = varargin{1};
+        varargin = varargin(2:end);
+    end
+    if isobject(outputs) && ~iscell(outputs)
+        outputs = num2cell(outputs);   % one object (or object array) -> cell
+    end
 
     % --- Parse options vs metadata name-value pairs ---
     [meta_args, opts] = split_options(varargin{:});
@@ -214,12 +232,23 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         % outputs may be cell of instances or cell of classes; class()
         % handles both
         if iscell(outputs)
-            output_class_names{o} = class(outputs{o});
+            out_obj = outputs{o};
         else
-            output_class_names{o} = class(outputs(o));
+            out_obj = outputs(o);
         end
+        output_class_names{o} = class(out_obj);
         % Ensure each output type is registered Python-side before prepare
         scidb.internal.ensure_registered(output_class_names{o});
+        % Mirror the class's column_name (Constant property, or none) onto
+        % its Python surrogate, so Python's scifor.output_column_name -- which
+        % names the result columns this call hands back -- agrees with
+        % MATLAB's scifor.output_column_name for the same class.
+        custom_col = py.None;
+        if isobject(out_obj) && isprop(out_obj, 'column_name')
+            custom_col = char(string(out_obj.column_name));
+        end
+        py.scimatlab.bridge.sync_output_column_name( ...
+            output_class_names{o}, custom_col);
     end
     py_output_classes = py.list(output_class_names);
 
@@ -598,7 +627,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     scifor_opts{end+1} = record_id_column;
     scifor_opts{end+1} = '_nest_table_outputs';
     scifor_opts{end+1} = true;
-    scifor_opts{end+1} = 'output_names';
+    scifor_opts{end+1} = 'outputs';
     scifor_opts{end+1} = output_names;
     if ~isempty(find_pathinput(inputs))
         scifor_opts{end+1} = '_resolve_pathinput';
@@ -884,6 +913,21 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         end
     end
     t_introspect = toc(t0_in);
+
+    % --- categorical=true: scifor's conversion, applied to the RETURNED table
+    %     only. The inner loop runs with categorical=false because its tables
+    %     go back to Python to be saved, and categorical metadata must not
+    %     cross that boundary. ---
+    if opts.categorical && ~isempty(result_tbl) && istable(result_tbl)
+        meta_cols = intersect( ...
+            unique([reshape(string(scifor.get_schema()), 1, []), ...
+                    reshape(string(keys(meta_original_classes)), 1, [])], 'stable'), ...
+            string(result_tbl.Properties.VariableNames), 'stable');
+        result_tbl = scifor.categorize_metadata(result_tbl, meta_cols, ...
+            scifor.get_schema());
+        scidb.Log.debug('categorical: converted %d metadata column(s): %s', ...
+            numel(meta_cols), strjoin(meta_cols, ', '));
+    end
 
     % Named-operation timing for the phase that used to be a silent gap between
     % 'for_each_save returned' and 'for_each done'. bytes is the size of the
@@ -1828,6 +1872,7 @@ function [meta_args, opts] = split_options(varargin)
     opts.introspect = false;
     opts.skip_computed = false;
     opts.finalized = false;
+    opts.categorical = false;   % scifor option; applied to the returned table
     opts.share_limits = struct();
     opts.schema_keys = string.empty;
     opts.schema_keys_given = false;
@@ -1853,7 +1898,7 @@ function [meta_args, opts] = split_options(varargin)
     % with the cases below.
     reserved_opts = ["dryrun", "save", "preload", "astable", "db", ...
                      "parallel", "distribute", "where", "introspect", ...
-                     "skipcomputed", "finalized", "sharelimits", ...
+                     "skipcomputed", "finalized", "categorical", "sharelimits", ...
                      "schemakeys", "schemafilter", "glue", "parameternames", "locations", ...
                      "fnname", "fnhash", "pipeline"];
 
@@ -1905,6 +1950,9 @@ function [meta_args, opts] = split_options(varargin)
                     i = i + 2; continue;
                 case "skip_computed"
                     opts.skip_computed = logical(varargin{i+1});
+                    i = i + 2; continue;
+                case "categorical"
+                    opts.categorical = logical(varargin{i+1});
                     i = i + 2; continue;
                 case "finalized"
                     opts.finalized = logical(varargin{i+1});

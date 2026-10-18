@@ -17,7 +17,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from scifor import LocationFilter, filter_combos, for_each, set_schema
+from scifor import LocationFilter, filter_combo_indices, filter_combos, for_each, set_schema
 from scifor.locations import value_spellings
 
 CASES_FILE = (
@@ -361,3 +361,22 @@ def test_without_keys_drops_whole_prefixes_and_exclusions():
     assert out.include == ((("trial", "1"),),)
     assert out.exclude_levels == (("trial", ("3",)),)
     assert lf.without_keys(()) is lf
+
+
+# --- filter_combo_indices / JSON text (MATLAB's +scifor/for_each.m path) -------
+
+
+def test_filter_combo_indices_agrees_with_filter_combos():
+    combos = [{"subject": s, "trial": t} for s in (1, 2) for t in (1, 2)]
+    sel = {"include": [[["subject", "1"]], [["subject", "2"], ["trial", "2"]]]}
+    kept = filter_combo_indices(combos, sel)
+    assert kept == [0, 1, 3]
+    assert [combos[i] for i in kept] == filter_combos(combos, sel)
+
+
+def test_json_text_is_a_locations_value():
+    combos = [{"subject": 1.0}, {"subject": 2.0}]  # MATLAB doubles
+    text = json.dumps({"include": [[["subject", "2"]]]})
+    assert filter_combo_indices(combos, text) == [1]
+    assert filter_combo_indices(combos, "") == [0, 1]
+    assert LocationFilter.of(text) == LocationFilter.of(json.loads(text))

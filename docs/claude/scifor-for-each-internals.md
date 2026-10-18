@@ -30,11 +30,11 @@ It is a **pure loop orchestrator**. It does no I/O — no database loading, no f
 def for_each(
     fn: Callable,
     inputs: dict[str, Any],
+    outputs: list[str] | int | None = None,
     dry_run: bool = False,
     as_table: list[str] | bool | None = None,
     distribute: bool = False,
     where=None,
-    output_names: list[str] | int | None = None,
     _all_combos: list[dict] | None = None,
     _log_fn: Callable[[str], None] | None = None,
     _progress_fn: Callable[[dict], None] | None = None,
@@ -45,7 +45,7 @@ def for_each(
 
 Source: lines 15–28.
 
-Parameters prefixed with `_` are internal hooks used by the `scidb` wrapper and the GUI. The user-facing parameters are `fn`, `inputs`, `dry_run`, `as_table`, `distribute`, `where`, `output_names`, and the `**metadata_iterables`.
+Parameters prefixed with `_` are internal hooks used by the `scidb` wrapper and the GUI. The user-facing parameters are `fn`, `inputs`, `outputs`, `dry_run`, `as_table`, `distribute`, `where`, and the `**metadata_iterables`.
 
 ---
 
@@ -53,7 +53,7 @@ Parameters prefixed with `_` are internal hooks used by the `scidb` wrapper and 
 
 ### Step 1: Resolve output column names (lines 60–67)
 
-The `output_names` parameter controls what the output columns are called in the result DataFrame:
+The `outputs` parameter (named and positioned like `scidb.for_each`'s `outputs`) controls what the output columns are called in the result DataFrame:
 
 - `None` (default) → `["output"]` — a single output column named "output"
 - An integer `N` → `["output_1", "output_2", ..., "output_N"]`

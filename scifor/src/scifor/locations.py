@@ -38,6 +38,7 @@ no step for a key they were not saved at).
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -152,6 +153,8 @@ class LocationFilter:
         lets ``for_each(locations={...})`` work straight from JSON without the
         GUI and the Python API disagreeing about the shape.
         """
+        if isinstance(value, (str, bytes)):
+            value = locations_from_text(value)
         if value is None:
             return cls()
         if isinstance(value, cls):
@@ -169,7 +172,7 @@ class LocationFilter:
                 exclude_levels=value.get("exclude_levels") or {},
             )
         raise TypeError(
-            "locations= must be a LocationFilter, a mapping with 'include' / "
+            "locations= must be a LocationFilter, a mapping (or its JSON text) with 'include' / "
             f"'exclude_levels', or None -- got {type(value).__name__}."
         )
 
@@ -297,7 +300,23 @@ def filter_combos(
     *,
     context: str = "",
 ) -> list[dict]:
-    """*combos* narrowed by *locations*, reporting what it dropped.
+    """*combos* narrowed by *locations* (see :func:`filter_combo_indices`)."""
+    return [
+        dict(combos[i]) for i in filter_combo_indices(combos, locations, context=context)
+    ]
+
+
+def filter_combo_indices(
+    combos: Sequence[Mapping[str, Any]],
+    locations: Any,
+    *,
+    context: str = "",
+) -> list[int]:
+    """Indices of the *combos* that *locations* keeps, reporting what it dropped.
+
+    The index form is for callers whose combos are not Python dicts --
+    MATLAB's ``+scifor/for_each.m`` converts each combo, asks, and keeps its
+    own structs -- so the rule has one owner in both languages.
 
     A filter that quietly removes everything is the failure mode this feature
     introduces -- a run that does nothing looks like a broken pipeline rather
@@ -306,7 +325,7 @@ def filter_combos(
     """
     location_filter = LocationFilter.of(locations)
     if location_filter.is_empty():
-        return [dict(combo) for combo in combos]
+        return list(range(len(combos)))
 
     where = f"{context}: " if context else ""
 
@@ -322,10 +341,10 @@ def filter_combos(
             layer=LAYER,
         )
 
-    kept: list[dict] = []
+    kept: list[int] = []
     dropped_by_prefix = 0
     dropped_by_level: dict[str, int] = {}
-    for combo in combos:
+    for index, combo in enumerate(combos):
         if not location_filter.covered(combo):
             dropped_by_prefix += 1
             continue
@@ -334,7 +353,7 @@ def filter_combos(
             label = f"{excluded[0]}={excluded[1]}"
             dropped_by_level[label] = dropped_by_level.get(label, 0) + 1
             continue
-        kept.append(dict(combo))
+        kept.append(index)
 
     by_level = ", ".join(
         f"{label} ({count})" for label, count in sorted(dropped_by_level.items())
@@ -355,3 +374,19 @@ def filter_combos(
             layer=LAYER,
         )
     return kept
+
+
+def locations_from_text(value: Any) -> Any:
+    """``locations`` as MATLAB sends it -- JSON text (a ragged include list
+    does not survive MATLAB->Python struct conversion), a mapping, or None --
+    as the mapping :meth:`LocationFilter.of` reads, or None for blank text.
+
+    Shared by ``+scifor/for_each.m`` (through :func:`filter_combo_indices`)
+    and ``scimatlab.bridge`` (``+scidb/for_each.m``).
+    """
+    if value is None:
+        return None
+    if isinstance(value, (str, bytes)):
+        text = value.decode() if isinstance(value, bytes) else value
+        return json.loads(text) if text.strip() else None
+    return dict(value)

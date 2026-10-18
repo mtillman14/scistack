@@ -1,0 +1,9 @@
+{
+  "_doc": "Shared cases for output_column_name (Python scifor/outputs.py, MATLAB +scifor/output_column_name.m). A 'class' case names a fixture class: Python builds it from 'column_name' (omitted attribute when null); MATLAB has a classdef of that name in scimatlab/tests/matlab/helpers. See docs/claude/for-each-kwarg-parity.md.",
+  "cases": [
+    {"string": "plain", "expected": "plain"},
+    {"class": "OcnPlain", "column_name": null, "expected": "OcnPlain"},
+    {"class": "OcnRenamed", "column_name": "step_len", "expected": "step_len"},
+    {"class": "OcnBlank", "column_name": "", "expected": "OcnBlank"}
+  ]
+}

@@ -5,7 +5,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
 %   - Non-table outputs (scalar, vector, string, matrix, struct, logical)
 %   - Table outputs (preserved columns, metadata prepended, conflict detection)
 %   - Multiple outputs via varargout
-%   - output_names interaction
+%   - outputs interaction
 %   - Edge cases (empty, dry_run, skipped)
 %   - Feature interactions (distribute, where, Fixed, Merge)
 
@@ -282,7 +282,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
             tbl = table([1;2], [10.0;20.0], 'VariableNames', {'subject','value'});
             result = scifor.for_each(@(x) deal(x*2, x+1), ...
                 struct('x', tbl), ...
-                output_names={"doubled", "incremented"}, ...
+                outputs={"doubled", "incremented"}, ...
                 subject=[1 2]);
 
             % Only first output captured
@@ -309,17 +309,17 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
     end
 
     % =====================================================================
-    % D. output_names interaction
+    % D. outputs interaction
     % =====================================================================
 
     methods (Test)
 
         function test_output_names_overrides_default(tc)
-        %   output_names={"my_result"} → column named 'my_result'.
+        %   outputs={"my_result"} → column named 'my_result'.
             scifor.set_schema(["subject"]);
 
             result = scifor.for_each(@() 42, struct(), ...
-                output_names={"my_result"}, subject=[1]);
+                outputs={"my_result"}, subject=[1]);
 
             tc.verifyTrue(ismember('my_result', result.Properties.VariableNames));
             tc.verifyFalse(ismember('output', result.Properties.VariableNames));
@@ -327,11 +327,11 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
         end
 
         function test_output_names_with_multiple_outputs(tc)
-        %   output_names names each output table's data column.
+        %   outputs names each output table's data column.
             scifor.set_schema(["subject"]);
 
             [r1, r2] = scifor.for_each(@() deal(10, 20), struct(), ...
-                output_names={"speed","force"}, subject=[1]);
+                outputs={"speed","force"}, subject=[1]);
 
             tc.verifyTrue(ismember('speed', r1.Properties.VariableNames));
             tc.verifyEqual(r1.speed, 10);
@@ -340,11 +340,11 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
         end
 
         function test_output_names_integer_creates_N_tables(tc)
-        %   output_names=2 → 2 separate tables with 'output' columns.
+        %   outputs=2 → 2 separate tables with 'output' columns.
             scifor.set_schema(["subject"]);
 
             [r1, r2] = scifor.for_each(@() deal(1, 2), struct(), ...
-                output_names=2, subject=[1]);
+                outputs=2, subject=[1]);
 
             tc.verifyTrue(ismember('output', r1.Properties.VariableNames));
             tc.verifyEqual(r1.output, 1);
@@ -353,12 +353,12 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
         end
 
         function test_output_names_does_not_apply_to_table_output(tc)
-        %   For table outputs, columns come from the table, not output_names.
+        %   For table outputs, columns come from the table, not outputs.
             scifor.set_schema(["subject"]);
 
             result = scifor.for_each( ...
                 @() table([1;2], 'VariableNames', {'my_col'}), ...
-                struct(), output_names={"ignored"}, subject=[1]);
+                struct(), outputs={"ignored"}, subject=[1]);
 
             tc.verifyTrue(ismember('my_col', result.Properties.VariableNames));
             % The output_name 'ignored' is not used since the output is a table
@@ -380,7 +380,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
             [r1, r2] = scifor.for_each( ...
                 @(x) deal(error('fail'), error('fail')), ...
                 struct('x', table([1;2], [1;2], 'VariableNames', {'subject','v'})), ...
-                output_names=2, subject=[1 2]);
+                outputs=2, subject=[1 2]);
 
             tc.verifyTrue(istable(r1));
             tc.verifyEqual(height(r1), 0);
@@ -393,7 +393,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
             scifor.set_schema(["subject"]);
 
             [r1, r2] = scifor.for_each(@() deal(1, 2), struct(), ...
-                output_names=2, dry_run=true, subject=[1]);
+                outputs=2, dry_run=true, subject=[1]);
 
             tc.verifyTrue(isempty(r1));
             tc.verifyTrue(isempty(r2));
@@ -463,7 +463,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
 
             [r1, r2] = scifor.for_each( ...
                 @() deal([10; 20], [100; 200; 300]), ...
-                struct(), output_names=2, ...
+                struct(), outputs=2, ...
                 distribute=true, subject=[1]);
 
             % First output: 2 pieces
@@ -624,7 +624,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
             [r1, r2] = scifor.for_each( ...
                 @(x, alpha) deal(x * alpha, x + alpha), ...
                 struct('x', tbl, 'alpha', 0.5), ...
-                output_names=2, subject=[1 2]);
+                outputs=2, subject=[1 2]);
 
             tc.verifyEqual(r1.output, [5.0; 10.0]);
             tc.verifyEqual(r2.output, [10.5; 20.5]);
@@ -639,7 +639,7 @@ classdef TestSciforForEachOutput < matlab.unittest.TestCase
     methods (Test)
 
         function test_default_output_column_is_output(tc)
-        %   Without output_names, the data column is 'output'.
+        %   Without outputs, the data column is 'output'.
             scifor.set_schema(["subject"]);
 
             result = scifor.for_each(@() 42, struct(), subject=[1]);

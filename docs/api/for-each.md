@@ -1,9 +1,9 @@
 # Batch Processing API — `for_each`
 
 <!-- Ground truth (source/tests win over prose). Verified against:
-     scifor/src/scifor/foreach.py for_each(fn, inputs, dry_run=False, as_table=None,
-       distribute=False, where=None, output_names=None, **metadata_iterables) -> DataFrame|None
-       (standalone: DataFrames/constants, NO outputs=, NO save);
+     scifor/src/scifor/foreach.py for_each(fn, inputs, outputs=None, dry_run=False, as_table=None,
+       distribute=False, where=None, **metadata_iterables) -> DataFrame|None
+       (standalone: DataFrames/constants, outputs= are column NAMES (list[str] | int), NO save);
      scidb/src/scidb/foreach.py for_each(fn, inputs, outputs, dry_run=False, save=True,
        as_table=None, db=None, distribute=False, where=None, introspect=False, **iterables);
      scihist/src/scihist/foreach.py for_each(fn, inputs, outputs, dry_run=False, save=True,
@@ -68,8 +68,8 @@ Iterating over only some schema keys aggregates the deeper levels into each call
 ## `for_each()` — standalone (scifor)
 
 ```python
-for_each(fn, inputs, dry_run=False, as_table=None, distribute=False, where=None,
-         output_names=None, **metadata_iterables) -> DataFrame | None
+for_each(fn, inputs, outputs=None, dry_run=False, as_table=None, distribute=False,
+         where=None, **metadata_iterables) -> DataFrame | None
 ```
 
 Operates on plain DataFrames and constants — **no** `outputs=`, nothing saved;

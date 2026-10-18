@@ -2,7 +2,13 @@ function varargout = for_each(fn, inputs, varargin)
 %SCIFOR.FOR_EACH  Execute a function for all combinations of metadata.
 %
 %   result = scifor.for_each(@FN, INPUTS, Name, Value, ...)
+%   result = scifor.for_each(@FN, INPUTS, OUTPUTS, Name, Value, ...)
 %   [r1, r2] = scifor.for_each(@FN, INPUTS, Name, Value, ...)
+%
+%   OUTPUTS may be given positionally (third argument, as in
+%   scidb.for_each) or as outputs=. scidb-only options (save, db, ...; see
+%   db_only_kwargs below) are accepted, logged and ignored, so a call
+%   written for scidb.for_each runs here unchanged.
 %
 %   Pure loop orchestrator — works with MATLAB tables only, no I/O.
 %   Iterates over every combination of the supplied metadata values.
@@ -11,7 +17,7 @@ function varargout = for_each(fn, inputs, varargin)
 %
 %   Each function output becomes a separate result table:
 %   - Non-table outputs produce a table with metadata columns + an
-%     'output' data column (name customizable via output_names).
+%     'output' data column (name customizable via outputs).
 %   - Table outputs are preserved with metadata columns prepended.
 %   Multiple outputs are returned via multiple return values.
 %
@@ -45,8 +51,16 @@ function varargout = for_each(fn, inputs, varargin)
 %                       after combo filtering. (default: [])
 %       categorical   - If true, convert metadata columns in result
 %                       tables to categorical. (default: false)
-%       output_names  - Cell array of strings for result column names
-%                       (one per output). Defaults to {'output'} for each.
+%       outputs       - Result column names, one per output: a cell array
+%                       of names and/or objects (an object names its column
+%                       by its Constant property column_name if set, else
+%                       class(obj); see scifor.output_column_name), or a
+%                       count N. Defaults to {'output'} for each.
+%       locations     - JSON text: which schema locations to run (ragged
+%                       include prefixes + exclude_levels), as
+%                       scidb.for_each takes it. Applied by Python's
+%                       scifor.filter_combo_indices, the one owner of the
+%                       rule. (default: none)
 %       _all_combos   - Pre-built cell array of combo structs (from DB
 %                       wrappers that pre-filter). Bypasses cartesian_product.
 %       _row_selection - Cell array aligned with _all_combos: per combo, a
@@ -90,8 +104,21 @@ function varargout = for_each(fn, inputs, varargin)
         inputs = collapse_struct_array(inputs);
     end
 
+    % --- Positional OUTPUTS (third argument, as in scidb.for_each).
+    %     Name-value arguments always come in pairs, so an odd count means
+    %     the first is OUTPUTS. Rewritten to outputs= so the EachOf
+    %     recursion below re-parses it like any other option. ---
+    if mod(numel(varargin), 2) == 1
+        varargin = [{'outputs', varargin{1}}, varargin(2:end)];
+    end
+
     % --- Parse options vs metadata name-value pairs ---
     [meta_args, opts] = split_options(varargin{:});
+    if ~isempty(opts.discarded)
+        scifor.Log.info(['discard_db_only_kwargs: ignored %s (scifor has no ' ...
+            'database; these only take effect in scidb.for_each)'], ...
+            strjoin(opts.discarded, ', '));
+    end
 
     dry_run = opts.dry_run;
     as_table_raw = opts.as_table;
@@ -160,8 +187,8 @@ function varargout = for_each(fn, inputs, varargin)
     % Get schema keys
     full_schema_keys = scifor.get_schema();
 
-    % --- Resolve output_names ---
-    if isempty(opts.output_names)
+    % --- Resolve outputs into result column names ---
+    if isempty(opts.outputs)
         % Auto-detect number of outputs via nargout introspection
         try
             n_out = nargout(fn);
@@ -175,16 +202,19 @@ function varargout = for_each(fn, inputs, varargin)
         for i = 1:n_out
             resolved_output_names{i} = 'output';
         end
-    elseif isnumeric(opts.output_names) && isscalar(opts.output_names)
-        n = opts.output_names;
+    elseif isnumeric(opts.outputs) && isscalar(opts.outputs)
+        n = opts.outputs;
         resolved_output_names = cell(1, n);
         for i = 1:n
             resolved_output_names{i} = 'output';
         end
     else
-        resolved_output_names = opts.output_names;
+        resolved_output_names = cellfun(@scifor.output_column_name, ...
+            opts.outputs, 'UniformOutput', false);
     end
     n_outputs = numel(resolved_output_names);
+    scifor.Log.debug('resolve_outputs: %d output name(s): %s', n_outputs, ...
+        strjoin(cellfun(@char, resolved_output_names, 'UniformOutput', false), ', '));
 
     % Parse metadata iterables
     if mod(numel(meta_args), 2) ~= 0
@@ -604,6 +634,22 @@ function varargout = for_each(fn, inputs, varargin)
         combos = {{}};
     else
         combos = scidb.internal.cartesian_product(meta_values);
+    end
+
+    % --- locations= : narrow the combo list (and everything aligned with it)
+    %     through Python scifor's filter_combo_indices, the one owner of the
+    %     rule in both languages. ---
+    if strlength(string(opts.locations)) > 0
+        keep = location_kept_indices(combos, meta_keys, opts.locations, fn_name);
+        combos = combos(keep);
+        if ~isempty(opts.row_selection)
+            opts.row_selection = opts.row_selection(keep);
+        end
+        rpo_fields = fieldnames(opts.resolved_path_outputs);
+        for rf = 1:numel(rpo_fields)
+            opts.resolved_path_outputs.(rpo_fields{rf}) = ...
+                opts.resolved_path_outputs.(rpo_fields{rf})(keep);
+        end
     end
 
     total = numel(combos);
@@ -2270,19 +2316,7 @@ function tbl = build_single_output_table(collected, output_name, categorical_fla
 
     % Sort by schema columns and convert to categorical if requested
     if categorical_flag
-        % Sort rows by schema columns in schema key order
-        sort_cols = intersect(schema_keys, string(meta_fields'), 'stable');
-        if ~isempty(sort_cols)
-            tbl = sort_by_schema_columns(tbl, sort_cols);
-        end
-
-        % Convert to categorical with order matching sorted rows
-        for f = 1:numel(meta_fields)
-            col = tbl.(meta_fields{f});
-            str_col = string(col);
-            unique_vals = unique(str_col, 'stable');
-            tbl.(meta_fields{f}) = categorical(str_col, unique_vals);
-        end
+        tbl = scifor.categorize_metadata(tbl, meta_fields, schema_keys);
     end
 end
 
@@ -2382,7 +2416,7 @@ function [meta_args, opts] = split_options(varargin)
     opts.distribute = false;
     opts.where = [];
     opts.categorical = false;
-    opts.output_names = {};
+    opts.outputs = {};
     opts.all_combos = [];
     opts.row_selection = {};
     opts.record_id_column = "";
@@ -2398,15 +2432,32 @@ function [meta_args, opts] = split_options(varargin)
     opts.mapping_inputs = struct();  % {param -> string array of data column
                                      % names} for struct-valued records; see
                                      % extract_data
+    opts.locations = '';   % JSON text; see the locations= doc above
+    opts.discarded = {};    % "name=<value>" of each scidb-only option seen
+    db_only = db_only_kwargs();
 
     meta_args = {};
     i = 1;
     while i <= numel(varargin)
         key = varargin{i};
+        if (ischar(key) || isstring(key)) && any(lower(string(key)) == db_only)
+            opts.discarded{end+1} = sprintf('%s=%s', lower(string(key)), ...
+                short_value(varargin{i+1}));
+            i = i + 2;
+            continue;
+        end
         if (ischar(key) || isstring(key))
             switch lower(string(key))
                 case "dry_run"
                     opts.dry_run = logical(varargin{i+1});
+                    i = i + 2;
+                    continue;
+                case "locations"
+                    val = varargin{i+1};
+                    if isstruct(val)
+                        val = jsonencode(val);
+                    end
+                    opts.locations = char(string(val));
                     i = i + 2;
                     continue;
                 case "as_table"
@@ -2434,14 +2485,17 @@ function [meta_args, opts] = split_options(varargin)
                     opts.where = varargin{i+1};
                     i = i + 2;
                     continue;
-                case "output_names"
+                case "outputs"
                     val = varargin{i+1};
                     if isnumeric(val) && isscalar(val)
-                        opts.output_names = val;
-                    elseif isstring(val)
-                        opts.output_names = cellstr(val);
+                        opts.outputs = val;
+                    elseif isstring(val) || ischar(val)
+                        opts.outputs = cellstr(val);
                     elseif iscell(val)
-                        opts.output_names = val;
+                        opts.outputs = val;
+                    elseif isobject(val)
+                        % One object, or an object array: one output each.
+                        opts.outputs = num2cell(val);
                     end
                     i = i + 2;
                     continue;
@@ -2517,6 +2571,72 @@ function [meta_args, opts] = split_options(varargin)
     end
 end
 
+
+
+function names = db_only_kwargs()
+%DB_ONLY_KWARGS  scidb.for_each options scifor accepts and ignores.
+%   Python's owner is scifor.DB_ONLY_KWARGS; this is that set plus MATLAB
+%   scidb's legacy preload/parallel. scidb/tests/
+%   test_foreach_signature_parity.py parses this list and both option
+%   parsers, so a new scidb-only option must be added here.
+    names = ["save", "db", "introspect", "skip_computed", "schema_filter", ...
+             "finalized", "glue", "parameter_names", "pipeline", ...
+             "preload", "parallel"];
+end
+
+
+function s = short_value(val)
+%SHORT_VALUE  Compact text for a discarded option's value in the log line.
+    if (isnumeric(val) || islogical(val)) && isscalar(val)
+        s = char(string(val));
+    elseif (ischar(val) || isstring(val)) && strlength(string(val)) <= 40
+        s = char(string(val));
+    else
+        s = sprintf('<%s>', class(val));
+    end
+end
+
+
+function keep = location_kept_indices(combos, meta_keys, locations_json, fn_name)
+%LOCATION_KEPT_INDICES  1-based indices of COMBOS that LOCATIONS_JSON keeps.
+%   Converts each combo (a struct from _all_combos, or a cell aligned with
+%   META_KEYS from cartesian_product) to a Python dict and asks
+%   py.scifor.filter_combo_indices, which also logs the kept/dropped counts.
+    py_combos = py.list();
+    for c = 1:numel(combos)
+        combo = combos{c};
+        d = py.dict();
+        if isstruct(combo)
+            fns = fieldnames(combo);
+            for k = 1:numel(fns)
+                d{fns{k}} = combo_value_to_py(combo.(fns{k}));
+            end
+        else
+            for k = 1:numel(combo)
+                d{char(meta_keys(k))} = combo_value_to_py(combo{k});
+            end
+        end
+        py_combos.append(d);
+    end
+    py_keep = py.scifor.filter_combo_indices(py_combos, char(locations_json), ...
+        pyargs('context', sprintf('for_each(%s)', fn_name)));
+    keep = cellfun(@double, cell(py_keep)) + 1;
+    if isempty(keep)
+        keep = zeros(1, 0);
+    end
+end
+
+
+function v = combo_value_to_py(val)
+%COMBO_VALUE_TO_PY  A combo value as Python sees it for location matching.
+    if (isnumeric(val) || islogical(val)) && isscalar(val)
+        v = double(val);
+    elseif isempty(val)
+        v = py.None;
+    else
+        v = char(string(val));
+    end
+end
 
 % =========================================================================
 % Display helpers
@@ -2785,36 +2905,6 @@ end
 % =========================================================================
 % Utility
 % =========================================================================
-
-function tbl = sort_by_schema_columns(tbl, sort_cols)
-%SORT_BY_SCHEMA_COLUMNS  Sort table rows by schema columns, numeric-aware.
-%   Numeric columns sort numerically. String columns that contain only
-%   numeric-like values (e.g., "1", "10", "2") sort numerically rather
-%   than alphabetically. Other string columns sort alphabetically.
-    n = height(tbl);
-    if n <= 1
-        return;
-    end
-    sort_matrix = zeros(n, numel(sort_cols));
-    for i = 1:numel(sort_cols)
-        col = tbl.(char(sort_cols(i)));
-        if isnumeric(col)
-            sort_matrix(:, i) = col;
-        else
-            str_col = string(col);
-            nums = str2double(str_col);
-            if all(~isnan(nums))
-                % All values are numeric-like strings — sort numerically
-                sort_matrix(:, i) = nums;
-            else
-                % Non-numeric strings — sort alphabetically via rank
-                [~, ~, sort_matrix(:, i)] = unique(str_col);
-            end
-        end
-    end
-    [~, order] = sortrows(sort_matrix);
-    tbl = tbl(order, :);
-end
 
 
 % =========================================================================

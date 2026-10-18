@@ -3,7 +3,7 @@ classdef TestSciforForEach < matlab.unittest.TestCase
 %
 %   Tests the pure loop orchestrator: table filtering, Fixed, Merge,
 %   ColumnSelection, distribute, dry_run, where, as_table,
-%   output_names, empty-list resolution, and result table structure.
+%   outputs, empty-list resolution, and result table structure.
 %
 %   NOTE: classdef test methods cannot contain nested function definitions
 %   that capture workspace variables. All tests verify behavior through the
@@ -394,25 +394,25 @@ classdef TestSciforForEach < matlab.unittest.TestCase
         end
 
         function test_result_table_uses_output_names(tc)
-        %   output_names= names the output columns.
+        %   outputs= names the output columns.
             scifor.set_schema(["subject"]);
 
             tbl = table([1;2], [10.0;20.0], 'VariableNames', {'subject','value'});
             result = scifor.for_each(@(x) x * 2, ...
                 struct('x', tbl), ...
-                output_names={"doubled_value"}, ...
+                outputs={"doubled_value"}, ...
                 subject=[1 2]);
             tc.verifyTrue(ismember('doubled_value', result.Properties.VariableNames));
             tc.verifyEqual(result.doubled_value, [20.0; 40.0]);
         end
 
         function test_result_table_auto_output_names(tc)
-        %   output_names=3 returns 3 separate tables, each with 'output' column.
+        %   outputs=3 returns 3 separate tables, each with 'output' column.
             scifor.set_schema(["subject"]);
 
             [r1, r2, r3] = scifor.for_each(@() deal(1, 2, 3), ...
                 struct(), ...
-                output_names=3, ...
+                outputs=3, ...
                 subject=[1]);
             tc.verifyTrue(ismember('output', r1.Properties.VariableNames));
             tc.verifyEqual(r1.output, 1);
@@ -451,18 +451,18 @@ classdef TestSciforForEach < matlab.unittest.TestCase
     end
 
     % =====================================================================
-    % output_names with multiple outputs
+    % outputs with multiple outputs
     % =====================================================================
 
     methods (Test)
         function test_multiple_outputs_with_names(tc)
-        %   Multiple outputs with output_names → separate tables.
+        %   Multiple outputs with outputs → separate tables.
             scifor.set_schema(["subject"]);
 
             tbl = table([1;2], [10.0;20.0], 'VariableNames', {'subject','value'});
             [r1, r2] = scifor.for_each(@(x) deal(x*2, x*3), ...
                 struct('x', tbl), ...
-                output_names={"doubled","tripled"}, ...
+                outputs={"doubled","tripled"}, ...
                 subject=[1 2]);
             tc.verifyTrue(ismember('doubled', r1.Properties.VariableNames));
             tc.verifyEqual(r1.doubled, [20.0; 40.0]);

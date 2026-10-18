@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 import scifor as _scifor
 from scifor import ColName, ColumnSelection, EachOf, Fixed, Merge, require_alternatives
 from scifor import for_each as _scifor_for_each
+from scifor import output_column_name as _output_column_name
 
 from . import glue as _glue
 from .across_variants import AcrossVariants
@@ -251,7 +252,6 @@ def for_each(
     distribute: bool = False,
     where=None,
     introspect: bool = False,
-    track_lineage: bool = True,
     skip_computed: bool = False,
     schema_filter: "dict[str, list] | None" = None,
     schema_keys: "list[str] | None" = None,
@@ -297,13 +297,11 @@ def for_each(
                     result DataFrame: _record_id_{param} and _branch_params_{param}
                     per DB-backed input, plus _call_id, _config_keys, _where on
                     every row. Does not affect saved outputs.
-        track_lineage: If True (default), record provenance (function hash, input
-                    record_ids, constants) into the bipartite graph from the
-                    inputs ``fn`` consumes. Pass False to run ``fn`` untracked.
         skip_computed: If True, skip combos whose outputs already exist and whose
                     full upstream provenance graph is unchanged (function hash,
                     input record_ids, constant hashes). Default False. Requires a
-                    database and ``track_lineage``.
+                    database (provenance is always recorded, so there is
+                    always a graph to compare against).
         schema_filter: Optional ``{schema_key: [values]}`` value overrides.
                     Cannot be combined with explicit **metadata_iterables.
                     For a key also named in schema_keys (or, if schema_keys
@@ -406,7 +404,6 @@ def for_each(
                 "distribute": distribute,
                 "where": where,
                 "introspect": introspect,
-                "track_lineage": track_lineage,
                 "skip_computed": skip_computed,
                 "schema_filter": schema_filter,
                 "schema_keys": schema_keys,
@@ -575,7 +572,6 @@ def for_each(
                 # dropped from this hand-written recursion fails silently.
                 locations=locations,
                 introspect=introspect,
-                track_lineage=track_lineage,
                 skip_computed=skip_computed,
                 share_limits=share_limits,
                 finalized=finalized,
@@ -955,7 +951,7 @@ def _for_each_execute(
             dry_run=False,
             as_table=as_table,
             distribute=distribute,
-            output_names=state.output_names,
+            outputs=state.output_names,
             share_limits=share_limits,
             locations=locations,
             _all_combos=state.full_combos,
@@ -2091,7 +2087,7 @@ def _dry_run_preview(
         dry_run=True,
         as_table=as_table,
         distribute=distribute,
-        output_names=output_names,
+        outputs=output_names,
         locations=locations,
         _cancel_check=cancel_check,
         **scifor_kwargs,
@@ -3386,7 +3382,7 @@ def _for_each_prepare(
         _resolve_iterables(metadata_iterables, inputs, db, distribute)
     )
 
-    output_names = [_output_name(o) for o in outputs] if outputs else ["result"]
+    output_names = [_output_column_name(o) for o in outputs] if outputs else ["result"]
     Log.debug(f"resolved {len(output_names)} output name(s): {output_names}")
 
     # Dry run: preview the iteration through scifor and stop.
@@ -5751,7 +5747,7 @@ def _save_results(
         items = [(_d, _m) for _d, _m, _e in items]
 
         Log.info(
-            f"[batch_save] Saving {len(items)} record(s) for {_output_name(output_obj)} ({save_path} path)"
+            f"[batch_save] Saving {len(items)} record(s) for {_output_type_label(output_obj)} ({save_path} path)"
         )
 
         try:
@@ -5786,7 +5782,7 @@ def _save_results(
             total_saved += _n_saved
             if _n_skipped:
                 _skip_msg = (
-                    f"[batch_save] {_output_name(output_obj)}: {_n_skipped} of "
+                    f"[batch_save] {_output_type_label(output_obj)}: {_n_skipped} of "
                     f"{len(items)} record(s) SKIPPED (schema-incompatible, e.g. "
                     f"empty/missing-key results); the rest were saved. See the "
                     f"per-record SKIPPED warning(s) in the log for details."
@@ -5847,14 +5843,14 @@ def _save_results(
                 data_desc = _describe_save_data(data)
                 rid_short = rid[:12] if isinstance(rid, str) else str(rid)
                 suffix = " [flatten]" if save_path == "flatten" else ""
-                msg = f"[save] {meta_str}: {_output_name(output_obj)} -> record_id={rid_short} ({data_desc}){suffix}"
+                msg = f"[save] {meta_str}: {_output_type_label(output_obj)} -> record_id={rid_short} ({data_desc}){suffix}"
                 Log.info(msg)
 
             if len(items) > 3:
                 Log.info(f"[save] ... and {len(items) - 3} more record(s)")
 
             Log.info(
-                f"[batch_save] Completed {len(items)} save(s) for {_output_name(output_obj)} in {save_elapsed:.3f}s "
+                f"[batch_save] Completed {len(items)} save(s) for {_output_type_label(output_obj)} in {save_elapsed:.3f}s "
                 f"({len(items) / save_elapsed:.1f} records/s)"
             )
 
@@ -5863,7 +5859,7 @@ def _save_results(
 
             Log.error(
                 f"[batch_save] Failed to save batch for "
-                f"{_output_name(output_obj)} ({len(items)} record(s)): "
+                f"{_output_type_label(output_obj)} ({len(items)} record(s)): "
                 f"{type(e).__name__}: {e}"
             )
             # Full traceback pinpoints the failing operation; the per-record
@@ -5875,10 +5871,10 @@ def _save_results(
             # so the offending record is not identifiable from the exception
             # alone; rely on the SKIPPED warnings above to find bad records.
             Log.error(
-                f"failed to save {_output_name(output_obj)}: {type(e).__name__}: {e}"
+                f"failed to save {_output_type_label(output_obj)}: {type(e).__name__}: {e}"
             )
             save_failures.append(
-                f"{_output_name(output_obj)}: {len(items)} record(s) not saved "
+                f"{_output_type_label(output_obj)}: {len(items)} record(s) not saved "
                 f"({type(e).__name__}: {e})"
             )
             for data, meta in items[:3]:
@@ -5887,7 +5883,7 @@ def _save_results(
                 )
                 Log.error(
                     f"[error] (first batch rows, not necessarily the "
-                    f"culprit) {meta_str}: {_output_name(output_obj)}"
+                    f"culprit) {meta_str}: {_output_type_label(output_obj)}"
                 )
 
     # ===========================================================================
@@ -5962,10 +5958,10 @@ def _save_results(
                 )
             except Exception as e:
                 Log.error(
-                    f"[error] failed generates_file save for {_output_name(output_obj)}: {e}"
+                    f"[error] failed generates_file save for {_output_type_label(output_obj)}: {e}"
                 )
                 save_failures.append(
-                    f"{_output_name(output_obj)} (generates_file): 1 item not saved "
+                    f"{_output_type_label(output_obj)} (generates_file): 1 item not saved "
                     f"({type(e).__name__}: {e})"
                 )
 
@@ -6100,12 +6096,14 @@ def _describe_save_data(val) -> str:
     return type(val).__name__
 
 
-def _output_name(output_obj: Any) -> str:
-    """Get display name for an output object."""
+def _output_type_label(output_obj: Any) -> str:
+    """The variable type an output saves as, for log lines.
+
+    Deliberately NOT the result column (``scifor.output_column_name``): a
+    ``column_name`` override renames the column, not the type being saved.
+    """
     if hasattr(output_obj, "view_name"):
         return output_obj.view_name()
-    if isinstance(output_obj, type):
-        return output_obj.__name__
     return getattr(output_obj, "__name__", type(output_obj).__name__)
 
 

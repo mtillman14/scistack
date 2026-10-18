@@ -2,7 +2,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
 %TESTSCIFORFOREACHFEATURES  Comprehensive tests for scifor.for_each feature interactions.
 %
 %   Tests covering combinations of where=, distribute=, as_table=,
-%   ColumnSelection, Merge, Fixed, and output_names.
+%   ColumnSelection, Merge, Fixed, and outputs.
 %   Each section focuses on feature interactions not covered by the
 %   basic TestSciforForEach and TestSciforForEachOutput test files.
 
@@ -252,7 +252,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
 
             result = scifor.for_each( ...
                 @() [10.0; 20.0; 30.0], struct(), ...
-                distribute=true, output_names={"measurement"}, ...
+                distribute=true, outputs={"measurement"}, ...
                 subject=[1]);
 
             tc.verifyEqual(height(result), 3);
@@ -1137,7 +1137,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
         end
 
         function test_pathinput_with_output_names(tc)
-        %   PathInput + custom output_names.
+        %   PathInput + custom outputs.
             scifor.set_schema(["subject"]);
 
             pi = scifor.PathInput("{subject}/data.mat", root_folder="/data", name="{subject}/data.mat");
@@ -1145,7 +1145,7 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
             result = scifor.for_each( ...
                 @(fp) strlength(fp), ...
                 struct('fp', pi), ...
-                output_names={"path_len"}, subject=[1 2]);
+                outputs={"path_len"}, subject=[1 2]);
 
             tc.verifyTrue(ismember('path_len', result.Properties.VariableNames));
             tc.verifyEqual(height(result), 2);

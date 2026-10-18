@@ -1156,11 +1156,7 @@ class Pipeline:
             owner, spec = pairs[i]
             origin = getattr(spec, "origin", spec)
             opts = dict(spec.options)
-            eff_skip = (
-                (opts.get("skip_computed") or skip_computed)
-                if opts.get("track_lineage", True)
-                else False
-            )
+            eff_skip = bool(opts.get("skip_computed") or skip_computed)
             descriptors.append(
                 {
                     "pipeline": owner.name,
@@ -1293,10 +1289,8 @@ class Pipeline:
 
             opts["_progress_fn"] = _collecting_progress_fn
         # Pull execution defaults to memoized runs; a step's explicitly
-        # registered skip_computed=True always wins, and untracked steps
-        # are left alone (skip_computed requires lineage).
-        if opts.get("track_lineage", True):
-            opts["skip_computed"] = opts.get("skip_computed") or skip_computed
+        # registered skip_computed=True always wins.
+        opts["skip_computed"] = opts.get("skip_computed") or skip_computed
         if finalized is not None:
             opts["finalized"] = finalized
         Log.info(

@@ -21,8 +21,8 @@ The schema names the columns that identify *where* a value belongs. Every other 
 ## for_each
 
 ```python
-for_each(fn, inputs, *, dry_run=False, as_table=None, distribute=False,
-         where=None, locations=None, output_names=None, schema_keys=None,
+for_each(fn, inputs, outputs=None, dry_run=False, as_table=None, distribute=False,
+         where=None, locations=None, schema_keys=None,
          **metadata_iterables)
 ```
 
@@ -62,7 +62,11 @@ results = scifor.for_each(@my_analysis, ...
 | `distribute=True` | Split a returned vector or table into one row per element, one schema level deeper (e.g. a trial into gait cycles). |
 | `where=` | Keep only rows matching a [column filter](#filters), on top of the per-combination slicing. |
 | `locations=` | Run only selected schema locations. See [`LocationFilter`](#location-selection). |
-| `output_names=` | Name the output columns (or give a count for a function with several returns). |
+| `outputs=` | Name the output columns: names, classes, or a count for a function with several returns. Also the third positional argument, as in `scidb.for_each`. |
+
+**Output column names.** Each entry of `outputs` names one column: a string is used as is; a class (or instance) uses its `column_name` class attribute if set, otherwise its class name. In MATLAB, define `column_name` as a `Constant` property. `scidb.for_each` names its columns by the same rule (`scifor.output_column_name`). The name only applies when an output fits in one cell; a returned DataFrame whose rows spread keeps its own columns.
+
+**Calls written for `scidb.for_each`.** The database-only options (`save`, `db`, `introspect`, `skip_computed`, `schema_filter`, `finalized`, `glue`, `parameter_names`, `pipeline`, listed in `scifor.DB_ONLY_KWARGS`) are accepted and ignored, with one INFO log line, so a `scidb.for_each` call runs here unchanged once its inputs are DataFrames. MATLAB also ignores `preload` and `parallel`. Those names cannot be used as schema keys.
 
 If `fn` returns a DataFrame, its columns are flattened into the result. If one combination raises, the run continues; failures are counted and summarised at the end. A combination with no matching rows is skipped and reported as "no data", not as a failure.
 

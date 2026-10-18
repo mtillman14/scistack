@@ -67,6 +67,13 @@ for_each(fn, inputs, outputs, *, where=None, skip_computed=False,
 
 `for_each` adds the database to [`scifor.for_each`](scifor.md#for_each). Inputs given as variable classes are loaded per combination. Each return value is saved as the matching class in `outputs`, and provenance is recorded for every saved record.
 
+The returned table names each output's column after its class, or after its `column_name` class attribute if you set one (a `Constant` property in MATLAB). The record is still saved as the class itself. Every `scifor.for_each` option is accepted here too, so a `scifor` call becomes a `scidb` call by swapping DataFrames for variable classes. In MATLAB, `outputs` may also be passed as `outputs={...}`, and `categorical=true` converts the returned table's metadata columns after saving.
+
+```python
+class StepLength(BaseVariable):
+    column_name = "step_len"     # result column; still saved as StepLength
+```
+
 /// tab | Python
 ```python
 for_each(
@@ -95,7 +102,6 @@ scidb.for_each(@bandpass, ...
 | `where=` | Load only records that pass a [filter](#filters). |
 | `finalized=` | `plot_` / `stat_` functions only: `False` draws or prints a draft and records nothing; `True` records the result with provenance. |
 | `glue={param: fn}` | Reshape one loaded input in memory before `fn` sees it. Nothing is saved; see [Glue](#glue). |
-| `track_lineage=False` | Run without recording provenance. |
 
 **Input wrappers specific to scidb** (all nest with `Fixed`, `Merge` and column selection):
 

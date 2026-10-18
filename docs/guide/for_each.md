@@ -1,9 +1,9 @@
 # Batch Processing (for_each)
 
 <!-- Ground truth (tests/source win over prose). Verified against:
-     scifor/src/scifor/foreach.py for_each(fn, inputs, dry_run=False, as_table=None,
-       distribute=False, where=None, output_names=None, **metadata_iterables) -> DataFrame|None
-       (standalone: DataFrames/constants only, NO outputs=, NO save);
+     scifor/src/scifor/foreach.py for_each(fn, inputs, outputs=None, dry_run=False, as_table=None,
+       distribute=False, where=None, **metadata_iterables) -> DataFrame|None
+       (standalone: DataFrames/constants only, outputs= are column NAMES (list[str] | int), NO save);
      scidb/src/scidb/foreach.py for_each(fn, inputs, outputs, dry_run=False, save=True,
        as_table=None, db=None, distribute=False, where=None, introspect=False, **iterables);
      scihist/src/scihist/foreach.py for_each(fn, inputs, outputs, dry_run=False, save=True,

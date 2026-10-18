@@ -207,13 +207,13 @@ def test_return_df_metadata_columns():
 
 
 def test_return_df_uses_output_names():
-    """Result DataFrame uses output_names for output columns."""
+    """Result DataFrame uses outputs= for output columns."""
     set_schema(["subject"])
     df = pd.DataFrame({"subject": [1, 2], "value": [10.0, 20.0]})
     result = for_each(
         lambda x: x * 2,
         inputs={"x": df},
-        output_names=["doubled_value"],
+        outputs=["doubled_value"],
         subject=[1, 2],
     )
     assert "doubled_value" in result.columns
@@ -221,13 +221,13 @@ def test_return_df_uses_output_names():
 
 
 def test_return_df_multiple_outputs():
-    """Multiple outputs with output_names."""
+    """Multiple outputs with outputs=."""
     set_schema(["subject"])
     df = pd.DataFrame({"subject": [1, 2], "value": [10.0, 20.0]})
     result = for_each(
         lambda x: (x * 2, x * 3),
         inputs={"x": df},
-        output_names=["doubled", "tripled"],
+        outputs=["doubled", "tripled"],
         subject=[1, 2],
     )
     assert "doubled" in result.columns
@@ -235,12 +235,12 @@ def test_return_df_multiple_outputs():
 
 
 def test_return_df_auto_output_names():
-    """output_names=3 auto-generates output_1, output_2, output_3."""
+    """outputs=3 auto-generates output_1, output_2, output_3."""
     set_schema(["subject"])
     result = for_each(
         lambda: (1, 2, 3),
         inputs={},
-        output_names=3,
+        outputs=3,
         subject=[1],
     )
     assert "output_1" in result.columns
@@ -2171,7 +2171,7 @@ class TestSelectRowsHook:
         result = for_each(
             fn,
             {"x": self._two_variants()},
-            output_names=["out"],
+            outputs=["out"],
             _all_combos=combos,
             _select_rows=select,
             subject=[1, 2],
@@ -2195,7 +2195,7 @@ class TestSelectRowsHook:
         result = for_each(
             lambda x: x,
             {"x": self._two_variants()},
-            output_names=["out"],
+            outputs=["out"],
             _select_rows=select,
             subject=[1, 2],
             session=["pre"],
@@ -2207,7 +2207,7 @@ class TestSelectRowsHook:
         result = for_each(
             lambda x: len(x),
             {"x": self._two_variants()},
-            output_names=["n"],
+            outputs=["n"],
             subject=[1, 2],
             session=["pre"],
         )
@@ -2225,7 +2225,7 @@ class TestSelectRowsHook:
         result = for_each(
             lambda x: str(x[0]) if hasattr(x, "__len__") else str(x),
             {"x": ColumnSelection(df, ["a", "b"], iterate=True)},
-            output_names=["out"],
+            outputs=["out"],
             _select_rows=select,
             subject=[1],
             session=["pre"],

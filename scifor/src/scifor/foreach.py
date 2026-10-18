@@ -26,6 +26,7 @@ from .each_of import EachOf, require_alternatives
 from .fixed import Fixed
 from .locations import LocationFilter, filter_combos
 from .merge import Merge
+from .outputs import discard_db_only_kwargs, output_column_name
 from .pathinput import PathInput
 from .pathoutput import PathOutput
 from .schema import expand_schema_keys, get_schema
@@ -86,12 +87,12 @@ def _record_iteration_failure(
 def for_each(
     fn: Callable,
     inputs: dict[str, Any],
+    outputs: list[str] | int | None = None,
     dry_run: bool = False,
     as_table: list[str] | bool | None = None,
     distribute: bool = False,
     where=None,
     locations: "LocationFilter | dict | None" = None,
-    output_names: list[str] | int | None = None,
     share_limits: "dict[str, list[str]] | None" = None,
     schema_keys: "list[str] | None" = None,
     _all_combos: list[dict] | None = None,
@@ -115,6 +116,11 @@ def for_each(
         fn: The function to execute.
         inputs: Dict mapping parameter names to DataFrames, Fixed wrappers,
                 Merge wrappers, ColumnSelection wrappers, or constant values.
+        outputs: Names for result columns. list[str] names them;
+                 int N auto-names (output_1, ..., output_N);
+                 None defaults to ["output"] (single output). Same name
+                 and position as scidb.for_each's ``outputs`` so the two
+                 are drop-in replacements for one another.
         dry_run: If True, only print what would happen without executing.
         as_table: Controls which DataFrame inputs keep schema key columns.
                   True = all; list of names = selected; False/None = none.
@@ -132,9 +138,6 @@ def for_each(
                ``where=`` filters ROWS within a combo — the two are unrelated
                and compose. An empty/omitted filter is inert. See
                docs/claude/location-filter-semantics.md.
-        output_names: Names for result columns. list[str] names them;
-                      int N auto-names (output_1, ..., output_N);
-                      None defaults to ["output"] (single output).
         share_limits: Optional ``{input_name: [schema_keys_to_hold_fixed]}``.
                       For each named input, computes the global numeric
                       ``(min, max)`` extent of that input's data within each
@@ -189,6 +192,11 @@ def for_each(
     Returns:
         A pandas DataFrame of results, or None when dry_run=True.
     """
+    # Step -2: scidb-only kwargs (save=, db=, ...) arrive in **metadata_iterables
+    # here. Set them aside before anything reads metadata_iterables as
+    # iteration axes, so a call written for scidb.for_each runs unchanged.
+    metadata_iterables = discard_db_only_kwargs(metadata_iterables)
+
     # Step -1: EachOf expansion — must be first, before any other logic.
     # Each alternative becomes an independent recursive for_each() call;
     # results are concatenated. Mirrors scidb.for_each's own EachOf
@@ -221,6 +229,7 @@ def for_each(
             result = for_each(
                 fn,
                 concrete_inputs,
+                outputs=outputs,
                 dry_run=dry_run,
                 as_table=as_table,
                 distribute=distribute,
@@ -230,7 +239,6 @@ def for_each(
                 # (Dropping a kwarg here is a silent, well-worn failure —
                 # `glue=` went missing from this same recursion in 2026-09-10.)
                 locations=locations,
-                output_names=output_names,
                 share_limits=share_limits,
                 schema_keys=schema_keys,
                 _progress_fn=_progress_fn,
@@ -267,18 +275,19 @@ def for_each(
             for name, v in inputs.items()
         }
 
-    # Step 1: Resolve output_names
-    if output_names is None:
+    # Step 1: Resolve outputs= into result column names
+    if outputs is None:
         resolved_output_names = ["output"]
-    elif isinstance(output_names, int):
-        resolved_output_names = [f"output_{i + 1}" for i in range(output_names)]
+    elif isinstance(outputs, int):
+        resolved_output_names = [f"output_{i + 1}" for i in range(outputs)]
     else:
-        resolved_output_names = list(output_names)
+        resolved_output_names = [output_column_name(o) for o in outputs]
     n_outputs = len(resolved_output_names)
     Log.debug(
-        "resolve_output_names: %d output name(s): %s",
+        "resolve_outputs: %d output name(s): %s (from %r)",
         n_outputs,
         resolved_output_names,
+        outputs,
         layer="scifor",
     )
 
@@ -2414,6 +2423,20 @@ def _results_to_output_dataframe(
             )
 
     if spread:
+        # Output names (outputs= strings, class names, column_name) only label
+        # an output that lands in one cell. Spread rows keep the DataFrame's
+        # own columns, so say when explicit names go unused.
+        _explicit = [
+            n for n in output_names if n != "output" and not str(n).startswith("output_")
+        ]
+        if _explicit:
+            Log.info(
+                "collect_results: output name(s) %s not applied — every output "
+                "is a DataFrame and its rows spread, so the DataFrame's own "
+                "columns are used",
+                _explicit,
+                layer="scifor",
+            )
         parts = []
         for metadata, result_tuple in collected_rows:
             combined_data = pd.concat(

@@ -155,12 +155,12 @@ classdef TestSciforForEachStructOutput < matlab.unittest.TestCase
     methods (Test)
 
         function test_struct_array_with_output_names(tc)
-        %   Custom output_names applies to struct array column.
+        %   Custom outputs applies to struct array column.
             scifor.set_schema(["subject"]);
 
             result = scifor.for_each( ...
                 @() struct('a', 1), struct(), ...
-                output_names={"stats"}, subject=[1 2]);
+                outputs={"stats"}, subject=[1 2]);
 
             tc.verifyTrue(ismember('stats', result.Properties.VariableNames));
             tc.verifyTrue(isstruct(result.stats));
@@ -187,7 +187,7 @@ classdef TestSciforForEachStructOutput < matlab.unittest.TestCase
 
             [r1, r2] = scifor.for_each( ...
                 @() deal(struct('x', 1), struct('y', 2)), ...
-                struct(), output_names=2, subject=[1 2]);
+                struct(), outputs=2, subject=[1 2]);
 
             tc.verifyTrue(isstruct(r1.output));
             tc.verifyEqual(r1.output(1).x, 1);
