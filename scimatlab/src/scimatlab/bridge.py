@@ -2071,6 +2071,18 @@ def numpy_scalar_to_python(obj):
     return [False, None]
 
 
+def is_dataframe(obj) -> bool:
+    """Whether *obj* is a pandas DataFrame, for ``from_python.m``'s fallback
+    when MATLAB's ``isa`` misses one (class proxy resolution varies by MATLAB
+    version). Here for the same reason as :func:`numpy_scalar_to_python`:
+    ``py.pandas.DataFrame`` in a MATLAB argument list CALLS the class (an
+    empty frame), so a MATLAB-side ``isinstance`` raises instead of answering.
+    """
+    import pandas as pd
+
+    return isinstance(obj, pd.DataFrame)
+
+
 def get_batch_data_item(batch_id, index):
     """Return just the data for one element from a cached batch."""
     data_list, _ = _batch_cache[int(batch_id)]

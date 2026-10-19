@@ -332,11 +332,12 @@ function data = from_python(py_obj)
         end
 
         % Fallback: isa() can miss pandas DataFrames depending on MATLAB
-        % version / class proxy resolution.  Use Python isinstance as a
-        % robust secondary check before giving up.
+        % version / class proxy resolution.  Ask Python as a secondary check
+        % before giving up (bridge.is_dataframe: a MATLAB-side isinstance
+        % cannot name the class, it CALLS py.pandas.DataFrame).
         is_df = false;
         try
-            is_df = logical(py.builtins.isinstance(py_obj, py.pandas.DataFrame));
+            is_df = logical(py.scimatlab.bridge.is_dataframe(py_obj));
         catch
         end
 
@@ -699,7 +700,7 @@ function [can_concat, concat_df] = try_concat_homogeneous_dataframes(c)
         try
             is_df = isa(elem, 'py.pandas.core.frame.DataFrame') || ...
                     isa(elem, 'py.pandas.DataFrame') || ...
-                    logical(py.builtins.isinstance(elem, py.pandas.DataFrame));
+                    logical(py.scimatlab.bridge.is_dataframe(elem));
         catch
             return;
         end

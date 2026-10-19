@@ -43,6 +43,14 @@ classdef TestFromPython < matlab.unittest.TestCase
             testCase.verifyTrue(result);
         end
 
+        function test_bridge_is_dataframe_from_matlab(testCase)
+            % from_python's DataFrame fallback asks Python: a MATLAB-side
+            % isinstance(x, py.pandas.DataFrame) CALLS the class and raises.
+            df = py.pandas.DataFrame(py.dict(pyargs('a', py.list({1, 2}))));
+            testCase.verifyTrue(logical(py.scimatlab.bridge.is_dataframe(df)));
+            testCase.verifyFalse(logical(py.scimatlab.bridge.is_dataframe(py.dict())));
+        end
+
         function test_py_float_converts_to_double(testCase)
             result = scidb.internal.from_python(py.float(3.14));
             testCase.verifyClass(result, 'double');

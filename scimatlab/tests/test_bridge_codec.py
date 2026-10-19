@@ -184,6 +184,14 @@ class TestCodecStorage:
         assert numpy_scalar_to_python(100) == [False, None]
         assert numpy_scalar_to_python(np.array([1, 2])) == [False, None]
 
+    def test_is_dataframe(self, db):
+        from scimatlab.bridge import is_dataframe
+
+        assert is_dataframe(pd.DataFrame({"a": [1]})) is True
+        assert is_dataframe(pd.DataFrame()) is True
+        assert is_dataframe({"a": [1]}) is False
+        assert is_dataframe(np.array([1])) is False
+
     def test_value_without_matlab_to_db_raises(self, db):
         cls = register_matlab_variable("CodecStoreC", codec=True)
         with pytest.raises(TypeError, match="without MATLAB's to_db"):
