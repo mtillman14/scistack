@@ -44,9 +44,10 @@ theme:
 # API is Code-only: the GUI nav omits it entirely.
 nav:
   - Home: index.md
-  - Installation: getting-started/installation.md
-  - Getting Started:
+  - Installation:
+    - Install SciStack: getting-started/installation.md
     - New to Coding?: getting-started/new-to-coding.md
+  - Getting Started:
     - What's a Schema?: getting-started/whats-a-schema.md
     - Create New Project: getting-started/create-new-project.md
     - Writing Functions: getting-started/writing-functions.md
@@ -57,6 +58,8 @@ nav:
     - Best Popcorn - scidb: examples/best-popcorn-scidb.md
     - Best Player - scifor: examples/best-player-scifor.md
     - Best Player - scidb: examples/best-player-scidb.md
+  - Sharing:
+    - Export & Import Projects: sharing/export-import.md
   # Only the user-facing APIs. The other api/ and internals/ pages stay in the
   # repo, covered by not_in_nav below, but nothing in the nav links to them.
   - API:
@@ -164,9 +167,10 @@ plugins:
             variant: ui
           nav:
             - Home: index.md
-            - Installation: getting-started/installation.md
-            - Getting Started:
+            - Installation:
+              - Install SciStack: getting-started/installation.md
               - New to Coding?: getting-started/new-to-coding.md
+            - Getting Started:
               - What's a Schema?: getting-started/whats-a-schema.md
               - Create New Project: getting-started/create-new-project.md
               - Open Existing Project: getting-started/open-existing-project.md

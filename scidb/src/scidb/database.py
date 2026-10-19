@@ -1284,15 +1284,7 @@ class DatabaseManager:
         """
         if not self._duck._table_exists(table_name):
             return
-        existing = [
-            row[0]
-            for row in self._duck._fetchall(
-                "SELECT column_name FROM information_schema.columns "
-                "WHERE table_name = ? AND column_name <> 'record_id' "
-                "ORDER BY ordinal_position",
-                [table_name],
-            )
-        ]
+        existing = self.stored_data_columns(table_name)
         new = [str(c) for c in columns]
         if set(existing) == set(new):
             return
@@ -1454,6 +1446,27 @@ class DatabaseManager:
         )
 
         return schema_id
+
+    def stored_data_columns(self, table_name: str) -> list[str]:
+        """The data columns of a variable's ``<Type>_data`` table, in stored
+        order (``record_id`` excluded); ``[]`` when the table does not exist.
+
+        The one owner of reading them: ``_check_column_set`` compares a save
+        against them, and the MATLAB bridge uses them to tell a custom
+        (``to_db``) record's stored columns from the metadata columns of a
+        loaded input (``scimatlab.bridge.codec_storage_columns``).
+        """
+        if not self._duck._table_exists(table_name):
+            return []
+        return [
+            row[0]
+            for row in self._duck._fetchall(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = ? AND column_name <> 'record_id' "
+                "ORDER BY ordinal_position",
+                [table_name],
+            )
+        ]
 
     def _ensure_columnar_table(
         self,

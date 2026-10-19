@@ -189,6 +189,8 @@ The default database for the [`scidb` command-line tool](../api/scidb.md#command
 
 **Used by:** the `scidb` CLI only. Your scripts still name their database in `configure_database(...)`, and the GUI asks which database to open.
 
+Wherever the database is named, keep the file on a local disk and back it up: see [Keep the project on a local disk](installation.md#keep-the-project-on-a-local-disk).
+
 ### How figures and tables show your data
 
 These three tables affect only how data is **displayed**: the order of levels, their names, and their colours. They never change what is stored or computed. Edits take effect on the next table or figure, without a restart.
@@ -351,7 +353,7 @@ Some declarations need code. These stay in a Python (or MATLAB) file listed in `
 |---|---|
 | A parameter description | `Parameter(30, description="window, seconds")` |
 | A computed value | `Parameter(*range(10, 60, 10))` |
-| A variable with custom storage or a docstring | `class X(BaseVariable)` with `to_db`/`from_db` |
+| A variable with [custom storage](writing-functions.md#saving-your-own-classes) or a docstring | `class X(BaseVariable)` with `to_db`/`from_db`, or a MATLAB `classdef X < scidb.BaseVariable` with both methods |
 | PathInput matching options | `aliases=`, `key_regex=`, `regex=` |
 
 If the same name is declared both in code and in the entities file, the GUI shows the entities file's version.

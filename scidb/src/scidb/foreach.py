@@ -2278,15 +2278,22 @@ def _track_variants(loaded_inputs: dict):
             for _k, _v in (getattr(data, "fixed_metadata", None) or {}).items():
                 if _k in _pinned.columns:
                     _pinned = _pinned[_pinned[_k].astype(str) == str(_v)]
-            if len(_pinned) == 1:
-                fixed_rid_values[param_name] = str(_pinned.iloc[0][RECORD_ID_COLUMN])
-            elif len(_pinned) > 1:
+            # Count RECORDS, not rows: a table-valued record (DataFrame mode,
+            # or a custom to_db table) is loaded as one row per stored row,
+            # all carrying its record id. Counting rows called one 2-row
+            # record "2 records" and dropped its edge (2026-10-18).
+            _pinned_rids = list(
+                dict.fromkeys(_pinned[RECORD_ID_COLUMN].dropna().astype(str))
+            )
+            if len(_pinned_rids) == 1:
+                fixed_rid_values[param_name] = _pinned_rids[0]
+            elif len(_pinned_rids) > 1:
                 Log.warn(
                     f"input '{param_name}' (Fixed): the pin "
-                    f"{getattr(data, 'fixed_metadata', {})} matches {len(_pinned)} "
-                    f"records, not one — no input edge can be recorded for it. "
-                    f"Pin every schema key of {getattr(data.data, '__name__', data.data)} "
-                    f"or narrow with where=."
+                    f"{getattr(data, 'fixed_metadata', {})} matches "
+                    f"{len(_pinned_rids)} records, not one — no input edge can be "
+                    f"recorded for it. Pin every schema key of that variable or "
+                    f"narrow with where=."
                 )
             Log.debug(
                 f"input '{param_name}' (Fixed): rid tracked "

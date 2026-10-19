@@ -68,6 +68,8 @@ class RotationMatrix(BaseVariable):
         return df["value"].values.reshape(df["row"].max() + 1, df["col"].max() + 1)
 ```
 
+A MATLAB variable overrides the same pair on its `classdef`: an ordinary `to_db(obj)` returning a `table`, and a `Static` `from_db(tbl)`. See [Saving your own classes](../getting-started/writing-functions.md#saving-your-own-classes).
+
 ## Save data
 
 `save` stores a value at the coordinates given by keyword metadata and returns its

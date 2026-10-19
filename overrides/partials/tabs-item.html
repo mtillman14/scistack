@@ -4,7 +4,7 @@
   A top-level nav section renders as a header tab that links to its first page
   (as upstream) plus a dropdown of its children, opened on hover/focus. The
   dropdown styling lives in docs/stylesheets/extra.css (.md-tabs__menu).
-  Leaf top-level entries (e.g. Installation) render as plain tabs.
+  Leaf top-level entries render as plain tabs.
 -#}
 {% macro render_content(nav_item, ref) %}
   {% set ref = ref or nav_item %}

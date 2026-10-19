@@ -527,6 +527,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         scifor_inputs, prep{'glue_chains'}, glue_handles);
     t_glue = toc(t0_glue);
 
+    % --- Custom to_db/from_db inputs: one row per record, from_db applied
+    %     to every record in one batch, so each call receives the object.
+    %     After glue: glue sees the stored table, as for any table input. ---
+    scifor_inputs = decode_codec_inputs(scifor_inputs, inputs, py_db, ...
+        char(prep{'record_id_column'}));
+
     % --- Convert extended_metadata_iterables to scifor name-value pairs ---
     t0_meta = tic;
     py_meta_iters = prep{'extended_metadata_iterables'};
@@ -752,6 +758,11 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             o, output_names{o}, height(tbl), width(tbl), ...
             strjoin(string(tbl.Properties.VariableNames), ', '));
         t_out = tic;
+        % Custom to_db/from_db output: every value becomes its to_db table.
+        out_codec = scidb.internal.codec(output_class_names{o});
+        if out_codec.has_codec
+            tbl = scidb.internal.encode_codec_output(tbl, output_names{o}, out_codec);
+        end
         % Whole-number metadata crosses as int64, as save() and Python's
         % for_each send it (scidb.internal.metadata_number). The returned
         % table still holds doubles: from_python converts every numpy
@@ -1713,6 +1724,43 @@ function src = read_function_source(name)
         end
     catch err
         scidb.Log.warn('[glue] could not read source for ''%s'': %s', name, err.message);
+    end
+end
+
+
+function scifor_inputs = decode_codec_inputs(scifor_inputs, inputs, py_db, rid_col)
+%DECODE_CODEC_INPUTS  from_db on every loaded input whose class has custom storage.
+%   Plain variable inputs and scidb.Fixed(variable) only: a column
+%   selection, for_columns or Merge input hands the function the stored
+%   columns themselves, so those stay tables (documented limitation).
+    names = fieldnames(scifor_inputs);
+    for i = 1:numel(names)
+        k = names{i};
+        if ~isfield(inputs, k)
+            continue;
+        end
+        spec = inputs.(k);
+        type_name = '';
+        if isa(spec, 'scidb.BaseVariable') && isempty(spec.selected_columns) ...
+                && ~(isprop(spec, 'iterate') && spec.iterate)
+            type_name = class(spec);
+        elseif isa(spec, 'scidb.Fixed') && isa(spec.var_type, 'scidb.BaseVariable')
+            type_name = class(spec.var_type);
+        end
+        if isempty(type_name)
+            continue;
+        end
+        codec = scidb.internal.codec(type_name);
+        if ~codec.has_codec
+            continue;
+        end
+        data_cols = string(cellfun(@char, ...
+            cell(py.scimatlab.bridge.codec_storage_columns(type_name, py_db)), ...
+            'UniformOutput', false));
+        parts = strsplit(type_name, '.');
+        scifor_inputs.(k) = scidb.internal.decode_codec_input( ...
+            scifor_inputs.(k), codec, parts{end}, data_cols, rid_col);
+        scidb.Log.info('for_each: input ''%s'' (%s) decoded with from_db', k, type_name);
     end
 end
 

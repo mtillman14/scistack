@@ -1,6 +1,6 @@
 # Writing Functions for SciStack
 
-SciStack runs **your** functions. It doesn't ask you to subclass anything or learn a new language. It does expect each function to have a particular *shape*. This page explains that shape, why it's worth it, how to convert an existing analysis script into it, and when you shouldn't bother making code general.
+SciStack runs **your** functions. It doesn't ask you to subclass anything or learn a new language. It does expect each function to have a particular _shape_. This page explains that shape, why it's worth it, how to convert an existing analysis script into it, and when you shouldn't bother making code general.
 
 Everything here applies to both the code and GUI workflows: the GUI calls the same functions, connecting variables to them on the canvas instead of in a `for_each` call.
 
@@ -10,22 +10,28 @@ Everything here applies to both the code and GUI workflows: the GUI calls the sa
      scidb/src/scidb/roles.py (plot_/stat_/glue_ prefixes; stat_ defaults to
      as_table); scifor.discovery.find_top_level_side_effects + registry
      _screen_for_side_effects (files with top-level work are skipped);
-     scidb variable.py (as_table data column named after the variable class). -->
+     scidb variable.py (as_table data column named after the variable class);
+     custom storage: scidb/tests/test_custom_serialization.py (Python),
+     scimatlab +scidb/+internal/codec.m + tests/matlab/scidb/TestCodec.m
+     (MATLAB to_db/from_db, scidb:CodecError, for_each inputs/outputs). -->
 
 ## The shape in one sentence
 
 > A SciStack function takes **one location's worth of data** as named arguments, and **returns** its results. It doesn't loop over subjects, open the database, or save anything.
 
 /// tab | Python
+
 ```python
 def lowpass_envelope(signal, fs_hz, cutoff_hz):
     """Rectify and low-pass filter one EMG recording."""
     b, a = butter(4, cutoff_hz / (fs_hz / 2), "low")
     return filtfilt(b, a, np.abs(signal - np.mean(signal)))
 ```
+
 ///
 
 /// tab | MATLAB
+
 ```matlab
 % lowpass_envelope.m
 function env = lowpass_envelope(signal, fs_hz, cutoff_hz)
@@ -34,6 +40,7 @@ function env = lowpass_envelope(signal, fs_hz, cutoff_hz)
     env = filtfilt(b, a, abs(signal - mean(signal)));
 end
 ```
+
 ///
 
 SciStack supplies the loop. You tell `for_each` which arguments come from which variables, and which schema keys to iterate:
@@ -59,7 +66,11 @@ Give parameters names that say what they are (`signal`, `fs_hz`, `cutoff_hz`), n
 
 ### 2. Settings are arguments, not hard-coded numbers
 
-A number buried in the function body (a cutoff frequency, a threshold, a window length) is invisible to SciStack. Pass it in instead. Then:
+A number buried in the function body (a cutoff frequency, a threshold, a window length) is hidden from the next person who reads your code: a labmate, a reviewer, or you in six months writing the methods section. To learn which settings an analysis depends on, they would have to read every line of every function, and they could easily miss one.
+
+Pass it in as an argument instead. Then every setting a step depends on is listed in its signature, and each value is visible in one place: the `for_each` call, or the node's inputs on the GUI canvas.
+
+It also makes the setting visible to SciStack:
 
 - it is **recorded** with every result it produced;
 - changing it creates a new **variant** next to the old results, rather than silently overwriting them;
@@ -72,6 +83,7 @@ Settings you will reuse across steps, or want to see by name in the GUI, can be 
 Return the value. `for_each` saves it as the variable named in `outputs`. To produce several outputs, return several values and list one variable per value:
 
 /// tab | Python
+
 ```python
 def gait_events(heel_marker, fs_hz):
     ...
@@ -79,9 +91,11 @@ def gait_events(heel_marker, fs_hz):
 
 for_each(gait_events, inputs={...}, outputs=[HeelStrikes, ToeOffs], ...)
 ```
+
 ///
 
 /// tab | MATLAB
+
 ```matlab
 function [heel_strikes, toe_offs] = gait_events(heel_marker, fs_hz)
     ...
@@ -89,23 +103,138 @@ end
 
 scidb.for_each(@gait_events, struct(...), {HeelStrikes(), ToeOffs()}, ...);
 ```
+
 ///
 
-A function can return a number, an array, a string, or a table (DataFrame). A table that has schema-key columns (for example a `subject` column) is saved as one record per row, at each row's own location. That's how an import function turns one CSV into many records.
+A function can return any value. SciStack stores the usual data types natively, in readable database columns, and gives them back with the same type:
+
+| Python                                                     | MATLAB                                              |
+| ---------------------------------------------------------- | --------------------------------------------------- |
+| `bool`, `int`, `float`, `str` and their NumPy scalar types | numeric and `logical` scalars and arrays            |
+| `np.ndarray` of any shape                                  | `string` (and `char`, which loads back as `string`) |
+| `list` (with every element the same type)                  | `cell` arrays                                       |
+| `dict`                                                     | `struct`                                            |
+| `pd.DataFrame`                                             | `table`                                             |
+| `datetime`, `date`, `timedelta`                            | `datetime`                                          |
+
+A table that has schema-key columns (for example a `subject` column) is saved as one record per row, at each row's own location. That's how an import function turns one CSV into many records.
+
+A few values change on the way through: a `tuple` comes back as a `list`, a MATLAB `categorical` as `string`, and a struct array as a cell array of structs. A list mixing types (`[1, "a"]`) can't be saved; use a `dict` or a DataFrame.
+
+#### Saving your own classes
+
+If a function returns an instance of **your own class** (a fitted model object, a custom `Trajectory`) and you want it saved, its variable has to say how to convert it to a table and back. Override two methods on the `BaseVariable` subclass:
+
+| Method    | Signature                                                     | Must                                                                                                                       |
+| --------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `to_db`   | `def to_db(self) -> pd.DataFrame`                             | Turn `self.data` (the value your function returned) into a DataFrame. Use ordinary column types: numbers, strings, arrays. |
+| `from_db` | `@classmethod`<br>`def from_db(cls, df: pd.DataFrame) -> Any` | Rebuild the original value from that DataFrame. Whatever it returns is what `load()` and later steps receive.              |
+
+Override both or neither. They are separate from `save()` and `load()`, which you call to store and fetch records and should never override.
+
+/// tab | Python
+
+```python
+from dataclasses import dataclass
+import numpy as np
+import pandas as pd
+from scidb import BaseVariable
+
+
+@dataclass
+class Trajectory:
+    t: np.ndarray        # time, seconds
+    xyz: np.ndarray      # N x 3 positions
+    label: str
+
+
+class MarkerTrajectory(BaseVariable):
+    def to_db(self) -> pd.DataFrame:
+        traj = self.data
+        return pd.DataFrame({
+            "t": traj.t,
+            "x": traj.xyz[:, 0], "y": traj.xyz[:, 1], "z": traj.xyz[:, 2],
+            "label": traj.label,          # repeated on every row
+        })
+
+    @classmethod
+    def from_db(cls, df: pd.DataFrame) -> Trajectory:
+        return Trajectory(
+            t=df["t"].to_numpy(),
+            xyz=df[["x", "y", "z"]].to_numpy(),
+            label=str(df["label"].iloc[0]),
+        )
+```
+
+A function can now `return Trajectory(...)` with `outputs=[MarkerTrajectory]`, and steps that take `MarkerTrajectory` as an input receive a `Trajectory` again.
+
+///
+
+/// tab | MATLAB
+
+Override the same two methods on the variable's `classdef`. `to_db` is an ordinary method that reads `obj.data`; `from_db` is `Static`, because it builds the value from a table, without an object to start from.
+
+```matlab
+% Trajectory.m: your own class
+classdef Trajectory
+    properties
+        t      % time, seconds (N x 1)
+        xyz    % N x 3 positions
+        label  % string
+    end
+end
+```
+
+```matlab
+% MarkerTrajectory.m: the variable, with its own storage
+classdef MarkerTrajectory < scidb.BaseVariable
+    methods
+        function tbl = to_db(obj)
+            traj = obj.data;
+            n = numel(traj.t);
+            tbl = table(traj.t(:), traj.xyz(:,1), traj.xyz(:,2), traj.xyz(:,3), ...
+                        repmat(string(traj.label), n, 1), ...   % repeated on every row
+                        'VariableNames', {'t', 'x', 'y', 'z', 'label'});
+        end
+    end
+    methods (Static)
+        function traj = from_db(tbl)
+            traj = Trajectory();
+            traj.t = tbl.t;
+            traj.xyz = [tbl.x, tbl.y, tbl.z];
+            traj.label = string(tbl.label(1));
+        end
+    end
+end
+```
+
+A function can now return a `Trajectory` with `{MarkerTrajectory()}` as its output, and a step that takes `MarkerTrajectory()` as an input receives a `Trajectory` again. `save`, `save_from_table` and `load` convert the same way.
+
+- **Override both or neither.** Defining only one, a `Static` `to_db`, or a non-`Static` `from_db` is an error (`scidb:CodecError`), as is a `to_db` that doesn't return a `table`.
+- **The object is rebuilt for plain inputs.** `MarkerTrajectory()` and `scidb.Fixed(MarkerTrajectory(), ...)` hand your function a `Trajectory`. A column selection (`MarkerTrajectory("t")`), `for_columns`, or a `scidb.Merge` hands it the stored table's columns, as for any table variable.
+- **Python and the GUI see the stored table.** They can't build a MATLAB object, so they read a `MarkerTrajectory` record as its `t, x, y, z, label` table.
+- **To raise the schema version**, use `scidb.register_variable(MarkerTrajectory(), schema_version=2)`.
+
+///
+
+- **Without these methods, an object of your own class can't be saved.** It isn't a type SciStack knows how to store, and the save fails. (Returning it is fine when the result is only used in memory, for example from `scifor.for_each`, which saves nothing.)
+- **Changing how a variable is stored is a change of type.** If you later change `to_db`/`from_db` so that old records no longer load correctly, also raise the class's `schema_version` (it starts at `1`).
 
 ### 4. No loops over subjects, sessions or trials
 
-If your function has `for subject in subjects:`, that loop belongs to SciStack. Remove it, and write the function for one subject. Then:
+If your function has `for subject in subjects:`, but each iteration could be done in parallel/independent of the other iterations, that loop belongs to SciStack. Remove it, and write the function for one subject. Then:
 
 - a crash for one subject doesn't stop the others; failures are counted and summarised at the end;
 - `skip_computed=True` re-runs only what's out of date;
 - adding a new subject means running the same call again, not editing code.
 
-Loops over things *inside* one location's data (samples, strides within a trial, columns of a table) are fine.
+Loops over things _inside_ one location's data (samples, strides within a trial, columns of a table) are fine.
 
 ### 5. Read raw files only in loader functions, through `PathInput`
 
 Functions should get their data as arguments. The exception is the step that reads your raw files from disk. Make that a small function that takes a **path** and returns the data, and let a [`PathInput`](../api/scifor.md#input-wrappers) build the path for each location:
+
+/// tab | Python
 
 ```python
 def load_emg(path):
@@ -113,18 +242,45 @@ def load_emg(path):
 
 EMG_FILE = PathInput("{subject}/{session}_emg.csv", root_folder="D:/study/raw", name="emg_file")
 for_each(load_emg, inputs={"path": EMG_FILE}, outputs=[RawEMG],
-         subject=["S01", "S02"], session=["BL", "POST"])
+         subject=[], session=[])
 ```
+
+///
+
+/// tab | MATLAB
+
+```matlab
+% load_emg.m
+function emg = load_emg(path)
+    emg = readtable(path).emg;
+end
+```
+
+```matlab
+emg_file = scidb.PathInput("{subject}/{session}_emg.csv", ...
+    root_folder="D:/study/raw", name="emg_file");
+scidb.for_each(@load_emg, struct("path", emg_file), {RawEMG()}, ...
+    subject=[], session=[]);
+```
+
+///
+
+**`subject=[], session=[]` works here too, even though nothing has been loaded yet.** An empty list always means "every value there is", and `for_each` works out those values before the first call:
+
+- **`scidb.for_each`** takes the values already in the database and, for keys still empty, runs **file discovery**: it scans `root_folder` for files matching the template and reads `subject` and `session` from the matching file names.
+- **`scifor.for_each`** reads the values from the schema-key columns (`subject`, `session`) of the table inputs, and fills any key still empty by the same file discovery.
+
+When every template key is left empty, `for_each` runs only the combinations that have a file on disk. If `S01` and `S02` both have `BL` files but only `S01` has a `POST` file, it makes three calls, not four. List values explicitly (`subject=["S01", "S02"]`) only when you want to run a subset.
 
 No hard-coded paths inside functions: a function that builds `f"C:/Users/me/{subject}.csv"` only works on your computer, and SciStack can't record which file it read.
 
-### 6. Same inputs, same outputs
+### 6. Same inputs, same outputs (idempotent)
 
 A function should depend only on its arguments. Avoid reading global variables, the current date, or files that aren't passed in. If it uses random numbers, take the seed as an argument. SciStack decides whether a result is up to date from the function's code and its recorded inputs. Anything else the function depends on is invisible to that check.
 
 ### 7. Files must be safe to import
 
-To discover your functions, SciStack imports your Python files. A file that *does work* at the top level (runs an analysis, draws figures, writes files) would do that work every time SciStack scans your project, so SciStack skips it and reports why. Keep functions and declarations at the top level, and put script code under a guard:
+To discover your functions, SciStack imports your Python files. A file that _does work_ at the top level (runs an analysis, draws figures, writes files) would do that work every time SciStack scans your project, so SciStack skips it and reports why. Keep functions and declarations at the top level, and put script code under a guard:
 
 ```python
 def lowpass_envelope(signal, fs_hz, cutoff_hz):
@@ -138,34 +294,35 @@ In MATLAB, put each function in **its own `.m` file**, named after the function.
 
 ### 8. Name prefixes give some functions a special role
 
-| Prefix | Role | Notes |
-|---|---|---|
-| `plot_` | Draws a figure | Writes to a `PathOutput`; the figure is stamped with its provenance. |
-| `stat_` | Produces a statistics result | Receives its inputs as tables by default (`as_table`). |
-| `glue_` | A small reshaping step between two others | Its result is never saved. See [Glue](../api/scidb.md#glue). |
-| anything else | An ordinary processing step | |
+| Prefix        | Role                                      | Notes                                                                |
+| ------------- | ----------------------------------------- | -------------------------------------------------------------------- |
+| `plot_`       | Draws a figure                            | Writes to a `PathOutput`; the figure is stamped with its provenance. |
+| `stat_`       | Produces a statistics result              | Receives its inputs as tables by default (`as_table`).               |
+| `glue_`       | A small reshaping step between two others | Its result is never saved. See [Glue](../api/scidb.md#glue).         |
+| anything else | An ordinary processing step               |                                                                      |
 
 ## What your function receives: `as_table`
 
 When `for_each` loads a variable for one call, it hands your function **just the data**, in the simplest form that fits:
 
-| What matched at this location | Your function receives |
-|---|---|
-| One record holding one value | The value itself: `0.72`, a NumPy array, a string. |
-| Several records with one data column (e.g. every trial of a session, when iterating only `subject` and `session`) | One NumPy column of the values (shape `(N, 1)`). |
-| Data with several columns | A DataFrame of **only** the data columns. |
+| What matched at this location                                                                                     | Your function receives                             |
+| ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| One record holding one value                                                                                      | The value itself: `0.72`, a NumPy array, a string. |
+| Several records with one data column (e.g. every trial of a session, when iterating only `subject` and `session`) | One NumPy column of the values (shape `(N, 1)`).   |
+| Data with several columns                                                                                         | A DataFrame of **only** the data columns.          |
 
 The schema-key columns (`subject`, `session`, ...) are removed. That's usually what you want: a filter function shouldn't care which subject its signal came from.
 
-Sometimes a function *does* need to know where each row came from: to pair up rows by participant, pivot a table, or compare sessions. Pass **`as_table`**:
+Sometimes a function _does_ need to know where each row came from: to pair up rows by participant, pivot a table, or compare sessions. Pass **`as_table`**:
 
-| Setting | Effect |
-|---|---|
-| `as_table=None` (default) | Data only, as above. `stat_` functions default to tables. |
-| `as_table=True` | Every loaded input arrives as a DataFrame (MATLAB: a table) **with** its schema-key columns. A scalar variable's values are in a column named after the variable, e.g. `PeakEMG`. |
-| `as_table=["baseline"]` | Only the named inputs arrive as tables; the others arrive as plain data. |
+| Setting                   | Effect                                                                                                                                                                            |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `as_table=None` (default) | Data only, as above. `stat_` functions default to tables.                                                                                                                         |
+| `as_table=True`           | Every loaded input arrives as a DataFrame (MATLAB: a table) **with** its schema-key columns. A scalar variable's values are in a column named after the variable, e.g. `PeakEMG`. |
+| `as_table=["baseline"]`   | Only the named inputs arrive as tables; the others arrive as plain data.                                                                                                          |
 
 /// tab | Python
+
 ```python
 def session_change(peaks):
     """Every subject's peak at every session in, one row per subject out."""
@@ -175,9 +332,11 @@ def session_change(peaks):
 for_each(session_change, inputs={"peaks": PeakEMG}, outputs=[PeakChange],
          as_table=True)          # no schema keys: one call, all the data
 ```
+
 ///
 
 /// tab | MATLAB
+
 ```matlab
 % session_change.m
 function out = session_change(peaks)
@@ -191,28 +350,29 @@ end
 scidb.for_each(@session_change, struct("peaks", PeakEMG()), {PeakChange()}, ...
     as_table=true);
 ```
+
 ///
 
 Because the returned table has a `subject` column, each row is saved as its own `PeakChange` record at that subject.
 
 /// tip | A rule of thumb
-If your function would need to *ask* "which subject is this?", give it `as_table`. If it wouldn't, don't: a function that works on plain arrays is easier to test and reuse.
+If your function would need to _ask_ "which subject is this?", give it `as_table`. If it wouldn't, don't: a function that works on plain arrays is easier to test and reuse.
 ///
 
 ## Pros and cons of this shape
 
-| | |
-|---|---|
-| ✅ **Every result is traceable** | Each saved value records the function, input records and settings that produced it. Months later you can answer "which cutoff did I use for that figure?" |
-| ✅ **Re-runs are cheap and safe** | Change one step or add one subject, and only the affected results are recomputed. |
-| ✅ **One failure doesn't stop the run** | A bad trial is reported, and the rest still run. |
-| ✅ **Trying alternatives is built in** | `Parameter(10, 20)` runs both and keeps both, side by side. |
-| ✅ **Functions are easy to test** | A function of its arguments can be tested on a tiny array, without the dataset. |
-| ✅ **Functions are reusable** | `lowpass_envelope` works in any project, with or without SciStack. |
-| ⚠️ **More, smaller functions** | One long script becomes several functions, plus the `for_each` calls that connect them. |
-| ⚠️ **Variables to declare** | Each intermediate result is a named variable (a one-line class, or one line in the entities file). |
-| ⚠️ **Data must be addressable by schema keys** | Every value has to live at a location (`subject`, `session`, ...). Deciding the [schema](whats-a-schema.md) takes some thought up front. |
-| ⚠️ **Less freedom inside a step** | A step can't reach across to other subjects' data unless you ask for it, by iterating fewer keys or using `Fixed`. That's deliberate, but it can feel restrictive at first. |
+|                                                |                                                                                                                                                                             |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ✅ **Every result is traceable**               | Each saved value records the function, input records and settings that produced it. Months later you can answer "which cutoff did I use for that figure?"                   |
+| ✅ **Re-runs are cheap and safe**              | Change one step or add one subject, and only the affected results are recomputed.                                                                                           |
+| ✅ **One failure doesn't stop the run**        | A bad trial is reported, and the rest still run.                                                                                                                            |
+| ✅ **Trying alternatives is built in**         | `Parameter(10, 20)` runs both and keeps both, side by side.                                                                                                                 |
+| ✅ **Functions are easy to test**              | A function of its arguments can be tested on a tiny array, without the dataset.                                                                                             |
+| ✅ **Functions are reusable**                  | `lowpass_envelope` works in any project, with or without SciStack.                                                                                                          |
+| ⚠️ **More, smaller functions**                 | One long script becomes several functions, plus the `for_each` calls that connect them.                                                                                     |
+| ⚠️ **Variables to declare**                    | Each intermediate result is a named variable (a one-line class, or one line in the entities file).                                                                          |
+| ⚠️ **Data must be addressable by schema keys** | Every value has to live at a location (`subject`, `session`, ...). Deciding the [schema](whats-a-schema.md) takes some thought up front.                                    |
+| ⚠️ **Less freedom inside a step**              | A step can't reach across to other subjects' data unless you ask for it, by iterating fewer keys or using `Fixed`. That's deliberate, but it can feel restrictive at first. |
 
 ## Reusable code and project-specific code
 
@@ -249,6 +409,7 @@ Both are ordinary SciStack steps. Only the second goes into your reusable module
 Most analysis scripts look something like this: nested loops over conditions, a file read, some processing with numbers typed in, and results collected into a spreadsheet.
 
 /// tab | Python
+
 ```python
 # old_analysis.py
 import numpy as np
@@ -266,9 +427,11 @@ for subject in ["S01", "S02", "S03"]:
 
 pd.DataFrame(rows).to_csv("peaks.csv", index=False)
 ```
+
 ///
 
 /// tab | MATLAB
+
 ```matlab
 % old_analysis.m
 subjects = ["S01", "S02", "S03"];
@@ -284,6 +447,7 @@ for s = subjects
 end
 writetable(peaks, "peaks.csv");
 ```
+
 ///
 
 Convert it in six steps:
@@ -296,6 +460,7 @@ Convert it in six steps:
 6. **The spreadsheet becomes an export.** Results are in the database; write a CSV whenever you want one.
 
 /// tab | Python
+
 ```python
 # emg_tools.py -- general, reusable in any project
 import numpy as np
@@ -342,9 +507,11 @@ if __name__ == "__main__":
 
     PeakEMG.to_csv("peaks.csv")
 ```
+
 ///
 
 /// tab | MATLAB
+
 ```matlab
 % lowpass_envelope.m -- general, reusable in any project
 function env = lowpass_envelope(signal, fs_hz, cutoff_hz)
@@ -390,6 +557,7 @@ scidb.for_each(@lowpass_envelope, ...
 scidb.for_each(@peak_value, struct("signal", EmgEnvelope()), {PeakEMG()}, ...
     subject=[], session=[]);
 ```
+
 ///
 
 The new version is longer, and that's the trade. What you get for it:
@@ -413,15 +581,15 @@ With no schema keys, `for_each` makes **one** call with all of the data, and sav
 
 ### Common conversion snags
 
-| In the old script | In SciStack |
-|---|---|
-| A results list you append to, then save | Return the value. `for_each` collects and saves. |
-| `if subject == "S07": continue` (a known bad recording) | Exclude it once with `exclude_schema(reason=..., subject="S07")`; every step skips it. |
-| A `try/except` around each subject so the script keeps going | Not needed. Failures are caught per location and summarised. |
-| Global settings at the top of the script | Arguments, or `Parameter`s in the entities file. |
-| Two scripts that each re-read the raw files | One loader step; later steps read its saved variable. |
-| A step that needs another session's data, e.g. "subtract baseline" | `Fixed(MyVar, session="BL")` as a second input pins that input to BL. |
-| A figure saved with `plt.savefig(f"{subject}.png")` | A `plot_` function with a `PathOutput`. |
+| In the old script                                                  | In SciStack                                                                            |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| A results list you append to, then save                            | Return the value. `for_each` collects and saves.                                       |
+| `if subject == "S07": continue` (a known bad recording)            | Exclude it once with `exclude_schema(reason=..., subject="S07")`; every step skips it. |
+| A `try/except` around each subject so the script keeps going       | Not needed. Failures are caught per location and summarised.                           |
+| Global settings at the top of the script                           | Arguments, or `Parameter`s in the entities file.                                       |
+| Two scripts that each re-read the raw files                        | One loader step; later steps read its saved variable.                                  |
+| A step that needs another session's data, e.g. "subtract baseline" | `Fixed(MyVar, session="BL")` as a second input pins that input to BL.                  |
+| A figure saved with `plt.savefig(f"{subject}.png")`                | A `plot_` function with a `PathOutput`.                                                |
 
 ## Next steps
 

@@ -137,7 +137,7 @@ Run `git --version`. If Git isn't installed, macOS offers to install the command
 
 A **virtual environment** ("venv") is a folder, usually called `.venv`, inside your project. Packages you install while it is *active* go into that folder instead of into your computer's main Python. Every project gets its own, so upgrading a package for one project can never break another.
 
-1. Make a new, empty folder for your project, for example `Documents/my-study`. Avoid spaces and special characters in the folder name.
+1. Make a new, empty folder for your project, for example `projects/my-study` in your home folder. Avoid spaces and special characters in the folder name. **Put it on your own computer's disk, not on a network drive or in a OneDrive/Dropbox folder**: the virtual environment and the database are slow and unreliable over a network. In many organizations `Documents` is on the network; see [Keep the project on a local disk](installation.md#keep-the-project-on-a-local-disk).
 2. Open it in VS Code: **File → Open Folder…** and choose the folder. If VS Code asks whether you trust the authors of the files in this folder, click **Yes**.
 3. Open the terminal in VS Code (**View → Terminal**). It starts in your project folder.
 4. Create the virtual environment:

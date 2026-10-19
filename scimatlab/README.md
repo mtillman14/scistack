@@ -97,6 +97,27 @@ end
 
 The class name becomes the database table name — no properties or methods needed. Types are auto-registered with Python on first use (save, load, etc.).
 
+### Custom storage (`to_db` / `from_db`)
+
+To save a value of your own class, override both conversions: an ordinary `to_db(obj)` that turns `obj.data` into a `table`, and a `Static` `from_db(tbl)` that rebuilds the value. `save`, `save_from_table`, `load` and `scidb.for_each` (outputs, and plain or `scidb.Fixed` inputs) call them automatically.
+
+```matlab
+classdef MarkerTrajectory < scidb.BaseVariable
+    methods
+        function tbl = to_db(obj)
+            tbl = table(obj.data.t(:), 'VariableNames', {'t'});
+        end
+    end
+    methods (Static)
+        function data = from_db(tbl)
+            data = Trajectory(tbl.t);
+        end
+    end
+end
+```
+
+One owner decides whether a class has custom storage: `+scidb/+internal/codec.m` (both-or-neither, `Static` checks, batched conversion). It tells the Python surrogate (`scimatlab.bridge.register_matlab_variable(..., codec=True)`), so the `to_db` table is stored in the same columnar form a Python class with `to_db`/`from_db` uses. Python and the GUI read such a record as its stored table. Column-selection, `for_columns` and `Merge` inputs receive the stored columns, not the object.
+
 A variable declared in the project's TOML entities file (`variables = [...]`, e.g. one created in the GUI) does not need a hand-written file: `scidb.entities()` checks every declared name with `exist(name, 'class')` and writes a stub classdef for the ones MATLAB cannot resolve, then adds that directory to the path. Stubs go to `scistack.toml`'s `[matlab] variable_dir` when configured, otherwise to `scistack_variables/` beside the entities file (`scimatlab.stubs`). A name that already resolves is never touched, so a hand-written classdef is never shadowed by a generated one.
 
 ## API Reference

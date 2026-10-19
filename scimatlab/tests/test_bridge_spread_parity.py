@@ -164,3 +164,31 @@ class TestUnlabelledTableStaysWholeOnBridge:
         assert len(result) == 1
         assert out_name in result.columns
         assert "saving each whole table as ONE record" in caplog.text
+
+
+class TestCodecOutputNeverSpreads:
+    """A MATLAB class with custom to_db/from_db: its output table is ONE
+    record's stored form (+scidb/+internal/encode_codec_output.m ran to_db),
+    so for_each_save must not spread it by schema key, even when to_db's
+    table carries subject/session columns."""
+
+    def test_labelled_to_db_table_is_one_record(self, db, literal_file, caplog):
+        out_name = "Outcomes_CODEC"
+        register_matlab_variable(out_name, codec=True)
+        prep, combo = _prepare_static(db, literal_file, out_name)
+        inner = pd.DataFrame(
+            {
+                "subject": ["A", "A", "B"],
+                "session": ["01", "02", "01"],
+                "score": [1.0, 2.0, 3.0],
+            }
+        )
+        with caplog.at_level(logging.INFO):
+            for_each_save(
+                prep["handle"], [_nested_frame(combo, out_name, inner)], save=True
+            )
+        assert _n_records(db, out_name) == 1
+        assert "has custom to_db/from_db" in caplog.text
+        out_cls = register_matlab_variable(out_name)
+        (loaded,) = list(db.load(out_cls, {}))
+        pd.testing.assert_frame_equal(loaded.data, inner)

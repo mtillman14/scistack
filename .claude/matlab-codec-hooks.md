@@ -3,7 +3,7 @@
 Status: Stage 0 implemented 2026-10-18, tests pass (uncommitted;
 scidb/tests/test_custom_serialization.py + existing codec suites).
 Stages 1-3 implemented 2026-10-18, tests PASS (scimatlab/tests/test_bridge_codec.py,
-scimatlab/tests/matlab/scidb/TestCodec.m). Stages 4-6 not started.
+scimatlab/tests/matlab/scidb/TestCodec.m). Stages 4-6 implemented 2026-10-18, tests unrun.
 
 Stages 1-3 as built:
 - bridge.register_matlab_variable(type_name, schema_version=1, codec=None):
@@ -58,9 +58,29 @@ Stages 1-3 as built:
     mismatch on a Merge input). Both run BEFORE the new TestMetadataNumbers,
     and nothing that runs before them changed between the passing 20:37 run
     and 21:02. If they recur in a full run: bisect by suite prefix.
-- Interim until Stage 4: a codec class as a MATLAB for_each OUTPUT fails with
-  the surrogate's TypeError ("reached Python without MATLAB's to_db()");
-  as an INPUT the function receives the stored table.
+- Stages 4-6 as built:
+  * Outputs: +scidb/+internal/encode_codec_output.m (to_db on every value,
+    before whole_metadata_columns/to_python); bridge.for_each_save never
+    spreads a codec output by schema key (one record per combo).
+  * Inputs: the spread load gives one row per STORED row; for_each.m
+    decode_codec_inputs -> +scidb/+internal/decode_codec_input.m groups by
+    record id (x__record_id), from_db on the stored columns
+    (bridge.codec_storage_columns -> DatabaseManager.stored_data_columns, the
+    one owner, also used by _check_column_set), one row per record with a
+    cell column named after the variable. After glue. Plain var and
+    scidb.Fixed inputs only; column selection / for_columns / Merge get the
+    stored columns (documented).
+  * Fixed codec inputs: the bridge strips __record_id inside wrappers, so
+    decode_codec_input groups a Fixed table by its metadata columns (latest
+    record per location = one record). Found alongside: scidb.foreach Fixed
+    rid tracking counted ROWS, so a multi-row record "matched 2 records" and
+    lost its input edge (any DataFrame-mode variable, pre-existing); now
+    counts distinct record ids. Test: TestFixedTableInputRecordsItsEdge.
+  * Stage 5: matlab_parser already classifies a classdef with methods as a
+    variable (test added, scistack-gui/tests/test_matlab.py); GUI process
+    surrogates have no codec flag and read the stored table (dtype custom).
+  * Stage 6: writing-functions.md MATLAB tab, project-files.md entities
+    table, guide/variables.md pointer, scimatlab README section.
 
 Stage 0 as built: storage form for codec classes stays the columnar
 `{"custom": true}` table (keeps `where=` on stored columns and the iterator

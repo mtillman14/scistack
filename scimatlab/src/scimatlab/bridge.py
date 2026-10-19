@@ -1140,7 +1140,20 @@ def for_each_save(
     # keeps each MATLAB output's table separate, so it stays in force there
     # rather than importing that limitation.
     nested_shape = result_tbl.shape
-    if len(state.output_names) == 1:
+    # A custom-serialized (to_db/from_db) output's table is ONE record's
+    # stored form, never rows to spread — whatever columns it has. Same rule
+    # as BaseVariable.save's custom path, which never auto-distributes.
+    from scidb.database import DatabaseManager as _DM
+
+    codec_output = len(outputs) == 1 and _DM._has_custom_serialization(
+        outputs[0] if isinstance(outputs[0], type) else type(outputs[0])
+    )
+    if codec_output:
+        _Log.info(
+            f"[bridge] for_each_save: {state.output_names[0]} has custom "
+            f"to_db/from_db — each output table is one record, not spread"
+        )
+    if len(state.output_names) == 1 and not codec_output:
         result_tbl = _spread_nested_results(
             result_tbl,
             list(state.output_names),
@@ -2069,6 +2082,27 @@ def numpy_scalar_to_python(obj):
     if isinstance(obj, np.generic):
         return [True, obj.item()]
     return [False, None]
+
+
+def codec_storage_columns(type_name: str, db=None) -> list:
+    """The stored data columns of a MATLAB codec variable (custom
+    ``to_db``/``from_db``), in stored order.
+
+    ``+scidb/for_each.m`` loads such an input as one row per STORED row (the
+    surrogate's pass-through ``from_db`` returns the record's table, which the
+    spread load lays out row by row). To hand each call the decoded object it
+    groups rows by record id and calls ``from_db`` on these columns only —
+    every other column of the loaded table is metadata. Owner of the column
+    list: ``DatabaseManager.stored_data_columns``.
+    """
+    from scidb.database import get_database
+    from scidb.variable import BaseVariable
+
+    cls = BaseVariable.get_subclass_by_name(type_name)
+    if cls is None:
+        return []
+    _db = db if db is not None and not isinstance(db, type(None)) else get_database()
+    return _db.stored_data_columns(cls.table_name())
 
 
 def is_dataframe(obj) -> bool:

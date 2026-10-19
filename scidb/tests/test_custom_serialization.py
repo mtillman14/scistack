@@ -242,3 +242,43 @@ class TestWhereOnBatchSavedColumns:
         StepLen.save(0.68, subject="1", trial="3")
         results = StepLen.load(where=GaitTable["Side"] == "L")
         assert sorted(v.data for v in results) == [0.65, 0.68]
+
+
+class BaselineTable(BaseVariable):
+    """A plain DataFrame variable: one record, several stored rows."""
+
+
+class TestFixedTableInputRecordsItsEdge:
+    """A Fixed pin on a table-valued record matched its ROWS: one 2-row
+    record was reported as "matches 2 records, not one" and its input edge
+    was dropped (scidb.foreach rid tracking counts records now)."""
+
+    def test_fixed_pin_on_multi_row_record_records_an_edge(self, db):
+        from scifor import Fixed
+
+        BaselineTable.save(
+            pd.DataFrame({"t": [0.0, 1.0], "v": [5.0, 6.0]}), subject="S01", trial="0"
+        )
+        RawSamples.save(np.array([1.0, 2.0]), subject="S01", trial="1")
+
+        def use_baseline(raw, baseline):
+            return float(len(baseline))
+
+        for_each(
+            use_baseline,
+            {"raw": RawSamples, "baseline": Fixed(BaselineTable, trial="0")},
+            [StepLen],
+            subject=["S01"],
+            trial=["1"],
+        )
+        assert StepLen.load(subject="S01", trial="1").data == 2.0
+        params = {
+            p
+            for (p,) in db._duck._fetchall(
+                "SELECT DISTINCT ii.param_name FROM _invocation_input ii "
+                "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
+                "WHERE inv.function_name = ?",
+                ["use_baseline"],
+            )
+        }
+        assert params == {"raw", "baseline"}, params

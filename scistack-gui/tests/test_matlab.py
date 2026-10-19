@@ -255,6 +255,33 @@ class TestParseMatlabVariable:
         name = parse_matlab_variable(f)
         assert name == "RawSignal"
 
+    def test_classdef_with_to_db_from_db_is_a_variable(self, tmp_path):
+        """A MATLAB variable with custom storage has methods blocks (to_db,
+        Static from_db); folder-scan discovery must still call it a
+        variable, not a function (scimatlab +scidb/+internal/codec.m)."""
+        from scistack_gui import matlab_parser as mp
+
+        f = tmp_path / "MarkerTrajectory.m"
+        f.write_text(
+            textwrap.dedent("""\
+            classdef MarkerTrajectory < scidb.BaseVariable
+                methods
+                    function tbl = to_db(obj)
+                        tbl = table(obj.data.t(:), 'VariableNames', {'t'});
+                    end
+                end
+                methods (Static)
+                    function data = from_db(tbl)
+                        data = Trajectory(tbl.t);
+                    end
+                end
+            end
+        """)
+        )
+
+        assert mp.parse_matlab_variable(f) == "MarkerTrajectory"
+        assert mp.classify_matlab_file(f) == ("variable", "MarkerTrajectory")
+
     def test_not_base_variable(self, tmp_path):
         from scistack_gui.matlab_parser import parse_matlab_variable
 

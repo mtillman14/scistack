@@ -103,6 +103,51 @@ classdef TestCodec < matlab.unittest.TestCase
             testCase.verifyClass(tbl.CodecTraj{1}, 'CodecTrajectory');
         end
 
+        % --- scidb.for_each (stage 4) ---
+
+        function test_for_each_object_output_round_trips(testCase)
+            RawSignal().save([1 2 3], 'subject', 1, 'session', 'A');
+            RawSignal().save([4 5], 'subject', 2, 'session', 'A');
+            scidb.for_each(@make_codec_traj, struct('raw', RawSignal()), ...
+                {CodecTraj()}, 'subject', [1 2], 'session', "A");
+            r1 = CodecTraj().load('subject', 1, 'session', 'A');
+            r2 = CodecTraj().load('subject', 2, 'session', 'A');
+            testCase.verifyEqual(r1.data, CodecTrajectory([1; 2; 3], "heel"));
+            testCase.verifyEqual(r2.data, CodecTrajectory([4; 5], "heel"));
+            dtype = py.scidb.database.get_database().get_dtype_meta('CodecTraj');
+            testCase.verifyTrue(logical(py.operator.contains(dtype, 'custom')));
+        end
+
+        function test_for_each_object_input_is_decoded(testCase)
+            CodecTraj().save(CodecTrajectory([1; 2; 3], "a"), 'subject', 1, 'session', 'A');
+            CodecTraj().save(CodecTrajectory([4; 5], "b"), 'subject', 2, 'session', 'A');
+            scidb.for_each(@codec_traj_length, struct('traj', CodecTraj()), ...
+                {ScalarVar()}, 'subject', [1 2], 'session', "A");
+            testCase.verifyEqual(ScalarVar().load('subject', 1, 'session', 'A').data, 3);
+            testCase.verifyEqual(ScalarVar().load('subject', 2, 'session', 'A').data, 2);
+        end
+
+        function test_for_each_chain_object_to_object(testCase)
+            % output of one step is the decoded input of the next
+            RawSignal().save([1 2 3 4], 'subject', 1, 'session', 'A');
+            scidb.for_each(@make_codec_traj, struct('raw', RawSignal()), ...
+                {CodecTraj()}, 'subject', 1, 'session', "A");
+            scidb.for_each(@codec_traj_length, struct('traj', CodecTraj()), ...
+                {ScalarVar()}, 'subject', 1, 'session', "A");
+            testCase.verifyEqual(ScalarVar().load('subject', 1, 'session', 'A').data, 4);
+        end
+
+        function test_for_each_fixed_codec_input_is_decoded(testCase)
+            CodecTraj().save(CodecTrajectory([1; 2], "base"), 'subject', 1, 'session', 'A');
+            RawSignal().save([9 9 9], 'subject', 1, 'session', 'B');
+            scidb.for_each(@codec_traj_length, ...
+                struct('traj', scidb.Fixed(CodecTraj(), 'session', "A")), ...
+                {ScalarVar()}, 'subject', 1, 'session', "B");
+            testCase.verifyEqual(ScalarVar().load('subject', 1, 'session', 'B').data, 2);
+        end
+
+        % --- errors ---
+
         function test_only_to_db_errors(testCase)
             testCase.verifyError( ...
                 @() CodecOnlyToDbVar().save(1, 'subject', 1, 'session', 'A'), ...
