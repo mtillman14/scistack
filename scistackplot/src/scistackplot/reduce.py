@@ -96,7 +96,7 @@ from .compare import (
 from .panels import override_for, panel_key_text, unmatched
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
-from .cell import apply_cell_collapse, cell_collapse_note, cell_collapses
+from .cell import all_nan_warning, apply_cell_collapse, cell_collapse_note, cell_collapses
 from .variants import apply_variant_sets, strip_answered_roles
 
 LAYER = "scistackplot"
@@ -376,6 +376,7 @@ def resolve(
             )
         for figure in figures:
             figure.fanout_notes = plan.notes
+            figure.data_warnings = plan.data_warnings
         for position, figure in enumerate(figures):
             figure.difference_siblings = [
                 figures[other] for other in _difference_sibling_indices(plan, position)
@@ -434,6 +435,9 @@ class _Plan:
     frame: "pd.DataFrame" = field(default_factory=pd.DataFrame)
     #: The y-limit scope, after ineligible factors were dropped.
     y_scope: list[str] = field(default_factory=list)
+    #: ``cell.all_nan_warning`` over ``frame``. On the plan, not computed per
+    #: figure, so a plan-cache HIT still carries it to every figure.
+    data_warnings: list[str] = field(default_factory=list)
     #: ``{scope values: (low, high)}`` for the WHOLE fan-out, computed here
     #: rather than per figure — a scope of ``[]`` means one range across every
     #: figure, including the ones ``resolve_one`` never builds. Computed off the
@@ -731,6 +735,7 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         explode=explode,
         iterate=iterate,
         notes=[collapsed_note] if collapsed_note else [],
+        data_warnings=[warning] if (warning := all_nan_warning(frame, y_measure)) else [],
         groups=groups,
         frame=frame,
         y_scope=eligible_scope(spec.y_axis.scope, roles, table),
@@ -811,6 +816,7 @@ def resolve_one(
             axis_frame=plan.frame,
         )
         figure.fanout_notes = plan.notes
+        figure.data_warnings = plan.data_warnings
         siblings = _difference_sibling_indices(plan, position)
         if siblings:
             with timing.phase("difference_siblings", extra=f"{len(siblings)} figure(s)"):

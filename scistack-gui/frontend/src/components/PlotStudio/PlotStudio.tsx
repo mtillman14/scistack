@@ -86,6 +86,7 @@ import {
 } from './figureUnits'
 import { roundTo, stepValue } from './stepper'
 import { adoptedFigureIndex } from './figureCursor'
+import { unseenWarnings } from './dataWarnings'
 import { FigureStepTimer } from './figureStepTiming'
 import {
   figureOutputSize,
@@ -875,6 +876,9 @@ interface ResolveResponse {
    *  nested key iterates. Never silently — a user who asked for one figure per
    *  trial and got one per subject-and-trial would think it was broken. */
   notes: string[]
+  /** Problems with the DATA (e.g. every value NaN), each shown once as a
+   *  VS Code popup — `scistackplot.cell.all_nan_warning`. */
+  data_warnings?: string[]
 }
 
 interface Props {
@@ -1211,6 +1215,8 @@ export default function PlotStudio({
   // Monotonic id of the newest request. A reply whose id is not the current one
   // is stale and is DROPPED — see below for why that matters so much here.
   const generation = useRef(0)
+  // Data warnings already shown as a popup in this panel (dataWarnings.ts).
+  const shownWarnings = useRef(new Set<string>())
   // --- single-flight ------------------------------------------------------
   // At most ONE resolve is in flight, and at most one waiting behind it.
   //
@@ -1275,6 +1281,10 @@ export default function PlotStudio({
           setFigures(result.figures ?? [])
           setFigureLabels(result.figure_labels ?? [])
           setFanoutNotes(result.notes ?? [])
+          for (const message of unseenWarnings(shownWarnings.current, result.data_warnings)) {
+            // Host-answered: only the extension can raise a VS Code popup.
+            callBackend('show_warning', { message }).catch(() => console.warn('[Plot Studio]', message))
+          }
           // Adopt the index the backend actually rendered — it clamps a stale
           // cursor against a fan-out that shrank — but ONLY if the user is
           // still on the figure this was sent for. Adopting an answer they had

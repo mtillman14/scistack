@@ -15,12 +15,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { callBackend } from '../api'
 import ProjectConfigPanel from './Sidebar/ProjectConfigPanel'
-import ManagedPathsList from './ManagedPathsList'
+import ManagedPathsList, { type ManagedPathDetail } from './ManagedPathsList'
 import EntitiesFileEditor from './EntitiesFileEditor'
 
 interface PathsInfo {
   configured: boolean
   managed_paths: string[]
+  /** Per entry: the full path on this machine, or why it names nothing here. */
+  managed_path_details?: ManagedPathDetail[]
   project_root: string
   /** The scistack.toml actually in use, or null if none yet. */
   config_path?: string | null
@@ -75,7 +77,11 @@ export default function PathsPopup({ onClose }: { onClose: () => void }) {
                     values={paths.config_path ? [paths.config_path] : []}
                   />
                 </div>
-                <ManagedPathsList paths={paths.managed_paths ?? []} onChange={fetchPaths} />
+                <ManagedPathsList
+                  paths={paths.managed_paths ?? []}
+                  details={paths.managed_path_details ?? []}
+                  onChange={fetchPaths}
+                />
                 <div style={styles.hint}>
                   Each path is recursively scanned for Python (.py) and MATLAB (.m) code — typically a shared, reusable code repository, not necessarily anything inside this project's own folder.
                 </div>

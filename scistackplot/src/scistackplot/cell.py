@@ -44,10 +44,11 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 
+import numpy as np
 import pandas as pd
 from scistacklog import Log
 
-from .series_stats import cell_arrays, collapse_cells
+from .series_stats import cell_array, cell_arrays, collapse_cells
 from .shape import Shape
 from .spec import SCALAR_KINDS, PlotSpec, Statistic
 from .table import LongTable
@@ -124,7 +125,11 @@ def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
         # Kept as NaN rows, never dropped: dropping would change the level
         # counts the factor summary reports, so "this trial recorded nothing"
         # would read as "this trial does not exist".
-        Log.warn(
+        #
+        # DEBUG: SOME empty cells are ordinary data (78 WARNs in scidb.log
+        # 2026-10-19). The case worth a WARN — nothing at all to draw — is
+        # `all_nan_warning`'s, over the post-filter rows.
+        Log.debug(
             "%d of %d row(s) of %r collapsed to NaN (empty or all-NaN cells) — "
             "kept as gaps",
             empty,
@@ -192,6 +197,48 @@ def _collapse_exploded(
     aggregated = (grouped.median() if statistic is Statistic.MEDIAN else grouped.mean())
     out = aggregated.reset_index()
     return out, len(out), len(frame)
+
+
+def _cell_is_nan(value) -> bool:
+    """One object-dtype cell holds no number: None, NaN, an empty or all-NaN
+    array. A value that is not numeric at all (a string) is NOT NaN — this
+    must never warn about data it cannot read."""
+    if value is None:
+        return True
+    if isinstance(value, (np.ndarray, list, tuple)):
+        array = cell_array(value)
+        return array.size == 0 or bool(np.isnan(array).all())
+    try:
+        return bool(np.isnan(float(value)))
+    except (TypeError, ValueError):
+        return False
+
+
+def all_nan_warning(frame: pd.DataFrame, measure: str) -> str | None:
+    """The message when every value of ``measure`` in ``frame`` is NaN, or None.
+
+    The one owner of "this plot has nothing to draw because the data is all
+    NaN" — logged as a WARN and returned for the GUI to show as a popup.
+    ``frame`` is the POST-filter frame, so the answer is about what the user
+    is plotting, not columns they filtered away. A frame with no rows is a
+    different case (filtered to nothing) and returns None. Scalar cells and
+    1-D cells (arrays, empty arrays) are both handled.
+    """
+    if measure not in frame.columns or frame.empty:
+        return None
+    column = frame[measure]
+    if column.dtype == object:
+        all_nan = all(_cell_is_nan(value) for value in column)
+    else:
+        all_nan = bool(column.isna().all())
+    if not all_nan:
+        return None
+    message = (
+        f"Every value of {measure!r} is NaN in the {len(frame)} row(s) being "
+        f"plotted — there is nothing to draw. Check the function that saved it."
+    )
+    Log.warn("all-NaN measure: %s", message, layer=LAYER)
+    return message
 
 
 def cell_collapse_note(spec: PlotSpec, table: LongTable) -> str | None:

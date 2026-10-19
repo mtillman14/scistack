@@ -1255,6 +1255,35 @@ class SciDuck:
                 self._recover_from_autocommit_failure()
                 raise
 
+    def _fetchdf_if_open(self, sql: str, params=None) -> pd.DataFrame | None:
+        """``_fetchdf``, or None when the connection is closed.
+
+        The open check runs under ``_lock`` — the same lock ``close()``
+        takes — so check and query are atomic. Checking ``is_open`` and
+        then calling ``_fetchdf`` leaves a window a concurrent close can
+        hit, which ``_fetchdf`` then logs as an ERROR with a traceback.
+        """
+        thread = threading.get_ident()
+        with self._lock:
+            if not self._open:
+                logger.debug(
+                    "_fetchdf_if_open thread=%d: connection closed, skipped sql=%s",
+                    thread, _truncate_sql(sql),
+                )
+                return None
+            foreign_tx = self._tx_owner is not None and self._tx_owner != thread
+            try:
+                if params:
+                    return self.con.execute(sql, params).fetchdf()
+                return self.con.execute(sql).fetchdf()
+            except Exception:
+                logger.exception(
+                    "_fetchdf_if_open FAILED thread=%d tx_owner=%s foreign_tx=%s sql=%s",
+                    thread, self._tx_owner, foreign_tx, _truncate_sql(sql),
+                )
+                self._recover_from_autocommit_failure()
+                raise
+
     def _table_exists(self, name: str) -> bool:
         rows = self._fetchall(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
@@ -1805,15 +1834,26 @@ class SciDuck:
     # List / inspect
     # ------------------------------------------------------------------
 
+    _LIST_VARIABLES_SQL = """
+            SELECT variable_name, schema_level, created_at, description
+            FROM _variables
+            ORDER BY variable_name
+        """
+
     def list_variables(self) -> pd.DataFrame:
         """
         List all variables with their schema level and creation time.
         """
-        return self._fetchdf("""
-            SELECT variable_name, schema_level, created_at, description
-            FROM _variables
-            ORDER BY variable_name
-        """)
+        return self._fetchdf(self._LIST_VARIABLES_SQL)
+
+    def list_variables_if_open(self) -> pd.DataFrame | None:
+        """``list_variables``, or None when the connection is closed.
+
+        For best-effort readers that can do without the database. The
+        open check and the query are one step under ``_lock``, so a
+        concurrent ``close()`` cannot slip between them.
+        """
+        return self._fetchdf_if_open(self._LIST_VARIABLES_SQL)
 
     def list_versions(self, name: str) -> pd.DataFrame:
         """
@@ -1949,10 +1989,24 @@ class SciDuck:
         return getattr(self, "_open", False)
 
     def close(self):
-        """Close the DuckDB connection."""
-        self.con.close()
-        self._open = False
-        logger.debug("DuckDB lock RELEASED: %s", self.db_path)
+        """Close the DuckDB connection.
+
+        Takes ``_lock`` so a close never lands between another thread's
+        is-open check and its statement (see ``_fetchdf_if_open``): two
+        overlapping GUI requests sharing one refcounted connection hit that
+        window on 2026-10-19 (scidb.log 15:08:27, "Connection already
+        closed!" 4 ms after ``is_open`` said True).
+        """
+        thread = threading.get_ident()
+        wait_start = time.monotonic()
+        with self._lock:
+            waited = time.monotonic() - wait_start
+            self.con.close()
+            self._open = False
+        logger.debug(
+            "DuckDB lock RELEASED: %s (thread=%d waited=%.4fs for in-flight statement)",
+            self.db_path, thread, waited,
+        )
 
     def reopen(self):
         """Reopen the DuckDB connection after close(), preserving read_only mode."""
@@ -1961,10 +2015,11 @@ class SciDuck:
             getattr(self, "read_only", False),
             self.db_path,
         )
-        self.con = duckdb.connect(
-            str(self.db_path), read_only=getattr(self, "read_only", False)
-        )
-        self._open = True
+        with self._lock:
+            self.con = duckdb.connect(
+                str(self.db_path), read_only=getattr(self, "read_only", False)
+            )
+            self._open = True
 
     def __enter__(self):
         """Enter context manager."""

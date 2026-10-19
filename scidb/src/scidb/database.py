@@ -2309,16 +2309,25 @@ class DatabaseManager:
         rather than queried: querying it made sciduckdb log an ERROR with a
         traceback for a case this code expects and handles (scidb.log
         2026-10-01 22:29, "Connection already closed!").
+
+        The check and the query are one atomic step in sciduckdb
+        (`list_variables_if_open`): checking `is_open` here and querying
+        after left a window that a concurrent GUI request's close hit
+        (scidb.log 2026-10-19 15:08:27).
         """
         duck = getattr(self, "_duck", None)
-        if duck is None or not getattr(duck, "is_open", True):
-            Log.debug(f"[{what}] connection closed; validation deferred to a later access")
+        if duck is None:
+            Log.debug(f"[{what}] no connection; validation deferred to a later access")
             return None
         try:
-            return [str(name) for name in self.list_variables()["variable_name"]]
+            frame = duck.list_variables_if_open()
         except Exception as exc:  # a half-open database
             Log.debug(f"[{what}] variable names unavailable for validation: {exc}")
             return None
+        if frame is None:
+            Log.debug(f"[{what}] connection closed; validation deferred to a later access")
+            return None
+        return [str(name) for name in frame["variable_name"]]
 
     @property
     def dataset_aliases(self) -> "dict[str, dict]":

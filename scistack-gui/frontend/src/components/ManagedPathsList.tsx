@@ -17,13 +17,28 @@ interface PathMutationResult {
   error?: string
 }
 
+/** `config.describe_managed_paths`: one scistack.toml entry as written, the
+ *  full path it names on this machine (a `{rto}/...` entry expanded through
+ *  ~/.scistack/machine.toml), or why it names nothing here. */
+export interface ManagedPathDetail {
+  entry: string
+  /** The `{name}` root the entry is written under, or null. */
+  root: string | null
+  resolved: string | null
+  problem: string | null
+}
+
 export default function ManagedPathsList({
   paths,
+  details,
   onChange,
 }: {
   paths: string[]
+  details: ManagedPathDetail[]
   onChange: () => void
 }) {
+  const detailFor = (entry: string): ManagedPathDetail =>
+    details.find(d => d.entry === entry) ?? { entry, root: null, resolved: null, problem: null }
   const [selected, setSelected] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
   const [newPath, setNewPath] = useState('')
@@ -65,7 +80,10 @@ export default function ManagedPathsList({
 
   const handleRemove = async () => {
     if (!selected) return
-    if (!window.confirm(`Stop discovering code under:\n${selected}\n\nThis only edits scistack.toml — no files are deleted.`)) {
+    // Sent as written: the backend matches the exact entry, which is the
+    // only identity an unmapped `{root}` entry has.
+    const shown = detailFor(selected).resolved ?? selected
+    if (!window.confirm(`Stop discovering code under:\n${shown}\n\nThis only edits scistack.toml — no files are deleted.`)) {
       return
     }
     setBusy(true)
@@ -138,20 +156,28 @@ export default function ManagedPathsList({
         {paths.length === 0 ? (
           <div style={styles.emptyText}>No paths configured yet.</div>
         ) : (
-          paths.map(p => (
-            <div
-              key={p}
-              style={{
-                ...styles.row,
-                ...(p === selected ? styles.rowSelected : {}),
-              }}
-              onClick={() => setSelected(p === selected ? null : p)}
-              role="button"
-              tabIndex={0}
-            >
-              {p}
-            </div>
-          ))
+          paths.map(p => {
+            const { root, resolved, problem } = detailFor(p)
+            return (
+              <div
+                key={p}
+                style={{
+                  ...styles.row,
+                  ...(p === selected ? styles.rowSelected : {}),
+                }}
+                onClick={() => setSelected(p === selected ? null : p)}
+                role="button"
+                tabIndex={0}
+                title={root && resolved ? `Written in scistack.toml as ${p}` : undefined}
+              >
+                {/* The full path on this machine; the portable `{rto}/...`
+                    form underneath when it differs. */}
+                {resolved ?? p}
+                {root && resolved && <div style={styles.asWritten}>{p}</div>}
+                {problem && <div style={styles.problem}>{problem}</div>}
+              </div>
+            )
+          })
         )}
       </div>
     </div>
@@ -222,6 +248,17 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     wordBreak: 'break-all',
     borderBottom: '1px solid #1a1a2e',
+  },
+  asWritten: {
+    color: '#777',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  problem: {
+    color: '#e0a060',
+    fontSize: 10,
+    fontFamily: 'sans-serif',
+    marginTop: 2,
   },
   rowSelected: {
     background: '#2a2a5a',

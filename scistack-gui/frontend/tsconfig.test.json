@@ -38,6 +38,8 @@
     "src/components/PlotStudio/groups.test.ts",
     "src/components/PlotStudio/combine.ts",
     "src/components/PlotStudio/combine.test.ts",
+    "src/components/PlotStudio/dataWarnings.ts",
+    "src/components/PlotStudio/dataWarnings.test.ts",
     "src/components/PlotStudio/showSample.ts",
     "src/components/PlotStudio/showSample.test.ts",
     "src/components/PlotStudio/figureSize.ts",

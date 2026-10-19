@@ -778,6 +778,17 @@ def _is_library_source(source: "str | None") -> bool:
     return False
 
 
+def _classdef_tier_winner(previous: str, source: str) -> "str | None":
+    """The .m source when one of the two is a MATLAB classdef file and the
+    other the entities TOML, else None. The one owner of "a .m beats the
+    TOML" — order-independent, since the TOML loads before the MATLAB scan
+    but a single-file reload can register either one second."""
+    pair = {Path(previous).suffix.lower(): previous, Path(source).suffix.lower(): source}
+    if set(pair) == {".m", ".toml"}:
+        return pair[".m"]
+    return None
+
+
 def _register_variable(name: str, *, source: str) -> None:
     """Record that *this* registry registered variable *name* from *source*.
 
@@ -802,6 +813,21 @@ def _register_variable(name: str, *, source: str) -> None:
                 previous,
                 source,
             )
+        elif conflict is None and (winner := _classdef_tier_winner(previous, source)):
+            # Tiered lookup (user decision 2026-10-19): a classdef .m file is
+            # the declaration; the entities TOML is consulted only for a name
+            # with no .m, and then generates one (materialize_variable_stubs).
+            # So a .m beside a TOML entry is the tier rule working, not a
+            # duplicate — this WARN fired ~20x per scan in scidb.log 2026-10-19.
+            logger.debug(
+                "[registry] Variable '%s': classdef %s is the declaration; the "
+                "entities-file entry in %s is not consulted",
+                name,
+                winner,
+                previous if winner == source else source,
+            )
+            _variable_sources[name] = winner
+            return
         elif conflict is None:
             # Two declarations INSIDE the project (a hand-written classdef and
             # a TOML entry, two modules): the same type, but redundant -- one

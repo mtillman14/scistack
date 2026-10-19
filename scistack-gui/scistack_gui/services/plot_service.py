@@ -959,6 +959,8 @@ def resolve_figures(
             "figure_count": len(labels),
             "figure_index": index,
             "notes": list(figure.fanout_notes),
+            # Shown by the panel as a popup (cell.all_nan_warning).
+            "data_warnings": list(figure.data_warnings),
         }
 
     labels = [item.figure_label for item in resolved]
@@ -995,6 +997,7 @@ def resolve_figures(
         "figure_index": index,
         # Identical on every figure — it describes the fan-out, not a figure.
         "notes": list(resolved[0].fanout_notes) if resolved else [],
+        "data_warnings": list(resolved[0].data_warnings) if resolved else [],
     }
 
 

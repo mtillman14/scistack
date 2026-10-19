@@ -2852,6 +2852,13 @@ var PlotPanel = class _PlotPanel {
           );
           return;
         }
+        if (method === "show_warning") {
+          const message = String(msg.params?.message ?? "");
+          this.session.log.appendLine(`[plot] show_warning: ${message}`);
+          void vscode6.window.showWarningMessage(`SciStack: ${message}`);
+          this.panel.webview.postMessage({ id: msg.id, result: { shown: true } });
+          return;
+        }
         if (method === "pick_save_path") {
           try {
             const params = msg.params ?? {};

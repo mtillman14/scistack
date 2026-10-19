@@ -271,7 +271,7 @@ def open_or_create_project(
     from scistack_gui import startup as _startup
 
     if loaded_config is not None:
-        _startup.check_windows_config_paths(loaded_config)
+        _startup.check_config_paths(loaded_config)
     for err in _startup.get_startup_errors():
         logger.warning("[bootstrap] startup warning [%s]: %s", err.kind, err.message)
 

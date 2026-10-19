@@ -1236,3 +1236,46 @@ def test_is_open_follows_close_and_reopen(tmp_path):
     db.reopen()
     assert db.is_open
     db.close()
+
+
+def test_list_variables_if_open_returns_none_when_closed_without_error(
+    tmp_path, caplog
+):
+    """The best-effort read checks and queries as one step: closed -> None,
+    and no ERROR traceback (scidb.log 2026-10-19 15:08:27)."""
+    import logging
+
+    from sciduckdb import SciDuck
+
+    db = SciDuck(str(tmp_path / "ifopen.duckdb"), dataset_schema=["subject"])
+    assert db.list_variables_if_open() is not None
+    db.close()
+    caplog.set_level(logging.DEBUG)
+    assert db.list_variables_if_open() is None
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    db.reopen()
+    assert list(db.list_variables_if_open().columns) == list(
+        db.list_variables().columns
+    )
+    db.close()
+
+
+def test_close_waits_for_an_in_flight_statement(tmp_path):
+    """close() takes the statement lock, so it cannot land between another
+    thread's open check and its query. Before, two overlapping GUI requests
+    on one refcounted connection closed it 4 ms after is_open said True
+    (scidb.log 2026-10-19 15:08:27, "Connection already closed!")."""
+    from sciduckdb import SciDuck
+
+    db = SciDuck(str(tmp_path / "race.duckdb"), dataset_schema=["subject"])
+    closer = threading.Thread(target=db.close)
+    with db._lock:  # stands in for a statement mid-flight on another thread
+        closer.start()
+        closer.join(timeout=0.2)
+        assert closer.is_alive(), "close() must wait for the in-flight statement"
+        assert db.is_open
+        # The statement that already passed the open check still runs.
+        assert db.con.execute("SELECT 1").fetchone() == (1,)
+    closer.join(timeout=5)
+    assert not closer.is_alive()
+    assert not db.is_open

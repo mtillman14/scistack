@@ -11,6 +11,67 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzi. Machine roots: `{rto}/...` paths in scistack.toml — added 2026-10-19
+
+**What changed.** A shared scistack.toml can write a machine-specific folder
+as `{rto}/rest`. Each computer maps `rto` in `~/.scistack/machine.toml`
+(Windows: `%USERPROFILE%\.scistack\machine.toml`). Paths that can't resolve
+on this machine are skipped and listed once in a startup notice, instead of
+appearing as "File does not exist" load errors.
+
+**Backend steps.**
+1. Start the GUI once. The file `~/.scistack/machine.toml` should now exist,
+   and scidb.log should have `[machine] ... machine_id=...` and
+   `[startup] machine paths: ...`.
+2. Edit it on Windows: add `rto = "Y:/"` under `[roots]` (on the Linux box:
+   `rto = "/home/mtillman/mnt/rto"`).
+3. In scistack.toml, replace the data-analytics-code-libraries entry (both
+   `modules` and `[matlab] sources`) with
+   `"{rto}/LabMembers/MTillman/GitRepos/data-analytics-code-libraries"`.
+4. Reload the window.
+
+**What you should see.**
+1. The library's functions are in the registry. The 8 "discovery load errors"
+   drop to the MATLAB scripts only, with no `y:\home\...` entry.
+2. Remove the `rto` line from machine.toml and reload. You should get ONE
+   non-blocking startup notice naming `{rto}/...` and the machine.toml path,
+   and no "File does not exist" error.
+3. In 📁 Paths, add a folder under `Y:\`. scistack.toml should record it as
+   `{rto}/...`, and adding the same folder again must not duplicate it.
+4. 📁 Paths shows each `{rto}/...` entry as its FULL path on this machine, with
+   the `{rto}/...` form in grey underneath (and as the hover title). An entry
+   whose root is unmapped shows the reason in orange. Selecting either kind
+   and clicking − removes it.
+
+---
+
+## 0zzzzh. All-NaN popup, quieter scidb.log, no false Plot Studio ERROR — added 2026-10-19
+
+**What changed.** When every value of the plotted measure is NaN, Plot Studio
+shows a VS Code warning popup, once per message per panel. Some-but-not-all NaN
+cells no longer WARN in scidb.log. "y-limit scope ignores" is now DEBUG.
+"Connection already closed!" ERRORs from overlapping plot requests are gone. A
+`src/vars/*.m` classdef beside its TOML entry no longer WARNs "declared in more
+than one place".
+
+**Backend steps.** Reinstall/pull, then *Developer: Reload Window*. The three
+bundles were rebuilt (static, webview, extension.js).
+
+**Frontend steps / what you should see.**
+1. Open Plot Studio on GAITRiteLoaded and click around for a minute (switch
+   kinds, filters). scidb.log should show no `_fetchdf FAILED` ERROR, no
+   "collapsed to NaN" WARN and no "y-limit scope ignores" WARN.
+2. Plot a column that is entirely NaN (or filter down to rows that are). One
+   popup should appear: "SciStack: Every value of '…' is NaN in the N row(s)
+   being plotted…". Changing another control must NOT re-raise it. scidb.log
+   has `all-NaN measure:` at WARN, and the SciStack output channel has
+   `[plot] show_warning:`.
+3. Plot a column with some NaN. There should be no popup.
+4. Restart the GUI. scidb.log should have no "declared in more than one place"
+   for variables with a `src/vars/*.m`.
+
+---
+
 ## 0zzzzg. StatStudio: open from a figure, tables, sync, brackets, pipeline — added 2026-10-17
 
 What changed (statistics plan Stages 9–13; control map

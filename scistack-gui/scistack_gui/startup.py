@@ -3,7 +3,7 @@ Project-open startup diagnostics (Phase 8).
 
 Checks that run when the GUI opens a project and record a structured
 :class:`StartupError` the frontend surfaces, instead of failing silently.
-Today: :func:`check_windows_config_paths`. (The uv lockfile check that used
+Today: :func:`check_config_paths` (Windows separators, machine roots). (The uv lockfile check that used
 to live here was removed with uv itself, 2026-10-08: SciStack does not
 manage environments.)
 
@@ -115,27 +115,22 @@ def check_windows_config_paths(config) -> "StartupError | None":
         return None
     section = read_scistack_section(toml_path) or {}
 
-    windows_values = sorted(_windows_path_values(section))
+    # Absolute ones (Y:\...) are check_machine_config_paths's to report --
+    # one notice per problem, not two.
+    windows_values = sorted(
+        v for v in _windows_path_values(section) if not is_windows_absolute(v)
+    )
     if not windows_values:
         return None
 
-    unresolvable = [v for v in windows_values if is_windows_absolute(v)]
     lines = [f"  {v}" for v in windows_values]
-    if unresolvable:
-        lines.append("")
-        lines.append(
-            "These name a Windows drive and cannot resolve on this machine; "
-            "re-add them in 📁 Paths:"
-        )
-        lines.extend(f"  {v}" for v in unresolvable)
     err = StartupError(
         kind="windows_config_paths",
         message=(
-            f"{toml_path} contains {len(windows_values)} path(s) written with "
-            f"Windows separators. Relative ones are read correctly, but a file "
-            f"may have been created at the literal path (check for a name "
-            f"containing a backslash in {project_root}); absolute ones "
-            f"(Y:\\...) cannot resolve here at all."
+            f"{toml_path} contains {len(windows_values)} relative path(s) "
+            f"written with Windows separators. They are read correctly, but a "
+            f"file may have been created at the literal path (check for a name "
+            f"containing a backslash in {project_root})."
         ),
         details="\n".join(lines),
         blocking=False,
@@ -143,6 +138,87 @@ def check_windows_config_paths(config) -> "StartupError | None":
     _record(err)
     logger.warning("[startup] %s\n%s", err.message, err.details)
     return err
+
+
+def check_config_paths(config) -> None:
+    """Every scistack.toml path check, in one call -- the one thing both
+    startup routes (bootstrap.open_or_create_project and server.main, which
+    duplicates it inline) call, so a new check cannot reach only one."""
+    check_windows_config_paths(config)
+    check_machine_config_paths(config)
+
+
+def check_machine_config_paths(config) -> "StartupError | None":
+    """Report scistack.toml paths that name nothing on THIS machine.
+
+    An unmapped ``{root}``, or another platform's absolute path. The config
+    loops skip these (config._skip_unresolvable) instead of recording a
+    "File does not exist" load error on every refresh; this is the one
+    place they are reported. Non-blocking. The owner of "why" is
+    ``scifor.machine.unresolvable_here``.
+    """
+    from scifor.discovery import read_scistack_section
+    from scifor.machine import machine_config, unresolvable_here
+
+    from scistack_gui.config import locate_config_at
+
+    project_root = getattr(config, "project_root", None)
+    if project_root is None:
+        return None
+    toml_path = locate_config_at(project_root)
+    if toml_path is None:
+        return None
+    section = read_scistack_section(toml_path) or {}
+
+    machine = machine_config()
+    problems = sorted(
+        (value, reason)
+        for value in _string_values(section)
+        if (reason := unresolvable_here(value)) is not None
+    )
+    logger.info(
+        "[startup] machine paths: machine_id=%s file=%s roots=%s; %d config "
+        "path(s) unresolvable here",
+        machine.machine_id or "(none)", machine.path, sorted(machine.roots), len(problems),
+    )
+    if not problems:
+        return None
+    details = "\n".join(f"  {value}\n    -> {reason}" for value, reason in problems)
+    details += (
+        f"\n\nWrite such a path as {{name}}/rest in scistack.toml and map name "
+        f"on each machine under [roots] in {machine.path}, e.g.\n"
+        f'  [roots]\n  rto = "Y:/"'
+    )
+    err = StartupError(
+        kind="machine_config_paths",
+        message=(
+            f"{toml_path} has {len(problems)} path(s) that cannot resolve on "
+            f"this machine. They are skipped."
+        ),
+        details=details,
+        blocking=False,
+    )
+    _record(err)
+    logger.warning("[startup] %s\n%s", err.message, err.details)
+    return err
+
+
+def _string_values(section: dict) -> set[str]:
+    """Every string value in *section*, at any depth."""
+    found: set[str] = set()
+
+    def visit(value) -> None:
+        if isinstance(value, str):
+            found.add(value)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+
+    visit(section)
+    return found
 
 
 def _windows_path_values(section: dict) -> set[str]:

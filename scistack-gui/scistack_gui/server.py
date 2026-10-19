@@ -837,7 +837,7 @@ def main():
     from scistack_gui import startup as _startup
 
     if registry._config is not None:
-        _startup.check_windows_config_paths(registry._config)
+        _startup.check_config_paths(registry._config)
 
     # Signal readiness
     logger.info("Startup complete in %.2fs", time.monotonic() - t0)

@@ -63,6 +63,23 @@ def _config_path(project_root: Path, raw) -> Path:
     return _normalize(resolve_config_path(project_root, str(raw)))
 
 
+def _skip_unresolvable(entry: str, label: str) -> bool:
+    """Whether a ``modules``/MATLAB list entry names nothing on this machine
+    (an unmapped ``{root}``, another platform's absolute path) and is skipped.
+
+    DEBUG only: the ``machine_config_paths`` startup notice reports these
+    once (startup.check_machine_config_paths). They used to be a "File does
+    not exist" load error on every refresh (22x in scidb.log 2026-10-19).
+    """
+    from scifor.machine import unresolvable_here
+
+    reason = unresolvable_here(str(entry))
+    if reason is None:
+        return False
+    logger.debug("[config] %s entry %r skipped: %s", label, entry, reason)
+    return True
+
+
 def _config_pattern(entry: str) -> str:
     """A glob pattern read from the config, with separators this platform
     understands. The Path form goes through :func:`_config_path`; a glob is
@@ -377,6 +394,8 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
             len(raw_modules),
             entry,
         )
+        if _skip_unresolvable(entry, "modules"):
+            continue
         if any(c in entry for c in ("*", "?", "[")):
             # Glob pattern (e.g. "pipelines/*.py")
             logger.debug("[config] Entry is a glob pattern")
@@ -745,6 +764,8 @@ def _resolve_glob_paths(
             len(raw_entries),
             entry,
         )
+        if _skip_unresolvable(entry, label):
+            continue
         if any(c in entry for c in ("*", "?", "[")):
             # Glob pattern — expand and keep only .m files.
             logger.debug("[config] Entry is a glob pattern")
@@ -1175,15 +1196,34 @@ def describe_managed_paths(db_path: Path) -> dict:
     deliberately NOT derived from the database's location -- so when it is
     wrong (VS Code opened somewhere unexpected), the popup can say which
     folder it settled on instead of just showing an empty list.
+
+    ``managed_path_details`` gives each entry as written, the full path it
+    names on THIS machine (a ``{root}/rest`` entry expanded through
+    ~/.scistack/machine.toml), or why it names nothing here -- the popup
+    shows the full path, not the raw ``{rto}/...`` (user request 2026-10-19).
     """
+    from scifor.machine import root_name, unresolvable_here
+
     project_root = resolve_project_root(None, db_path)
     toml_path = locate_config_at(project_root)
     managed_paths: list[str] = []
     if toml_path is not None:
         section = _load_raw_scistack_section(toml_path)
         managed_paths = list(section.get("modules", []))
+    details = []
+    for entry in managed_paths:
+        problem = unresolvable_here(str(entry))
+        resolved = None if problem else str(_resolve_raw_entry(str(entry), project_root))
+        details.append({
+            "entry": entry,
+            "root": root_name(str(entry)),
+            "resolved": resolved,
+            "problem": problem,
+        })
+    logger.debug("[config] describe_managed_paths: %s", details)
     return {
         "managed_paths": managed_paths,
+        "managed_path_details": details,
         "project_root": str(project_root),
         "config_path": str(toml_path) if toml_path is not None else None,
     }
@@ -1237,7 +1277,18 @@ def add_path(db_path: Path, new_path: Path) -> Path:
         _seed_first_write(db_path, project_root, raw_modules, raw_sources, "add_path")
 
     normalized_new = _normalize(new_path)
-    new_str = str(normalized_new)
+    # Under a machine root (~/.scistack/machine.toml), record `{root}/rest`
+    # so the shared config resolves on every machine that maps the root.
+    from scifor.machine import portable_form
+
+    portable = portable_form(normalized_new)
+    new_str = portable if portable is not None else str(normalized_new)
+    if portable is not None:
+        logger.info(
+            "[config] add_path: %s is under a machine root; recording %s",
+            normalized_new,
+            portable,
+        )
 
     # Identity, not spelling: adding \\server\share\x when y:\x is already
     # listed must not append a second entry for the same directory (see
@@ -1360,20 +1411,27 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
 
     section = _load_raw_scistack_section(toml_path)
     project_root = toml_path.parent
-    target = _normalize(path_to_remove)
+    # The entry exactly as written also matches: an entry with an unmapped
+    # `{root}` names no directory here, and the popup sends it as written.
+    as_written = str(path_to_remove)
+    target = _resolve_raw_entry(as_written, project_root)
 
-    # Identity, not spelling, so removing a path spelled as a mapped drive
-    # also removes the UNC-spelled entry for the same directory (and vice
-    # versa) instead of leaving a duplicate behind (see _same_path).
-    raw_modules = [
-        e for e in section.get("modules", [])
-        if not _same_path(_resolve_raw_entry(e, project_root), target)
-    ]
+    def _matches(entry) -> bool:
+        if str(entry) == as_written:
+            return True
+        # Identity, not spelling, so removing a path spelled as a mapped
+        # drive also removes the UNC-spelled entry for the same directory
+        # (and vice versa) instead of leaving a duplicate behind (see
+        # _same_path). An unresolvable entry has no identity here.
+        from scifor.machine import unresolvable_here
+
+        if unresolvable_here(str(entry)):
+            return False
+        return _same_path(_resolve_raw_entry(entry, project_root), target)
+
+    raw_modules = [e for e in section.get("modules", []) if not _matches(e)]
     matlab_section = dict(section.get("matlab", {}))
-    raw_sources = [
-        e for e in matlab_section.get("sources", [])
-        if not _same_path(_resolve_raw_entry(e, project_root), target)
-    ]
+    raw_sources = [e for e in matlab_section.get("sources", []) if not _matches(e)]
     removed = (len(section.get("modules", [])) - len(raw_modules)) + (
         len(matlab_section.get("sources", [])) - len(raw_sources)
     )

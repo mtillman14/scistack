@@ -156,6 +156,16 @@ export class PlotPanel {
           return;
         }
 
+        if (method === 'show_warning') {
+          // A data problem the backend found (all-NaN measure). Not awaited:
+          // the popup stays until dismissed and the panel must not hang on it.
+          const message = String((msg.params as { message?: unknown } | undefined)?.message ?? '');
+          this.session.log.appendLine(`[plot] show_warning: ${message}`);
+          void vscode.window.showWarningMessage(`SciStack: ${message}`);
+          this.panel.webview.postMessage({ id: msg.id, result: { shown: true } });
+          return;
+        }
+
         if (method === 'pick_save_path') {
           // Only the host can show a file dialog; a webview cannot save a file
           // at all, which is why plotly's own camera button fails here.

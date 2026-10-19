@@ -349,21 +349,59 @@ forward slashes (`config._portable_relpath`), which Windows accepts natively.
 `str(WindowsPath("src/x.toml"))` is `src\x.toml`, which is how the broken
 values got written in the first place.
 
-**Windows-absolute values** (`Y:\LabMembers\...`, `\\server\share`) are a
-different problem: there is no such drive on a Mac and nothing to guess.
-`resolve_config_path` returns them unchanged rather than gluing them onto the
-project root (which produced `/Users/me/project/y:\LabMembers\...` in every
-error message), and `startup.check_windows_config_paths` records a
-non-blocking `windows_config_paths` startup notice listing them so the user
-can re-add them in 📁 Paths.
+**Absolute values** (`Y:\LabMembers\...`, `/home/me/mnt/rto/...`) are a
+different problem: they name a drive or mount that exists on one machine
+only. Since 2026-10-19 they are made portable with **machine roots** (below).
+A value that still cannot resolve here (another platform's absolute path, or
+an unmapped root) is skipped by the config loops and reported once in the
+non-blocking `machine_config_paths` startup notice
+(`startup.check_machine_config_paths`). It is no longer a "File does not
+exist" load error on every refresh. `windows_config_paths` now covers only
+*relative* backslashed values.
 
-Absolute `modules`/`matlab.sources` entries are machine-specific by nature —
-this makes them *fail legibly*, it does not make them portable.
+## Machine roots: `{name}/rest`
+
+The shared config writes a machine-specific path once:
+
+```toml
+# scistack.toml (committed)
+modules = ["{rto}/LabMembers/MTillman/GitRepos/data-analytics-code-libraries"]
+```
+
+Each computer says what `rto` means in a file **outside** every project:
+
+```toml
+# ~/.scistack/machine.toml   (Windows: %USERPROFILE%\.scistack\machine.toml)
+machine_id = "6f1c..."      # generated on first use; logged, nothing else
+[roots]
+rto = "Y:/"                  # on the Linux box: "/home/mtillman/mnt/rto"
+```
+
+- **Owner:** `scifor/machine.py` owns the grammar and the file: `machine_config`,
+  `expand_roots`, `unresolvable_here`, and `portable_form`.
+  `resolve_config_path` and `normalize_config_separators` call `expand_roots`
+  first, so every config reader gets it, including `scidb.entities`.
+- **Grammar:** `{name}` only at the very start of a value; `name` matches
+  `[A-Za-z_][A-Za-z0-9_-]*`. Anything else is an ordinary path.
+- **The file:** it is created (with a `machine_id`) the first time a startup
+  check runs, and re-read when its mtime changes, so an edit takes effect at
+  the next refresh. Invalid TOML means no roots and a WARN, not a crash.
+  `$SCISTACK_MACHINE_FILE` overrides the location; the GUI test suite pins it
+  to tmp (conftest `_pin_machine_file`).
+- **Writing:** 📁 Paths `add_path` records `{name}/rest` when the folder is under
+  a mapped root (the longest root wins; case-insensitive for Windows paths).
+  Dedup and `remove_path` compare resolved paths, so the `{root}` form and an
+  absolute path to the same folder are one entry.
+- **Unresolvable:** the reason comes from `unresolvable_here`. It covers an
+  unmapped root; a Windows-absolute path on POSIX; and a POSIX-absolute
+  `/home/...` on Windows, which Windows would otherwise read relative to the
+  current drive (scidb.log 2026-10-19: `y:\home\mtillman\mnt\rto\...`).
 
 ## Implementation
 
 - **Parser**: `scistack_gui/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_config_path()`; file name and location: `scifor/discovery.py` `CONFIG_FILENAME`, `config_path_at()`
 - **Cross-platform path reading**: `scifor/discovery.py` — `resolve_config_path()`, `normalize_config_separators()`, `is_windows_absolute()`
+- **Machine roots** (one owner): `scifor/machine.py`; startup notice `scistack_gui/startup.py` — `check_machine_config_paths()` via `check_config_paths()`
 - **Project creation** (one owner): `scidb/project.py` — `init_project()`, called by `scistack init` and, on database creation, by the GUI's `ensure_project_files(create_new=True)`
 - **Config/entities-file creation on open**: `scistack_gui/services/project_init_service.py` — `ensure_project_files()`, called from `bootstrap.open_or_create_project()` and `server.py`
 - **Writing scistack.toml** (one owner): `scidb/config_file.py` — `render()`, `write()`; every key survives a write

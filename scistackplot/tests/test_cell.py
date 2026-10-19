@@ -255,3 +255,89 @@ def test_roles_survive_the_collapse(series_table):
     spec = violin("Signal", roles={"trial": Role.COLLAPSE, "subject": Role.GROUP})
     collapsed = apply_cell_collapse(spec, series_table)
     assert all(name in collapsed.frame.columns for name in spec.roles)
+
+
+# --- all-NaN: the one case worth a WARN and a popup -------------------------
+
+
+def _signal_table(values) -> LongTable:
+    frame = pd.DataFrame({"trial": [str(i) for i in range(len(values))], "Signal": values})
+    return LongTable.from_frame(frame, factors=["trial"], measures=["Signal"], name="Signal")
+
+
+def test_some_empty_cells_log_at_debug_not_warn(caplog):
+    """Some empty cells are ordinary data — 78 WARNs per session in scidb.log
+    2026-10-19. The per-collapse count is DEBUG now."""
+    import logging
+
+    from scistackplot.cell import LAYER
+
+    table = _signal_table([[1.0, 3.0], [], [np.nan]])
+    with caplog.at_level(logging.DEBUG, logger=LAYER):
+        apply_cell_collapse(violin("Signal"), table)
+    gaps = [r for r in caplog.records if "collapsed to NaN" in r.getMessage()]
+    assert gaps and all(r.levelno == logging.DEBUG for r in gaps)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [np.nan, np.nan],                        # scalar float column
+        [None, np.nan],                          # object column of scalars
+        [[], [np.nan, np.nan]],                  # 1-D cells, empty or all-NaN
+        [np.array([np.nan]), np.empty(0)],
+    ],
+)
+def test_every_value_nan_warns(values, caplog):
+    import logging
+
+    from scistackplot.cell import LAYER, all_nan_warning
+
+    frame = _signal_table(values).frame
+    with caplog.at_level(logging.WARNING, logger=LAYER):
+        message = all_nan_warning(frame, "Signal")
+    assert message and "Signal" in message
+    assert [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        [np.nan, 1.0],
+        [None, 2.0],                             # object column, one real number
+        [[], [np.nan, 4.0]],
+        ["a", "b"],                              # unreadable is not NaN
+    ],
+)
+def test_one_real_value_does_not_warn(values):
+    from scistackplot.cell import all_nan_warning
+
+    assert all_nan_warning(_signal_table(values).frame, "Signal") is None
+
+
+def test_no_rows_is_not_all_nan():
+    """Filtered to nothing is a different case, already explained by row_count."""
+    from scistackplot.cell import all_nan_warning
+
+    assert all_nan_warning(_signal_table([]).frame, "Signal") is None
+
+
+def test_resolve_carries_the_warning_to_every_figure():
+    """The plan owns it, so a fan-out's figures all carry it and a plan-cache
+    HIT does not lose it; `to_dict` exposes it for the GUI popup."""
+    from scistackplot import resolve
+
+    frame = pd.DataFrame(
+        {"subject": ["S1", "S1", "S2"], "trial": ["1", "2", "1"], "Signal": [[], [np.nan], [np.nan]]}
+    )
+    table = LongTable.from_frame(
+        frame, factors=["subject", "trial"], measures=["Signal"], name="Signal"
+    )
+    spec = violin("Signal", roles={"subject": Role.ITERATE, "trial": Role.COLLAPSE})
+    figures = resolve(spec, table)
+    assert len(figures) == 2
+    assert all(f.data_warnings and "Signal" in f.data_warnings[0] for f in figures)
+    assert figures[0].to_dict()["data_warnings"] == figures[0].data_warnings
+
+    ok = resolve(violin("Signal", roles={"trial": Role.COLLAPSE}), _signal_table([[1.0], [np.nan]]))
+    assert all(not f.data_warnings for f in ok)

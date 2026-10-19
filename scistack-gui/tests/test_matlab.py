@@ -3398,9 +3398,14 @@ class TestGeneratedStubAttribution:
         assert "declared in more than one place" not in caplog.text
         assert registry._variable_sources["RawEMG"] == str(entities)
 
-    def test_two_independent_declarations_still_warn(self, tmp_path, caplog):
-        """The warning must keep firing for what it was written for: a
-        hand-written classdef AND a TOML entry really are two declarations."""
+    @pytest.mark.parametrize("toml_first", [True, False])
+    def test_a_classdef_wins_over_the_toml_without_a_warning(
+        self, tmp_path, caplog, toml_first
+    ):
+        """Tiered lookup (user decision 2026-10-19): a .m classdef is the
+        declaration and the TOML entry is not consulted. It used to WARN
+        "declared in more than one place" ~20x per scan (scidb.log
+        2026-10-19) for src/vars/*.m beside their TOML entries."""
         from scistack_gui import matlab_registry, registry
 
         entities, _ = self._project(tmp_path)
@@ -3408,13 +3413,27 @@ class TestGeneratedStubAttribution:
         handwritten.parent.mkdir()
         handwritten.write_text("classdef RawEMG < scidb.BaseVariable\nend\n")
 
-        registry._register_variable("RawEMG", source=str(entities))
+        with caplog.at_level(logging.DEBUG):
+            if toml_first:
+                registry._register_variable("RawEMG", source=str(entities))
+                # What the classdef-file scan does — no declared_by.
+                matlab_registry._register_matlab_variable("RawEMG", handwritten)
+            else:
+                matlab_registry._register_matlab_variable("RawEMG", handwritten)
+                registry._register_variable("RawEMG", source=str(entities))
 
+        assert "declared in more than one place" not in caplog.text
+        assert registry._variable_sources["RawEMG"] == str(handwritten)
+        assert "is the declaration" in caplog.text
+
+    def test_two_python_declarations_still_warn(self, caplog):
+        """The warning keeps firing outside the tier rule: two project
+        modules declaring one Variable really are redundant."""
+        from scistack_gui import registry
+
+        registry._register_variable("RawEMG", source="/p/src/a.py")
         with caplog.at_level(logging.WARNING):
-            # What the classdef-file scan does — no declared_by, because that
-            # file genuinely is its own declaration.
-            matlab_registry._register_matlab_variable("RawEMG", handwritten)
-
+            registry._register_variable("RawEMG", source="/p/src/b.py")
         assert "declared in more than one place" in caplog.text
 
 

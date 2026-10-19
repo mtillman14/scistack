@@ -220,10 +220,10 @@ def test_a_within_panel_factor_is_dropped_from_the_scope(spread_table, caplog):
         color="trial",
     )
 
-    with caplog.at_level(logging.WARNING, logger=LAYER):
+    with caplog.at_level(logging.DEBUG, logger=LAYER):
         figures = resolve(spec, spread_table)
 
-    assert "trial" in "\n".join(r.getMessage() for r in caplog.records)
+    assert "trial" in "\n".join(r.getMessage() for r in caplog.records if "y-limit scope ignores" in r.getMessage())
     assert figures[0].y_scope == []
     # Dropped, not obeyed and not fatal: the figure falls back to one range.
     assert len({panel.y_limits for panel in _all_panels(figures)}) == 1
@@ -754,3 +754,18 @@ def test_a_column_mixing_scalar_and_array_cells_scales_every_panel(caplog):
     assert figure.y_limits is None, "panels differ, so the axes must not be linked"
     # No cell was dropped: the scalar cells were extents of their own.
     assert not [r for r in caplog.records if "hold nothing numeric" in r.getMessage()]
+
+
+def test_an_ineligible_scope_factor_is_dropped_at_debug(caplog):
+    """It fired WARN on every resolve of an unchanged plot (31x in scidb.log
+    2026-10-19); the panel already offers only eligible factors."""
+    from scistackplot import LongTable, Role
+    from scistackplot.ylimits import LAYER, eligible_scope
+
+    frame = pd.DataFrame({"subject": ["S1", "S2"], "trial": ["1", "1"], "Peak": [1.0, 2.0]})
+    table = LongTable.from_frame(frame, factors=["subject", "trial"], measures=["Peak"], name="Peak")
+    roles = {"subject": Role.FACET, "trial": Role.GROUP}
+    with caplog.at_level(logging.DEBUG, logger=LAYER):
+        assert eligible_scope(["subject", "trial"], roles, table) == ["subject"]
+    dropped = [r for r in caplog.records if "y-limit scope ignores" in r.getMessage()]
+    assert dropped and all(r.levelno == logging.DEBUG for r in dropped)

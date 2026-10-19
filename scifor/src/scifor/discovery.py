@@ -36,6 +36,8 @@ else:  # pragma: no cover
     except ModuleNotFoundError:
         import tomli as tomllib  # type: ignore[no-redef]
 
+from .machine import expand_roots
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -169,6 +171,7 @@ def normalize_config_separators(raw: str) -> str:
     Split out from :func:`resolve_config_path` for the callers that need the
     STRING rather than a Path -- glob patterns, which are expanded as text.
     """
+    raw = expand_roots(raw)
     if os.sep != "\\" and "\\" in raw and not is_windows_absolute(raw):
         return raw.replace("\\", "/")
     return raw
@@ -197,6 +200,9 @@ def resolve_config_path(root: Path, raw: str) -> Path:
     should be -- so it is returned as-is for the caller to report as
     missing, rather than being joined onto *root*.
     """
+    # `{name}/...` first: a machine root expands to an absolute path in this
+    # machine's spelling, which the rules below then treat like any other.
+    raw = expand_roots(raw)
     if os.sep != "\\" and "\\" in raw:
         if is_windows_absolute(raw):
             logger.warning(

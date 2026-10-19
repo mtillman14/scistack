@@ -1,5 +1,5 @@
 """
-``ResolvedPlot`` — a spec plus data, reduced to exactly what a renderer draws.
+``ResolvedPlot`` â a spec plus data, reduced to exactly what a renderer draws.
 
 This intermediate is the reason the interactive plotly view and the exported
 matplotlib figure cannot drift apart. Compiling ``PlotSpec`` straight to each
@@ -34,23 +34,23 @@ Y_LOW = "__y_low"
 Y_HIGH = "__y_high"
 COLOR = "__color"
 SERIES = "__series"
-#: The UNCOLOURED part of a series identity — the grouping layers that are
+#: The UNCOLOURED part of a series identity â the grouping layers that are
 #: neither the colour nor the sample. A line or band per level of these is
 #: told apart by a dash style (docs/claude/grouping-and-collapse.md, D4),
 #: which is what a scientist reads off a printed figure without hovering.
 DASH = "__dash"
 #: The overlay's own colour level (``PlotSpec.sample_color``): the shown key
-#: that colours a "Show sample" point, beside ``__color`` — the MARK's level,
+#: that colours a "Show sample" point, beside ``__color`` â the MARK's level,
 #: which paints the point when it has no colour of its own. Two columns
 #: because the two colourings are independent by construction (a shown key
 #: is collapsed, a coloured layer groups; no factor is both).
 SAMPLE_COLOR = "__sample_color"
-#: On a spaghetti figure, the id of the LINE an overlay point belongs to —
+#: On a spaghetti figure, the id of the LINE an overlay point belongs to â
 #: the marks' ``__series`` (the lines layer, plus the units when a collapsed
 #: key is drawn one line each) recomposed on the overlay rows, so the point
 #: is placed at its line's ``series_offsets`` shift rather than on the tick.
 SAMPLE_LINE = "__line"
-#: The RUN a joined point belongs to — the bracket a polyline stays inside.
+#: The RUN a joined point belongs to â the bracket a polyline stays inside.
 #: A line spans the innermost tick only and never crosses a bracket (every
 #: tick layer above the innermost, ``roles.GroupingLayers.brackets``; user
 #: decision 2026-09-21), so a spaghetti's marks carry the brackets' values
@@ -60,13 +60,13 @@ SAMPLE_LINE = "__line"
 #: subject keeps its slot in every bracket. Empty when nothing splits the runs.
 RUN = "__run"
 Z = "__z"
-#: The one x level a categorical figure has when NO tick layer was chosen —
+#: The one x level a categorical figure has when NO tick layer was chosen â
 #: a scalar measure grouped by its colour alone, or not grouped at all. The
 #: mark frame and the overlay frame both write it as their ``__x``
 #: (``reduce._panel_frame`` / ``reduce._overlay_frame``), and
 #: ``ResolvedPlot.x_order`` lists it as the axis' single level so both
 #: renderers read the axis as categorical (``render.base.is_categorical_x``)
-#: — a "Show sample" overlay only draws on a categorical axis, and
+#: â a "Show sample" overlay only draws on a categorical axis, and
 #: ``x_positions`` would coerce the label to NaN on a numeric one.
 UNLABELLED_X = ""
 
@@ -118,8 +118,8 @@ class Labels:
     x: str = ""
     y: str = ""
     color: str | None = None
-    #: What the dash styles tell apart — the uncoloured series layers'
-    #: display names, outermost first — for the legend's second block.
+    #: What the dash styles tell apart â the uncoloured series layers'
+    #: display names, outermost first â for the legend's second block.
     dash: str | None = None
     #: The overlay's own colour key (``PlotSpec.sample_color``), display
     #: name, for the legend's block of overlay levels.
@@ -140,14 +140,14 @@ class Panel:
     key: dict[str, Any] = field(default_factory=dict)
     #: This panel's y range, or None to autoscale.
     #:
-    #: **The authority** — ``ResolvedPlot.y_limits`` is derived from these and
+    #: **The authority** â ``ResolvedPlot.y_limits`` is derived from these and
     #: exists only for the case where they all agree. Per panel rather than per
     #: figure because ``PlotSpec.y_axis.scope`` may separate limits by a FACET
     #: factor, which is what "autoscale each panel" means.
     y_limits: tuple[float, float] | None = None
     #: "Show sample" overlay rows for this panel, or None: ``__x`` (the
     #: same leaf key the marks use), ``__y``, ``__color`` when coloured,
-    #: ``__series`` (the shown keys composed, outermost first — one line's
+    #: ``__series`` (the shown keys composed, outermost first â one line's
     #: identity when joined) and the shown key columns themselves, for hover.
     #: Built by ``reduce._overlay_frame``; drawn after the marks.
     sample: pd.DataFrame | None = None
@@ -157,18 +157,18 @@ class Panel:
         """
         What names this panel: the facet VALUES only.
 
-        The key is already obvious from the figure — every panel in a grid is
+        The key is already obvious from the figure â every panel in a grid is
         faceted by the same factor, so repeating "ColName=" on all 13 subplots
         is noise. (``ResolvedPlot.figure_label`` keeps ``key=value``: there the
         figures are separate files and the key is not otherwise visible.)
 
         Renderers draw this as the panel's **y-axis title**, not as a caption
-        above it (``render.base.panel_y_title``) — the axis title is room the
+        above it (``render.base.panel_y_title``) â the axis title is room the
         panel already spends, so the name costs the grid no height. The property
         keeps its name because it is also the panel's identity in logs, in
         ``to_dict`` and in the GUI.
         """
-        return " · ".join(str(v) for v in self.key.values())
+        return " Â· ".join(str(v) for v in self.key.values())
 
 
 @dataclass
@@ -176,7 +176,7 @@ class ResolvedPlot:
     """
     One figure, fully reduced.
 
-    ``resolve()`` returns a LIST of these — one per combination of the spec's
+    ``resolve()`` returns a LIST of these â one per combination of the spec's
     ITERATE factors, which is the interactive equivalent of the pipeline's
     ``for_each`` fan-out over iterated schema keys.
     """
@@ -195,7 +195,7 @@ class ResolvedPlot:
     #: draw the group labels and brackets beneath the ticks.
     x_plan: Any = None
     #: x levels of the plot (its filtered data, every figure of the fan-out)
-    #: this figure has no data for, in axis order — a nested leaf as its
+    #: this figure has no data for, in axis order â a nested leaf as its
     #: layer values joined by ``reduce.MISSING_X_JOIN``. Listed whether or not
     #: ``PlotSpec.show_missing_levels`` draws them, so the GUI can offer the
     #: toggle exactly when it would change something.
@@ -214,12 +214,12 @@ class ResolvedPlot:
     #: Headers for rule-defined rows/columns (empty when the panels just flow).
     row_labels: list[str] = field(default_factory=list)
     col_labels: list[str] = field(default_factory=list)
-    #: Human-readable notes about placement decisions the user did not ask for —
+    #: Human-readable notes about placement decisions the user did not ask for â
     #: a panel that spilled out of its ruled cell, a grid that had to grow, a
     #: panel that matched no rule. The layout never silently disobeys a rule;
     #: it says what it did instead. Surfaced in the GUI's Layout section.
     layout_notes: list[str] = field(default_factory=list)
-    #: The whole figure's y range — set only when every panel shares it, and
+    #: The whole figure's y range â set only when every panel shares it, and
     #: ``None`` when they differ. Derived from the panels in ``reduce``, never
     #: computed separately, so the two can never disagree. A renderer reads the
     #: None as "give each panel its own axis" (``render.base.shares_y_axis``).
@@ -229,20 +229,24 @@ class ResolvedPlot:
     y_scope: list[str] = field(default_factory=list)
     #: Every factor that separates PANELS, as resolved: the figure's ITERATE
     #: keys in fan-out order, then its FACET factors. The factors a y-limit
-    #: scope may name — offered by the GUI from HERE rather than from
+    #: scope may name â offered by the GUI from HERE rather than from
     #: `spec.roles`, because a schema key promoted to ITERATE or a facet the
     #: table defaulted is a panel factor the spec never mentions.
     panel_factors: list[str] = field(default_factory=list)
     #: Set when the data was reduced for transport (see reduce.MAX_TRANSPORT_POINTS).
     downsampled_from: int | None = None
-    #: Notes about the FIGURE SET rather than about this figure's layout — at
+    #: Notes about the FIGURE SET rather than about this figure's layout â at
     #: present, schema keys promoted to ITERATE because a nested key iterates.
     #: Identical on every figure of a fan-out (it describes the fan-out), which
     #: is why the GUI reads it from the first one.
     fanout_notes: list[str] = field(default_factory=list)
+    #: Problems with the DATA the user should see even if the canvas is out
+    #: of view — the GUI shows each as a popup. Like `fanout_notes`, about the
+    #: whole figure set; at present only `cell.all_nan_warning`.
+    data_warnings: list[str] = field(default_factory=list)
     #: SPAGHETTI only: the horizontal shift each series (subject) keeps at every
     #: x position, keyed by its ``SERIES`` id. Decided once per FIGURE, not per
-    #: panel, so a subject sits at the same offset in every facet — and by one
+    #: panel, so a subject sits at the same offset in every facet â and by one
     #: function (:func:`scistackplot.spaghetti.series_offsets`) so both
     #: renderers and the generated code place the same marker in the same spot.
     series_offsets: dict[str, float] = field(default_factory=dict)
@@ -251,7 +255,7 @@ class ResolvedPlot:
     #: same level in the same style, and the legend can list them.
     dash_styles: dict[str, str] = field(default_factory=dict)
     #: "Show sample" (``PlotSpec.show_sample``): the shown keys, outermost
-    #: first — the identity of one overlay point — empty when no overlay is
+    #: first â the identity of one overlay point â empty when no overlay is
     #: drawn. ``sample_join`` says whether the points sharing that identity
     #: are joined across x, ``sample_join_reason`` why (``roles.overlay_join``),
     #: and ``sample_offsets`` the per-identity horizontal shift inside its
@@ -264,7 +268,7 @@ class ResolvedPlot:
     sample_offsets: dict[str, float] = field(default_factory=dict)
     #: The shown key colouring the overlay (``roles.overlay_color``), None
     #: when a point takes its mark's colour; and that key's levels in
-    #: declared order across the WHOLE figure — the same rule as
+    #: declared order across the WHOLE figure â the same rule as
     #: ``color_order``, so subject 03 is the same colour in every panel
     #: (``render.base.sample_palette_for`` indexes it, never a panel's own
     #: enumeration).
@@ -323,7 +327,7 @@ class ResolvedPlot:
         return sum(len(p.frame) for p in self.panels)
 
     def to_dict(self) -> dict:
-        """JSON-serializable form — used by the GUI transport and by tests."""
+        """JSON-serializable form â used by the GUI transport and by tests."""
         # Lazily: render.base imports this module. The panel's drawn y title
         # comes from the renderers' own rule, so the GUI shows what is drawn.
         from .panels import override_for, unmatched
@@ -381,6 +385,7 @@ class ResolvedPlot:
             ],
             "downsampled_from": self.downsampled_from,
             "fanout_notes": list(self.fanout_notes),
+            "data_warnings": list(self.data_warnings),
             "series_offsets": dict(self.series_offsets),
             "dash_styles": dict(self.dash_styles),
             "sample": {
@@ -411,7 +416,7 @@ class ResolvedPlot:
                     "grid_row": panel.grid_row,
                     "grid_col": panel.grid_col,
                     # Per panel, because the figure-level value is absent
-                    # exactly when the panels differ — which is the case the
+                    # exactly when the panels differ â which is the case the
                     # interactive view most needs to draw correctly.
                     "y_limits": list(panel.y_limits) if panel.y_limits else None,
                     "rows": _frame_records(panel.frame),

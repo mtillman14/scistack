@@ -292,3 +292,26 @@ class TestThroughTheManager:
             r for r in caplog.records
             if r.levelno == logging.WARNING and "sesion" in r.getMessage()
         ]
+
+    def test_a_close_racing_the_read_defers_validation(
+        self, db, tmp_path, caplog, monkeypatch
+    ):
+        """A concurrent GUI request closed the connection after is_open said
+        True and before the query (scidb.log 2026-10-19 15:08:27). Validation
+        asks sciduckdb's atomic `list_variables_if_open`, never is_open then
+        list_variables, so the race defers rather than errors."""
+        config = write_config(tmp_path, '[aliases.sesion]\nname = "Visit"\n')
+        _bump_mtime(config)
+        assert db._duck.is_open
+        monkeypatch.setattr(db._duck, "list_variables_if_open", lambda: None)
+        monkeypatch.setattr(
+            db._duck, "list_variables",
+            lambda: pytest.fail("validation must not use the unguarded read"),
+        )
+        caplog.set_level(logging.DEBUG)
+        assert db.dataset_aliases == {"sesion": {"name": "Visit"}}
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert not [
+            r for r in caplog.records
+            if r.levelno == logging.WARNING and "sesion" in r.getMessage()
+        ]
