@@ -92,6 +92,10 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
+          # Resumable: an upload that stops partway (v0.1.41, v0.1.42: a
+          # project without a trusted publisher) leaves the earlier packages
+          # on PyPI; a re-run then skips those instead of failing on the first.
+          skip-existing: true
 
   # The VS Code extension ships from the SAME tag as the PyPI packages, so its
   # version always equals theirs: package.json holds the placeholder 0.0.0 in
