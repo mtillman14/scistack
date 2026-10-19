@@ -67,6 +67,14 @@ class TestFreshProject:
         assert not report.warnings
         assert not report.kept
 
+    def test_gitignore_excludes_database_and_venv(self, tmp_path):
+        # The venv is machine-specific and large; docs/getting-started/
+        # new-to-coding.md tells users it is already ignored.
+        init_project(tmp_path / "gait")
+        lines = (tmp_path / "gait" / ".gitignore").read_text().splitlines()
+        for pattern in ("*.duckdb", "scidb.log", ".venv/", "venv/"):
+            assert pattern in lines, f"{pattern!r} missing from the scaffolded .gitignore"
+
     def test_pyproject_is_packaging_only_and_buildable(self, tmp_path):
         init_project(tmp_path / "gait")
         data = tomllib.loads((tmp_path / "gait" / "pyproject.toml").read_text())

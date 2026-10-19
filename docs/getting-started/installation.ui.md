@@ -1,6 +1,10 @@
 # Installation
 
-The instructions below assume that you are using VS Code and have Python 3 installed.
+The instructions below assume that you are using VS Code and have Python 3.10 or newer installed.
+
+/// tip | New to coding, or on a new computer?
+Start with [New to Coding?](new-to-coding.md): it covers installing VS Code and Python, creating a virtual environment, and the extensions to install.
+///
 
 ### 1. Install the "[SciStack Pipeline GUI](https://marketplace.visualstudio.com/items?itemName=scistack.scistack-gui)" extension
 

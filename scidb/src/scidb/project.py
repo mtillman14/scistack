@@ -116,6 +116,10 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Virtual environments (machine-specific; recreate with python -m venv .venv)
+.venv/
+venv/
 """
 
 

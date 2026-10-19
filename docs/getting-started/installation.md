@@ -10,6 +10,10 @@
      NOTE: folder `path-gen` ships package `scipathgen`; folder `scicanonicalhash` ships
      `scicanonicalhash`. Install editable in dependency order. -->
 
+/// tip | New to coding, or on a new computer?
+Start with [New to Coding?](new-to-coding.md): it covers installing VS Code and Python, creating a virtual environment, and the extensions to install.
+///
+
 ```bash
 pip install scistack
 ```
