@@ -227,6 +227,9 @@ class Grid:
 
 
 def _variants_sentence(stats_spec: StatsSpec) -> str:
+    if stats_spec.variant_mode == "sweep":
+        return ("Variants: swept; every variant of every variant axis is analysed separately "
+                "(see the specification curve).")
     sets = stats_spec.design.variant_sets
     if not sets:
         return "Variants: no selection (every variant in the data)."
@@ -426,7 +429,18 @@ def _comparison_decimals(analysis: AnalysisReport, dv: str, formatting: FormatSp
     return auto_decimals(values)
 
 
+def clusters_text(c: Comparison, p_decimals: int = 3) -> str:
+    """SPM: ``nodes 34.7–58.2 (p = .003)``, or ``no supra-threshold cluster``."""
+    if not c.clusters:
+        return "no supra-threshold cluster"
+    parts = [f"nodes {number(cl.get('start'), 1)}–{number(cl.get('end'), 1)} ({p_phrase(cl.get('p'), p_decimals)})"
+             for cl in c.clusters]
+    return "; ".join(parts)
+
+
 def _spread_text(c: Comparison, spread: str, d: int) -> str:
+    if c.clusters is not None:
+        return clusters_text(c)
     if spread == "ci":
         return f"{number(c.estimate, d)} {interval(c.spread, d)}".strip()
     return f"{number(c.estimate, d)} ({number(c.spread, d)})"
@@ -447,6 +461,9 @@ def apa_sentence(c: Comparison, analysis: AnalysisReport, formatting: FormatSpec
     head = f"{dv}{f' ({where})' if where else ''}: {a} − {b}"
     if c.refused:
         return f"{head}: not run ({c.refused})."
+    if c.clusters is not None:
+        threshold = f", t* = {number(c.threshold, 2)}" if _finite(c.threshold) else ""
+        return f"{head}: SPM{{t}} {clusters_text(c, formatting.p_decimals)}{threshold}."
     d = _comparison_decimals(analysis, c.dv, formatting)
     ci_level = analysis.analysis.get("ci_level", 0.95)
     spread = analysis.analysis.get("difference_spread", "ci")
@@ -498,7 +515,8 @@ def comparisons_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: 
         adjusted = p_value(c.p_adjusted, formatting.p_decimals) + (stars(c.p_adjusted) if formatting.stars else "")
         rows.append(GridRow([
             dv, _comparison_context(c, labels), pair, _spread_text(c, spread, d),
-            statistic(c.statistic_name, c.statistic, c.df), p_value(c.p, formatting.p_decimals),
+            (f"t* = {number(c.threshold, 2)}" if c.clusters is not None else statistic(c.statistic_name, c.statistic, c.df)),
+            p_value(c.p, formatting.p_decimals),
             adjusted if c.family else DASH,
             effect(c.effect_size, formatting.effect_decimals, with_name=len(sizes) != 1),
             str(n) if n is not None else DASH,
@@ -516,8 +534,10 @@ def comparisons_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: 
     for c in comps:
         for w in c.warnings:
             notes.append(f"{labels.dv(c.dv)} {c.a} − {c.b}: {w.get('message', w.get('code'))}")
-    for r in report.refusals:
+    for r in analysis.refusals:
         notes.append(f"{labels.dv(r['dv'])}: not analysed ({r['reason']})")
+    if any(c.clusters is not None for c in comps):
+        notes.append("SPM: p is the smallest cluster p-value of each comparison (cluster-level inference, spm1d).")
     if formatting.stars:
         notes.append("* p < .05, ** p < .01, *** p < .001 (adjusted).")
     return Grid(title=f"Comparisons ({analysis.analysis.get('id')})", header_rows=[[HeaderCell(h) for h in header]],
@@ -596,3 +616,38 @@ def omnibus_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: Stat
                + _variants_sentence(stats_spec))
     return Grid(title=f"Omnibus ({analysis.analysis.get('id')})", header_rows=[[HeaderCell(h) for h in header]],
                 rows=rows, caption=caption, notes=_unique(notes), label_columns=3)
+
+
+def sweep_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: StatsSpec,
+               labels: Labels | None = None) -> Grid | None:
+    """The specification curve as a table (S3, S7): each comparison under
+    every variant of a sweep, sorted by Δ within the comparison. None when
+    nothing was swept."""
+    labels = labels or Labels()
+    formatting = stats_spec.formatting
+    swept = [c for c in analysis.comparisons() if c.variant and not c.refused]
+    if not swept:
+        return None
+    spread = analysis.analysis.get("difference_spread", "ci")
+    ci_level = analysis.analysis.get("ci_level", 0.95)
+    groups: dict[tuple, list[Comparison]] = {}
+    for c in swept:
+        rest = {k: v for k, v in c.stratum.items() if k not in c.variant}
+        groups.setdefault((c.dv, tuple(rest.items()), tuple(c.context.items()), c.a, c.b), []).append(c)
+    rows: list[GridRow] = []
+    for (dv, rest, context, a, b), members in groups.items():
+        members.sort(key=lambda m: m.estimate if _finite(m.estimate) else math.inf)
+        d = _comparison_decimals(analysis, dv, formatting)
+        where = labels.key(dv, {**dict(rest), **dict(context)})
+        pair = f"{labels.level(dv, members[0].term, a)} − {labels.level(dv, members[0].term, b)}"
+        for m in members:
+            rows.append(GridRow([labels.dv(dv), where, pair, labels.key(dv, m.variant), _spread_text(m, spread, d),
+                                 p_value(m.p, formatting.p_decimals),
+                                 p_value(m.p_adjusted, formatting.p_decimals) if m.family else DASH]))
+    header = ["Measure", "Within", "Comparison", "Variant",
+              {"ci": f"Δ [{ci_level * 100:g}% CI]", "se": "Δ (SE)", "sd_diff": "Δ (SD of differences)"}[spread],
+              "p", "p (adj.)"]
+    caption = ("Specification curve: each comparison under every variant, sorted by Δ within the comparison. "
+               + analysis.family_statement + " " + _variants_sentence(stats_spec))
+    return Grid(title=f"Variant sweep ({analysis.analysis.get('id')})", header_rows=[[HeaderCell(h) for h in header]],
+                rows=rows, caption=caption, label_columns=4)

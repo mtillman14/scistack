@@ -50,6 +50,7 @@ SCOPE_LABELS = {
     "stratum": "DV and figure/panel",
     "dv": "DV",
     "table": "table",
+    "variants": "comparison across the variants",
 }
 
 
@@ -82,6 +83,8 @@ class Comparison:
     a: str
     b: str
     test: str
+    #: The variant-axis part of ``stratum`` (a sweep's coordinates).
+    variant: dict[str, str] = field(default_factory=dict)
     statistic_name: str | None = None
     statistic: float | None = None
     df: list[float | None] = field(default_factory=list)
@@ -98,6 +101,10 @@ class Comparison:
     #: this comparison's factor (S13: shown beside it).
     interaction_p: dict[str, float | None] = field(default_factory=dict)
     warnings: list[dict[str, str]] = field(default_factory=list)
+    #: SPM only: supra-threshold clusters ``{start, end, p, extent}`` (nodes)
+    #: and the critical t*. None for a scalar test.
+    clusters: list[dict[str, Any]] | None = None
+    threshold: float | None = None
     refused: str | None = None
     refusal_kind: str | None = None
 
@@ -237,6 +244,7 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
                 id=f"{analysis.id}|{frame.dv.key}|{stratum_text}|{_key_text(context)}|{a}|{b}",
                 dv=frame.dv.key, stratum=_text(dict(design.stratum)), context=_text(context),
                 term=primary, a=str(a), b=str(b), test=test, interaction_p=dict(interactions),
+                variant={k: str(v) for k, v in design.stratum.items() if k in frame.variant_axes},
             )
             columns = [frame.y, primary, *([UNIT] if UNIT in pair_rows.columns else [])]
             try:
@@ -262,6 +270,9 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
             comparison.effect_size = _shown_size(effect, size_id)
             comparison.n = record.get("n")
             comparison.warnings = list(record.get("warnings", []))
+            if "clusters" in effect:
+                comparison.clusters = list(effect.get("clusters") or [])
+                comparison.threshold = effect.get("threshold")
             out.append(comparison)
     return out
 
@@ -275,6 +286,9 @@ def _family_key(scope: str, c: Comparison) -> tuple | None:
         return (c.dv, _key_text(c.stratum))
     if scope == "dv":
         return (c.dv,)
+    if scope == "variants":
+        rest = {k: v for k, v in c.stratum.items() if k not in c.variant}
+        return (c.dv, _key_text(rest), _key_text(c.context), c.a, c.b)
     return ()
 
 
@@ -379,20 +393,27 @@ def run(stats_spec: StatsSpec, tables: dict[str, LongTable]) -> StatsReport:
             if name is not None and name not in TESTS:
                 raise StatsSpecError(f"analysis {analysis.id}: unknown test {name!r}; choose from {list(TESTS)}")
     with Log.timer("stats_run", layer=LAYER, extra=f"{len(stats_spec.comparisons)} analysis(es)") as timing:
-        frames: list[AnalysisFrame] = []
-        refusals: list[dict[str, str]] = []
+        by_kind: dict[bool, list[AnalysisFrame]] = {}
+        refusals_by: dict[bool, list[dict[str, str]]] = {}
         with timing.phase("rows"):
-            for dv in stats_spec.targets:
-                try:
-                    frames.append(analysis_frame(stats_spec, dv, tables[dv.variable]))
-                except AnalysisFrameError as exc:
-                    refusals.append({"dv": dv.key, "reason": str(exc)})
-                except KeyError:
-                    refusals.append({"dv": dv.key, "reason": f"no table loaded for {dv.variable}"})
+            # Scalar rows always (Descriptives and every scalar test); 1-D
+            # curves only when an SPM analysis asks for them.
+            for curves in sorted({False} | {a.family == "spm" for a in stats_spec.comparisons}):
+                by_kind[curves], refusals_by[curves] = [], []
+                for dv in stats_spec.targets:
+                    try:
+                        by_kind[curves].append(analysis_frame(stats_spec, dv, tables[dv.variable], curves=curves))
+                    except AnalysisFrameError as exc:
+                        refusals_by[curves].append({"dv": dv.key, "reason": str(exc)})
+                    except KeyError:
+                        refusals_by[curves].append({"dv": dv.key, "reason": f"no table loaded for {dv.variable}"})
+        refusals = refusals_by[False]
         reports = []
         for analysis in stats_spec.comparisons:
+            curves = analysis.family == "spm"
             with timing.phase(f"analysis {analysis.id}"):
-                reports.append(run_analysis(analysis, frames, refusals))
+                reports.append(run_analysis(analysis, by_kind[curves], refusals_by[curves]))
+        frames = by_kind[False]
     for refusal in refusals:
         Log.warn("[stats] %s refused: %s", refusal["dv"], refusal["reason"], layer=LAYER)
     return StatsReport(

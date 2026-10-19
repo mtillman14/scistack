@@ -40,6 +40,8 @@ TESTS: dict[str, StatTest] = {
         StatTest("ttest_paired", "Paired t-test", "pairwise", "parametric", WITHIN),
         StatTest("mann_whitney", "Mann–Whitney U", "pairwise", "nonparametric", BETWEEN),
         StatTest("wilcoxon", "Wilcoxon signed-rank", "pairwise", "nonparametric", WITHIN),
+        StatTest("spm_ttest2", "SPM two-sample t (1-D curves)", "pairwise", "spm", BETWEEN),
+        StatTest("spm_ttest_paired", "SPM paired t (1-D curves)", "pairwise", "spm", WITHIN),
         StatTest("anova", "ANOVA", "omnibus", "parametric"),
         StatTest("kruskal", "Kruskal–Wallis", "omnibus", "nonparametric"),
         StatTest("friedman", "Friedman", "omnibus", "nonparametric"),
@@ -110,7 +112,9 @@ def _pairwise_default(analysis: Analysis, design: Design) -> tuple[str | None, s
     if primary is None:
         return None, "no grouping layer"
     within = primary.kind == WITHIN
-    if analysis.family == "nonparametric":
+    if analysis.family == "spm":
+        test = "spm_ttest_paired" if within else "spm_ttest2"
+    elif analysis.family == "nonparametric":
         test = "wilcoxon" if within else "mann_whitney"
     elif within:
         test = "ttest_paired"
@@ -125,6 +129,8 @@ def _pairwise_default(analysis: Analysis, design: Design) -> tuple[str | None, s
 def _omnibus_default(analysis: Analysis, design: Design) -> tuple[str | None, str]:
     if not design.factors:
         return None, "no grouping layer"
+    if analysis.family == "spm":
+        return None, "SPM on curves runs the pairwise tests; an SPM ANOVA is not yet in csv-stats"
     if analysis.family == "parametric":
         return "anova", "parametric family"
     if len(design.factors) == 1:

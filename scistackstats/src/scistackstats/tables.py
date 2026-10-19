@@ -48,6 +48,8 @@ LAYER = "scistackstats"
 #: extra step (``roles.CollapseSteps``) and turns a 1-D measure into its cell
 #: statistic, like every scalar kind.
 ANALYSIS_KIND = PlotKind.BAR
+#: The kind an SPM analysis reads curves at (no cell collapse; S4).
+CURVE_KIND = PlotKind.BAND
 #: Column holding the composite experimental-unit id.
 UNIT = "__unit__"
 
@@ -76,6 +78,8 @@ class AnalysisFrame:
     #: Collapsed keys averaged away before the unit, deepest first (the
     #: caption's "trials averaged within subject first").
     averaged: list[str] = field(default_factory=list)
+    #: Variant axes among the factors and strata (S3: what a sweep varies).
+    variant_axes: list[str] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         """What a caption needs to say about these rows."""
@@ -83,6 +87,7 @@ class AnalysisFrame:
             "dv": self.dv.key, "variable": self.dv.variable, "unit": self.unit,
             "unit_keys": list(self.unit_keys), "averaged": list(self.averaged),
             "factors": list(self.factors), "strata": list(self.strata), "notes": list(self.notes),
+            "variant_axes": list(self.variant_axes),
         }
 
     @property
@@ -112,8 +117,14 @@ def _field_factor(table: LongTable) -> str | None:
     return names[0] if names else None
 
 
-def analysis_spec(design: PlotSpec, dv: DV, table: LongTable) -> tuple[PlotSpec, list[str]]:
+def analysis_spec(design: PlotSpec, dv: DV, table: LongTable, *, sweep: bool = False,
+                  curves: bool = False) -> tuple[PlotSpec, list[str]]:
     """The design carrier, pointed at ``dv`` and read at the analysis kind.
+
+    ``sweep`` (S3): every variant of every variant axis is kept, and each axis
+    without a role of its own separates the analyses (ITERATE), so each
+    variant is its own stratum. An axis the design already groups by keeps
+    its role (comparing variants is a design choice).
 
     A DV with ``columns`` keeps only those fields of a multi-column Variable,
     and its field factor separates them (ITERATE): each column is its own DV
@@ -128,7 +139,7 @@ def analysis_spec(design: PlotSpec, dv: DV, table: LongTable) -> tuple[PlotSpec,
     spec = replace(
         design,
         measures=[dv.variable],
-        kind=ANALYSIS_KIND,
+        kind=CURVE_KIND if curves else ANALYSIS_KIND,
         custom=None,
         color=None,
         show_sample=[],
@@ -136,6 +147,15 @@ def analysis_spec(design: PlotSpec, dv: DV, table: LongTable) -> tuple[PlotSpec,
         difference_bars=[],
         panel_overrides=[],
     )
+    if sweep:
+        axes = [f.name for f in table.variant_factors]
+        roles = dict(spec.roles)
+        for name in axes:
+            if roles.get(name) not in (Role.GROUP, Role.FACET):
+                roles[name] = Role.ITERATE
+        spec = replace(spec, roles=roles, variant_sets=[])
+        notes.append(f"variant sweep over {axes}: each variant analysed separately" if axes
+                     else "variant sweep: this variable has no variant axes")
     if dv.columns is not None:
         field_name = _field_factor(table)
         if field_name is None:
@@ -167,12 +187,22 @@ def _level_order(name: str, table: LongTable, values: pd.Series) -> list[Any]:
     return sorted(present, key=_natural)
 
 
-def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable) -> AnalysisFrame:
-    """The rows and their structure for one DV (module docstring)."""
-    spec, notes = analysis_spec(stats_spec.design, dv, table)
+def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable, *, curves: bool = False) -> AnalysisFrame:
+    """The rows and their structure for one DV (module docstring).
+
+    ``curves`` (SPM, S4): one row per unit per cell with its whole 1-D curve,
+    from ``scistackplot.export.sample_curves`` (the band figure's own
+    reduction), instead of the scalar rows ``plot_data`` gives.
+    """
+    from scistackplot.export import sample_curves
+    from scistackplot.shape import Shape
+
+    if curves and dv.variable in table.measure_names and table.shape_of(dv.variable) is not Shape.SERIES_1D:
+        raise AnalysisFrameError(f"{dv.key}: SPM needs a 1-D measure; {dv.variable} is {table.shape_of(dv.variable)}")
+    spec, notes = analysis_spec(stats_spec.design, dv, table, sweep=stats_spec.variant_mode == "sweep", curves=curves)
     derived = apply_level_groups(spec, apply_variant_sets(spec, table))
     try:
-        rows = plot_data(spec, table, fields_as_columns=False)
+        rows = sample_curves(spec, table) if curves else plot_data(spec, table, fields_as_columns=False)
     except ValueError as exc:
         raise AnalysisFrameError(f"{dv.key}: {exc}") from exc
     roles = complete_roles(spec, derived)
@@ -203,6 +233,7 @@ def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable) -> AnalysisF
         dv=dv, y=dv.variable, rows=rows, factors=factors, strata=strata, unit=unit,
         unit_keys=unit_keys, levels=levels, spec=spec, notes=notes,
         averaged=list(steps.pre) if unit is not None else [],
+        variant_axes=[f.name for f in derived.variant_factors if f.name in (*factors, *strata)],
     )
     Log.info(
         "[stats rows] %s: %d row(s), factors (inner first) %s, strata %s, unit %s%s",

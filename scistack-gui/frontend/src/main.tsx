@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import PlotRoot, { type PlotViewConfig } from './PlotRoot'
+import StatStudio, { type StatViewConfig } from './components/StatStudio/StatStudio'
 import ClientErrorBoundary from './components/ClientErrorBoundary'
 import { callBackend } from './api'
 import { reportBundleBuild } from './bundleBuild'
@@ -15,7 +16,7 @@ import { DEFAULT_PLOT_THEME, plotThemeVars } from './components/PlotStudio/plotT
  */
 declare global {
   interface Window {
-    __SCISTACK_VIEW__?: PlotViewConfig
+    __SCISTACK_VIEW__?: PlotViewConfig | StatViewConfig
   }
 }
 
@@ -23,7 +24,7 @@ const view = window.__SCISTACK_VIEW__
 
 // Once per webview, before the first render: which bundle this is, so
 // scidb.log can say which frontend a panel ran (bundleBuild.ts).
-reportBundleBuild(view?.view === 'plot' ? 'plot' : 'pipeline', callBackend)
+reportBundleBuild(view?.view === 'plot' || view?.view === 'stat' ? 'plot' : 'pipeline', callBackend)
 
 // The Plot Studio's colour tokens, on the page root in the default (dark)
 // palette. The studio overrides them on its own root with the chosen mode; this
@@ -41,6 +42,10 @@ createRoot(document.getElementById('root')!).render(
     {view?.view === 'plot' ? (
       <ClientErrorBoundary where="Plot Studio tab">
         <PlotRoot initial={view} />
+      </ClientErrorBoundary>
+    ) : view?.view === 'stat' ? (
+      <ClientErrorBoundary where="StatStudio tab">
+        <StatStudio initial={view} />
       </ClientErrorBoundary>
     ) : (
       <ClientErrorBoundary where="pipeline view">

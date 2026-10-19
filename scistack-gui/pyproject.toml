@@ -12,7 +12,7 @@ raw-options = { search_parent_directories = true, local_scheme = "no-local-versi
 # dependencies must be named here: CI's build job fails a wheel whose internal
 # dependency is not "==<its own version>".
 [tool.hatch.metadata.hooks.dependency-coversion]
-override-versions-of = ["scistack-db", "scifor", "scimatlab", "scistackplot", "scistackplotdb", "scicanonicalhash", "scistacklog"]
+override-versions-of = ["scistack-db", "scifor", "scimatlab", "scistackplot", "scistackplotdb", "scistackstats", "scistackstatsdb", "scicanonicalhash", "scistacklog"]
 
 [project]
 name = "scistack-gui"
@@ -38,6 +38,9 @@ dependencies = [
     # calls render_matplotlib().
     "scistackplot[mpl]",
     "scistackplotdb",
+    # StatStudio, and the saved-stats section of project bundles.
+    "scistackstats",
+    "scistackstatsdb",
     # Imported directly by the GUI, not only through scistack-db.
     "scicanonicalhash",
     "scistacklog",

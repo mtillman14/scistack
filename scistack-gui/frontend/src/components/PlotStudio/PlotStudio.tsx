@@ -165,6 +165,7 @@ import {
 } from './combine'
 import { PLOT_THEMES, otherPlotTheme, plotThemeVars, screenFigure } from './plotTheme'
 import { setPlotTheme, usePlotTheme } from './usePlotTheme'
+import StatsLink from './StatsLink'
 import {
   OPEN_GROUPS_STORAGE_KEY,
   appearanceSummary,
@@ -916,6 +917,14 @@ export default function PlotStudio({
     () => (csvPath ? { csv_path: csvPath } : {}),
     [csvPath]
   )
+  // StatStudio test brackets (StatsLink): joined per request by the backend
+  // (`with_derived_bars`), never saved with the plot. Resolve, export, save
+  // and add-to-pipeline all send them, so the file draws what the preview drew.
+  const [derivedBars, setDerivedBars] = useState<Record<string, unknown>[]>([])
+  const resolveParams = useMemo(
+    () => (derivedBars.length ? { ...sourceParams, derived_bars: derivedBars } : sourceParams),
+    [sourceParams, derivedBars]
+  )
   const [describe, setDescribe] = useState<DescribeResponse | null>(null)
   // This panel's own undo stack (docs/claude/undo-redo.md): spec edits are
   // local steps; its project alias/colour writes and "Add to pipeline" are
@@ -1044,6 +1053,11 @@ export default function PlotStudio({
     { plotId: string; name: string; text: string } | null
   >(null)
   const [loadedPlot, setLoadedPlot] = useState<SavedPlotInfo | null>(null)
+  // StatStudio "Sync to PlotStudio": its design copied onto this spec (StatsLink).
+  const applyLinkedSpec = useCallback(
+    (next: Record<string, unknown>) => setSpec(next as unknown as Spec),
+    [setSpec]
+  )
   const [restoreNotes, setRestoreNotes] = useState<RestoreNote[]>([])
   const [savedBusy, setSavedBusy] = useState(false)
   const [savedError, setSavedError] = useState('')
@@ -1244,7 +1258,7 @@ export default function PlotStudio({
           spec: nextSpec,
           figure_index: nextIndex,
           preview: previewRef.current,
-          ...sourceParams,
+          ...resolveParams,
         }),
         needCapabilities
           ? callBackend('plot_capabilities', { spec: nextSpec, ...sourceParams }).catch(
@@ -1304,7 +1318,7 @@ export default function PlotStudio({
           if (mine === generation.current) setBusy(false)
         })
     },
-    [sourceParams]
+    [resolveParams]
   )
 
   useEffect(() => {
@@ -1348,7 +1362,7 @@ export default function PlotStudio({
         figure_index: figureIndex,
         preview: previewRef.current,
         reuse_resolved: true,
-        ...sourceParams,
+        ...resolveParams,
       })
         .then(resolved => {
           if (mine !== generation.current) return
@@ -1358,7 +1372,7 @@ export default function PlotStudio({
         .catch(err => console.warn('[plot] preview re-render failed', err))
     }, 300)
     return () => { if (rerenderTimer.current) window.clearTimeout(rerenderTimer.current) }
-  }, [preview, spec, specKey, figureIndex, sourceParams])
+  }, [preview, spec, specKey, figureIndex, resolveParams])
 
   // --- figure navigation --------------------------------------------------
   const figureCount = figureLabels.length
@@ -2390,10 +2404,10 @@ export default function PlotStudio({
   const handleExport = useCallback(() => {
     if (!spec) return
     setNotice('')
-    callBackend('plot_export', { spec: outputSpec, ...sourceParams })
+    callBackend('plot_export', { spec: outputSpec, ...resolveParams })
       .then(raw => setCode((raw as { source: string }).source))
       .catch(err => setNotice(`Export failed: ${(err as Error).message}`))
-  }, [spec, outputSpec, sourceParams])
+  }, [spec, outputSpec, resolveParams])
 
   // The background save's job id. A ref, not state: the first figure can
   // report progress before the render that set it has committed, and the
@@ -2546,7 +2560,7 @@ export default function PlotStudio({
           // field, and `undefined` would be dropped by JSON. It also decides
           // whether `path` is a file or the folder to fill.
           figure_index: savingAll ? null : figureIndex,
-          ...sourceParams,
+          ...resolveParams,
         })
       } catch (err) {
         // The id was adopted before the request; a request that never reached
@@ -2557,7 +2571,7 @@ export default function PlotStudio({
         setNotice(`Could not save: ${(err as Error).message}`)
       }
     },
-    [spec, outputSpec, previewMode, figWidth, figHeight, sourceParams, title, figureIndex, figureCount, imageFormat]
+    [spec, outputSpec, previewMode, figWidth, figHeight, resolveParams, title, figureIndex, figureCount, imageFormat]
   )
 
   /** Save the plot's long table as CSV — the rows the figure is drawn from
@@ -2679,14 +2693,14 @@ export default function PlotStudio({
   const handleAddToPipeline = useCallback(() => {
     if (!spec) return
     setNotice('Writing endpoint…')
-    callBackend('plot_add_to_pipeline', { spec: outputSpec }, { stack: undo })
+    callBackend('plot_add_to_pipeline', { spec: outputSpec, ...(derivedBars.length ? { derived_bars: derivedBars } : {}) }, { stack: undo })
       .then(raw => {
         const result = raw as { ok?: boolean; error?: string; function_name?: string; file?: string }
         if (result.error) setNotice(`Could not add: ${result.error}`)
         else setNotice(`Added ${result.function_name} to ${result.file}. Wire it up on the canvas.`)
       })
       .catch(err => setNotice(`Could not add: ${(err as Error).message}`))
-  }, [spec, outputSpec, undo])
+  }, [spec, outputSpec, undo, derivedBars])
 
   // --- saved plots ----------------------------------------------------------
   // Keyed by the variable `describe` resolved (the prop may be empty, meaning
@@ -4272,6 +4286,17 @@ export default function PlotStudio({
           <button type="button" style={styles.toolPrimaryButton} onClick={handleAddToPipeline}>
             Add to pipeline
           </button>
+        )}
+        {!capabilities?.custom && (
+          <StatsLink
+            spec={spec as Record<string, unknown> | null}
+            plotId={loadedPlot?.plot_id ?? null}
+            variable={describe?.variable ?? variable}
+            csvPath={csvPath}
+            onApplySpec={applyLinkedSpec}
+            onDerivedBars={setDerivedBars}
+            buttonStyle={styles.toolButton}
+          />
         )}
         {/* Floats over the figure rather than pushing it down: a taller
             toolbar would shrink the canvas and re-request a pane preview. */}

@@ -608,3 +608,65 @@ def _describe_chain(options: DataExportOptions) -> str:
     if options.pooled:
         return " x ".join(options.chain) + " (pooled sample)"
     return " -> ".join([*options.chain[:-1], f"{options.chain[-1]} (sample)"])
+
+
+# ---------------------------------------------------------------------------
+# 1-D sample curves (statistics: SPM, plan stage 13)
+# ---------------------------------------------------------------------------
+
+
+def sample_curves(spec: PlotSpec, table: LongTable) -> pd.DataFrame:
+    """One row per SAMPLE per cell, its 1-D curve kept as an ndarray in the
+    measure column: the rows a statistical parametric mapping (SPM) test sees.
+
+    The same plan and collapse chain a 1-D band figure runs: ``reduce._plan``
+    and the numpy reducer's ``reducer._chain`` (per-position means over the
+    collapsed keys, deepest first). So the per-position mean across these
+    rows is the band's centre (``tests/test_sample_curves.py``). Every figure
+    of the fan-out goes into one frame, the figure keys as columns.
+
+    ``spec`` must draw the measure as 1-D (a line or band kind). A scalar kind
+    collapses each cell first and has no curves, so it raises ``ValueError``
+    saying so. Curves of unequal length are kept, with a WARN naming the
+    rows: an SPM test needs equal lengths and refuses them itself.
+    """
+    from collections import Counter
+
+    from .reduce import _plan
+    from .reducer import _chain
+    from .series_stats import cell_arrays
+
+    plan = _plan(spec, table)
+    if plan.shape is not Shape.SERIES_1D:
+        raise ValueError(
+            f"{spec.y_measure} is drawn as {plan.shape} for kind {spec.kind}; sample curves "
+            f"need a 1-D measure at a line or band kind"
+        )
+    steps = collapse_steps(plan.spec, plan.roles, plan.table)
+    y = plan.spec.y_measure
+    pieces: list[pd.DataFrame] = []
+    for figure_key, group in plan.groups:
+        frame = group.reset_index(drop=True)
+        arrays = cell_arrays(frame[y])
+        kept, arrays = _chain(frame, arrays, list(steps.pre), plan.table)
+        kept = kept.copy()
+        for name, value in figure_key.items():
+            if name not in kept.columns:
+                kept[name] = value
+        kept[y] = list(arrays)
+        pieces.append(kept)
+    out = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame(columns=[y])
+    lengths = Counter(len(a) for a in out[y])
+    Log.info(
+        "[sample-curves] %s: %d figure(s), %d curve(s), lengths %s, %s averaged first",
+        y, len(plan.groups), len(out), dict(lengths), list(steps.pre) or "nothing", layer=LAYER,
+    )
+    if len(lengths) > 1:
+        common = lengths.most_common(1)[0][0]
+        odd = [i for i, a in enumerate(out[y]) if len(a) != common]
+        Log.warn(
+            "[sample-curves] %s: curves of unequal length (%s); rows %s differ from the common %d. "
+            "An SPM test refuses them: time-normalise first",
+            y, dict(lengths), odd[:10], common, layer=LAYER,
+        )
+    return out

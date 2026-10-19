@@ -30,6 +30,7 @@ from scistack_gui.api.registry import router as registry_router
 from scistack_gui.api.run import router as run_router
 from scistack_gui.api.schema import router as schema_router
 from scistack_gui.api.scopes import router as scopes_router
+from scistack_gui.api.stats import router as stats_router
 from scistack_gui.api.variables import router as variables_router
 from scistack_gui.api.variants import router as variants_router
 from scistack_gui.api.ws import router as ws_router
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(builtin_functions_router, prefix="/api")
     app.include_router(glue_router, prefix="/api")
     app.include_router(plot_router, prefix="/api")
+    app.include_router(stats_router, prefix="/api")
     app.include_router(provenance_router, prefix="/api")
     app.include_router(variants_router, prefix="/api")
     app.include_router(history_router, prefix="/api")

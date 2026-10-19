@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import importlib
 import importlib.metadata
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -36,9 +37,26 @@ VERSIONED = {
 }
 
 
+def _tracked_pyprojects() -> list[Path]:
+    """``<pkg>/pyproject.toml`` files in the monorepo, minus gitignored ones."""
+    found = sorted(REPO.glob("*/pyproject.toml"))
+    try:
+        ignored = subprocess.run(
+            ["git", "check-ignore", "--stdin"], cwd=REPO, capture_output=True, text=True,
+            input="\n".join(str(p.relative_to(REPO)) for p in found),
+        ).stdout.split()
+    except OSError:  # no git: scan everything
+        return found
+    return [p for p in found if str(p.relative_to(REPO)) not in ignored]
+
+
 def _package_sources():
-    """Shipped source of every package: ``<pkg>/src/**`` plus scistack-gui's flat layout."""
-    roots = [p.parent / "src" for p in REPO.glob("*/pyproject.toml")]
+    """Shipped source of every package: ``<pkg>/src/**`` plus scistack-gui's flat layout.
+
+    Only packages git tracks: a gitignored clone with its own pyproject (the
+    csv-stats repo, cloned at the root for editable dev) is not ours to version.
+    """
+    roots = [p.parent / "src" for p in _tracked_pyprojects()]
     roots.append(REPO / "scistack-gui" / "scistack_gui")
     for root in roots:
         if root.is_dir():

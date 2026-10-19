@@ -44,6 +44,8 @@ LAYER = "scistackplot"
 
 #: The label a new bar carries.
 DEFAULT_LABEL = "*"
+#: ``DifferenceBar.origin`` of a bar the user placed.
+MANUAL = "manual"
 
 
 @dataclass(frozen=True)
@@ -55,12 +57,17 @@ class DifferenceBar:
     - ``a``, ``b``: the two ends, ``{x layer: level text}`` over EVERY x
       layer (a nested axis names each layer). Unordered.
     - ``label``: drawn over the bar's middle.
+    - ``origin``: who made it. ``"manual"`` (clicked in Plot Studio, stored
+      on the spec), or another tag for a bar derived at resolve time by a
+      layer above (``"test"``: a statistics result; never stored). The plot
+      layer draws every origin the same way and never asks what made a bar.
     """
 
     match: dict[str, str] = field(default_factory=dict)
     a: dict[str, str] = field(default_factory=dict)
     b: dict[str, str] = field(default_factory=dict)
     label: str = DEFAULT_LABEL
+    origin: str = MANUAL
 
     def problem(self) -> str | None:
         """Why this bar can never be drawn anywhere, or None."""
@@ -97,12 +104,15 @@ class DifferenceBar:
         )
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "match": dict(self.match),
             "a": dict(self.a),
             "b": dict(self.b),
             "label": self.label,
         }
+        if self.origin != MANUAL:
+            out["origin"] = self.origin
+        return out
 
     @classmethod
     def from_dict(cls, raw: dict) -> "DifferenceBar":
@@ -112,6 +122,7 @@ class DifferenceBar:
             a=_text_dict(raw.get("a")),
             b=_text_dict(raw.get("b")),
             label=DEFAULT_LABEL if label is None else str(label),
+            origin=str(raw.get("origin") or MANUAL),
         )
 
     @classmethod
@@ -1385,3 +1396,35 @@ def difference_meta(
         # decisions) or the preview's estimate.
         "estimated": estimated,
     }
+
+
+# ---------------------------------------------------------------------------
+# Derived bars (a layer above hands bars in at resolve time)
+# ---------------------------------------------------------------------------
+
+
+def with_derived_bars(spec: "PlotSpec", derived: list[DifferenceBar]) -> "PlotSpec":
+    """``spec`` drawing ``derived`` bars as well as its own, for one resolve.
+
+    The one place derived bars join a figure. A derived bar is intent
+    computed from something else (a statistics result), so it is never
+    stored: callers resolve the returned spec and keep saving the original.
+    Derived bars go FIRST and the spec's manual bars after them, so on a
+    duplicate pair the manual bar's label wins (``bars_for_panel`` keeps the
+    last entry), and the duplicate derived bar is dropped here with a log
+    line rather than reaching the WARN.
+    """
+    from dataclasses import replace
+
+    manual = list(spec.difference_bars)
+    kept = [bar for bar in derived if not any(bar.same_pair(m) for m in manual)]
+    dropped = len(derived) - len(kept)
+    Log.info(
+        "difference bars: %d derived (%s) + %d manual%s",
+        len(kept),
+        ", ".join(sorted({bar.origin for bar in kept})) or "none",
+        len(manual),
+        f"; {dropped} derived bar(s) dropped (a manual bar has that pair)" if dropped else "",
+        layer=LAYER,
+    )
+    return replace(spec, difference_bars=[*kept, *manual])

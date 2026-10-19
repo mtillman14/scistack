@@ -61,8 +61,8 @@ jobs:
           # VS Code extension itself ship via the publish-vscode job below.
           # scidb-net is excluded — outdated, slated for removal.
           for pkg in scicanonicalhash path-gen scistacklog sciduckdb \
-                     scifor scilineage scistackplot scidb \
-                     scimatlab scihist scistackplotdb scistack \
+                     scifor scilineage scistackplot scistackstats scidb \
+                     scimatlab scihist scistackplotdb scistackstatsdb scistack \
                      scistack-gui; do
             echo "== build $pkg =="
             python -m build --outdir dist "$pkg"

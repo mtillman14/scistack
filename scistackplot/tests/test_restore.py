@@ -136,6 +136,7 @@ def full_spec() -> PlotSpec:
                 a={"session": "pre"},
                 b={"session": "post"},
                 label="**",
+                origin="test",
             )
         ],
         comparison=Comparison(

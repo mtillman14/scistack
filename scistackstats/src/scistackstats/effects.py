@@ -94,6 +94,8 @@ def difference_spec(test_id: str, spread: str, ci_level: float) -> DifferenceSpe
     """What a comparison's difference and its spread are, for this test (S14)."""
     pct = f"{ci_level * 100:g}%"
     note = None
+    if test_id.startswith("spm_"):
+        return DifferenceSpec("ci", "SPM{t}: supra-threshold clusters (nodes) with their p-values; a − b")
     if test_id in ("mann_whitney", "wilcoxon"):
         if spread != "ci":
             note = f"{spread} is not defined for a Hodges–Lehmann shift; showing its {pct} CI"

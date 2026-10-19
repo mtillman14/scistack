@@ -60,6 +60,16 @@ export interface PlotTarget {
    * pipeline's database even when another tab was focused last.
    */
   sessionId?: string;
+  /**
+   * `stat` opens StatStudio in this same kind of tab (one owner of the tab
+   * machinery). It carries a saved stats table to open (`statsId`), or a
+   * figure spec to set it up from (`seed`) and the saved plot it links to
+   * (`linkedPlot`). Opaque here, like `location`.
+   */
+  view?: 'plot' | 'stat';
+  statsId?: string;
+  seed?: Record<string, unknown>;
+  linkedPlot?: string;
 }
 
 export class PlotPanel {
@@ -179,6 +189,33 @@ export class PlotPanel {
           return;
         }
 
+        if (method === 'open_stat_panel') {
+          // StatStudio, set up from this figure, as a sibling tab of the same
+          // session (S10). Host-side: only the host can open a tab.
+          const params = (msg.params ?? {}) as { seed?: Record<string, unknown>; linkedPlot?: string | null; variable?: string; statsId?: string };
+          await vscode.commands.executeCommand('scistack.openPlotPanel', {
+            view: 'stat',
+            variable: params.variable ?? this.target.variable,
+            seed: params.seed,
+            linkedPlot: params.linkedPlot ?? undefined,
+            statsId: params.statsId,
+            csvPath: this.target.csvPath,
+            sessionId: this.session.id,
+          });
+          this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
+          return;
+        }
+
+        if (method === 'broadcast_panels') {
+          // Plot <-> stats design sync: tell every tab of THIS session (never
+          // another database's). Each tab decides whether the message is for it.
+          const params = (msg.params ?? {}) as { method?: string; params?: unknown };
+          const delivered = params.method ? this.session.plots.send({ method: params.method, params: params.params ?? {} }) : 0;
+          this.session.log.appendLine(`plot panel: broadcast ${params.method} to ${delivered} tab(s)`);
+          this.panel.webview.postMessage({ id: msg.id, result: { delivered } });
+          return;
+        }
+
         if (method === 'pick_save_folder') {
           // Saving a fan-out writes N files whose names are the figure labels,
           // so the only thing left to choose is WHERE — a folder, not a name.
@@ -244,6 +281,10 @@ export class PlotPanel {
    * nothing about which is which.
    */
   private title(): string {
+    if (this.target.view === 'stat') {
+      const what = this.target.variable ? `Stats — ${this.target.variable}` : 'Stats';
+      return this.session.isPlotOnly ? what : `${what} · ${this.session.label}`;
+    }
     if (this.target.csvPath) return `Plot — ${path.basename(this.target.csvPath)}`;
     const variable = this.target.plotFunction
       ? `Plot — ${this.target.plotFunction}`
@@ -270,7 +311,10 @@ export class PlotPanel {
     // JSON.stringify, not interpolation: a variable name or file path must not
     // be able to break out of the script tag.
     const target = JSON.stringify({
-      view: 'plot',
+      view: this.target.view ?? 'plot',
+      statsId: this.target.statsId ?? null,
+      seed: this.target.seed ?? null,
+      linkedPlot: this.target.linkedPlot ?? null,
       variable: this.target.variable ?? null,
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,

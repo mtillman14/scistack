@@ -26,11 +26,17 @@ from scistackplot import PlotSpec
 
 FORMAT = 1
 
-FAMILIES = ("parametric", "nonparametric")
+#: ``spm``: statistical parametric mapping on 1-D curves (S4), via spm1d.
+FAMILIES = ("parametric", "nonparametric", "spm")
 TAILS = ("two-sided", "greater", "less")
 #: Correction family scopes (P5). ``stratum`` = one DV × one stratum, the
 #: default (S13); ``context`` = one combination of the outer grouping layers.
-FAMILY_SCOPES = ("none", "context", "stratum", "dv", "table")
+#: ``variants``: the same comparison across every variant of a sweep (S7:
+#: opt-in, never the default).
+FAMILY_SCOPES = ("none", "context", "stratum", "dv", "table", "variants")
+#: ``pinned``: the design's own variant selection (S3 default). ``sweep``: every
+#: variant of every variant axis, each analysed separately (S3, S7).
+VARIANT_MODES = ("pinned", "sweep")
 #: How a comparison's difference is spread (S14).
 DIFFERENCE_SPREADS = ("ci", "se", "sd_diff")
 FACTOR_KINDS = ("within", "between")
@@ -197,6 +203,45 @@ class Analysis:
         return cls(**{k: (dict(v) if k == "overrides" else v) for k, v in raw.items()})
 
 
+BAR_PAIRS = ("significant", "all", "adjacent")
+BAR_LABELS = ("stars", "p")
+
+
+@dataclass(frozen=True)
+class OverlaySpec:
+    """Brackets drawn back on the linked figure (S20, P6).
+
+    The rule is stored, not the bars: bars are derived from the latest
+    results at resolve time (``overlays.bars_for``). A bar the user hides is
+    a hidden comparison id, never deleted.
+    """
+
+    show: bool = False
+    #: Which analysis feeds the bars; None = the first.
+    analysis: str | None = None
+    #: ``significant`` (adjusted p < alpha), ``all``, or ``adjacent`` (levels
+    #: next to each other in level order).
+    pairs: str = "significant"
+    #: ``stars`` (* / ** / ***) or ``p`` (the adjusted p, APA).
+    label: str = "stars"
+    hidden: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check(self.pairs, BAR_PAIRS, "overlay.pairs")
+        _check(self.label, BAR_LABELS, "overlay.label")
+        object.__setattr__(self, "hidden", tuple(str(h) for h in self.hidden))
+
+    def to_dict(self) -> dict[str, Any]:
+        out = {f.name: getattr(self, f.name) for f in fields(self)}
+        out["hidden"] = list(self.hidden)
+        return {k: v for k, v in out.items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "OverlaySpec":
+        _only(raw, {f.name for f in fields(cls)}, "overlay")
+        return cls(**{k: (tuple(v) if k == "hidden" else v) for k, v in raw.items()})
+
+
 @dataclass(frozen=True)
 class StatsSpec:
     design: PlotSpec
@@ -206,11 +251,12 @@ class StatsSpec:
     comparisons: tuple[Analysis, ...] = ()
     variant_mode: str = "pinned"
     formatting: FormatSpec = field(default_factory=FormatSpec)
+    overlay: OverlaySpec = field(default_factory=OverlaySpec)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dvs", tuple(self.dvs))
         object.__setattr__(self, "comparisons", tuple(self.comparisons))
-        _check(self.variant_mode, ("pinned",), "variant_mode")  # sweep: stage 13
+        _check(self.variant_mode, VARIANT_MODES, "variant_mode")
         ids = [a.id for a in self.comparisons]
         if len(ids) != len(set(ids)):
             raise StatsSpecError(f"analysis ids must be unique, got {ids}")
@@ -235,6 +281,7 @@ class StatsSpec:
             "comparisons": [a.to_dict() for a in self.comparisons],
             "variant_mode": self.variant_mode,
             "formatting": self.formatting.to_dict(),
+            "overlay": self.overlay.to_dict(),
         }
         if self.linked_plot is not None:
             out["linked_plot"] = self.linked_plot
@@ -244,7 +291,7 @@ class StatsSpec:
     def from_dict(cls, raw: dict) -> "StatsSpec":
         if not isinstance(raw, dict):
             raise StatsSpecError(f"a stats spec must be a table, got {type(raw).__name__}")
-        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting"}, "stats spec")
+        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting", "overlay"}, "stats spec")
         if raw.get("format") != FORMAT:
             raise StatsSpecError(f"stats spec format {raw.get('format')!r} is not {FORMAT}")
         if "design" not in raw:
@@ -257,6 +304,7 @@ class StatsSpec:
             comparisons=tuple(Analysis.from_dict(a) for a in raw.get("comparisons", [])),
             variant_mode=raw.get("variant_mode", "pinned"),
             formatting=FormatSpec.from_dict(raw.get("formatting", {})),
+            overlay=OverlaySpec.from_dict(raw.get("overlay", {})),
         )
 
 

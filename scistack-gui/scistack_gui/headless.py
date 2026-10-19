@@ -85,13 +85,14 @@ def _open(db_path, *, project, discover: bool, schema_keys):
 
 def bundle_providers() -> list:
     """The bundle sections this installation can write and read, beyond
-    scidb's own ``config``: the GUI's canvas and the saved plots/presets.
+    scidb's own ``config``: the GUI's canvas, the saved plots/presets and the saved stats tables/presets.
     The one list both directions use."""
     from scistackplotdb.bundle_section import PlotsSection
+    from scistackstatsdb.bundle_section import StatsSection
 
     from scistack_gui.bundle_section import CodeSection, GuiSection
 
-    return [CodeSection(), GuiSection(), PlotsSection()]
+    return [CodeSection(), GuiSection(), PlotsSection(), StatsSection()]
 
 
 def export_open_project(out_path: "Path | str", *, options=None, db=None) -> Path:

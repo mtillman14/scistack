@@ -99,6 +99,9 @@ class SpecRequest(BaseModel):
     preview: dict | None = None
     #: Re-render the last resolve of this exact request (a pane resize).
     reuse_resolved: bool = False
+    #: Bars derived by a layer above (StatStudio test brackets), merged for
+    #: this request only through `scistackplot.diffbars.with_derived_bars`.
+    derived_bars: list[dict] | None = None
 
 
 class ExportRequest(BaseModel):
@@ -108,6 +111,7 @@ class ExportRequest(BaseModel):
     output_variable: str | None = None
     path_template: str | None = None
     finalized: bool | None = True
+    derived_bars: list[dict] | None = None
 
 
 class VariantGraphRequest(BaseModel):
@@ -167,6 +171,7 @@ class SaveRequest(BaseModel):
     depth: str | None = None
     #: For "data": one column per struct field (default) or a ColName column.
     fields_as_columns: bool | None = True
+    derived_bars: list[dict] | None = None
 
 
 class VariantSetsRequest(BaseModel):
@@ -369,10 +374,28 @@ def _location_tree(db, req: LocationTreeRequest) -> dict:
     )
 
 
+def _with_derived(spec: dict, derived: list[dict] | None) -> dict:
+    """The request's spec with derived bars joined, for this request only.
+
+    The merge is `scistackplot.diffbars.with_derived_bars` (manual bars win a
+    duplicate pair). The panel keeps saving its own spec, so derived bars are
+    never stored. Resolve, export and save all go through here, so the
+    exported figure draws the brackets the preview drew.
+    """
+    if not derived:
+        return spec
+    from scistackplot.diffbars import DifferenceBar, with_derived_bars
+
+    from scistack_gui.services.plot_service import _spec_from_payload
+
+    merged = with_derived_bars(_spec_from_payload(spec), [DifferenceBar.from_dict(b) for b in derived])
+    return merged.to_dict()
+
+
 def _resolve(db, req: SpecRequest) -> dict:
     return plot_service.resolve_figures(
         db,
-        req.spec,
+        _with_derived(req.spec, req.derived_bars),
         max_points=req.max_points,
         figure_index=req.figure_index,
         csv_path=req.csv_path,
@@ -384,7 +407,7 @@ def _resolve(db, req: SpecRequest) -> dict:
 def _export(db, req: ExportRequest) -> dict:
     return plot_service.export_code(
         db,
-        req.spec,
+        _with_derived(req.spec, req.derived_bars),
         function_name=req.function_name,
         output_variable=req.output_variable,
         path_template=req.path_template,
@@ -396,7 +419,7 @@ def _export(db, req: ExportRequest) -> dict:
 def _add_to_pipeline(db, req: ExportRequest) -> dict:
     return plot_service.add_to_pipeline(
         db,
-        req.spec,
+        _with_derived(req.spec, req.derived_bars),
         function_name=req.function_name,
         output_variable=req.output_variable,
         path_template=req.path_template,
@@ -423,7 +446,7 @@ def _save_start(db, req: SaveRequest) -> dict:
     """
     return plot_service.start_save_job(
         db,
-        req.spec,
+        _with_derived(req.spec, req.derived_bars),
         req.path,
         dpi=req.dpi if req.dpi is not None else 200,
         figure_index=req.figure_index,

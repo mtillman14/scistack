@@ -28,7 +28,7 @@ from scistacklog import Log
 from scistackplot import LongTable
 
 from .describe import DescriptivesTable
-from .format import Grid, Labels, comparisons_grid, descriptives_grids, labels_for, omnibus_grid
+from .format import Grid, Labels, comparisons_grid, descriptives_grids, labels_for, omnibus_grid, sweep_grid
 from .run import StatsReport
 from .spec import StatsSpec
 
@@ -215,4 +215,7 @@ def export_comparisons(
         omnibus = omnibus_grid(report, analysis, stats_spec, labels)
         if omnibus is not None:
             grids.append(omnibus)
+        swept = sweep_grid(report, analysis, stats_spec, labels)
+        if swept is not None:
+            grids.append(swept)
     return render(grids, fmt, data=report.to_dict())

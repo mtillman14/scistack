@@ -2875,6 +2875,27 @@ var PlotPanel = class _PlotPanel {
           }
           return;
         }
+        if (method === "open_stat_panel") {
+          const params = msg.params ?? {};
+          await vscode6.commands.executeCommand("scistack.openPlotPanel", {
+            view: "stat",
+            variable: params.variable ?? this.target.variable,
+            seed: params.seed,
+            linkedPlot: params.linkedPlot ?? void 0,
+            statsId: params.statsId,
+            csvPath: this.target.csvPath,
+            sessionId: this.session.id
+          });
+          this.panel.webview.postMessage({ id: msg.id, result: { ok: true } });
+          return;
+        }
+        if (method === "broadcast_panels") {
+          const params = msg.params ?? {};
+          const delivered = params.method ? this.session.plots.send({ method: params.method, params: params.params ?? {} }) : 0;
+          this.session.log.appendLine(`plot panel: broadcast ${params.method} to ${delivered} tab(s)`);
+          this.panel.webview.postMessage({ id: msg.id, result: { delivered } });
+          return;
+        }
         if (method === "pick_save_folder") {
           try {
             const uris = await vscode6.window.showOpenDialog({
@@ -2942,6 +2963,10 @@ var PlotPanel = class _PlotPanel {
    * nothing about which is which.
    */
   title() {
+    if (this.target.view === "stat") {
+      const what = this.target.variable ? `Stats \u2014 ${this.target.variable}` : "Stats";
+      return this.session.isPlotOnly ? what : `${what} \xB7 ${this.session.label}`;
+    }
     if (this.target.csvPath)
       return `Plot \u2014 ${path6.basename(this.target.csvPath)}`;
     const variable = this.target.plotFunction ? `Plot \u2014 ${this.target.plotFunction}` : this.target.variable ? `Plot \u2014 ${this.target.variable}` : "Plot";
@@ -2964,7 +2989,10 @@ var PlotPanel = class _PlotPanel {
     );
     const nonce = getNonce2();
     const target = JSON.stringify({
-      view: "plot",
+      view: this.target.view ?? "plot",
+      statsId: this.target.statsId ?? null,
+      seed: this.target.seed ?? null,
+      linkedPlot: this.target.linkedPlot ?? null,
       variable: this.target.variable ?? null,
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,

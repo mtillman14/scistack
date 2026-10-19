@@ -301,6 +301,7 @@ _WRITE_ALLOWLIST = {
     ("bundle_section.py", "import_"): "writes a NEW project's code (bundle import), not an edit to undo",
     ("bundle_section.py", "_verbatim_import"): "writes a NEW project's layout (bundle import), not an edit to undo",
     ("services/plot_service.py", "_figure_filename"): "export manifest",
+    ("services/stats_service.py", "export"): "export",
     ("layout.py", "_replace_with_retry"): "helper; its caller _save notes the write",
 }
 

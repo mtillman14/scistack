@@ -29,7 +29,10 @@ from scistacklog import Log
 LAYER = "scistackstats"
 
 #: Tests that compare the two levels of one factor.
-PAIRWISE_TESTS = ("ttest_ind_welch", "ttest_ind_student", "ttest_paired", "mann_whitney", "wilcoxon")
+PAIRWISE_TESTS = (
+    "ttest_ind_welch", "ttest_ind_student", "ttest_paired", "mann_whitney", "wilcoxon",
+    "spm_ttest2", "spm_ttest_paired",
+)
 #: Omnibus tests over every factor of a design.
 OMNIBUS_TESTS = ("anova", "kruskal", "friedman")
 
@@ -97,6 +100,8 @@ class CsvStatsEngine:
                 )
             if test in ("mann_whitney", "wilcoxon"):
                 return core.rank_test(data, dv, **design, alpha=alpha, ci_level=ci_level, tails=tails)
+            if test in ("spm_ttest2", "spm_ttest_paired"):
+                return core.spm_ttest(data, dv, **design, alpha=alpha, ci_level=ci_level, tails=tails)
             if test == "anova":
                 return core.anova(data, dv, **design, alpha=alpha, ci_level=ci_level)
             if test == "kruskal":
@@ -175,8 +180,12 @@ class FakeEngine:
         if test in PAIRWISE_TESTS:
             (factor,) = factors
             a, b = (levels or {})[factor]
-            ma = float(data.loc[data[factor] == a, dv].mean())
-            mb = float(data.loc[data[factor] == b, dv].mean())
+            if test.startswith("spm_"):
+                # Curves: no scalar mean; a fixed fake cluster so the report has one.
+                ma = mb = 0.0
+            else:
+                ma = float(data.loc[data[factor] == a, dv].mean())
+                mb = float(data.loc[data[factor] == b, dv].mean())
             effect = {
                 "term": factor, "a": str(a), "b": str(b), "statistic_name": "t",
                 "statistic": ma - mb, "df": [float(len(data) - 2)], "df_method": "fake",
@@ -187,6 +196,9 @@ class FakeEngine:
                 "effect_sizes": {name: {"name": name, "value": 0.5, "ci": None}
                                  for name in ("d_s", "g_s", "d_z", "d_av", "d_rm", "rank_biserial")},
             }
+            if test.startswith("spm_"):
+                effect.update(clusters=[{"start": 40.0, "end": 60.0, "p": effect["p"], "extent": 20.0}],
+                              threshold=3.0, effect_size=None, effect_sizes={})
             effects = [effect]
         else:
             terms = list(factors)

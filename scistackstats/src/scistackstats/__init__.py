@@ -25,13 +25,14 @@ Design: ``docs/claude/statistics-design.md``; plan ``.claude/plan-statistics.md`
 
 from __future__ import annotations
 
+from .codegen import NotExportable, generate_stats_function, why_not_exportable
 from .catalog import TESTS, available_tests, select_tests, why_unavailable
 from .describe import CELL_LAYOUTS, STATISTICS, DescriptivesTable, describe_table
 from .design import Design, Factor, Tiers, comparison_tiers, derive_design
 from .effects import EFFECT_SIZES, DifferenceSpec, default_effect_size, difference_spec
 from .engine import CsvStatsEngine, EngineRefusal, FakeEngine, get_engine, use_engine
 from .export import FORMATS, export_comparisons, export_descriptives, render
-from .format import Grid, Labels, apa_sentence, comparisons_grid, descriptives_grids, labels_for, omnibus_grid
+from .format import Grid, Labels, apa_sentence, comparisons_grid, descriptives_grids, labels_for, omnibus_grid, sweep_grid
 from .run import Comparison, StatsReport, run
 from .seed import SeedError, Seeded, seed_from_plot
 from .spec import DV, Analysis, DescriptiveSpec, FormatSpec, StatsSpec, StatsSpecError
@@ -46,5 +47,13 @@ __all__ = [
     "difference_spec", "get_engine", "load_tables", "run", "seed_from_plot", "select_tests",
     "use_engine", "why_unavailable",
     "FORMATS", "FormatSpec", "Grid", "Labels", "apa_sentence", "comparisons_grid", "descriptives_grids",
-    "export_comparisons", "export_descriptives", "labels_for", "omnibus_grid", "render",
+    "export_comparisons", "export_descriptives", "labels_for", "omnibus_grid", "render", "sweep_grid",
+    "NotExportable", "generate_stats_function", "why_not_exportable",
 ]
+
+try:
+    from importlib import metadata as _metadata
+
+    __version__ = _metadata.version("scistackstats")
+except Exception:  # pragma: no cover - running from a source tree
+    __version__ = "0.0.0"
