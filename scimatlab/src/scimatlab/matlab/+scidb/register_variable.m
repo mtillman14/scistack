@@ -25,8 +25,10 @@ function register_variable(type_arg, options)
     end
 
     type_name = class(type_arg);
+    codec = scidb.internal.codec(type_name);
 
     py.scimatlab.bridge.register_matlab_variable( ...
         type_name, ...
-        int64(options.schema_version));
+        int64(options.schema_version), ...
+        pyargs('codec', codec.has_codec));
 end

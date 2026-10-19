@@ -31,8 +31,12 @@ function exclude_schema(reason, varargin)
     for i = 1:2:numel(varargin)
         key = char(string(varargin{i}));
         val = varargin{i + 1};
-        if isnumeric(val) && isscalar(val) && val == floor(val)
-            py_keys{key} = py.int(int64(val));
+        is_whole = false;
+        if isnumeric(val) && isscalar(val)
+            [py_num, is_whole] = scidb.internal.number_to_python(val);
+        end
+        if is_whole
+            py_keys{key} = py_num;
         else
             py_keys{key} = py.str(char(string(val)));
         end

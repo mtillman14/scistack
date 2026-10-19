@@ -207,10 +207,22 @@ function [py_obj, col_stats] = to_python(data)
                                 elem_data = elem_data';
                             end
 
-                            % Bypass numpy for simple numeric/logical arrays to avoid
-                            % libmwbuffer errors. Convert directly to Python lists.
-                            % Pandas can handle lists fine for DataFrame columns.
-                            if (isnumeric(elem_data) || islogical(elem_data)) && ~isscalar(elem_data)
+                            % Bypass numpy for simple numeric/logical VECTORS to
+                            % avoid libmwbuffer errors. Convert directly to Python
+                            % lists. A 2-D MATRIX must keep its shape: flattened
+                            % to a list, a 4x3 for_each output was saved as a
+                            % 12-element list (TestEndToEnd/
+                            % test_matrix_through_pipeline). It crosses as a
+                            % shaped ndarray, as a direct save() of it does;
+                            % pandas keeps a list of ndarrays as an object column.
+                            is_num = isnumeric(elem_data) || islogical(elem_data);
+                            if is_num && ~isempty(elem_data) && ~isscalar(elem_data) ...
+                                    && ~isvector(elem_data)
+                                elem = scidb.internal.to_python(elem_data);
+                                scidb.Log.debug(['to_python: column "%s" elem %d is a ' ...
+                                    '[%s] matrix, sent shaped'], col_names{i}, k, ...
+                                    num2str(size(elem_data)));
+                            elseif is_num && ~isscalar(elem_data)
                                 % Convert MATLAB array -> Python list (avoiding MATLAB numpy bridge)
                                 elem = py.list(num2cell(elem_data(:)'));
                             else

@@ -752,6 +752,15 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             o, output_names{o}, height(tbl), width(tbl), ...
             strjoin(string(tbl.Properties.VariableNames), ', '));
         t_out = tic;
+        % Whole-number metadata crosses as int64, as save() and Python's
+        % for_each send it (scidb.internal.metadata_number). The returned
+        % table still holds doubles: from_python converts every numpy
+        % numeric dtype to double.
+        [tbl, cast_cols] = scidb.internal.whole_metadata_columns(tbl, output_names);
+        if ~isempty(cast_cols)
+            scidb.Log.debug('scifor output %d (%s): metadata sent as int64: %s', ...
+                o, output_names{o}, strjoin(cast_cols, ', '));
+        end
         [py_df, col_stats] = scidb.internal.to_python(tbl);
         py_result_dfs.append(py_df);
         w = whos('tbl');

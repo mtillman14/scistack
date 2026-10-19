@@ -2440,7 +2440,11 @@ function [meta_args, opts] = split_options(varargin)
     i = 1;
     while i <= numel(varargin)
         key = varargin{i};
-        if (ischar(key) || isstring(key)) && any(lower(string(key)) == db_only)
+        % Only a single name can be an option: metadata VALUES are walked
+        % past here too, and a string-array value (e.g. ["1","2","3"])
+        % compared against db_only is a size mismatch (MATLAB:dimagree).
+        if (ischar(key) || (isstring(key) && isscalar(key))) ...
+                && any(lower(string(key)) == db_only)
             opts.discarded{end+1} = sprintf('%s=%s', lower(string(key)), ...
                 short_value(varargin{i+1}));
             i = i + 2;

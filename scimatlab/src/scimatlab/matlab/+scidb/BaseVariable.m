@@ -14,6 +14,27 @@ classdef BaseVariable < dynamicprops
 %   The class name becomes the database table name automatically via
 %   class(obj).  No additional properties or methods are needed.
 %
+%   Custom storage: to save a value of your own class (an object, not a
+%   numeric/string/struct/table), override BOTH conversions. save() and
+%   load() then call them automatically:
+%
+%       classdef MarkerTrajectory < scidb.BaseVariable
+%           methods
+%               function tbl = to_db(obj)       % obj.data -> table
+%                   tbl = table(obj.data.t(:), 'VariableNames', {'t'});
+%               end
+%           end
+%           methods (Static)
+%               function data = from_db(tbl)    % table -> original value
+%                   data = Trajectory(tbl.t);
+%               end
+%           end
+%       end
+%
+%   Changing how a variable is stored is a change of type: raise its
+%   schema_version (scidb.register_variable) when old records no longer
+%   load. Python and the GUI read such a variable as its stored table.
+%
 %   Properties (populated after load):
 %       data         - The loaded data (MATLAB native type)
 %       record_id    - Unique record identifier (string)
@@ -160,15 +181,23 @@ classdef BaseVariable < dynamicprops
         %       RawSignal().save(data, db=db2, subject=1);
 
             type_name = class(obj);
-            py_class = scidb.internal.ensure_registered(type_name);
+            [py_class, codec] = scidb.internal.ensure_registered(type_name);
 
             % Extract db option and build kwargs (needed for all paths)
             [metadata_nv, db_val] = extract_db(varargin);
             py_kwargs = scidb.internal.metadata_to_pykwargs(metadata_nv{:});
 
+            % Custom to_db/from_db: store the class's to_db table. It is one
+            % record, never auto-distributed (Python's custom path never
+            % distributes either). A re-saved BaseVariable is already stored.
+            if codec.has_codec && ~isa(data, 'scidb.BaseVariable')
+                encoded = codec.encode({data});
+                data = encoded{1};
+            end
+
             % Auto-detect table-distribute: if data is a table with columns
             % matching the configured schema keys, dispatch to save_from_table.
-            if istable(data)
+            if istable(data) && ~codec.has_codec
                 if isempty(db_val)
                     py_db_check = py.scidb.database.get_database();
                 else
@@ -266,7 +295,7 @@ classdef BaseVariable < dynamicprops
         %           experiment="exp1");
 
             type_name = class(obj);
-            scidb.internal.ensure_registered(type_name);
+            [~, codec] = scidb.internal.ensure_registered(type_name);
 
             % Normalise inputs
             if isstring(data_column), data_column = char(data_column); end
@@ -285,6 +314,20 @@ classdef BaseVariable < dynamicprops
 
             % --- Convert data column to Python (numpy for numeric) ---
             data_col = tbl.(data_column);
+
+            % Custom to_db/from_db: to_db on EVERY row first; the cell of
+            % tables then crosses the bridge in one piece (Strategy A
+            % vertcat + row heights) and Python saves the batch at once.
+            if codec.has_codec
+                if istable(data_col)
+                    data_col = arrayfun(@(r) data_col(r, :), ...
+                        (1:height(data_col))', 'UniformOutput', false);
+                elseif ~iscell(data_col)
+                    data_col = num2cell(data_col);
+                end
+                data_col = codec.encode(data_col(:));
+            end
+
             if isdatetime(data_col)
                 data_col = string(data_col, 'yyyy-MM-dd''T''HH:mm:ss.SSS');
             end
@@ -369,7 +412,9 @@ classdef BaseVariable < dynamicprops
                     col = json_strs;
                 end
                 if isnumeric(col)
-                    py_meta_cols.append(py.numpy.array(col(:)'));
+                    % Same int-vs-float rule as save()'s metadata, so one
+                    % location gets one record id on both routes.
+                    py_meta_cols.append(scidb.internal.number_to_python(col(:)'));
                 elseif isstring(col)
                     % Join into single string (1 boundary crossing vs N)
                     py_meta_cols.append(strjoin(col(:)', char(30)));
@@ -451,7 +496,7 @@ classdef BaseVariable < dynamicprops
         %       disp(var.record_id); disp(var.branch_params); disp(var.where);
 
             type_name = class(obj);
-            py_class = scidb.internal.ensure_registered(type_name);
+            [py_class, codec] = scidb.internal.ensure_registered(type_name);
 
             [metadata_args, version, as_table, db_val, where, categorical_flag, introspect] = ...
                 split_load_args(varargin{:});
@@ -485,6 +530,15 @@ classdef BaseVariable < dynamicprops
             end
 
             results_arr = scidb.BaseVariable.wrap_py_vars_batch(bulk);
+
+            % Custom to_db/from_db: the batch arrives as stored tables;
+            % from_db rebuilds every value in one pass.
+            if codec.has_codec
+                decoded = codec.decode({results_arr.data});
+                for ii = 1:numel(results_arr)
+                    results_arr(ii).data = decoded{ii};
+                end
+            end
 
             if as_table
                 result = multi_result_to_table(results_arr, type_name, categorical_flag);

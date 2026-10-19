@@ -1424,74 +1424,8 @@ class DatabaseManager:
             else 0
         )
 
-        # Ensure table exists, with this save's columns.
-        self._check_column_set(table_name, variable_class, list(df.columns))
-        if not self._duck._table_exists(table_name):
-            col_defs = []
-            for col in df.columns:
-                dtype = df[col].dtype
-                if pd.api.types.is_integer_dtype(dtype):
-                    ddb_type = "BIGINT"
-                elif pd.api.types.is_float_dtype(dtype):
-                    ddb_type = "DOUBLE"
-                elif pd.api.types.is_bool_dtype(dtype):
-                    ddb_type = "BOOLEAN"
-                elif dtype == object:
-                    first_val = next(
-                        (
-                            v
-                            for v in df[col]
-                            if v is not None
-                            and not (isinstance(v, float) and np.isnan(v))
-                        ),
-                        None,
-                    )
-                    if isinstance(first_val, np.ndarray) and np.issubdtype(
-                        first_val.dtype, np.number
-                    ):
-                        ddb_type = "DOUBLE[]"
-                    elif (
-                        isinstance(first_val, list)
-                        and len(first_val) > 0
-                        and all(isinstance(x, (int, float)) for x in first_val)
-                    ):
-                        ddb_type = "DOUBLE[]"
-                    else:
-                        ddb_type = "VARCHAR"
-                else:
-                    ddb_type = "VARCHAR"
-                col_defs.append(f'"{col}" {ddb_type}')
-
-            data_cols_sql = ", ".join(col_defs)
-            self._duck._execute(f"""
-                CREATE TABLE "{table_name}" (
-                    record_id VARCHAR NOT NULL,
-                    {data_cols_sql}
-                )
-            """)
-            self._create_variable_view(variable_class)
-            Log.debug(f"_save_columnar: created table '{table_name}'")
-
-        # Only insert if this record_id doesn't already exist
-        existing_count = self._duck._fetchall(
-            f'SELECT COUNT(*) FROM "{table_name}" WHERE record_id = ?',
-            [record_id],
-        )[0][0]
-
-        if existing_count == 0:
-            insert_df = df.copy()
-            insert_df.insert(0, "record_id", record_id)
-            col_str = ", ".join(f'"{c}"' for c in insert_df.columns)
-            self._duck.con.execute(
-                f'INSERT INTO "{table_name}" ({col_str}) SELECT * FROM insert_df'
-            )
-            Log.debug(
-                f"_save_columnar: inserted {len(df)} rows into '{table_name}', record_id={record_id[:12]}"
-            )
-        else:
-            Log.debug(
-                f"_save_columnar: record_id={record_id[:12]} already exists in '{table_name}', skipped"
-            )
+        self._ensure_columnar_table(table_name, variable_class, df)
+        self._insert_columnar_frames(table_name, [(record_id, df)])
 
         # Upsert into _variables (one row per variable)
         effective_level = schema_level or self.dataset_schema_keys[-1]
@@ -1520,6 +1454,139 @@ class DatabaseManager:
         )
 
         return schema_id
+
+    def _ensure_columnar_table(
+        self,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        df: pd.DataFrame,
+    ) -> None:
+        """Create the columnar (``"custom": True``) data table from *df*'s
+        columns if it does not exist yet; check the column set if it does.
+
+        The one owner of the columnar table's shape, shared by ``save`` and
+        ``save_batch`` so both paths store a custom-serialized variable alike.
+        """
+        self._check_column_set(table_name, variable_class, list(df.columns))
+        if self._duck._table_exists(table_name):
+            return
+        col_defs = []
+        for col in df.columns:
+            dtype = df[col].dtype
+            if pd.api.types.is_integer_dtype(dtype):
+                ddb_type = "BIGINT"
+            elif pd.api.types.is_float_dtype(dtype):
+                ddb_type = "DOUBLE"
+            elif pd.api.types.is_bool_dtype(dtype):
+                ddb_type = "BOOLEAN"
+            elif dtype == object:
+                first_val = next(
+                    (
+                        v
+                        for v in df[col]
+                        if v is not None
+                        and not (isinstance(v, float) and np.isnan(v))
+                    ),
+                    None,
+                )
+                if isinstance(first_val, np.ndarray) and np.issubdtype(
+                    first_val.dtype, np.number
+                ):
+                    ddb_type = "DOUBLE[]"
+                elif (
+                    isinstance(first_val, list)
+                    and len(first_val) > 0
+                    and all(isinstance(x, (int, float)) for x in first_val)
+                ):
+                    ddb_type = "DOUBLE[]"
+                else:
+                    ddb_type = "VARCHAR"
+            else:
+                ddb_type = "VARCHAR"
+            col_defs.append(f'"{col}" {ddb_type}')
+
+        data_cols_sql = ", ".join(col_defs)
+        self._duck._execute(f"""
+            CREATE TABLE "{table_name}" (
+                record_id VARCHAR NOT NULL,
+                {data_cols_sql}
+            )
+        """)
+        self._create_variable_view(variable_class)
+        Log.debug(f"_ensure_columnar_table: created table '{table_name}'")
+
+    def _insert_columnar_frames(
+        self,
+        table_name: str,
+        frames: "list[tuple[str, pd.DataFrame]]",
+    ) -> int:
+        """Insert ``(record_id, frame)`` pairs into a columnar data table in
+        ONE statement, skipping record_ids already stored (one lookup query)
+        and repeats within *frames*. Returns the number of records inserted.
+
+        The table has no PRIMARY KEY (one row per frame row), so dedup is
+        done here rather than by ``ON CONFLICT``.
+        """
+        if not frames:
+            return 0
+        rids = list(dict.fromkeys(rid for rid, _ in frames))
+        placeholders = ", ".join(["?"] * len(rids))
+        existing = {
+            r[0]
+            for r in self._duck._fetchall(
+                f'SELECT DISTINCT record_id FROM "{table_name}" '
+                f"WHERE record_id IN ({placeholders})",
+                rids,
+            )
+        }
+        new_parts = []
+        seen: set[str] = set(existing)
+        for rid, df in frames:
+            if rid in seen:
+                continue
+            seen.add(rid)
+            part = df.reset_index(drop=True)
+            part.insert(0, "record_id", rid)
+            new_parts.append(part)
+        if not new_parts:
+            Log.debug(
+                f"_insert_columnar_frames: all {len(rids)} record(s) already in "
+                f"'{table_name}', skipped"
+            )
+            return 0
+        insert_df = (
+            new_parts[0]
+            if len(new_parts) == 1
+            else pd.concat(new_parts, ignore_index=True)
+        )
+        col_str = ", ".join(f'"{c}"' for c in insert_df.columns)
+        self._duck.con.register("__columnar_insert", insert_df)
+        try:
+            self._duck.con.execute(
+                f'INSERT INTO "{table_name}" ({col_str}) '
+                f"SELECT {col_str} FROM __columnar_insert"
+            )
+        finally:
+            self._duck.con.unregister("__columnar_insert")
+        Log.debug(
+            f"_insert_columnar_frames: inserted {len(new_parts)} record(s), "
+            f"{len(insert_df)} row(s) into '{table_name}' "
+            f"({len(existing)} already stored)"
+        )
+        return len(new_parts)
+
+    def _custom_storage_frame(self, variable: BaseVariable) -> pd.DataFrame:
+        """The frame a custom-serialized *variable* is stored (and hashed) as:
+        its ``to_db()`` result. THE owner of calling ``to_db`` on save, for
+        both ``save`` and ``save_batch``; raises a ``TypeError`` naming the
+        class when ``to_db`` does not return a DataFrame."""
+        df = variable.to_db()
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(
+                f"{type(variable).__name__}.to_db() must return a pandas "
+                f"DataFrame, got {type(df).__name__}"
+            )
+        return df
 
     def _save_native(
         self,
@@ -1659,17 +1726,40 @@ class DatabaseManager:
         type_name = variable_class.__name__
         schema_version = variable_class.schema_version
 
+        # --- Custom serialization (to_db/from_db): convert first, then batch ---
+        # Every item becomes its to_db() frame BEFORE any hashing or SQL, so the
+        # rest of the batch (hashing, record ids, dedup, one bulk insert, the
+        # _record/_record_save rows) runs on stored frames exactly as `save`
+        # stores one: the columnar ("custom": True) table. Loads then hand each
+        # record's frame to from_db (_deserialize_custom_subdf).
+        is_custom = self._has_custom_serialization(variable_class)
+        if is_custom:
+            _t = time.perf_counter()
+            data_items = [
+                (self._custom_storage_frame(variable_class(d)), m)
+                for d, m in data_items
+            ]
+            timings["to_db"] = time.perf_counter() - _t
+            Log.debug(
+                f"save_batch({type_name}): custom serialization, to_db() on "
+                f"{len(data_items)} item(s) in {timings['to_db']:.3f}s"
+            )
+
         # --- One-time setup from first item ---
         first_data, first_meta = data_items[0]
 
-        data_col_types, dtype_meta = infer_data_columns(first_data)
+        if is_custom:
+            data_col_types = {c: str(first_data[c].dtype) for c in first_data.columns}
+            dtype_meta = {"custom": True}
+        else:
+            data_col_types, dtype_meta = infer_data_columns(first_data)
         is_dataframe = dtype_meta.get("mode") == "dataframe"
 
         # Reference-schema selection: a leading degenerate record (e.g. an
         # empty dict -> no columns) must not define the table schema. Fall back
         # to the first record that yields a usable (non-empty) schema. The
         # degenerate record itself is caught by the validation pass below.
-        if not data_col_types and not is_dataframe:
+        if not data_col_types and not is_dataframe and not is_custom:
             for _dv, _ in data_items:
                 _ct, _dm = infer_data_columns(_dv)
                 if _ct:
@@ -1714,8 +1804,18 @@ class DatabaseManager:
             valid_items = []
             valid_orig_idx = []
             for _idx, (_dv, _fm) in enumerate(data_items):
-                _rec_col_types, _ = infer_data_columns(_dv)
-                _reason = record_schema_mismatch(data_col_types, _rec_col_types)
+                if is_custom:
+                    # One table per variable: every to_db() frame in the batch
+                    # must have the first frame's columns, in order.
+                    _reason = (
+                        None
+                        if list(_dv.columns) == list(data_col_types)
+                        else f"to_db() columns {list(_dv.columns)} differ from "
+                        f"the batch's {list(data_col_types)}"
+                    )
+                else:
+                    _rec_col_types, _ = infer_data_columns(_dv)
+                    _reason = record_schema_mismatch(data_col_types, _rec_col_types)
                 if _reason is None:
                     valid_items.append((_dv, _fm))
                     valid_orig_idx.append(_idx)
@@ -1744,8 +1844,11 @@ class DatabaseManager:
             valid_orig_idx = list(range(n_original))
 
         # A variable keeps the columns of its first save (_check_column_set).
-        self._check_column_set(table_name, variable_class, list(data_col_types))
-        if not self._duck._table_exists(table_name):
+        if is_custom:
+            self._ensure_columnar_table(table_name, variable_class, first_data)
+        else:
+            self._check_column_set(table_name, variable_class, list(data_col_types))
+        if not is_custom and not self._duck._table_exists(table_name):
             data_cols_sql = ", ".join(
                 f'"{col}" {dtype}' for col, dtype in data_col_types.items()
             )
@@ -1848,6 +1951,8 @@ class DatabaseManager:
         # the dominant cost; bulk_df_to_storage_rows processes column-by-column.
         _df_bulk: list = []
         _df_bulk_rids: list = []
+        # Custom serialization: (record_id, to_db frame) for one bulk insert.
+        _custom_frames: list = []
 
         for i, (data_val, flat_meta) in enumerate(data_items):
             nested = all_nested[i]
@@ -1911,6 +2016,8 @@ class DatabaseManager:
                 _arrow_record_ids.append(record_id)
                 for col in data_col_types:
                     _arrow_col_arrays[col].append(data_val[col])
+            elif is_custom:
+                _custom_frames.append((record_id, data_val))
             elif is_dataframe:
                 _df_bulk.append(data_val)
                 _df_bulk_rids.append(record_id)
@@ -1956,6 +2063,9 @@ class DatabaseManager:
         if _use_arrow:
             # Arrow path: ON CONFLICT DO NOTHING handles dedup in the INSERT.
             new_data_rows = _arrow_record_ids  # for count only
+        elif is_custom:
+            # _insert_columnar_frames does the dedup lookup itself (one query).
+            new_data_rows = []
         elif is_dataframe:
             # No PRIMARY KEY: filter out rows whose record_id already exists.
             all_new_rids = list({row[0] for row in data_table_rows})
@@ -2022,6 +2132,14 @@ class DatabaseManager:
                     )
                 finally:
                     self._duck.con.unregister("arrow_table")
+                timings["data_insert"] = time.perf_counter() - t6b
+            elif is_custom:
+                timings["data_df_create"] = time.perf_counter() - t6a
+                t6b = time.perf_counter()
+                _n_custom_new = self._insert_columnar_frames(
+                    table_name, _custom_frames
+                )
+                new_data_rows = [None] * _n_custom_new  # for count only
                 timings["data_insert"] = time.perf_counter() - t6b
             elif new_data_rows:
                 all_columns = ["record_id"] + list(data_col_types.keys())
@@ -2095,7 +2213,12 @@ class DatabaseManager:
 
         n = len(data_items)
         n_new = len(new_data_rows)
-        n_total_rows = len(_arrow_record_ids) if _use_arrow else len(data_table_rows)
+        if _use_arrow:
+            n_total_rows = len(_arrow_record_ids)
+        elif is_custom:
+            n_total_rows = sum(len(_df) for _, _df in _custom_frames)
+        else:
+            n_total_rows = len(data_table_rows)
         # Phase breakdown at INFO, not DEBUG. This path is measured in tens of
         # seconds on payload-heavy batches (77.3s for 419 RawEMG records,
         # 2026-09-13) and a single opaque total gives no way to tell hashing
@@ -2107,7 +2230,8 @@ class DatabaseManager:
             timings,
             extra=(
                 f"{n} items ({n_new} new rows, {n_total_rows} total storage rows), "
-                f"{len(unique_schema_combos)} schemas, {_hash_paths}"
+                f"{len(unique_schema_combos)} schemas, {_hash_paths}, "
+                f"serialization={'custom' if is_custom else 'native'}"
             ),
             top=6,
         )
@@ -2947,8 +3071,13 @@ class DatabaseManager:
                 if isinstance(v, _array_mod.array):
                     variable.data[k] = np.array(v)
 
-        # Compute content hash
-        content_hash = canonical_hash(variable.data)
+        # Compute content hash. A custom-serialized variable is hashed by its
+        # STORED form (the to_db() frame), as in save_batch: its value may be an
+        # object canonical_hash cannot serialize, and one stored table must mean
+        # one record whichever save path wrote it.
+        is_custom = self._has_custom_serialization(type(variable))
+        custom_df = self._custom_storage_frame(variable) if is_custom else None
+        content_hash = canonical_hash(custom_df if is_custom else variable.data)
 
         # Generate record_id
         record_id = generate_record_id(
@@ -2958,9 +3087,7 @@ class DatabaseManager:
             metadata=nested_metadata,
         )
 
-        serialization = (
-            "custom" if self._has_custom_serialization(type(variable)) else "native"
-        )
+        serialization = "custom" if is_custom else "native"
         Log.debug(
             f"save({type_name}): record_id={record_id[:12]}, content_hash={content_hash[:12]}, serialization={serialization}"
         )
@@ -2976,9 +3103,9 @@ class DatabaseManager:
             schema_level = self._infer_schema_level(schema_keys)
             created_at = datetime.now().isoformat()
 
-            if self._has_custom_serialization(type(variable)):
-                # Custom serialization: user provides to_db() → DataFrame
-                df = variable.to_db()
+            if is_custom:
+                # Custom serialization: the to_db() frame computed for the hash
+                df = custom_df
 
                 if index is not None:
                     index_list = list(index) if not isinstance(index, list) else index

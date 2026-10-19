@@ -26,13 +26,8 @@ function kwargs = metadata_to_pykwargs(varargin)
         if isstring(val) && isscalar(val)
             val = char(val);
         elseif isnumeric(val) && isscalar(val)
-            % Whole numbers → py.int so str() gives "1" not "1.0"
-            % (schema keys are VARCHAR in DuckDB)
-            if val == floor(val)
-                val = py.int(int64(val));
-            else
-                val = py.float(double(val));
-            end
+            % Whole numbers → py.int (scidb.internal.number_to_python)
+            val = scidb.internal.number_to_python(val);
         elseif isstruct(val)
             % Structs become JSON strings so they can be stored as
             % version keys (e.g. config structs).

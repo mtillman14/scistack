@@ -48,6 +48,17 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
             end
         end
 
+        function test_one_row_table(testCase)
+            % A 1x1 numeric column crosses the bridge as a scalar, which
+            % py.numpy.array turns into a 0-d array (tolist() -> a number).
+            tbl = table(1, "A", 0.5, ...
+                'VariableNames', {'subject','session','MyVar'});
+            ids = ScalarVar().save_from_table(tbl, "MyVar", ["subject","session"]);
+            testCase.verifyEqual(numel(ids), 1);
+            r = ScalarVar().load('subject', 1, 'session', 'A');
+            testCase.verifyEqual(r.data, 0.5, 'AbsTol', 1e-10);
+        end
+
         function test_data_loads_back_correctly(testCase)
             tbl = table([1;1;2], ["A";"B";"A"], [0.5;0.6;0.7], ...
                 'VariableNames', {'subject','session','MyVar'});

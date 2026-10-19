@@ -23,6 +23,26 @@ classdef TestFromPython < matlab.unittest.TestCase
             testCase.verifyEqual(result, 42);
         end
 
+        function test_numpy_int64_scalar_converts_to_double(testCase)
+            % An integer record loads back as np.int64; it must not come
+            % back as a raw py.numpy.int64 (TestSaveFromTable/test_integer_data).
+            result = scidb.internal.from_python(py.numpy.int64(100));
+            testCase.verifyClass(result, 'double');
+            testCase.verifyEqual(result, 100);
+        end
+
+        function test_numpy_float32_scalar_converts_to_double(testCase)
+            result = scidb.internal.from_python(py.numpy.float32(1.5));
+            testCase.verifyClass(result, 'double');
+            testCase.verifyEqual(result, 1.5);
+        end
+
+        function test_numpy_bool_scalar_converts_to_logical(testCase)
+            result = scidb.internal.from_python(py.numpy.bool_(true));
+            testCase.verifyClass(result, 'logical');
+            testCase.verifyTrue(result);
+        end
+
         function test_py_float_converts_to_double(testCase)
             result = scidb.internal.from_python(py.float(3.14));
             testCase.verifyClass(result, 'double');

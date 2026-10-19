@@ -317,6 +317,20 @@ function data = from_python(py_obj)
         data = scidb.internal.pydict_to_struct(py_obj);
 
     else
+        % numpy scalar (np.int64, np.float32, np.bool_ ...): an integer
+        % record loads back as np.int64. .item() gives the Python scalar,
+        % which converts by the rules above (bool -> logical, else double).
+        % Without this it reached the double() last resort below, which
+        % does not reliably accept a numpy scalar, and came back RAW
+        % (TestSaveFromTable/test_integer_data, 2026-10-18). The check runs
+        % in Python: in MATLAB, py.numpy.generic as an argument CALLS the
+        % class rather than naming it, so a MATLAB-side isinstance fails.
+        np_item = cell(py.scimatlab.bridge.numpy_scalar_to_python(py_obj));
+        if np_item{1}
+            data = scidb.internal.from_python(np_item{2});
+            return;
+        end
+
         % Fallback: isa() can miss pandas DataFrames depending on MATLAB
         % version / class proxy resolution.  Use Python isinstance as a
         % robust secondary check before giving up.

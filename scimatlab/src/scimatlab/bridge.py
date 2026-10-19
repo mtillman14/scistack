@@ -1746,12 +1746,77 @@ def convert_nested_dicts_to_json(py_list):
         return None
 
 
-def register_matlab_variable(type_name: str, schema_version: int = 1):
+#: Type names already warned about a MATLAB codec shadowed by a Python class.
+_CODEC_CONFLICT_WARNED: set = set()
+
+
+def _matlab_codec_to_db(self):
+    """Surrogate ``to_db`` for a MATLAB class with its own ``to_db``/``from_db``.
+
+    MATLAB already ran the class's ``to_db`` (``+scidb/+internal/codec.m``), so
+    the value arriving here IS the stored table. Anything else means a save
+    path reached Python without MATLAB's ``to_db`` applied.
+    """
+    import pandas as pd
+
+    if not isinstance(self.data, pd.DataFrame):
+        raise TypeError(
+            f"MATLAB variable {type(self).__name__} has custom to_db/from_db, "
+            f"but the value reached Python without MATLAB's to_db() applied "
+            f"(got {type(self.data).__name__}, expected a table)"
+        )
+    return self.data
+
+
+def _matlab_codec_from_db(cls, df):
+    """Surrogate ``from_db``: hand the stored table back unchanged. MATLAB's
+    own ``from_db`` rebuilds the object on the MATLAB side."""
+    return df
+
+
+def _sync_matlab_codec(surrogate, codec) -> None:
+    """Attach (``codec=True``) or detach (``False``) the pass-through codec on
+    a MATLAB surrogate; ``None`` leaves it as it is.
+
+    The flag is what ``DatabaseManager._has_custom_serialization`` reads, so a
+    codec surrogate is stored in the columnar ``"custom": True`` form, as a
+    Python class with ``to_db``/``from_db`` is. ``None`` exists for callers
+    that cannot know (the GUI registers MATLAB variables from discovered
+    ``.m`` files) so they never clear a flag MATLAB set.
+    """
+    if codec is None:
+        return
+    from scidb.log import Log as _BridgeLog
+
+    has = "to_db" in surrogate.__dict__
+    if bool(codec) and not has:
+        surrogate.to_db = _matlab_codec_to_db
+        surrogate.from_db = classmethod(_matlab_codec_from_db)
+        _BridgeLog.info(
+            f"[codec] MATLAB variable {surrogate.__name__}: custom to_db/from_db on"
+        )
+    elif not bool(codec) and has:
+        del surrogate.to_db
+        del surrogate.from_db
+        _BridgeLog.info(
+            f"[codec] MATLAB variable {surrogate.__name__}: custom to_db/from_db off"
+        )
+
+
+def register_matlab_variable(type_name: str, schema_version: int = 1, codec=None):
     """Create a Python surrogate BaseVariable subclass for a MATLAB type.
 
     The surrogate is auto-registered in ``BaseVariable._all_subclasses``
     via ``__init_subclass__`` and, if a database is configured, registered
     with the ``DatabaseManager`` as well.
+
+    ``codec`` says whether the MATLAB class overrides ``to_db``/``from_db``
+    (decided by ``+scidb/+internal/codec.m``): ``True``/``False`` sets the
+    surrogate's pass-through codec, also on an already registered surrogate
+    or entities-TOML declaration (``_declared_only``: it names the type but
+    says nothing about storage, so the MATLAB class is the definition);
+    ``None`` (the default) leaves it unchanged. A Python-defined class of the
+    same name is never modified.
 
     Returns the surrogate class.
     """
@@ -1759,6 +1824,19 @@ def register_matlab_variable(type_name: str, schema_version: int = 1):
 
     existing = BaseVariable.get_subclass_by_name(type_name)
     if existing is not None:
+        if getattr(existing, "_matlab_surrogate", False) or getattr(
+            existing, "_declared_only", False
+        ):
+            _sync_matlab_codec(existing, codec)
+        elif codec and type_name not in _CODEC_CONFLICT_WARNED:
+            from scidb.log import Log as _BridgeLog
+
+            _CODEC_CONFLICT_WARNED.add(type_name)
+            _BridgeLog.warn(
+                f"[codec] MATLAB variable {type_name} has custom to_db/from_db, "
+                f"but a Python class of that name defines its storage; the "
+                f"Python class's to_db/from_db apply"
+            )
         return existing
 
     surrogate = type(
@@ -1766,6 +1844,7 @@ def register_matlab_variable(type_name: str, schema_version: int = 1):
         (BaseVariable,),
         {"schema_version": schema_version, "_matlab_surrogate": True},
     )
+    _sync_matlab_codec(surrogate, codec)
 
     try:
         from scidb.database import get_database
@@ -1899,7 +1978,9 @@ def save_batch_bridge(
         bulk_mode = "vertcat_arr"
     elif hasattr(data_values, "tolist"):
         # Numpy array (isnumeric fast path or Strategy B flatten result).
-        data_list = data_values.tolist()
+        # atleast_1d: a ONE-row MATLAB column crosses as a scalar, so
+        # py.numpy.array makes a 0-d array whose tolist() is a bare number.
+        data_list = np.atleast_1d(data_values).tolist()
         bulk_mode = "numpy_list"
     else:
         # Plain Python list (Strategy B split_flat_to_lists, Strategy C, or
@@ -1912,8 +1993,12 @@ def save_batch_bridge(
         if isinstance(col, str):
             # Joined string from MATLAB (record-separator delimited)
             meta_lists.append(col.split("\x1e"))
+        elif isinstance(col, (bool, int, float)):
+            # One-row numeric column: number_to_python sends the scalar.
+            meta_lists.append([col])
         elif hasattr(col, "tolist"):
-            meta_lists.append(col.tolist())
+            # atleast_1d: a one-row numeric column arrives as a 0-d array.
+            meta_lists.append(np.atleast_1d(col).tolist())
         else:
             meta_lists.append([v.item() if hasattr(v, "item") else v for v in col])
 
@@ -1967,6 +2052,23 @@ def get_batch_item(batch_id, index):
     data_list, py_vars_list = _batch_cache[int(batch_id)]
     i = int(index)
     return data_list[i], py_vars_list[i]
+
+
+def numpy_scalar_to_python(obj):
+    """``[True, obj.item()]`` when *obj* is a numpy scalar, else ``[False, None]``.
+
+    For ``+scidb/+internal/from_python.m``: an integer record loads back as
+    ``np.int64``, which MATLAB does not convert. The check has to live here
+    because MATLAB cannot name a Python class as a value: ``py.numpy.generic``
+    in an argument list CALLS the class (and numpy.generic cannot be
+    instantiated), so an ``isinstance`` written in MATLAB always fails.
+    A list, not a tuple, so MATLAB can ``cell()`` it.
+    """
+    import numpy as np
+
+    if isinstance(obj, np.generic):
+        return [True, obj.item()]
+    return [False, None]
 
 
 def get_batch_data_item(batch_id, index):
@@ -2040,8 +2142,13 @@ def wrap_batch_bridge(py_vars_list):
         "json_branch_params": "\n".join(branch_params_list),
     }
 
-    # Scalar fast path: pack all data into a single numpy array
-    if n > 0 and all(isinstance(d, (int, float)) for d in data):
+    # Scalar fast path: pack all data into a single numpy array. numpy
+    # scalars count: an integer record loads back as np.int64 (a BIGINT
+    # column's .iloc), and without them here it took the per-item path,
+    # where MATLAB's double() on a py.numpy.int64 is not guaranteed.
+    if n > 0 and all(
+        isinstance(d, (int, float, np.integer, np.floating)) for d in data
+    ):
         result["scalar_data"] = np.array(data, dtype=float)
 
     # DataFrame fast path: concatenate same-schema DataFrames into one
