@@ -1055,7 +1055,7 @@ class TestMatlabRegistryLoadFromSources:
         load_from_sources logs it at DEBUG (not WARNING) and does NOT
         record it as a load error; only files explicitly listed in
         matlab.functions/matlab.variables that fail to parse are load
-        errors (see load_from_config)."""
+        errors (see load_from_config) -- plain scripts excepted, see the next test."""
         import logging
 
         from scistack_gui import matlab_registry
@@ -1073,6 +1073,59 @@ class TestMatlabRegistryLoadFromSources:
         assert "Skipping non-function/non-variable" in caplog.text
         assert "Could not classify" not in caplog.text
         assert matlab_registry.get_load_errors() == []
+
+    def test_script_in_explicit_functions_list_is_not_a_load_error(
+        self, tmp_path, caplog
+    ):
+        """A [matlab] functions directory sweeps in entry-point scripts
+        (main_entrypoint_aim2.m); they were a "No function declaration found"
+        load error plus a WARN on every refresh (scidb.log 2026-10-19). A
+        plain script is DEBUG now; a file that is neither a function nor a
+        script (a non-variable classdef) is still a load error."""
+        import logging
+
+        from scistack_gui import config, matlab_registry
+
+        script = tmp_path / "main_entrypoint.m"
+        script.write_text("% entry point\nx = 1;\nrunAll(x);\n")
+        other_class = tmp_path / "Helper.m"
+        other_class.write_text("classdef Helper < handle\nend\n")
+
+        cfg = config.SciStackConfig(
+            project_root=tmp_path, matlab_functions=[script, other_class]
+        )
+        with caplog.at_level(logging.DEBUG):
+            matlab_registry.load_from_config(cfg)
+
+        sources = [e["source"] for e in matlab_registry.get_load_errors()]
+        assert str(script) not in sources
+        assert str(other_class) in sources
+        assert "is a script, not a function" in caplog.text
+        warned = [
+            r for r in caplog.records
+            if r.levelno >= logging.WARNING and "main_entrypoint" in r.getMessage()
+        ]
+        assert warned == []
+
+    def test_is_matlab_script(self, tmp_path):
+        from scistack_gui.matlab_parser import is_matlab_script
+
+        script = tmp_path / "s.m"
+        script.write_text("% a script\ny = 2;\n")
+        fn = tmp_path / "f.m"
+        fn.write_text("function y = f(x)\ny = x;\nend\n")
+        cls = tmp_path / "C.m"
+        cls.write_text("classdef C\nend\n")  # no superclass: _CLASSDEF_RE misses it
+        no_args = tmp_path / "runAll.m"
+        no_args.write_text("% header\n\nfunction runAll\ndisp(1);\nend\n")  # no parens
+        with_local = tmp_path / "main.m"
+        with_local.write_text("% entry\nx = helper(1);\n\nfunction y = helper(x)\ny = x;\nend\n")
+        assert is_matlab_script(script)
+        assert is_matlab_script(with_local)  # MATLAB: still a script
+        assert not is_matlab_script(fn)
+        assert not is_matlab_script(cls)
+        assert not is_matlab_script(no_args)
+        assert not is_matlab_script(tmp_path / "missing.m")
 
     def test_same_named_setup_methods_across_test_classes_do_not_shadow(
         self, tmp_path, caplog

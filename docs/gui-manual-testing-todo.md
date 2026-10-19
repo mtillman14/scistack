@@ -42,6 +42,11 @@ appearing as "File does not exist" load errors.
    the `{rto}/...` form in grey underneath (and as the hover title). An entry
    whose root is unmapped shows the reason in orange. Selecting either kind
    and clicking − removes it.
+5. (Added later the same day.) The load-errors list no longer contains "No
+   function declaration found" for MATLAB scripts such as
+   main_entrypoint_aim2.m and main_overground.m, and scidb.log no longer
+   WARNs "Could not parse MATLAB function" for them. Their entities still
+   load (`Loaded N entities from ...`).
 
 ---
 

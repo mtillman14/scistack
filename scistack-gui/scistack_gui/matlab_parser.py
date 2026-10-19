@@ -926,6 +926,37 @@ def _path_input_args_to_literal(
 
 
 
+def is_matlab_script(path: Path) -> bool:
+    """True if *path* is a plain MATLAB script, by MATLAB's own rule: the
+    first line of code is neither ``function`` nor ``classdef``. A script
+    may end in local functions and is still a script.
+
+    The one owner of "this is a script, not a broken function file". A
+    ``[matlab] functions`` entry that is a directory sweeps in entry-point
+    scripts (main_entrypoint_aim2.m) that were never meant to be functions;
+    they were a "No function declaration found" load error on every refresh
+    (scidb.log 2026-10-19).
+
+    Deliberately NOT ``_FUNCTION_RE``/``_CLASSDEF_RE``: those require
+    parentheses and a superclass, so a no-argument ``function runAll`` or a
+    bare ``classdef C`` would read as a script and be skipped silently
+    instead of being reported.
+    """
+    text = read_source_text(path)
+    if text is None:
+        return False
+    for line in _preprocess_for_parsing(text).splitlines():
+        code = line.strip()
+        if not code or code.startswith("%"):
+            continue
+        return _FILE_KEYWORD_RE.match(code) is None
+    return True  # only comments: an (empty) script
+
+
+# The first word of a function or class file (see is_matlab_script).
+_FILE_KEYWORD_RE = re.compile(r"(function|classdef)\b")
+
+
 def is_matlab_entities_script(path: Path) -> bool:
     """True if *path* is a plain script (no ``function``, no ``classdef``)
     that declares at least one entity.
@@ -935,10 +966,11 @@ def is_matlab_entities_script(path: Path) -> bool:
     rule — an entities script is exactly the shape ``classify_matlab_file``
     previously had no answer for.
     """
-    text = read_source_text(path)
-    if text is None:
+    if not is_matlab_script(path):
         return False
-    parsed = _preprocess_for_parsing(text)
+    # Stricter than "a script": no local functions either (unchanged rule).
+    text = read_source_text(path)
+    parsed = _preprocess_for_parsing(text or "")
     if _CLASSDEF_RE.search(parsed) or _FUNCTION_RE.search(parsed):
         return False
     return bool(parse_matlab_entities_script(path))

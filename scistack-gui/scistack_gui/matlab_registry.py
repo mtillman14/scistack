@@ -22,6 +22,7 @@ from scistack_gui.matlab_parser import (
     binding_path_input_literal,
     classify_matlab_file,
     collect_matlab_literal_scope,
+    is_matlab_script,
     parse_matlab_entities_script,
     parse_matlab_function,
     parse_matlab_variable,
@@ -174,6 +175,13 @@ def load_from_config(config: SciStackConfig) -> dict:
         info = parse_matlab_function(path)
         if info is not None:
             _register_matlab_function(info)
+        elif is_matlab_script(path):
+            # A script swept in by a directory entry (an entry point like
+            # main_entrypoint_aim2.m) is not a broken function file: DEBUG,
+            # not a load error -- the same as the folder-scan path below.
+            logger.debug(
+                "[matlab_registry] %s is a script, not a function; skipped", path
+            )
         else:
             logger.warning(
                 "[matlab_registry] Could not parse MATLAB function from %s", path
