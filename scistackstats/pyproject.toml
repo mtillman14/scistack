@@ -48,7 +48,7 @@ dependencies = [
     "pandas>=1.5",
     "numpy>=1.21",
     # Every statistic is computed by csv-stats (S6); [full] has the tests.
-    "csv-stats[full]>=0.2",
+    "csv-stats[full]>=0.2.1",
     "scistackplot",
     "scistacklog",
 ]
