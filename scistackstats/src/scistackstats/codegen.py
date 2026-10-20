@@ -63,6 +63,9 @@ def why_not_exportable(stats_spec: StatsSpec, tables: dict[str, LongTable]) -> s
         return "chosen columns of a multi-column variable are not exported as code yet"
     if design.factor_variables:
         return "joined grouping variables are not exported as code yet"
+    if any(a.covariates for a in stats_spec.comparisons):
+        # Joined like grouping variables, and refused for the same reason.
+        return "covariates (joined variables) are not exported as code yet"
     if design.x_measure:
         return "an x variable is not exported as code yet"
     if design.variant_sets:

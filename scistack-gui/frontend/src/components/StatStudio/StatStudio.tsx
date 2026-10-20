@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { addNotificationHandler, callBackend, isVSCodeMode } from '../../api'
 import { plotThemeVars } from '../PlotStudio/plotTheme'
 import { usePlotTheme } from '../PlotStudio/usePlotTheme'
+import ModelFormulaDialog from './ModelFormulaDialog'
 import { pendingActions, recommendedFor, type StratumSummary } from './statsActions'
 import {
   addAnalysis, addDV, moveGroup, removeAnalysis, removeDV, setCell, setFormatting, setOverlay,
@@ -66,6 +67,8 @@ interface Readout {
   rows?: { unit: string | null; averaged: string[]; strata: string[] }
   design?: { factors: { name: string; kind: string; derived: string; overridden: boolean; units_multi: number; units_single: number; basis?: string }[]; n_units: number | null; warnings: { code: string; message: string }[]; incomplete_units?: string[] }
   tests?: { id: string; label: string; role: string; reason: string | null }[]
+  /** The first analysis' model formula as it runs (scistackstats.model). */
+  model?: { text: string; is_default: boolean; errors: { message: string }[]; needs_mixed_model: boolean }
 }
 
 interface ComputeResult {
@@ -166,6 +169,8 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   const [newColumns, setNewColumns] = useState<string[]>([])
   const [savedList, setSavedList] = useState<{ stats_id: string; name: string; version: number }[]>([])
   const [presets, setPresets] = useState<{ preset_id: string; name: string }[]>([])
+  // The analysis whose Model formula popup is open (plan-statstudio-model-formula).
+  const [formulaFor, setFormulaFor] = useState<string | null>(null)
   const generation = useRef(0)
   const sourceParams = useMemo(() => (csvPath ? { csv_path: csvPath } : {}), [csvPath])
 
@@ -358,6 +363,26 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             <div style={styles.recommended}>
               <div>Recommended: {label(rec.pairwise)} (pairwise), {label(rec.omnibus)} (omnibus)</div>
               {rec.evidence.map((e, i) => <div key={i} style={styles.muted}>• {e}</div>)}
+            </div>
+          )
+        })()}
+        {(() => {
+          // The model as it runs: the first analysis' text comes from the
+          // backend (rebased on the design); another analysis shows its stored
+          // text. Rarely changed, so it is one line and a button.
+          const model = a.id === firstAnalysis?.id ? readout[0]?.model : undefined
+          const shown = model?.text ?? a.formula ?? 'the default model'
+          const custom = !!a.formula || (a.covariates?.length ?? 0) > 0
+          return (
+            <div style={styles.formulaRow}>
+              <code style={styles.formula} title={model?.errors.length ? model.errors.map(e => e.message).join('; ') : shown}>
+                {targets(spec)[0]?.variable} ~ {shown}
+              </code>
+              <button type="button" style={styles.smallButton} onClick={() => setFormulaFor(a.id)}
+                      title="Covariates and custom random effects, as an lme4 formula">
+                Model formula…
+              </button>
+              {custom && <span style={styles.chip}>{model?.errors.length ? 'formula has problems' : 'custom'}</span>}
             </div>
           )
         })()}
@@ -643,6 +668,17 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             ))
         )}
       </main>
+      {formulaFor && (
+        <ModelFormulaDialog
+          spec={spec}
+          analysisId={formulaFor}
+          measure={targets(spec)[0]?.variable ?? ''}
+          sourceParams={sourceParams}
+          canPickCovariates={!csvPath}
+          onCancel={() => setFormulaFor(null)}
+          onApply={next => { setSpec(next); setFormulaFor(null); setMessage('Model formula applied.') }}
+        />
+      )}
     </div>
   )
 }
@@ -667,6 +703,8 @@ const styles: Record<string, React.CSSProperties> = {
   listButton: { background: 'none', border: 'none', color: 'var(--ps-accent-text)', textAlign: 'left', cursor: 'pointer', padding: '1px 0', fontSize: 12 },
   factorName: { minWidth: 70 },
   chip: { border: '1px solid var(--ps-border-soft)', borderRadius: 10, padding: '0 6px', fontSize: 11 },
+  formulaRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  formula: { fontFamily: 'monospace', fontSize: 11, color: 'var(--ps-text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 },
   chipNeedsAction: { border: '1px solid var(--ps-warn)', color: 'var(--ps-warn)', borderRadius: 10, padding: '0 6px', fontSize: 11, fontWeight: 600 },
   badge: { marginLeft: 6, background: 'var(--ps-warn)', color: 'var(--ps-bg)', borderRadius: 8, padding: '0 5px', fontSize: 11, fontWeight: 700 },
   actionBanner: { border: '1px solid var(--ps-warn)', borderLeft: '4px solid var(--ps-warn)', borderRadius: 4, padding: '8px 10px', margin: '8px 0', display: 'flex', flexDirection: 'column', gap: 6 },

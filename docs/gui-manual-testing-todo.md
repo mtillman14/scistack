@@ -11,6 +11,51 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzk. StatStudio: Model formula popup (covariates, random effects) — added 2026-10-20
+
+**What changed:** each analysis in StatStudio's Comparisons rail shows its
+mixed model as one line of lme4 formula, with a **Model formula…** button
+that opens a popup. The text is the single source of truth. **Add
+covariate…** (the grouping DAG picker, offering numeric variables), **Add
+random term…** and **Reset to default** only edit the text. Changing the
+fixed factors writes the table's design, which raises the existing
+"design differs" banner. Plan: `.claude/plan-statstudio-model-formula.md`.
+
+**Backend:** restart the GUI (reload the VS Code window) so the new
+`stats_formula_*` RPCs and the rebuilt bundles load.
+
+**Frontend**
+1. Open StatStudio from a figure with a within factor (e.g. session) and a
+   subject unit. Under Comparisons, the line should read
+   `<measure> ~ session + (1 | subject)`.
+2. Click **Model formula…**. The editor should open on that text, with a
+   resolved-terms table (session: factor; subject: group).
+3. Type `session * height + (1 | subject)`. `height` should be underlined in
+   red, with "neither a factor of this design nor a picked covariate", and
+   **Apply** should be disabled.
+4. **Add covariate…**: the DAG picker should open, titled "Which variable is
+   the covariate?". Numeric variables should be clickable; text ones should
+   be greyed with "a covariate is numeric". Pick a per-subject numeric column
+   (e.g. `Demographics.Age`) and apply. `* Age` should appear in the fixed
+   part, and the terms table should show Age as a covariate.
+5. Apply. The rail line should show the formula with a "custom" chip. The
+   Comparisons tab should run the linear mixed model, with
+   `Model: <measure> ~ … ` in the caption.
+6. Reopen the popup, **Add random term…**, tick slope session, and Insert.
+   If the rows are one mean per subject × session, the comparisons should
+   be refused with "number of observations (…) <= number of random effects
+   (…)" (lme4's reason), not a crash or a singular fit.
+7. Type a formula adding a factor the figure averages over (e.g. `trial *
+   session + (1 | subject)`, if trial is collapsed). The popup should say
+   Apply adds it to the design. After Apply, a linked figure should show the
+   "design differs" banner, and **Sync to PlotStudio** should be offered.
+8. **Reset to default** should restore the plain formula and drop the
+   covariates. Applying it should remove the "custom" chip.
+9. Add to pipeline should be disabled while a covariate is picked, with
+   "covariates (joined variables) are not exported as code yet".
+
+---
+
 ## 0zzzzj. StatStudio: recommended tests, missing-data choice, mixed models, decision banner — added 2026-10-19
 
 **What changed.**

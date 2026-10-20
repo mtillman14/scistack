@@ -18,6 +18,8 @@ StatStudio — the handler table for both transports (see ``api/plot.py``).
     POST /api/stats/presets/save        stats_preset_save
     POST /api/stats/presets/apply       stats_preset_apply
     POST /api/stats/presets/hide        stats_preset_hide
+    POST /api/stats/formula/check       stats_formula_check
+    POST /api/stats/formula/apply       stats_formula_apply
     POST /api/stats/add-to-pipeline     stats_add_to_pipeline
 
 Lock policy, as for plots: every handler whose service loads tables takes
@@ -104,6 +106,17 @@ class PresetIdRequest(BaseModel):
     hidden: bool | None = True
 
 
+class FormulaRequest(BaseModel):
+    spec: dict
+    #: The analysis the popup edits (default: the first).
+    analysis_id: str | None = None
+    #: The draft right side; empty = the default model.
+    text: str | None = None
+    #: The draft's picked covariates (``FactorVariable.to_dict()`` each).
+    covariates: list[dict] | None = None
+    csv_path: str | None = None
+
+
 class AddRequest(BaseModel):
     spec: dict
     function_name: str | None = None
@@ -181,6 +194,16 @@ def _preset_hide(db, req: PresetIdRequest) -> dict:
     return stats_service.presets_hide(db, req.preset_id, req.hidden is not False)
 
 
+def _formula_check(db, req: FormulaRequest) -> dict:
+    return stats_service.formula_check(db, req.spec, analysis_id=req.analysis_id, text=req.text,
+                                       covariates=req.covariates, csv_path=req.csv_path)
+
+
+def _formula_apply(db, req: FormulaRequest) -> dict:
+    return stats_service.formula_apply(db, req.spec, analysis_id=req.analysis_id, text=req.text,
+                                       covariates=req.covariates, csv_path=req.csv_path)
+
+
 def _add_to_pipeline(db, req: AddRequest) -> dict:
     return stats_service.add_to_pipeline(db, req.spec, function_name=req.function_name,
                                          output_variable=req.output_variable, finalized=req.finalized is not False)
@@ -218,6 +241,12 @@ STATS_HANDLERS: tuple[Handler, ...] = (
             http_errors=_BAD_REQUEST, undoable=False),
     Handler("stats_preset_hide", "/stats/presets/hide", PresetIdRequest, _preset_hide,
             http_errors=_BAD_REQUEST, undoable=False),
+    # The model-formula popup: read-only checks; Apply returns a new spec the
+    # webview adopts (its own undo stack records the change, like any edit).
+    Handler("stats_formula_check", "/stats/formula/check", FormulaRequest, _formula_check, holds_db_lock=False,
+            http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
+    Handler("stats_formula_apply", "/stats/formula/apply", FormulaRequest, _formula_apply, holds_db_lock=False,
+            http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
     Handler("stats_add_to_pipeline", "/stats/add-to-pipeline", AddRequest, _add_to_pipeline,
             http_errors=_BAD_REQUEST, undoable=True, undo_label="add stats to pipeline"),
 )

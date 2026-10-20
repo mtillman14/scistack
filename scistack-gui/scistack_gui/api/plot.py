@@ -125,6 +125,9 @@ class VariantGraphRequest(BaseModel):
 class GroupingGraphRequest(BaseModel):
     variable: str
     csv_path: str | None = None
+    #: "group" (default: Plot Studio's grouping) or "covariate" (StatStudio's
+    #: model formula: numeric variables, the mirror offer).
+    purpose: str | None = None
 
 
 class GroupingColumnsRequest(BaseModel):
@@ -133,6 +136,7 @@ class GroupingColumnsRequest(BaseModel):
     #: The variable whose columns are being listed — what it is grouped BY.
     group_variable: str
     csv_path: str | None = None
+    purpose: str | None = None
 
 
 class GroupingDefaultVariantRequest(BaseModel):
@@ -349,12 +353,13 @@ def _variant_graph(db, req: VariantGraphRequest) -> dict:
 
 
 def _grouping_graph(db, req: GroupingGraphRequest) -> dict:
-    return plot_service.grouping_graph(db, req.variable, csv_path=req.csv_path)
+    return plot_service.grouping_graph(db, req.variable, csv_path=req.csv_path, purpose=req.purpose or "group")
 
 
 def _grouping_columns(db, req: GroupingColumnsRequest) -> dict:
     return plot_service.grouping_columns(
-        db, req.variable, req.group_variable, csv_path=req.csv_path
+        db, req.variable, req.group_variable, csv_path=req.csv_path,
+        purpose=req.purpose or "group",
     )
 
 

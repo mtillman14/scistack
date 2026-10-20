@@ -42,6 +42,8 @@
     "src/components/PlotStudio/dataWarnings.test.ts",
     "src/components/StatStudio/statsActions.ts",
     "src/components/StatStudio/statsActions.test.ts",
+    "src/components/StatStudio/modelFormulaText.ts",
+    "src/components/StatStudio/modelFormulaText.test.ts",
     "src/components/PlotStudio/showSample.ts",
     "src/components/PlotStudio/showSample.test.ts",
     "src/components/PlotStudio/figureSize.ts",

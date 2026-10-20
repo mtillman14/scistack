@@ -31,6 +31,21 @@ export interface Analysis {
   overrides?: Record<string, string>
   /** "use_all" (default) or "complete_cases": recorded and stated in every caption. */
   missing?: string
+  /** The mixed model's right side, lme4 spelling (scistackstats.model). Absent
+   *  = the default from the design. Written only through the Model formula
+   *  popup's Apply (`stats_formula_apply`), never assembled here. */
+  formula?: string
+  /** Picked covariates (`FactorVariable.to_dict()`), named in the formula by column. */
+  covariates?: CovariateBinding[]
+}
+
+/** A picked covariate. Its NAME in the formula is the backend's
+ *  (`FactorVariable.factor_name`, returned by `stats_formula_check` as
+ *  `offers.covariates`); the webview never derives it. */
+export interface CovariateBinding {
+  variable: string
+  column: string | null
+  variant: Record<string, unknown>
 }
 
 export interface Formatting {

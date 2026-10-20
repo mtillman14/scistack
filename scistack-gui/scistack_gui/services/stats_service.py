@@ -44,6 +44,24 @@ def _tables(db, spec, *, csv_path: str | None, label: str) -> dict:
     return tables
 
 
+def _load(db, spec, *, csv_path: str | None, label: str) -> tuple[dict, dict]:
+    """The DV tables and every analysis' covariate values, under one hold of
+    the connection (``scistackstats.load_covariates``: the grouping loader's
+    variant pin and one-value-per-location rules)."""
+    from scistackstats import load_covariates, load_tables
+
+    from scistack_gui.db import db_connection
+
+    t0 = time.perf_counter()
+    with db_connection(label, needed=not csv_path):
+        source = plot_service.get_source(db, csv_path=csv_path)
+        tables = load_tables(source, spec)
+        covariates = load_covariates(source, spec)
+    logger.info("[stats] %s: %d table(s), %d covariate(s) loaded in %.3fs", label, len(tables), len(covariates),
+                time.perf_counter() - t0)
+    return tables, covariates
+
+
 # ---------------------------------------------------------------------------
 # Open
 # ---------------------------------------------------------------------------
@@ -98,11 +116,13 @@ def open_stats(
 
 
 def _readout(spec, tables) -> list[dict]:
-    """Per DV, the first stratum's design and every test with its reason,
-    for the design chips and the "+ test" menu."""
-    from scistackstats import AnalysisFrameError, analysis_frame, available_tests, derive_design
+    """Per DV, the first stratum's design, every test with its reason (for
+    the design chips and the "+ test" menu) and the first analysis' model
+    formula as it stands (the rail's one-line formula)."""
+    from scistackstats import AnalysisFrameError, analysis_frame, available_tests, derive_design, for_frame
 
-    overrides = spec.comparisons[0].overrides if spec.comparisons else {}
+    first = spec.comparisons[0] if spec.comparisons else None
+    overrides = first.overrides if first else {}
     out = []
     for dv in spec.targets:
         try:
@@ -112,9 +132,126 @@ def _readout(spec, tables) -> list[dict]:
             continue
         stratum, rows = frame.stratum_groups()[0]
         design = derive_design(frame, stratum, rows, overrides)
+        model = for_frame(first.formula if first else None, first.covariates if first else (), frame,
+                          available=list(tables[dv.variable].factor_names))
         out.append({"dv": dv.key, "rows": frame.summary(), "design": design.to_dict(),
-                    "tests": available_tests(design)})
+                    "tests": available_tests(design, mixed_formula=model.ok and model.needs_mixed_model),
+                    "model": model.to_dict()})
     return out
+
+
+# ---------------------------------------------------------------------------
+# Model formula (the popup; plan-statstudio-model-formula)
+# ---------------------------------------------------------------------------
+
+
+def _formula_analysis(spec, analysis_id: str | None, text: str | None, covariates: list | None):
+    """The analysis the popup edits, with its draft text and covariates."""
+    from dataclasses import replace
+
+    from scistackplot import FactorVariable
+    from scistackstats import Analysis
+
+    analyses = list(spec.comparisons) or [Analysis()]
+    index = next((i for i, a in enumerate(analyses) if a.id == analysis_id), 0)
+    draft = replace(analyses[index], formula=text if text and text.strip() else None,
+                    covariates=tuple(FactorVariable.from_dict(c) for c in (covariates or [])))
+    return analyses, index, draft
+
+
+def _formula_frames(db, spec, draft, *, csv_path, label):
+    """Per DV: (frame with the draft's covariates joined, its table's factors, join problems)."""
+    from dataclasses import replace
+
+    from scistackstats import AnalysisFrameError, analysis_frame
+    from scistackstats.tables import join_covariates
+
+    probe = replace(spec, comparisons=(draft,))
+    tables, covariates = _load(db, probe, csv_path=csv_path, label=label)
+    out = []
+    for dv in spec.targets:
+        try:
+            frame = analysis_frame(spec, dv, tables[dv.variable])
+        except (AnalysisFrameError, KeyError) as exc:
+            out.append((dv.key, None, [], [str(exc)]))
+            continue
+        problems: list[str] = []
+        if draft.covariates:
+            rows, problems = join_covariates(frame.rows, [c.factor_name for c in draft.covariates], covariates)
+            frame = replace(frame, rows=rows)
+        out.append((dv.key, frame, list(tables[dv.variable].factor_names), problems))
+    return out
+
+
+def formula_check(db, spec_payload: dict, *, analysis_id: str | None = None, text: str | None = None,
+                  covariates: list | None = None, csv_path: str | None = None) -> dict:
+    """The popup's live check of a draft formula: per DV, what each name
+    means here, the factors it would add to or drop from the design, and the
+    problems with their spans (``scistackstats.model.check``, rebase off).
+    Also what the helpers may offer: groups and slopes."""
+    from scistackstats import default_formula, for_frame
+
+    spec = _spec(spec_payload)
+    _, _, draft = _formula_analysis(spec, analysis_id, text, covariates)
+    results = []
+    for dv_key, frame, available, problems in _formula_frames(db, spec, draft, csv_path=csv_path,
+                                                             label="stats_formula_check"):
+        if frame is None:
+            results.append({"dv": dv_key, "errors": [{"message": problems[0]}]})
+            continue
+        model = for_frame(draft.formula, draft.covariates, frame, available=available, rebase=False)
+        model.errors.extend({"message": p} for p in problems)
+        entry = model.to_dict()
+        entry.update(
+            dv=dv_key, default=default_formula(frame.outer_first, frame.unit),
+            offers={
+                "groups": [g for g in [frame.unit, *[k for k in frame.unit_keys if k != frame.unit]] if g],
+                "factors": list(frame.outer_first),
+                "addable": [f for f in available if f not in frame.factors and f not in frame.unit_keys
+                            and f not in frame.strata],
+                "covariates": [c.factor_name for c in draft.covariates],
+            },
+        )
+        results.append(entry)
+    logger.info("[stats] formula_check %r: %s", text, [(r["dv"], len(r.get("errors", []))) for r in results])
+    return {"ok": True, "checks": results}
+
+
+def formula_apply(db, spec_payload: dict, *, analysis_id: str | None = None, text: str | None = None,
+                  covariates: list | None = None, csv_path: str | None = None) -> dict:
+    """Write the popup's formula into the spec: the analysis keeps the text
+    (or None when it says nothing beyond the design: no covariates, the
+    default random part) and only the covariates the text names; factor
+    changes are written to the DESIGN (``apply_to_design``), which raises the
+    plot-divergence banner. Refused, unchanged, while the text has problems."""
+    from dataclasses import replace
+
+    from scistackstats import apply_to_design, for_frame
+    from scistackstats.model import bindings_in
+
+    spec = _spec(spec_payload)
+    analyses, index, draft = _formula_analysis(spec, analysis_id, text, covariates)
+    checks = []
+    for dv_key, frame, available, problems in _formula_frames(db, spec, draft, csv_path=csv_path,
+                                                             label="stats_formula_apply"):
+        if frame is None:
+            return {"ok": False, "errors": [{"message": f"{dv_key}: {problems[0]}"}]}
+        model = for_frame(draft.formula, draft.covariates, frame, available=available, rebase=False)
+        model.errors.extend({"message": p} for p in problems)
+        if model.errors:
+            return {"ok": False, "errors": model.errors}
+        checks.append(model)
+    if not checks:
+        return {"ok": False, "errors": [{"message": "no measure to apply the formula to"}]}
+    model = checks[0]
+    design = apply_to_design(spec.design, model.add, model.drop)
+    keep_text = model.needs_mixed_model
+    analyses[index] = replace(draft, formula=model.text if keep_text else None,
+                              covariates=bindings_in(model.covariates, draft.covariates))
+    new = replace(spec.with_design(design), comparisons=tuple(analyses))
+    logger.info("[stats] formula_apply %r -> stored %r, covariates %s, design add %s drop %s", text,
+                analyses[index].formula, [c.label for c in analyses[index].covariates], model.add, model.drop)
+    return {"ok": True, "spec": new.to_dict(), "design_changed": bool(model.add or model.drop)}
 
 
 def catalog() -> dict:
@@ -164,12 +301,12 @@ def compute(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
         spec = _spec(spec_payload)
     except (StatsSpecError, ValueError, KeyError, TypeError) as exc:
         return {"ok": False, "error": f"The stats settings could not be read: {exc}"}
-    tables = _tables(db, spec, csv_path=csv_path, label="stats_compute")
+    tables, covariates = _load(db, spec, csv_path=csv_path, label="stats_compute")
     t0 = time.perf_counter()
     labels = labels_for(spec, tables)
     try:
         descriptives = describe_table(spec, tables)
-        report = run(spec, tables) if spec.comparisons else None
+        report = run(spec, tables, covariates) if spec.comparisons else None
     except (StatsSpecError, ValueError) as exc:
         return {"ok": False, "error": str(exc)}
     comparisons = []
@@ -186,7 +323,7 @@ def compute(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
                 "family_statement": analysis.family_statement,
                 "strata": [{"dv": s.dv, "stratum": s.stratum, "selection": s.selection, "refused": s.refused,
                             "action": s.action, "excluded": s.excluded,
-                            "design": s.design} for s in analysis.strata],
+                            "design": s.design, "model": s.model} for s in analysis.strata],
             })
     result = {
         "ok": True,
@@ -210,8 +347,8 @@ def export(db, spec_payload: dict, fmt: str, which: str, *, csv_path: str | None
     from scistackstats import describe_table, export_comparisons, export_descriptives, run
 
     spec = _spec(spec_payload)
-    tables = _tables(db, spec, csv_path=csv_path, label="stats_export")
-    report = run(spec, tables) if spec.comparisons else None
+    tables, covariates = _load(db, spec, csv_path=csv_path, label="stats_export")
+    report = run(spec, tables, covariates) if spec.comparisons else None
     if which == "descriptives":
         text = export_descriptives(describe_table(spec, tables), spec, fmt, tables=tables, report=report)
     elif which == "comparisons":

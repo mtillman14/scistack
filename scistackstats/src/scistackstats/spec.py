@@ -22,7 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
-from scistackplot import PlotSpec
+from scistackplot import FactorVariable, PlotSpec
 
 FORMAT = 1
 
@@ -197,10 +197,26 @@ class Analysis:
     overrides: dict[str, str] = field(default_factory=dict)
     #: ``MISSING_POLICIES``; recorded in the report and every caption.
     missing: str = "use_all"
+    #: The mixed model as the right side of an lme4 formula
+    #: (``group * time * age + (1 | subject)``), the user's TEXT and the one
+    #: source of truth for the model (``model.py``). None = the default from
+    #: the design: its factors crossed + ``(1 | unit)``, never stored so it
+    #: follows the design.
+    formula: str | None = None
+    #: Numeric variables joined per row, each named in the formula by its
+    #: ``FactorVariable.factor_name`` (the DAG picker writes them).
+    covariates: tuple[FactorVariable, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.id:
             raise StatsSpecError("an analysis needs an id")
+        object.__setattr__(self, "covariates", tuple(
+            c if isinstance(c, FactorVariable) else FactorVariable.from_dict(c) for c in self.covariates))
+        names = [c.factor_name for c in self.covariates]
+        if len(names) != len(set(names)):
+            raise StatsSpecError(f"analysis {self.id}: two covariates share a name: {names}")
+        if self.formula is not None and not self.formula.strip():
+            object.__setattr__(self, "formula", None)
         _check(self.family, FAMILIES, f"analysis {self.id}: family")
         _check(self.missing, MISSING_POLICIES, f"analysis {self.id}: missing")
         _check(self.tails, TAILS, f"analysis {self.id}: tails")
@@ -216,6 +232,7 @@ class Analysis:
     def to_dict(self) -> dict[str, Any]:
         out = {f.name: getattr(self, f.name) for f in fields(self)}
         out["overrides"] = dict(self.overrides)
+        out["covariates"] = [c.to_dict() for c in self.covariates] or None
         return {k: v for k, v in out.items() if v is not None}
 
     @classmethod
@@ -223,6 +240,11 @@ class Analysis:
         names = {f.name for f in fields(cls)}
         _only(raw, names, "analysis")
         return cls(**{k: (dict(v) if k == "overrides" else v) for k, v in raw.items()})
+
+    @property
+    def custom_model(self) -> bool:
+        """The user wrote a model formula or picked a covariate."""
+        return self.formula is not None or bool(self.covariates)
 
 
 BAR_PAIRS = ("significant", "all", "adjacent")

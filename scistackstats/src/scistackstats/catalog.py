@@ -87,14 +87,33 @@ def needed_action(design: Design) -> dict[str, Any] | None:
     return None
 
 
-def why_unavailable(test_id: str, design: Design) -> str | None:
-    """``None`` if ``test_id`` can run on ``design``, else the reason."""
+#: Why a non-mixed test cannot run when the analysis' model formula has
+#: covariates or custom random effects (plan-statstudio-model-formula).
+MIXED_FORMULA_REASON = "the model formula has covariates or random terms that only a mixed model fits"
+
+
+def why_unavailable(test_id: str, design: Design, *, mixed_formula: bool = False) -> str | None:
+    """``None`` if ``test_id`` can run on ``design``, else the reason.
+
+    ``mixed_formula``: the analysis' model formula needs a mixed model, so
+    only lmm / lmm_pairwise can run. Their usual "needs a within factor"
+    rule is then csv-stats' to judge: a covariate or a crossed random group
+    can make a mixed model sensible without one, and csv-stats refuses an
+    unidentifiable one with lme4's reason.
+    """
     info = TESTS.get(test_id)
     if info is None:
         return f"unknown test {test_id!r}"
     problem = _design_problem(design)
     if problem:
         return problem
+    if mixed_formula:
+        if info.family != "mixed_model":
+            return MIXED_FORMULA_REASON
+        if info.role == "pairwise" and len(design.factors[0].levels) < 2:
+            return f"{design.factors[0].name} has fewer than 2 levels here"
+        thin = [f.name for f in design.factors if len(f.levels) < 2]
+        return f"{', '.join(thin)} has fewer than 2 levels here" if thin and info.role == "omnibus" else None
     if info.role == "pairwise":
         primary = design.factors[0]
         if len(primary.levels) < 2:
@@ -265,26 +284,33 @@ def _omnibus_default(analysis: Analysis, design: Design,
     return None, "no rank-based test for a factorial design; the pairwise rank tests still run"
 
 
-def select_tests(analysis: Analysis, design: Design, rec: Recommendation | None = None) -> Selection:
+def select_tests(analysis: Analysis, design: Design, rec: Recommendation | None = None, *,
+                 mixed_formula: bool = False) -> Selection:
     """The omnibus and pairwise tests for ``analysis`` on ``design``.
 
     An override (``omnibus_test`` / ``pairwise_test``) wins, and is still
     checked by :func:`why_unavailable`. With family "auto", ``rec`` (from
     :func:`recommend`) supplies the defaults; without it, parametric.
+    ``mixed_formula`` (the model formula needs a mixed model): the defaults
+    are lmm / lmm_pairwise, "chosen: model formula", and an override of
+    another test is refused with :data:`MIXED_FORMULA_REASON`.
     """
     omnibus = omnibus_reason = pairwise = pairwise_reason = None
     whys: list[str] = []
+    formula_because = "chosen: model formula"
     if analysis.omnibus:
         if analysis.omnibus_test:
             omnibus, because = analysis.omnibus_test, "chosen"
             if TESTS.get(omnibus) and TESTS[omnibus].role != "omnibus":
                 omnibus_reason = f"{TESTS[omnibus].label} is not an omnibus test"
+        elif mixed_formula:
+            omnibus, because = "lmm", formula_because
         else:
             omnibus, because = _omnibus_default(analysis, design, rec)
         if omnibus is None:
             omnibus_reason = because
         elif omnibus_reason is None:
-            omnibus_reason = why_unavailable(omnibus, design)
+            omnibus_reason = why_unavailable(omnibus, design, mixed_formula=mixed_formula)
         if omnibus:
             whys.append(f"omnibus: {TESTS[omnibus].label if omnibus in TESTS else omnibus} ({because})")
     if analysis.pairwise:
@@ -292,21 +318,24 @@ def select_tests(analysis: Analysis, design: Design, rec: Recommendation | None 
             pairwise, because = analysis.pairwise_test, "chosen"
             if TESTS.get(pairwise) and TESTS[pairwise].role != "pairwise":
                 pairwise_reason = f"{TESTS[pairwise].label} is not a pairwise test"
+        elif mixed_formula:
+            pairwise, because = "lmm_pairwise", formula_because
         else:
             pairwise, because = _pairwise_default(analysis, design, rec)
         if pairwise is None:
             pairwise_reason = because
         elif pairwise_reason is None:
-            pairwise_reason = why_unavailable(pairwise, design)
+            pairwise_reason = why_unavailable(pairwise, design, mixed_formula=mixed_formula)
         if pairwise:
             whys.append(f"pairwise: {TESTS[pairwise].label if pairwise in TESTS else pairwise} ({because})")
     return Selection(omnibus, omnibus_reason, pairwise, pairwise_reason, "; ".join(whys) or "nothing selected",
                      rec.to_dict() if rec is not None else None)
 
 
-def available_tests(design: Design) -> list[dict[str, Any]]:
+def available_tests(design: Design, *, mixed_formula: bool = False) -> list[dict[str, Any]]:
     """Every test with its availability, for the GUI's "+ Add test" menu."""
     return [
-        {"id": t.id, "label": t.label, "role": t.role, "family": t.family, "reason": why_unavailable(t.id, design)}
+        {"id": t.id, "label": t.label, "role": t.role, "family": t.family,
+         "reason": why_unavailable(t.id, design, mixed_formula=mixed_formula)}
         for t in TESTS.values()
     ]

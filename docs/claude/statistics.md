@@ -111,9 +111,21 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
     (`type3_at_covariate_zero` warning);
   - `lmm_pairwise`: FULL-model contrasts within each combination of the other
     factors (emmeans-style), ONE engine call per stratum
-    (`run._pairwise_full_model`). csv-stats can also hold covariates at
-    their mean (`covariates=`, `covariates_at=`), but StatStudio has no
-    covariates yet, so scistack passes none.
+    (`run._pairwise_full_model`), covariates at their mean.
+  - **Model formula** (`Analysis.formula`, right side only; `Analysis.covariates`;
+    plan-statstudio-model-formula): owner `scistackstats.model` (what each
+    name means here); grammar csv-stats `lmm_formula` (via `engine.parse_formula`,
+    the only csvstats import). The DESIGN owns the factors: a stored formula's
+    fixed part is rebased onto it at run time (`check(rebase=True)`); the
+    popup's Apply writes factor changes to the design (`apply_to_design`: add
+    → Group, drop → Collapse), so the divergence banner shows them. A formula
+    is stored only when it says more than the design (covariates or a random
+    part other than `(1 | unit)`), and then forces lmm / lmm_pairwise
+    (`catalog.MIXED_FORMULA_REASON` greys the rest). Covariates are joined
+    per ANALYSIS ROW after the figure's reduction (`tables.join_covariates`),
+    loaded by scistackplotdb's one loader `_keyed_values` (shared with
+    grouping variables); one recorded below the rows' level is refused.
+    The unit's name in a formula (`subject`) maps to the `UNIT` column.
   The fit is csv-stats' own REML (`lmm_fit.MixedModel`), not statsmodels:
   statsmodels' SEs and boundary handling did not match lme4. A df that
   can't be computed falls back to Wald (`df_method: "wald"`, a

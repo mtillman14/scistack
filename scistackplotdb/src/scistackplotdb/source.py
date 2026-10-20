@@ -818,9 +818,7 @@ class ScidbSource(BaseSource):
             return frame, attached
 
         for group in factor_variables:
-            name = group.variable
-            variable = self._variable_frame(name)
-            source_column = self._factor_source_column(variable, group)
+            variable = self._variable_frame(group.variable)
             factor = group.factor_name
             if factor in frame.columns:
                 # Never merge over a column that is already there. pandas would
@@ -846,10 +844,7 @@ class ScidbSource(BaseSource):
                     f"attach one of its values to each row. Group by a variable "
                     f"recorded at or above the level of the data."
                 )
-            on = list(variable.levels)
-            right = self._pinned_variant(variable, group)
-            right = right.rename(columns={source_column: factor})
-            right = self._one_label_per_location(right, on, factor, group)
+            on, right = self._keyed_values(variable, group)
             frame = frame.merge(right, on=on, how="left")
 
             # A row the grouping variable says nothing about keeps its place and
@@ -894,6 +889,53 @@ class ScidbSource(BaseSource):
                     layer=LAYER,
                 )
         return frame, attached
+
+    def _keyed_values(self, variable_frame, group: FactorVariable):
+        """``(on, right)``: one grouping's or covariate's values, pinned to its
+        variant, one per schema location, in a column named
+        ``group.factor_name``; ``on`` = the schema keys it is recorded at.
+
+        The ONE loader behind both joins: a grouping variable merged onto the
+        long table (:meth:`_attach_factor_variables`) and a covariate merged
+        onto StatStudio's analysis rows (:meth:`covariate_values`), so "which
+        value does this location get" cannot mean two things.
+        """
+        source_column = self._factor_source_column(variable_frame, group)
+        on = list(variable_frame.levels)
+        right = self._pinned_variant(variable_frame, group)
+        right = right.rename(columns={source_column: group.factor_name})
+        right = self._one_label_per_location(right, on, group.factor_name, group)
+        return on, right
+
+    def covariate_values(self, group: FactorVariable):
+        """``(keys, frame)``: a numeric covariate for StatStudio's mixed model
+        (``scistackstats.tables.load_covariates``), keyed by the schema keys
+        it is recorded at. ``frame`` has ``[*keys, group.factor_name]``.
+
+        Joined per analysis ROW by the caller, after the figure's reduction,
+        so a covariate recorded below the rows' level is refused there with
+        the reason. A text column is refused here: a covariate is a number.
+        """
+        import pandas as pd
+
+        variable = self._variable_frame(group.variable)
+        on, right = self._keyed_values(variable, group)
+        values = right[group.factor_name]
+        numeric = pd.to_numeric(values, errors="coerce")
+        if values.notna().any() and numeric.notna().sum() == 0:
+            raise ValueError(
+                f"{group.label} holds text, not numbers: a covariate is numeric "
+                f"(group by it instead)"
+            )
+        right = right.assign(**{group.factor_name: numeric})
+        Log.info(
+            "covariate %r: %d value(s) keyed by %s",
+            group.label,
+            int(numeric.notna().sum()),
+            on,
+            layer=LAYER,
+        )
+        return on, right
 
     def _pinned_variant(self, variable_frame, group: FactorVariable):
         """The grouping variable's rows, narrowed to the pinned variant.
@@ -1746,6 +1788,52 @@ class ScidbSource(BaseSource):
         offered = self._groupable_columns(
             variable, types, rejected, self._offer, numeric_reason=numeric_reason
         )
+        return {"offered": offered, "rejected": rejected}
+
+    def covariate_variables(self, measure: str) -> dict:
+        """Which VARIABLES may supply a numeric covariate for ``measure`` —
+        the DAG canvas half of StatStudio's Add covariate picker.
+
+        :meth:`groupable_variables`' offers with the meaning of "numeric"
+        turned around: a whole variable with numeric values and every wide
+        table (its columns are :meth:`covariate_columns`' question) are
+        offered; a categorical variable is refused, with the reason. The
+        plotted variable's own columns are not offered: covariates are joined
+        onto the analysis rows, where the measure's own fields are not
+        carried.
+        """
+        found = self.groupable_variables(measure)
+        offered, rejected = [], dict(found["rejected"])
+        for entry in found["offered"]:
+            if entry.get("own"):
+                continue
+            if entry["kind"] == "categorical":
+                rejected[entry["label"]] = "text values: a covariate is numeric (group by it instead)"
+                continue
+            offered.append(entry)
+        Log.info("covariate_variables(%s): %d offered, %d rejected", measure, len(offered), len(rejected),
+                 layer=LAYER)
+        return {"offered": offered, "rejected": rejected}
+
+    def covariate_columns(self, measure: str, variable: str) -> dict:
+        """Which COLUMNS of ``variable`` may be a covariate: the numeric ones
+        (the mirror of :meth:`groupable_columns`, which offers the text
+        ones). Same ``{"offered", "rejected"}`` shape, same type pre-filter."""
+        rejected: dict[str, str] = {}
+        offered: list[dict] = []
+        types = data_column_types_for(self._db, variable)
+        with Log.timer(f"covariate_columns({variable})", layer=LAYER):
+            for column, data_type in types.items():
+                label = f"{variable}.{column}"
+                if is_container_type(data_type):
+                    continue
+                shape = classify_value(sample_column_value(self._db, variable, column))
+                if shape in (Shape.SERIES_1D, Shape.MATRIX_2D, Shape.UNKNOWN):
+                    continue
+                if shape is Shape.CATEGORICAL:
+                    rejected[label] = "text column: a covariate is numeric (group by it instead)"
+                    continue
+                offered.append(self._offer(variable, column, []))
         return {"offered": offered, "rejected": rejected}
 
     def _groupable_columns(

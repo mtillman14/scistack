@@ -256,6 +256,99 @@ def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable, *, curves: b
     return frame
 
 
+@dataclass
+class CovariateValues:
+    """One picked covariate's values, keyed by the schema keys it is
+    recorded at (``source.covariate_values``), or why it could not load."""
+
+    name: str
+    label: str
+    keys: list[str] = field(default_factory=list)
+    frame: pd.DataFrame | None = None
+    error: str | None = None
+
+
+def load_covariates(source: Any, stats_spec: StatsSpec) -> dict[str, CovariateValues]:
+    """``{factor_name: CovariateValues}`` for every analysis' covariates,
+    through the source (variant pin, one value per location: the grouping
+    loader's own rules, ``covariate_values``). A source without that method
+    or a variable it cannot load is an ``error``, never an exception: the
+    model check reports it."""
+    out: dict[str, CovariateValues] = {}
+    for analysis in stats_spec.comparisons:
+        for fv in analysis.covariates:
+            if fv.factor_name in out:
+                continue
+            entry = CovariateValues(name=fv.factor_name, label=fv.label)
+            loader = getattr(source, "covariate_values", None)
+            if loader is None:
+                entry.error = "this data source has no variables to join as covariates"
+            else:
+                try:
+                    entry.keys, entry.frame = loader(fv)
+                except (ValueError, KeyError) as exc:
+                    entry.error = str(exc)
+            if entry.error:
+                Log.warn("[stats rows] covariate %s not loaded: %s", fv.label, entry.error, layer=LAYER)
+            else:
+                Log.info("[stats rows] covariate %s: %d value(s) keyed by %s", fv.label, len(entry.frame),
+                         entry.keys, layer=LAYER)
+            out[fv.factor_name] = entry
+    return out
+
+
+def join_covariates(rows: pd.DataFrame, names: list[str],
+                    values: dict[str, CovariateValues]) -> tuple[pd.DataFrame, list[str]]:
+    """The rows with each covariate merged on per row, and the problems.
+
+    A covariate must be recorded at or above the rows' level: every key it is
+    recorded by is a column of the rows, so each row gets ONE value. One
+    recorded deeper (per trial, while the rows are cell means) varies within
+    a row and is refused with that reason; averaging it is not offered yet.
+    A row the covariate has no value for keeps its place with NaN, and
+    csv-stats leaves it out and names it (never silently).
+    """
+    problems: list[str] = []
+    for name in names:
+        entry = values.get(name)
+        if entry is None or entry.error:
+            problems.append(f"covariate {name}: {entry.error if entry else 'not loaded'}")
+            continue
+        if name in rows.columns:
+            problems.append(f"covariate {name}: the rows already have a column {name!r}")
+            continue
+        missing_keys = [k for k in entry.keys if k not in rows.columns]
+        if missing_keys:
+            problems.append(
+                f"covariate {entry.label} is recorded per {' × '.join(entry.keys)}, but the analysis rows have no "
+                f"{', '.join(missing_keys)} column (averaged away): a covariate must be recorded at or above the "
+                f"rows' level")
+            continue
+        right = entry.frame[[*entry.keys, name]].copy()
+        right[name] = pd.to_numeric(right[name], errors="coerce")
+        if right[name].notna().sum() == 0 and entry.frame[name].notna().any():
+            problems.append(f"covariate {entry.label} is not numeric; a covariate is a number (group by it instead)")
+            continue
+        # Keys compared as text: the rows' keys may be categorical, the
+        # source's plain strings or numbers.
+        tmp = [f"__cov_key{i}" for i in range(len(entry.keys))]
+        left = rows.copy()
+        for t, k in zip(tmp, entry.keys):
+            left[t] = rows[k].astype(str)
+            right[t] = right[k].astype(str)
+        joined = left.merge(right[[*tmp, name]], on=tmp, how="left").drop(columns=tmp)
+        joined.index = rows.index if len(joined) == len(rows) else joined.index
+        if len(joined) != len(rows):
+            problems.append(f"covariate {entry.label}: more than one value per {' × '.join(entry.keys)}")
+            continue
+        missing = int(joined[name].isna().sum())
+        if missing:
+            Log.warn("[stats rows] covariate %s has no value for %d of %d row(s): the mixed model leaves them out "
+                     "and names them", entry.label, missing, len(joined), layer=LAYER)
+        rows = joined
+    return rows, problems
+
+
 def table_request(stats_spec: StatsSpec, dv: DV) -> dict[str, Any]:
     """The ``DataSource.get_table`` arguments that load one DV's table."""
     spec = replace(stats_spec.design, measures=[dv.variable])

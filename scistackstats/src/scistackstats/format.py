@@ -596,6 +596,12 @@ def comparisons_caption(report: StatsReport, analysis: AnalysisReport, stats_spe
         sentences.append(f"Test: {_join_words([TESTS[t].label for t in pair_tests if t in TESTS])}.")
     if omni_tests:
         sentences.append(f"Omnibus: {_join_words([TESTS[t].label for t in omni_tests if t in TESTS])}.")
+    # A model formula the user wrote is stated verbatim (lme4 spelling), so
+    # the covariates and random effects a reader must know about are in the
+    # caption, not only in the settings.
+    models = _unique(s.model for s in strata if s.model)
+    if models:
+        sentences.append(f"Model: {'; '.join(models)}.")
     size_ids = _unique(c.effect_size.get("id") for c in analysis.comparisons() if c.effect_size)
     for sid in size_ids:
         info = EFFECT_SIZES.get(sid)

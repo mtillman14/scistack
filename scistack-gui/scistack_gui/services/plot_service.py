@@ -612,7 +612,20 @@ def _variant_graph(db, variable, *, functions, csv_path) -> dict:
     return graph
 
 
-def grouping_graph(db, variable: str, *, csv_path: str | None = None) -> dict:
+def _offers(source, purpose: str, method: str):
+    """The source's offer method for ``purpose``: "group" (Plot Studio's
+    grouping: ``groupable_*``) or "covariate" (StatStudio's model formula:
+    ``covariate_*``, numeric offered). A source without covariate offers (a
+    CSV) offers nothing, honestly."""
+    if purpose == "group":
+        return getattr(source, f"groupable_{method}")
+    if purpose == "covariate":
+        found = getattr(source, f"covariate_{method}", None)
+        return found or (lambda *_: {"offered": [], "rejected": {}})
+    raise ValueError(f"purpose must be 'group' or 'covariate', got {purpose!r}")
+
+
+def grouping_graph(db, variable: str, *, csv_path: str | None = None, purpose: str = "group") -> dict:
     """Which variable nodes may group ``variable``'s figure, and why not.
 
     The canvas half of the Grouping picker, and the reason it is its own call:
@@ -630,10 +643,11 @@ def grouping_graph(db, variable: str, *, csv_path: str | None = None) -> dict:
 
     with db_connection("plot_grouping_graph", needed=not csv_path):
         source = get_source(db, csv_path=csv_path)
-        report = source.groupable_variables(variable)
+        report = _offers(source, purpose, "variables")(variable)
         logger.info(
-            "[plot] grouping_graph(%s): %d offered %s, %d refused",
+            "[plot] grouping_graph(%s, %s): %d offered %s, %d refused",
             variable,
+            purpose,
             len(report["offered"]),
             [(o["label"], o["kind"]) for o in report["offered"]],
             len(report["rejected"]),
@@ -642,7 +656,7 @@ def grouping_graph(db, variable: str, *, csv_path: str | None = None) -> dict:
 
 
 def grouping_columns(
-    db, variable: str, group_variable: str, *, csv_path: str | None = None
+    db, variable: str, group_variable: str, *, csv_path: str | None = None, purpose: str = "group"
 ) -> dict:
     """Which columns of ``group_variable`` may group ``variable``'s figure.
 
@@ -654,11 +668,12 @@ def grouping_columns(
 
     with db_connection("plot_grouping_columns", needed=not csv_path):
         source = get_source(db, csv_path=csv_path)
-        report = source.groupable_columns(variable, group_variable)
+        report = _offers(source, purpose, "columns")(variable, group_variable)
         logger.info(
-            "[plot] grouping_columns(%s of %s): %d offered %s, %d refused %s",
+            "[plot] grouping_columns(%s of %s, %s): %d offered %s, %d refused %s",
             group_variable,
             variable,
+            purpose,
             len(report["offered"]),
             [o["label"] for o in report["offered"]],
             len(report["rejected"]),

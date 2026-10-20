@@ -150,7 +150,7 @@ lineage and `scidb report` apply unchanged.
 **Specification**
 - ✅ Factors, stratification, unit of analysis (S2)
 - Within/between derivation owner + override (S2 consequence)
-- Covariates (ANCOVA) — no plot role carries these today
+- ✅ Covariates — no plot role carries these; picked per analysis in the Model formula popup (2026-10-20, plan-statstudio-model-formula), mixed model only
 - Interactions: default full factorial vs. main effects only
 - Contrast coding, reference level, planned contrasts
 - Test recommendation from the design (suggest the test + its nonparametric

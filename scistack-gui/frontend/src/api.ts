@@ -367,6 +367,8 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     stats_preset_apply:     { path: '/api/stats/presets/apply', method: 'POST', body: true },
     stats_preset_hide:      { path: '/api/stats/presets/hide', method: 'POST', body: true },
     stats_add_to_pipeline:  { path: '/api/stats/add-to-pipeline', method: 'POST', body: true },
+    stats_formula_check:    { path: '/api/stats/formula/check', method: 'POST', body: true },
+    stats_formula_apply:    { path: '/api/stats/formula/apply', method: 'POST', body: true },
     plot_preset_history:    { path: '/api/plot/presets/history', method: 'POST', body: true },
     // One edit to the project's [aliases] in scistack.toml (scidb.aliases).
     plot_project_alias_set: { path: '/api/plot/project-alias', method: 'POST', body: true },

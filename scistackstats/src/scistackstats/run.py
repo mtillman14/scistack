@@ -20,7 +20,7 @@ its reason. A configuration error (an unknown correction) raises
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pandas as pd
@@ -34,8 +34,9 @@ from .design import WITHIN, Design, comparison_tiers, derive_design
 from .effects import EFFECT_SIZES, chosen_effect_size, difference_spec
 from .engine import EngineRefusal, get_engine
 from .exclusions import Exclusions, from_record
+from .model import ModelCheck, for_frame
 from .spec import Analysis, StatsSpec, StatsSpecError
-from .tables import UNIT, AnalysisFrame, AnalysisFrameError, analysis_frame
+from .tables import UNIT, AnalysisFrame, AnalysisFrameError, CovariateValues, analysis_frame, join_covariates
 
 LAYER = "scistackstats"
 
@@ -149,6 +150,9 @@ class StratumResult:
     #: Stage F: a decision the user must make before tests can run
     #: (``{"factor", "message", "choices"}``), from a design refusal.
     action: dict[str, Any] | None = None
+    #: The model formula this stratum ran (``dv ~ …``), when the analysis
+    #: has one (``model.py``); None for StatStudio's default model.
+    model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -156,7 +160,7 @@ class StratumResult:
             "difference": self.difference, "effect_size_note": self.effect_size_note,
             "omnibus": self.omnibus.to_dict() if self.omnibus else None,
             "primary": [c.to_dict() for c in self.primary], "refused": self.refused,
-            "excluded": self.excluded, "action": self.action,
+            "excluded": self.excluded, "action": self.action, "model": self.model,
         }
 
 
@@ -214,14 +218,25 @@ def _levels_for(design: Design) -> dict[str, list[Any]]:
     return {f.name: list(f.levels) for f in design.factors}
 
 
-def _omnibus(engine, test: str, frame: AnalysisFrame, rows: pd.DataFrame, design: Design, analysis: Analysis) -> OmnibusResult:
+def _model_inputs(test: str, model: ModelCheck | None, base: list[str]) -> tuple[list[str], dict[str, Any]]:
+    """The extra row columns and engine options a model formula adds to a
+    mixed-model call (covariates, random groups and slopes). Other tests,
+    and StatStudio's default model, are called exactly as before."""
+    if model is None or not model.needs_mixed_model or test not in ("lmm", "lmm_pairwise"):
+        return base, {}
+    return [*base, *(c for c in model.columns() if c not in base)], model.engine_options()
+
+
+def _omnibus(engine, test: str, frame: AnalysisFrame, rows: pd.DataFrame, design: Design, analysis: Analysis,
+             model: ModelCheck | None = None) -> OmnibusResult:
     columns = [frame.y, *[f.name for f in design.factors], *([UNIT] if UNIT in rows.columns else [])]
+    columns, model_options = _model_inputs(test, model, columns)
     try:
         record = engine.run(
             test, rows[columns], frame.y,
             between=design.between, within=design.within,
-            subject=UNIT if design.within else None, levels=_levels_for(design),
-            options={"alpha": analysis.alpha, "ci_level": analysis.ci_level},
+            subject=UNIT if design.within or model_options else None, levels=_levels_for(design),
+            options={"alpha": analysis.alpha, "ci_level": analysis.ci_level, **model_options},
         )
     except EngineRefusal as exc:
         return OmnibusResult(test=test, refused=exc.reason, refusal_kind=exc.kind)
@@ -254,7 +269,8 @@ def _exclusions(record: dict[str, Any], rows: pd.DataFrame, by_unit: bool, where
     return found.to_dict()
 
 
-def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, omnibus, size_id, diff) -> list[Comparison]:
+def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, omnibus, size_id, diff,
+              model: ModelCheck | None = None) -> list[Comparison]:
     primary = tiers.primary
     within = design.factor(primary).kind == WITHIN
     interactions: dict[str, float | None] = {}
@@ -265,7 +281,7 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
                 interactions[effect["term"]] = effect["p"]
     if test == "lmm_pairwise":
         return _pairwise_full_model(engine, test, frame, rows, design, tiers, analysis, stratum_text,
-                                    interactions, size_id, diff)
+                                    interactions, size_id, diff, model)
     out = []
     for context in tiers.contexts:
         part = rows
@@ -315,7 +331,7 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
 
 
 def _pairwise_full_model(engine, test, frame, rows, design, tiers, analysis, stratum_text,
-                         interactions, size_id, diff) -> list[Comparison]:
+                         interactions, size_id, diff, model: ModelCheck | None = None) -> list[Comparison]:
     """Mixed-model contrasts: ONE engine call on the whole stratum.
 
     csv-stats fits the full model once and returns every pair of the primary
@@ -336,12 +352,13 @@ def _pairwise_full_model(engine, test, frame, rows, design, tiers, analysis, str
             variant={k: str(v) for k, v in design.stratum.items() if k in frame.variant_axes},
         )
 
+    columns, model_options = _model_inputs(test, model, columns)
     try:
         record = engine.run(
             test, rows[columns], frame.y, between=design.between, within=design.within,
             subject=UNIT, levels=_levels_for(design),
             options={"alpha": analysis.alpha, "ci_level": analysis.ci_level, "tails": analysis.tails,
-                     "factor": primary},
+                     "factor": primary, **model_options},
         )
     except EngineRefusal as exc:
         out = []
@@ -438,13 +455,48 @@ def family_statement(analysis: Analysis, families: list[Family], n_comparisons: 
     return primary
 
 
-def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list[dict[str, str]]) -> AnalysisReport:
+def _model_for(analysis: Analysis, frame: AnalysisFrame, covariates: dict[str, CovariateValues],
+               available: list[str]) -> tuple[AnalysisFrame, ModelCheck | None]:
+    """The analysis' model formula against one DV's rows, with its
+    covariates joined on; ``(frame, None)`` for StatStudio's default model."""
+    if not analysis.custom_model:
+        return frame, None
+    problems: list[str] = []
+    if analysis.covariates:
+        rows, problems = join_covariates(frame.rows, [c.factor_name for c in analysis.covariates], covariates)
+        frame = replace(frame, rows=rows)
+    model = for_frame(analysis.formula, analysis.covariates, frame, available=available)
+    model.errors.extend({"message": p} for p in problems)
+    if model.errors:
+        Log.warn("[stats] %s: model formula %r unusable: %s", frame.dv.key, model.text,
+                 "; ".join(e["message"] for e in model.errors), layer=LAYER)
+    return frame, model
+
+
+def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list[dict[str, str]],
+                 covariates: dict[str, CovariateValues] | None = None,
+                 available: dict[str, list[str]] | None = None) -> AnalysisReport:
     engine = get_engine()
     strata: list[StratumResult] = []
     for frame in frames:
+        # available: the table's factors, so a stored formula naming one the
+        # design has since dropped is rebased, not "unknown".
+        frame, model = _model_for(analysis, frame, covariates or {}, (available or {}).get(frame.dv.key, []))
+        model_text = f"{frame.dv.key} ~ {model.text}" if model is not None else None
         for stratum, rows in frame.stratum_groups():
             stratum_text = _key_text(stratum)
             design = derive_design(frame, stratum, rows, analysis.overrides)
+            if model is not None and not model.ok:
+                reason = "model formula: " + model.errors[0]["message"]
+                strata.append(StratumResult(
+                    dv=frame.dv.key, stratum=_text(stratum), design=design.to_dict(),
+                    selection={"omnibus": None, "omnibus_reason": reason, "pairwise": None,
+                               "pairwise_reason": reason, "why": reason, "recommended": None},
+                    difference=None, effect_size_note=None,
+                    omnibus=OmnibusResult(test="", refused=reason, refusal_kind="design") if analysis.omnibus else None,
+                    primary=[], refused=reason if analysis.pairwise else None, model=model_text,
+                ))
+                continue
             stratum_excluded = None
             if analysis.missing == "complete_cases" and design.incomplete_units:
                 # The user's recorded choice: every test of this analysis sees
@@ -461,7 +513,8 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                          Exclusions(**stratum_excluded).sentence(), layer=LAYER)
                 design = derive_design(frame, stratum, rows, analysis.overrides)
             rec = recommend(analysis, design, rows, frame.y, engine, UNIT)
-            selection = select_tests(analysis, design, rec)
+            selection = select_tests(analysis, design, rec,
+                                     mixed_formula=model is not None and model.needs_mixed_model)
             Log.info("[stats] %s %s: missing=%s; %s%s", frame.dv.key, stratum_text or "(one stratum)",
                      analysis.missing, selection.why,
                      f"; recommended omnibus={rec.omnibus} pairwise={rec.pairwise}" if rec else "", layer=LAYER)
@@ -471,7 +524,7 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                 if selection.omnibus_reason:
                     omnibus = OmnibusResult(test=selection.omnibus, refused=selection.omnibus_reason, refusal_kind="design")
                 else:
-                    omnibus = _omnibus(engine, selection.omnibus, frame, rows, design, analysis)
+                    omnibus = _omnibus(engine, selection.omnibus, frame, rows, design, analysis, model)
             elif analysis.omnibus:
                 omnibus = OmnibusResult(test="", refused=selection.omnibus_reason, refusal_kind="design")
             if omnibus is not None and omnibus.refused:
@@ -495,14 +548,14 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                     size_id, size_note = chosen_effect_size(analysis, test, any_within=bool(design.within))
                     diff = difference_spec(test, analysis.difference_spread, analysis.ci_level)
                     primary = _pairwise(engine, test, frame, rows, design, tiers, analysis,
-                                        stratum_text, omnibus, size_id, diff)
+                                        stratum_text, omnibus, size_id, diff, model)
                     Log.info("[stats] %s %s: %s; %s", frame.dv.key, stratum_text or "(one stratum)",
                              selection.why, diff.label, layer=LAYER)
             strata.append(StratumResult(
                 dv=frame.dv.key, stratum=_text(stratum), design=design.to_dict(),
                 selection=selection.to_dict(), difference=diff.to_dict() if diff else None,
                 effect_size_note=size_note, omnibus=omnibus, primary=primary, refused=stratum_refusal,
-                excluded=stratum_excluded, action=needed_action(design),
+                excluded=stratum_excluded, action=needed_action(design), model=model_text,
             ))
     comparisons = [c for s in strata for c in s.primary]
     families = apply_families(engine, analysis, comparisons)
@@ -516,8 +569,11 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                           family_statement=statement, refusals=list(refusals))
 
 
-def run(stats_spec: StatsSpec, tables: dict[str, LongTable]) -> StatsReport:
-    """Every analysis of ``stats_spec`` over every DV (module docstring)."""
+def run(stats_spec: StatsSpec, tables: dict[str, LongTable],
+        covariates: dict[str, CovariateValues] | None = None) -> StatsReport:
+    """Every analysis of ``stats_spec`` over every DV (module docstring).
+    ``covariates``: ``tables.load_covariates``, for analyses with a model
+    formula that names covariates."""
     engine = get_engine()
     allowed = set(engine.corrections())
     for analysis in stats_spec.comparisons:
@@ -542,11 +598,13 @@ def run(stats_spec: StatsSpec, tables: dict[str, LongTable]) -> StatsReport:
                     except KeyError:
                         refusals_by[curves].append({"dv": dv.key, "reason": f"no table loaded for {dv.variable}"})
         refusals = refusals_by[False]
+        available = {dv.key: list(tables[dv.variable].factor_names)
+                     for dv in stats_spec.targets if dv.variable in tables}
         reports = []
         for analysis in stats_spec.comparisons:
             curves = analysis.family == "spm"
             with timing.phase(f"analysis {analysis.id}"):
-                reports.append(run_analysis(analysis, by_kind[curves], refusals_by[curves]))
+                reports.append(run_analysis(analysis, by_kind[curves], refusals_by[curves], covariates, available))
         frames = by_kind[False]
     for refusal in refusals:
         Log.warn("[stats] %s refused: %s", refusal["dv"], refusal["reason"], layer=LAYER)

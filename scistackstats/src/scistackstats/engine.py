@@ -61,6 +61,51 @@ class EngineRefusal(Exception):
         self.kind = kind
 
 
+class FormulaSyntaxError(ValueError):
+    """csv-stats' grammar refused a model formula. ``position``/``length``:
+    the offending span of the text, for the GUI to underline."""
+
+    def __init__(self, reason: str, position: int, length: int = 1) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.position = position
+        self.length = length
+
+
+def _formula_grammar():
+    """csv-stats' formula grammar (``csvstats.lmm_formula``, the one owner),
+    or a "gap" refusal on a csv-stats without it."""
+    try:
+        from csvstats import lmm_formula
+    except ImportError as exc:
+        raise EngineRefusal("not yet in csv-stats: model formulas need csvstats.lmm_formula", kind="gap") from exc
+    return lmm_formula
+
+
+def parse_formula(text: str) -> dict[str, Any]:
+    """``{"response", "fixed": [...], "random": [{"group", "terms",
+    "correlated"}], "names": [...]}``, or :class:`FormulaSyntaxError`.
+    Shared by every engine: the grammar is csv-stats', never restated."""
+    grammar = _formula_grammar()
+    try:
+        m = grammar.parse(text)
+    except grammar.FormulaError as exc:
+        raise FormulaSyntaxError(exc.reason, exc.position, exc.length) from exc
+    return {
+        "response": m.response, "fixed": list(m.fixed), "names": list(m.names),
+        "random": [{"group": list(r.group), "terms": list(r.terms), "correlated": r.correlated} for r in m.random],
+    }
+
+
+def render_formula(fixed: Sequence[str], random: Sequence[dict[str, Any]], response: str | None = None) -> str:
+    """The canonical text of a parsed formula (``parse_formula``'s shape)."""
+    grammar = _formula_grammar()
+    from csvstats.lmm_fit import RandomTerm
+
+    terms = tuple(RandomTerm(tuple(r["group"]), tuple(r["terms"]), bool(r.get("correlated", True))) for r in random)
+    return grammar.render(grammar.ModelFormula(fixed=tuple(fixed), random=terms), response=response)
+
+
 class Engine(Protocol):
     name: str
 
@@ -143,11 +188,14 @@ class CsvStatsEngine:
                 except ImportError as exc:
                     raise EngineRefusal(f"not yet in csv-stats {self._version}: {needed}", kind="gap") from exc
 
+                # A model formula's covariates and random terms
+                # (scistackstats.model); absent = csv-stats' (1 | subject).
+                model = {k: opts[k] for k in ("covariates", "random") if opts.get(k)}
                 if test == "lmm":
-                    return lmm(data, dv, **design, alpha=alpha, ci_level=ci_level)
+                    return lmm(data, dv, **design, **model, alpha=alpha, ci_level=ci_level)
                 # Full-model contrasts (csv-stats >= 0.4): ONE call returns every pair of
                 # `factor` within each combination of the other factors.
-                return lmm_pairwise(data, dv, **design, factor=opts.get("factor"), alpha=alpha,
+                return lmm_pairwise(data, dv, **design, **model, factor=opts.get("factor"), alpha=alpha,
                                     ci_level=ci_level, tails=tails)
             if test == "kruskal":
                 return core.kruskal(data, dv, between=list(between), levels=levels, alpha=alpha, ci_level=ci_level)
@@ -293,7 +341,10 @@ class FakeEngine:
 
     def run(self, test, data, dv, *, between=(), within=(), subject=None, levels=None, options=None):
         self.calls.append({"test": test, "between": list(between), "within": list(within),
-                           "subject": subject, "levels": levels, "rows": len(data)})
+                           "subject": subject, "levels": levels, "rows": len(data),
+                           "columns": list(data.columns),
+                           "covariates": list((options or {}).get("covariates") or []),
+                           "random": list((options or {}).get("random") or [])})
         if test in self.refuse:
             reason, kind = self.refuse[test]
             raise EngineRefusal(reason, kind=kind)

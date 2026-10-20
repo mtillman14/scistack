@@ -31,12 +31,14 @@ from .describe import CELL_LAYOUTS, STATISTICS, DescriptivesTable, describe_tabl
 from .design import Design, Factor, Tiers, comparison_tiers, derive_design
 from .effects import EFFECT_SIZES, DifferenceSpec, default_effect_size, difference_spec
 from .engine import CsvStatsEngine, EngineRefusal, FakeEngine, get_engine, use_engine
+from .model import ModelCheck, apply_to_design, default_formula, for_frame
 from .export import FORMATS, export_comparisons, export_descriptives, render
 from .format import Grid, Labels, apa_sentence, comparisons_grid, descriptives_grids, labels_for, omnibus_grid, sweep_grid
 from .run import Comparison, StatsReport, run
 from .seed import SeedError, Seeded, seed_from_plot
 from .spec import DV, Analysis, DescriptiveSpec, FormatSpec, StatsSpec, StatsSpecError
-from .tables import ANALYSIS_KIND, UNIT, AnalysisFrame, AnalysisFrameError, analysis_frame, load_tables
+from .tables import (ANALYSIS_KIND, UNIT, AnalysisFrame, AnalysisFrameError, CovariateValues, analysis_frame,
+                     load_covariates, load_tables)
 
 __all__ = [
     "ANALYSIS_KIND", "Analysis", "AnalysisFrame", "AnalysisFrameError", "CELL_LAYOUTS", "Comparison",
@@ -49,6 +51,7 @@ __all__ = [
     "FORMATS", "FormatSpec", "Grid", "Labels", "apa_sentence", "comparisons_grid", "descriptives_grids",
     "export_comparisons", "export_descriptives", "labels_for", "omnibus_grid", "render", "sweep_grid",
     "NotExportable", "generate_stats_function", "why_not_exportable",
+    "CovariateValues", "ModelCheck", "apply_to_design", "default_formula", "for_frame", "load_covariates",
 ]
 
 try:

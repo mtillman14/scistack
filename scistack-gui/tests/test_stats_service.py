@@ -121,3 +121,67 @@ def test_compute_carries_the_vocabulary(populated_db):
     assert {"mean_sd", "median_iqr"} <= {c["id"] for c in catalog["cells"]}
     assert "holm" in {c["id"] for c in catalog["corrections"]}
     assert any(e["name"] == "Cohen's d_z" for e in catalog["effect_sizes"])
+
+
+# --- the Model formula popup (plan-statstudio-model-formula) -----------------
+
+
+def test_formula_handlers_are_registered():
+    names = {h.name for h in ALL_HANDLERS}
+    assert {"stats_formula_check", "stats_formula_apply"} <= names
+
+
+def test_the_formula_check_starts_from_the_default_model(populated_db):
+    out = stats_service.formula_check(populated_db, _seeded(populated_db))
+    assert out["ok"]
+    json.dumps(out)
+    (check,) = out["checks"]
+    assert check["errors"] == [] and check["text"] == check["default"] == "session + (1 | subject)"
+    assert check["offers"]["groups"] == ["subject"] and check["offers"]["factors"] == ["session"]
+
+
+def test_a_problem_comes_back_with_its_span(populated_db):
+    (check,) = stats_service.formula_check(populated_db, _seeded(populated_db),
+                                           text="session * height + (1 | subject)")["checks"]
+    (problem,) = check["errors"]
+    assert "height" in problem["message"] and problem["position"] == 10
+
+
+def test_apply_keeps_the_text_only_when_it_says_more_than_the_design(populated_db):
+    spec = _seeded(populated_db)
+    plain = stats_service.formula_apply(populated_db, spec, text="session + (1 | subject)")
+    assert plain["ok"] and "formula" not in plain["spec"]["comparisons"][0]
+    slope = stats_service.formula_apply(populated_db, spec, text="session + (1 + session | subject)")
+    assert slope["ok"] and slope["spec"]["comparisons"][0]["formula"] == "session + (1 + session | subject)"
+    assert slope["design_changed"] is False
+
+
+def test_apply_refuses_a_formula_with_problems_and_changes_nothing(populated_db):
+    out = stats_service.formula_apply(populated_db, _seeded(populated_db), text="session + (1 | nobody)")
+    assert out["ok"] is False and "nobody" in out["errors"][0]["message"]
+
+
+def test_a_random_slope_the_rows_cannot_support_is_refused_with_lme4s_reason(populated_db):
+    """2 subjects x 2 sessions: a session slope per subject is 4 random
+    effects for 4 rows; csv-stats refuses it before fitting (decision 3)."""
+    spec = stats_service.formula_apply(populated_db, _seeded(populated_db),
+                                       text="session + (1 + session | subject)")["spec"]
+    result = stats_service.compute(populated_db, spec)
+    assert result["ok"], result
+    (analysis,) = result["comparisons"]
+    (stratum,) = analysis["strata"]
+    assert stratum["model"] == "RawSignal ~ session + (1 + session | subject)"
+    assert stratum["selection"]["pairwise"] == "lmm_pairwise"
+    (readout,) = result["readout"]
+    assert readout["model"]["text"] == "session + (1 + session | subject)"
+    assert readout["model"]["needs_mixed_model"] is True
+    grid_text = json.dumps(analysis["grid"])
+    assert "number of observations" in grid_text
+
+
+def test_the_covariate_picker_reuses_the_grouping_rpcs(populated_db):
+    report = plot_service.grouping_graph(populated_db, "RawSignal", purpose="covariate")
+    assert set(report) == {"offered", "rejected"}
+    assert all(o["kind"] != "categorical" for o in report["offered"])
+    with pytest.raises(ValueError, match="purpose"):
+        plot_service.grouping_graph(populated_db, "RawSignal", purpose="colour")

@@ -23,6 +23,8 @@ tables, captions and option lists come from `stats_compute` (`Grid`s +
 | Design | readout chips (within/between with evidence) + override | `comparisons[0].overrides` | `design.derive_design` |
 | Descriptives | Cell, statistic checkboxes | `descriptives.cell`, `.statistics` | `describe.CELL_LAYOUTS`, `STATISTICS`; numbers `csvstats.descriptive` |
 | Comparisons | family (default "Recommended from the data"), the Recommended box (tests + evidence), Missing data (use every observation / complete cases), pairwise/omnibus, test overrides (any test; greyed only for the data's shape, reason on hover), equal var, correction, family scope, effect size, difference spread, α, CI | `comparisons[i].*` (incl. `missing`) | `catalog` (`recommend`, `why_unavailable`), `effects`, `run` |
+| Comparisons | one-line model formula (the first analysis' from `readout[].model`, rebased on the design) + **Model formula…** | — (the popup writes) | `scistackstats.model` |
+| Model formula popup | text editor (`<dv> ~` fixed), errors underlined at their span, resolved terms, Add covariate… (GroupingDagPopup `purpose="covariate"`), Add random term…, Reset to default, Apply | `comparisons[i].formula`, `.covariates`; factor changes → `design.roles`/`groups` | `stats_formula_check` (live) / `stats_formula_apply` → `model.check`, `model.apply_to_design`; grammar `csvstats.lmm_formula` |
 | Format | decimals (auto), p decimals, stars | `formatting` | `format` |
 | Brackets on the figure | show, pairs, label | `overlay` | `overlays.bars_for` |
 | Save | name + Save; saved list; presets | `_stats_spec` / `_stats_preset` rows | `scistackstatsdb.saved` |
