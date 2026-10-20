@@ -9,7 +9,7 @@ this before changing anything in `scistackstats`, `scistackstatsdb`,
 
 | Package | What it is |
 |---|---|
-| `csv-stats` (`csvstats`, own repo, cloned at `/workspace/csv-stats`) | ALL math. `descriptive` = every descriptive formula (light: numpy/pandas/scipy). `core` = tests returning the C3 core record (`ttest`, `rank_test`, `anova`, `kruskal`, `friedman`, `spm_ttest`, `correct_pvalues`, `assumption_checks`). `lmm` = `lmm` and `lmm_pairwise` (statsmodels MixedLM, Wald tests, 0.3.0). The old `ttest_ind`/`anova1way` API is untouched and never called by scistack. |
+| `csv-stats` (`csvstats`, own repo, cloned at `/workspace/csv-stats`) | ALL math. `descriptive` = every descriptive formula (light: numpy/pandas/scipy). `core` = tests returning the C3 core record (`ttest`, `rank_test`, `anova`, `kruskal`, `friedman`, `spm_ttest`, `correct_pvalues`, `assumption_checks`). `lmm` = `lmm` and `lmm_pairwise` (own REML fit `_RandomIntercept`, Satterthwaite df, 0.4.0; testing against R: lmm-r-oracle-testing.md). The old `ttest_ind`/`anova1way` API is untouched and never called by scistack. |
 | `scistackplot` | Rows and design. `design.py` (which fields sync), `spread.py` (error bars call csv-stats), `export.plot_data` / `export.sample_curves` (the rows), `diffbars.with_derived_bars` (derived brackets join a resolve). |
 | `scistackstats` (pure) | StatStudio's engine: spec, seed, rows, design derivation, tests, families, formatting, export, overlays, codegen. |
 | `scistackstatsdb` | Loading through `ScidbSource`, saved stats tables + presets (`VersionedStore`), the `stat_` endpoint, the bundle section. |
