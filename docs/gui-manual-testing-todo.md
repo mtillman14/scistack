@@ -11,6 +11,50 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzj. StatStudio: recommended tests, missing-data choice, mixed models, decision banner — added 2026-10-19
+
+**What changed.**
+- Each analysis defaults to "Recommended from the data". A Recommended box
+  shows the tests and their evidence (Shapiro–Wilk, Levene, incomplete
+  subjects).
+- A **Missing data** choice: "use every observation" (the default) or
+  "complete cases only".
+- Linear mixed models (Wald tests) are offered for incomplete within data.
+- A factor nested below the subject in the schema (session) is within-subject
+  automatically.
+- A factor that still needs a decision gets an amber banner with buttons.
+- Every excluded subject is named, and n reads "15 of 17".
+
+**Backend steps.**
+1. Install csv-stats 0.3.0. From the clone: `pip install -e /path/to/csv-stats[full]`,
+   or from PyPI once released.
+2. Reload the window.
+
+**What you should see** (Stroke Aim 2, GAITRiteLoaded, open StatStudio from the
+"speed across sessions" figure):
+1. The design chip says `session: within (schema)`. Hovering it explains that
+   session is nested below subject. There is no "set within or between" refusal.
+2. Analysis a1 shows "Recommended: Mixed-model contrast (Wald z) (pairwise),
+   Linear mixed model (Wald χ²) (omnibus)". The first evidence line names the
+   subjects lacking some sessions.
+3. The Comparisons table is filled. Its caption ends "Missing data: every
+   observation used where the test allows it (linear mixed model; Wald tests:
+   z and χ², no t/F degrees of freedom)."
+4. Set **Missing data** to "Complete cases only". The incomplete subjects are
+   named in the notes, n reads "X of 17", the omnibus becomes ANOVA, and
+   scidb.log has a `complete cases:` WARN.
+5. Choose **Pairwise test → Paired t-test** under "use every observation". It
+   runs (it is not greyed). The notes name the subjects it couldn't pair, and
+   the Recommended box still shows the mixed model.
+6. A grouping factor that is NOT a schema key with incomplete subjects (for
+   example a `Demographics` column): an amber banner appears on both tabs,
+   with buttons "<factor> is within-subject" / "between-subject". The
+   Comparisons tab shows "!". Clicking a button re-runs with the choice.
+7. Tests the data's shape can't run (for example Mann–Whitney on a within
+   factor) are greyed in the menu, with the reason on hover.
+
+---
+
 ## 0zzzzi. Machine roots: `{rto}/...` paths in scistack.toml — added 2026-10-19
 
 **What changed.** A shared scistack.toml can write a machine-specific folder

@@ -31,6 +31,7 @@ from scistackplot.variants import set_name
 from .catalog import TESTS
 from .describe import CELL_LAYOUTS, STATISTICS, DescriptivesTable, DVBlock
 from .effects import EFFECT_SIZES
+from .exclusions import RESTATED_CODES, Exclusions
 from .run import CORRECTION_LABELS, AnalysisReport, Comparison, StatsReport
 from .spec import FormatSpec, StatsSpec
 
@@ -512,6 +513,8 @@ def comparisons_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: 
             continue
         d = _comparison_decimals(analysis, c.dv, formatting)
         n = (c.n or {}).get("subjects") or (c.n or {}).get("total")
+        if c.excluded:
+            n = Exclusions(**c.excluded).n_text()  # "15 of 17": never just the n used
         adjusted = p_value(c.p_adjusted, formatting.p_decimals) + (stars(c.p_adjusted) if formatting.stars else "")
         rows.append(GridRow([
             dv, _comparison_context(c, labels), pair, _spread_text(c, spread, d),
@@ -524,6 +527,9 @@ def comparisons_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: 
     caption = comparisons_caption(report, analysis, stats_spec, labels)
     notes = [analysis.family_statement]
     for s in analysis.strata:
+        if s.excluded:
+            notes.append(f"{labels.dv(s.dv)}{f' ({labels.key(s.dv, s.stratum)})' if s.stratum else ''}: "
+                         f"{Exclusions(**s.excluded).sentence()}")
         if s.refused:
             notes.append(f"{labels.dv(s.dv)}{f' ({labels.key(s.dv, s.stratum)})' if s.stratum else ''}: "
                          f"comparisons not run: {s.refused}")
@@ -533,7 +539,12 @@ def comparisons_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: 
             notes.append(s.difference["note"])
     for c in comps:
         for w in c.warnings:
+            if w.get("code") in RESTATED_CODES and c.excluded:
+                continue  # restated in full below
             notes.append(f"{labels.dv(c.dv)} {c.a} − {c.b}: {w.get('message', w.get('code'))}")
+        if c.excluded:
+            notes.append(f"{labels.dv(c.dv)} {_comparison_context(c, labels)} {c.a} − {c.b}: "
+                         f"{Exclusions(**c.excluded).sentence()}")
     for r in analysis.refusals:
         notes.append(f"{labels.dv(r['dv'])}: not analysed ({r['reason']})")
     if any(c.clusters is not None for c in comps):
@@ -542,6 +553,21 @@ def comparisons_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: 
         notes.append("* p < .05, ** p < .01, *** p < .001 (adjusted).")
     return Grid(title=f"Comparisons ({analysis.analysis.get('id')})", header_rows=[[HeaderCell(h) for h in header]],
                 rows=rows, caption=caption, notes=_unique(notes), label_columns=3)
+
+
+def missing_sentence(analysis: AnalysisReport) -> str:
+    """The analysis's missing-data policy, stated in every caption (user
+    decision 2026-10-19: the choice is recorded and known)."""
+    policy = analysis.analysis.get("missing", "use_all")
+    tests = {t for s in analysis.strata for t in (s.selection.get("omnibus"), s.selection.get("pairwise")) if t}
+    if policy == "complete_cases":
+        dropped = sum(len((s.excluded or {}).get("units", [])) for s in analysis.strata)
+        return ("Missing data: complete cases only (chosen); "
+                + (f"{dropped} incomplete unit(s) excluded, named in the notes." if dropped else "no unit was incomplete."))
+    text = "Missing data: every observation used where the test allows it"
+    if tests & {"lmm", "lmm_pairwise"}:
+        text += " (linear mixed model; Wald tests: z and χ², no t/F degrees of freedom)"
+    return text + "."
 
 
 def comparisons_caption(report: StatsReport, analysis: AnalysisReport, stats_spec: StatsSpec, labels: Labels) -> str:
@@ -570,6 +596,7 @@ def comparisons_caption(report: StatsReport, analysis: AnalysisReport, stats_spe
         if info:
             sentences.append(f"Effect size: {info.name} ({info.formula}; {info.citation}).")
     sentences.append(analysis.family_statement)
+    sentences.append(missing_sentence(analysis))
     units = _unique((labels.factor(r["dv"], r["unit"]) if r.get("unit") else None) for r in report.dvs)
     if units:
         sentences.append(f"Unit of analysis: {_join_words(units)}.")
@@ -605,7 +632,12 @@ def omnibus_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: Stat
             if gg:
                 notes.append(f"{labels.dv(s.dv)} {term}: Greenhouse–Geisser corrected (ε = {number(gg.get('epsilon'), 2)}).")
         for w in s.omnibus.warnings:
+            if w.get("code") in RESTATED_CODES and s.omnibus.excluded:
+                continue  # restated in full below
             notes.append(f"{labels.dv(s.dv)}: {w.get('message', w.get('code'))}")
+        if s.omnibus.excluded:
+            notes.append(f"{labels.dv(s.dv)}{f' ({where})' if where else ''}: "
+                         f"{Exclusions(**s.omnibus.excluded).sentence()}")
     if not rows:
         return None
     names = _unique(sizes)
@@ -613,6 +645,7 @@ def omnibus_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: Stat
     tests = _unique(s.omnibus.test for s in analysis.strata if s.omnibus and s.omnibus.test)
     caption = (f"Omnibus tests: {_join_words([TESTS[t].label for t in tests if t in TESTS])}; main effects and "
                f"interactions of every grouping layer. Not adjusted for multiple comparisons. "
+               + missing_sentence(analysis) + " "
                + _variants_sentence(stats_spec))
     return Grid(title=f"Omnibus ({analysis.analysis.get('id')})", header_rows=[[HeaderCell(h) for h in header]],
                 rows=rows, caption=caption, notes=_unique(notes), label_columns=3)

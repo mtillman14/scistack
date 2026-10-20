@@ -59,14 +59,14 @@ def test_dv_key_and_targets():
 @pytest.mark.parametrize(
     "plot, cell, family",
     [
-        (bar_spec(), "mean_sd", "parametric"),
-        (bar_spec(aggregate=Aggregation(error=ErrorBand.SEM)), "mean_sem", "parametric"),
-        (bar_spec(aggregate=Aggregation(error=ErrorBand.CI95)), "mean_ci95", "parametric"),
+        (bar_spec(), "mean_sd", "auto"),  # "auto" since 2026-10-19: the data recommend the test
+        (bar_spec(aggregate=Aggregation(error=ErrorBand.SEM)), "mean_sem", "auto"),
+        (bar_spec(aggregate=Aggregation(error=ErrorBand.CI95)), "mean_ci95", "auto"),
         (bar_spec(aggregate=Aggregation(error=ErrorBand.IQR)), "median_iqr", "nonparametric"),
         (bar_spec(aggregate=Aggregation(statistic=Statistic.MEDIAN)), "median_iqr", "nonparametric"),
         (bar_spec(kind=PlotKind.BOX), "median_iqr", "nonparametric"),
         (bar_spec(kind=PlotKind.VIOLIN), "median_iqr", "nonparametric"),
-        (bar_spec(kind=PlotKind.SCATTER), "mean_sd", "parametric"),
+        (bar_spec(kind=PlotKind.SCATTER), "mean_sd", "auto"),
     ],
 )
 def test_seed_rules(plot, cell, family):

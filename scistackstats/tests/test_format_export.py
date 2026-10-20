@@ -171,7 +171,7 @@ def test_apa_sentence():
 
 
 def test_real_engine_comparisons_export_end_to_end():
-    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(),))
+    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(family="parametric"),))  # the t-test path
     tables = {"Ratings": popcorn_table()}
     report = run(spec, tables)
     text = export_comparisons(report, spec, "md", tables=tables)
@@ -221,3 +221,57 @@ def test_latex_and_html_escape_level_names():
     table, tables = _desc(spec)
     html_text = export_descriptives(table, spec, "html", tables=tables)
     assert "A&lt;b&gt;" in html_text and "A<b>" not in html_text
+
+
+# --- exclusions are never silent (Stage A, user rule 2026-10-19) --------------------
+
+
+def test_an_excluded_subject_is_named_in_the_n_column_notes_and_log(caplog):
+    """csv-stats records every subject a paired/RM test cannot use. That used
+    to reach only a truncated note (10 names max), the n column showed the n
+    USED with no denominator, and scidb.log said nothing."""
+    import logging
+
+    reason = "missing a within-subject level"
+    fake = FakeEngine(exclude={"ttest_paired": [("S06", reason)], "anova": [("S06", reason)]})
+    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(),))
+    with caplog.at_level(logging.WARNING):
+        report = _report(spec, engine=fake)
+    analysis = report.analyses[0]
+
+    grid = comparisons_grid(report, analysis, spec)
+    assert {r.cells[-1] for r in grid.rows} == {"5 of 6"}
+    assert any("1 of 6 subjects excluded: S06 (missing a within-subject level)" in n for n in grid.notes)
+
+    omni = omnibus_grid(report, analysis, spec)
+    assert any("S06 (missing a within-subject level)" in n for n in omni.notes)
+
+    logged = [r.getMessage() for r in caplog.records if "subjects excluded" in r.getMessage()]
+    assert logged and all("S06" in m for m in logged)
+
+
+def test_the_engine_note_is_not_doubled_when_restated():
+    """csv-stats' own truncated "subjects_dropped_incomplete" message is
+    replaced by the full sentence, not shown beside it."""
+    from scistackstats.exclusions import RESTATED_CODES
+
+    assert "subjects_dropped_incomplete" in RESTATED_CODES
+    fake = FakeEngine(exclude={"ttest_paired": [("S06", "missing a within-subject level")]})
+    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(),))
+    report = _report(spec, engine=fake)
+    for c in report.analyses[0].comparisons():
+        c.warnings.append({"code": "subjects_dropped_incomplete", "message": "1 subject(s) ... dropped: S06"})
+    grid = comparisons_grid(report, report.analyses[0], spec)
+    assert not any("dropped: S06" in n for n in grid.notes)
+
+
+def test_nothing_excluded_means_no_note_and_a_plain_n(caplog):
+    import logging
+
+    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(),))
+    with caplog.at_level(logging.WARNING):
+        report = _report(spec, engine=FakeEngine())
+    grid = comparisons_grid(report, report.analyses[0], spec)
+    assert not any("excluded" in n for n in grid.notes)
+    assert all(" of " not in r.cells[-1] for r in grid.rows)
+    assert not [r for r in caplog.records if "excluded" in r.getMessage()]

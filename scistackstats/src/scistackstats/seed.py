@@ -63,13 +63,13 @@ def seed_from_plot(plot: PlotSpec, *, linked_plot: str | None = None) -> Seeded:
         cell, family = "median_iqr", "nonparametric"
         notes.append("median / IQR in the figure: median [Q1, Q3], rank-based tests")
     elif error is ErrorBand.SEM:
-        cell, family = "mean_sem", "parametric"
+        cell, family = "mean_sem", "auto"
         notes.append("± SEM in the figure: mean (SEM). Journals usually ask for SD in a descriptive table")
     elif error is ErrorBand.CI95:
-        cell, family = "mean_ci95", "parametric"
+        cell, family = "mean_ci95", "auto"
         notes.append("95% CI in the figure: mean [95% CI], t-based like the bars")
     else:
-        cell, family = "mean_sd", "parametric"
+        cell, family = "mean_sd", "auto"
         notes.append(f"{'± SD' if error is ErrorBand.SD else 'no error bars'} in the figure: mean (SD)")
     if plot.kind is PlotKind.SPAGHETTI:
         notes.append("spaghetti plot: its lines join one unit across levels, so those comparisons are paired")

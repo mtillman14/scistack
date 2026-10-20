@@ -31,7 +31,7 @@ LAYER = "scistackstats"
 #: Tests that compare the two levels of one factor.
 PAIRWISE_TESTS = (
     "ttest_ind_welch", "ttest_ind_student", "ttest_paired", "mann_whitney", "wilcoxon",
-    "spm_ttest2", "spm_ttest_paired",
+    "spm_ttest2", "spm_ttest_paired", "lmm_pairwise",
 )
 #: Omnibus tests over every factor of a design.
 OMNIBUS_TESTS = ("anova", "kruskal", "friedman")
@@ -61,6 +61,18 @@ class Engine(Protocol):
         levels: dict[str, list[Any]] | None = None,
         options: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+
+    def assumptions(
+        self,
+        data: pd.DataFrame,
+        dv: str,
+        *,
+        between: Sequence[str] = (),
+        within: Sequence[str] = (),
+        subject: str | None = None,
+        levels: dict[str, list[Any]] | None = None,
+        alpha: float = 0.05,
+    ) -> list[dict[str, Any]]: ...
 
     def correct(self, pvalues: Sequence[float | None], method: str) -> list[float | None]: ...
 
@@ -104,6 +116,18 @@ class CsvStatsEngine:
                 return core.spm_ttest(data, dv, **design, alpha=alpha, ci_level=ci_level, tails=tails)
             if test == "anova":
                 return core.anova(data, dv, **design, alpha=alpha, ci_level=ci_level)
+            if test in ("lmm", "lmm_pairwise"):
+                # Every observation used (Stage C, 2026-10-19); Wald tests.
+                try:
+                    from csvstats.lmm import lmm, lmm_pairwise
+                except ImportError as exc:
+                    raise EngineRefusal(
+                        f"not yet in csv-stats {self._version}: mixed models need csv-stats>=0.3.0", kind="gap",
+                    ) from exc
+
+                if test == "lmm":
+                    return lmm(data, dv, **design, alpha=alpha, ci_level=ci_level)
+                return lmm_pairwise(data, dv, **design, alpha=alpha, ci_level=ci_level, tails=tails)
             if test == "kruskal":
                 return core.kruskal(data, dv, between=list(between), levels=levels, alpha=alpha, ci_level=ci_level)
             if test == "friedman":
@@ -118,6 +142,24 @@ class CsvStatsEngine:
             Log.info("csv-stats refused %s: %s", test, exc, layer=LAYER)
             raise EngineRefusal(str(exc), kind="invalid") from exc
         raise EngineRefusal(f"not yet in csv-stats: no test {test!r}", kind="gap")
+
+    def assumptions(self, data, dv, *, between=(), within=(), subject=None, levels=None, alpha=0.05):
+        """csv-stats' assumption checks (``core.assumption_checks``), for the
+        recommendation. A check that cannot run is an empty list, not an error."""
+        check = getattr(self._core, "assumption_checks", None)
+        if check is None:
+            Log.warn("csv-stats %s has no assumption_checks (needs >=0.3.0): recommendations "
+                     "fall back to parametric", self._version, layer=LAYER)
+            return []
+        try:
+            out = check(
+                data, dv, between=list(between), within=list(within), subject=subject,
+                levels=levels, alpha=alpha,
+            )
+        except (ValueError, self._core.NotSupported) as exc:
+            Log.info("csv-stats assumption checks unavailable: %s", exc, layer=LAYER)
+            return []
+        return list(out.get("assumptions", []))
 
     def correct(self, pvalues, method):
         return self._core.correct_pvalues(list(pvalues), method)
@@ -138,6 +180,12 @@ class CsvStatsEngine:
             out["pingouin"] = pingouin.__version__
         except ImportError:  # pragma: no cover - csv-stats[full] brings it
             pass
+        try:
+            import statsmodels
+
+            out["statsmodels"] = statsmodels.__version__
+        except ImportError:  # pragma: no cover - csv-stats[full] brings it
+            pass
         return out
 
 
@@ -153,7 +201,8 @@ class FakeEngine:
 
     name = "fake"
 
-    def __init__(self, p_values: dict | None = None, default_p: float = 0.04, refuse: dict | None = None) -> None:
+    def __init__(self, p_values: dict | None = None, default_p: float = 0.04, refuse: dict | None = None,
+                 exclude: dict | None = None, violated: tuple = ()) -> None:
         from csvstats import core, descriptive
 
         self._core = core
@@ -162,7 +211,23 @@ class FakeEngine:
         self.default_p = default_p
         #: ``{test id: (reason, kind)}`` to simulate a refusal.
         self.refuse = dict(refuse or {})
+        #: ``{test id: [(unit, reason), ...]}`` to simulate csv-stats leaving
+        #: units out (``n.excluded_detail``), for the never-silent tests.
+        self.exclude = dict(exclude or {})
+        #: Assumption names the fake checks report as violated.
+        self.violated = set(violated)
         self.calls: list[dict[str, Any]] = []
+
+    def _n(self, test, data, subject) -> dict[str, Any]:
+        """csv-stats' ``n`` shape; ``exclude`` drops the named units."""
+        dropped = [(str(u), r) for u, r in self.exclude.get(test, [])]
+        units = None  # unset unless simulating, so existing fake n stays as it was
+        if dropped and subject and subject in data.columns:
+            units = int(data[subject].nunique()) - len(dropped)
+        return {
+            "total": int(len(data)), "subjects": units, "per_cell": [], "excluded": len(dropped),
+            "excluded_detail": [{"subject": u, "reason": r} for u, r in dropped],
+        }
 
     def _p(self, *keys) -> float:
         for key in keys:
@@ -214,9 +279,21 @@ class FakeEngine:
         return {
             "schema_version": 1, "test": test, "test_label": f"fake {test}",
             "design": {"dv": dv, "between": list(between), "within": list(within), "subject": subject},
-            "n": {"total": int(len(data)), "per_cell": [], "excluded": 0, "excluded_detail": []},
+            "n": self._n(test, data, subject),
             "effects": effects, "assumptions": [], "warnings": [], "engine": self.versions(), "details": {},
         }
+
+    def assumptions(self, data, dv, *, between=(), within=(), subject=None, levels=None, alpha=0.05):
+        """``violated`` from the ``violated`` constructor set (names
+        "normality" / "homogeneity_of_variance"); every check passes by default."""
+        checks = [{"name": "normality", "test": "shapiro_wilk", "scope": "residuals",
+                   "statistic": 0.95, "p": 0.001 if "normality" in self.violated else 0.5,
+                   "violated": "normality" in self.violated}]
+        if between:
+            checks.append({"name": "homogeneity_of_variance", "test": "levene", "scope": "groups",
+                           "statistic": 1.0, "p": 0.001 if "homogeneity_of_variance" in self.violated else 0.5,
+                           "violated": "homogeneity_of_variance" in self.violated})
+        return checks
 
     def correct(self, pvalues, method):
         return self._core.correct_pvalues(list(pvalues), method)

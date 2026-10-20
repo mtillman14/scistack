@@ -122,7 +122,10 @@ def catalog() -> dict:
     statistics vocabulary of its own."""
     from scistackstats import CELL_LAYOUTS, EFFECT_SIZES, STATISTICS, TESTS, get_engine
     from scistackstats.run import CORRECTION_LABELS, SCOPE_LABELS
-    from scistackstats.spec import BAR_LABELS, BAR_PAIRS, DIFFERENCE_SPREADS, FAMILIES, FAMILY_SCOPES, TAILS, VARIANT_MODES
+    from scistackstats.spec import (
+        BAR_LABELS, BAR_PAIRS, DIFFERENCE_SPREADS, FAMILIES, FAMILY_LABELS, FAMILY_SCOPES, MISSING_LABELS,
+        MISSING_POLICIES, TAILS, VARIANT_MODES,
+    )
 
     return {
         "statistics": [{"id": s.id, "label": s.label} for s in STATISTICS.values()],
@@ -133,6 +136,8 @@ def catalog() -> dict:
         "corrections": [{"id": c, "label": CORRECTION_LABELS.get(c, c)} for c in get_engine().corrections()],
         "scopes": [{"id": s, "label": SCOPE_LABELS.get(s, "no correction")} for s in FAMILY_SCOPES],
         "families": list(FAMILIES),
+        "family_labels": dict(FAMILY_LABELS),
+        "missing_policies": [{"id": m, "label": MISSING_LABELS[m]} for m in MISSING_POLICIES],
         "tails": list(TAILS),
         "spreads": list(DIFFERENCE_SPREADS),
         "bar_pairs": list(BAR_PAIRS),
@@ -180,6 +185,7 @@ def compute(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
                 "sentences": [apa_sentence(c, analysis, spec.formatting, labels) for c in analysis.comparisons()],
                 "family_statement": analysis.family_statement,
                 "strata": [{"dv": s.dv, "stratum": s.stratum, "selection": s.selection, "refused": s.refused,
+                            "action": s.action, "excluded": s.excluded,
                             "design": s.design} for s in analysis.strata],
             })
     result = {

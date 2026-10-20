@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { addNotificationHandler, callBackend, isVSCodeMode } from '../../api'
 import { plotThemeVars } from '../PlotStudio/plotTheme'
 import { usePlotTheme } from '../PlotStudio/usePlotTheme'
+import { pendingActions, recommendedFor, type StratumSummary } from './statsActions'
 import {
   addAnalysis, addDV, moveGroup, removeAnalysis, removeDV, setCell, setFormatting, setOverlay,
   setOverride, setRole, targets, toggleStatistic, updateAnalysis, gridToTsv, gridWidth,
@@ -40,6 +41,8 @@ interface Catalog {
   corrections: { id: string; label: string }[]
   scopes: { id: string; label: string }[]
   families: string[]
+  family_labels?: Record<string, string>
+  missing_policies?: { id: string; label: string }[]
   tails: string[]
   spreads: string[]
   bar_pairs: string[]
@@ -54,13 +57,14 @@ interface ComparisonResult {
   sweep?: Grid | null
   sentences: string[]
   family_statement: string
+  strata?: StratumSummary[]
 }
 
 interface Readout {
   dv: string
   error?: string
   rows?: { unit: string | null; averaged: string[]; strata: string[] }
-  design?: { factors: { name: string; kind: string; derived: string; overridden: boolean; units_multi: number; units_single: number }[]; n_units: number | null; warnings: { code: string; message: string }[] }
+  design?: { factors: { name: string; kind: string; derived: string; overridden: boolean; units_multi: number; units_single: number; basis?: string }[]; n_units: number | null; warnings: { code: string; message: string }[]; incomplete_units?: string[] }
   tests?: { id: string; label: string; role: string; reason: string | null }[]
 }
 
@@ -320,35 +324,62 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   const groups = spec.design.groups ?? []
   const firstAnalysis = spec.comparisons[0]
   const readout = result?.readout ?? []
+  // Decisions the user must make before comparisons run (Stage F).
+  const actions = pendingActions(result?.comparisons)
   const addable = variables.find(v => v.name === newDV)
 
   const analysisEditor = (a: Analysis) => {
     const patch = (p: Partial<Analysis>) => setSpec(updateAnalysis(spec, a.id, p))
     const pairTests = (catalog?.tests ?? []).filter(t => t.role === 'pairwise')
     const omniTests = (catalog?.tests ?? []).filter(t => t.role === 'omnibus')
+    // Why a test can't run on this data's SHAPE (scistackstats
+    // catalog.why_unavailable, via the readout); missing data never greys a
+    // test out (user decision 2026-10-19), it is reported instead.
+    const shapeReason = (id: string): string | null =>
+      readout[0]?.tests?.find(t => t.id === id)?.reason ?? null
     return (
       <div key={a.id} style={styles.analysis}>
         <div style={styles.row}>
           <b>{a.id}</b>
           <select value={a.family} onChange={e => patch({ family: e.target.value })} style={styles.select}>
-            {(catalog?.families ?? ['parametric', 'nonparametric']).map(f => <option key={f} value={f}>{f}</option>)}
+            {(catalog?.families ?? ['auto', 'parametric', 'nonparametric']).map(f => <option key={f} value={f}>{catalog?.family_labels?.[f] ?? f}</option>)}
           </select>
           {spec.comparisons.length > 1 && (
             <button type="button" style={styles.smallButton} onClick={() => setSpec(removeAnalysis(spec, a.id))}>✕</button>
           )}
         </div>
+        {(() => {
+          // What the data point to, with the evidence: shown whatever is
+          // selected, so a test the user chose instead is a visible choice.
+          const rec = recommendedFor(result?.comparisons, a.id)
+          if (!rec) return null
+          const label = (id: string | null) => (id ? (catalog?.tests.find(t => t.id === id)?.label ?? id) : 'none')
+          return (
+            <div style={styles.recommended}>
+              <div>Recommended: {label(rec.pairwise)} (pairwise), {label(rec.omnibus)} (omnibus)</div>
+              {rec.evidence.map((e, i) => <div key={i} style={styles.muted}>• {e}</div>)}
+            </div>
+          )
+        })()}
+        <div style={styles.field}>Missing data
+          <select value={a.missing ?? 'use_all'} onChange={e => patch({ missing: e.target.value })} style={styles.select}
+                  title="Recorded with the analysis and stated in every caption">
+            {(catalog?.missing_policies ?? [{ id: 'use_all', label: 'Use every observation' }, { id: 'complete_cases', label: 'Complete cases only' }])
+              .map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+        </div>
         <label style={styles.check}><input type="checkbox" checked={a.pairwise !== false} onChange={e => patch({ pairwise: e.target.checked })} /> Pairwise comparisons (primary)</label>
         <label style={styles.check}><input type="checkbox" checked={a.omnibus !== false} onChange={e => patch({ omnibus: e.target.checked })} /> Omnibus (main effects + interactions)</label>
         <div style={styles.field}>Pairwise test
           <select value={a.pairwise_test ?? ''} onChange={e => patch({ pairwise_test: e.target.value || undefined })} style={styles.select}>
-            <option value="">From the design</option>
-            {pairTests.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+            <option value="">{a.family === 'auto' ? 'Recommended' : 'From the family'}</option>
+            {pairTests.map(t => <option key={t.id} value={t.id} disabled={!!shapeReason(t.id)} title={shapeReason(t.id) ?? undefined}>{t.label}</option>)}
           </select>
         </div>
         <div style={styles.field}>Omnibus test
           <select value={a.omnibus_test ?? ''} onChange={e => patch({ omnibus_test: e.target.value || undefined })} style={styles.select}>
-            <option value="">From the design</option>
-            {omniTests.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
+            <option value="">{a.family === 'auto' ? 'Recommended' : 'From the family'}</option>
+            {omniTests.map(t => <option key={t.id} value={t.id} disabled={!!shapeReason(t.id)} title={shapeReason(t.id) ?? undefined}>{t.label}</option>)}
           </select>
         </div>
         <label style={styles.check}><input type="checkbox" checked={!!a.equal_var} onChange={e => patch({ equal_var: e.target.checked })} /> Assume equal variances (Student, not Welch)</label>
@@ -444,7 +475,10 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
               {r.rows && <div style={styles.muted}>Unit: {r.rows.unit ?? 'none (rows independent)'}{r.rows.averaged.length ? `; ${r.rows.averaged.join(', ')} averaged first` : ''}{r.design?.n_units != null ? `; n = ${r.design.n_units}` : ''}</div>}
               {r.design?.factors.map(f => (
                 <div key={f.name} style={styles.row}>
-                  <span style={styles.chip} title={`${f.units_multi} unit(s) at several levels, ${f.units_single} at one`}>{f.name}: {f.kind}{f.overridden ? ' (set)' : ''}</span>
+                  <span style={f.kind === 'mixed_membership' ? styles.chipNeedsAction : styles.chip}
+                        title={`${f.units_multi} unit(s) at several levels, ${f.units_single} at one` + (f.basis === 'schema' ? '; within-subject because it is nested below the unit in the schema' : '')}>
+                    {f.name}: {f.kind === 'mixed_membership' ? 'needs a decision' : f.kind}{f.overridden ? ' (set)' : f.basis === 'schema' ? ' (schema)' : ''}
+                  </span>
                   {firstAnalysis && (
                     <select value={firstAnalysis.overrides?.[f.name] ?? ''} style={styles.select}
                             onChange={e => setSpec(setOverride(spec, firstAnalysis.id, f.name, e.target.value || null))}>
@@ -557,7 +591,10 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
 
         <div style={styles.toolbar}>
           <button type="button" style={tab === 'descriptives' ? styles.tabOn : styles.tab} onClick={() => setTab('descriptives')}>Descriptives</button>
-          <button type="button" style={tab === 'comparisons' ? styles.tabOn : styles.tab} onClick={() => setTab('comparisons')}>Comparisons</button>
+          <button type="button" style={tab === 'comparisons' ? styles.tabOn : styles.tab} onClick={() => setTab('comparisons')}
+                  title={actions.length ? 'A decision is needed before comparisons can run' : undefined}>
+            Comparisons{actions.length > 0 && <span style={styles.badge}>!</span>}
+          </button>
           <span style={{ flex: 1 }} />
           <select value={exportFormat} onChange={e => setExportFormat(e.target.value)} style={styles.select} title="html pastes into Word as a table">
             {FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
@@ -572,6 +609,22 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
           )}
         </div>
 
+        {/* Stage F: a decision the user must make is a banner with the
+            choices, on both tabs, not a table of "not run" rows. The wording
+            and choices come from scistackstats.catalog.needed_action. */}
+        {actions.map(act => (
+          <div key={`${act.analysisId}|${act.factor}`} style={styles.actionBanner} role="alert">
+            <div>{act.message}</div>
+            <div style={styles.row}>
+              {act.choices.map(choice => (
+                <button key={choice} type="button" style={styles.primaryButton}
+                        onClick={() => setSpec(setOverride(spec, act.analysisId, act.factor, choice))}>
+                  {act.factor} is {choice}-subject
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
         {result?.refusals.map((r, i) => <div key={i} style={styles.warn}>{r.dv}: {r.reason}</div>)}
         {tab === 'descriptives' && result?.descriptives.map((g, i) => <GridTable key={i} grid={g} />)}
         {tab === 'comparisons' && (
@@ -614,6 +667,10 @@ const styles: Record<string, React.CSSProperties> = {
   listButton: { background: 'none', border: 'none', color: 'var(--ps-accent-text)', textAlign: 'left', cursor: 'pointer', padding: '1px 0', fontSize: 12 },
   factorName: { minWidth: 70 },
   chip: { border: '1px solid var(--ps-border-soft)', borderRadius: 10, padding: '0 6px', fontSize: 11 },
+  chipNeedsAction: { border: '1px solid var(--ps-warn)', color: 'var(--ps-warn)', borderRadius: 10, padding: '0 6px', fontSize: 11, fontWeight: 600 },
+  badge: { marginLeft: 6, background: 'var(--ps-warn)', color: 'var(--ps-bg)', borderRadius: 8, padding: '0 5px', fontSize: 11, fontWeight: 700 },
+  actionBanner: { border: '1px solid var(--ps-warn)', borderLeft: '4px solid var(--ps-warn)', borderRadius: 4, padding: '8px 10px', margin: '8px 0', display: 'flex', flexDirection: 'column', gap: 6 },
+  recommended: { border: '1px solid var(--ps-border-soft)', borderRadius: 4, padding: '4px 6px', margin: '4px 0', fontSize: 12 },
   readout: { borderLeft: '2px solid var(--ps-border-soft)', paddingLeft: 6, margin: '4px 0' },
   analysis: { border: '1px solid var(--ps-border-faint)', borderRadius: 4, padding: 6, display: 'flex', flexDirection: 'column', gap: 4 },
   statGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 },

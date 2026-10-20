@@ -29,10 +29,11 @@ from scistacklog import Log
 from scistackplot import LongTable
 from scistackplot.design import design_fingerprint
 
-from .catalog import TESTS, select_tests
+from .catalog import TESTS, needed_action, recommend, select_tests
 from .design import WITHIN, Design, comparison_tiers, derive_design
 from .effects import EFFECT_SIZES, chosen_effect_size, difference_spec
 from .engine import EngineRefusal, get_engine
+from .exclusions import Exclusions, from_record
 from .spec import Analysis, StatsSpec, StatsSpecError
 from .tables import UNIT, AnalysisFrame, AnalysisFrameError, analysis_frame
 
@@ -107,6 +108,8 @@ class Comparison:
     threshold: float | None = None
     refused: str | None = None
     refusal_kind: str | None = None
+    #: ``exclusions.Exclusions.to_dict()`` when the test left anything out.
+    excluded: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -118,6 +121,8 @@ class OmnibusResult:
     effects: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[dict[str, str]] = field(default_factory=list)
     n: dict[str, Any] | None = None
+    #: ``exclusions.Exclusions.to_dict()`` when the test left anything out.
+    excluded: dict[str, Any] | None = None
     sphericity: list[dict[str, Any]] = field(default_factory=list)
     refused: str | None = None
     refusal_kind: str | None = None
@@ -137,6 +142,11 @@ class StratumResult:
     omnibus: OmnibusResult | None
     primary: list[Comparison]
     refused: str | None = None
+    #: Units the "complete_cases" policy left out of every test here.
+    excluded: dict[str, Any] | None = None
+    #: Stage F: a decision the user must make before tests can run
+    #: (``{"factor", "message", "choices"}``), from a design refusal.
+    action: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -144,6 +154,7 @@ class StratumResult:
             "difference": self.difference, "effect_size_note": self.effect_size_note,
             "omnibus": self.omnibus.to_dict() if self.omnibus else None,
             "primary": [c.to_dict() for c in self.primary], "refused": self.refused,
+            "excluded": self.excluded, "action": self.action,
         }
 
 
@@ -221,7 +232,23 @@ def _omnibus(engine, test: str, frame: AnalysisFrame, rows: pd.DataFrame, design
             "sphericity_correction": effect.get("sphericity_correction"),
             "effect_size": _shown_size(effect, size_id),
         })
-    return OmnibusResult(test=test, effects=effects, warnings=list(record.get("warnings", [])), n=record.get("n"))
+    excluded = _exclusions(record, rows, bool(design.within), f"{frame.dv.key} {_key_text(design.stratum)} omnibus {test}")
+    return OmnibusResult(test=test, effects=effects, warnings=list(record.get("warnings", [])), n=record.get("n"),
+                         excluded=excluded)
+
+
+def _exclusions(record: dict[str, Any], rows: pd.DataFrame, by_unit: bool, where: str) -> dict[str, Any] | None:
+    """``exclusions.from_record`` for one engine call, logged at WARN: what a
+    test left out is never silent (user rule 2026-10-19)."""
+    if by_unit and UNIT in rows.columns:
+        offered, counts = int(rows[UNIT].nunique()), "subjects"
+    else:
+        offered, counts = int(len(rows)), "rows"
+    found = from_record(record.get("n"), offered, counts)
+    if found is None:
+        return None
+    Log.warn("[stats] %s: %s", where.strip(), found.sentence(), layer=LAYER)
+    return found.to_dict()
 
 
 def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, omnibus, size_id, diff) -> list[Comparison]:
@@ -270,6 +297,9 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
             comparison.effect_size = _shown_size(effect, size_id)
             comparison.n = record.get("n")
             comparison.warnings = list(record.get("warnings", []))
+            comparison.excluded = _exclusions(
+                record, pair_rows, within, f"{frame.dv.key} {stratum_text} {_key_text(context)} {a} vs {b}",
+            )
             if "clusters" in effect:
                 comparison.clusters = list(effect.get("clusters") or [])
                 comparison.threshold = effect.get("threshold")
@@ -340,7 +370,26 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
         for stratum, rows in frame.stratum_groups():
             stratum_text = _key_text(stratum)
             design = derive_design(frame, stratum, rows, analysis.overrides)
-            selection = select_tests(analysis, design)
+            stratum_excluded = None
+            if analysis.missing == "complete_cases" and design.incomplete_units:
+                # The user's recorded choice: every test of this analysis sees
+                # the same complete units; the others are named, never silent.
+                dropped = list(design.incomplete_units)
+                offered = int(rows[UNIT].nunique())
+                rows = rows[~rows[UNIT].astype(str).isin(dropped)]
+                stratum_excluded = Exclusions(
+                    offered=offered, used=offered - len(dropped), counts="subjects",
+                    units=[{"unit": u, "reason": "missing a within-subject level (complete cases chosen)"}
+                           for u in dropped],
+                ).to_dict()
+                Log.warn("[stats] %s %s: complete cases: %s", frame.dv.key, stratum_text or "(one stratum)",
+                         Exclusions(**stratum_excluded).sentence(), layer=LAYER)
+                design = derive_design(frame, stratum, rows, analysis.overrides)
+            rec = recommend(analysis, design, rows, frame.y, engine, UNIT)
+            selection = select_tests(analysis, design, rec)
+            Log.info("[stats] %s %s: missing=%s; %s%s", frame.dv.key, stratum_text or "(one stratum)",
+                     analysis.missing, selection.why,
+                     f"; recommended omnibus={rec.omnibus} pairwise={rec.pairwise}" if rec else "", layer=LAYER)
             tiers = comparison_tiers(design, rows)
             omnibus = None
             if analysis.omnibus and selection.omnibus:
@@ -350,6 +399,10 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                     omnibus = _omnibus(engine, selection.omnibus, frame, rows, design, analysis)
             elif analysis.omnibus:
                 omnibus = OmnibusResult(test="", refused=selection.omnibus_reason, refusal_kind="design")
+            if omnibus is not None and omnibus.refused:
+                Log.warn("[stats] %s %s: omnibus %s not run: %s", frame.dv.key,
+                         stratum_text or "(one stratum)", omnibus.test or "(none)",
+                         omnibus.refused, layer=LAYER)
             primary: list[Comparison] = []
             diff = None
             size_note = None
@@ -358,6 +411,11 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                 test = selection.pairwise
                 if test is None or selection.pairwise_reason:
                     stratum_refusal = selection.pairwise_reason
+                    # The reason, not just a count: scidb.log 2026-10-19 said
+                    # "3 refused ... (see the refusals)" and nothing else, so
+                    # an empty comparison table had no explanation in the log.
+                    Log.warn("[stats] %s %s: comparisons not run: %s", frame.dv.key,
+                             stratum_text or "(one stratum)", stratum_refusal, layer=LAYER)
                 else:
                     size_id, size_note = chosen_effect_size(analysis, test, any_within=bool(design.within))
                     diff = difference_spec(test, analysis.difference_spread, analysis.ci_level)
@@ -369,6 +427,7 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                 dv=frame.dv.key, stratum=_text(stratum), design=design.to_dict(),
                 selection=selection.to_dict(), difference=diff.to_dict() if diff else None,
                 effect_size_note=size_note, omnibus=omnibus, primary=primary, refused=stratum_refusal,
+                excluded=stratum_excluded, action=needed_action(design),
             ))
     comparisons = [c for s in strata for c in s.primary]
     families = apply_families(engine, analysis, comparisons)

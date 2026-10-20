@@ -80,6 +80,11 @@ class AnalysisFrame:
     averaged: list[str] = field(default_factory=list)
     #: Variant axes among the factors and strata (S3: what a sweep varies).
     variant_axes: list[str] = field(default_factory=list)
+    #: Factors that are schema keys nested BELOW the unit (session under
+    #: subject). Each unit can have several of their levels by construction,
+    #: so they are within-subject; a unit at only one level is missing data,
+    #: not a group (Stage E, design.derive_design).
+    below_unit: list[str] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         """What a caption needs to say about these rows."""
@@ -219,6 +224,7 @@ def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable, *, curves: b
         notes.append(f"no experimental unit ({reason}): rows are treated as independent observations")
     unit_keys: list[str] = []
     rows = rows.copy()
+    below_unit: list[str] = []
     if unit is not None:
         depths = derived.factor_depths
         unit_depth = depths.get(unit)
@@ -228,12 +234,18 @@ def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable, *, curves: b
             and unit_depth is not None and depths.get(name) is not None and depths[name] < unit_depth
         ] + [unit]
         rows[UNIT] = rows[unit_keys].astype(str).agg(" / ".join, axis=1)
+        below_unit = [
+            name for name in factors
+            if derived.is_schema_key(name) and unit_depth is not None
+            and depths.get(name) is not None and depths[name] > unit_depth
+        ]
     levels = {name: _level_order(name, derived, rows[name]) for name in [*factors, *strata]}
     frame = AnalysisFrame(
         dv=dv, y=dv.variable, rows=rows, factors=factors, strata=strata, unit=unit,
         unit_keys=unit_keys, levels=levels, spec=spec, notes=notes,
         averaged=list(steps.pre) if unit is not None else [],
         variant_axes=[f.name for f in derived.variant_factors if f.name in (*factors, *strata)],
+        below_unit=below_unit,
     )
     Log.info(
         "[stats rows] %s: %d row(s), factors (inner first) %s, strata %s, unit %s%s",

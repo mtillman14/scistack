@@ -9,7 +9,7 @@ this before changing anything in `scistackstats`, `scistackstatsdb`,
 
 | Package | What it is |
 |---|---|
-| `csv-stats` (`csvstats`, own repo, cloned at `/workspace/csv-stats`) | ALL math. `descriptive` = every descriptive formula (light: numpy/pandas/scipy). `core` = tests returning the C3 core record (`ttest`, `rank_test`, `anova`, `kruskal`, `friedman`, `spm_ttest`, `correct_pvalues`). The old `ttest_ind`/`anova1way` API is untouched and never called by scistack. |
+| `csv-stats` (`csvstats`, own repo, cloned at `/workspace/csv-stats`) | ALL math. `descriptive` = every descriptive formula (light: numpy/pandas/scipy). `core` = tests returning the C3 core record (`ttest`, `rank_test`, `anova`, `kruskal`, `friedman`, `spm_ttest`, `correct_pvalues`, `assumption_checks`). `lmm` = `lmm` and `lmm_pairwise` (statsmodels MixedLM, Wald tests, 0.3.0). The old `ttest_ind`/`anova1way` API is untouched and never called by scistack. |
 | `scistackplot` | Rows and design. `design.py` (which fields sync), `spread.py` (error bars call csv-stats), `export.plot_data` / `export.sample_curves` (the rows), `diffbars.with_derived_bars` (derived brackets join a resolve). |
 | `scistackstats` (pure) | StatStudio's engine: spec, seed, rows, design derivation, tests, families, formatting, export, overlays, codegen. |
 | `scistackstatsdb` | Loading through `ScidbSource`, saved stats tables + presets (`VersionedStore`), the `stat_` endpoint, the bundle section. |
@@ -31,7 +31,13 @@ for error bars.
 | Plot → table settings | `scistackstats.seed.seed_from_plot` |
 | The rows a statistic sees (scalar and 1-D) | `scistackstats.tables.analysis_frame` (via `plot_data` / `sample_curves`) |
 | Experimental unit id (sample key + schema keys above it) | `tables.analysis_frame` (`UNIT` column) |
-| Within / between / mixed_membership | `scistackstats.design.derive_design` |
+| Within / between / mixed_membership (data, or the schema for a key below the unit) | `scistackstats.design.derive_design` |
+| Which units are incomplete (missing a within cell) | `scistackstats.design.incomplete_units` |
+| The recommended tests + their evidence | `scistackstats.catalog.recommend` (assumption math: `csvstats.core.assumption_checks`) |
+| The decision the user must make (banner) | `scistackstats.catalog.needed_action` |
+| Missing-data policy (`use_all` / `complete_cases`) and its labels | `scistackstats.spec` (`MISSING_POLICIES`, `MISSING_LABELS`) |
+| What a test left out, and its wording | `scistackstats.exclusions` |
+| The missing-data caption sentence | `scistackstats.format.missing_sentence` |
 | Primary vs secondary comparisons | `scistackstats.design.comparison_tiers` |
 | Which test, and why not | `scistackstats.catalog` (`select_tests`, `why_unavailable`) |
 | What csv-stats can't do yet | csv-stats (`core.NotSupported`) → `EngineRefusal(kind="gap")` |
@@ -73,8 +79,34 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
   the `UNIT` column, never the raw sample key, as `subject=` for csv-stats.
 - **Pooled / nothing collapsed ⇒ no unit.** Every factor is between, with a
   `no_unit` warning (possible pseudoreplication).
-- **mixed_membership is refused** until the analysis overrides the kind.
-  With "within", csv-stats drops incomplete units and reports them.
+- **Data is never dropped silently (user rule, 2026-10-19).** Every unit or
+  row a test leaves out is named in the table notes, shown as "n = 15 of 17",
+  and logged at WARN (`exclusions`). `Analysis.missing` is the user's
+  recorded choice: `use_all` (default; the recommendation picks a mixed
+  model when within units are incomplete) or `complete_cases` (incomplete
+  units are left out of EVERY test of the analysis, named). Every caption
+  states the policy (`format.missing_sentence`).
+- **Missing data never makes a test unavailable.** `why_unavailable` is
+  about the data's SHAPE only. A complete-cases test (paired t, RM-ANOVA,
+  Friedman, `catalog.COMPLETE_CASES_TESTS`) still runs under `use_all` and
+  names whom it left out.
+- **family "auto" is the default.** `catalog.recommend` runs csv-stats'
+  `assumption_checks` (Shapiro–Wilk on residuals, Levene across between
+  cells) and recommends; the evidence travels in `selection.recommended`
+  and the GUI shows it. Any override (`pairwise_test`/`omnibus_test`) wins
+  and is labelled "chosen". Pre-testing normality to choose a test is
+  debated in the statistics literature: it is a recommendation with its
+  evidence, never a silent switch.
+- **mixed_membership**: a schema key nested below the unit (session under
+  subject) is within by construction (`Factor.basis == "schema"`; Stage E).
+  Any other mixed factor is refused until the user decides; the GUI shows
+  `catalog.needed_action` as a banner with the two choices.
+- **LMM df are Wald only** (`df_method: "wald"`, z for pairwise, χ² per
+  term). Never present them as t/F. Satterthwaite is a planned addition,
+  to be validated against R lmerTest.
+- **csv-stats >= 0.3.0** is needed for `lmm`/`assumption_checks`. On an
+  older install the engine refuses the mixed model as a "gap" and the
+  recommendation falls back to parametric with a WARN (never a crash).
 - **csv-stats gaps are refusals, never fallbacks.** Don't compute a
   statistic in scistackstats. Add it to `csvstats.core`.
 - **pingouin 0.6 renamed columns:** `p_unc`, `p_GG_corr` (old `p-unc`,

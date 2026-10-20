@@ -22,7 +22,7 @@ tables, captions and option lists come from `stats_compute` (`Grid`s +
 | Design | Variants: Pinned / Sweep | `variant_mode` | `tables.analysis_spec(sweep=)` |
 | Design | readout chips (within/between with evidence) + override | `comparisons[0].overrides` | `design.derive_design` |
 | Descriptives | Cell, statistic checkboxes | `descriptives.cell`, `.statistics` | `describe.CELL_LAYOUTS`, `STATISTICS`; numbers `csvstats.descriptive` |
-| Comparisons | family, pairwise/omnibus, test overrides, equal var, correction, family scope, effect size, difference spread, α, CI | `comparisons[i].*` | `catalog`, `effects`, `run` |
+| Comparisons | family (default "Recommended from the data"), the Recommended box (tests + evidence), Missing data (use every observation / complete cases), pairwise/omnibus, test overrides (any test; greyed only for the data's shape, reason on hover), equal var, correction, family scope, effect size, difference spread, α, CI | `comparisons[i].*` (incl. `missing`) | `catalog` (`recommend`, `why_unavailable`), `effects`, `run` |
 | Format | decimals (auto), p decimals, stars | `formatting` | `format` |
 | Brackets on the figure | show, pairs, label | `overlay` | `overlays.bars_for` |
 | Save | name + Save; saved list; presets | `_stats_spec` / `_stats_preset` rows | `scistackstatsdb.saved` |
@@ -32,6 +32,11 @@ tables, captions and option lists come from `stats_compute` (`Grid`s +
 - **Banner** (linked + diverged): `stats_divergence` (`scistackplot.design.design_diff`).
   **Sync to PlotStudio** = `stats_sync to_plot` → `plot_saved_save` (new
   version of the linked saved plot) → `broadcast_panels stats_design_sync`.
+- **Decision banner** (amber, both tabs): one per (analysis, factor) from
+  `strata[].action` (`catalog.needed_action`), with a button per choice that
+  sets the analysis override. The Comparisons tab shows a "!" badge and the
+  design chip says "needs a decision" while one is pending. Collected by
+  `StatStudio/statsActions.ts` (`pendingActions`, `recommendedFor`).
 - **Tabs**: Descriptives (one Grid per run of DVs sharing columns) |
   Comparisons (primary grid, omnibus grid, sweep grid, APA sentences).
 - **Toolbar**: format + Copy (html = Word-pasteable rich table), Save to

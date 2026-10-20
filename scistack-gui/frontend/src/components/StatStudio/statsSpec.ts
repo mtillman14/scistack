@@ -29,6 +29,8 @@ export interface Analysis {
   effect_size?: string
   difference_spread?: string
   overrides?: Record<string, string>
+  /** "use_all" (default) or "complete_cases": recorded and stated in every caption. */
+  missing?: string
 }
 
 export interface Formatting {
@@ -139,7 +141,7 @@ export function nextAnalysisId(spec: StatsSpec): string {
   return `a${n}`
 }
 
-export function addAnalysis(spec: StatsSpec, family = 'parametric'): StatsSpec {
+export function addAnalysis(spec: StatsSpec, family = 'auto'): StatsSpec {
   return { ...spec, comparisons: [...spec.comparisons, { id: nextAnalysisId(spec), family }] }
 }
 

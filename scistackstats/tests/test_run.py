@@ -87,6 +87,25 @@ def test_design_refusal_stops_the_pairwise_tests_with_its_reason():
     assert stratum.primary == []
 
 
+def test_a_design_refusal_logs_its_reason(caplog):
+    """scidb.log 2026-10-19 said "3 refused ... (see the refusals)" and never
+    WHY, so an empty comparison table had no explanation in the log."""
+    import logging
+
+    from conftest import BRANDS
+    from scistackplot import LongTable
+
+    frame = popcorn_frame()
+    frame = frame[~((frame.subject == "S01") & (frame.brand != "Acme"))]
+    table = LongTable.from_frame(frame, factors=["subject", "brand", "trial"], measures=["Ratings"],
+                                 name="Ratings", schema_levels=["subject", "trial"], level_order={"brand": BRANDS})
+    with caplog.at_level(logging.WARNING):
+        _run(Analysis(), table=table)
+    lines = [r.getMessage() for r in caplog.records if "comparisons not run" in r.getMessage()]
+    assert len(lines) == 1
+    assert "Ratings" in lines[0] and "set within or between" in lines[0]
+
+
 def test_report_is_deterministic_json():
     one = json.dumps(_run(Analysis()).to_dict(), sort_keys=True)
     two = json.dumps(_run(Analysis()).to_dict(), sort_keys=True)
@@ -100,7 +119,9 @@ def test_unknown_correction_raises_before_running():
 
 def test_real_csvstats_end_to_end():
     """Better Popcorn with csv-stats: paired t-tests of the brands, RM ANOVA."""
-    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(),))
+    # Pinned: this checks the t-test / RM-ANOVA path; "auto" picks Wilcoxon here
+    # (the residuals are not normal, see the next test).
+    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(family="parametric"),))
     report = run(spec, {"Ratings": popcorn_table()}).analyses[0]
     (stratum,) = report.strata
     assert stratum.selection["pairwise"] == "ttest_paired"
@@ -116,6 +137,21 @@ def test_real_csvstats_end_to_end():
     assert isinstance(acme_butter.spread, list) and len(acme_butter.spread) == 2
     assert all(c.p_adjusted >= c.p for c in comps)
     assert stratum.difference["label"].startswith("Δ = a − b, mean [95% CI of the paired differences]")
+
+
+def test_real_csvstats_recommendation_carries_its_evidence():
+    """The default ("auto") on real csv-stats: the Popcorn residuals fail
+    Shapiro–Wilk, so the rank tests are recommended and the evidence says why."""
+    spec = StatsSpec(design=bar_spec(), comparisons=(Analysis(),))
+    report = run(spec, {"Ratings": popcorn_table()}).analyses[0]
+    (stratum,) = report.strata
+    rec = stratum.selection["recommended"]
+    check = rec["checks"][0]
+    assert check["name"] == "normality" and check["test"] == "shapiro_wilk"
+    expected = "wilcoxon" if check["violated"] else "ttest_paired"
+    assert rec["pairwise"] == stratum.selection["pairwise"] == expected
+    assert rec["evidence"][0].startswith("residuals: ")
+    assert "pairwise: " in stratum.selection["why"] and "(recommended: residuals: " in stratum.selection["why"]
 
 
 def test_statement_when_every_comparison_was_refused():

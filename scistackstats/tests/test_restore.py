@@ -37,7 +37,7 @@ def test_bad_settings_become_notes_and_defaults():
     assert {"comparisons[0].family", "comparisons[0].shiny", "comparisons[1].pairwise_test",
             "descriptives.statistics", "dvs[1]", "formatting.decimals", "unknown_top"} <= paths
     spec = restored.spec
-    assert spec.comparisons[0].family == "parametric"
+    assert spec.comparisons[0].family == "auto"  # the default since 2026-10-19
     assert spec.comparisons[1].pairwise_test is None, "the design chooses instead"
     assert spec.descriptives.statistics == ("n",)
     assert spec.dvs == (DV("Ratings"),)

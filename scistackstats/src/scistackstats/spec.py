@@ -27,7 +27,26 @@ from scistackplot import PlotSpec
 FORMAT = 1
 
 #: ``spm``: statistical parametric mapping on 1-D curves (S4), via spm1d.
-FAMILIES = ("parametric", "nonparametric", "spm")
+#: "auto" (the default) runs the recommendation (catalog.recommend): the
+#: data decide, with the evidence shown; the others pin a family.
+FAMILIES = ("auto", "parametric", "nonparametric", "mixed_model", "spm")
+#: How an analysis treats units missing some within level (user decision
+#: 2026-10-19). "use_all": every observation used where the method allows it
+#: (a mixed model); "complete_cases": incomplete units are left out of every
+#: test of the analysis, named. Either way it is recorded and shown.
+MISSING_POLICIES = ("use_all", "complete_cases")
+#: What the GUI shows for each family and missing-data policy.
+FAMILY_LABELS = {
+    "auto": "Recommended from the data",
+    "parametric": "Parametric (t-tests, ANOVA)",
+    "nonparametric": "Rank-based (Wilcoxon, Mann–Whitney, Friedman, Kruskal–Wallis)",
+    "mixed_model": "Linear mixed model",
+    "spm": "SPM (1-D curves)",
+}
+MISSING_LABELS = {
+    "use_all": "Use every observation (mixed model where needed)",
+    "complete_cases": "Complete cases only (drop incomplete units, named)",
+}
 TAILS = ("two-sided", "greater", "less")
 #: Correction family scopes (P5). ``stratum`` = one DV × one stratum, the
 #: default (S13); ``context`` = one combination of the outer grouping layers.
@@ -155,7 +174,7 @@ class Analysis:
     """
 
     id: str = "a1"
-    family: str = "parametric"
+    family: str = "auto"
     #: Main effects and interactions over every grouping layer (secondary).
     omnibus: bool = True
     #: Pairwise comparisons of the innermost layer's levels within each
@@ -176,11 +195,14 @@ class Analysis:
     difference_spread: str = "ci"
     #: ``{factor: "within"|"between"}`` over the derived classification (P4).
     overrides: dict[str, str] = field(default_factory=dict)
+    #: ``MISSING_POLICIES``; recorded in the report and every caption.
+    missing: str = "use_all"
 
     def __post_init__(self) -> None:
         if not self.id:
             raise StatsSpecError("an analysis needs an id")
         _check(self.family, FAMILIES, f"analysis {self.id}: family")
+        _check(self.missing, MISSING_POLICIES, f"analysis {self.id}: missing")
         _check(self.tails, TAILS, f"analysis {self.id}: tails")
         _check(self.family_scope, FAMILY_SCOPES, f"analysis {self.id}: family_scope")
         _check(self.difference_spread, DIFFERENCE_SPREADS, f"analysis {self.id}: difference_spread")

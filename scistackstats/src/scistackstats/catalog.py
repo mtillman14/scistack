@@ -42,11 +42,18 @@ TESTS: dict[str, StatTest] = {
         StatTest("wilcoxon", "Wilcoxon signed-rank", "pairwise", "nonparametric", WITHIN),
         StatTest("spm_ttest2", "SPM two-sample t (1-D curves)", "pairwise", "spm", BETWEEN),
         StatTest("spm_ttest_paired", "SPM paired t (1-D curves)", "pairwise", "spm", WITHIN),
+        StatTest("lmm_pairwise", "Mixed-model contrast (Wald z)", "pairwise", "mixed_model", WITHIN),
         StatTest("anova", "ANOVA", "omnibus", "parametric"),
         StatTest("kruskal", "Kruskal–Wallis", "omnibus", "nonparametric"),
         StatTest("friedman", "Friedman", "omnibus", "nonparametric"),
+        StatTest("lmm", "Linear mixed model (Wald χ²)", "omnibus", "mixed_model"),
     )
 }
+
+#: Tests that need every unit at every within level they compare. With
+#: missing data they still RUN (never unavailable for it, user decision
+#: 2026-10-19) and name whom they left out (``exclusions``).
+COMPLETE_CASES_TESTS = frozenset({"ttest_paired", "wilcoxon", "spm_ttest_paired", "anova", "friedman"})
 
 
 def _design_problem(design: Design) -> str | None:
@@ -57,6 +64,26 @@ def _design_problem(design: Design) -> str | None:
         return f"{names}: some units at one level, some at several; set within or between first"
     if design.within and design.unit is None:
         return "a within-subject factor needs an experimental unit (collapse to one, without weight by N)"
+    return None
+
+
+def needed_action(design: Design) -> dict[str, Any] | None:
+    """The decision the user must make before any test can run here, or None.
+
+    Stage F: a refusal the user can fix with one choice is not a table of
+    "not run" rows; the GUI shows it as a banner with these choices, applied
+    as the analysis override. Today: a factor whose units sit at one level
+    AND at several (only possible for non-schema factors since Stage E).
+    """
+    for f in design.factors:
+        if f.kind == MIXED:
+            return {
+                "factor": f.name,
+                "message": (f"Comparisons need one decision: {f.name} has {f.units_multi} unit(s) at several "
+                            f"levels and {f.units_single} at one. Is it within-subject (the same units "
+                            f"measured repeatedly) or between-subject (separate groups)?"),
+                "choices": ["within", "between"],
+            }
     return None
 
 
@@ -86,10 +113,13 @@ def why_unavailable(test_id: str, design: Design) -> str | None:
             return "Friedman takes one within-subject factor"
         if len(design.factors[0].levels) < 3:
             return "Friedman needs 3+ levels; with 2, the Wilcoxon test is the test"
-    if test_id == "anova":
+    if test_id in ("anova", "lmm"):
         thin = [f.name for f in design.factors if len(f.levels) < 2]
         if thin:
             return f"{', '.join(thin)} has fewer than 2 levels here"
+    if test_id == "lmm" and not design.within:
+        return ("a mixed model needs repeated observations per unit: at least one within-subject factor "
+                "(with only between factors each unit has one row)")
     return None
 
 
@@ -101,17 +131,103 @@ class Selection:
     pairwise_reason: str | None
     #: Why these tests (shown in the GUI and the report).
     why: str
+    #: :class:`Recommendation` ``to_dict()``, whatever was selected, so the
+    #: GUI can show "Recommended: …" beside a test the user chose instead.
+    recommended: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"omnibus": self.omnibus, "omnibus_reason": self.omnibus_reason,
-                "pairwise": self.pairwise, "pairwise_reason": self.pairwise_reason, "why": self.why}
+                "pairwise": self.pairwise, "pairwise_reason": self.pairwise_reason, "why": self.why,
+                "recommended": self.recommended}
 
 
-def _pairwise_default(analysis: Analysis, design: Design) -> tuple[str | None, str]:
+@dataclass(frozen=True)
+class Recommendation:
+    """The tests the DATA point to, with the evidence (Stage D, 2026-10-19).
+
+    A recommendation, never a silent switch: it pre-selects the tests when
+    the family is "auto", the GUI shows it with its evidence, and the user
+    can pick any test that runs on the design's shape instead.
+    """
+
+    omnibus: str | None
+    pairwise: str | None
+    #: Human-readable lines: "residuals not normal (Shapiro–Wilk W = 0.91,
+    #: p = .003)", "4 subjects lack some sessions: a mixed model uses all ...".
+    evidence: tuple[str, ...]
+    #: csv-stats' raw assumption records.
+    checks: tuple[dict[str, Any], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"omnibus": self.omnibus, "pairwise": self.pairwise,
+                "evidence": list(self.evidence), "checks": list(self.checks)}
+
+
+def _check_text(check: dict[str, Any]) -> str:
+    stat = check.get("statistic")
+    p = check.get("p")
+    if p is None:
+        return f"{check.get('test')}: too few values to check {check.get('scope')}"
+    name = {"normality": "normal", "homogeneity_of_variance": "equal variances"}.get(check.get("name"), check.get("name"))
+    verdict = f"not {name}" if check.get("violated") else name
+    label = {"shapiro_wilk": "Shapiro–Wilk W", "levene": "Levene F"}.get(check.get("test"), check.get("test"))
+    return f"{check.get('scope')}: {verdict} ({label} = {stat:.2f}, p = {p:.3g})"
+
+
+def recommend(analysis: Analysis, design: Design, rows: Any, y: str, engine: Any, unit_column: str) -> Recommendation | None:
+    """The tests the data point to, or None when the design can't be tested
+    (no grouping layer, an unresolved mixed factor, curves).
+
+    - Within units incomplete and ``missing == "use_all"``: the linear mixed
+      model (omnibus) and mixed-model contrasts (pairwise, within primary),
+      because they use every observation.
+    - Otherwise, residual normality (csv-stats' Shapiro–Wilk) decides
+      parametric vs rank-based. Variances are reported, and Welch is used
+      unless the analysis assumes equal variances.
+    """
+    if _design_problem(design) or analysis.family == "spm":
+        return None
+    primary = design.factors[0]
+    names = [f.name for f in design.factors]
+    columns = [y, *names, *([unit_column] if design.within and unit_column in rows.columns else [])]
+    checks = tuple(engine.assumptions(
+        rows[columns], y, between=design.between, within=design.within,
+        subject=unit_column if design.within else None,
+        levels={f.name: list(f.levels) for f in design.factors}, alpha=analysis.alpha,
+    ))
+    evidence = [_check_text(c) for c in checks]
+    normal = not any(c.get("violated") for c in checks if c.get("name") == "normality")
+    welch = "ttest_ind_student" if analysis.equal_var else "ttest_ind_welch"
+    between_pair = welch if normal else "mann_whitney"
+    if design.incomplete_units and analysis.missing == "use_all":
+        n = len(design.incomplete_units)
+        evidence.insert(0, f"{n} {design.unit or 'unit'}(s) lack some within levels "
+                           f"({', '.join(design.incomplete_units)}): a mixed model uses all their observations")
+        pairwise = "lmm_pairwise" if primary.kind == WITHIN else between_pair
+        return Recommendation("lmm", pairwise, tuple(evidence), checks)
+    if normal:
+        pairwise = "ttest_paired" if primary.kind == WITHIN else between_pair
+        return Recommendation("anova", pairwise, tuple(evidence), checks)
+    pairwise = "wilcoxon" if primary.kind == WITHIN else "mann_whitney"
+    if len(design.factors) == 1:
+        omnibus = "friedman" if primary.kind == WITHIN and len(primary.levels) >= 3 else (
+            "kruskal" if primary.kind == BETWEEN else None)
+    else:
+        omnibus = None
+        evidence.append("no rank-based test for a factorial design: choose ANOVA or a mixed model for the omnibus")
+    return Recommendation(omnibus, pairwise, tuple(evidence), checks)
+
+
+def _pairwise_default(analysis: Analysis, design: Design,
+                      rec: Recommendation | None = None) -> tuple[str | None, str]:
     primary = design.factors[0] if design.factors else None
     if primary is None:
         return None, "no grouping layer"
     within = primary.kind == WITHIN
+    if analysis.family == "auto" and rec is not None and rec.pairwise:
+        return rec.pairwise, "recommended: " + "; ".join(rec.evidence)
+    if analysis.family == "mixed_model" and within:
+        return "lmm_pairwise", f"{primary.name} is within-subject; mixed model chosen"
     if analysis.family == "spm":
         test = "spm_ttest_paired" if within else "spm_ttest2"
     elif analysis.family == "nonparametric":
@@ -126,13 +242,21 @@ def _pairwise_default(analysis: Analysis, design: Design) -> tuple[str | None, s
     return test, because
 
 
-def _omnibus_default(analysis: Analysis, design: Design) -> tuple[str | None, str]:
+def _omnibus_default(analysis: Analysis, design: Design,
+                     rec: Recommendation | None = None) -> tuple[str | None, str]:
     if not design.factors:
         return None, "no grouping layer"
     if analysis.family == "spm":
         return None, "SPM on curves runs the pairwise tests; an SPM ANOVA is not yet in csv-stats"
-    if analysis.family == "parametric":
-        return "anova", "parametric family"
+    if analysis.family == "auto" and rec is not None:
+        if rec.omnibus:
+            return rec.omnibus, "recommended: " + "; ".join(rec.evidence)
+        return None, "; ".join(rec.evidence) or "no omnibus test recommended"
+    if analysis.family == "mixed_model":
+        return "lmm", "mixed model chosen"
+    if analysis.family in ("parametric", "auto"):
+        # "auto" without rows to check (e.g. the GUI's menu before a run).
+        return "anova", "parametric family" if analysis.family == "parametric" else "auto: no data checked yet"
     if len(design.factors) == 1:
         f = design.factors[0]
         if f.kind == WITHIN:
@@ -141,11 +265,12 @@ def _omnibus_default(analysis: Analysis, design: Design) -> tuple[str | None, st
     return None, "no rank-based test for a factorial design; the pairwise rank tests still run"
 
 
-def select_tests(analysis: Analysis, design: Design) -> Selection:
+def select_tests(analysis: Analysis, design: Design, rec: Recommendation | None = None) -> Selection:
     """The omnibus and pairwise tests for ``analysis`` on ``design``.
 
     An override (``omnibus_test`` / ``pairwise_test``) wins, and is still
-    checked by :func:`why_unavailable`.
+    checked by :func:`why_unavailable`. With family "auto", ``rec`` (from
+    :func:`recommend`) supplies the defaults; without it, parametric.
     """
     omnibus = omnibus_reason = pairwise = pairwise_reason = None
     whys: list[str] = []
@@ -155,7 +280,7 @@ def select_tests(analysis: Analysis, design: Design) -> Selection:
             if TESTS.get(omnibus) and TESTS[omnibus].role != "omnibus":
                 omnibus_reason = f"{TESTS[omnibus].label} is not an omnibus test"
         else:
-            omnibus, because = _omnibus_default(analysis, design)
+            omnibus, because = _omnibus_default(analysis, design, rec)
         if omnibus is None:
             omnibus_reason = because
         elif omnibus_reason is None:
@@ -168,14 +293,15 @@ def select_tests(analysis: Analysis, design: Design) -> Selection:
             if TESTS.get(pairwise) and TESTS[pairwise].role != "pairwise":
                 pairwise_reason = f"{TESTS[pairwise].label} is not a pairwise test"
         else:
-            pairwise, because = _pairwise_default(analysis, design)
+            pairwise, because = _pairwise_default(analysis, design, rec)
         if pairwise is None:
             pairwise_reason = because
         elif pairwise_reason is None:
             pairwise_reason = why_unavailable(pairwise, design)
         if pairwise:
             whys.append(f"pairwise: {TESTS[pairwise].label if pairwise in TESTS else pairwise} ({because})")
-    return Selection(omnibus, omnibus_reason, pairwise, pairwise_reason, "; ".join(whys) or "nothing selected")
+    return Selection(omnibus, omnibus_reason, pairwise, pairwise_reason, "; ".join(whys) or "nothing selected",
+                     rec.to_dict() if rec is not None else None)
 
 
 def available_tests(design: Design) -> list[dict[str, Any]]:

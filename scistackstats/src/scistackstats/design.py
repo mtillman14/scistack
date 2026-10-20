@@ -4,9 +4,14 @@ Factor kinds are **derived, with evidence, and overridable**:
 
 - **within**: every unit appears at two or more of the factor's levels;
 - **between**: every unit sits at exactly one level;
-- **mixed_membership**: some units at one level, some at several. Tests
-  refuse it until the analysis overrides the kind (P4). With "within", units
-  missing a level are dropped by csv-stats and reported.
+- **mixed_membership**: some units at one level, some at several. For a
+  schema key nested BELOW the unit (session under subject) the schema
+  decides: it is within, and the units at one level are missing data
+  (``basis="schema"``, an ``incomplete_within`` warning; Stage E,
+  2026-10-19). Any other factor stays mixed and the tests refuse it until the
+  analysis overrides the kind (P4); ``catalog.needed_action`` turns that into
+  the GUI's decision banner. Incomplete units are never dropped silently:
+  see ``Analysis.missing`` and ``exclusions``.
 
 With no experimental unit (nothing collapsed, or pooled), every factor is
 between, and the design carries a ``no_unit`` warning: the rows are treated as
@@ -45,12 +50,15 @@ class Factor:
     #: Units seen at several levels / at exactly one level.
     units_multi: int = 0
     units_single: int = 0
+    #: What decided ``derived``: "data" (the rows) or "schema" (a key nested
+    #: below the unit, Stage E).
+    basis: str = "data"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name, "levels": [str(v) for v in self.levels], "kind": self.kind,
             "derived": self.derived, "overridden": self.overridden,
-            "units_multi": self.units_multi, "units_single": self.units_single,
+            "units_multi": self.units_multi, "units_single": self.units_single, "basis": self.basis,
         }
 
 
@@ -65,6 +73,8 @@ class Design:
     n_units: int | None
     n_rows: int
     warnings: list[dict[str, str]] = field(default_factory=list)
+    #: Units missing some within-cell combination (:func:`incomplete_units`).
+    incomplete_units: list[str] = field(default_factory=list)
 
     @property
     def between(self) -> list[str]:
@@ -86,6 +96,7 @@ class Design:
             "dv": self.dv, "stratum": {k: str(v) for k, v in self.stratum.items()},
             "factors": [f.to_dict() for f in self.factors], "unit": self.unit,
             "n_units": self.n_units, "n_rows": self.n_rows, "warnings": list(self.warnings),
+            "incomplete_units": list(self.incomplete_units),
         }
 
 
@@ -116,11 +127,23 @@ def derive_design(
             derived, multi, single = BETWEEN, 0, 0
         else:
             derived, multi, single = _classify(rows, name)
+        basis = "data"
+        if derived == MIXED and name in getattr(frame, "below_unit", ()):
+            # Stage E (2026-10-19): the rows can't tell "missing data" from
+            # "a group", but the schema can. A key nested below the unit
+            # (session under subject) is repeated within each unit by
+            # construction, so a unit at one level is missing data.
+            derived, basis = WITHIN, "schema"
+            warnings.append({
+                "code": "incomplete_within",
+                "message": f"{name} is nested below {frame.unit} in the schema, so it is within-subject; "
+                           f"{single} {frame.unit}(s) have only one {name} (missing data, not a group)",
+            })
         kind = overrides.get(name, derived)
-        factors.append(Factor(name, levels, kind, derived, name in overrides, multi, single))
+        factors.append(Factor(name, levels, kind, derived, name in overrides, multi, single, basis))
         Log.debug(
-            "[design] %s %s: %s (units at several levels %d, at one %d)%s",
-            frame.dv.key, name, derived, multi, single,
+            "[design] %s %s: %s from the %s (units at several levels %d, at one %d)%s",
+            frame.dv.key, name, derived, basis, multi, single,
             f" -> overridden to {kind}" if name in overrides else "", layer=LAYER,
         )
         if derived == MIXED and name not in overrides:
@@ -138,12 +161,29 @@ def derive_design(
         n_units=int(rows[UNIT].nunique()) if frame.unit is not None else None,
         n_rows=int(len(rows)), warnings=warnings,
     )
+    design.incomplete_units = incomplete_units(design, rows)
     Log.info(
-        "[design] %s %s: within=%s, between=%s, mixed=%s, unit=%s, n=%s",
+        "[design] %s %s: within=%s, between=%s, mixed=%s, unit=%s, n=%s, incomplete=%d",
         frame.dv.key, stratum or "(one stratum)", design.within, design.between, design.mixed,
-        frame.unit, design.n_units if design.n_units is not None else design.n_rows, layer=LAYER,
+        frame.unit, design.n_units if design.n_units is not None else design.n_rows,
+        len(design.incomplete_units), layer=LAYER,
     )
     return design
+
+
+def incomplete_units(design: Design, rows: pd.DataFrame) -> list[str]:
+    """Units missing at least one combination of the within factors' levels,
+    in unit order. The one owner of "who is incomplete": the recommendation
+    (a mixed model when the policy is use_all), the complete-cases filter
+    and the GUI banner all read it."""
+    within = [f for f in design.factors if f.kind == WITHIN]
+    if design.unit is None or not within or UNIT not in rows.columns:
+        return []
+    n_cells = 1
+    for f in within:
+        n_cells *= len(f.levels)
+    cells = rows.groupby(UNIT)[[f.name for f in within]].apply(lambda g: len(g.drop_duplicates()))
+    return [str(u) for u, n in cells.items() if n < n_cells]
 
 
 @dataclass
