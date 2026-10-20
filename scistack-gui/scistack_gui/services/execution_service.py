@@ -1071,6 +1071,7 @@ def record_dispatch_wirings(
     from scistack_gui.domain.edge_resolver import (
         BINDING_PATHINPUT,
         bindings_of_kind,
+        path_input_arm_bindings,
         variable_types_view,
     )
     from scistack_gui.domain.graph_builder import wiring_id
@@ -1102,7 +1103,11 @@ def record_dispatch_wirings(
             entry[2].add(target.get("output_type"))
     wirings = {}
     for inputs, pis, outputs in outputs_by_shape.values():
-        wirings[wiring_id(function_name, inputs, outputs, pis)] = sorted(outputs)
+        # An EachOf of PathInputs records one wiring PER ARM (each arm
+        # records its own name), so claim each — a list-valued shape is a
+        # wiring no run ever records, and an unclaimed arm forks a node.
+        for arm in path_input_arm_bindings(pis):
+            wirings[wiring_id(function_name, inputs, outputs, arm)] = sorted(outputs)
     written = 0
     for wiring in sorted(wirings):
         if _node_wiring_store.record(db, node_id, wiring, run_id=run_id, scope=scope):
@@ -1560,6 +1565,7 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
         BINDING_PARAMETER,
         BINDING_PATHINPUT,
         BINDING_VARIABLE,
+        path_input_names,
     )
 
     # The registry already holds live PathInput/Parameter objects — no
@@ -1615,23 +1621,32 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
                 )
 
         elif kind == BINDING_PATHINPUT:
-            pi = path_inputs_by_name.get(ref)
-            if pi is None:
-                logger.warning(
-                    "[execution] '%s': parameter '%s' is wired to PathInput '%s', "
-                    "which is no longer declared in source — leaving it unbound",
-                    function_name,
-                    param,
-                    ref,
-                )
+            arms = []
+            for name in path_input_names(ref):
+                pi = path_inputs_by_name.get(name)
+                if pi is None:
+                    logger.warning(
+                        "[execution] '%s': parameter '%s' is wired to PathInput "
+                        "'%s', which is no longer declared in source — leaving "
+                        "it out",
+                        function_name,
+                        param,
+                        name,
+                    )
+                    continue
+                # A declaration with alternate templates is itself an EachOf;
+                # its arms join the others on one axis.
+                arms.extend(pi.alternatives if isinstance(pi, EachOf) else [pi])
+            if not arms:
                 continue
-            inputs[param] = pi
+            inputs[param] = arms[0] if len(arms) == 1 else EachOf(*arms)
             logger.info(
-                "[execution] '%s': input '%s' resolved via PathInput '%s' (%s)",
+                "[execution] '%s': input '%s' resolved via PathInput %s (%d "
+                "template(s))",
                 function_name,
                 param,
-                ref,
-                pi,
+                path_input_names(ref),
+                len(arms),
             )
 
         elif kind == BINDING_PARAMETER:
@@ -1858,7 +1873,11 @@ def default_schema_level(
     from scidb import provenance_query as _pq
     from scidb.schema_level import input_levels, resolve_schema_level
     from scistack_gui import registry
-    from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, BINDING_VARIABLE
+    from scistack_gui.domain.edge_resolver import (
+        BINDING_PATHINPUT,
+        BINDING_VARIABLE,
+        path_input_names,
+    )
 
     schema_keys = list(db.dataset_schema_keys)
 
@@ -1885,8 +1904,10 @@ def default_schema_level(
             ref = binding.get("ref")
             if kind == BINDING_VARIABLE:
                 type_names.update(ref if isinstance(ref, (list, tuple)) else [ref])
-            elif kind == BINDING_PATHINPUT and ref in registry_pis:
-                path_inputs.append(registry_pis[ref])
+            elif kind == BINDING_PATHINPUT:
+                path_inputs.extend(
+                    registry_pis[n] for n in path_input_names(ref) if n in registry_pis
+                )
     try:
         levels = input_levels(db._duck, type_names, path_inputs, schema_keys)
     except Exception:
@@ -1966,8 +1987,14 @@ def build_run_declared_names(target: dict) -> dict[str, str]:
     )
 
     bindings = target.get("bindings") or {}
+    # An EachOf of PathInputs names no single declaration; each arm records
+    # its own name (scidb takes a PathInput's declared name from its key).
     return {
-        **bindings_of_kind(bindings, BINDING_PATHINPUT),
+        **{
+            p: ref
+            for p, ref in bindings_of_kind(bindings, BINDING_PATHINPUT).items()
+            if not isinstance(ref, (list, tuple))
+        },
         **bindings_of_kind(bindings, BINDING_PARAMETER),
     }
 

@@ -396,13 +396,17 @@ class TestManualPathInputOverrides:
         edges = [_edge("pathInput__RAW2", target="fn__f__fedcba9876543210")]
         assert _pi_overrides(edges) == {}
 
-    def test_two_drawn_on_one_handle_the_last_wins_and_warns(self, caplog):
+    def test_two_drawn_on_one_handle_are_an_each_of(self, caplog):
+        """User decision 2026-10-20: several PathInputs on one port are an
+        EachOf, as several variables are. Until then the last drawn won and
+        the others silently never ran."""
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="scistack_gui"):
+        with caplog.at_level(logging.INFO, logger="scistack_gui"):
             out = _pi_overrides([_edge("pathInput__A"), _edge("pathInput__B")])
-        assert out == {"filepath": "B"}
+        assert out == {"filepath": ["A", "B"]}
         assert "2 PathInputs drawn onto 'filepath'" in caplog.text
+        assert "every one runs" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +452,45 @@ class TestAScriptRunThroughTheDrawnPathInput:
         )
         assert node_wiring.current_wiring(db, node_id) != before, (
             "the node did not take the shape it just ran as"
+        )
+
+    def test_an_each_of_of_two_drawn_path_inputs_keeps_one_node(
+        self, pi_client, tmp_path
+    ):
+        """Both arms record their own wiring (each its own PathInput name),
+        and the node states both — so neither forks a node (2026-10-20)."""
+        node_id = _nodes(_graph(pi_client))[0]["id"]
+        _hide_raw(pi_client)
+        arms = []
+        for name, folder in (("RAW2", "b"), ("RAW3", "a")):
+            pi = _pi(tmp_path, folder, name)
+            _registry._path_inputs[name] = pi
+            arms.append(pi)
+            r = pi_client.put(
+                f"/api/edges/manual__{name.lower()}",
+                json={
+                    "source": f"pathInput__{name}",
+                    "target": node_id,
+                    "source_handle": None,
+                    "target_handle": "in__filepath",
+                },
+            )
+            assert r.status_code == 200, r.text
+        _graph(pi_client)
+
+        from scidb import EachOf
+
+        for_each(
+            load_table,
+            inputs={"filepath": EachOf(*arms)},
+            outputs=[LoadedTable],
+            subject=[1, 2],
+            session=["pre", "post"],
+        )
+
+        nodes = _nodes(_graph(pi_client))
+        assert [n["id"] for n in nodes] == [node_id], (
+            f"an EachOf arm forked a node: {[n['id'] for n in nodes]}"
         )
 
 
@@ -654,3 +697,22 @@ def pipeline_store_edges(db):
     from scistack_gui import pipeline_store as ps
 
     return ps.get_manual_edges(db)
+
+
+class TestPythonRunBindsEveryArm:
+    def test_two_path_inputs_on_one_port_bind_an_each_of(self, pi_client, tmp_path):
+        """The Python Run used to bind the last drawn PathInput only."""
+        from scidb import EachOf
+
+        from scistack_gui.domain.edge_resolver import pathinput_binding
+        from scistack_gui.services.execution_service import build_run_inputs
+
+        _registry._path_inputs["RAW2"] = _pi(tmp_path, "b", "RAW2")
+        target = {
+            "constants": {},
+            "bindings": {"filepath": pathinput_binding(["RAW", "RAW2"])},
+        }
+        inputs = build_run_inputs(target, "load_table", _gui_db.get_db())
+        bound = inputs["filepath"]
+        assert isinstance(bound, EachOf)
+        assert [a.name for a in bound.alternatives] == ["RAW", "RAW2"]

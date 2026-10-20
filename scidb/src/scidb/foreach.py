@@ -5264,7 +5264,12 @@ def _load_pathinput_checked(
     key_types = key_types or {}
     string_keys = {k for k, t in key_types.items() if t == "string"}
     eligible = {k for k in load_kw if k not in string_keys}
-    path, resolutions = pi.load_with_captures(load_kw, numeric_match=eligible)
+    # Numeric bridges only: an alias spelling ("Baseline" for canonical "BL")
+    # is a DECLARED equivalence, never the ambiguity this policy guards. scifor
+    # owns which kind each bridge was.
+    path, resolutions = pi.load_with_captures(
+        load_kw, numeric_match=eligible, report="numeric"
+    )
     if resolutions:
         numeric_keys = {k for k, t in key_types.items() if t == "numeric"}
         offending = {

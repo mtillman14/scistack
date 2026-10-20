@@ -132,3 +132,51 @@ class TestHidingAHistoryEdgeDoesNotDisconnectTheNode:
         assert self._hidden_wirings(
             agg, hidden, lambda f, w: f == fn and w == cur_wiring
         ) == set()
+
+
+class TestRewiredNodeStillColoursItsDrawnOutput:
+    """scidb.log 2026-10-20: ``load_cbrace`` was rewired to a new PathInput by
+    a run whose every iteration failed, so its only call site became history.
+    The grouped node then had no outputs, the second propagation pass never
+    reached ``CosmedData``, and the variable drew green under a red function.
+    The drawn output edge is ground truth for the cascade."""
+
+    def _history_only_agg(self) -> AggregatedData:
+        agg = AggregatedData()
+        agg.fn_input_params[HIST_KEY] = {}
+        agg.fn_outputs[HIST_KEY] = {"GAITRiteLoaded"}
+        agg.path_inputs["GaitRiteOld"] = {"functions": {(HIST_KEY, "gaitRitePath")}}
+        return agg
+
+    def _states(self, manual_edges):
+        run_states = {
+            fn_node_id(*HIST_KEY): "red",
+            "var__GAITRiteLoaded": "red",
+        }
+        _, node_states, _ = group_call_sites_by_wiring(
+            self._history_only_agg(),
+            run_states,
+            token_for=_token_for,
+            is_current=_is_current,
+            manual_edges=manual_edges,
+        )
+        return node_states
+
+    def test_drawn_output_edge_carries_red_to_the_variable(self):
+        edges = [
+            {
+                "id": "manual__out",
+                "source": NODE,
+                "target": "var__GAITRiteLoaded",
+                "sourceHandle": "out__0",
+                "targetHandle": "in",
+            }
+        ]
+        states = self._states(edges)
+        assert states[NODE] == "red"
+        assert states["var__GAITRiteLoaded"] == "red"
+
+    def test_control_without_the_drawn_edge_the_variable_has_no_state(self):
+        """Pins the failure the fix addresses: nothing produces the variable on
+        the grouped graph, so it would fall back to green."""
+        assert "var__GAITRiteLoaded" not in self._states([])

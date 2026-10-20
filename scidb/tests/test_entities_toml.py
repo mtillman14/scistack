@@ -714,3 +714,94 @@ class TestCheckedText:
         exc = ValueError("Expected newline (at line 7, column 12)")
         assert entities._decode_error_line(exc) == 7
         assert entities._decode_error_line(ValueError("no location")) == 0
+
+
+# ---------------------------------------------------------------------------
+# PathInput aliases
+# ---------------------------------------------------------------------------
+
+
+class TestPathInputAliases:
+    """``aliases = {key = {canonical = [spellings]}}`` on a PathInput table:
+    several on-disk spellings of one schema-key value (match-only)."""
+
+    def test_aliases_reach_the_path_input(self, tmp_path):
+        path = write(tmp_path, """
+            [path_inputs]
+            XSENS = { template = "{session}/Xsens/{subject}_{session}.xlsx", aliases = { session = { BL = ["Baseline"] } } }
+        """)
+        result = entities.load(path)
+
+        assert result.errors == []
+        pi = result.path_inputs["XSENS"]
+        assert pi.aliases == {"session": {"BL": ["Baseline"]}}
+
+    def test_quoted_canonical_and_bare_string_spelling(self, tmp_path):
+        path = write(tmp_path, """
+            [path_inputs]
+            X = { template = "{session}/d.csv", aliases = { session = { "01" = "Baseline", "1. Pre" = ["Pre", "PRE"] } } }
+        """)
+        pi = entities.load(path).path_inputs["X"]
+
+        assert pi.aliases == {"session": {"01": ["Baseline"], "1. Pre": ["Pre", "PRE"]}}
+
+    def test_each_alternate_carries_its_own_aliases(self, tmp_path):
+        path = write(tmp_path, """
+            [path_inputs]
+            X = [{ template = "{session}/a.csv", aliases = { session = { BL = ["Baseline"] } } }, "{session}/b.csv"]
+        """)
+        obj = entities.load(path).path_inputs["X"]
+
+        assert [a.aliases for a in obj.alternatives] == [
+            {"session": {"BL": ["Baseline"]}},
+            {},
+        ]
+
+    @pytest.mark.parametrize(
+        "aliases, message",
+        [
+            ('"session"', "must be a table"),
+            ('{ session = ["BL"] }', "aliases.session must be a table"),
+            ('{ session = { BL = [1] } }', "list of non-empty strings"),
+            ('{ trial = { BL = ["Baseline"] } }', "not a placeholder"),
+            ('{ session = { BL = ["X"], FU = ["X"] } }', "ambiguous"),
+        ],
+    )
+    def test_bad_aliases_reject_only_that_entry(self, tmp_path, aliases, message):
+        path = write(tmp_path, f"""
+            [path_inputs]
+            GOOD = "{{session}}/ok.csv"
+            BAD = {{ template = "{{session}}/d.csv", aliases = {aliases} }}
+        """)
+        result = entities.load(path)
+
+        assert sorted(result.path_inputs) == ["GOOD"]
+        assert [e.name for e in result.errors] == ["BAD"]
+        assert message in result.errors[0].message
+
+    def test_render_aliases(self):
+        assert entities.render_path_input_value(
+            "{session}/d.csv", aliases={"session": {"BL": ["Baseline"], "01": ["Pre"], "1. X": ["Y"]}}
+        ) == (
+            '{ template = "{session}/d.csv", aliases = { session = '
+            '{ BL = ["Baseline"], 01 = ["Pre"], "1. X" = ["Y"] } } }'
+        )
+
+    def test_render_alternate_aliases(self):
+        rendered = entities.render_path_input_value(
+            "a/{s}.csv",
+            None,
+            [{"template": "b/{s}.csv", "root_folder": None, "aliases": {"s": {"A": ["a"]}}}],
+        )
+        assert rendered == '["a/{s}.csv", { template = "b/{s}.csv", aliases = { s = { A = ["a"] } } }]'
+
+    def test_render_then_load_round_trips(self, tmp_path):
+        aliases = {"session": {"BL": ["Baseline", "1. Baseline"], "01": ["Pre"]}}
+        rendered = entities.render_path_input_value(
+            "{session}/Xsens/{subject}_{session}.xlsx", "/data", aliases=aliases
+        )
+        path = write(tmp_path, f"[path_inputs]\nXSENS = {rendered}\n")
+        pi = entities.load(path).path_inputs["XSENS"]
+
+        assert pi.aliases == aliases
+        assert str(pi.root_folder) == "/data"

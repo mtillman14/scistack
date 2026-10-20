@@ -304,7 +304,7 @@ class EntitiesSection(CodeLikeSection):
         return {"src/gait/scistack_entities.toml": ENTITIES.encode()}
 
 
-def _export_with_config(project, tmp_path):
+def _export_with_config(project, tmp_path, section=None):
     root, db = project
     (root / "scistack.toml").write_text(
         f'modules = ["{root.resolve().as_posix()}", "{root.resolve().as_posix()}/scripts"]\n'
@@ -312,7 +312,7 @@ def _export_with_config(project, tmp_path):
         '[schema_keys]\nsession = ["BL", "FU"]\n\n'
         '[aliases.session]\nname = "Session"\n'
     )
-    out = _export(project, tmp_path, providers=[EntitiesSection()])
+    out = _export(project, tmp_path, providers=[section or EntitiesSection()])
     db.close()
     return out
 
@@ -348,6 +348,40 @@ def test_into_another_schema_remaps_config_and_path_inputs(project, tmp_path):
     assert schema["recipient"] == ["participant", "visit"]
     assert schema["key_map"] == {"subject": "participant", "session": "visit"}
     assert any("another schema" in w for w in report.warnings)
+
+
+ALIASED_ENTITIES = (
+    'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+    'XSENS = { template = "{session}/Xsens/{subject}_{session}.xlsx", '
+    'root_folder = "/exporter/data", aliases = { session = { BL = ["Baseline"] } } }\n'
+)
+
+
+class AliasedEntitiesSection(CodeLikeSection):
+    def export(self, ctx):
+        return {"src/gait/scistack_entities.toml": ALIASED_ENTITIES.encode()}
+
+
+def test_path_input_aliases_follow_their_placeholder_through_a_key_map(project, tmp_path):
+    """The import rewrite re-renders every arm; it used to rebuild arms from
+    template + root_folder only, which would drop the aliases."""
+    out = _export_with_config(project, tmp_path, AliasedEntitiesSection())
+    target = tmp_path / "copy"
+
+    import_project(
+        out, target,
+        providers=[AliasedEntitiesSection()],
+        schema_keys=["participant", "visit"],
+        key_map={"subject": "participant", "session": "visit"},
+        path_roots={"XSENS": "/mine/raw"},
+    )
+
+    entities = bundle._toml_loads((target / "src/gait/scistack_entities.toml").read_text())
+    assert entities["path_inputs"]["XSENS"] == {
+        "template": "{visit}/Xsens/{participant}_{visit}.xlsx",
+        "root_folder": "/mine/raw",
+        "aliases": {"visit": {"BL": ["Baseline"]}},
+    }
 
 
 def test_a_kept_root_folder_is_reported(project, tmp_path):

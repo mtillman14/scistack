@@ -958,6 +958,7 @@ class TestPathInputDisplay:
         assert display == {
             "template": "{s}/f.csv",
             "root_folder": "/data",
+            "aliases": {},
             "alternate_templates": [],
         }
 
@@ -968,7 +969,7 @@ class TestPathInputDisplay:
         display = path_input_display(obj)
         assert display["template"] == "{s}/a.csv"
         assert display["alternate_templates"] == [
-            {"template": "{s}/b.csv", "root_folder": "/x"}
+            {"template": "{s}/b.csv", "root_folder": "/x", "aliases": {}}
         ]
 
 

@@ -317,6 +317,13 @@ def _pathinput_specs(meta: dict) -> dict[str, str]:
     return out
 
 
+def _pathinput_name(key: str) -> "str | None":
+    """The PathInput name inside an identity key (``to_key()`` JSON)."""
+    from .provenance import parse_path_input_spec
+
+    return (parse_path_input_spec(key) or {}).get("name") or None
+
+
 def _log_moved_path_inputs(duck, pathinput_spec_rows: dict[str, str]) -> None:
     """INFO for every PathInput whose stored spec this run changes — the
     "data moved / other machine" case. Identity (the name) is unchanged, so
@@ -725,7 +732,22 @@ def record_run(
                 # Which DECLARED PathInput fed this argument — what groups
                 # PathInput-fed steps, on the canvas and in `scidb graph`
                 # alike (cleanup-audit F38). Same column as a Parameter's.
-                declared = parameter_names.get(param)
+                # A PathInput's declared name IS its identity (the key's
+                # name), so the key is the one owner. ``parameter_names``
+                # names ONE declaration per argument and so cannot speak for
+                # an EachOf of differently named PathInputs on one argument
+                # (2026-10-20): each arm records its own name.
+                declared = _pathinput_name(key) or parameter_names.get(param)
+                given = parameter_names.get(param)
+                if given and declared and given != declared:
+                    logger.info(
+                        "[provenance] fn=%s: argument '%s' recorded as PathInput "
+                        "'%s' (its own name), not '%s' from parameter_names",
+                        fn_name,
+                        param,
+                        declared,
+                        given,
+                    )
                 if declared:
                     declared_edges[(inv_id, param, prid)] = declared
 

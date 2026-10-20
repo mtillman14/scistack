@@ -8,16 +8,19 @@
  */
 
 import { Handle, Position } from '@xyflow/react'
+import { aliasCount, type PathInputAliases } from '../Sidebar/pathInputAliases'
 
 export interface PathInputAlternate {
   template: string
   root_folder: string | null
+  aliases?: PathInputAliases
 }
 
 export interface PathInputNodeData {
   label: string
   template: string
   root_folder: string | null
+  aliases?: PathInputAliases
   alternate_templates: PathInputAlternate[]
 }
 
@@ -34,6 +37,7 @@ function parseTemplateKeys(template: string): string[] {
 
 export default function PathInputNode({ data }: Props) {
   const keys = parseTemplateKeys(data.template)
+  const nAliases = aliasCount(data.aliases)
 
   return (
     <div style={styles.container}>
@@ -48,6 +52,12 @@ export default function PathInputNode({ data }: Props) {
       {data.alternate_templates?.length > 0 && (
         <div style={styles.altBadge} title="Multiple templates — runs as EachOf(...)">
           +{data.alternate_templates.length} alt{data.alternate_templates.length > 1 ? 's' : ''}
+        </div>
+      )}
+
+      {nAliases > 0 && (
+        <div style={styles.altBadge} title="Several on-disk spellings of a schema-key value (aliases)">
+          ≈{nAliases} alias{nAliases > 1 ? 'es' : ''}
         </div>
       )}
 

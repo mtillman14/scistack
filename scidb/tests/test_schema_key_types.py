@@ -247,3 +247,58 @@ class TestForEachStringDeclared:
             "SELECT COUNT(*) FROM _record WHERE type='PathName'"
         )
         assert rows[0][0] == 0
+
+
+@pytest.fixture
+def aliased_tree(tmp_path):
+    """tmp_path/aliased/1/Baseline/data.mat (3.5) and
+    tmp_path/aliased/1/Baseline/x_BL.mat (4.5): the folder spells the trial
+    in full, one filename abbreviates it."""
+    d = tmp_path / "aliased" / "1" / "Baseline"
+    d.mkdir(parents=True)
+    (d / "data.mat").write_text("3.5")
+    (d / "x_BL.mat").write_text("4.5")
+    return tmp_path / "aliased"
+
+
+TRIAL_ALIASES = {"trial": {"BL": ["Baseline"]}}
+
+
+class TestForEachAliasBridge:
+    """An alias spelling is a declared equivalence: resolving trial="BL" to
+    a ``Baseline`` folder must not raise the zero-padding SchemaKeyTypeError
+    on an undeclared key (it used to — the policy saw every bridged spelling
+    as a padding ambiguity)."""
+
+    def _run(self, tree, template, **iterables):
+        for_each(
+            read_name,
+            {
+                "filepath": _scifor.PathInput(
+                    template, root_folder=str(tree), aliases=TRIAL_ALIASES, name="aliased"
+                )
+            },
+            [PathName],
+            **iterables,
+        )
+
+    def test_explicit_canonical_resolves_aliased_folder(self, db_undeclared, aliased_tree):
+        self._run(aliased_tree, "{subject}/{trial}/data.mat", subject=[1], trial=["BL"])
+        assert db_undeclared.distinct_schema_values("trial") == ["BL"]
+
+    def test_one_key_two_spellings_in_one_path(self, db_undeclared, aliased_tree):
+        self._run(aliased_tree, "{subject}/{trial}/x_{trial}.mat", subject=[1], trial=["BL"])
+        assert db_undeclared.distinct_schema_values("trial") == ["BL"]
+
+    def test_discovery_stores_canonical(self, db_undeclared, aliased_tree):
+        self._run(aliased_tree, "{subject}/{trial}/data.mat", subject=[], trial=[])
+        assert db_undeclared.distinct_schema_values("trial") == ["BL"]
+
+    def test_numeric_bridge_still_raises_beside_alias(self, db_undeclared, tmp_path):
+        d = tmp_path / "mixed" / "001" / "Baseline"
+        d.mkdir(parents=True)
+        (d / "data.mat").write_text("1.0")
+        with pytest.raises(SchemaKeyTypeError, match="subject"):
+            self._run(
+                tmp_path / "mixed", "{subject}/{trial}/data.mat", subject=[1], trial=["BL"]
+            )

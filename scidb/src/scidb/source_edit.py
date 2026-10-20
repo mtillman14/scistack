@@ -189,6 +189,7 @@ def render_path_input(
     *,
     name: str,
     qualifier: str = DEFAULT_QUALIFIER,
+    aliases: "dict | None" = None,
 ) -> str:
     """``scidb.PathInput('{subject}/x.csv', name='RawData')``, or, with *alternates*,
     ``scidb.EachOf(scidb.PathInput(...), scidb.PathInput(...))``.
@@ -196,15 +197,18 @@ def render_path_input(
     The ``EachOf``-of-``PathInput``\\ s form is how alternate templates are
     expressed -- there is no separate concept (see
     ``docs/claude/code-discovery-categories.md`` §4). Each alternate is a
-    ``{"template", "root_folder"}`` dict.
+    ``{"template", "root_folder", "aliases"}`` dict; *aliases* belong to the
+    primary template.
 
     ``root_folder`` is omitted when falsy rather than written as
     ``root_folder=None``, so the common single-argument declaration stays
     readable.
     """
-    calls = [_path_input_call(template, root_folder, name, qualifier)]
+    calls = [_path_input_call(template, root_folder, name, qualifier, aliases)]
     calls.extend(
-        _path_input_call(alt.get("template", ""), alt.get("root_folder"), name, qualifier)
+        _path_input_call(
+            alt.get("template", ""), alt.get("root_folder"), name, qualifier, alt.get("aliases")
+        )
         for alt in (alternates or [])
     )
     if len(calls) == 1:
@@ -213,11 +217,17 @@ def render_path_input(
 
 
 def _path_input_call(
-    template: str, root_folder: "str | None", name: str, qualifier: str
+    template: str,
+    root_folder: "str | None",
+    name: str,
+    qualifier: str,
+    aliases: "dict | None" = None,
 ) -> str:
     args = [repr(template)]
     if root_folder:
         args.append(f"root_folder={root_folder!r}")
+    if aliases:
+        args.append(f"aliases={aliases!r}")
     # Required: the name is the PathInput's identity, and it must equal the
     # binding the declaration is written under (scidb.parameter.
     # path_input_declaration).

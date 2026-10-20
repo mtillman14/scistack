@@ -26,6 +26,7 @@ import PathInputSettingsPanel from './PathInputSettingsPanel'
 import PipelineSettingsPanel from './PipelineSettingsPanel'
 import EndpointPanel from './EndpointPanel'
 import type { PipelineNodeData } from '../DAG/PipelineNode'
+import type { PathInputNodeData } from '../DAG/PathInputNode'
 import { useSelectedNode } from '../../context/SelectedNodeContext'
 import type { Node } from '@xyflow/react'
 import type { ParameterValue } from '../DAG/ParameterNode'
@@ -69,18 +70,6 @@ function isParameterNode(node: Node | null): node is Node & { data: ParameterNod
 
 function isVariableNode(node: Node | null): node is Node & { data: { label: string } } {
   return node?.type === 'variableNode'
-}
-
-interface PathInputAlternate {
-  template: string
-  root_folder: string | null
-}
-
-interface PathInputNodeData {
-  label: string
-  template: string
-  root_folder: string | null
-  alternate_templates: PathInputAlternate[]
 }
 
 function isPathInputNode(node: Node | null): node is Node & { data: PathInputNodeData } {
@@ -245,6 +234,7 @@ export default function Sidebar() {
             template={(selectedNode.data as PathInputNodeData).template}
             root_folder={(selectedNode.data as PathInputNodeData).root_folder}
             alternate_templates={(selectedNode.data as PathInputNodeData).alternate_templates ?? []}
+            aliases={(selectedNode.data as PathInputNodeData).aliases ?? {}}
           />
         )}
         {isPipelineNode(selectedNode) && (

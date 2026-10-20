@@ -153,5 +153,22 @@ classdef TestSchemaKeyTypes < matlab.unittest.TestCase
             r = ScalarVar().load('subject', 1, 'trial', "001");
             testCase.verifyEqual(double(r.data), 1.5, 'AbsTol', 1e-12);
         end
+
+        function test_alias_bridge_needs_no_declaration(testCase)
+            % trial="BL" resolving to a "Baseline" folder is a DECLARED
+            % alias, not a zero-padding ambiguity: no SchemaKeyTypeError.
+            d = fullfile(testCase.data_root, '1', 'Baseline');
+            mkdir(d);
+            fid = fopen(fullfile(d, 'x_BL.txt'), 'w');
+            fprintf(fid, '4.5'); fclose(fid);
+            testCase.configure(struct());
+            pi = scifor.PathInput("{subject}/{trial}/x_{trial}.txt", ...
+                'root_folder', testCase.data_root, ...
+                'aliases', struct('trial', struct('BL', "Baseline")), 'name', "aliased");
+            scidb.for_each(@read_file_value, struct('filepath', pi), ...
+                {ScalarVar()}, 'subject', 1, 'trial', "BL");
+            r = ScalarVar().load('subject', 1, 'trial', "BL");
+            testCase.verifyEqual(double(r.data), 4.5, 'AbsTol', 1e-12);
+        end
     end
 end

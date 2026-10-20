@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Binding kinds. A function parameter is fed by exactly one of these.
 BINDING_VARIABLE = "variable"  # ref: [variable type names] (>1 ⇒ EachOf)
-BINDING_PATHINPUT = "pathinput"  # ref: declared PathInput name
+BINDING_PATHINPUT = "pathinput"  # ref: declared name; [names] (>1 ⇒ EachOf)
 BINDING_PARAMETER = "parameter"  # ref: declared Parameter name
 
 # Manual-node type for a glue node. A glue node is a *variant of a function
@@ -79,6 +79,30 @@ def variable_binding(
 
 def pathinput_binding(declared_name: str) -> dict:
     return {"kind": BINDING_PATHINPUT, "ref": declared_name}
+
+
+def path_input_names(ref) -> list[str]:
+    """Every declared PathInput name a PathInput binding's *ref* names.
+
+    THE reader of that ref. One PathInput is a bare name — the shape wiring
+    ids hash and DB history spells — and several drawn onto one port are a
+    list, an EachOf (user decision 2026-10-20, mirroring two variables on a
+    port). Each name is its own PathInput: a run records one wiring per arm.
+    """
+    if isinstance(ref, (list, tuple)):
+        return [str(r) for r in ref]
+    return [str(ref)] if ref else []
+
+
+def path_input_arm_bindings(path_inputs: dict) -> list[dict[str, str]]:
+    """``{param: name}`` per arm of a ``{param: name | [names]}`` map — the
+    Cartesian product, i.e. each wiring a run of it records. One element (the
+    map itself) when nothing is an EachOf."""
+    import itertools
+
+    params = sorted(path_inputs or {})
+    choices = [path_input_names(path_inputs[p]) for p in params]
+    return [dict(zip(params, combo)) for combo in itertools.product(*choices)]
 
 
 def parameter_binding(declared_name: str) -> dict:
@@ -223,8 +247,9 @@ class ResolvedEdges:
         }
 
     @property
-    def path_input_params(self) -> dict[str, str]:
-        """View: ``{param: declared PathInput name}``."""
+    def path_input_params(self) -> dict:
+        """View: ``{param: declared PathInput name}`` — a list of names for an
+        EachOf of PathInputs; read it with :func:`path_input_names`."""
         return bindings_of_kind(self.bindings, BINDING_PATHINPUT)
 
     @property
@@ -567,7 +592,24 @@ def resolve_function_edges(
             # for the same reason (see graph_builder.connection_id).
             if src_kind == BINDING_PATHINPUT:
                 if th.startswith(IN_HANDLE_PREFIX):
-                    _bind(th[len(IN_HANDLE_PREFIX) :], src_binding, edge)
+                    param = th[len(IN_HANDLE_PREFIX) :]
+                    # Several PathInputs onto one handle is an EachOf, as
+                    # several variables are (user decision 2026-10-20) —
+                    # accumulate instead of going through _bind.
+                    existing = bindings.get(param)
+                    if existing is not None and existing["kind"] == BINDING_PATHINPUT:
+                        names = path_input_names(existing["ref"])
+                        if src_binding["ref"] not in names:
+                            names.append(src_binding["ref"])
+                            existing["ref"] = names
+                            logger.info(
+                                "[edge_resolver] parameter %r is an EachOf of "
+                                "PathInputs %s",
+                                param,
+                                names,
+                            )
+                    else:
+                        _bind(param, src_binding, edge)
                 else:
                     _drop(edge, "PathInput edge carries no 'in__<param>' handle")
                 continue

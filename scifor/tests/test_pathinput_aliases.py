@@ -195,3 +195,94 @@ class TestCombinedNumericAndAlias:
         )
         combos = pi.discover()
         assert combos == [{"subject": "002", "session": "BL", "trial": "001"}]
+
+
+class TestOneKeyTwoSpellingsInOnePath:
+    """One placeholder used twice, spelled differently in each place — e.g.
+    ``Baseline/Xsens/S01_BL.xlsx``: the folder spells the session in full,
+    the filename abbreviates it. Each occurrence is matched against the alias
+    map on its own, and discover() canonicalizes BEFORE its "same key, same
+    value" consistency check, so the two spellings do not conflict."""
+
+    TEMPLATE = "{session}/Xsens/{subject}_{session}.xlsx"
+
+    @pytest.fixture
+    def xsens_tree(self, tmp_path):
+        (tmp_path / "Baseline" / "Xsens").mkdir(parents=True)
+        (tmp_path / "Baseline" / "Xsens" / "S01_BL.xlsx").touch()
+        (tmp_path / "Baseline" / "Xsens" / "S02_BL.xlsx").touch()
+        (tmp_path / "FollowUp" / "Xsens").mkdir(parents=True)
+        (tmp_path / "FollowUp" / "Xsens" / "S01_FU.xlsx").touch()
+        return tmp_path
+
+    def _pi(self, root):
+        return PathInput(
+            self.TEMPLATE,
+            root_folder=str(root),
+            aliases={"session": {"BL": ["Baseline"], "FU": ["FollowUp"]}},
+            name="xsens",
+        )
+
+    def test_discover_reports_one_canonical_session(self, xsens_tree):
+        combos = sorted(
+            self._pi(xsens_tree).discover(), key=lambda c: (c["session"], c["subject"])
+        )
+        assert combos == [
+            {"session": "BL", "subject": "S01"},
+            {"session": "BL", "subject": "S02"},
+            {"session": "FU", "subject": "S01"},
+        ]
+
+    def test_load_finds_mixed_spelling_file(self, xsens_tree):
+        assert self._pi(xsens_tree).load(session="BL", subject="S01") == (
+            xsens_tree / "Baseline" / "Xsens" / "S01_BL.xlsx"
+        ).resolve()
+
+    def test_load_from_full_spelling_finds_abbreviated_filename(self, xsens_tree):
+        # Metadata may carry ANY spelling of the canonical value.
+        assert self._pi(xsens_tree).load(session="FollowUp", subject="S01") == (
+            xsens_tree / "FollowUp" / "Xsens" / "S01_FU.xlsx"
+        ).resolve()
+
+    def test_two_different_sessions_in_one_path_do_not_match(self, xsens_tree):
+        # A file whose folder and filename name DIFFERENT canonical sessions is
+        # not a match for either: discover() refuses the inconsistent capture.
+        (xsens_tree / "Baseline" / "Xsens" / "S03_FU.xlsx").touch()
+        combos = self._pi(xsens_tree).discover()
+        assert {"session": "BL", "subject": "S03"} not in combos
+        assert {"session": "FU", "subject": "S03"} not in combos
+
+
+class TestReportNumericOnly:
+    """``report="numeric"`` leaves alias bridges out — scidb's zero-padding
+    policy must never mistake a declared alias for an ambiguous spelling."""
+
+    def test_alias_bridge_is_not_reported(self, session_tree):
+        pi = PathInput(
+            "{subject}/{session}/data.mat",
+            root_folder=str(session_tree),
+            aliases=SESSION_ALIASES, name="p",
+        )
+        path, resolutions = pi.load_with_captures(
+            {"subject": "sub1", "session": "BL"}, report="numeric"
+        )
+        assert path == (session_tree / "sub1" / "Baseline" / "data.mat").resolve()
+        assert resolutions == {}
+
+    def test_numeric_bridge_still_reported_beside_alias(self, tmp_path):
+        (tmp_path / "sub-002" / "Baseline").mkdir(parents=True)
+        (tmp_path / "sub-002" / "Baseline" / "6MWT-001.mat").touch()
+        pi = PathInput(
+            "sub-{subject}/{session}/6MWT-{trial}.mat",
+            root_folder=str(tmp_path),
+            aliases=SESSION_ALIASES, name="p",
+        )
+        _, resolutions = pi.load_with_captures(
+            {"subject": 2, "session": "BL", "trial": 1}, report="numeric"
+        )
+        assert resolutions == {"subject": "002", "trial": "001"}
+
+    def test_unknown_report_rejected(self, session_tree):
+        pi = PathInput("{subject}/data.mat", root_folder=str(session_tree), name="p")
+        with pytest.raises(ValueError, match="report"):
+            pi.load_with_captures({"subject": "sub1"}, report="alias")

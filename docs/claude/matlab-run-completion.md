@@ -277,3 +277,32 @@ the remaining alternatives.
 
 scidb.log: `[batch_save] <fn>: N output(s) NOT saved; the run fails: ...`.
 Tests: `scidb/tests/test_output_save_error.py`.
+
+---
+
+## A run whose iterations failed is a failure (2026-10-20)
+
+`scifor.for_each` never throws when an iteration fails. It logs the failure
+and moves on. On 2026-10-20 `load_cbrace` finished with `completed=0, failed=1`
+(the user's function raised "Control data does not have data here"), and the
+run was reported `verdict=done`. The Python Run already fails in this case:
+`api/run.py` sets `success = False` when `combo_totals["failed"] > 0`.
+
+MATLAB now follows the same rule:
+- `+scifor/for_each.m` calls an optional `'_summary_fn'` once with its
+  end-of-loop counts (`fn_name, completed, failed, no_data, total,
+  first_reason`). NoData combos aren't counted as failures.
+- `+scidb/for_each.m` passes
+  `@(s) scidb.internal.iteration_tally('add', s)` as that function.
+- The generated script (only when it has a `run_id`) calls
+  `scidb.internal.iteration_tally('reset')` as the first line inside its
+  `try`. After the last `for_each` / `pipe.run_*` it reads `'get'` and raises
+  `SciStack:iterationsFailed` with the tally's message. The `catch` then
+  closes the database and writes the failure marker. Records from the
+  iterations that succeeded stay saved.
+
+Scripts generated without a `run_id` (preview, copy to clipboard) don't
+raise. Python's `for_each` doesn't raise either.
+
+Tests: `scistack-gui/tests/test_matlab_run_markers.py::test_failed_iterations_fail_the_run`,
+`scimatlab/tests/matlab/scidb/TestIterationTally.m`.

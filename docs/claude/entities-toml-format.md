@@ -80,7 +80,7 @@ values through a literal parser to get there.
 | A Parameter `description` | `scidb.Parameter(30, description=...)` in Python |
 | A Variable docstring or non-default `schema_version` | a `class X(BaseVariable)` statement |
 | Custom `to_db`/`from_db` | a Python class |
-| PathInput `aliases` / `key_regex` / `regex` | a Python declaration |
+| PathInput `key_regex` / `regex` (`aliases` ARE expressible since 2026-10-20 -- see `pathinput-folder-aliases.md`) | a Python declaration |
 | Computed values (`Parameter(*range(10, 60, 10))`) | a Python declaration |
 
 None of these are lost — they are **read-only declarations**, discovered

@@ -1297,6 +1297,7 @@ def load_entities(project_start=None) -> dict:
     are pre-rendered strings: MATLAB shows them as warnings, and a rejected
     entry must be visible there too, not only in the GUI.
     """
+    import json
     from pathlib import Path
 
     from scidb import entities
@@ -1330,6 +1331,12 @@ def load_entities(project_start=None) -> dict:
                     str(arm.root_folder)
                     if getattr(arm, "root_folder", None) is not None
                     else None
+                ),
+                # JSON text, not a dict: a dict crosses the bridge as a
+                # struct, and a canonical such as "01" is not a field name.
+                # +scifor/PathInput.m takes the text as-is ("" = none).
+                "aliases_json": (
+                    json.dumps(arm.aliases) if getattr(arm, "aliases", None) else ""
                 ),
             }
             for arm in _arms(obj)

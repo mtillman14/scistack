@@ -366,6 +366,7 @@ class PathInput:
         metadata: dict,
         db=None,
         numeric_match: "set | None" = None,
+        report: str = "all",
     ) -> "tuple[Path, dict[str, str]]":
         """Resolve like ``load(**metadata)`` and report spelling resolutions.
 
@@ -388,7 +389,17 @@ class PathInput:
                 spelling semantically significant (e.g. scidb's
                 string-declared schema keys) exclude it here so it only ever
                 matches literally.
+            report: ``"all"`` (default) reports every bridged spelling;
+                ``"numeric"`` reports only numeric-equivalence bridges
+                (``1`` -> ``"001"``), leaving out alias bridges. This module
+                owns which kind a bridge was (numeric takes precedence over
+                an alias for the same key, see ``_fallback_segment_regex``),
+                so scidb's zero-padding policy asks for ``"numeric"`` rather
+                than guessing: an alias spelling is a DECLARED equivalence,
+                never an ambiguous one.
         """
+        if report not in ("all", "numeric"):
+            raise ValueError(f"report must be 'all' or 'numeric', got {report!r}")
         resolved_str = self.path_template
         for key, value in metadata.items():
             resolved_str = resolved_str.replace("{" + key + "}", str(value))
@@ -446,12 +457,19 @@ class PathInput:
                     if key in numeric_keys:
                         self._pad_width[key] = len(captured)
                 resolutions = {
-                    k: cap for k, cap in bindings.items() if cap != str(metadata[k])
+                    k: cap
+                    for k, cap in bindings.items()
+                    if cap != str(metadata[k])
+                    and (report == "all" or k in numeric_keys)
                 }
                 Log.debug(
-                    "pathinput_fallback: matched %s (captures: %s)",
+                    "pathinput_fallback: matched %s (captures: %s, numeric "
+                    "keys: %s, alias keys: %s, report=%s)",
                     path,
                     bindings,
+                    sorted(numeric_keys),
+                    sorted(k for k in alias_keys if k not in numeric_keys),
+                    report,
                     layer="scifor",
                 )
                 return path.resolve(), resolutions

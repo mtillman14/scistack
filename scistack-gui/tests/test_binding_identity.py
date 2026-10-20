@@ -119,6 +119,75 @@ class TestResolveIntoOneDict:
         )
         assert resolved.bindings["x"]["ref"] == ["A", "B"]
 
+    def test_multiple_path_inputs_on_one_handle_are_an_each_of(self):
+        """User decision 2026-10-20: two PathInputs drawn onto one port are an
+        EachOf, as two variables are. They used to rebind (last one wins)."""
+        resolved = resolve_function_edges(
+            fn_node_ids={"fn__f"},
+            manual_edges=[
+                {
+                    "id": "e1",
+                    "source": "pathInput__main",
+                    "target": "fn__f",
+                    "targetHandle": "in__filePath",
+                },
+                {
+                    "id": "e2",
+                    "source": "pathInput__controls",
+                    "target": "fn__f",
+                    "targetHandle": "in__filePath",
+                },
+            ],
+            manual_nodes={},
+            existing_node_labels={},
+        )
+        assert resolved.path_input_params == {"filePath": ["main", "controls"]}
+
+    def test_one_path_input_stays_a_bare_name(self):
+        """The bare spelling is what wiring ids hash and history records."""
+        resolved = resolve_function_edges(
+            fn_node_ids={"fn__f"},
+            manual_edges=[
+                {
+                    "id": "e1",
+                    "source": "pathInput__main",
+                    "target": "fn__f",
+                    "targetHandle": "in__filePath",
+                }
+            ],
+            manual_nodes={},
+            existing_node_labels={},
+        )
+        assert resolved.path_input_params == {"filePath": "main"}
+
+
+class TestPathInputArms:
+    def test_names_reads_both_spellings(self):
+        from scistack_gui.domain.edge_resolver import path_input_names
+
+        assert path_input_names("a") == ["a"]
+        assert path_input_names(["a", "b"]) == ["a", "b"]
+
+    def test_arm_bindings_are_the_product(self):
+        from scistack_gui.domain.edge_resolver import path_input_arm_bindings
+
+        arms = path_input_arm_bindings({"x": ["a", "b"], "y": "c"})
+        assert arms == [{"x": "a", "y": "c"}, {"x": "b", "y": "c"}]
+
+    def test_each_arm_wiring_is_what_a_run_records(self):
+        """The dispatch claims hash each arm bare — the shape the run records
+        — never the list, which no run records."""
+        from scistack_gui.domain.edge_resolver import path_input_arm_bindings
+
+        claimed = {
+            wiring_id("f", {}, {"Out"}, arm)
+            for arm in path_input_arm_bindings({"p": ["a", "b"]})
+        }
+        assert claimed == {
+            wiring_id("f", {}, {"Out"}, {"p": "a"}),
+            wiring_id("f", {}, {"Out"}, {"p": "b"}),
+        }
+
 
 # ---------------------------------------------------------------------------
 # wiring_id: PathInputs are part of the shape

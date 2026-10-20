@@ -6,6 +6,7 @@ Used by the MATLAB registry to discover functions and variable types from
 configured .m file paths.
 """
 
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -800,13 +801,17 @@ def render_matlab_path_input(
     alternates: "list[dict] | None" = None,
     *,
     name: str,
+    aliases: "dict | None" = None,
 ) -> str:
     """``scidb.PathInput('{s}/x.csv', root_folder='/d', name='X')``, or an
     ``scidb.EachOf(...)`` of them when *alternates* is given — the same
-    shape :func:`scidb.source_edit.render_path_input` produces for Python."""
-    calls = [_matlab_path_input_call(template, root_folder, name)]
+    shape :func:`scidb.source_edit.render_path_input` produces for Python.
+    *aliases* belong to the primary template; each alternate carries its own."""
+    calls = [_matlab_path_input_call(template, root_folder, name, aliases)]
     calls.extend(
-        _matlab_path_input_call(alt.get("template", ""), alt.get("root_folder"), name)
+        _matlab_path_input_call(
+            alt.get("template", ""), alt.get("root_folder"), name, alt.get("aliases")
+        )
         for alt in (alternates or [])
     )
     if len(calls) == 1:
@@ -814,10 +819,24 @@ def render_matlab_path_input(
     return f"scidb.EachOf({', '.join(calls)})"
 
 
-def _matlab_path_input_call(template: str, root_folder: "str | None", name: str) -> str:
+def render_matlab_aliases(aliases: dict) -> str:
+    """PathInput ``aliases`` as a MATLAB argument value: JSON text in a
+    single-quoted char array, which ``+scifor/PathInput.m`` hands to Python
+    as-is. Never a ``struct(...)``: a canonical value such as ``"01"`` or
+    ``"1. Baseline"`` is not a valid struct field name. The ONE place a
+    generated MATLAB expression spells aliases (declarations here, run
+    commands in ``api.matlab_command._format_path_input_arm``)."""
+    return render_matlab_value(json.dumps(aliases, separators=(", ", ": ")))
+
+
+def _matlab_path_input_call(
+    template: str, root_folder: "str | None", name: str, aliases: "dict | None" = None
+) -> str:
     args = [render_matlab_value(template)]
     if root_folder:
         args.append(f"root_folder={render_matlab_value(root_folder)}")
+    if aliases:
+        args.append(f"aliases={render_matlab_aliases(aliases)}")
     # Required — the name is the PathInput's identity (+scifor/PathInput.m).
     args.append(f"name={render_matlab_value(name)}")
     return f"scidb.PathInput({', '.join(args)})"

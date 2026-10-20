@@ -649,6 +649,26 @@ class TestPathInputDeepCopy:
         assert by_name[new_name]["template"] == "{subject}.csv"
         assert by_name["gait_data"]["template"] == "{subject}.csv"
 
+    def test_deep_copy_keeps_aliases_and_alternates(self, client_with_variable_file):
+        """The copy is the WHOLE declaration: it used to clone only template
+        and root_folder, so a copy silently matched fewer files."""
+        client = client_with_variable_file
+        _, _, root_id, _ = self._place_on_two_canvases(client, "{session}/a.csv")
+        aliases = {"session": {"BL": ["Baseline"]}}
+        assert client.put("/api/path-inputs/gait_data", json={
+            "template": "{session}/a.csv",
+            "aliases": aliases,
+            "alternate_templates": [{"template": "{session}/b.csv", "root_folder": None}],
+        }).json()["ok"]
+
+        new_name = client.post(f"/api/path-inputs/{root_id}/deep-copy").json()["name"]
+
+        by_name = {p["name"]: p for p in client.get("/api/path-inputs").json()}
+        assert by_name[new_name]["aliases"] == aliases
+        assert [a["template"] for a in by_name[new_name]["alternate_templates"]] == [
+            "{session}/b.csv"
+        ]
+
     def test_deep_copy_disambiguates_repeated_names(self, client_with_variable_file):
         client = client_with_variable_file
         _, _, root_id, other_id = self._place_on_two_canvases(client, "t")

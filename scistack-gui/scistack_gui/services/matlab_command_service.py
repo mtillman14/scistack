@@ -204,7 +204,16 @@ def _collect_declared_names(
     ``_collect_sweep_params``' business.
     """
     resolved = _resolve_matlab_wiring(function_name, manual_edges, manual_nodes)
-    names = {**resolved.path_input_params, **resolved.parameter_params}
+    # An EachOf of PathInputs names no single declaration; each arm records
+    # its own name (scidb takes a PathInput's declared name from its key).
+    names = {
+        **{
+            p: n
+            for p, n in resolved.path_input_params.items()
+            if not isinstance(n, (list, tuple))
+        },
+        **resolved.parameter_params,
+    }
     if names:
         logger.info(
             "generate_matlab_command: %s: parameter_names %s",
@@ -350,16 +359,119 @@ def _collect_edge_path_inputs(
     """``{param_name: {"name", "template", "root_folder"}}`` for every PathInput node
     wired into *function_name*, resolved from the edge that names the
     parameter — never from a name coincidence."""
+    from scistack_gui.domain.edge_resolver import path_input_names
+
     resolved = _resolve_matlab_wiring(function_name, manual_edges, manual_nodes)
+    out: dict[str, dict] = {}
+    for param_name, ref in resolved.path_input_params.items():
+        declared = [n for n in path_input_names(ref) if n in saved_pis]
+        missing = [n for n in path_input_names(ref) if n not in saved_pis]
+        if missing:
+            logger.warning(
+                "generate_matlab_command: %s: '%s' is wired to PathInput(s) %s "
+                "that are no longer declared — left out",
+                function_name,
+                param_name,
+                missing,
+            )
+        if declared:
+            out[param_name] = _declared_path_inputs(declared, saved_pis)
+    return out
+
+
+def _declared_path_inputs(names: list[str], saved_pis: dict) -> dict:
+    """One PathInput dict for an EachOf of DIFFERENT declarations on one
+    argument (user decision 2026-10-20): the first declaration's dict, with
+    every other declaration's templates appended to ``alternate_templates``
+    carrying their OWN ``name`` — each arm records under its own identity.
+    ``_format_path_input`` gives an alternate its own name when it has one."""
+    first = _declared_path_input(names[0], saved_pis[names[0]])
+    for name in names[1:]:
+        other = _declared_path_input(name, saved_pis[name])
+        first["alternate_templates"].append(
+            {
+                "name": name,
+                "template": other["template"],
+                "root_folder": other["root_folder"],
+                "aliases": other["aliases"],
+            }
+        )
+        first["alternate_templates"].extend(
+            {"name": name, **alt} for alt in other["alternate_templates"]
+        )
+    return first
+
+
+def _declared_path_input(decl_name: str, display: dict) -> dict:
+    """``{"name", "template", "root_folder", "aliases", "alternate_templates"}``
+    for the declared PathInput *decl_name* (*display* is its
+    ``path_input_display``).
+
+    The ONE place a MATLAB command's PathInput dict is built from a
+    declaration. ``alternate_templates`` must ride along: dropping it here
+    (2026-10-20) made a MATLAB run discover only the primary template while
+    a Python run of the same declaration ran every alternative. ``aliases``
+    likewise: without them a MATLAB run finds only the canonical spelling
+    on disk while a Python run finds every declared one.
+    """
     return {
-        param_name: {
-            "name": decl_name,
-            "template": saved_pis[decl_name].get("template", ""),
-            "root_folder": saved_pis[decl_name].get("root_folder"),
-        }
-        for param_name, decl_name in resolved.path_input_params.items()
-        if decl_name in saved_pis
+        "name": decl_name,
+        "template": display.get("template", ""),
+        "root_folder": display.get("root_folder"),
+        "aliases": dict(display.get("aliases") or {}),
+        "alternate_templates": list(display.get("alternate_templates") or []),
     }
+
+
+def resolve_path_input_params(
+    function_name: str,
+    history_rows: list[dict],
+    saved_pis: dict,
+    manual_edges: list[dict],
+    manual_nodes: dict,
+) -> dict[str, dict]:
+    """``{param_name: PathInput dict}`` the MATLAB command binds for
+    *function_name* — shared by the single-node and pipeline routes.
+
+    Two sources: DB history (each row's ``input_types``), then canvas edges
+    as the live overlay. A history entry whose recorded name is still
+    declared is replaced by that declaration, so the templates (alternates
+    included) always come from the entities file, never from whichever one
+    template a past run happened to record.
+    """
+    from scistack_gui.domain.graph_builder import parse_path_input
+
+    params: dict[str, dict] = {}
+    for row in history_rows:
+        for param_name, type_val in (row.get("input_types") or {}).items():
+            pi = parse_path_input(str(type_val))
+            if pi is None:
+                continue
+            name = pi.get("name")
+            if name and name in saved_pis:
+                pi = _declared_path_input(name, saved_pis[name])
+            params[param_name] = pi
+    params.update(
+        _collect_edge_path_inputs(function_name, saved_pis, manual_edges, manual_nodes)
+    )
+    for param_name, pi in params.items():
+        arms = [(pi.get("name"), pi.get("template"), pi.get("aliases"))] + [
+            (a.get("name") or pi.get("name"), a.get("template"), a.get("aliases"))
+            for a in pi.get("alternate_templates") or []
+        ]
+        logger.info(
+            "generate_matlab_command: %s: PathInput %s bound to '%s' emits "
+            "%d template(s) %s",
+            function_name,
+            sorted({n for n, _, _ in arms}),
+            param_name,
+            len(arms),
+            [
+                f"{n}: {t}" + (f" aliases={sorted(al)}" if al else "")
+                for n, t, al in arms
+            ],
+        )
+    return params
 
 
 def scope_variants_to_node(
@@ -450,7 +562,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     from scistack_gui.domain import schema_selection as _schema_selection
     from scistack_gui.db import get_db_path
     from scistack_gui.domain.edge_resolver import infer_manual_fn_output_types
-    from scistack_gui.domain.graph_builder import parse_path_input, path_input_display
+    from scistack_gui.domain.graph_builder import path_input_display
 
     db_path = str(get_db_path())
 
@@ -530,17 +642,9 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
             db, _node_id, function_name, fn_variants, params.get("run_id")
         )
 
-    # Collect PathInput param mappings.
-    path_input_params: dict[str, dict] = {}
-    for v in fn_variants:
-        for param_name, type_val in (v.get("input_types") or {}).items():
-            pi = parse_path_input(str(type_val))
-            if pi is not None:
-                path_input_params[param_name] = pi
-
-    # Source 2: canvas edges — for functions not yet in the DB, and as the
-    # live overlay for those that are (the edge's current PathInput wins
-    # over whatever template history happens to have recorded).
+    # PathInput param mappings: DB history, then canvas edges — for functions
+    # not yet in the DB, and as the live overlay for those that are (see
+    # resolve_path_input_params).
     saved_pis = {
         name: path_input_display(obj)
         for name, obj in registry.get_path_inputs_registry().items()
@@ -558,8 +662,8 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     )
     manual_nodes = view.manual_nodes
     manual_edges = view.drawn_list
-    path_input_params.update(
-        _collect_edge_path_inputs(function_name, saved_pis, manual_edges, manual_nodes)
+    path_input_params = resolve_path_input_params(
+        function_name, fn_variants, saved_pis, manual_edges, manual_nodes
     )
 
     # Collect Parameter mappings (registry + edges only — no DB-history
@@ -806,7 +910,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         generate_matlab_pipeline_command as _fmt,
     )
     from scistack_gui.db import get_db_path
-    from scistack_gui.domain.graph_builder import parse_path_input, path_input_display
+    from scistack_gui.domain.graph_builder import path_input_display
     from scistack_gui.domain.variant_resolver import (
         filter_hidden_targets,
         hidden_call_ids_for_fn,
@@ -917,14 +1021,8 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         # Path inputs for this function — same two-source resolution
         # (DB-variant input_types, then canvas edges as the live overlay) as
         # generate_matlab_command, applied per-node here.
-        path_input_params: dict[str, dict] = {}
-        for t in unique_targets:
-            for param_name, type_val in (t.get("input_types") or {}).items():
-                pi = parse_path_input(str(type_val))
-                if pi is not None:
-                    path_input_params[param_name] = pi
-        path_input_params.update(
-            _collect_edge_path_inputs(fn_label, saved_pis, manual_edges, manual_nodes)
+        path_input_params = resolve_path_input_params(
+            fn_label, unique_targets, saved_pis, manual_edges, manual_nodes
         )
         _drop_project_root_folder(path_input_params, project_root)
 

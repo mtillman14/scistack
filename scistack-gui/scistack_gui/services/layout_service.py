@@ -453,6 +453,7 @@ def update_path_input(
     template: str,
     root_folder: "str | None" = None,
     alternate_templates: "list[dict] | None" = None,
+    aliases: "dict | None" = None,
 ) -> dict:
     """Rewrite an existing PathInput's declaration in source.
 
@@ -464,7 +465,7 @@ def update_path_input(
     """
     from scistack_gui.services.path_input_service import update_path_input as _update
 
-    result = _update(name, template, root_folder, alternate_templates)
+    result = _update(name, template, root_folder, alternate_templates, aliases)
     if result.get("ok"):
         _notify_dag_updated()
     return result
@@ -610,7 +611,15 @@ def deep_copy_path_input(node_id: str) -> dict:
     pos = positions_by_scope.get(pipeline_id, {}).get(node_id, {"x": 0.0, "y": 0.0})
 
     new_name = _unique_path_input_name(old_name, registry.get_path_inputs_registry())
-    result = create_path_input(new_name, display["template"], display.get("root_folder"))
+    # The whole declaration — alternates and aliases included — or the copy
+    # silently matches fewer files than the original.
+    result = create_path_input(
+        new_name,
+        display["template"],
+        display.get("root_folder"),
+        display.get("alternate_templates") or None,
+        display.get("aliases") or None,
+    )
     if not result.get("ok"):
         raise ValueError(result.get("error", "Failed to create PathInput copy"))
 

@@ -515,7 +515,7 @@ def group_call_sites_by_wiring(
             manual_nodes=manual_nodes,
             hidden_edge_ids=hidden_edge_ids,
         ),
-        grouped.fn_outputs,
+        outputs_with_manual_edges(grouped.fn_outputs, manual_edges, manual_nodes),
         # Hidden nodes take no part here either (pass 1 dropped their call
         # sites via hidden_fn_fkeys). Grouped keys ARE (fn, node token), so a
         # hidden node id parses straight to one. Without this, a hidden node
@@ -527,6 +527,23 @@ def group_call_sites_by_wiring(
             if parsed is not None and parsed in grouped.fn_input_params
         },
     )
+
+    # A variable pass 1 coloured but pass 2 no longer reaches gets NO state,
+    # and build_variable_nodes draws a missing state as green — which is how a
+    # red function's only output showed green on 2026-10-20. Say so.
+    lost = sorted(
+        k
+        for k, s in run_states.items()
+        if k.startswith(VAR_ID_PREFIX) and k not in node_states and s != "green"
+    )
+    if lost:
+        logger.warning(
+            "[graph_builder] wiring grouping: %d variable(s) coloured by the "
+            "call-site pass have no producer on the grouped graph and will "
+            "draw green: %s",
+            len(lost),
+            {k: run_states[k] for k in lost},
+        )
 
     n_groups = len(grouped.fn_input_params)
     n_sites = len(agg.fn_input_params)
@@ -569,11 +586,16 @@ def _path_input_content_variants(obj) -> list[tuple[str, str | None]]:
 
 
 def path_input_display(obj) -> dict:
-    """{"template", "root_folder", "alternate_templates"} for a registry
-    PathInput/EachOf-of-PathInput object — what a ``pathInput__`` node
-    shows. The first alternative is the primary template; the rest render
-    as ``alternate_templates`` (same shape the old layout.json-authored
-    version used)."""
+    """{"template", "root_folder", "aliases", "alternate_templates"} for a
+    registry PathInput/EachOf-of-PathInput object — what a ``pathInput__``
+    node shows. The first alternative is the primary template; the rest
+    render as ``alternate_templates`` (same shape the old layout.json-authored
+    version used), each with its own ``aliases``.
+
+    ``aliases`` (``{key: {canonical: [spellings]}}``, ``{}`` when none) MUST
+    ride along: every writer that re-renders a declaration from this dict
+    (the sidebar's update, deep copy, the MATLAB command) would otherwise
+    drop them silently."""
     from scifor import EachOf, PathInput
 
     alts = obj.alternatives if isinstance(obj, EachOf) else [obj]
@@ -583,13 +605,23 @@ def path_input_display(obj) -> dict:
         "root_folder": (
             str(primary.root_folder) if primary.root_folder is not None else None
         ),
+        "aliases": _path_input_aliases(primary),
         "alternate_templates": [
             {
                 "template": a.path_template,
                 "root_folder": str(a.root_folder) if a.root_folder is not None else None,
+                "aliases": _path_input_aliases(a),
             }
             for a in rest
         ],
+    }
+
+
+def _path_input_aliases(pi) -> dict:
+    """A JSON-safe copy of one PathInput's ``aliases`` (lists, not tuples)."""
+    return {
+        key: {canonical: list(spellings) for canonical, spellings in canon_map.items()}
+        for key, canon_map in (getattr(pi, "aliases", None) or {}).items()
     }
 
 
@@ -1570,6 +1602,7 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
                     "label": pi_name,
                     "template": pi["template"],
                     "root_folder": pi.get("root_folder"),
+                    "aliases": pi.get("aliases") or {},
                     "alternate_templates": pi.get("alternate_templates", []),
                     # Seeded from the registry with no run history
                     # (seed_undiscovered_path_inputs) — see DECLARED_ONLY.
@@ -2416,9 +2449,9 @@ def manual_path_input_overrides(
     wid: str,
     manual_index: dict[tuple[str, str, str], list],
     manual_nodes: "dict[str, dict] | None" = None,
-) -> dict[str, str]:
-    """``{param: declared PathInput name}`` — the PathInput a manual edge
-    draws onto each ``in__<param>`` handle of the ``(fn, wid)`` node.
+) -> dict:
+    """``{param: declared PathInput name | [names]}`` — the PathInput(s) manual
+    edges draw onto each ``in__<param>`` handle of the ``(fn, wid)`` node.
 
     The PathInput half of :func:`manual_input_overrides` — the same rule
     (**the edges visible on the DAG are the ground truth**, for display and
@@ -2427,11 +2460,13 @@ def manual_path_input_overrides(
     ``manual_input_overrides`` treats its values as variable types, and a
     PathInput is never one (it resolves files, not a versioned record).
 
-    **A drawn PathInput replaces the recorded one** on that handle. Unlike two
-    variables, two PathInputs on one handle are not an EachOf on a history
-    node, so the drawn one wins; the 2026-09-28 case is exactly this — the
-    recorded ``DemographicsPath`` hidden and ``DemographicsPath2`` drawn onto
-    ``filepath_or_buffer`` (docs/claude/hidden-path-input-identity.md).
+    **A drawn PathInput replaces the recorded one** on that handle; the
+    2026-09-28 case is exactly this — the recorded ``DemographicsPath`` hidden
+    and ``DemographicsPath2`` drawn onto ``filepath_or_buffer``
+    (docs/claude/hidden-path-input-identity.md). **Several drawn PathInputs
+    are an EachOf** (a list, read with ``edge_resolver.path_input_names``),
+    as several variables are — user decision 2026-10-20. Before, the last
+    drawn won and the others never ran.
 
     ``wid`` is the node's TOKEN, as for ``manual_input_overrides``. The source
     is resolved by ``edge_resolver.resolve_source_binding``, the one owner of
@@ -2440,7 +2475,7 @@ def manual_path_input_overrides(
     """
     from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, resolve_source_binding
 
-    overrides: dict[str, str] = {}
+    overrides: dict = {}
     for (ifn, iwid, handle), edges in manual_index.items():
         if ifn != fn or iwid != wid or not handle.startswith(IN_HANDLE_PREFIX):
             continue
@@ -2453,17 +2488,16 @@ def manual_path_input_overrides(
             continue
         param = handle[len(IN_HANDLE_PREFIX) :]
         if len(names) > 1:
-            logger.warning(
-                "[graph_builder] %s node %s: %d PathInputs drawn onto '%s' (%s) — "
-                "a history node binds ONE; using the last drawn, %s",
+            logger.info(
+                "[graph_builder] %s node %s: %d PathInputs drawn onto '%s' — an "
+                "EachOf, every one runs: %s",
                 fn,
                 wid,
                 len(names),
                 param,
                 names,
-                names[-1],
             )
-        overrides[param] = names[-1]
+        overrides[param] = names[0] if len(names) == 1 else names
     if overrides:
         logger.debug(
             "[graph_builder] manual_path_input_overrides(%s, %s): %s", fn, wid, overrides
@@ -2546,6 +2580,50 @@ def input_params_with_manual_edges(
             "binding(s): %s",
             len(applied),
             applied,
+        )
+    return out
+
+
+def outputs_with_manual_edges(
+    fn_outputs: dict[FnKey, set],
+    manual_edges: "list[dict] | tuple",
+    manual_nodes: "dict[str, dict] | None" = None,
+) -> dict[FnKey, set]:
+    """``fn_outputs`` of GROUPED keys ``(fn, node token)`` with each node's
+    drawn output edges folded in — **for run-state propagation only**; the
+    output-side mirror of :func:`input_params_with_manual_edges`.
+
+    A grouped node takes its outputs from its CURRENT wiring's call sites
+    only. A node rewired by a run that saved nothing (scidb.log 2026-10-20: a
+    PathInput swapped, every iteration raised) has no current call site, so
+    its outputs were empty and the cascade never reached the variable its
+    drawn edge feeds: ``load_cbrace`` red, ``CosmedData`` green. The edges
+    visible on the DAG are the ground truth
+    (docs/claude/manual-edges-on-history-nodes.md).
+
+    Never use this for identity: ``wiring_id`` hashes outputs.
+    """
+    if not manual_edges:
+        return fn_outputs
+    out = {k: set(v) for k, v in fn_outputs.items()}
+    added: dict[str, list[str]] = {}
+    for edge in manual_edges:
+        parsed = parse_fn_node_id(edge.get("source") or "")
+        if parsed is None or parsed not in out:
+            continue
+        ref = endpoint_ref(edge.get("target") or "", manual_nodes)
+        if not ref.startswith("var:"):
+            continue
+        var = ref[len("var:") :]
+        if var not in out[parsed]:
+            out[parsed].add(var)
+            added.setdefault(fn_node_id(*parsed), []).append(var)
+    if added:
+        logger.info(
+            "[graph_builder] run-state propagation follows %d drawn output "
+            "edge(s) no current call site records: %s",
+            sum(len(v) for v in added.values()),
+            added,
         )
     return out
 
@@ -2745,8 +2823,16 @@ def _claim_stated_wirings(
     pi_overrides = manual_path_input_overrides(fn, token, manual_index, manual_nodes)
     if not overrides and not pi_overrides:
         return
-    path_input_bindings = {**path_input_bindings, **pi_overrides}
+    from scistack_gui.domain.edge_resolver import path_input_names
+
     params = {p: t for p, t in params.items() if p not in pi_overrides}
+    # A PathInput EachOf splits into one wiring per arm too — each arm records
+    # its own name. Same one-handle-at-a-time rule as the variables below.
+    pi_as_list = {p: path_input_names(n) for p, n in pi_overrides.items()}
+    path_input_bindings = {
+        **path_input_bindings,
+        **{p: names[0] for p, names in pi_as_list.items()},
+    }
     # provenance records ONE variable type per input, so an EachOf override
     # splits into ONE WIRING PER SOURCE — and the node states every one of
     # them, not just the first. Claiming only the first is how the second
@@ -2767,6 +2853,11 @@ def _claim_stated_wirings(
                 wiring_id(
                     fn, {**base, param: source}, outputs, path_input_bindings
                 )
+            )
+    for param, names in pi_as_list.items():
+        for name in names:
+            stated_wirings.add(
+                wiring_id(fn, base, outputs, {**path_input_bindings, param: name})
             )
     for stated in stated_wirings:
         if stated == recorded:
@@ -3306,7 +3397,7 @@ def build_manual_node(
         ]
         extra = {"values": pending_vals}
     elif meta["type"] == "pathInputNode":
-        extra = {"template": "", "root_folder": None, "alternate_templates": []}
+        extra = {"template": "", "root_folder": None, "aliases": {}, "alternate_templates": []}
     elif meta["type"] == "glueNode":
         # A glue node is a functionNode VARIANT: same in__{param} / out__
         # handle contract, so edges resolve with no new branch. What it does

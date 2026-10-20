@@ -74,13 +74,17 @@ function varargout = entities(project_root)
             % Quoted 'name', value form, not name=value: scidb.PathInput
             % forwards varargin{:} and declares no arguments block, so it
             % cannot accept the name=value syntax.
+            % aliases arrive as JSON text ("" = none): a dict would cross
+            % as a struct, and a canonical such as "01" is not a field name.
+            opts = {'name', name};
+            if ~isempty(arm.root_folder)
+                opts = [opts, {'root_folder', string(arm.root_folder)}]; %#ok<AGROW>
+            end
+            if isfield(arm, 'aliases_json') && strlength(string(arm.aliases_json)) > 0
+                opts = [opts, {'aliases', string(arm.aliases_json)}]; %#ok<AGROW>
+            end
             try
-                if isempty(arm.root_folder)
-                    objs{j} = scidb.PathInput(arm.template, 'name', name);
-                else
-                    objs{j} = scidb.PathInput(arm.template, ...
-                        'root_folder', string(arm.root_folder), 'name', name);
-                end
+                objs{j} = scidb.PathInput(arm.template, opts{:});
             catch err
                 % Without this the failure reads as a bare constructor error
                 % with no hint of which declaration produced it.

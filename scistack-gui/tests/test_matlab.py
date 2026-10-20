@@ -2401,8 +2401,33 @@ class TestCollectEdgePathInputs:
                 "name": "test_pi",
                 "template": "{subject}.csv",
                 "root_folder": "/data",
+                "aliases": {},
+                "alternate_templates": [],
             }
         }
+
+    def test_alternate_templates_are_kept(self):
+        """Regression 2026-10-20: the collector copied only template and
+        root_folder, so a MATLAB run discovered the primary template alone."""
+        from scistack_gui.services.matlab_command_service import (
+            _collect_edge_path_inputs,
+        )
+
+        edges = [self._edge("pathInput__cosmed", "fn__load_raw", "in__filepath")]
+        alts = [{"template": "data/controls.xlsx", "root_folder": None}]
+        result = _collect_edge_path_inputs(
+            "load_raw",
+            {
+                "cosmed": {
+                    "template": "data/main.xlsx",
+                    "root_folder": None,
+                    "alternate_templates": alts,
+                }
+            },
+            edges,
+            {},
+        )
+        assert result["filepath"]["alternate_templates"] == alts
 
     def test_unknown_declared_name_is_skipped(self):
         from scistack_gui.services.matlab_command_service import (
@@ -2423,6 +2448,228 @@ class TestCollectEdgePathInputs:
             "load_raw", {"test_pi": {"template": "x.csv"}}, edges, {}
         )
         assert result == {}
+
+
+class TestAlternatePathInputTemplates:
+    """An EachOf-of-PathInputs declaration (alternate templates) must reach
+    the MATLAB command as ``scifor.EachOf(PathInput, PathInput)`` — the same
+    thing a Python run binds from the registry. Regression 2026-10-20."""
+
+    def _declared(self):
+        from scifor import EachOf, PathInput
+
+        from scistack_gui.domain.graph_builder import path_input_display
+
+        obj = EachOf(
+            PathInput("data/main.xlsx", name="cosmed"),
+            PathInput("data/controls.xlsx", name="cosmed"),
+        )
+        return {"cosmed": path_input_display(obj)}
+
+    def test_format_emits_each_of_with_every_template(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+
+        pi = {
+            "name": "cosmed",
+            "template": "data/main.xlsx",
+            "root_folder": None,
+            "alternate_templates": [
+                {"template": "data/controls.xlsx", "root_folder": "/other"}
+            ],
+        }
+        assert _format_path_input(pi) == (
+            'scifor.EachOf(scifor.PathInput("data/main.xlsx", name="cosmed"), '
+            'scifor.PathInput("data/controls.xlsx", root_folder="/other", '
+            'name="cosmed"))'
+        )
+
+    def test_format_without_alternates_is_a_bare_path_input(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+
+        pi = {"name": "cosmed", "template": "x.csv", "alternate_templates": []}
+        assert _format_path_input(pi) == 'scifor.PathInput("x.csv", name="cosmed")'
+
+    def test_history_entry_is_replaced_by_the_declaration(self):
+        """History recorded ONE template per run; the declaration owns the
+        full set, so a history-only binding (no canvas edge) still runs every
+        alternative."""
+        import json
+
+        from scistack_gui.services.matlab_command_service import (
+            resolve_path_input_params,
+        )
+
+        spec = json.dumps(
+            {
+                "__type": "PathInput",
+                "name": "cosmed",
+                "template": "data/main.xlsx",
+                "root_folder": None,
+            }
+        )
+        result = resolve_path_input_params(
+            "load_raw", [{"input_types": {"filepath": spec}}], self._declared(), [], {}
+        )
+        assert result["filepath"]["template"] == "data/main.xlsx"
+        assert [a["template"] for a in result["filepath"]["alternate_templates"]] == [
+            "data/controls.xlsx"
+        ]
+
+    def test_edge_bound_declaration_reaches_the_command(self):
+        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_service import (
+            resolve_path_input_params,
+        )
+
+        edges = [
+            {
+                "source": "pathInput__cosmed",
+                "target": "fn__load_raw",
+                "targetHandle": "in__filepath",
+            }
+        ]
+        path_inputs = resolve_path_input_params(
+            "load_raw", [], self._declared(), edges, {}
+        )
+        cmd = generate_matlab_command(
+            function_name="load_raw",
+            db_path="/data/exp.duckdb",
+            schema_keys=["subject"],
+            path_inputs=path_inputs,
+            project_root="/projects/myexp",
+        )
+        assert (
+            'scifor.EachOf(scifor.PathInput("data/main.xlsx", name="cosmed"), '
+            'scifor.PathInput("data/controls.xlsx", name="cosmed"))'
+        ) in cmd
+
+    def test_two_path_input_nodes_on_one_port_each_keep_their_name(self):
+        """User decision 2026-10-20: two PathInput NODES drawn onto one port
+        are an EachOf, and each arm is its own PathInput (its own name). The
+        MATLAB route used to bind the last drawn only."""
+        from scifor import PathInput
+
+        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.domain.graph_builder import path_input_display
+        from scistack_gui.services.matlab_command_service import (
+            _collect_edge_path_inputs,
+        )
+
+        saved = {
+            "main": path_input_display(PathInput("data/main.xlsx", name="main")),
+            "controls": path_input_display(
+                PathInput("data/controls.xlsx", name="controls")
+            ),
+        }
+        edges = [
+            {"source": f"pathInput__{n}", "target": "fn__load_raw", "targetHandle": "in__filepath"}
+            for n in ("main", "controls")
+        ]
+        result = _collect_edge_path_inputs("load_raw", saved, edges, {})
+        assert _format_path_input(result["filepath"]) == (
+            'scifor.EachOf(scifor.PathInput("data/main.xlsx", name="main"), '
+            'scifor.PathInput("data/controls.xlsx", name="controls"))'
+        )
+
+    def test_an_each_of_param_names_no_single_declaration(self):
+        """parameter_names maps an argument to ONE declared name; scidb takes
+        each arm's name from the PathInput itself."""
+        from scistack_gui.services.matlab_command_service import (
+            _collect_declared_names,
+        )
+
+        edges = [
+            {"source": f"pathInput__{n}", "target": "fn__load_raw", "targetHandle": "in__filepath"}
+            for n in ("main", "controls")
+        ]
+        assert "filepath" not in _collect_declared_names("load_raw", edges, {})
+
+
+class TestPathInputAliasesInMatlabCommand:
+    """A declaration's ``aliases`` must reach the MATLAB command, or a MATLAB
+    run finds only the canonical spelling on disk while a Python run (which
+    binds the registry object) finds every declared one."""
+
+    ALIASES = {"session": {"BL": ["Baseline"], "01": ["1. Pre"]}}
+
+    def _declared(self):
+        from scifor import PathInput
+
+        from scistack_gui.domain.graph_builder import path_input_display
+
+        obj = PathInput(
+            "{session}/Xsens/{subject}_{session}.xlsx", aliases=self.ALIASES, name="xsens"
+        )
+        return {"xsens": path_input_display(obj)}
+
+    def test_display_carries_aliases(self):
+        assert self._declared()["xsens"]["aliases"] == self.ALIASES
+
+    def test_format_emits_aliases_as_json_text(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+
+        pi = {"name": "xsens", "template": "{session}/d.csv", "aliases": {"session": {"BL": ["Baseline"]}}}
+        assert _format_path_input(pi) == (
+            'scifor.PathInput("{session}/d.csv", '
+            'aliases=\'{"session": {"BL": ["Baseline"]}}\', name="xsens")'
+        )
+
+    def test_quote_in_a_spelling_is_escaped_for_matlab(self):
+        from scistack_gui.matlab_parser import render_matlab_aliases
+
+        assert render_matlab_aliases({"s": {"A": ["it's"]}}) == (
+            '\'{"s": {"A": ["it\'\'s"]}}\''
+        )
+
+    def test_history_bound_declaration_keeps_aliases(self):
+        import json
+
+        from scistack_gui.services.matlab_command_service import (
+            resolve_path_input_params,
+        )
+
+        spec = json.dumps({"__type": "PathInput", "name": "xsens", "template": "x"})
+        result = resolve_path_input_params(
+            "load_raw", [{"input_types": {"filepath": spec}}], self._declared(), [], {}
+        )
+        assert result["filepath"]["aliases"] == self.ALIASES
+
+    def test_edge_bound_declaration_reaches_the_command(self):
+        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_service import (
+            resolve_path_input_params,
+        )
+
+        edges = [
+            {"source": "pathInput__xsens", "target": "fn__load_raw", "targetHandle": "in__filepath"}
+        ]
+        path_inputs = resolve_path_input_params("load_raw", [], self._declared(), edges, {})
+        cmd = generate_matlab_command(
+            function_name="load_raw",
+            db_path="/data/exp.duckdb",
+            schema_keys=["subject", "session"],
+            path_inputs=path_inputs,
+            project_root="/projects/myexp",
+        )
+        assert (
+            "aliases='{\"session\": {\"BL\": [\"Baseline\"], \"01\": [\"1. Pre\"]}}'"
+        ) in cmd
+
+    def test_alternate_carries_its_own_aliases(self):
+        from scistack_gui.api.matlab_command import _format_path_input
+
+        pi = {
+            "name": "x",
+            "template": "a.csv",
+            "aliases": {},
+            "alternate_templates": [
+                {"template": "{s}/b.csv", "root_folder": None, "aliases": {"s": {"A": ["a"]}}}
+            ],
+        }
+        assert _format_path_input(pi) == (
+            'scifor.EachOf(scifor.PathInput("a.csv", name="x"), '
+            'scifor.PathInput("{s}/b.csv", aliases=\'{"s": {"A": ["a"]}}\', name="x"))'
+        )
 
 
 class TestMatlabFnProxyHash:
@@ -3132,7 +3379,7 @@ class TestMatlabEntitiesBridge:
         assert payload["variables"] == ["StepLength"]
         assert payload["parameters"] == {"WINDOW": [10, 20], "RATE": [1000]}
         assert payload["path_inputs"] == {
-            "EMG": [{"template": "{subject}/emg.csv", "root_folder": "/data"}]
+            "EMG": [{"template": "{subject}/emg.csv", "root_folder": "/data", "aliases_json": ""}]
         }
         assert payload["errors"] == []
 

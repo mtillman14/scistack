@@ -1139,6 +1139,24 @@ function varargout = for_each(fn, inputs, varargin)
             scifor.Log.info('%s: %d × "%s" — %s', ...
                 label, numel(combos_for_reason), reason, shown);
         end
+        % Hand the counts to the caller that asked (scidb's run tally —
+        % +scidb/+internal/iteration_tally.m). Iteration failures never
+        % throw here, so this is the only way a caller learns of them.
+        if ~isempty(opts.summary_fn)
+            first_reason = '';
+            for fr = 1:numel(failure_order)
+                if ~startsWith(failure_order{fr}, 'scifor:NoData:')
+                    first_reason = failure_order{fr};
+                    break;
+                end
+            end
+            opts.summary_fn(struct('fn_name', fn_name, ...
+                'completed', completed, ...
+                'failed', skipped - no_data_count, ...
+                'no_data', no_data_count, ...
+                'total', total, ...
+                'first_reason', first_reason));
+        end
         if n_outputs == 0
             % Zero-output function: nothing to collect
             if nargout > 0
@@ -2426,6 +2444,8 @@ function [meta_args, opts] = split_options(varargin)
                                  % scidb layer injects its schema-key-type
                                  % policy here so scifor stays policy-free
     opts.log_fn = [];  % deprecated, ignored (kept so parsing stays stable)
+    opts.summary_fn = [];  % optional summary_fn(struct) called once with the
+                           % end-of-loop counts; scidb injects its run tally
     opts.resolved_path_outputs = struct();
     opts.share_limits = struct();
     opts.schema_keys = string.empty;
@@ -2530,6 +2550,10 @@ function [meta_args, opts] = split_options(varargin)
                     continue;
                 case "_pathinput_loader"
                     opts.pathinput_loader = varargin{i+1};
+                    i = i + 2;
+                    continue;
+                case "_summary_fn"
+                    opts.summary_fn = varargin{i+1};
                     i = i + 2;
                     continue;
                 case "_mapping_inputs"

@@ -30,6 +30,14 @@ classdef PathInput < handle
 %       scifor.PathInput("{subject}/{session}/data.mat", ...
 %           aliases=struct('session', struct('BL', ["Baseline", "1. Baseline"])))
 %
+%   A struct field name must be a valid MATLAB identifier, so a canonical
+%   value like "01" or "1. Baseline" cannot be a field. ALIASES may then be
+%   given as JSON text with the same nesting instead (this is what the GUI
+%   generates):
+%
+%       scifor.PathInput("{session}/Xsens/{subject}_{session}.xlsx", ...
+%           aliases='{"session": {"01": ["Baseline"]}}', name="xsens")
+%
 %   KEY_REGEX overrides the default greedy capture used for a {key}
 %   placeholder when discover() builds its matching regex. Needed when
 %   two placeholders are adjacent with no delimiter between them (e.g.
@@ -54,7 +62,7 @@ classdef PathInput < handle
         path_template  string   % Format string with {key} placeholders
         root_folder    string   % Optional root directory
         regex          logical  % Whether to use regex matching on the last segment
-        aliases        struct   % key -> canonical -> [spellings] (see class help)
+        aliases                 % key -> canonical -> [spellings]: struct or JSON text (see class help)
         key_regex      struct   % key -> regex pattern (see class help)
         name           string   % REQUIRED identity of this PathInput (see class help)
         py_obj                  % Python scifor.pathinput.PathInput instance
@@ -78,7 +86,7 @@ classdef PathInput < handle
                 path_template  string
                 options.root_folder  string = ""
                 options.regex        logical = false
-                options.aliases      struct = struct()
+                options.aliases             = struct()
                 options.key_regex    struct = struct()
                 options.name         string = ""
             end
@@ -167,7 +175,7 @@ classdef PathInput < handle
             filepath = string(char(py.str(py_path)));
         end
 
-        function [filepath, resolutions] = load_with_captures(obj, meta_nv, numeric_match)
+        function [filepath, resolutions] = load_with_captures(obj, meta_nv, numeric_match, report)
         %LOAD_WITH_CAPTURES  Resolve like load() and report bridged spellings.
         %
         %   [PATH, RESOLUTIONS] = pi.load_with_captures(META_NV, NUMERIC_MATCH)
@@ -180,6 +188,11 @@ classdef PathInput < handle
         %   spelling differs from its given value (e.g. trial=1 matching
         %   6MWT-001.mat yields struct('trial', "001")); empty struct when
         %   the literal path resolved.
+        %
+        %   REPORT (optional, default "all") is forwarded to Python: "numeric"
+        %   leaves alias bridges out of RESOLUTIONS (scidb.internal.
+        %   load_pathinput_checked uses it; an alias is a declared
+        %   equivalence, not a zero-padding ambiguity).
         %
         %   Forwards to Python's PathInput.load_with_captures with the same
         %   value marshaling and error translation as load().
@@ -206,10 +219,13 @@ classdef PathInput < handle
             end
 
             py_eligible = py.list(cellstr(string(numeric_match)));
+            if nargin < 4
+                report = "all";
+            end
 
             try
                 res = obj.py_obj.load_with_captures(py_meta, ...
-                    pyargs('numeric_match', py_eligible));
+                    pyargs('numeric_match', py_eligible, 'report', char(report)));
             catch err
                 msg = err.message;
                 if contains(msg, 'matched no files')
@@ -369,8 +385,10 @@ classdef PathInput < handle
             if obj.regex
                 opts = opts + ", regex=true";
             end
-            if ~isempty(fieldnames(obj.aliases))
-                opts = opts + sprintf(', aliases=<%d key(s)>', numel(fieldnames(obj.aliases)));
+            % Counted on the Python object: aliases may be a struct OR JSON text.
+            n_alias_keys = double(py.len(obj.py_obj.aliases));
+            if n_alias_keys > 0
+                opts = opts + sprintf(', aliases=<%d key(s)>', n_alias_keys);
             end
             if ~isempty(fieldnames(obj.key_regex))
                 opts = opts + sprintf(', key_regex=<%d key(s)>', numel(fieldnames(obj.key_regex)));
@@ -384,7 +402,24 @@ classdef PathInput < handle
         %ALIASES_TO_PY  Marshal the nested ALIASES struct into a py.dict of
         %   py.dict of py.list(str), matching Python's
         %   ``{key: {canonical: [spelling, ...]}}`` shape.
+        %
+        %   JSON text of that same shape is decoded by Python as-is: it is
+        %   the only spelling that can carry a canonical value which is not
+        %   a MATLAB identifier ("01", "1. Baseline"). Python's PathInput
+        %   validates the decoded shape like any other.
 
+            if ischar(aliases) || isstring(aliases)
+                py_aliases = py.json.loads(char(aliases));
+                if ~isa(py_aliases, 'py.dict')
+                    error('scifor:PathInput', ...
+                        'aliases JSON must be an object {key: {canonical: [spellings]}}.');
+                end
+                return;
+            end
+            if ~isstruct(aliases)
+                error('scifor:PathInput', ...
+                    'aliases must be a struct or JSON text, got %s.', class(aliases));
+            end
             py_aliases = py.dict();
             keys = fieldnames(aliases);
             for i = 1:numel(keys)

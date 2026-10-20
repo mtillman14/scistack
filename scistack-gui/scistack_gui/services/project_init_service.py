@@ -62,7 +62,7 @@ Declare things here only when the TOML form cannot express them:
 
   - a Variable with a custom ``to_db``/``from_db`` or a non-default
     ``schema_version``
-  - a PathInput needing ``aliases``, ``key_regex`` or ``regex``
+  - a PathInput needing ``key_regex`` or ``regex``
   - a Parameter whose value is computed rather than literal
 
 Anything declared here is discovered and usable exactly like a TOML
@@ -80,7 +80,7 @@ _M_STUB = """% Read-only entity declarations for this project.
 % Parameters and PathInputs.
 %
 % Declare things here only when the TOML form cannot express them --
-% a PathInput needing aliases/key_regex/regex, or a Parameter whose value
+% a PathInput needing key_regex/regex, or a Parameter whose value
 % is computed rather than literal.
 %
 % Variables are the exception: a MATLAB Variable is a classdef, so declare

@@ -635,6 +635,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     scifor_opts{end+1} = true;
     scifor_opts{end+1} = 'outputs';
     scifor_opts{end+1} = output_names;
+    % Failed iterations never throw; the run tally is how a GUI-dispatched
+    % script learns of them (+scidb/+internal/iteration_tally.m).
+    scifor_opts{end+1} = '_summary_fn';
+    scifor_opts{end+1} = @(s) scidb.internal.iteration_tally('add', s);
     if ~isempty(find_pathinput(inputs))
         scifor_opts{end+1} = '_resolve_pathinput';
         scifor_opts{end+1} = true;

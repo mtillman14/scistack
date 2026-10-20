@@ -313,6 +313,40 @@ classdef TestPathInput < matlab.unittest.TestCase
             testCase.verifyEqual(sessions('sub2'), 'BL');  % on disk: "BL" itself
         end
 
+        function test_alias_json_text_allows_non_identifier_canonical(testCase)
+            % "01" cannot be a struct field name; JSON text carries it (this
+            % is the form the GUI generates).
+            pi = scifor.PathInput("alias/sub1/{session}/data.mat", ...
+                'root_folder', testCase.tmp_dir, ...
+                'aliases', '{"session": {"01": ["Baseline"]}}', 'name', "alias_json");
+            path = pi.load('session', '01');
+            expected = string(fullfile(testCase.tmp_dir, 'alias', 'sub1', 'Baseline', 'data.mat'));
+            testCase.verifyEqual(path, expected);
+        end
+
+        function test_alias_json_text_must_be_an_object(testCase)
+            testCase.verifyError(@() scifor.PathInput("{session}/data.mat", ...
+                'aliases', '["session"]', 'name', "alias_bad_json"), ...
+                'scifor:PathInput');
+        end
+
+        function test_alias_one_key_two_spellings_in_one_path(testCase)
+            % Folder spells the session in full, filename abbreviates it:
+            % Baseline/Xsens/S01_BL.xlsx.
+            d = fullfile(testCase.tmp_dir, 'mixed', 'Baseline', 'Xsens');
+            mkdir(d);
+            fclose(fopen(fullfile(d, 'S01_BL.xlsx'), 'w'));
+            pi = scifor.PathInput("mixed/{session}/Xsens/{subject}_{session}.xlsx", ...
+                'root_folder', testCase.tmp_dir, ...
+                'aliases', struct('session', struct('BL', "Baseline")), 'name', "xsens");
+            path = pi.load('session', 'BL', 'subject', 'S01');
+            testCase.verifyEqual(path, string(fullfile(d, 'S01_BL.xlsx')));
+            combos = pi.discover();
+            testCase.verifyEqual(numel(combos), 1);
+            testCase.verifyEqual(combos{1}.session, 'BL');
+            testCase.verifyEqual(combos{1}.subject, 'S01');
+        end
+
         %% key_regex: adjacent-placeholder disambiguation
 
         function test_key_regex_unknown_key_errors(testCase)

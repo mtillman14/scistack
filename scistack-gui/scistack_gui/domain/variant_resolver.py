@@ -290,7 +290,11 @@ def compute_call_id(
     """
     from scidb.foreach_config import CallSite, RunOptions
 
-    from scistack_gui.domain.edge_resolver import BINDING_PATHINPUT, BINDING_VARIABLE
+    from scistack_gui.domain.edge_resolver import (
+        BINDING_PATHINPUT,
+        BINDING_VARIABLE,
+        path_input_names,
+    )
 
     options = options or RunOptions()
 
@@ -311,7 +315,12 @@ def compute_call_id(
                 # `__as_table` (a run option, not an input type).
                 across_variants.append(param)
         elif kind == BINDING_PATHINPUT:
-            pi_key = _path_input_version_key(binding["ref"])
+            names = path_input_names(binding["ref"])
+            if len(names) != 1:
+                # An EachOf of PathInputs is one call per arm — no single
+                # call id, exactly like a multi-type variable binding above.
+                return None
+            pi_key = _path_input_version_key(names[0])
             if pi_key is None:
                 # Declared PathInput is gone from source — we cannot
                 # reproduce scidb's key, so fail safe rather than hash a

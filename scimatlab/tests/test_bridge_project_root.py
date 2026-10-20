@@ -90,7 +90,7 @@ class TestLoadEntitiesPins:
         the recorded key identical to the declaration."""
         payload = load_entities(str(project))
         assert payload["path_inputs"]["EMG"] == [
-            {"template": "data/{subject}.mat", "root_folder": None}
+            {"template": "data/{subject}.mat", "root_folder": None, "aliases_json": ""}
         ]
 
     def test_a_named_folder_without_a_config_is_still_the_root(self, tmp_path):
@@ -107,3 +107,34 @@ class TestLoadEntitiesPins:
         monkeypatch.chdir(tmp_path)
         load_entities(None)
         assert get_project_root() is None
+
+
+class TestLoadEntitiesAliases:
+    """``aliases`` cross the bridge as JSON text: a dict would arrive in
+    MATLAB as a struct, and a canonical such as ``"01"`` is not a field name.
+    ``+scidb/entities.m`` hands the text to ``scidb.PathInput(aliases=)``."""
+
+    def _project(self, tmp_path, decl):
+        (tmp_path / "scistack.toml").write_text(
+            'entities_file = "src/scistack_entities.toml"\n', encoding="utf-8"
+        )
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "scistack_entities.toml").write_text(
+            f"[path_inputs]\n{decl}\n", encoding="utf-8"
+        )
+        return tmp_path
+
+    def test_aliases_ride_along_as_json(self, tmp_path):
+        import json
+
+        root = self._project(
+            tmp_path,
+            'X = { template = "{session}/{subject}_{session}.xlsx", '
+            'aliases = { session = { "01" = ["Baseline"] } } }',
+        )
+        arm = load_entities(str(root))["path_inputs"]["X"][0]
+        assert json.loads(arm["aliases_json"]) == {"session": {"01": ["Baseline"]}}
+
+    def test_no_aliases_is_empty_text(self, tmp_path):
+        root = self._project(tmp_path, 'X = "{subject}.csv"')
+        assert load_entities(str(root))["path_inputs"]["X"][0]["aliases_json"] == ""

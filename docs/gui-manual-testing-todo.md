@@ -11,6 +11,117 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzq. PathInput spelling aliases in the sidebar — added 2026-10-20
+
+**What changed:** a PathInput can now declare **spelling aliases** in the
+entities TOML and edit them from the sidebar. Use this when one value is
+spelled differently on disk, e.g. `Baseline/Xsens/S01_BL.xlsx`, where the
+folder says `Baseline` and the file name says `BL`. Aliases also reach MATLAB
+runs and `scidb.entities()`. An aliased schema key no longer raises the
+"zero-padded filenames" `SchemaKeyTypeError`. Plan:
+`.claude/plan-pathinput-aliases-gui.md`. Doc:
+`docs/claude/pathinput-folder-aliases.md`.
+
+**Backend:** reload the VS Code window, and reinstall scifor, scidb and
+scimatlab (MATLAB uses the site-packages copy). After an edit, `scidb.log`
+should show `[path_input_service] update_path_input: ... aliases={...}`. A
+MATLAB run should log `generate_matlab_command: ... emits 1 template(s) ['xsens: ... aliases=['session']']`,
+and the generated script should contain `aliases='{"session": {...}}'`.
+
+**Frontend**
+1. Select a PathInput and set its template to
+   `{session}/Xsens/{subject}_{session}.xlsx`.
+2. Under **Spelling Aliases**, pick `session`, type `BL` as the stored value
+   and `Baseline` as the spelling, then **Add**. A row should appear
+   (`session BL ← Baseline`), and the canvas node should show `≈1 alias`.
+3. `src/scistack_entities.toml` should now hold
+   `aliases = { session = { BL = ["Baseline"] } }` on that entry.
+4. Run the downstream function, Python and MATLAB. Files under `Baseline/`
+   should load, and the saved rows should have `session = BL`.
+5. Add an alias for a key that is not in the template (edit the template
+   first so the key disappears). The write should be refused with PathInput's
+   "not a placeholder" message, and the file should be unchanged.
+6. Remove the alias with ×. The TOML entry should go back to a bare
+   template string.
+7. **Deep copy** a PathInput that has aliases or alternates. The copy should
+   keep both (it used to keep the template and root only).
+
+---
+
+## 0zzzzp. Two PathInputs on one port run both (EachOf) — added 2026-10-20
+
+**What changed:** drawing several PathInput nodes onto one function input
+used to run only the last one drawn. Now every one runs, as an `EachOf`, and
+each records under its own name. Plan:
+`.claude/plan-multi-pathinput-eachof.md`. Doc:
+`docs/claude/alternate-pathinput-templates.md` (last section).
+
+**Backend:** reload the VS Code window, and reinstall scidb and scimatlab.
+`scidb.log` should show
+`[graph_builder] load_cbrace node …: 2 PathInputs drawn onto 'filePath' — an EachOf, every one runs`
+and `generate_matlab_command: load_cbrace: PathInput ['cbrace_cosmed_path', 'cbrace_cosmed_path_controls'] bound to 'filePath' emits 2 template(s)`.
+The old WARN `a history node binds ONE` should be gone.
+
+**Frontend**
+1. Connect both `cbrace_cosmed_path` and `cbrace_cosmed_path_controls` to
+   `load_cbrace.filePath`, then Run.
+2. MATLAB should log `EachOf expansion detected` and two `pathinput_discover`
+   lines. `CosmedData` should gain rows from both files.
+3. The canvas should still show ONE `load_cbrace` node, with both PathInput
+   edges drawn.
+4. If one file's iteration raises (as the controls file did), the run should
+   end **failed** and name it (§0zzzzo).
+
+---
+
+## 0zzzzo. Red output under a rewired node; failed MATLAB iterations fail the run — added 2026-10-20
+
+**What changed:**
+1. A function node whose recorded call sites are all from an older wiring
+   now passes its red state down its drawn output edges. Before, the output
+   variable drew green.
+2. A MATLAB run where any iteration raised is reported as **failed**, with
+   the reason, not `done`. This matches the Python Run. Doc:
+   `docs/claude/matlab-run-completion.md` (last section).
+
+**Backend:** reload the VS Code window. MATLAB needs the updated scimatlab:
+your venv has a non-editable copy in site-packages, so reinstall it.
+`scidb.log` should show `run-state propagation follows N drawn output edge(s)`.
+If a variable still loses its colour, it should show a WARN
+`... will draw green: {...}`.
+
+**Frontend**
+1. In C-Brace, point `load_cbrace` at a PathInput your function rejects, then
+   run it. The run should end **failed**, with
+   `load_cbrace: 1 of 1 iteration(s) failed (first: ... Control data does not have data here)`.
+2. Edit `load_cbrace.m`. Both `load_cbrace` and `CosmedData` should turn red.
+
+---
+
+## 0zzzzn. MATLAB run: alternate PathInput templates all run — added 2026-10-20
+
+**What changed:** a MATLAB function bound to a PathInput with alternate
+templates used to run only the primary template. Python runs already ran every
+alternative. The generated MATLAB command now binds
+`scifor.EachOf(scifor.PathInput(primary), scifor.PathInput(alt), ...)`. The
+templates always come from the entities-file declaration, never from the one
+template an earlier run recorded. Doc: `docs/claude/alternate-pathinput-templates.md`.
+
+**Backend:** reload the VS Code window. When the command is generated,
+`scidb.log` should show
+`generate_matlab_command: load_cbrace: PathInput 'cbrace_cosmed_path' bound to 'filePath' emits 2 template(s) [...]`.
+
+**Frontend**
+1. In C-Brace, `cbrace_cosmed_path` already lists the CONTROLS ONLY file as an
+   alternate. Run `load_cbrace`.
+2. The MATLAB log should show `EachOf expansion detected` and two
+   `pathinput_discover` lines, one per file.
+3. `CosmedData` should gain the control subjects' rows. The Ottobock rows
+   should be unchanged: the same name means the same identity, and different
+   subjects mean different locations.
+
+---
+
 ## 0zzzzm. StatStudio: step-by-step view with plain-language explanations — added 2026-10-20
 
 **What changed:** a newly opened StatStudio table starts in a **Step by step**

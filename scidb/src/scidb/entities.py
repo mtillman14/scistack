@@ -33,6 +33,7 @@ The format::
     [path_inputs]
     EMG_FILE = "{subject}/{session}_emg.csv"
     RAW_FILE = { template = "{subject}/raw.csv", root_folder = "/data/raw" }
+    XSENS    = { template = "{session}/Xsens/{subject}_{session}.xlsx", aliases = { session = { BL = ["Baseline"] } } }
 
     [library]                                  # only in a LIBRARY's file
     schema_keys = ["subject", "session"]       # its own schema vocabulary
@@ -53,14 +54,18 @@ unambiguous:
   which used to be a placeholder ``0`` indistinguishable from a real value.
 - **An inline table means the value under ``[parameters]``, and the field
   set under ``[path_inputs]``.** A PathInput has no dict-shaped value, so
-  a table there is unambiguously ``{template, root_folder}``.
+  a table there is unambiguously ``{template, root_folder, aliases}``.
+  ``aliases`` is ``{key = {canonical = [spellings]}}`` -- several on-disk
+  spellings of one schema-key value (``scifor.PathInput(aliases=)``,
+  match-only). A canonical that is not a bare TOML key is quoted
+  (``{ "01" = ["Baseline"] }``); a lone spelling may be a bare string.
 - **Values are never re-parsed.** TOML types are taken as they come, so a
   zero-padded ``"01"`` stays the string ``"01"`` -- there is no literal
   parser in the path to turn it into ``1``
   (``feedback_zero_padded_schema_keys``).
 - **Anything this shape cannot say stays in Python, read-only**: custom
   ``to_db``/``from_db``, a non-default ``schema_version``, PathInput
-  ``aliases``/``key_regex``/``regex``, or computed Parameter values.
+  ``key_regex``/``regex``, or computed Parameter values.
 
 Errors are **per entry**: one bad declaration is recorded with its name
 and line and skipped, never raised. The ``.py`` entities file it replaces
@@ -137,7 +142,7 @@ def default_entities_relpath(root: "Path | str", package: "str | None" = None) -
         package = own[0]
     return Path("src") / package / DEFAULT_ENTITIES_FILENAME
 
-_PATH_INPUT_KEYS = frozenset({"template", "root_folder"})
+_PATH_INPUT_KEYS = frozenset({"template", "root_folder", "aliases"})
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +488,10 @@ def _load_path_inputs(data: dict, result: EntitiesFile) -> None:
         result.path_inputs[name] = obj
         result.lines[name] = line
         Log.debug(
-            "[entities] Declared path input %s with %d template(s)", name, len(arms)
+            "[entities] Declared path input %s with %d template(s), alias keys %s",
+            name,
+            len(arms),
+            [sorted(a.aliases) for a in arms],
         )
 
 
@@ -503,8 +511,8 @@ def _build_path_input_arms(raw_alts: list, name: str) -> "tuple[list, str | None
         if unknown:
             return [], (
                 f"unknown key(s) {', '.join(unknown)} -- a PathInput accepts "
-                f"only template and root_folder here; declare richer forms "
-                f"(aliases, key_regex, regex) in Python"
+                f"only template, root_folder and aliases here; declare richer "
+                f"forms (key_regex, regex) in Python"
             )
         template = alt.get("template")
         if not isinstance(template, str) or not template:
@@ -512,8 +520,56 @@ def _build_path_input_arms(raw_alts: list, name: str) -> "tuple[list, str | None
         root = alt.get("root_folder")
         if root is not None and not isinstance(root, str):
             return [], f"root_folder must be a string, got {type(root).__name__}"
-        arms.append(PathInput(template, root_folder=root, name=name))
+        aliases, alias_err = _parse_path_input_aliases(alt.get("aliases"))
+        if alias_err is not None:
+            return [], alias_err
+        try:
+            # PathInput owns the rest of the validation: an alias key that is
+            # not a placeholder, a spelling claimed by two canonicals.
+            arms.append(
+                PathInput(template, root_folder=root, aliases=aliases, name=name)
+            )
+        except ValueError as exc:
+            return [], str(exc)
     return arms, None
+
+
+def _parse_path_input_aliases(raw) -> "tuple[dict | None, str | None]":
+    """``aliases = {key = {canonical = [spelling, ...]}}`` -> the
+    ``scifor.PathInput(aliases=)`` dict, or ``(None, error)``.
+
+    A lone spelling may be written as a bare string; it is normalized to a
+    one-element list, so the object (and anything rendered back from it)
+    always holds lists. Canonical values and spellings are strings: TOML
+    keys always are, and a spelling is text found on disk.
+    """
+    if raw is None:
+        return None, None
+    if not isinstance(raw, dict):
+        return None, (
+            f"aliases must be a table {{key = {{canonical = [spellings]}}}}, "
+            f"got {type(raw).__name__}"
+        )
+    out: dict = {}
+    for key, canon_map in raw.items():
+        if not isinstance(canon_map, dict):
+            return None, (
+                f"aliases.{key} must be a table {{canonical = [spellings]}}, "
+                f"got {type(canon_map).__name__}"
+            )
+        out[key] = {}
+        for canonical, spellings in canon_map.items():
+            if isinstance(spellings, str):
+                spellings = [spellings]
+            if not isinstance(spellings, list) or not all(
+                isinstance(s, str) and s for s in spellings
+            ):
+                return None, (
+                    f"aliases.{key}.{canonical} must be a list of non-empty "
+                    f"strings (on-disk spellings)"
+                )
+            out[key][canonical] = list(spellings)
+    return out, None
 
 
 def _name_error(name: str, result: EntitiesFile) -> "str | None":
@@ -1028,13 +1084,15 @@ def render_path_input_value(
     template: str,
     root_folder: "str | None" = None,
     alternates: "list[dict] | None" = None,
+    aliases: "dict | None" = None,
 ) -> str:
     """A PathInput's RHS: a bare template string when that is all there is,
-    a ``{template, root_folder}`` table when there is a root, an array of
-    either when there are alternates."""
-    arms = [_path_input_arm(template, root_folder)]
+    a ``{template, root_folder, aliases}`` table when there is a root or
+    aliases, an array of either when there are alternates. *aliases* belong
+    to the primary template; each alternate dict carries its own."""
+    arms = [_path_input_arm(template, root_folder, aliases)]
     arms.extend(
-        _path_input_arm(alt.get("template", ""), alt.get("root_folder"))
+        _path_input_arm(alt.get("template", ""), alt.get("root_folder"), alt.get("aliases"))
         for alt in (alternates or [])
     )
     if len(arms) == 1:
@@ -1042,10 +1100,42 @@ def render_path_input_value(
     return "[" + ", ".join(arms) + "]"
 
 
-def _path_input_arm(template: str, root_folder: "str | None") -> str:
-    if not root_folder:
+def _path_input_arm(
+    template: str, root_folder: "str | None", aliases: "dict | None" = None
+) -> str:
+    if not root_folder and not aliases:
         return render_value(template)
-    return render_value({"template": template, "root_folder": root_folder})
+    fields = [f"template = {render_value(template)}"]
+    if root_folder:
+        fields.append(f"root_folder = {render_value(root_folder)}")
+    if aliases:
+        fields.append(f"aliases = {_render_aliases(aliases)}")
+    return "{ " + ", ".join(fields) + " }"
+
+
+_BARE_TOML_KEY = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _render_key(key: str) -> str:
+    """A TOML key: bare when TOML allows it, quoted otherwise. Alias
+    canonicals are schema-key VALUES ("01", "1. Baseline"), not
+    identifiers, so :func:`render_value`'s identifier-only rule (right for a
+    Parameter dict, which must also be a MATLAB struct) does not apply."""
+    return key if _BARE_TOML_KEY.fullmatch(key) else _render_string(key)
+
+
+def _render_aliases(aliases: dict) -> str:
+    """``{ session = { BL = ["Baseline"] } }`` -- the inverse of
+    :func:`_parse_path_input_aliases`."""
+    keys = []
+    for key, canon_map in aliases.items():
+        canons = [
+            f"{_render_key(str(canonical))} = "
+            f"{render_value([str(s) for s in spellings])}"
+            for canonical, spellings in canon_map.items()
+        ]
+        keys.append(f"{_render_key(str(key))} = {{ {', '.join(canons)} }}")
+    return "{ " + ", ".join(keys) + " }"
 
 
 def initial_text() -> str:

@@ -141,6 +141,75 @@ def _toml_project(tmp_path, toml_text):
     return entities
 
 
+class TestPathInputAliasesEndpoint:
+    """PUT /path-inputs/{name} with ``aliases`` writes them into the TOML
+    entry and the registry object carries them; the node's display dict
+    reads them back (the sidebar's source)."""
+
+    ALIASES = {"session": {"BL": ["Baseline"], "01": ["1. Pre"]}}
+
+    def test_put_writes_aliases(self, client, tmp_path):
+        entities = _toml_project(
+            tmp_path,
+            'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+            'XSENS = "{session}/Xsens/{subject}_{session}.xlsx"\n',
+        )
+
+        resp = client.put(
+            "/api/path-inputs/XSENS",
+            json={
+                "template": "{session}/Xsens/{subject}_{session}.xlsx",
+                "aliases": self.ALIASES,
+            },
+        )
+
+        assert resp.json()["ok"], resp.json()
+        assert (
+            'aliases = { session = { BL = ["Baseline"], 01 = ["1. Pre"] } }'
+            in entities.read_text()
+        )
+        assert _registry.get_path_inputs_registry()["XSENS"].aliases == self.ALIASES
+
+    def test_display_reads_aliases_back(self, client, tmp_path):
+        from scistack_gui.domain.graph_builder import path_input_display
+
+        _toml_project(
+            tmp_path,
+            'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+            'X = { template = "{session}/d.csv", aliases = { session = { BL = "Baseline" } } }\n',
+        )
+
+        display = path_input_display(_registry.get_path_inputs_registry()["X"])
+        assert display["aliases"] == {"session": {"BL": ["Baseline"]}}
+
+    def test_alias_key_not_in_template_is_refused_and_file_untouched(self, client, tmp_path):
+        text = (
+            'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+            'X = "{subject}/d.csv"\n'
+        )
+        entities = _toml_project(tmp_path, text)
+
+        resp = client.put(
+            "/api/path-inputs/X",
+            json={"template": "{subject}/d.csv", "aliases": {"session": {"BL": ["Baseline"]}}},
+        )
+
+        assert not resp.json()["ok"]
+        assert entities.read_text() == text
+
+    def test_removing_every_alias_writes_a_bare_template(self, client, tmp_path):
+        entities = _toml_project(
+            tmp_path,
+            'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+            'X = { template = "{session}/d.csv", aliases = { session = { BL = ["Baseline"] } } }\n',
+        )
+
+        resp = client.put("/api/path-inputs/X", json={"template": "{session}/d.csv", "aliases": {}})
+
+        assert resp.json()["ok"], resp.json()
+        assert 'X = "{session}/d.csv"' in entities.read_text()
+
+
 class TestRefreshParameterSourceEndpoint:
     """POST /parameters/{name}/refresh-source — the standalone trigger for
     registry.reload_entities_file(), so a Parameter's context menu can pull

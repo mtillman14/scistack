@@ -610,8 +610,9 @@ def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
 
 def _declared_path_inputs(root: Path) -> "tuple[Path, str, dict[str, list[dict]]] | None":
     """The PathInputs the project at *root*'s entities TOML declares, as
-    ``(file, text, {name: [{"template", "root_folder"}, ...]})`` (one dict
-    per arm), or ``None`` when the project has no entities file. The one
+    ``(file, text, {name: [{"template", "root_folder", "aliases"}, ...]})``
+    (one dict per arm; ``aliases`` is ``{}`` when the arm has none), or
+    ``None`` when the project has no entities file. The one
     reader both the import rewrite and :func:`preview` use."""
     from scifor.discovery import project_config_at, read_scistack_section
 
@@ -627,8 +628,12 @@ def _declared_path_inputs(root: Path) -> "tuple[Path, str, dict[str, list[dict]]
     for name, raw in (_toml_loads(text).get(PATH_INPUTS) or {}).items():
         raw_arms = raw if isinstance(raw, list) else [raw]
         declared[name] = [
-            {"template": a, "root_folder": None} if isinstance(a, str) else
-            {"template": a.get("template", ""), "root_folder": a.get("root_folder")}
+            {"template": a, "root_folder": None, "aliases": {}} if isinstance(a, str) else
+            {
+                "template": a.get("template", ""),
+                "root_folder": a.get("root_folder"),
+                "aliases": a.get("aliases") or {},
+            }
             for a in raw_arms
         ]
     return path, text, declared
@@ -657,6 +662,7 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
             {
                 "template": kmap.template(a["template"], where, report),
                 "root_folder": path_roots.get(name, a["root_folder"]),
+                "aliases": _rename_alias_keys(a["aliases"], kmap),
             }
             for a in arms
         ]
@@ -664,7 +670,9 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
             first, rest = new_arms[0], new_arms[1:]
             text = upsert_entry(
                 text, PATH_INPUTS, name,
-                render_path_input_value(first["template"], first["root_folder"], rest),
+                render_path_input_value(
+                    first["template"], first["root_folder"], rest, first["aliases"]
+                ),
             )
             out["rewritten"].append(name)
         if name not in path_roots:
@@ -682,6 +690,18 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
         f"{len(out['roots_unchanged'])} keep the exporter's root, "
         f"{len(out['unknown_roots'])} root(s) given for unknown names"
     )
+    return out
+
+
+def _rename_alias_keys(aliases: dict, kmap) -> dict:
+    """PathInput ``aliases`` follow their placeholder through *kmap*: renamed
+    with it, and kept under the old name when the key has no counterpart
+    (``KeyMap.template`` leaves such a placeholder in place too). Without
+    this the rewrite would drop every alias, or orphan one on a renamed key."""
+    out = {}
+    for key, canon_map in (aliases or {}).items():
+        new = kmap.key(key)
+        out[new if new is not None else key] = canon_map
     return out
 
 

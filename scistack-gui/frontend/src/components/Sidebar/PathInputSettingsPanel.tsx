@@ -1,6 +1,9 @@
 /**
  * PathInputSettingsPanel — shown in the sidebar when a PathInput node is
- * selected. Rename it, edit its template, or add alternates.
+ * selected. Rename it, edit its template, add alternates, or declare
+ * spelling aliases (`aliases = {key = {canonical = [spellings]}}` in the
+ * entities file; the edits are pathInputAliases.ts, the validation is
+ * scifor's PathInput). Aliases never change identity: a PathInput is its name.
  *
  * Edits rewrite its entry in the entities file (`src/scistack_entities.toml`
  * by default — never scistack.toml) via `update_path_input`
@@ -32,20 +35,25 @@
 import { useCallback, useState } from 'react'
 import { callBackend } from '../../api'
 import { useScope } from '../../context/ScopeContext'
+import type { PathInputAlternate } from '../DAG/PathInputNode'
 import ReadOnlyDeclarationBanner from './ReadOnlyDeclarationBanner'
+import {
+  aliasCount,
+  aliasRows,
+  parseSpellings,
+  withAlias,
+  withoutAlias,
+  type PathInputAliases,
+} from './pathInputAliases'
 import { formatLocation, isLockedForEditing } from './sourceLocation'
 import { useEntityEditability, useSourceEdit } from './useSourceEdit'
-
-interface PathInputAlternate {
-  template: string
-  root_folder: string | null
-}
 
 interface Props {
   id: string
   label: string
   template: string
   root_folder: string | null
+  aliases: PathInputAliases
   alternate_templates: PathInputAlternate[]
 }
 
@@ -55,12 +63,15 @@ function parseTemplateKeys(template: string): string[] {
   return [...new Set(matches.map(m => m.slice(1, -1)))]
 }
 
-export default function PathInputSettingsPanel({ id, label, template, root_folder, alternate_templates }: Props) {
+export default function PathInputSettingsPanel({ id, label, template, root_folder, aliases, alternate_templates }: Props) {
   const { bumpGraph } = useScope()
   const [deepCopyError, setDeepCopyError] = useState('')
   const [templateDraft, setTemplateDraft] = useState(template)
   const [rootDraft, setRootDraft] = useState(root_folder ?? '')
   const [altDraft, setAltDraft] = useState('')
+  const [aliasKey, setAliasKey] = useState('')
+  const [aliasCanonical, setAliasCanonical] = useState('')
+  const [aliasSpellings, setAliasSpellings] = useState('')
   const { submit, error, readOnlyAt, saving, clearError } = useSourceEdit()
   // Declared outside the entities file: every edit control is locked up
   // front rather than taking input the write would refuse.
@@ -68,12 +79,20 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
   const locked = isLockedForEditing(editability)
   const inputsDisabled = saving || locked
 
-  const write = (t: string, root: string, alts: PathInputAlternate[]) =>
+  // The update rewrites the WHOLE declaration, so every write carries the
+  // aliases (and each alternate's own) — leaving them out would drop them.
+  const write = (
+    t: string,
+    root: string,
+    alts: PathInputAlternate[],
+    al: PathInputAliases = aliases,
+  ) =>
     submit('update_path_input', {
       name: label,
       template: t,
       root_folder: root.trim() || null,
       alternate_templates: alts.length ? alts : null,
+      aliases: al,
     })
 
   const templateDirty =
@@ -93,6 +112,20 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
 
   const removeAlternate = (index: number) =>
     write(template, rootDraft, alternate_templates.filter((_, i) => i !== index))
+
+  const addAlias = async () => {
+    const key = aliasKey || keys[0] || ''
+    const canonical = aliasCanonical.trim()
+    const spellings = parseSpellings(aliasSpellings)
+    if (!key || !canonical || spellings.length === 0) return
+    if (await write(template, rootDraft, alternate_templates, withAlias(aliases, key, canonical, spellings))) {
+      setAliasCanonical('')
+      setAliasSpellings('')
+    }
+  }
+
+  const removeAlias = (key: string, canonical: string) =>
+    write(template, rootDraft, alternate_templates, withoutAlias(aliases, key, canonical))
 
   const [nameDraft, setNameDraft] = useState(label)
   const saveName = async () => {
@@ -179,6 +212,81 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
       </section>
 
       <section style={styles.section}>
+        <div style={styles.sectionTitle}>Spelling Aliases</div>
+        <div style={styles.hint}>
+          One value spelled several ways on disk — e.g. a session that is
+          "Baseline" in a folder and "BL" in a file name: use{' '}
+          <span style={styles.mono}>{'{session}'}</span> in both places and alias
+          Baseline to BL. The stored value is the one on the left.
+        </div>
+
+        {aliasRows(aliases).length === 0 ? (
+          <div style={styles.empty}>No aliases — every value matches only its own spelling.</div>
+        ) : (
+          aliasRows(aliases).map(row => (
+            <div key={`${row.key}:${row.canonical}`} style={styles.altRow}>
+              <div style={styles.altTemplateText}>
+                <span style={styles.aliasKey}>{row.key}</span>{' '}
+                {row.canonical} <span style={styles.aliasArrow}>←</span> {row.spellings.join(', ')}
+              </div>
+              <button
+                style={styles.removeBtn}
+                onClick={() => removeAlias(row.key, row.canonical)}
+                disabled={inputsDisabled}
+                title="Remove this alias"
+              >
+                ×
+              </button>
+            </div>
+          ))
+        )}
+
+        {keys.length === 0 ? (
+          <div style={styles.empty}>The template has no {'{placeholders}'} to alias.</div>
+        ) : (
+          <div style={styles.aliasAddGrid}>
+            <select
+              style={locked ? styles.inputLocked : styles.input}
+              value={aliasKey || keys[0]}
+              disabled={inputsDisabled}
+              aria-label="Alias placeholder"
+              onChange={e => { setAliasKey(e.target.value); clearError() }}
+            >
+              {keys.map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+            <input
+              style={locked ? styles.inputLocked : styles.input}
+              placeholder="stored value, e.g. BL"
+              value={aliasCanonical}
+              disabled={inputsDisabled}
+              aria-label="Alias stored value"
+              onChange={e => { setAliasCanonical(e.target.value); clearError() }}
+              onKeyDown={e => { if (e.key === 'Enter') addAlias() }}
+            />
+            <input
+              style={{ ...(locked ? styles.inputLocked : styles.input), gridColumn: '1 / span 2' }}
+              placeholder="other spellings, comma-separated, e.g. Baseline"
+              value={aliasSpellings}
+              disabled={inputsDisabled}
+              aria-label="Alias spellings"
+              onChange={e => { setAliasSpellings(e.target.value); clearError() }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') addAlias()
+                if (e.key === 'Escape') { setAliasCanonical(''); setAliasSpellings(''); clearError() }
+              }}
+            />
+            <button
+              style={locked ? styles.addBtnLocked : styles.addBtn}
+              onClick={addAlias}
+              disabled={inputsDisabled}
+            >
+              {saving ? '…' : 'Add'}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section style={styles.section}>
         <div style={styles.sectionTitle}>Alternate Templates</div>
         <div style={styles.hint}>
           More than one template runs as EachOf(...) — one for_each call per
@@ -193,6 +301,11 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
               <div style={styles.altTemplateText}>{alt.template}</div>
               {alt.root_folder && (
                 <div style={styles.altRootText}>root: {alt.root_folder}</div>
+              )}
+              {aliasCount(alt.aliases) > 0 && (
+                <div style={styles.altRootText} title="This alternate's own aliases — edit them in the entities file">
+                  ≈{aliasCount(alt.aliases)}
+                </div>
               )}
               <button
                 style={styles.removeBtn}
@@ -447,5 +560,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 10,
     color: '#8a7a60',
     wordBreak: 'break-all',
+  },
+  aliasKey: {
+    color: '#fbbf24',
+  },
+  aliasArrow: {
+    color: '#8a7a60',
+  },
+  aliasAddGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) auto',
+    gap: 6,
+    marginTop: 6,
+    alignItems: 'center',
   },
 }

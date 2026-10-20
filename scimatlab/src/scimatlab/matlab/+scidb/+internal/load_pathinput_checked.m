@@ -37,7 +37,9 @@ function filepath = load_pathinput_checked(pi_obj, meta_nv, key_types, schema_ke
     end
     eligible = setdiff(meta_keys, string_keys, 'stable');
 
-    [filepath, resolutions] = pi_obj.load_with_captures(meta_nv, eligible);
+    % Numeric bridges only: an alias spelling ("Baseline" for canonical
+    % "BL") is a declared equivalence. scifor owns which kind a bridge was.
+    [filepath, resolutions] = pi_obj.load_with_captures(meta_nv, eligible, "numeric");
 
     res_fields = fieldnames(resolutions);
     for i = 1:numel(res_fields)

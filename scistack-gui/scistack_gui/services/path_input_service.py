@@ -39,6 +39,7 @@ def create_path_input(
     template: str,
     root_folder: "str | None" = None,
     alternate_templates: "list[dict] | None" = None,
+    aliases: "dict | None" = None,
 ) -> dict:
     """Append ``NAME = scidb.PathInput(...)`` (or, with ``alternate_templates``,
     ``NAME = scidb.EachOf(scidb.PathInput(...), scidb.PathInput(...), ...)``) to the
@@ -74,11 +75,12 @@ def create_path_input(
 
     logger.info(
         "[path_input_service] create_path_input: name=%r template=%r root_folder=%r "
-        "%d alternate(s) target=%s",
+        "%d alternate(s) alias keys=%s target=%s",
         name,
         template,
         root_folder,
         len(alternate_templates or []),
+        sorted(aliases or {}),
         target_file,
     )
 
@@ -90,7 +92,7 @@ def create_path_input(
             section="path_inputs",
             name=name,
             rendered=render_path_input_value(
-                template, root_folder, alternate_templates
+                template, root_folder, alternate_templates, aliases
             ),
         )
     else:
@@ -98,7 +100,7 @@ def create_path_input(
 
         line = (
             f"\n{name} = "
-            f"{render_path_input(template, root_folder, alternate_templates, name=name)}\n"
+            f"{render_path_input(template, root_folder, alternate_templates, name=name, aliases=aliases)}\n"
         )
         err = _append_and_refresh(line, target_file)
 
@@ -112,6 +114,7 @@ def update_path_input(
     template: str,
     root_folder: "str | None" = None,
     alternate_templates: "list[dict] | None" = None,
+    aliases: "dict | None" = None,
 ) -> dict:
     """Rewrite an existing PathInput declaration in place.
 
@@ -149,17 +152,26 @@ def update_path_input(
     from scistack_gui.matlab_parser import render_matlab_path_input
     from scistack_gui.services.target_file_service import update_declaration
 
+    logger.info(
+        "[path_input_service] update_path_input: name=%r template=%r "
+        "root_folder=%r %d alternate(s) aliases=%s",
+        name,
+        template,
+        root_folder,
+        len(alternate_templates or []),
+        aliases or {},
+    )
     return update_declaration(
         "path_input",
         name,
         python_expr=render_path_input(
-            template, root_folder, alternate_templates, name=name
+            template, root_folder, alternate_templates, name=name, aliases=aliases
         ),
         matlab_expr=render_matlab_path_input(
-            template, root_folder, alternate_templates, name=name
+            template, root_folder, alternate_templates, name=name, aliases=aliases
         ),
         toml_expr=render_path_input_value(
-            template, root_folder, alternate_templates
+            template, root_folder, alternate_templates, aliases
         ),
     )
 

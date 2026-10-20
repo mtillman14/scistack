@@ -291,7 +291,10 @@ def _project_root_lines(
     """
     if not project_root:
         rootless = [
-            p for p, pi in (path_inputs or {}).items() if not pi.get("root_folder")
+            p
+            for p, pi in (path_inputs or {}).items()
+            if not pi.get("root_folder")
+            or any(not a.get("root_folder") for a in pi.get("alternate_templates") or [])
         ]
         if rootless:
             logger.warning(
@@ -840,6 +843,38 @@ def _run_marker_begin_lines(db_path: str, run_id: "str | None") -> list[str]:
     ]
 
 
+def _iteration_tally_reset_lines(run_id: "str | None") -> list[str]:
+    """First line inside the run's ``try``: start this run's failure tally.
+
+    Paired with :func:`_iteration_failure_check_lines`. Only a GUI-dispatched
+    run (one with a *run_id*) is judged this way, as only the GUI's Python
+    Run is: ``api/run.py`` fails a run when any iteration failed.
+    """
+    if not run_id:
+        return []
+    return ["    scidb.internal.iteration_tally('reset');"]
+
+
+def _iteration_failure_check_lines(run_id: "str | None") -> list[str]:
+    """Last lines inside the run's ``try``: fail the run if any iteration did.
+
+    ``scifor.for_each`` logs a failed iteration and carries on, so the script
+    used to end "done" with every iteration failed (scidb.log 2026-10-20:
+    ``load_cbrace`` completed=0, failed=1, verdict=done). Raising here routes
+    it through the ``catch``, which writes the failure marker carrying the
+    message (``+scidb/+internal/iteration_tally.m``). Records the successful
+    iterations saved stay saved.
+    """
+    if not run_id:
+        return []
+    return [
+        "    scistack_tally__ = scidb.internal.iteration_tally('get');",
+        "    if scistack_tally__.failed > 0",
+        "        error('SciStack:iterationsFailed', '%s', scistack_tally__.message);",
+        "    end",
+    ]
+
+
 def _run_marker_finish_lines(
     db_path: str, run_id: "str | None", *, ok: bool, indent: str = ""
 ) -> list[str]:
@@ -1081,6 +1116,7 @@ def generate_matlab_command(
         if template_locations_str:
             template_tail += f", ...\n        {template_locations_str}"
         lines.append("try")
+        lines.extend(_iteration_tally_reset_lines(run_id))
         lines.append("    % Run (fill in inputs/outputs)")
         lines.append(f"    scidb.for_each(@{function_name}, ...")
         lines.append(f"        {inputs_str}, ...")
@@ -1089,6 +1125,7 @@ def generate_matlab_command(
             lines.append(f"        {template_schema_str}{template_tail});")
         else:
             lines.append(f"        {outputs_str}{template_tail});")
+        lines.extend(_iteration_failure_check_lines(run_id))
         lines.append("    scidb.close_database(db);")
         lines.append("catch scistack_err__")
         lines.append(
@@ -1134,6 +1171,7 @@ def generate_matlab_command(
     # Wrap all for_each calls in a try/catch so db.close() always runs,
     # even if the run errors out or is interrupted.
     lines.append("try")
+    lines.extend(_iteration_tally_reset_lines(run_id))
 
     # Generate for_each call for each unique (inputs, constants) group.
     lines.extend(
@@ -1154,6 +1192,7 @@ def generate_matlab_command(
         )
     )
 
+    lines.extend(_iteration_failure_check_lines(run_id))
     lines.append("    scidb.close_database(db);")
     lines.append("catch scistack_err__")
     lines.append(
@@ -1655,6 +1694,7 @@ def generate_matlab_pipeline_command(
     # Wrap registration + the driven run in a try/catch so db.close() always
     # runs, even if a step registration or the run itself errors out.
     lines.append("try")
+    lines.extend(_iteration_tally_reset_lines(run_id))
     for fn_name, grouped_entries, step in resolved_steps:
         lines.append(f"    % Register {fn_name} (deferred — runs via pipe below)")
         lines.extend(
@@ -1699,6 +1739,7 @@ def generate_matlab_pipeline_command(
             run_line += f", 'finalized', {'true' if finalized else 'false'}"
         lines.append(run_line + ");")
 
+    lines.extend(_iteration_failure_check_lines(run_id))
     lines.append("    scidb.close_database(db);")
     lines.append("catch scistack_err__")
     lines.append(
@@ -1743,7 +1784,31 @@ def _format_path_input(pi: dict) -> str:
 
     Resolution is now pinned separately by ``_project_root_lines`` (see
     ``scifor.pathinput.set_project_root``), which leaves identity alone.
+
+    With ``alternate_templates`` the result is
+    ``scifor.EachOf(scifor.PathInput(primary), scifor.PathInput(alt), ...)``
+    — the MATLAB spelling of the EachOf-of-PathInputs a Python run binds from
+    the registry. An alternate carries the primary's name unless it has its
+    own: several PathInput nodes drawn onto one port arrive as one dict whose
+    later arms name their own declarations
+    (``matlab_command_service._declared_path_inputs``).
     """
+    name = pi.get("name")
+    if not name:
+        raise ValueError(
+            f"PathInput with template {pi.get('template', '')!r} has no name"
+        )
+    arms = [pi] + [
+        {"name": name, **alt} for alt in pi.get("alternate_templates") or []
+    ]
+    exprs = [_format_path_input_arm(a) for a in arms]
+    if len(exprs) == 1:
+        return exprs[0]
+    return f"scifor.EachOf({', '.join(exprs)})"
+
+
+def _format_path_input_arm(pi: dict) -> str:
+    """One ``scifor.PathInput(...)`` expression — see ``_format_path_input``."""
     template = pi.get("template", "")
     root_folder = pi.get("root_folder")
 
@@ -1759,12 +1824,17 @@ def _format_path_input(pi: dict) -> str:
     if not name:
         raise ValueError(f"PathInput with template {template!r} has no name")
     name_arg = f'name="{_escape_matlab_string(name)}"'
+    args = [matlab_template]
     if root_folder:
-        return (
-            f'scifor.PathInput({matlab_template}, root_folder="{root_folder}", '
-            f"{name_arg})"
-        )
-    return f"scifor.PathInput({matlab_template}, {name_arg})"
+        args.append(f'root_folder="{root_folder}"')
+    aliases = pi.get("aliases")
+    if aliases:
+        # One owner for the spelling (JSON char, never a struct — see there).
+        from scistack_gui.matlab_parser import render_matlab_aliases
+
+        args.append(f"aliases={render_matlab_aliases(aliases)}")
+    args.append(name_arg)
+    return f"scifor.PathInput({', '.join(args)})"
 
 
 def _format_sweep(values: list, param_name: str = "") -> str:

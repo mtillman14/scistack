@@ -721,7 +721,7 @@ export default function PipelineDAG() {
             ...(nodeType === 'variableNode' ? { total_records: 0, run_state: 'red' } : {}),
             ...(nodeType === 'functionNode' ? fnExtra : {}),
             ...(nodeType === 'parameterNode' ? { values: [], source_kind: 'constant' } : {}),
-            ...(nodeType === 'pathInputNode' ? { template: '', root_folder: null, alternate_templates: [] } : {}),
+            ...(nodeType === 'pathInputNode' ? { template: '', root_folder: null, aliases: {}, alternate_templates: [] } : {}),
           },
         }
         return [...prev, newNode]

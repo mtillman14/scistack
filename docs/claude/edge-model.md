@@ -124,7 +124,10 @@ Binding semantics, in `edge_resolver` / `manual_input_overrides` /
 `manual_path_input_overrides`:
 - two variables on a port make an EachOf;
 - a Parameter fans out over its values;
-- a drawn PathInput replaces the recorded one;
+- a drawn PathInput replaces the recorded one; several drawn PathInputs on a
+  port make an EachOf (2026-10-20). Each arm is its own PathInput, so a run
+  records one wiring per arm and dispatch claims each
+  (`edge_resolver.path_input_names` / `path_input_arm_bindings`);
 - a glue node chains.
 
 Edge existence, visibility and identity are not kind-specific.

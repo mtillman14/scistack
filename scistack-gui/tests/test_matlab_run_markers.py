@@ -660,3 +660,47 @@ def test_no_run_completion_path_here_forgets_to_announce():
         f"expected exactly one run_done emitter in this module, found {checked} "
         f"— if a second completion path was added, confirm it announces too"
     )
+
+
+def _variant_script(run_id="run-xyz"):
+    return _script(
+        run_id=run_id,
+        variants=[
+            {
+                "input_types": {"signal": "RawSignal"},
+                "output_type": "FilteredSignal",
+                "constants": {"low_hz": 20},
+                "record_count": 4,
+            }
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "make", [_script, _variant_script, _pipeline_script], ids=["first_run", "variants", "pipeline"]
+)
+def test_failed_iterations_fail_the_run(make):
+    """scidb.log 2026-10-20: load_cbrace finished completed=0, failed=1 and was
+    reported verdict=done. Every GUI route resets the iteration tally inside
+    its try and raises after its last for_each, BEFORE closing the database,
+    so the catch writes the failure marker — the Python Run's rule
+    (api/run.py fails a run when any iteration failed)."""
+    lines = make().splitlines()
+    stripped = [l.strip() for l in lines]
+    reset_at = stripped.index("scidb.internal.iteration_tally('reset');")
+    assert stripped[reset_at - 1] == "try"
+    check_at = stripped.index("scistack_tally__ = scidb.internal.iteration_tally('get');")
+    assert stripped[check_at + 2].startswith("error('SciStack:iterationsFailed'")
+    close_at = stripped.index("scidb.close_database(db);", check_at)
+    catch_at = stripped.index("catch scistack_err__")
+    assert reset_at < check_at < close_at < catch_at
+    # Every for_each call sits between the reset and the check.
+    for i, l in enumerate(stripped):
+        if l.startswith("scidb.for_each(") or l.startswith("pipe.run_"):
+            assert reset_at < i < check_at
+
+
+def test_no_run_id_no_iteration_tally():
+    """A preview / copy-to-clipboard script is a user's own script: like the
+    Python for_each, it reports failed iterations without raising."""
+    assert "iteration_tally" not in _script(run_id=None)
