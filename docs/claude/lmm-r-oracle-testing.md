@@ -5,9 +5,9 @@ this way. Read this before changing `csvstats.lmm` or its reference fixtures.
 
 ## Ownership
 - **csv-stats** (`/workspace/csv-stats`, MIT) owns the LMM math:
-  `csvstats/lmm.py`. The fit is its own REML (`_RandomIntercept`), not
-  statsmodels. (statistics.md's package table still says statsmodels; that
-  line is stale.)
+  `csvstats/lmm.py` (tests, Satterthwaite) and `csvstats/lmm_fit.py`
+  (`MixedModel`: the general random-effects fit, any lme4-style structure;
+  .claude/plan-lmm-general-fit.md). Its own REML, not statsmodels.
 - **R is an oracle only.** It runs once, offline, and writes fixtures. It is
   never a runtime or test-time dependency: the Python tests read the
   committed CSV and JSON files.
@@ -81,13 +81,40 @@ alongside the JSON. Python never has to reproduce R's random numbers.
   both (`_as_list`).
 - **The boundary must be a candidate in its own right.** statsmodels stopped
   at a positive subject variance with a worse likelihood where lme4 found
-  exactly 0. `_RandomIntercept.fit` always compares θ = 0 explicitly.
+  exactly 0. `MixedModel` compares θ = 0 explicitly (one θ), and tries the
+  boundary face θ_j = 0 of every diagonal θ (several θ).
 - **Sum coding everywhere.** R sets `options(contrasts = c("contr.sum",
   "contr.poly"))`, so coefficient names and type-III tests match patsy's
   `Sum` coding.
 - **A singular fit can also be a correlation boundary (ρ = ±1),** not only a
   zero variance (W3rep complete slopes). The singular flag must cover both
   once slopes are fitted.
+- **An uncentred covariate wrecks raw-θ optimization.** With x on [40, 80],
+  the slope θ is ~0.01 against an intercept θ of ~1, and the two are
+  strongly confounded. L-BFGS-B on raw θ stalled up to 2 criterion units
+  short of lme4 (RIS scenarios). `MixedModel` therefore optimizes θ for
+  the block's columns centred and scaled (`Block.whitening`), and maps back
+  exactly through ΛΛᵀ (`MixedModel._recast`, QR, so singular Σ maps too).
+- **lme4 stops short on the same data.** On 9 RIS scenarios csv-stats'
+  criterion was lower than lme4's, by up to 0.58 (RIS_006). R confirmed it
+  (`tests/reference/check_lmm_optimum.R`, fed by `write_ours_check.py`):
+  lme4's own devFun at csv-stats' θ equals csv-stats' criterion, and lme4
+  restarted there stays there. All 4 lme4 optimizers had agreed on the
+  worse point, so the optimizer spread cannot reveal this. The generator
+  now also starts lme4 from the whitened fit's θ (`whitened_start`) and
+  records the better fit (`start`: "default" | "whitened"). Use the check
+  script whenever csv-stats beats lme4 by more than LOGLIK_ATOL.
+- **Every key is listed once.** A covariate that is also a random slope sat
+  twice in `_Prepared(extra=)`, so `frame["x"]` was a two-column DataFrame
+  ("covariate 'x' must be numeric").
+- **R's own optimizers can disagree on isSingular at one optimum** (RIF_020:
+  θ = 3.5e-5 vs 1.7e-4, with criteria 2e-7 apart). The singular-flag test
+  skips such scenarios (`_r_singularity_ambiguous`).
+- **t and F cannot be pinned tighter than the est and SE they come from.**
+  On several-θ fits, R's optimizers at the same optimum still disagree by
+  ~1e-4 in θ. Inference tolerances widen to 10 × the t spread across the
+  optimizers AT the optimum (`_at_optimum`). One that stopped at a worse
+  criterion would widen them to nothing.
 
 ## One owner per concern
 - **`tests/reference/lmm_reference_common.R`** turns a fit into JSON for
@@ -98,13 +125,17 @@ alongside the JSON. Python never has to reproduce R's random numbers.
   for a quantity the other suite also checks.
 - **`route(ref)` in `test_lmm_scenarios.py`** decides what csv-stats can
   check for a scenario today:
-  - objective only: `_RandomIntercept`, for one random intercept per
-    subject with any fixed design
-  - the full public `lmm()`: also factors only
+  - objective (`MixedModel`): every scenario R fitted
+  - the public `lmm()`: every scenario except the collinear ones (`lmm()`
+    refuses a rank-deficient design)
+  - term F tests and contrasts: factors-only designs. With covariates,
+    csv-stats tests the term's own coefficients, which is not lmerTest's
+    type III.
   - otherwise skipped, with the reason
-  When the general random-effects fit lands, widen `route` and nothing else.
 - **Per-scenario tolerance:** 10 × the spread between R's own optimizers
   (`optimizers.spread`), never below the curated set's base tolerances.
+  Inference (df, t, F, p) uses the t spread over the optimizers at the
+  optimum instead (`_inference_loosen`).
 - **Objective tolerance:** 1e-8 relative at the probe θ. A failure there is
   a bug in the criterion, never an optimizer difference.
 
