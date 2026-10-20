@@ -218,3 +218,5 @@ the GUI or csv-stats parses a formula, and the engine passes no
     the formula is a "gap" refusal.
   - Undo: Apply is an ordinary spec edit, like every StatStudio edit (no
     stats handler is undoable today).
+
+- 2026-10-20: the user ran every suite and all pass. Committed and pushed: csv-stats 627bd8c, scistack 391e699f.
