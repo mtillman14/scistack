@@ -308,3 +308,8 @@ caption changes.
   464 full-model contrasts against emmeans (Satterthwaite and Wald). One
   scistackstats failure: `_version_tuple("0.3.0rc1")` gave (0, 3, 1), because
   it joined all digits of "0rc1". Fixed to use leading digits only.
+- Stage 5 DONE + committed (2026-10-19): csv-stats 6a4e36b (0.4.0), scistack
+  1d4e9a47. All tests pass. Remaining:
+  - stage 6 check by eye (GUI 0zzzzj) with real csv-stats 0.4;
+  - stage 7: the user releases csv-stats 0.4.0 to PyPI;
+  - stage 8 (optional): Kenward-Roger (the fixtures already hold KR).
