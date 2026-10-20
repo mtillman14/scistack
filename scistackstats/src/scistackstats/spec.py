@@ -247,6 +247,55 @@ class Analysis:
         return self.formula is not None or bool(self.covariates)
 
 
+#: StatStudio's two views of one spec (plan-statstudio-guided): the
+#: step-by-step wizard, or the rail of every control.
+GUIDE_MODES = ("guided", "advanced")
+#: The wizard's steps, in order. The one owner of the step ids and their
+#: order: ``guide`` builds one entry per id, and the webview walks them in
+#: the order it is sent.
+GUIDE_STEPS = (
+    "measure", "unit", "factors", "within_between", "data_check", "question",
+    "test", "multiple_comparisons", "effect_size", "results",
+)
+
+
+@dataclass(frozen=True)
+class GuideState:
+    """How StatStudio shows this spec: the view it was last used in and the
+    wizard's progress, so a saved table reopens where it was left (user
+    decision 2026-10-20). Display only: no statistic reads it.
+
+    A spec without one opens in "advanced" (every table saved before the
+    wizard was built in the rail); :func:`seed.seed_from_plot` starts a new
+    table in "guided".
+    """
+
+    mode: str = "advanced"
+    #: The step the wizard shows; None = the first.
+    step: str | None = None
+    #: Steps the user has finished (Next pressed), in step order.
+    done: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _check(self.mode, GUIDE_MODES, "guide.mode")
+        if self.step is not None:
+            _check(self.step, GUIDE_STEPS, "guide.step")
+        for step in self.done:
+            _check(step, GUIDE_STEPS, "guide.done")
+        object.__setattr__(self, "done", tuple(s for s in GUIDE_STEPS if s in set(self.done)))
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"mode": self.mode, "done": list(self.done)}
+        if self.step is not None:
+            out["step"] = self.step
+        return out
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "GuideState":
+        _only(raw, {"mode", "step", "done"}, "guide")
+        return cls(mode=raw.get("mode", "advanced"), step=raw.get("step"), done=tuple(raw.get("done", ())))
+
+
 BAR_PAIRS = ("significant", "all", "adjacent")
 BAR_LABELS = ("stars", "p")
 
@@ -296,6 +345,7 @@ class StatsSpec:
     variant_mode: str = "pinned"
     formatting: FormatSpec = field(default_factory=FormatSpec)
     overlay: OverlaySpec = field(default_factory=OverlaySpec)
+    guide: GuideState = field(default_factory=GuideState)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "dvs", tuple(self.dvs))
@@ -326,6 +376,7 @@ class StatsSpec:
             "variant_mode": self.variant_mode,
             "formatting": self.formatting.to_dict(),
             "overlay": self.overlay.to_dict(),
+            "guide": self.guide.to_dict(),
         }
         if self.linked_plot is not None:
             out["linked_plot"] = self.linked_plot
@@ -335,7 +386,7 @@ class StatsSpec:
     def from_dict(cls, raw: dict) -> "StatsSpec":
         if not isinstance(raw, dict):
             raise StatsSpecError(f"a stats spec must be a table, got {type(raw).__name__}")
-        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting", "overlay"}, "stats spec")
+        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting", "overlay", "guide"}, "stats spec")
         if raw.get("format") != FORMAT:
             raise StatsSpecError(f"stats spec format {raw.get('format')!r} is not {FORMAT}")
         if "design" not in raw:
@@ -349,6 +400,7 @@ class StatsSpec:
             variant_mode=raw.get("variant_mode", "pinned"),
             formatting=FormatSpec.from_dict(raw.get("formatting", {})),
             overlay=OverlaySpec.from_dict(raw.get("overlay", {})),
+            guide=GuideState.from_dict(raw.get("guide", {})),
         )
 
 

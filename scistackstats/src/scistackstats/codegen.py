@@ -117,7 +117,9 @@ def generate_stats_function(stats_spec: StatsSpec, tables: dict[str, LongTable],
     if not name.isidentifier() or keyword.iskeyword(name):
         raise NotExportable(f"{name!r} is not a valid function name")
     params = input_params(stats_spec)
-    spec_literal = pprint.pformat(stats_spec.to_dict(), indent=1, width=96, sort_dicts=True)
+    # The wizard's view state is not part of what the function computes.
+    embedded = {k: v for k, v in stats_spec.to_dict().items() if k != "guide"}
+    spec_literal = pprint.pformat(embedded, indent=1, width=96, sort_dicts=True)
     dvs = ", ".join(dv.key for dv in stats_spec.targets)
     analyses = ", ".join(f"{a.id} ({a.family})" for a in stats_spec.comparisons) or "descriptives only"
     lines = [

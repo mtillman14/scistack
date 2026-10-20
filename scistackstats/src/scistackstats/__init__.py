@@ -36,7 +36,9 @@ from .export import FORMATS, export_comparisons, export_descriptives, render
 from .format import Grid, Labels, apa_sentence, comparisons_grid, descriptives_grids, labels_for, omnibus_grid, sweep_grid
 from .run import Comparison, StatsReport, run
 from .seed import SeedError, Seeded, seed_from_plot
-from .spec import DV, Analysis, DescriptiveSpec, FormatSpec, StatsSpec, StatsSpecError
+from .spec import GUIDE_STEPS, DV, Analysis, DescriptiveSpec, FormatSpec, GuideState, StatsSpec, StatsSpecError
+from .explain import CONCEPTS, Concept, StepGuide, build_steps
+from .guide import GuideFacts, guide, guide_facts
 from .tables import (ANALYSIS_KIND, UNIT, AnalysisFrame, AnalysisFrameError, CovariateValues, analysis_frame,
                      load_covariates, load_tables)
 
@@ -52,6 +54,8 @@ __all__ = [
     "export_comparisons", "export_descriptives", "labels_for", "omnibus_grid", "render", "sweep_grid",
     "NotExportable", "generate_stats_function", "why_not_exportable",
     "CovariateValues", "ModelCheck", "apply_to_design", "default_formula", "for_frame", "load_covariates",
+    "CONCEPTS", "Concept", "GUIDE_STEPS", "GuideFacts", "GuideState", "StepGuide", "build_steps", "guide",
+    "guide_facts",
 ]
 
 try:

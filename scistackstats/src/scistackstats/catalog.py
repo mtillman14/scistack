@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .design import BETWEEN, MIXED, WITHIN, Design
+from .design import BETWEEN, MIXED, WITHIN, Design, cells_text
 from .spec import Analysis
 
 
@@ -218,6 +218,21 @@ def recommend(analysis: Analysis, design: Design, rows: Any, y: str, engine: Any
     normal = not any(c.get("violated") for c in checks if c.get("name") == "normality")
     welch = "ttest_ind_student" if analysis.equal_var else "ttest_ind_welch"
     between_pair = welch if normal else "mann_whitney"
+    if design.empty_cells:
+        # Never recommend a model csv-stats will refuse (scidb.log
+        # 2026-10-20: a full-interaction mixed model on data with empty
+        # cells was refused, and every contrast that hung on it with it).
+        # The pairwise tests run inside each combination of the other
+        # factors, so the cells that have data are still compared.
+        evidence.insert(0, f"{len(design.empty_cells)} combination(s) of levels have no rows "
+                           f"({cells_text(design.empty_cells)}): a model with every interaction can't be "
+                           f"estimated, so no omnibus test is recommended; analyse a factor separately, "
+                           f"leave out the empty level, or write a model formula without that interaction")
+        if primary.kind == WITHIN:
+            pairwise = "ttest_paired" if normal else "wilcoxon"
+        else:
+            pairwise = between_pair
+        return Recommendation(None, pairwise, tuple(evidence), checks)
     if design.incomplete_units and analysis.missing == "use_all":
         n = len(design.incomplete_units)
         evidence.insert(0, f"{n} {design.unit or 'unit'}(s) lack some within levels "

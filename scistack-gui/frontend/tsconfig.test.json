@@ -90,6 +90,8 @@
     "src/components/Sidebar/sourceLocation.ts",
     "src/components/Sidebar/sourceLocation.test.ts",
     "src/components/StatStudio/statsSpec.ts",
-    "src/components/StatStudio/statsSpec.test.ts"
+    "src/components/StatStudio/statsSpec.test.ts",
+    "src/components/StatStudio/Guided/guideSteps.ts",
+    "src/components/StatStudio/Guided/guideSteps.test.ts"
   ]
 }

@@ -30,7 +30,7 @@ from scistacklog import Log
 from scistackplot import PlotKind, PlotSpec
 from scistackplot.spec import ErrorBand, Statistic
 
-from .spec import DV, Analysis, DescriptiveSpec, StatsSpec
+from .spec import DV, Analysis, DescriptiveSpec, GuideState, StatsSpec
 
 LAYER = "scistackstats"
 
@@ -79,6 +79,9 @@ def seed_from_plot(plot: PlotSpec, *, linked_plot: str | None = None) -> Seeded:
         linked_plot=linked_plot,
         descriptives=DescriptiveSpec(cell=cell, statistics=("n",)),
         comparisons=(Analysis(id="a1", family=family),),
+        # A new table opens in the step-by-step wizard (user decision
+        # 2026-10-20); a saved one reopens in the view it was saved in.
+        guide=GuideState(mode="guided"),
     )
     for note in notes:
         Log.info("[seed] %s: %s", plot.y_measure, note, layer=LAYER)

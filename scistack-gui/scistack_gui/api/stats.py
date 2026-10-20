@@ -3,6 +3,8 @@ StatStudio — the handler table for both transports (see ``api/plot.py``).
 
     POST /api/stats/open                stats_open
     POST /api/stats/compute             stats_compute
+    POST /api/stats/preview             stats_preview
+    POST /api/stats/guide-log           stats_guide_log
     POST /api/stats/export              stats_export
     POST /api/stats/divergence          stats_divergence
     POST /api/stats/sync                stats_sync
@@ -106,6 +108,19 @@ class PresetIdRequest(BaseModel):
     hidden: bool | None = True
 
 
+class GuideLogRequest(BaseModel):
+    """One wizard event from the webview (StatStudio/Guided), for scidb.log."""
+
+    event: str
+    step: str | None = None
+    detail: str | None = None
+
+
+def _guide_log(req: GuideLogRequest) -> dict:
+    logger.info("[stats guided] %s step=%s%s", req.event, req.step or "-", f" {req.detail}" if req.detail else "")
+    return {"ok": True}
+
+
 class FormulaRequest(BaseModel):
     spec: dict
     #: The analysis the popup edits (default: the first).
@@ -131,6 +146,10 @@ def _open(db, req: OpenRequest) -> dict:
 
 def _compute(db, req: ComputeRequest) -> dict:
     return stats_service.compute(db, req.spec, csv_path=req.csv_path)
+
+
+def _preview(db, req: ComputeRequest) -> dict:
+    return stats_service.preview(db, req.spec, csv_path=req.csv_path)
 
 
 def _export(db, req: ExportRequest) -> dict:
@@ -214,6 +233,11 @@ STATS_HANDLERS: tuple[Handler, ...] = (
             http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
     Handler("stats_compute", "/stats/compute", ComputeRequest, _compute, holds_db_lock=False,
             http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
+    # The step-by-step wizard's design steps: the lay guide without a test run.
+    Handler("stats_preview", "/stats/preview", ComputeRequest, _preview, holds_db_lock=False,
+            http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
+    Handler("stats_guide_log", "/stats/guide-log", GuideLogRequest, _guide_log, needs_db=False,
+            http_errors=_BAD_REQUEST, undoable=False),
     Handler("stats_export", "/stats/export", ExportRequest, _export, holds_db_lock=False,
             http_errors={**_BAD_REQUEST, OSError: 400}, db_optional=True, undoable=False),
     Handler("stats_divergence", "/stats/divergence", PairRequest, _divergence, needs_db=False,

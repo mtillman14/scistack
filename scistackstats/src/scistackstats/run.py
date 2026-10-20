@@ -295,6 +295,19 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
                 term=primary, a=str(a), b=str(b), test=test, interaction_p=dict(interactions),
                 variant={k: str(v) for k, v in design.stratum.items() if k in frame.variant_axes},
             )
+            absent = [lv for lv in (a, b) if not (pair_rows[primary] == lv).any()]
+            if absent:
+                # An empty cell (design.empty_cells): say which, instead of
+                # csv-stats' "levels [...] are not in column ..." (scidb.log
+                # 2026-10-20).
+                where = f" at {_key_text(context)}" if context else ""
+                comparison.refused = (f"no rows for {primary} = {', '.join(str(lv) for lv in absent)}{where}: "
+                                      f"there is nothing to compare")
+                comparison.refusal_kind = "invalid"
+                Log.info("[stats] %s %s: %s vs %s not run: %s", frame.dv.key, stratum_text or "(one stratum)",
+                         a, b, comparison.refused, layer=LAYER)
+                out.append(comparison)
+                continue
             columns = [frame.y, primary, *([UNIT] if UNIT in pair_rows.columns else [])]
             try:
                 record = engine.run(

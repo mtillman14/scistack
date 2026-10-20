@@ -185,3 +185,43 @@ def test_the_covariate_picker_reuses_the_grouping_rpcs(populated_db):
     assert all(o["kind"] != "categorical" for o in report["offered"])
     with pytest.raises(ValueError, match="purpose"):
         plot_service.grouping_graph(populated_db, "RawSignal", purpose="colour")
+
+
+# --- the step-by-step wizard (plan-statstudio-guided) ---------------------------
+
+
+def test_preview_returns_the_guide_without_running_a_test(populated_db, monkeypatch):
+    from scistackstats import GUIDE_STEPS
+
+    def no_engine():
+        raise AssertionError("stats_preview must not reach csv-stats")
+
+    # The modules themselves: the dotted string "scistackstats.run" resolves
+    # to the package's exported run() FUNCTION, which shadows the module.
+    import importlib
+
+    monkeypatch.setattr(importlib.import_module("scistackstats.engine"), "get_engine", no_engine)
+    monkeypatch.setattr(importlib.import_module("scistackstats.run"), "get_engine", no_engine)
+    result = stats_service.preview(populated_db, _seeded(populated_db))
+    assert result["ok"], result
+    json.dumps(result)
+    guide = result["guide"]
+    assert [s["id"] for s in guide["steps"]] == list(GUIDE_STEPS)
+    assert guide["has_results"] is False
+    assert "unit" in guide["concepts"]
+
+
+def test_compute_carries_the_guide_with_results(populated_db):
+    result = stats_service.compute(populated_db, _seeded(populated_db))
+    guide = result["guide"]
+    assert guide["has_results"] is True
+    test_step = next(s for s in guide["steps"] if s["id"] == "test")
+    assert test_step["cards"], "the test choices need the run's recommendation"
+
+
+def test_a_seeded_table_opens_in_the_wizard(populated_db):
+    assert _seeded(populated_db)["guide"]["mode"] == "guided"
+
+
+def test_preview_handler_is_registered():
+    assert {"stats_preview", "stats_guide_log"} <= {h.name for h in ALL_HANDLERS}

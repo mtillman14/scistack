@@ -11,6 +11,67 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzm. StatStudio: step-by-step view with plain-language explanations — added 2026-10-20
+
+**What changed:** a newly opened StatStudio table starts in a **Step by step**
+view. It shows one decision per screen, explains each idea in plain words in a
+"What does this mean?" panel, and pre-selects a recommended answer. The ten
+steps are: Measure, Independent unit, What to compare, Same or different
+people, Missing data, Main question, Test, Many comparisons, Size of the
+difference, Results. **Advanced** is the previous rail; both edit the same
+table. A saved table reopens in the view it was saved in. All the wording comes
+from `scistackstats/explain.py`. Plan: `.claude/plan-statstudio-guided.md`.
+
+Also fixed (from the 2026-10-20 C-Brace log): no overall test is recommended
+when a combination of levels has no data. A pair with nothing to compare now
+says "no rows for group = Traditional at session=…". `group` is no longer
+called "the experimental unit".
+
+**Backend:** reload the VS Code window. `scidb.log` should show
+`[stats guide] 10 step(s)` and `[timing] stats_preview` lines as you move
+through the steps, and `[stats guided] show step=…` / `choose step=…` for
+every screen and click. It should also show `[timing] engine_import: csvstats`
+the first time a step needs results.
+
+**Frontend**
+1. From the C-Brace `CosmedData` Dist_m figure, click **StatStudio**. It
+   should open on "Step 1 of 10 — What did you measure?", with a step list on
+   the left and a tinted "What does this mean?" panel on the right.
+2. Only step 1 is clickable in the step list. **Next** goes to step 2. Each
+   finished step gets a ✓ and stays clickable.
+3. Independent unit: "Each subject counts once: 22 subjects in total" and "A
+   subject is identified within its group…".
+4. What to compare: one card per factor (group, session, minute, subject),
+   each with Compare / Analyse separately / Average over. On `subject`, only
+   Average over should be enabled. Set `minute` to **Analyse separately**.
+5. Same or different people: `group` should be marked Recommended as
+   "Different subjects in each level", and `session` as "Same subjects,
+   measured repeatedly". Hovering a choice should move its explanation to the
+   top of the right panel.
+6. Missing data: a who-has-what table with the session=… / group=Traditional
+   row highlighted. Facts should read "Nobody was measured in: …". There
+   should be choices "Keep everything", "Analyse each session separately",
+   "Leave out session = …", and "Use every measurement" (Recommended) vs
+   "Only people with every measurement".
+7. Test: "Running the tests on your data…" briefly, then the recommendation
+   in plain words (e.g. "The values are not bell-shaped…"), "no overall test"
+   for the empty cell, and a card of alternative tests (greyed ones say why).
+8. Many comparisons: "You are making N comparisons…", with Holm Recommended
+   and selected.
+9. Results: the comparison tables, sentences, Copy / Save to file, and a
+   Save box. Save as "guided test".
+10. Click **Advanced** (top right): the familiar rail should show the same
+    settings. Save again, reopen it from the saved list: it should open in
+    Advanced. Switch back to Step by step: it should return to the step you
+    left.
+11. Go back to "What to compare" and set every factor to Analyse separately.
+    Its step should turn amber ("Choose at least one thing to compare."),
+    Next should be disabled, and the later steps should not be clickable.
+12. Check the layout in a narrow editor pane: the explanation panel should
+    wrap below the question rather than squeeze it.
+
+---
+
 ## 0zzzzl. Windows: Plot Studio opens (no hang on its first import) — added 2026-10-20
 
 **What changed:** on Windows the server no longer leaves a blocking read

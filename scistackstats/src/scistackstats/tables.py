@@ -85,6 +85,10 @@ class AnalysisFrame:
     #: so they are within-subject; a unit at only one level is missing data,
     #: not a group (Stage E, design.derive_design).
     below_unit: list[str] = field(default_factory=list)
+    #: Every factor's effective role as the rows were read
+    #: (``scistackplot.complete_roles``: the spec's roles plus the defaults),
+    #: ``{name: "group"|"facet"|"iterate"|"collapse"}``.
+    roles: dict[str, str] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
         """What a caption needs to say about these rows."""
@@ -246,6 +250,7 @@ def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable, *, curves: b
         averaged=list(steps.pre) if unit is not None else [],
         variant_axes=[f.name for f in derived.variant_factors if f.name in (*factors, *strata)],
         below_unit=below_unit,
+        roles={name: getattr(role, "value", str(role)) for name, role in roles.items()},
     )
     Log.info(
         "[stats rows] %s: %d row(s), factors (inner first) %s, strata %s, unit %s%s",

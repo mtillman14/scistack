@@ -17,11 +17,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { addNotificationHandler, callBackend, isVSCodeMode } from '../../api'
 import { plotThemeVars } from '../PlotStudio/plotTheme'
 import { usePlotTheme } from '../PlotStudio/usePlotTheme'
+import GridTable from './GridTable'
+import GuidedStudio from './Guided/GuidedStudio'
+import { clampToBlocked, currentStep, type GuidePayload } from './Guided/guideSteps'
 import ModelFormulaDialog from './ModelFormulaDialog'
 import { pendingActions, recommendedFor, type StratumSummary } from './statsActions'
 import {
-  addAnalysis, addDV, moveGroup, removeAnalysis, removeDV, setCell, setFormatting, setOverlay,
-  setOverride, setRole, targets, toggleStatistic, updateAnalysis, gridToTsv, gridWidth,
+  addAnalysis, addDV, computeKey, guideState, moveGroup, removeAnalysis, removeDV, setCell, setFormatting,
+  setGuide, setOverlay, setOverride, setRole, targets, toggleStatistic, updateAnalysis,
   type Analysis, type Grid, type StatsSpec,
 } from './statsSpec'
 
@@ -74,6 +77,8 @@ interface Readout {
 interface ComputeResult {
   ok: boolean
   error?: string
+  /** The wizard's steps (scistackstats.guide), with the run's results. */
+  guide?: GuidePayload
   descriptives: Grid[]
   comparisons: ComparisonResult[]
   readout: Readout[]
@@ -91,50 +96,6 @@ const ROLE_CHOICES: { id: string; label: string }[] = [
   { id: 'collapse', label: 'Collapse (average)' },
 ]
 const FORMATS = ['html', 'md', 'csv', 'latex', 'txt', 'json']
-
-function GridTable({ grid }: { grid: Grid }) {
-  const width = gridWidth(grid)
-  return (
-    <div style={styles.gridBox}>
-      <div style={styles.gridTitle}>{grid.title}</div>
-      <table style={styles.table}>
-        <thead>
-          {grid.header_rows.map((row, i) => (
-            <tr key={i}>
-              {row.map((cell, j) => (
-                <th key={j} colSpan={cell.span}
-                    style={{ ...styles.th, ...(i === grid.header_rows.length - 1 ? styles.thLast : {}),
-                             textAlign: j < grid.label_columns ? 'left' : 'center' }}>
-                  {cell.text}
-                </th>
-              ))}
-            </tr>
-          ))}
-        </thead>
-        <tbody>
-          {grid.rows.map((row, i) => row.kind === 'section' ? (
-            <tr key={i}><td colSpan={width} style={styles.section}>{row.cells[0]}</td></tr>
-          ) : (
-            <tr key={i}>
-              {row.cells.map((cell, j) => (
-                <td key={j} style={{ ...styles.td, textAlign: j < grid.label_columns ? 'left' : 'center' }}>{cell}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div style={styles.caption}><i>Note.</i> {grid.caption}</div>
-      {grid.notes.length > 0 && (
-        <ul style={styles.notes}>{grid.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
-      )}
-      <button type="button" style={styles.smallButton}
-              onClick={() => navigator.clipboard?.writeText(gridToTsv(grid)).catch(() => undefined)}
-              title="Copy as tab-separated text (pastes into a spreadsheet)">
-        Copy as text
-      </button>
-    </div>
-  )
-}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(true)
@@ -155,6 +116,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   const [savedInfo, setSavedInfo] = useState<{ stats_id: string; name: string; version: number } | null>(null)
   const [openNotes, setOpenNotes] = useState<string[]>([])
   const [result, setResult] = useState<ComputeResult | null>(null)
+  const [guidePayload, setGuidePayload] = useState<GuidePayload | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'descriptives' | 'comparisons'>('descriptives')
@@ -201,23 +163,49 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   }, [firstVariable, sourceParams])
 
   // --- compute (debounced, latest wins) ----------------------------------------
+  // The view state (spec.guide) is not part of the key: moving between steps
+  // or views never recomputes. The wizard's design steps ask for the cheap
+  // preview (no tests); a step that reads results, and the Advanced view, ask
+  // for the full compute (plan-statstudio-guided).
+  const key = useMemo(() => (spec ? computeKey(spec) : ''), [spec])
+  const specRef = useRef(spec)
+  specRef.current = spec
+  const mode = spec ? guideState(spec).mode : 'advanced'
+  const shownStep = spec && guidePayload ? currentStep(spec, guidePayload.steps) : null
+  const wantResults = mode === 'advanced' || !!guidePayload?.steps.find(s => s.id === shownStep)?.needs_results
+  const haveResultsFor = useRef('')
   useEffect(() => {
-    if (!spec) return
+    const current = specRef.current
+    if (!current || !key) return
+    if (!wantResults && haveResultsFor.current === key) return // the full result already covers the preview
     const mine = ++generation.current
+    const method = wantResults ? 'stats_compute' : 'stats_preview'
     const timer = window.setTimeout(() => {
       setBusy(true)
       const t0 = performance.now()
-      callBackend('stats_compute', { spec, ...sourceParams }).then(raw => {
+      callBackend(method, { spec: current, ...sourceParams }).then(raw => {
         if (mine !== generation.current) return
         const r = raw as ComputeResult
-        console.info('[StatStudio] compute', { ms: Math.round(performance.now() - t0), ok: r.ok })
-        setResult(r)
+        console.info(`[StatStudio] ${method}`, { ms: Math.round(performance.now() - t0), ok: r.ok })
+        if (wantResults) { setResult(r); haveResultsFor.current = key }
+        if (r.guide) setGuidePayload(r.guide)
         setError(r.ok ? '' : r.error ?? 'Could not compute.')
       }).catch(err => { if (mine === generation.current) setError(String(err)) })
         .finally(() => { if (mine === generation.current) setBusy(false) })
     }, 350)
     return () => window.clearTimeout(timer)
-  }, [spec, sourceParams])
+  }, [key, wantResults, sourceParams])
+
+  // A fresh guide that blocks a step before the one shown pulls the wizard back.
+  useEffect(() => {
+    if (!guidePayload) return
+    setSpec(prev => {
+      if (!prev || guideState(prev).mode !== 'guided') return prev
+      const clamped = clampToBlocked(prev, guidePayload.steps)
+      if (clamped !== prev) console.info('[StatStudio] guided: back to the blocked step', { step: clamped.guide?.step })
+      return clamped
+    })
+  }, [guidePayload])
 
   // --- the plot link ---------------------------------------------------------------
   const linkedId = spec?.linked_plot
@@ -230,11 +218,12 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   }, [linkedId, csvPath])
 
   useEffect(() => {
-    if (!spec || !linkedPlot) { setDifferences([]); return }
-    callBackend('stats_divergence', { stats_spec: spec, plot_spec: linkedPlot.spec }).then(raw => {
+    const current = specRef.current
+    if (!current || !linkedPlot) { setDifferences([]); return }
+    callBackend('stats_divergence', { stats_spec: current, plot_spec: linkedPlot.spec }).then(raw => {
       setDifferences((raw as { differences: Difference[] }).differences)
     }).catch(() => setDifferences([]))
-  }, [spec, linkedPlot])
+  }, [key, linkedPlot])
 
   useEffect(() => addNotificationHandler(msg => {
     if (msg.method !== 'plot_design_sync') return
@@ -287,16 +276,16 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
     setSpec(r.spec); setSavedInfo(r.info); setSaveName(r.info?.name ?? ''); setOpenNotes(r.notes.map(n => n.message))
   }
 
-  const exportTab = async (toFile: boolean) => {
+  const exportTab = async (toFile: boolean, which: 'descriptives' | 'comparisons' = tab) => {
     if (!spec) return
     let path: string | null = null
     if (toFile) {
       const ext = { html: 'html', md: 'md', csv: 'csv', latex: 'tex', txt: 'txt', json: 'json' }[exportFormat] ?? 'txt'
-      const picked = await callBackend('pick_save_path', { defaultName: `${tab}.${ext}`, formats: [ext], filterName: exportFormat.toUpperCase() }) as { path: string | null }
+      const picked = await callBackend('pick_save_path', { defaultName: `${which}.${ext}`, formats: [ext], filterName: exportFormat.toUpperCase() }) as { path: string | null }
       if (!picked.path) return
       path = picked.path
     }
-    const r = await callBackend('stats_export', { spec, fmt: exportFormat, which: tab, path, ...sourceParams }) as { ok: boolean; text: string; error?: string }
+    const r = await callBackend('stats_export', { spec, fmt: exportFormat, which, path, ...sourceParams }) as { ok: boolean; text: string; error?: string }
     if (!r.ok) { setMessage(r.error ?? 'Export failed.'); return }
     if (path) { setMessage(`Wrote ${path}.`); return }
     try {
@@ -332,6 +321,134 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   // Decisions the user must make before comparisons run (Stage F).
   const actions = pendingActions(result?.comparisons)
   const addable = variables.find(v => v.name === newDV)
+
+  // --- pieces both views show -----------------------------------------------------
+  const switchMode = (next: 'guided' | 'advanced') => {
+    if (next === mode) return
+    setSpec(setGuide(spec, { mode: next }))
+    callBackend('stats_guide_log', { event: `view ${next}`, step: guideState(spec).step ?? null }).catch(() => undefined)
+  }
+  const modeSwitch = (
+    <div style={styles.modeSwitch} role="group" aria-label="View">
+      <button type="button" style={mode === 'guided' ? styles.tabOn : styles.tab} onClick={() => switchMode('guided')}
+              title="One decision at a time, each explained">Step by step</button>
+      <button type="button" style={mode === 'advanced' ? styles.tabOn : styles.tab} onClick={() => switchMode('advanced')}
+              title="Every setting at once">Advanced</button>
+    </div>
+  )
+
+  const measuresEditor = (
+    <>
+      {targets(spec).map((dv, i) => (
+        <div key={i} style={styles.row}>
+          <span>{dv.variable}{dv.columns ? ` [${dv.columns.join(', ')}]` : ''}</span>
+          {targets(spec).length > 1 && <button type="button" style={styles.smallButton} onClick={() => setSpec(removeDV(spec, i))}>✕</button>}
+        </div>
+      ))}
+      <div style={styles.row}>
+        <select value={newDV} onChange={e => { setNewDV(e.target.value); setNewColumns([]) }} style={styles.select}>
+          <option value="">Add a measure…</option>
+          {variables.filter(v => v.name).map(v => <option key={v.name} value={v.name}>{v.name}</option>)}
+        </select>
+        <button type="button" style={styles.smallButton} disabled={!newDV}
+                onClick={() => { setSpec(addDV(spec, newDV, newColumns)); setNewDV(''); setNewColumns([]) }}>Add</button>
+      </div>
+      {addable?.columns && addable.columns.length > 1 && (
+        <div style={styles.columns}>
+          <div style={styles.muted}>Columns (each one its own measure; none = the variable as it is):</div>
+          {addable.columns.map(c => (
+            <label key={c} style={styles.check}>
+              <input type="checkbox" checked={newColumns.includes(c)}
+                     onChange={e => setNewColumns(e.target.checked ? [...newColumns, c] : newColumns.filter(x => x !== c))} /> {c}
+            </label>
+          ))}
+        </div>
+      )}
+    </>
+  )
+
+  const notices = (
+    <>
+      {linkedPlot && differences.length > 0 && (
+        <div style={styles.banner}>
+          <div><b>This table's design differs from the figure "{linkedPlot.name}":</b></div>
+          <ul style={styles.notes}>
+            {differences.map(d => <li key={d.path}>{d.label}: figure {d.a} · table {d.b}</li>)}
+          </ul>
+          <button type="button" style={styles.primaryButton} onClick={syncToPlot}>Sync to PlotStudio</button>
+        </div>
+      )}
+      {spec.linked_plot && !linkedPlot && !csvPath && <div style={styles.muted}>Linked figure not found; save the plot to link it.</div>}
+      {openNotes.length > 0 && <ul style={styles.notes}>{openNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
+      {message && <pre style={styles.message}>{message}</pre>}
+      {error && <div style={styles.error}>{error}</div>}
+    </>
+  )
+
+  const saveBox = !csvPath && (
+    <div style={styles.row}>
+      <input value={saveName} placeholder="Table name" onChange={e => setSaveName(e.target.value)} style={styles.input} />
+      <button type="button" style={styles.primaryButton} onClick={save} disabled={!saveName.trim()}>Save</button>
+    </div>
+  )
+
+  const exportBar = (which: 'descriptives' | 'comparisons') => (
+    <div style={styles.row}>
+      <select value={exportFormat} onChange={e => setExportFormat(e.target.value)} style={styles.select} title="html pastes into Word as a table">
+        {FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
+      </select>
+      <button type="button" style={styles.smallButton} onClick={() => exportTab(false, which)}>Copy</button>
+      {isVSCodeMode && <button type="button" style={styles.smallButton} onClick={() => exportTab(true, which)}>Save to file…</button>}
+    </div>
+  )
+
+  // The wizard's last step: the same grids as the Advanced tabs.
+  const resultsView = (
+    <div>
+      {result?.refusals.map((r, i) => <div key={i} style={styles.warn}>{r.dv}: {r.reason}</div>)}
+      {result?.comparisons.map(c => (
+        <div key={c.id}>
+          <GridTable grid={c.grid} />
+          {c.omnibus && <GridTable grid={c.omnibus} />}
+          {c.sweep && <GridTable grid={c.sweep} />}
+          <div style={styles.gridTitle}>Results as sentences</div>
+          <ul style={styles.notes}>{c.sentences.map((s, i) => <li key={i}>{s}</li>)}</ul>
+          <button type="button" style={styles.smallButton}
+                  onClick={() => navigator.clipboard?.writeText(c.sentences.join('\n')).catch(() => undefined)}>Copy sentences</button>
+        </div>
+      ))}
+      {exportBar('comparisons')}
+      {result?.descriptives.map((g, i) => <GridTable key={i} grid={g} />)}
+      {(result?.descriptives.length ?? 0) > 0 && exportBar('descriptives')}
+      {saveBox}
+    </div>
+  )
+
+  if (mode === 'guided') {
+    return (
+      <div style={{ ...plotThemeVars(theme), ...styles.guidedRoot }}>
+        <GuidedStudio
+          spec={spec}
+          onSpec={setSpec}
+          guide={guidePayload}
+          busy={busy}
+          header={(
+            <div>
+              <div style={styles.guidedHeader}>
+                <span style={styles.title}>StatStudio{busy ? ' · working…' : ''}</span>
+                <span style={styles.muted}>{savedInfo ? `saved as "${savedInfo.name}" v${savedInfo.version}` : ''}</span>
+                <span style={{ flex: 1 }} />
+                {modeSwitch}
+              </div>
+              {notices}
+            </div>
+          )}
+          measureEditor={measuresEditor}
+          results={resultsView}
+        />
+      </div>
+    )
+  }
 
   const analysisEditor = (a: Analysis) => {
     const patch = (p: Partial<Analysis>) => setSpec(updateAnalysis(spec, a.id, p))
@@ -442,33 +559,10 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
       <aside style={styles.rail}>
         <div style={styles.title}>StatStudio{busy ? ' · computing…' : ''}</div>
         <div style={styles.muted}>{targets(spec).map(d => d.columns ? `${d.variable}[${d.columns.join(', ')}]` : d.variable).join(', ')}{savedInfo ? ` · saved as "${savedInfo.name}" v${savedInfo.version}` : ''}</div>
+        {modeSwitch}
 
         <Section title="Measures">
-          {targets(spec).map((dv, i) => (
-            <div key={i} style={styles.row}>
-              <span>{dv.variable}{dv.columns ? ` [${dv.columns.join(', ')}]` : ''}</span>
-              {targets(spec).length > 1 && <button type="button" style={styles.smallButton} onClick={() => setSpec(removeDV(spec, i))}>✕</button>}
-            </div>
-          ))}
-          <div style={styles.row}>
-            <select value={newDV} onChange={e => { setNewDV(e.target.value); setNewColumns([]) }} style={styles.select}>
-              <option value="">Add a measure…</option>
-              {variables.filter(v => v.name).map(v => <option key={v.name} value={v.name}>{v.name}</option>)}
-            </select>
-            <button type="button" style={styles.smallButton} disabled={!newDV}
-                    onClick={() => { setSpec(addDV(spec, newDV, newColumns)); setNewDV(''); setNewColumns([]) }}>Add</button>
-          </div>
-          {addable?.columns && addable.columns.length > 1 && (
-            <div style={styles.columns}>
-              <div style={styles.muted}>Columns (each one its own measure; none = the variable as it is):</div>
-              {addable.columns.map(c => (
-                <label key={c} style={styles.check}>
-                  <input type="checkbox" checked={newColumns.includes(c)}
-                         onChange={e => setNewColumns(e.target.checked ? [...newColumns, c] : newColumns.filter(x => x !== c))} /> {c}
-                </label>
-              ))}
-            </div>
-          )}
+          {measuresEditor}
         </Section>
 
         <Section title="Design">
@@ -599,20 +693,8 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
       </aside>
 
       <main style={styles.main}>
-        {linkedPlot && differences.length > 0 && (
-          <div style={styles.banner}>
-            <div><b>This table's design differs from the figure "{linkedPlot.name}":</b></div>
-            <ul style={styles.notes}>
-              {differences.map(d => <li key={d.path}>{d.label}: figure {d.a} · table {d.b}</li>)}
-            </ul>
-            <button type="button" style={styles.primaryButton} onClick={syncToPlot}>Sync to PlotStudio</button>
-          </div>
-        )}
-        {spec.linked_plot && !linkedPlot && !csvPath && <div style={styles.muted}>Linked figure not found; save the plot to link it.</div>}
+        {notices}
         {!spec.linked_plot && <div style={styles.muted}>Not linked to a saved plot.</div>}
-        {openNotes.length > 0 && <ul style={styles.notes}>{openNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
-        {message && <pre style={styles.message}>{message}</pre>}
-        {error && <div style={styles.error}>{error}</div>}
 
         <div style={styles.toolbar}>
           <button type="button" style={tab === 'descriptives' ? styles.tabOn : styles.tab} onClick={() => setTab('descriptives')}>Descriptives</button>
@@ -685,6 +767,9 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
 
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', height: '100%', background: 'var(--ps-bg)', color: 'var(--ps-text)', fontFamily: 'sans-serif', fontSize: 13 },
+  guidedRoot: { height: '100%', background: 'var(--ps-bg)', color: 'var(--ps-text)', fontFamily: 'sans-serif', fontSize: 13 },
+  guidedHeader: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 },
+  modeSwitch: { display: 'flex', gap: 4, margin: '6px 0' },
   rail: { width: 330, minWidth: 260, overflowY: 'auto', borderRight: '1px solid var(--ps-border)', padding: 10, background: 'var(--ps-surface)' },
   main: { flex: 1, overflow: 'auto', padding: 14 },
   title: { fontSize: 16, fontWeight: 600, marginBottom: 4, color: 'var(--ps-text-strong)' },

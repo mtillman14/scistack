@@ -351,6 +351,8 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     plot_preset_hide:       { path: '/api/plot/presets/hide', method: 'POST', body: true },
     stats_open:             { path: '/api/stats/open', method: 'POST', body: true },
     stats_compute:          { path: '/api/stats/compute', method: 'POST', body: true },
+    stats_preview:          { path: '/api/stats/preview', method: 'POST', body: true },
+    stats_guide_log:        { path: '/api/stats/guide-log', method: 'POST', body: true },
     stats_export:           { path: '/api/stats/export', method: 'POST', body: true },
     stats_divergence:       { path: '/api/stats/divergence', method: 'POST', body: true },
     stats_sync:             { path: '/api/stats/sync', method: 'POST', body: true },

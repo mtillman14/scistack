@@ -30,6 +30,7 @@ from .spec import (
     Analysis,
     DescriptiveSpec,
     FormatSpec,
+    GuideState,
     OverlaySpec,
     StatsSpec,
     StatsSpecError,
@@ -99,7 +100,8 @@ def restore_stats_spec(raw: Any, *, fallback_measure: str | None = None) -> Rest
     if not isinstance(raw, dict):
         _note(notes, "", NoteKind.INVALID_VALUE, "the stored stats settings are not a table", raw)
         raw = {}
-    known = {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting", "overlay"}
+    known = {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting", "overlay",
+             "guide"}
     for key in sorted(set(raw) - known):
         _note(notes, key, NoteKind.UNKNOWN_SETTING, f"{key} is no longer a setting", raw[key])
     if raw.get("format") not in (None, FORMAT):
@@ -161,6 +163,9 @@ def restore_stats_spec(raw: Any, *, fallback_measure: str | None = None) -> Rest
         comparisons=tuple(analyses),
         formatting=_salvage_block(FormatSpec, raw.get("formatting"), "formatting", notes),
         overlay=_salvage_block(OverlaySpec, raw.get("overlay"), "overlay", notes),
+        # Absent (every table saved before the wizard) = "advanced", the view
+        # it was saved in.
+        guide=_salvage_block(GuideState, raw.get("guide"), "guide", notes),
     )
     if notes:
         for n in notes:

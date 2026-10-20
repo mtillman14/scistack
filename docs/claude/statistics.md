@@ -33,6 +33,8 @@ for error bars.
 | Experimental unit id (sample key + schema keys above it) | `tables.analysis_frame` (`UNIT` column) |
 | Within / between / mixed_membership (data, or the schema for a key below the unit) | `scistackstats.design.derive_design` |
 | Which units are incomplete (missing a within cell) | `scistackstats.design.incomplete_units` |
+| Which factor-level combinations have no rows (empty cells) | `scistackstats.design.empty_cells` (`Design.empty_cells`), from `design.cell_counts` |
+| Every lay sentence / concept StatStudio's wizard shows | `scistackstats.explain` (facts: `scistackstats.guide`); see [statstudio-guided.md](statstudio-guided.md) |
 | The recommended tests + their evidence | `scistackstats.catalog.recommend` (assumption math: `csvstats.core.assumption_checks`) |
 | The decision the user must make (banner) | `scistackstats.catalog.needed_action` |
 | Missing-data policy (`use_all` / `complete_cases`) and its labels | `scistackstats.spec` (`MISSING_POLICIES`, `MISSING_LABELS`) |
@@ -86,6 +88,18 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
   model when within units are incomplete) or `complete_cases` (incomplete
   units are left out of EVERY test of the analysis, named). Every caption
   states the policy (`format.missing_sentence`).
+- **Empty cells are not missing data** (scidb.log 2026-10-20, C-Brace: no
+  Traditional subject has one session). A model with every interaction is
+  rank deficient there, so `catalog.recommend` recommends NO omnibus and a
+  per-context pairwise test (never `lmm_pairwise`, which hangs on that one
+  model), with the empty cells in the evidence. A chosen lmm still runs and
+  csv-stats refuses it. A pair whose level has no rows in a context is
+  refused by `run._pairwise` with "no rows for group = X at session=Y",
+  before the engine. The units of the group missing that level also count
+  as `incomplete_units` (structural, not missing data).
+- **A key above the unit is a factor, not the unit.** The unit id is
+  composite (`group / subject`), but only the unit itself is refused in a
+  formula's fixed part (`model.check`); `group` is a between factor.
 - **Missing data never makes a test unavailable.** `why_unavailable` is
   about the data's SHAPE only. A complete-cases test (paired t, RM-ANOVA,
   Friedman, `catalog.COMPLETE_CASES_TESTS`) still runs under `use_all` and

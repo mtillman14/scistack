@@ -75,6 +75,8 @@ class Design:
     warnings: list[dict[str, str]] = field(default_factory=list)
     #: Units missing some within-cell combination (:func:`incomplete_units`).
     incomplete_units: list[str] = field(default_factory=list)
+    #: Combinations of the factors' levels with no rows (:func:`empty_cells`).
+    empty_cells: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def between(self) -> list[str]:
@@ -97,6 +99,7 @@ class Design:
             "factors": [f.to_dict() for f in self.factors], "unit": self.unit,
             "n_units": self.n_units, "n_rows": self.n_rows, "warnings": list(self.warnings),
             "incomplete_units": list(self.incomplete_units),
+            "empty_cells": [dict(c) for c in self.empty_cells],
         }
 
 
@@ -162,12 +165,16 @@ def derive_design(
         n_rows=int(len(rows)), warnings=warnings,
     )
     design.incomplete_units = incomplete_units(design, rows)
+    design.empty_cells = empty_cells(design, rows)
     Log.info(
-        "[design] %s %s: within=%s, between=%s, mixed=%s, unit=%s, n=%s, incomplete=%d",
+        "[design] %s %s: within=%s, between=%s, mixed=%s, unit=%s, n=%s, incomplete=%d, empty cells=%d",
         frame.dv.key, stratum or "(one stratum)", design.within, design.between, design.mixed,
         frame.unit, design.n_units if design.n_units is not None else design.n_rows,
-        len(design.incomplete_units), layer=LAYER,
+        len(design.incomplete_units), len(design.empty_cells), layer=LAYER,
     )
+    if design.empty_cells:
+        Log.info("[design] %s %s: no rows for %s", frame.dv.key, stratum or "(one stratum)",
+                 cells_text(design.empty_cells), layer=LAYER)
     return design
 
 
@@ -184,6 +191,54 @@ def incomplete_units(design: Design, rows: pd.DataFrame) -> list[str]:
         n_cells *= len(f.levels)
     cells = rows.groupby(UNIT)[[f.name for f in within]].apply(lambda g: len(g.drop_duplicates()))
     return [str(u) for u, n in cells.items() if n < n_cells]
+
+
+def empty_cells(design: Design, rows: pd.DataFrame) -> list[dict[str, str]]:
+    """The combinations of the factors' levels that have no rows, outer
+    factor first in each dict. The one owner of "which cells are empty".
+
+    With two or more factors, a model with every interaction (the default
+    omnibus) has a column per combination, so an empty one makes it rank
+    deficient and csv-stats refuses it (scidb.log 2026-10-20: one session
+    with no Traditional subjects, "rank deficient (54 of 60 columns)").
+    One factor can't have an empty cell: its levels come from the rows.
+    """
+    if len(design.factors) < 2:
+        return []
+    return [c["cell"] for c in cell_counts(design, rows) if c["rows"] == 0]
+
+
+def cell_counts(design: Design, rows: pd.DataFrame) -> list[dict[str, Any]]:
+    """Every combination of the factors' levels with its row and unit
+    counts, outer factor first: ``{"cell": {factor: level}, "rows": n,
+    "units": n}`` (``units`` is None with no unit). The one owner of "how
+    many are in each cell", read by :func:`empty_cells` and the wizard's
+    "Is anything missing?" grid."""
+    if not design.factors:
+        return []
+    outer_first = design.factors[::-1]
+    names = [f.name for f in outer_first]
+    keyed = rows[names].astype(str)
+    row_n = keyed.value_counts().to_dict()
+    unit_n: dict[tuple, int] = {}
+    if design.unit is not None and UNIT in rows.columns:
+        unit_n = keyed.assign(_u=rows[UNIT].values).groupby(names)["_u"].nunique().to_dict()
+    out = []
+    for combo in itertools.product(*([str(v) for v in f.levels] for f in outer_first)):
+        key = combo if len(combo) > 1 else combo[0]
+        out.append({
+            "cell": dict(zip(names, combo)),
+            "rows": int(row_n.get(combo, 0)),
+            "units": int(unit_n.get(key, 0)) if design.unit is not None else None,
+        })
+    return out
+
+
+def cells_text(cells: list[dict[str, str]], limit: int = 6) -> str:
+    """``session=MO12 / group=Traditional, …`` for logs and evidence."""
+    shown = [" / ".join(f"{k}={v}" for k, v in c.items()) for c in cells[:limit]]
+    more = f" (+{len(cells) - limit} more)" if len(cells) > limit else ""
+    return ", ".join(shown) + more
 
 
 @dataclass

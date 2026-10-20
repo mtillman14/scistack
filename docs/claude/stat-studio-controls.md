@@ -6,6 +6,13 @@ What each StatStudio control writes, and who owns the answer. The webview
 tables, captions and option lists come from `stats_compute` (`Grid`s +
 `catalog`).
 
+## Two views of one spec
+
+**Step by step** (`Guided/GuidedStudio.tsx`, the default for a new table) and
+**Advanced** (the rail below) edit the same `StatsSpec`. The view and the
+wizard's progress are stored in `spec.guide`, so a saved table reopens in its
+view. The wizard is described in [statstudio-guided.md](statstudio-guided.md).
+
 ## Opening
 
 | From | How | Backend |

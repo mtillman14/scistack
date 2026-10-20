@@ -290,6 +290,7 @@ def compute(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
         comparisons_grid,
         describe_table,
         descriptives_grids,
+        guide,
         labels_for,
         omnibus_grid,
         run,
@@ -325,8 +326,12 @@ def compute(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
                             "action": s.action, "excluded": s.excluded,
                             "design": s.design, "model": s.model} for s in analysis.strata],
             })
+    t_guide = time.perf_counter()
+    guide_payload = guide(spec, tables, report)
+    logger.info("[timing] stats_compute: guide in %.3fs", time.perf_counter() - t_guide)
     result = {
         "ok": True,
+        "guide": guide_payload,
         "descriptives": [g.to_dict() for g in descriptives_grids(descriptives, spec, labels, report)],
         "comparisons": comparisons,
         "readout": _readout(spec, tables),
@@ -339,6 +344,30 @@ def compute(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
     logger.info("[stats] compute: %d DV(s), %d analysis(es), %d comparison table(s) in %.3fs",
                 len(spec.targets), len(spec.comparisons), len(comparisons), time.perf_counter() - t0)
     return result
+
+
+def preview(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
+    """The wizard's early steps (plan-statstudio-guided): the rows, designs
+    and the lay ``guide`` WITHOUT running a test, so editing the design stays
+    fast (``stats_compute`` takes 1-3 s with its tests and csv-stats' cold
+    import). ``guide.has_results`` is False; the steps that need results say
+    so (``needs_results``) and the webview calls ``stats_compute`` there."""
+    from scistackstats import StatsSpecError, guide
+
+    try:
+        spec = _spec(spec_payload)
+    except (StatsSpecError, ValueError, KeyError, TypeError) as exc:
+        return {"ok": False, "error": f"The stats settings could not be read: {exc}"}
+    tables, _covariates = _load(db, spec, csv_path=csv_path, label="stats_preview")
+    t0 = time.perf_counter()
+    try:
+        payload = guide(spec, tables)
+    except (StatsSpecError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+    # No catalog() here: its correction list asks the engine, and that is
+    # csv-stats' cold import, the cost this call exists to avoid.
+    logger.info("[timing] stats_preview: %d DV(s), guide in %.3fs", len(spec.targets), time.perf_counter() - t0)
+    return {"ok": True, "guide": payload}
 
 
 def export(db, spec_payload: dict, fmt: str, which: str, *, csv_path: str | None = None,

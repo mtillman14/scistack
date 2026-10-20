@@ -19,6 +19,7 @@ The runner records either as a refusal on that stratum and never raises.
 
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Iterator, Protocol, Sequence
@@ -149,6 +150,9 @@ class CsvStatsEngine:
     name = "csvstats"
 
     def __init__(self) -> None:
+        # Timed: the first stats_compute of a session paid ~1.7 s here with
+        # nothing logged (scidb.log 2026-10-20), csv-stats' cold import.
+        t0 = time.perf_counter()
         import csvstats
         from csvstats import core, descriptive
 
@@ -156,6 +160,7 @@ class CsvStatsEngine:
         self._descriptive = descriptive
         self._version = csvstats.__version__
         Log.info("engine csvstats %s", self._version, layer=LAYER)
+        Log.info("[timing] engine_import: csvstats, TOTAL=%.3fs", time.perf_counter() - t0, layer=LAYER)
 
     def run(self, test, data, dv, *, between=(), within=(), subject=None, levels=None, options=None):
         core = self._core

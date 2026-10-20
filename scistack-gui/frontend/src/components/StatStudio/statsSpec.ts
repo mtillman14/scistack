@@ -73,6 +73,15 @@ export interface StatsSpec {
   variant_mode: string
   formatting?: Formatting
   overlay?: Overlay
+  /** The view the table was last used in and the wizard's progress
+   *  (scistackstats.spec.GuideState). Display only: compute ignores it. */
+  guide?: GuideState
+}
+
+export interface GuideState {
+  mode: 'guided' | 'advanced'
+  step?: string
+  done: string[]
 }
 
 export interface GridCell { text: string; span: number }
@@ -131,6 +140,49 @@ export function moveGroup(spec: StatsSpec, factor: string, delta: 1 | -1): Stats
   if (i < 0 || j < 0 || j >= groups.length) return spec
   ;[groups[i], groups[j]] = [groups[j], groups[i]]
   return { ...spec, design: { ...spec.design, groups } }
+}
+
+/** Make `factor` the innermost grouping layer (the primary comparison). */
+export function setPrimary(spec: StatsSpec, factor: string): StatsSpec {
+  const groups = spec.design.groups ?? []
+  if (!groups.includes(factor)) return spec
+  return { ...spec, design: { ...spec.design, groups: [factor, ...groups.filter(g => g !== factor)] } }
+}
+
+interface DesignFilter { column: string; include?: unknown[] | null; exclude?: unknown[] | null; [k: string]: unknown }
+
+/** Leave one level of a factor out of the rows (and the linked figure):
+ *  dropped from that column's `include` list when it has one, else added to
+ *  its `exclude` list (scistackplot.spec.Filter). */
+export function excludeLevel(spec: StatsSpec, factor: string, level: string): StatsSpec {
+  const filters = [...((spec.design.filters as DesignFilter[] | undefined) ?? [])]
+  const i = filters.findIndex(f => f.column === factor)
+  if (i >= 0 && filters[i].include) {
+    filters[i] = { ...filters[i], include: filters[i].include!.filter(v => String(v) !== level) }
+  } else if (i >= 0) {
+    const exclude = filters[i].exclude ?? []
+    if (!exclude.map(String).includes(level)) filters[i] = { ...filters[i], exclude: [...exclude, level] }
+  } else {
+    filters.push({ column: factor, exclude: [level] })
+  }
+  return { ...spec, design: { ...spec.design, filters } }
+}
+
+// --- the wizard's view state ---------------------------------------------------
+
+export function guideState(spec: StatsSpec): GuideState {
+  return spec.guide ?? { mode: 'advanced', done: [] }
+}
+
+export function setGuide(spec: StatsSpec, patch: Partial<GuideState>): StatsSpec {
+  return { ...spec, guide: { ...guideState(spec), ...patch } }
+}
+
+/** The spec as the statistics see it: without the view state, so moving
+ *  between steps or views never recomputes. */
+export function computeKey(spec: StatsSpec): string {
+  const { guide: _guide, ...rest } = spec
+  return JSON.stringify(rest)
 }
 
 // --- descriptives ------------------------------------------------------------
