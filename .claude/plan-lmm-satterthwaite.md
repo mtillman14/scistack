@@ -313,3 +313,7 @@ caption changes.
   - stage 6 check by eye (GUI 0zzzzj) with real csv-stats 0.4;
   - stage 7: the user releases csv-stats 0.4.0 to PyPI;
   - stage 8 (optional): Kenward-Roger (the fixtures already hold KR).
+- Stage 7 DONE (2026-10-19): the user published csv-stats 0.4.0 to PyPI (a
+  fresh install printed 0.4.0); the git tag 0.4.0 (annotated) on 6a4e36b is
+  pushed. The scistack release is deliberately NOT cut yet (user decision);
+  it must come after this, since scistackstats needs csv-stats>=0.4.0.
