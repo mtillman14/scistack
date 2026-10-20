@@ -69,7 +69,7 @@ _CONCEPT_LIST = (
        "Each measure is analysed on its own.",
        "If you pick several measures, each gets its own rows in the tables and its own tests."),
     _c("unit", "One independent thing", "experimental unit",
-       "The thing that was sampled independently, usually one participant. Measurements from the same "
+       "The thing that was sampled independently, often one participant. Measurements from the same "
        "participant are related, so the analysis counts each participant once, not each measurement.",
        "Getting this right matters more than the choice of test. If one person contributes many rows and "
        "each row is treated as independent, the test believes it has far more evidence than it really has, "
@@ -85,11 +85,14 @@ _CONCEPT_LIST = (
        "The groups or conditions you want to compare, such as treatment vs control, or before vs after."),
     _c("role.separate", "Analyse separately for each", "stratum",
        "Runs the whole analysis once for each level, as if each were its own small study. Use it for things "
-       "you don't want to compare with each other, such as different muscles or outcome columns.",
+       "you don't want to compare with each other.",
        "Levels analysed separately are never compared with each other, and each gets its own table section."),
     _c("role.average", "Average over", "collapsed factor",
-       "Combines its levels into one value. Use it for repetitions (trials) and for the participant "
-       "itself: the outermost thing you average over becomes the independent unit."),
+       "Averages its levels together into one value, so they are not compared with each other. Use it for "
+       "repeated recordings of the same condition, such as several trials.",
+       "The participant is averaged over too: each participant's recordings become one value per condition, "
+       "so each participant counts once. Of everything you average over, the largest (usually the "
+       "participant) is what counts as one independent unit."),
     # --- repeated measures --------------------------------------------------
     _c("within", "Same participants at every level", "within-subject factor (repeated measures)",
        "Every participant was measured at each level, for example before and after training. Each "
