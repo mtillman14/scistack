@@ -111,7 +111,9 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
     (`type3_at_covariate_zero` warning);
   - `lmm_pairwise`: FULL-model contrasts within each combination of the other
     factors (emmeans-style), ONE engine call per stratum
-    (`run._pairwise_full_model`).
+    (`run._pairwise_full_model`). csv-stats can also hold covariates at
+    their mean (`covariates=`, `covariates_at=`), but StatStudio has no
+    covariates yet, so scistack passes none.
   The fit is csv-stats' own REML (`lmm_fit.MixedModel`), not statsmodels:
   statsmodels' SEs and boundary handling did not match lme4. A df that
   can't be computed falls back to Wald (`df_method: "wald"`, a

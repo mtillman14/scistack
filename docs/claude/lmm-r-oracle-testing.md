@@ -130,8 +130,10 @@ alongside the JSON. Python never has to reproduce R's random numbers.
     refuses a rank-deficient design)
   - term F tests: every design with a fixed term. Type III with
     covariates is in `lmm.type3_hypotheses` (.claude/plan-lmm-covariate-type3.md).
-  - emmeans contrasts: factors-only designs. The generator writes none for
-    a covariate design, and `lmm_pairwise` has no covariates.
+  - emmeans contrasts: every design with a factor. A covariate sits at
+    emmeans' reference-grid mean; the fixture's `covariates_at` records
+    emmeans' value and `test_covariate_grid_value_matches_emmeans` checks
+    ours (.claude/plan-lmm-covariate-contrasts.md).
   - otherwise skipped, with the reason
 - **Per-scenario tolerance:** 10 × the spread between R's own optimizers
   (`optimizers.spread`), never below the curated set's base tolerances.
