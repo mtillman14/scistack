@@ -123,6 +123,71 @@ def test_describe_is_json_serializable(populated_db):
     json.dumps(plot_service.describe(populated_db, "RawSignal"))
 
 
+#: Every step `describe` narrates, in the order it runs them. A panel that
+#: never opens (scidb.log 2026-10-20 10:25:21) leaves the stuck one last.
+DESCRIBE_PHASES = [
+    "import_plot_packages",
+    "acquire_connection",
+    "build_source",
+    "catalog",
+    "load_table",
+    "default_spec",
+    "stored_variant_sets",
+    "stackable",
+    "groupable",
+    "joinable",
+    "capabilities",
+]
+
+
+def test_describe_logs_each_phase_as_it_starts_and_ends(populated_db, caplog):
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        plot_service.describe(populated_db, "RawSignal")
+
+    lines = [
+        r.getMessage()
+        for r in caplog.records
+        if r.getMessage().startswith("[timing] plot_describe")
+    ]
+    def phases(marker: str) -> list[str]:
+        return [
+            line.split(": ", 1)[1].split(marker)[0] for line in lines if marker in line
+        ]
+
+    started = phases(" started")
+    done = phases(" done in")
+    assert started == DESCRIBE_PHASES, lines
+    assert done == DESCRIBE_PHASES, lines
+    # One summary, carrying every phase's cost.
+    summary = [line for line in lines if "TOTAL=" in line]
+    assert len(summary) == 1, lines
+    assert "variable=RawSignal" in summary[0]
+    for name in DESCRIBE_PHASES:
+        assert f"{name}=" in summary[0], summary[0]
+
+
+def test_describe_imports_the_plot_packages_before_taking_the_connection(
+    populated_db, per_request_policy, monkeypatch
+):
+    """A slow first import (matplotlib's font cache) must not lock MATLAB out."""
+    open_at_call: list[bool] = []
+    original = plot_service._require_scistackplot
+
+    def spy():
+        open_at_call.append(per_request_policy._db_open)
+        return original()
+
+    monkeypatch.setattr(plot_service, "_require_scistackplot", spy)
+    assert per_request_policy._db_open is False
+
+    plot_service.describe(populated_db, "RawSignal")
+
+    # The first call is the real import; get_source's later one is a no-op.
+    assert open_at_call[0] is False, open_at_call
+
+
 def test_unknown_variable_raises_a_key_error(populated_db):
     with pytest.raises(KeyError):
         plot_service.describe(populated_db, "NoSuchVariable")

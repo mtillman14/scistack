@@ -342,23 +342,57 @@ def describe(
     report — one round trip from "user right-clicked a node" to a rendered
     panel.
     """
+    from contextlib import ExitStack
+
+    from scidb.log import Log
     from scistack_gui.db import db_connection
 
-    # Unlike the spec-driven entry points there is no clean load/compute split
-    # here — `describe` interleaves source queries (catalog, stackable,
-    # groupable, joinable) with cheap in-memory work, and it runs once when the
-    # panel opens rather than on every control change. So the whole body takes
-    # the hold; there is nothing worth narrowing further.
-    with db_connection("plot_describe", needed=not csv_path):
-        return _describe(db, variable, refresh=refresh, csv_path=csv_path)
+    # live=True: each phase logs as it starts, so a panel that never opens
+    # leaves the step it is stuck in as the last line of scidb.log. Before
+    # this, a hang (scidb.log 2026-10-20 10:25:21) was one "reopened
+    # connection" line and then silence, naming no step.
+    with Log.timer(
+        "plot_describe",
+        layer="scistack_gui",
+        extra=f"variable={variable or '(default)'}",
+        live=True,
+    ) as timing:
+        # The first describe in a process imports pandas + matplotlib (font
+        # cache build on a fresh install). Do it before taking the hold, so a
+        # slow import never keeps MATLAB out of the database.
+        with timing.phase("import_plot_packages"):
+            _require_scistackplot()
+        # Unlike the spec-driven entry points there is no clean load/compute
+        # split here — `describe` interleaves source queries (catalog,
+        # stackable, groupable, joinable) with cheap in-memory work, and it
+        # runs once when the panel opens rather than on every control change.
+        # So the whole body takes the hold; there is nothing worth narrowing
+        # further.
+        with ExitStack() as hold:
+            with timing.phase("acquire_connection"):
+                hold.enter_context(db_connection("plot_describe", needed=not csv_path))
+            return _describe(
+                db, variable, refresh=refresh, csv_path=csv_path, timing=timing
+            )
 
 
-def _describe(db, variable, *, refresh, csv_path) -> dict:
-    """:func:`describe`'s body, run with the database connection held."""
+def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
+    """:func:`describe`'s body, run with the database connection held.
+
+    ``timing`` is :func:`describe`'s live timer; callers without one (the
+    custom-plot layout probe) run the same steps untimed.
+    """
+    from contextlib import nullcontext
+
     from scistackplot import capabilities, default_spec, presets_payload
 
-    source = get_source(db, refresh=refresh, csv_path=csv_path)
-    catalog = source.describe()
+    def phase(name: str):
+        return timing.phase(name) if timing is not None else nullcontext()
+
+    with phase("build_source"):
+        source = get_source(db, refresh=refresh, csv_path=csv_path)
+    with phase("catalog"):
+        catalog = source.describe()
 
     # Entry points that name no variable (the CSV command, the palette with an
     # empty box) open on the first plottable measure rather than on nothing.
@@ -367,7 +401,8 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
     if not variable:
         return {"catalog": catalog, "variable": None}
 
-    table = source.get_table([variable])
+    with phase("load_table"):
+        table = source.get_table([variable])
     shape = table.shape_of(variable)
     if not _plottable(shape):
         return {
@@ -380,20 +415,23 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
 
     # default_spec owns roles + kind + facet wrap together: a 13-field struct
     # opens as a wrapped grid of subplots, not one overplotted axis.
-    spec = default_spec(table, variable)
+    with phase("default_spec"):
+        spec = default_spec(table, variable)
     # A plot's named pins over variant space are statements about the plotted
     # variable (`variant_selection` aspect of the intent store), so they
     # survive the panel closing. Stored pins replace the default's — the
     # user's most recent statement wins over a computed default.
-    spec = _with_stored_variant_sets(db, variable, spec)
+    with phase("stored_variant_sets"):
+        spec = _with_stored_variant_sets(db, variable, spec)
 
     # Offers AND refusals: the variant picker draws every variable node on the
     # canvas, so one it cannot offer has to say why in place.
-    stacking = (
-        source.stackable_report(variable)
-        if hasattr(source, "stackable_report")
-        else {"offered": source.stackable_with(variable), "rejected": {}}
-    )
+    with phase("stackable"):
+        stacking = (
+            source.stackable_report(variable)
+            if hasattr(source, "stackable_report")
+            else {"offered": source.stackable_with(variable), "rejected": {}}
+        )
     stackable = stacking["offered"]
     # Which VARIABLES may group this figure — never their columns.
     #
@@ -402,8 +440,13 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
     # looked: 4.2 s for FilteredDelsys and 5.4 s for RawEMG on the user's
     # project (scidb.log 2026-09-15), both offering nothing. The columns are now
     # `plot_grouping_columns`, asked once per variable the user opens.
-    grouping = source.groupable_variables(variable)
+    with phase("groupable"):
+        grouping = source.groupable_variables(variable)
     groupable = grouping["offered"]
+    with phase("joinable"):
+        joinable = source.joinable_with(variable)
+    with phase("capabilities"):
+        report = capabilities(spec, table)
     # Which optional sections the panel can show, and why. Each of these gates a
     # control that is simply absent when the list is empty, so an empty list has
     # to be visible somewhere — otherwise "no other variable qualifies" and "the
@@ -416,7 +459,7 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         stackable,
         len(groupable),
         [(offer["label"], offer["kind"]) for offer in groupable],
-        len(source.joinable_with(variable)),
+        len(joinable),
     )
 
     return {
@@ -426,11 +469,11 @@ def _describe(db, variable, *, refresh, csv_path) -> dict:
         "reason": None,
         "table": table.describe(),
         "spec": spec.to_dict(),
-        "capabilities": capabilities(spec, table),
+        "capabilities": report,
         # Two different offers, deliberately kept apart: variables that can
         # STACK with this one (another series — a variant row) and variables
         # that can be JOINED as its x axis (a relational plot).
-        "joinable_with": source.joinable_with(variable),
+        "joinable_with": joinable,
         "stackable_with": stackable,
         # Why each remaining variable is NOT offered, so the picker can draw it
         # refused-with-a-reason instead of leaving it inert and unexplained.
