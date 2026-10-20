@@ -22,9 +22,15 @@ from scistack_gui.services import plot_service
 
 @pytest.fixture(autouse=True)
 def _clear_source_cache():
-    plot_service.invalidate()
+    # Captured before the test runs: a test may monkeypatch `invalidate`, and
+    # conftest's autouse `_pin_machine_file` sets `monkeypatch` up BEFORE this
+    # fixture, so the patch is undone only AFTER this teardown. Calling the
+    # module attribute here would call the test's patch (a "boom" that errors
+    # every teardown of test_notify_still_updates_the_dag_if_invalidation_fails).
+    invalidate = plot_service.invalidate
+    invalidate()
     yield
-    plot_service.invalidate()
+    invalidate()
 
 
 def _pooled_spec(db, variable: str = "RawSignal") -> dict:
