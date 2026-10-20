@@ -100,6 +100,15 @@ def difference_spec(test_id: str, spread: str, ci_level: float) -> DifferenceSpe
         if spread != "ci":
             note = f"{spread} is not defined for a Hodges–Lehmann shift; showing its {pct} CI"
         return DifferenceSpec("ci", f"Δ = a − b, Hodges–Lehmann shift [{pct} CI, distribution-free]", note)
+    if test_id == "lmm_pairwise":
+        # Full-model contrast (emmeans-style): a difference of model-estimated
+        # cell means, not of observed means, and there are no paired differences.
+        if spread == "sd_diff":
+            note = "SD of differences needs paired data; showing the CI of the model-estimated difference"
+            spread = "ci"
+        what = {"ci": f"{pct} CI, Satterthwaite df", "se": "SE"}[spread]
+        label = "Δ = a − b, mixed-model estimated difference"
+        return DifferenceSpec(spread, f"{label} [{what}]" if spread == "ci" else f"{label} ({what})", note)
     if test_id == "ttest_paired":
         what = {"ci": f"{pct} CI of the paired differences", "se": "SE of the mean difference",
                 "sd_diff": "SD of the paired differences"}[spread]

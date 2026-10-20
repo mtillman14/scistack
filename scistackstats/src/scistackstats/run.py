@@ -89,6 +89,8 @@ class Comparison:
     statistic_name: str | None = None
     statistic: float | None = None
     df: list[float | None] = field(default_factory=list)
+    #: "satterthwaite", "wald", "residual", ... as csv-stats reports it.
+    df_method: str | None = None
     p: float | None = None
     p_adjusted: float | None = None
     family: str | None = None
@@ -229,6 +231,7 @@ def _omnibus(engine, test: str, frame: AnalysisFrame, rows: pd.DataFrame, design
         effects.append({
             "term": effect.get("term"), "statistic_name": effect.get("statistic_name"),
             "statistic": effect.get("statistic"), "df": effect.get("df"), "p": effect.get("p"),
+            "df_method": effect.get("df_method"),
             "sphericity_correction": effect.get("sphericity_correction"),
             "effect_size": _shown_size(effect, size_id),
         })
@@ -260,6 +263,9 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
             parts = str(effect["term"]).split(":")
             if len(parts) > 1 and primary in parts:
                 interactions[effect["term"]] = effect["p"]
+    if test == "lmm_pairwise":
+        return _pairwise_full_model(engine, test, frame, rows, design, tiers, analysis, stratum_text,
+                                    interactions, size_id, diff)
     out = []
     for context in tiers.contexts:
         part = rows
@@ -291,6 +297,7 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
             comparison.statistic_name = effect.get("statistic_name")
             comparison.statistic = effect.get("statistic")
             comparison.df = list(effect.get("df") or [])
+            comparison.df_method = effect.get("df_method")
             comparison.p = effect.get("p")
             comparison.estimate = estimate.get("value")
             comparison.spread = estimate.get(spread_key)
@@ -304,6 +311,74 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
                 comparison.clusters = list(effect.get("clusters") or [])
                 comparison.threshold = effect.get("threshold")
             out.append(comparison)
+    return out
+
+
+def _pairwise_full_model(engine, test, frame, rows, design, tiers, analysis, stratum_text,
+                         interactions, size_id, diff) -> list[Comparison]:
+    """Mixed-model contrasts: ONE engine call on the whole stratum.
+
+    csv-stats fits the full model once and returns every pair of the primary
+    factor within each combination of the outer factors (emmeans-style; the
+    user's decision of 2026-10-19). Fitting a model per pair on just the
+    pair's rows would use less of the data for the variance estimates. The
+    contrasts are then laid out as the same Comparison records the other
+    pairwise tests produce.
+    """
+    primary = tiers.primary
+    columns = [frame.y, *[f.name for f in design.factors], *([UNIT] if UNIT in rows.columns else [])]
+
+    def comparison(context, a, b) -> Comparison:
+        return Comparison(
+            id=f"{analysis.id}|{frame.dv.key}|{stratum_text}|{_key_text(context)}|{a}|{b}",
+            dv=frame.dv.key, stratum=_text(dict(design.stratum)), context=_text(context),
+            term=primary, a=str(a), b=str(b), test=test, interaction_p=dict(interactions),
+            variant={k: str(v) for k, v in design.stratum.items() if k in frame.variant_axes},
+        )
+
+    try:
+        record = engine.run(
+            test, rows[columns], frame.y, between=design.between, within=design.within,
+            subject=UNIT, levels=_levels_for(design),
+            options={"alpha": analysis.alpha, "ci_level": analysis.ci_level, "tails": analysis.tails,
+                     "factor": primary},
+        )
+    except EngineRefusal as exc:
+        out = []
+        for context in tiers.contexts:
+            for a, b in tiers.pairs:
+                c = comparison(context, a, b)
+                c.refused, c.refusal_kind = exc.reason, exc.kind
+                out.append(c)
+        return out
+    by_key = {(tuple(sorted(e.get("context", {}).items())), e["a"], e["b"]): e for e in record["effects"]}
+    spread_key = {"ci": "ci", "se": "se", "sd_diff": "sd_of_differences"}[diff.spread]
+    out = []
+    for context in tiers.contexts:
+        key_context = tuple(sorted((k, str(v)) for k, v in context.items()))
+        for a, b in tiers.pairs:
+            c = comparison(context, a, b)
+            effect = by_key.get((key_context, str(a), str(b)))
+            if effect is None:
+                c.refused, c.refusal_kind = "the mixed model returned no contrast for this pair", "invalid"
+                Log.warn("[stats] %s %s: no lmm contrast for %s - %s in %s", frame.dv.key, stratum_text, a, b,
+                         _key_text(context), layer=LAYER)
+                out.append(c)
+                continue
+            estimate = effect.get("estimate") or {}
+            c.statistic_name = effect.get("statistic_name")
+            c.statistic = effect.get("statistic")
+            c.df = list(effect.get("df") or [])
+            c.df_method = effect.get("df_method")
+            c.p = effect.get("p")
+            c.estimate = estimate.get("value")
+            c.spread = estimate.get(spread_key)
+            c.effect_size = _shown_size(effect, size_id)
+            c.n = record.get("n")
+            c.warnings = list(record.get("warnings", []))
+            out.append(c)
+    Log.info("[stats] %s %s: %d mixed-model contrast(s) of %s from one full model", frame.dv.key,
+             stratum_text or "(one stratum)", len(out), primary, layer=LAYER)
     return out
 
 

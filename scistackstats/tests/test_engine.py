@@ -55,3 +55,16 @@ def test_fake_engine_keeps_real_descriptives_and_corrections():
     fake = FakeEngine()
     assert fake.summarize([1.0, 2.0, 3.0])["mean"] == pytest.approx(2.0)
     assert fake.correct([0.01, 0.04, 0.03], "holm") == pytest.approx([0.03, 0.06, 0.06])
+
+
+def test_mixed_models_refuse_on_an_old_csv_stats():
+    """csv-stats 0.3 had Wald-only mixed models and a per-pair lmm_pairwise
+    without factor=; calling it would crash. It is a named "gap" refusal."""
+    from scistackstats.engine import CsvStatsEngine, EngineRefusal, _version_tuple
+
+    assert _version_tuple("0.4.0") == (0, 4, 0) and _version_tuple("0.3.0rc1") == (0, 3, 0)
+    engine = CsvStatsEngine()
+    engine._version = "0.3.0"
+    with pytest.raises(EngineRefusal, match="csv-stats>=0.4.0") as exc:
+        engine.run("lmm_pairwise", None, "y")
+    assert exc.value.kind == "gap"

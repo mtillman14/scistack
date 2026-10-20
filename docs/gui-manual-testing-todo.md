@@ -26,7 +26,7 @@ steps (clicks in the GUI), and what you should see.
 - Every excluded subject is named, and n reads "15 of 17".
 
 **Backend steps.**
-1. Install csv-stats 0.3.0. From the clone: `pip install -e /path/to/csv-stats[full]`,
+1. Install csv-stats 0.4.0. From the clone: `pip install -e /path/to/csv-stats[full]`,
    or from PyPI once released.
 2. Reload the window.
 
@@ -34,12 +34,13 @@ steps (clicks in the GUI), and what you should see.
 "speed across sessions" figure):
 1. The design chip says `session: within (schema)`. Hovering it explains that
    session is nested below subject. There is no "set within or between" refusal.
-2. Analysis a1 shows "Recommended: Mixed-model contrast (Wald z) (pairwise),
-   Linear mixed model (Wald χ²) (omnibus)". The first evidence line names the
-   subjects lacking some sessions.
-3. The Comparisons table is filled. Its caption ends "Missing data: every
-   observation used where the test allows it (linear mixed model; Wald tests:
-   z and χ², no t/F degrees of freedom)."
+2. Analysis a1 shows "Recommended: Mixed-model contrast (Satterthwaite t)
+   (pairwise), Linear mixed model (Satterthwaite F) (omnibus)". The first
+   evidence line names the subjects lacking some sessions.
+3. The Comparisons table is filled with t(df) statistics, and the omnibus with
+   F(df1, df2), all with fractional Satterthwaite df (csv-stats 0.4). The caption
+   ends "Missing data: every observation used where the test allows it (linear
+   mixed model; Satterthwaite degrees of freedom)."
 4. Set **Missing data** to "Complete cases only". The incomplete subjects are
    named in the notes, n reads "X of 17", the omnibus becomes ANOVA, and
    scidb.log has a `complete cases:` WARN.

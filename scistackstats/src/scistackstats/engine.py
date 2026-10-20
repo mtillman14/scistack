@@ -37,6 +37,21 @@ PAIRWISE_TESTS = (
 OMNIBUS_TESTS = ("anova", "kruskal", "friedman")
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """``"0.4.0"`` -> ``(0, 4, 0)``; ``"0.3.0rc1"`` -> ``(0, 3, 0)``: each part's
+    LEADING digits only (joining every digit read "0rc1" as 1), and a part
+    with none stops the tuple."""
+    import re
+
+    out = []
+    for part in str(version).split("."):
+        match = re.match(r"\d+", part)
+        if match is None:
+            break
+        out.append(int(match.group()))
+    return tuple(out)
+
+
 class EngineRefusal(Exception):
     """csv-stats could not run this test here; ``reason`` says why."""
 
@@ -117,17 +132,23 @@ class CsvStatsEngine:
             if test == "anova":
                 return core.anova(data, dv, **design, alpha=alpha, ci_level=ci_level)
             if test in ("lmm", "lmm_pairwise"):
-                # Every observation used (Stage C, 2026-10-19); Wald tests.
+                # Every observation used; Satterthwaite df and full-model
+                # contrasts need csv-stats 0.4 (0.3 had Wald tests and a
+                # per-pair lmm_pairwise without factor=).
+                needed = "mixed models need csv-stats>=0.4.0 (Satterthwaite df, full-model contrasts)"
+                if _version_tuple(self._version) < (0, 4):
+                    raise EngineRefusal(f"not yet in csv-stats {self._version}: {needed}", kind="gap")
                 try:
                     from csvstats.lmm import lmm, lmm_pairwise
                 except ImportError as exc:
-                    raise EngineRefusal(
-                        f"not yet in csv-stats {self._version}: mixed models need csv-stats>=0.3.0", kind="gap",
-                    ) from exc
+                    raise EngineRefusal(f"not yet in csv-stats {self._version}: {needed}", kind="gap") from exc
 
                 if test == "lmm":
                     return lmm(data, dv, **design, alpha=alpha, ci_level=ci_level)
-                return lmm_pairwise(data, dv, **design, alpha=alpha, ci_level=ci_level, tails=tails)
+                # Full-model contrasts (csv-stats >= 0.4): ONE call returns every pair of
+                # `factor` within each combination of the other factors.
+                return lmm_pairwise(data, dv, **design, factor=opts.get("factor"), alpha=alpha,
+                                    ci_level=ci_level, tails=tails)
             if test == "kruskal":
                 return core.kruskal(data, dv, between=list(between), levels=levels, alpha=alpha, ci_level=ci_level)
             if test == "friedman":
@@ -218,6 +239,41 @@ class FakeEngine:
         self.violated = set(violated)
         self.calls: list[dict[str, Any]] = []
 
+    def _lmm_pairwise(self, test, data, dv, factors, between, within, subject, levels, options):
+        """csv-stats' shape (>= 0.4): every pair of ``options["factor"]``
+        within each combination of the other factors, from one call. The
+        estimate is the real difference of cell means; p is fake as usual."""
+        factor = options.get("factor") or factors[0]
+        levels = levels or {}
+        lv = levels.get(factor) or sorted(data[factor].unique())
+        others = [f for f in factors if f != factor]
+        contexts = [{}]
+        for o in others:
+            contexts = [{**c, o: v} for c in contexts for v in (levels.get(o) or sorted(data[o].unique()))]
+        effects = []
+        for context in contexts:
+            part = data
+            for k, v in context.items():
+                part = part[part[k] == v]
+            for i in range(len(lv)):
+                for j in range(i + 1, len(lv)):
+                    a, b = lv[i], lv[j]
+                    diff = float(part.loc[part[factor] == a, dv].mean() - part.loc[part[factor] == b, dv].mean())
+                    effects.append({
+                        "term": factor, "a": str(a), "b": str(b), "context": {k: str(v) for k, v in context.items()},
+                        "statistic_name": "t", "statistic": diff, "df": [float(len(data) - 2)],
+                        "df_method": "fake", "p": self._p((test, str(a), str(b)), test),
+                        "estimate": {"name": "mean_difference", "value": diff, "ci": [diff - 1, diff + 1],
+                                     "se": 0.5, "sd_of_differences": None, "method": "fake"},
+                        "effect_size": None, "effect_sizes": {},
+                    })
+        return {
+            "schema_version": 1, "test": test, "test_label": f"fake {test}",
+            "design": {"dv": dv, "between": list(between), "within": list(within), "subject": subject},
+            "n": self._n(test, data, subject), "effects": effects, "assumptions": [], "warnings": [],
+            "engine": self.versions(), "details": {},
+        }
+
     def _n(self, test, data, subject) -> dict[str, Any]:
         """csv-stats' ``n`` shape; ``exclude`` drops the named units."""
         dropped = [(str(u), r) for u, r in self.exclude.get(test, [])]
@@ -242,6 +298,8 @@ class FakeEngine:
             reason, kind = self.refuse[test]
             raise EngineRefusal(reason, kind=kind)
         factors = [*between, *within]
+        if test == "lmm_pairwise":
+            return self._lmm_pairwise(test, data, dv, factors, between, within, subject, levels, options or {})
         if test in PAIRWISE_TESTS:
             (factor,) = factors
             a, b = (levels or {})[factor]

@@ -48,7 +48,7 @@ dependencies = [
     "pandas>=1.5",
     "numpy>=1.21",
     # Every statistic is computed by csv-stats (S6); [full] has the tests.
-    "csv-stats[full]>=0.3.0",  # 0.3.0: lmm, lmm_pairwise
+    "csv-stats[full]>=0.4.0",  # 0.4.0: Satterthwaite lmm; full-model lmm_pairwise(factor=)
     "scistackplot",
     "scistacklog",
 ]

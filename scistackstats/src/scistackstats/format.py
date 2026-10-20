@@ -566,7 +566,13 @@ def missing_sentence(analysis: AnalysisReport) -> str:
                 + (f"{dropped} incomplete unit(s) excluded, named in the notes." if dropped else "no unit was incomplete."))
     text = "Missing data: every observation used where the test allows it"
     if tests & {"lmm", "lmm_pairwise"}:
-        text += " (linear mixed model; Wald tests: z and χ², no t/F degrees of freedom)"
+        # Satterthwaite since csv-stats 0.4; a test that could not get a df
+        # fell back to Wald, and the caption must not claim otherwise.
+        wald = any(c.df_method == "wald" for c in analysis.comparisons() if c.test == "lmm_pairwise") or any(
+            e.get("df_method") == "wald"
+            for s in analysis.strata if s.omnibus and s.omnibus.test == "lmm" for e in s.omnibus.effects)
+        text += " (linear mixed model; Satterthwaite degrees of freedom"
+        text += "; some tests fell back to Wald z / χ², named in the notes)" if wald else ")"
     return text + "."
 
 

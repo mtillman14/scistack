@@ -42,11 +42,11 @@ TESTS: dict[str, StatTest] = {
         StatTest("wilcoxon", "Wilcoxon signed-rank", "pairwise", "nonparametric", WITHIN),
         StatTest("spm_ttest2", "SPM two-sample t (1-D curves)", "pairwise", "spm", BETWEEN),
         StatTest("spm_ttest_paired", "SPM paired t (1-D curves)", "pairwise", "spm", WITHIN),
-        StatTest("lmm_pairwise", "Mixed-model contrast (Wald z)", "pairwise", "mixed_model", WITHIN),
+        StatTest("lmm_pairwise", "Mixed-model contrast (Satterthwaite t)", "pairwise", "mixed_model", WITHIN),
         StatTest("anova", "ANOVA", "omnibus", "parametric"),
         StatTest("kruskal", "Kruskal–Wallis", "omnibus", "nonparametric"),
         StatTest("friedman", "Friedman", "omnibus", "nonparametric"),
-        StatTest("lmm", "Linear mixed model (Wald χ²)", "omnibus", "mixed_model"),
+        StatTest("lmm", "Linear mixed model (Satterthwaite F)", "omnibus", "mixed_model"),
     )
 }
 

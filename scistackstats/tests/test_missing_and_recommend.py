@@ -169,13 +169,46 @@ def test_complete_cases_drops_named_units_from_every_test_and_logs_it(caplog):
     assert any("S05" in n for n in grid.notes)
 
 
-def test_use_all_is_stated_with_the_mixed_model_and_wald():
+def test_use_all_is_stated_with_the_mixed_model_and_satterthwaite():
     report = _run(Analysis(), _incomplete_table(session_in_schema=True))
     analysis = report.analyses[0]
     spec = _spec(Analysis())
     caption = comparisons_grid(report, analysis, spec).caption
-    assert "Missing data: every observation used where the test allows it (linear mixed model; Wald" in caption
+    assert ("Missing data: every observation used where the test allows it "
+            "(linear mixed model; Satterthwaite degrees of freedom)") in caption
     assert "Missing data:" in omnibus_grid(report, analysis, spec).caption
+
+
+def test_a_wald_fallback_is_stated_in_the_caption():
+    """If csv-stats could not compute a Satterthwaite df, the caption must
+    not claim Satterthwaite for everything."""
+
+    class WaldFallback(FakeEngine):
+        def run(self, test, data, dv, **kw):
+            record = super().run(test, data, dv, **kw)
+            for e in record["effects"]:
+                e["df_method"] = "wald"
+            return record
+
+    report = _run(Analysis(), _incomplete_table(session_in_schema=True), engine=WaldFallback())
+    caption = comparisons_grid(report, report.analyses[0], _spec(Analysis())).caption
+    assert "some tests fell back to Wald" in caption
+
+
+def test_mixed_model_contrasts_come_from_one_call_on_the_whole_stratum():
+    """Stage 5 (full-model contrasts, user decision 2026-10-19): one engine
+    call with every row and the primary factor named, not one call per pair
+    on the pair's rows."""
+    fake = FakeEngine()
+    report = _run(Analysis(), _incomplete_table(session_in_schema=True), engine=fake)
+    calls = [c for c in fake.calls if c["test"] == "lmm_pairwise"]
+    assert len(calls) == 1
+    (stratum,) = report.analyses[0].strata
+    assert calls[0]["rows"] == stratum.design["n_rows"]
+    assert [(c.a, c.b) for c in stratum.primary] == [("pre", "post")]
+    assert all(c.refused is None and c.estimate is not None for c in stratum.primary)
+    # A model-estimated difference, not a paired or pooled-variance one.
+    assert stratum.difference["label"].startswith("Δ = a − b, mixed-model estimated difference [95% CI")
 
 
 def test_the_policy_is_validated_and_round_trips():

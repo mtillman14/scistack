@@ -101,10 +101,19 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
   subject) is within by construction (`Factor.basis == "schema"`; Stage E).
   Any other mixed factor is refused until the user decides; the GUI shows
   `catalog.needed_action` as a banner with the two choices.
-- **LMM df are Wald only** (`df_method: "wald"`, z for pairwise, χ² per
-  term). Never present them as t/F. Satterthwaite is a planned addition,
-  to be validated against R lmerTest.
-- **csv-stats >= 0.3.0** is needed for `lmm`/`assumption_checks`. On an
+- **LMM df are Satterthwaite** (csv-stats 0.4, matched to lmerTest / emmeans on
+  75 R reference datasets, `csv-stats/tests/test_lmm_reference.py`):
+  - coefficients: t(df);
+  - terms: type-III F(q, ddf). The Fai–Cornelius ddf depend on the BASIS of L,
+    so `lmm.type3_contrasts` ports lmerTest's construction;
+  - `lmm_pairwise`: FULL-model contrasts within each combination of the other
+    factors (emmeans-style), ONE engine call per stratum
+    (`run._pairwise_full_model`).
+  The fit is csv-stats' own REML (`lmm._RandomIntercept`), not statsmodels:
+  statsmodels' SEs and boundary handling did not match lme4. A df that
+  can't be computed falls back to Wald (`df_method: "wald"`, a
+  `satterthwaite_unavailable` warning), and the caption says so.
+- **csv-stats >= 0.4.0** is needed for mixed models (0.3.0 for `assumption_checks`). On an
   older install the engine refuses the mixed model as a "gap" and the
   recommendation falls back to parametric with a WARN (never a crash).
 - **csv-stats gaps are refusals, never fallbacks.** Don't compute a

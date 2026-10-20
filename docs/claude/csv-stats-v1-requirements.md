@@ -44,8 +44,8 @@ Open gaps (the next things to add in csv-stats, as StatStudio needs them):
 - estimated-marginal-means post-hoc tests (scistack runs pairwise two-sample
   tests per outer-level context for now);
 - rank-based factorial omnibus tests (none exist; pairwise rank tests run);
-- LMM (§3.5) beyond v0.3.0: Satterthwaite/Kenward–Roger df (0.3.0 has `lmm` + `lmm_pairwise`
-  with Wald tests only, `df_method: "wald"`), random slopes, covariates, `model_compare`;
+- LMM (§3.5) beyond v0.4.0: Kenward–Roger df (0.4.0 has Satterthwaite, matched to
+  lmerTest; the fixtures already hold KR results), random slopes, covariates, `model_compare`;
 - correlation / regression (§3.6), reliability (§3.7),
   categorical (§3.8), SPM1d (§3.9);
 - C5 warning codes not yet emitted: `unbalanced_design`, `empty_cell`,
