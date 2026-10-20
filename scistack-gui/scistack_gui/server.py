@@ -434,9 +434,15 @@ def _serve_stdin() -> None:
 
     Each request is handled in its own thread so a long call (``start_run``,
     a figure save) doesn't stop the loop reading the next one.
+
+    Lines come from :func:`scistack_gui.stdin_reader.request_lines`, never
+    from iterating the stdin stream: on Windows a read left pending on the
+    pipe stalls every first-time native import on those request threads.
     """
+    from scistack_gui.stdin_reader import request_lines
+
     logger.info("Server ready, waiting for requests on stdin...")
-    for line in sys.stdin:
+    for line in request_lines():
         line = line.strip()
         if not line:
             continue

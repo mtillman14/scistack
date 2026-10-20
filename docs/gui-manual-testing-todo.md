@@ -11,6 +11,28 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzl. Windows: Plot Studio opens (no hang on its first import) — added 2026-10-20
+
+**What changed:** on Windows the server no longer leaves a blocking read
+waiting on its stdin pipe. That read stalled the first native import
+(numpy/scipy) on any request thread, so Plot Studio's first `plot_describe`
+hung forever at `import_plot_packages started`. The server now polls the pipe
+(`scistack_gui/stdin_reader.py`).
+
+**Backend:** install the release, reload the VS Code window, and confirm
+`scidb.log` shows `[stdin] reader=windows-pipe-poll` right after `Server
+ready`. On macOS it should say `reader=blocking`.
+
+**Frontend**
+1. On the Windows C-Brace project, right after a fresh window reload, open
+   Plot Studio on `CosmedData`. It should open within a few seconds.
+2. `scidb.log` should show `import_plot_packages done in` (about 4-6 s), then
+   every later `plot_describe` phase, then one `TOTAL=` line.
+3. Click around the canvas: requests should feel as responsive as before (the
+   poll adds at most 10 ms per request).
+
+---
+
 ## 0zzzzk. StatStudio: Model formula popup (covariates, random effects) — added 2026-10-20
 
 **What changed:** each analysis in StatStudio's Comparisons rail shows its

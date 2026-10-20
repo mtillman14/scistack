@@ -49,7 +49,9 @@ dependencies = [
     "numpy>=1.21",
     # The one owner of every descriptive formula (error bars: spread.py).
     # Core only: numpy, pandas, scipy. Not a scistack sibling, so not coversioned.
-    "csv-stats>=0.2.1",
+    # 0.4.2: scipy imported lazily, keeping it out of `import scistackplot`
+    # (2 s of every first Plot Studio open; tests/test_import_cost.py).
+    "csv-stats>=0.4.2",
     "scistacklog",
 ]
 

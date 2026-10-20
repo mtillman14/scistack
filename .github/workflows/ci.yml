@@ -71,7 +71,8 @@ jobs:
           # csv-stats (scistackplot's descriptive formulas; StatStudio's engine)
           # is its own repo and not cloned here. Installed from PyPI, the same
           # release users get: GitHub main once hid an empty 0.2.0 wheel.
-          pip install "csv-stats[full]>=0.2.1"
+          # >=0.4.2 matches scistackplot's pin (lazy scipy import).
+          pip install "csv-stats[full]>=0.4.2"
           pip install pytest pytest-cov matplotlib seaborn plotly tomli-w
           # scistack-gui: fastapi/uvicorn are runtime deps; httpx is what
           # fastapi.testclient.TestClient runs on, and conftest.py builds one
