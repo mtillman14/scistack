@@ -105,7 +105,10 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
   75 R reference datasets, `csv-stats/tests/test_lmm_reference.py`):
   - coefficients: t(df);
   - terms: type-III F(q, ddf). The Fai–Cornelius ddf depend on the BASIS of L,
-    so `lmm.type3_contrasts` ports lmerTest's construction;
+    so `lmm.type3_hypotheses` builds the type-III basis lmerTest reports,
+    written from Goodnight 1980 and the SAS definition, covariates included.
+    A factor crossed with a covariate is tested at covariate = 0
+    (`type3_at_covariate_zero` warning);
   - `lmm_pairwise`: FULL-model contrasts within each combination of the other
     factors (emmeans-style), ONE engine call per stratum
     (`run._pairwise_full_model`).

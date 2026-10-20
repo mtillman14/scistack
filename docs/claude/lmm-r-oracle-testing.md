@@ -45,7 +45,7 @@ structures, GLMMs.
 | set | script | scenarios | role |
 |---|---|---|---|
 | curated | `tests/reference/make_lmm_reference.R` → `tests/reference/{datasets,results}` | 77 named (`B2W3_mcar15_n17_icc50_effect_unit_intercept`) | readable regression grid over the Satterthwaite dimensions; tests `test_lmm_reference.py` |
-| sampled | `tests/reference/make_lmm_scenarios.R` → `tests/reference/scenarios/` | 200 stratified draws over 8 random-effect structures | development bed for general random effects; tests `test_lmm_scenarios.py` (built 2026-10-19; fixtures need one R run) |
+| sampled | `tests/reference/make_lmm_scenarios.R` → `tests/reference/scenarios/` | 225 stratified draws over 9 random-effect structures (RIS_FACTOR, a 3-level factor × x, added for covariate type III) | development bed for general random effects; tests `test_lmm_scenarios.py` (built 2026-10-19; fixtures need one R run) |
 
 Both scripts generate their own data with fixed seeds and write the CSV
 alongside the JSON. Python never has to reproduce R's random numbers.
@@ -128,9 +128,10 @@ alongside the JSON. Python never has to reproduce R's random numbers.
   - objective (`MixedModel`): every scenario R fitted
   - the public `lmm()`: every scenario except the collinear ones (`lmm()`
     refuses a rank-deficient design)
-  - term F tests and contrasts: factors-only designs. With covariates,
-    csv-stats tests the term's own coefficients, which is not lmerTest's
-    type III.
+  - term F tests: every design with a fixed term. Type III with
+    covariates is in `lmm.type3_hypotheses` (.claude/plan-lmm-covariate-type3.md).
+  - emmeans contrasts: factors-only designs. The generator writes none for
+    a covariate design, and `lmm_pairwise` has no covariates.
   - otherwise skipped, with the reason
 - **Per-scenario tolerance:** 10 × the spread between R's own optimizers
   (`optimizers.spread`), never below the curated set's base tolerances.
