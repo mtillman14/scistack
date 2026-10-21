@@ -1103,6 +1103,7 @@ class TestBinding:
                     "raw/{session}_{trial}.mat",
                     root_folder="/data",
                     aliases={"session": {"BL": ["Baseline"]}}, name="raw/{session}_{trial}.mat",
+                    key_regex={"session": "[A-Z]+"},
                 )
             },
             [Filtered],
@@ -1120,6 +1121,8 @@ class TestBinding:
         assert str(rewritten.path_template) == "raw/{subject}_{trial}.mat"
         assert rewritten.root_folder == Path("/data")
         assert rewritten.aliases == {"subject": {"BL": ["Baseline"]}}
+        # key_regex was dropped the same way until 2026-10-21.
+        assert rewritten.key_regex == {"subject": "[A-Z]+"}
         # Source spec untouched — key stays "session".
         assert foreign.steps[0].inputs["signal"].aliases == {
             "session": {"BL": ["Baseline"]}

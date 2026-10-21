@@ -698,11 +698,9 @@ def pathinput_configs(duck, fn_name: str) -> list[tuple[dict, dict]]:
                 raise ValueError(
                     f"Unparseable PathInput spec for {fn_name}.{param}: {spec!r}"
                 )
-            inputs[param] = PathInput(
-                info["template"],
-                root_folder=info.get("root_folder") or None,
-                name=info["name"],
-            )
+            # The stored spec is PathInput.to_spec(); its one reader keeps
+            # regex/aliases/key_regex, which a field copy here dropped.
+            inputs[param] = PathInput.from_spec(spec)
         out.append((inputs, constants))
     return out
 

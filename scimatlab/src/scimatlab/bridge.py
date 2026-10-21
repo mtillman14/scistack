@@ -138,7 +138,7 @@ def _reconstruct_input_for_keys(spec):
         - {"kind": "fixed", "inner": <spec>, "fixed_metadata": dict}
         - {"kind": "variant", "inner": <spec>, "branch_params": dict}
         - {"kind": "merge", "specs": list[<spec>]}
-        - {"kind": "pathinput", "name": str, "template": str, "root_folder": str}
+        - {"kind": "pathinput", "spec": PathInput.to_spec() JSON}
 
     Anything else is returned unchanged (treated as a constant value).
     """
@@ -186,15 +186,19 @@ def _reconstruct_input_for_keys(spec):
         subs = [_reconstruct_input_for_keys(s) for s in spec["specs"]]
         return Merge(*subs)
     if kind == "pathinput":
+        from scidb.log import Log
         from scifor.pathinput import PathInput
 
-        root = spec.get("root_folder") or None
-        if root == "":
-            root = None
-        regex_flag = bool(spec.get("regex", False))
-        return PathInput(
-            spec["template"], root_folder=root, regex=regex_flag, name=spec["name"]
+        # The whole to_spec() JSON, rebuilt by its one reader: a field-by-field
+        # copy here lost aliases and key_regex until 2026-10-21.
+        pi = PathInput.from_spec(spec["spec"])
+        Log.info(
+            f"[bridge] PathInput {pi.name!r} from MATLAB: template={pi.path_template!r}, "
+            f"root_folder={str(pi.root_folder) if pi.root_folder else None!r}, "
+            f"regex={pi.regex}, aliases={sorted(pi.aliases)}, "
+            f"key_regex={sorted(pi.key_regex)}"
         )
+        return pi
     if kind == "path_output":
         from scifor import PathOutput
 
@@ -1006,17 +1010,9 @@ def for_each_describe_loaded_input(val):
         }
     if isinstance(val, _SciforPathInput):
         # PathInput is resolved per-combo by MATLAB's +scifor/for_each.m
-        # via _resolve_pathinput=true. Ship the template + flags so MATLAB
-        # can construct a matching MATLAB-side scifor.PathInput.
-        return {
-            "kind": "pathinput",
-            "name": val.name,
-            "template": val.path_template,
-            "root_folder": (
-                str(val.root_folder) if val.root_folder is not None else ""
-            ),
-            "regex": bool(getattr(val, "regex", False)),
-        }
+        # via _resolve_pathinput=true. Ship the whole to_spec() so MATLAB
+        # rebuilds a matching scifor.PathInput — aliases and key_regex included.
+        return {"kind": "pathinput", "spec": val.to_spec()}
     from scifor import PathOutput as _SciforPathOutput
 
     if isinstance(val, _SciforPathOutput):

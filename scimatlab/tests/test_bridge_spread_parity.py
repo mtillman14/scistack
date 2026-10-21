@@ -30,6 +30,7 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 import pandas as pd
 import pytest
 from scidb.database import configure_database
+from scifor.pathinput import PathInput
 from scimatlab.bridge import (
     for_each_prepare,
     for_each_save,
@@ -66,7 +67,7 @@ def _prepare_static(db, literal_file, out_name):
         "loadOutcomes",
         "hash0",
         # name is required since a9357ddd (a PathInput is identified by it).
-        {"filePath": {"kind": "pathinput", "name": "Outcomes", "template": str(literal_file)}},
+        {"filePath": {"kind": "pathinput", "spec": PathInput(str(literal_file), name="Outcomes").to_spec()}},
         [out_name],
         {},
         db=db,

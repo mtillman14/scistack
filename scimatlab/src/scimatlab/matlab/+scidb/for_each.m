@@ -1311,15 +1311,8 @@ function val = build_scifor_input_from_desc(desc)
             val = scifor.Merge(tables_cell{:});
 
         case 'pathinput'
-            tmpl = char(desc{'template'});
-            root = char(desc{'root_folder'});
-            is_regex = logical(desc{'regex'});
-            pi_name = char(desc{'name'});
-            if isempty(root)
-                val = scifor.PathInput(tmpl, 'regex', is_regex, 'name', pi_name);
-            else
-                val = scifor.PathInput(tmpl, 'root_folder', root, 'regex', is_regex, 'name', pi_name);
-            end
+            % The whole to_spec() JSON — aliases and key_regex included.
+            val = scifor.PathInput.from_spec(char(desc{'spec'}));
 
         case 'colname'
             % Deferred ColName() marker — rebuild the MATLAB-side scifor
@@ -1570,16 +1563,11 @@ function spec = describe_input_for_python(val)
         spec = py.dict(pyargs('kind', 'var_type', 'type_name', class(val)));
 
     elseif isa(val, 'scifor.PathInput')
-        if strlength(val.root_folder) > 0
-            root_str = char(val.root_folder);
-        else
-            root_str = '';
-        end
+        % Ship the Python object's own to_spec(): a field-by-field copy
+        % here dropped aliases and key_regex until 2026-10-21, so a MATLAB
+        % run discovered 0 files that a Python run found.
         spec = py.dict(pyargs('kind', 'pathinput', ...
-            'name', char(val.name), ...
-            'template', char(val.path_template), ...
-            'root_folder', root_str, ...
-            'regex', logical(val.regex)));
+            'spec', char(val.py_obj.to_spec())));
 
     elseif isa(val, 'scidb.ColName')
         % Deferred ColName() ships with no type_name; the Python bridge

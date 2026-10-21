@@ -347,6 +347,35 @@ classdef TestPathInput < matlab.unittest.TestCase
             testCase.verifyEqual(combos{1}.subject, 'S01');
         end
 
+        %% from_spec: the scidb bridge's hand-off (to_spec JSON both ways)
+
+        function test_from_spec_keeps_aliases_and_key_regex(testCase)
+            % 2026-10-21: the bridge rebuilt PathInputs from name/template/
+            % root_folder/regex only, so this layout discovered 0 files.
+            d = fullfile(testCase.tmp_dir, 'spec', 'R2_001', 'Baseline', 'Xsens');
+            mkdir(d);
+            fclose(fopen(fullfile(d, 'R2_001_BL_xsens_FV1.xlsx'), 'w'));
+            pi = scifor.PathInput("spec/{subject}/{session}/Xsens/{subject}_{session}_xsens_{speed}{trial}.xlsx", ...
+                'root_folder', testCase.tmp_dir, ...
+                'aliases', '{"session": {"BL": ["Baseline"], "01": ["Pre"]}}', ...
+                'key_regex', struct('subject', 'R2_\d{3}', 'speed', '[A-Za-z]+', 'trial', '\d+'), ...
+                'name', "xsens_path");
+            back = scifor.PathInput.from_spec(char(pi.py_obj.to_spec()));
+            testCase.verifyEqual(char(back.py_obj.to_spec()), char(pi.py_obj.to_spec()));
+            combos = back.discover();
+            testCase.verifyEqual(numel(combos), 1);
+            testCase.verifyEqual(combos{1}.session, 'BL');
+            testCase.verifyEqual(combos{1}.speed, 'FV');
+            testCase.verifyEqual(combos{1}.trial, '1');
+        end
+
+        function test_from_spec_without_root_folder(testCase)
+            pi = scifor.PathInput("{subject}/a.csv", 'name', "raw");
+            back = scifor.PathInput.from_spec(char(pi.py_obj.to_spec()));
+            testCase.verifyEqual(back.root_folder, "");
+            testCase.verifyEqual(back.name, "raw");
+        end
+
         %% key_regex: adjacent-placeholder disambiguation
 
         function test_key_regex_unknown_key_errors(testCase)

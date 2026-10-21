@@ -58,6 +58,13 @@ def path_input_key(name: str) -> str:
     return json.dumps({"__type": "PathInput", "name": name})
 
 
+# Every field PathInput.to_spec() can write; PathInput.from_spec() reads
+# exactly these and refuses any other.
+_SPEC_FIELDS = (
+    "__type", "name", "template", "root_folder", "regex", "aliases", "key_regex",
+)
+
+
 def key_regex_pattern_error(pattern: Any) -> "str | None":
     """Why *pattern* cannot be a ``key_regex`` fragment, or ``None``.
 
@@ -424,6 +431,39 @@ class PathInput:
         if self.key_regex:
             payload["key_regex"] = self.key_regex
         return json.dumps(payload)
+
+    @classmethod
+    def from_spec(cls, spec: "str | dict") -> "PathInput":
+        """Rebuild a PathInput from :meth:`to_spec` — its exact inverse.
+
+        The ONE reader of the spec. Every hand-off that crosses a boundary
+        (the MATLAB bridge, both ways) ships ``to_spec()`` and rebuilds here,
+        so a matching option cannot be dropped in transit. Before 2026-10-21
+        the bridge copied name/template/root_folder/regex field by field and
+        lost ``aliases`` and ``key_regex``: a ``Baseline`` folder holding
+        ``*_BL_*`` files discovered 0 combos on a MATLAB run while a Python
+        run of the same declaration found them all.
+
+        An unknown field raises rather than being ignored, so a field added
+        to :meth:`to_spec` without a reader here fails loudly.
+        """
+        payload = json.loads(spec) if isinstance(spec, str) else dict(spec)
+        if not isinstance(payload, dict) or payload.get("__type") != "PathInput":
+            raise ValueError(f"not a PathInput spec: {spec!r}")
+        unknown = set(payload) - set(_SPEC_FIELDS)
+        if unknown:
+            raise ValueError(
+                f"PathInput spec has unknown field(s) {sorted(unknown)}; "
+                f"from_spec reads {sorted(_SPEC_FIELDS)}"
+            )
+        return cls(
+            payload["template"],
+            root_folder=payload.get("root_folder"),
+            regex=bool(payload.get("regex", False)),
+            aliases=payload.get("aliases"),
+            key_regex=payload.get("key_regex"),
+            name=payload["name"],
+        )
 
     def load(self, db=None, **metadata: Any) -> Path:
         """Resolve the template with the given metadata and return the path.

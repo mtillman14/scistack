@@ -397,6 +397,38 @@ classdef PathInput < handle
         end
     end
 
+    methods (Static)
+        function obj = from_spec(spec_json)
+        %FROM_SPEC  Rebuild a PathInput from Python's PathInput.to_spec() JSON.
+        %
+        %   PI = scifor.PathInput.from_spec(SPEC_JSON)
+        %
+        %   The scidb bridge ships every PathInput as to_spec() in both
+        %   directions. Python's PathInput.from_spec is the one reader of
+        %   that JSON (it refuses unknown fields); this reads the rebuilt
+        %   Python object's attributes, so no field list lives here.
+        %   Aliases cross as JSON text, which keeps canonical values that
+        %   are not MATLAB identifiers ("01", "1. Baseline").
+            py_pi = py.scifor.pathinput.PathInput.from_spec(char(spec_json));
+            if isa(py_pi.root_folder, 'py.NoneType')
+                root = "";
+            else
+                root = string(py.str(py_pi.root_folder));
+            end
+            key_regex = struct();
+            kr_keys = cell(py.list(py_pi.key_regex.keys()));
+            for i = 1:numel(kr_keys)
+                key_regex.(char(kr_keys{i})) = char(py_pi.key_regex{kr_keys{i}});
+            end
+            obj = scifor.PathInput(string(py_pi.path_template), ...
+                'root_folder', root, ...
+                'regex', logical(py_pi.regex), ...
+                'aliases', string(py.json.dumps(py_pi.aliases)), ...
+                'key_regex', key_regex, ...
+                'name', string(py_pi.name));
+        end
+    end
+
     methods (Static, Access = private)
         function py_aliases = aliases_to_py(aliases)
         %ALIASES_TO_PY  Marshal the nested ALIASES struct into a py.dict of
