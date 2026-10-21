@@ -344,18 +344,6 @@ def load_from_config(
     return _diff_summary(old_fns, new_fns, old_vars, new_vars)
 
 
-def refresh_all() -> dict:
-    """
-    Re-load everything from the stored config (project mode).
-
-    Equivalent of refresh_module() but for multi-source configs.
-    """
-    logger.info("[registry] Starting refresh_all")
-    if _config is None:
-        raise RuntimeError("No project config loaded. Nothing to refresh.")
-    return load_from_config(_config)
-
-
 def _load_file_modules(
     paths: list[Path], on_progress: ProgressCallback | None = None
 ) -> None:
@@ -954,7 +942,7 @@ def _prune_sources(sources: set[str]) -> None:
 def reload_entities_file() -> "str | None":
     """Re-read *only* the TOML entities file. Returns an error, or ``None``.
 
-    The narrow counterpart to :func:`refresh_all`, for the one case that
+    The narrow counterpart to :func:`~scistack_gui.services.registry_reload_service.refresh_registries`, for the one case that
     dominates GUI writes: the user created or edited an entity, so the only
     file whose contents can have changed is the one the GUI just wrote.
 

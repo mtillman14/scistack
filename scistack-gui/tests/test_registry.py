@@ -968,7 +968,7 @@ class TestTopLevelSideEffectRefusal:
 class TestMatlabClassificationCache:
     """``classify_matlab_file`` must reuse unchanged files and re-read changed ones.
 
-    Classification is the hot path of every ``refresh_all()``: once per
+    Classification is the hot path of every ``registry_reload_service.refresh_registries()``: once per
     configured .m file, and the uncached body opens each file up to three
     times (variable parse, function parse, entities-script check). On a
     project whose libraries sit on an SMB share that measured ~90 ms/file —

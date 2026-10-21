@@ -14,7 +14,9 @@ from scistack_gui.domain.graph_builder import (
     auto_clean_pending_constants,
     build_parameter_nodes,
     build_edges,
+    assign_input_ports,
     build_function_nodes,
+    input_port_order,
     build_manual_node,
     build_path_input_nodes,
     build_variable_nodes,
@@ -1306,6 +1308,86 @@ class TestBuildFunctionNodes:
         states = {n["id"]: n["data"]["run_state"] for n in nodes}
         assert states[f"fn__bandpass__{cid_a}"] == "green"
         assert states[f"fn__bandpass__{cid_b}"] == "red"
+
+    def test_unrecorded_param_keeps_its_signature_slot(self):
+        # Regression 2026-10-21: the fill-in ran AFTER the sort, so an
+        # argument the DB never recorded was appended last.
+        nodes = self._make(
+            fn_input_params={self.BP_KEY: {"c": "C"}},
+            fn_constants={},
+            fn_params_map={"bandpass": ["a", "b", "c"]},
+        )
+        assert list(nodes[0]["data"]["input_params"]) == ["a", "b", "c"]
+
+
+# ---------------------------------------------------------------------------
+# input_port_order / assign_input_ports
+# ---------------------------------------------------------------------------
+
+
+class TestInputPorts:
+    """One order for a function node's input ports, whatever feeds each one.
+
+    Regression 2026-10-21: load_xsens_one_file(xsens_file_path, col_names,
+    sheet_name) drew col_names third — it was Parameter-fed, and the node drew
+    every variable-fed/unwired port before any Parameter-fed one.
+    """
+
+    SIG = ["xsens_file_path", "col_names", "sheet_name"]
+
+    def _node(self, input_params, constant_params, label="load_xsens_one_file"):
+        return {
+            "id": f"fn__{label}__abc",
+            "type": "functionNode",
+            "data": {
+                "label": label,
+                "input_params": input_params,
+                "constant_params": constant_params,
+            },
+        }
+
+    def test_order_is_signature_then_alphabetical(self):
+        assert input_port_order(["b", "a"], {"z", "a", "y", "b"}) == ["b", "a", "y", "z"]
+
+    def test_parameter_fed_port_stays_in_the_middle(self):
+        node = self._node({"xsens_file_path": "", "sheet_name": ""}, ["col_names"])
+        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assert node["data"]["input_ports"] == self.SIG
+        assert node["data"]["constant_params"] == ["col_names"]
+        # Parameter-fed ports never become variable inputs.
+        assert "col_names" not in node["data"]["input_params"]
+
+    def test_overlay_added_param_is_reordered(self):
+        # The manual-edge overlay appends keys to input_params after
+        # build_function_nodes sorted it.
+        node = self._node({"sheet_name": "", "xsens_file_path": ""}, [])
+        node["data"]["input_params"]["col_names"] = "ColNames"
+        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assert node["data"]["input_ports"] == self.SIG
+        assert list(node["data"]["input_params"]) == self.SIG
+        assert node["data"]["input_params"]["col_names"] == "ColNames"
+
+    def test_missing_signature_param_gets_an_unwired_port(self):
+        node = self._node({"xsens_file_path": ""}, ["col_names"])
+        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assert node["data"]["input_ports"] == self.SIG
+        assert node["data"]["input_params"]["sheet_name"] == ""
+
+    def test_param_outside_signature_goes_last(self):
+        node = self._node({"stale": "S", "xsens_file_path": ""}, ["col_names"])
+        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assert node["data"]["input_ports"] == self.SIG + ["stale"]
+
+    def test_glue_nodes_get_ports_other_nodes_do_not(self):
+        glue = {
+            "id": "var__glue_x__1",
+            "type": "glueNode",
+            "data": {"label": "glue_x", "input_params": {"b": "", "a": ""}},
+        }
+        var = {"id": "var__X", "type": "variableNode", "data": {"label": "X"}}
+        assert assign_input_ports([glue, var], {"glue_x": ["a", "b"]}) == 1
+        assert glue["data"]["input_ports"] == ["a", "b"]
+        assert "input_ports" not in var["data"]
 
 
 # ---------------------------------------------------------------------------

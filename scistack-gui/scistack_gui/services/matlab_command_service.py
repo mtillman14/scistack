@@ -10,6 +10,7 @@ import logging
 import sys
 
 from scidb.foreach_config import RunOptions
+from scidb.provenance import constants_identity_key
 
 logger = logging.getLogger(__name__)
 
@@ -1012,7 +1013,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         seen_target_keys: set = set()
         unique_targets: list[dict] = []
         for target in targets:
-            key = (tuple(sorted(target["constants"].items())), target["output_type"])
+            key = (constants_identity_key(target["constants"]), target["output_type"])
             if key in seen_target_keys:
                 continue
             seen_target_keys.add(key)

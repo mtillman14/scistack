@@ -187,9 +187,10 @@ class _ForEachState:
     mapping_inputs: Any = None  # dict | None
     # The inputs spec as prepare left it — identical to the caller's dict
     # except that a Parameter-fed glue chain has been folded into its values
-    # (scidb.glue.apply_constant_glue). ForEachConfig hashed THIS dict, so
-    # the save path must read it too or the recorded selectors and the
-    # recorded version_keys would describe two different calls.
+    # (scidb.glue.apply_constant_glue) — what the function receives. The save
+    # path reads it for selectors and pins (unaffected by constant glue);
+    # ForEachConfig hashed this dict with each glued constant put back to its
+    # RAW value (_build_call_identity), since the glue is a history hop.
     inputs: Any = None  # dict | None
     # {param_name: [GlueSpec]} the caller attached to this call MINUS anything
     # already applied during prepare — i.e. Parameter-fed chains, which run
@@ -1247,10 +1248,17 @@ def _find_skip_gate_record(
     target_const_hashes,
     expected_input_rids=None,
     fixed_rids=frozenset(),
+    target_glue_rids=None,
 ):
     """Latest output record of ``type_name`` at ``schema_combo`` produced by an
     invocation of ``fn_name`` whose constants match ``target_const_hashes``
     (``{param: canonical_hash(value)}``), or None.
+
+    ``target_glue_rids`` (``{param: virtual glue rid}``) are the Parameter-fed
+    glued constants, which the graph records as a virtual glue record on the
+    consumer's edge (not a constant): a candidate matches only when it bound
+    exactly that record — so distinct Parameter values, an edited glue body
+    and a changed glued value each disambiguate here, as plain constants do.
 
     Graph-precise variant lookup for the skip gate: filters by producing function
     (so a re-saved raw input at the same location is not mistaken for the output)
@@ -1305,10 +1313,21 @@ def _find_skip_gate_record(
                 f"(stored={sig.get('const_hashes', {})}, target={target_const_hashes})"
             )
             continue
+        # Parameter-fed glued constants: the stored invocation must have bound
+        # exactly these virtual records — and no glue where none is expected.
+        stored_glue = sig.get("constant_glue", {})
+        if stored_glue != dict(target_glue_rids or {}):
+            _rejections.append(
+                f"{rid[:12]}: Parameter-fed glue mismatch (stored={stored_glue}, "
+                f"target={dict(target_glue_rids or {})}) — the value, glue body "
+                f"or glued value differs"
+            )
+            continue
+        stored_var = sig.get("var_inputs", {})
         if expected_input_rids is not None:
             stored_rids = {
                 str(in_rid)
-                for edges in sig.get("var_inputs", {}).values()
+                for edges in stored_var.values()
                 for (in_rid, _sel) in edges
                 if in_rid is not None
             }
@@ -1489,6 +1508,15 @@ def _build_skip_hook(
         f"fn_hash={fn_hash[:12]}, selectors={ {k: v for k, v in selectors.items() if v} }"
     )
 
+    # Parameter-fed glue: a glued constant's recorded edge binds a virtual glue
+    # record, not the constant, and that rid needs the glued value's hash —
+    # known only once prepare has run the glue (after this hook is built, on
+    # both run paths). Prepare derives ``{param: virtual rid}`` with the save
+    # path's own rule and fills this ref; the hook only reads it. Unset, glued
+    # params are unknown and compare as plain constants (which then never
+    # match: safe, recompute).
+    constant_glue_ref: dict = {"rids": {}, "set": False}
+
     def _should_skip(combo: dict) -> bool:
         schema_combo = {k: v for k, v in combo.items() if k in schema_keys}
         combo_str = _combo_str(schema_combo)
@@ -1522,7 +1550,10 @@ def _build_skip_hook(
         # pipelines: a re-saved raw input at the same location must NOT be mistaken
         # for the fn's output (it has no producing invocation → would force a
         # spurious recompute).
-        target_const_hashes = {n: _chash(v) for n, v in constant_values.items()}
+        glue_rids = constant_glue_ref["rids"]
+        target_const_hashes = {
+            n: _chash(v) for n, v in constant_values.items() if n not in glue_rids
+        }
         output_record_id = None
         for OutputCls in outputs:
             rid = _find_skip_gate_record(
@@ -1533,6 +1564,7 @@ def _build_skip_hook(
                 target_const_hashes,
                 expected_input_rids=expected_input_rids,
                 fixed_rids=_fixed_rids,
+                target_glue_rids=glue_rids,
             )
             if rid is None:
                 Log.debug(
@@ -1582,6 +1614,8 @@ def _build_skip_hook(
         # Constants: compare current value hashes to stored content hashes.
         stored_const = sig["const_hashes"]
         for name, value in constant_values.items():
+            if name in glue_rids:
+                continue  # bound through its virtual glue record (the gate)
             cur_hash = _chash(value)
             stored_hash = stored_const.get(name)
             if stored_hash is None:
@@ -1608,6 +1642,9 @@ def _build_skip_hook(
     # Exposed so _for_each_prepare can hand over the iteration level once the
     # iterables are resolved (see _run_options_now).
     _should_skip._iteration_level_ref = level_ref
+    # Exposed so _for_each_prepare can hand over the Parameter-fed glue's
+    # identity once the glue has run (see constant_glue_ref).
+    _should_skip._constant_glue_ref = constant_glue_ref
     return _should_skip
 
 
@@ -1631,15 +1668,17 @@ def _build_skip_hook(
 
 def _normalize_glue(
     glue: "dict[str, Any] | None", inputs: dict, glue_language: str
-) -> "tuple[dict, dict, dict]":
+) -> "tuple[dict, dict, dict, dict]":
     """Prepare stage: normalize and validate the call's glue chains, and apply
     the constant-fed ones. Returns ``(glue_chains, deferred_glue_chains,
-    inputs)``.
+    inputs, constant_glue)``.
 
     Runs first so a malformed chain fails before any data is loaded (and
     before the dry-run shortcut, which must display the same call the real
     run would make). ``inputs`` comes back as a COPY when a Parameter-fed
-    chain was applied to it, else unchanged.
+    chain was applied to it, else unchanged — it holds what the FUNCTION
+    receives. ``constant_glue`` is ``{param: glue.ConstantGlue}`` for each
+    glued constant: its raw value is what identity records.
     """
     glue_chains = _glue.normalize_glue(glue)
     # Chains still to apply downstream (the fusion point, or MATLAB's loop).
@@ -1647,6 +1686,7 @@ def _normalize_glue(
     # names contribute to the call_id, and a Parameter-fed chain is just as
     # much part of the call site as a variable-fed one.
     deferred_glue_chains = glue_chains
+    constant_glue: dict = {}
     if glue_chains:
         _glue.log_chains(glue_chains)
         _glue.refuse_pathinput_glue(inputs, glue_chains)
@@ -1662,16 +1702,17 @@ def _normalize_glue(
         _glue.check_run_language(deferred_glue_chains, glue_language)
 
         # Constant-fed glue (the Parameter case) is applied HERE, before Step 8
-        # builds the version keys, so the recorded constant is the glued value.
+        # builds the version keys, so the glued value's hash can enter
+        # identity (as a history hop; the RAW value stays the constant).
         # ``inputs`` is copied first: it is the caller's dict, and mutating it
         # would double-apply the chain if the caller reused it for a second
         # for_each call.
         if constant_chains:
             inputs = dict(inputs)
-            _glue.apply_constant_glue(inputs, constant_chains)
+            constant_glue = _glue.apply_constant_glue(inputs, constant_chains)
     else:
         Log.debug("[glue] no glue chains on this call")
-    return glue_chains, deferred_glue_chains, inputs
+    return glue_chains, deferred_glue_chains, inputs, constant_glue
 
 
 def _resolve_iterables(
@@ -2111,15 +2152,33 @@ def _iteration_level_of(metadata_iterables: dict, db) -> list[str]:
 
 
 def _build_call_identity(
-    fn, inputs: dict, where, distribute: bool, as_table, glue_chains, level=None
+    fn,
+    inputs: dict,
+    where,
+    distribute: bool,
+    as_table,
+    glue_chains,
+    level=None,
+    constant_glue: "dict | None" = None,
 ) -> "tuple[dict, str]":
     """Prepare stage: the call's ``ForEachConfig`` version keys and call_id.
-    Built after constant-fed glue has been applied, so the recorded constant
-    is the glued value; glue names are part of the call site."""
+
+    ``inputs`` holds GLUED constants (what the function receives), but a
+    glued constant is recorded by its RAW value — the value the Parameter was
+    declared with, which is what the canvas shows and what names the call
+    site. The glue's identity goes under ``glue.CONSTANT_GLUE_KEY`` (a version
+    key, not a call-site key), from which ``provenance_save.constant_bindings``
+    derives the virtual rid the consumer binds. Glue names are part of the
+    call site."""
     Log.debug("building ForEachConfig version keys")
+    constant_glue = constant_glue or {}
+    identity_inputs = {
+        **inputs,
+        **{p: cg.raw for p, cg in constant_glue.items()},
+    }
     config = ForEachConfig(
         fn=fn,
-        inputs=inputs,
+        inputs=identity_inputs,
         where=where,
         distribute=distribute,
         as_table=as_table,
@@ -2127,6 +2186,10 @@ def _build_call_identity(
         level=level,
     )
     config_keys = config.to_version_keys()
+    if constant_glue:
+        config_keys[_glue.CONSTANT_GLUE_KEY] = _glue.constant_glue_version_keys(
+            constant_glue
+        )
     call_id = config.to_call_id()
     Log.debug(
         f"ForEachConfig: call_id={call_id}, version_keys={list(config_keys.keys())}"
@@ -3379,9 +3442,33 @@ def _for_each_prepare(
     inputs = declared_spelling(inputs, parameter_names)
 
     # Glue chains: normalized and validated up front, constant-fed ones applied.
-    glue_chains, deferred_glue_chains, inputs = _normalize_glue(
+    glue_chains, deferred_glue_chains, inputs, constant_glue = _normalize_glue(
         glue, inputs, glue_language
     )
+    # The skip hook compares a glued constant by the virtual glue rid its edge
+    # binds. Derived HERE, once, by the save path's own rule
+    # (provenance_save.constant_bindings) from the same raw value the version
+    # keys record — after declared_spelling, so a MATLAB 6.0 declared as 6 is
+    # one value on both sides. The hook derives nothing.
+    glue_ref = getattr(_pre_combo_hook, "_constant_glue_ref", None)
+    if glue_ref is not None:
+        from .provenance_save import constant_bindings
+
+        glue_ref["rids"] = {
+            b.param: b.rid
+            for b in constant_bindings(
+                {p: cg.raw for p, cg in constant_glue.items()},
+                _glue.constant_glue_version_keys(constant_glue),
+            )
+        }
+        glue_ref["set"] = True
+        for p, vrid in sorted(glue_ref["rids"].items()):
+            Log.info(
+                f"[skip] {fn_name}: '{p}' is a Parameter-fed glued constant; "
+                f"skip_computed compares its virtual glue record {vrid} "
+                f"(raw value + glue chain {constant_glue[p].chain_hash} + glued "
+                f"value {constant_glue[p].glued_hash}), not the constant"
+            )
 
     # The metadata iterables: [] filled from the database / disk, schema
     # propagated, schema-key values stringified.
@@ -3424,7 +3511,7 @@ def _for_each_prepare(
 
     # The call's identity: version keys and call_id (glue names included).
     config_keys, call_id = _build_call_identity(
-        fn, inputs, where, distribute, as_table, glue_chains, level
+        fn, inputs, where, distribute, as_table, glue_chains, level, constant_glue
     )
 
     # Only the schema combinations that exist (and are not excluded).

@@ -282,6 +282,21 @@ def virtual_rid_map(
     return ch, sig, {rid: compute_glue_record_id(ch, rid, sig) for rid in uniq}
 
 
+def constant_glue_rid(raw_record_id: str, entry: dict) -> str:
+    """The virtual record a Parameter-fed glue's consumer binds — the
+    constant-head twin of :func:`virtual_rid_map`, beside it so the two
+    derivations of a glue record's identity live in one place.
+
+    ``entry`` is the call's :data:`CONSTANT_GLUE_KEY` entry for the param.
+    Same recipe as a variable head, with the glued value's content hash in the
+    input-set slot: a constant has no input set, and the glued hash is what
+    makes a config FILE edited behind an unchanged path recompute.
+    """
+    from .provenance import compute_glue_record_id
+
+    return compute_glue_record_id(entry["chain"], raw_record_id, entry["glued"])
+
+
 def chain_names(chain: Sequence[GlueSpec]) -> list[str]:
     """Glue node names in application order — the call-site-bearing half."""
     return [s.name for s in chain]
@@ -525,13 +540,56 @@ def check_constant_glue_language(chains: GlueChains, run_language: str) -> None:
                 )
 
 
-def apply_constant_glue(inputs: dict[str, Any], chains: GlueChains) -> None:
+#: Version key carrying each Parameter-fed glue's identity, ``{param:
+#: {"chain": chain_hash, "glued": canonical_hash(glued value)}}``. NOT a
+#: call-site key (absent from ``foreach_config._CALL_ID_INCLUDED_KEYS``): like
+#: ``__glue_hashes``, an edited body or a changed glued value is a new version
+#: at the same call site. Read back by ``provenance_save.constant_bindings``.
+CONSTANT_GLUE_KEY = "__constant_glue"
+
+
+@dataclass(frozen=True)
+class ConstantGlue:
+    """What :func:`apply_constant_glue` did to one constant-valued param.
+
+    ``raw`` is the value the user declared (what ``__constants`` records and
+    the Parameter shows); the function received the glued value, identified
+    by ``glued_hash``. Together with ``chain_hash`` they derive the virtual
+    glue record the consumer binds — :func:`constant_glue_rid`.
+    """
+
+    raw: Any
+    chain_hash: str
+    glued_hash: str
+
+    def version_entry(self) -> dict:
+        """This glue's ``CONSTANT_GLUE_KEY`` entry."""
+        return {"chain": self.chain_hash, "glued": self.glued_hash}
+
+
+def constant_glue_version_keys(applied: "dict[str, ConstantGlue]") -> dict:
+    """The ``CONSTANT_GLUE_KEY`` value for a call's applied constant glue."""
+    return {p: applied[p].version_entry() for p in sorted(applied)}
+
+
+def apply_constant_glue(
+    inputs: dict[str, Any], chains: GlueChains
+) -> "dict[str, ConstantGlue]":
     """Apply glue attached to a **constant-valued** input, in prepare.
 
     Mutates ``inputs`` in place, replacing each glued value with the reshaped
-    one. ``chains`` must already be the constant-fed half
-    (:func:`split_constant_chains`), language-checked by
+    one — the value the FUNCTION receives. ``chains`` must already be the
+    constant-fed half (:func:`split_constant_chains`), language-checked by
     :func:`check_constant_glue_language`.
+
+    Returns ``{param: ConstantGlue}`` for every concrete value it glued: the
+    caller records the RAW value in ``__constants`` and the glue's identity
+    under :data:`CONSTANT_GLUE_KEY`, and history gets the same virtual
+    ``__glue__`` hop a variable head gets (docs/claude/free-code-glue-nodes.md
+    §1). Until 2026-10-21 the glued value itself was recorded as the constant,
+    so history named the Parameter with the glue's OUTPUT (a dict where the
+    user declared a path), and the skip gate — built from the raw value —
+    never matched, so a Parameter-fed glue step recomputed on every run.
 
     This is the ``Parameter`` case (and a bare constant passed directly).
 
@@ -540,15 +598,11 @@ def apply_constant_glue(inputs: dict[str, Any], chains: GlueChains) -> None:
     A constant never becomes a loaded table, so the fusion point has nothing
     to reshape: it would fall into the "not a table — glue applied to the value
     as-is" branch, *after* ``ForEachConfig`` has already hashed the pre-glue
-    value.
-
-    Applying it here — before Step 8 builds the version keys — gets **identity
-    right for free**. The value that lands in ``__constants`` IS the glued
-    value, so editing a glue body changes the constant's content hash, which is
-    one of the bindings ``skip_computed`` compares. Downstream results
-    invalidate with **no virtual glue record at all**: §2's staleness hole is
-    closed here rather than merely warned about, as it must be for ``Merge`` /
-    ``PerComboLoader``.
+    value. Here, before Step 8 builds the version keys, the glued value's hash
+    is known in time to enter identity: an edited glue body changes
+    ``chain_hash``, and a changed glued value (e.g. a config FILE edited behind
+    an unchanged path) changes ``glued_hash`` — either moves the virtual rid
+    the consumer binds, which ``skip_computed`` compares.
 
     A multi-valued ``Parameter`` needs no special handling. ``for_each``'s
     Step 1 expands it into one recursive call per value *before* prepare, so
@@ -565,34 +619,50 @@ def apply_constant_glue(inputs: dict[str, Any], chains: GlueChains) -> None:
     to a per-combo site, because a per-combo site would record the *pre*-glue
     constant and reintroduce the silent staleness this placement removes.
     """
+    from scicanonicalhash import canonical_hash
     from scifor import EachOf
 
+    from .parameter import single_value
+
+    applied: dict[str, ConstantGlue] = {}
     for param in sorted(chains):
         chain = chains[param]
-        before = inputs[param]
+        # A single-valued Parameter that reached prepare unexpanded (the
+        # MATLAB bridge has no Step 1) IS its one value.
+        before = single_value(inputs[param])
 
         if is_constant_axis(before):
-            # An unexpanded fan-out (the MATLAB bridge path, which has no
-            # Step 1 in front of it). Map over the alternatives: gluing the
-            # EachOf object itself would hand the user's code the axis.
+            # A multi-valued fan-out that reached prepare unexpanded. Both run
+            # paths expand an EachOf before prepare (for_each's Step 1,
+            # for_each.m's Step 0), so this is a defence, not a route: there
+            # is no single raw value to record, so no history hop is written
+            # and the glued alternatives are recorded as before.
             values = list(before.alternatives)
             inputs[param] = EachOf(
                 *(apply_glue_chain(v, chain, param=param) for v in values)
             )
-            detail = f"{len(values)} unexpanded value(s)"
-        else:
-            inputs[param] = apply_glue_chain(before, chain, param=param)
-            detail = (
-                f"the constant value ({type(before).__name__} -> "
-                f"{type(inputs[param]).__name__})"
+            Log.warn(
+                f"[glue] '{param}': {len(values)} unexpanded value(s) glued in "
+                f"prepare — no history hop recorded for them (expected every "
+                f"EachOf to be expanded before prepare)"
             )
+            continue
 
-        Log.info(
-            f"[glue] '{param}': applied {len(chain)} node(s) to {detail} "
-            f"before the version keys were built, so the glued value is what "
-            f"lands in __constants and an edit to a glue body invalidates "
-            f"downstream results"
+        glued = apply_glue_chain(before, chain, param=param)
+        inputs[param] = glued
+        cg = ConstantGlue(
+            raw=before,
+            chain_hash=chain_hash(chain),
+            glued_hash=canonical_hash(glued),
         )
+        applied[param] = cg
+        Log.info(
+            f"[glue] '{param}': applied {len(chain)} node(s) to the constant "
+            f"value ({type(before).__name__} -> {type(glued).__name__}) in "
+            f"prepare; __constants records the RAW value and the glue is a "
+            f"history hop (chain {cg.chain_hash}, glued value {cg.glued_hash})"
+        )
+    return applied
 
 
 def bulk_chain(chain: Sequence[GlueSpec]) -> list[GlueSpec]:

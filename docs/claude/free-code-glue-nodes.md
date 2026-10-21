@@ -117,11 +117,65 @@ A `Parameter`-fed parameter has **no loaded table at all** — a `scidb.Paramete
 concrete value. Its glue is therefore applied earlier still, in
 `scidb.glue.apply_constant_glue`, **before Step 8 builds the version keys**.
 
-That placement is not a convenience, it is the identity story. The value that
-lands in `__constants` *is* the glued value, so an edited glue body changes the
-constant's content hash — one of the bindings `skip_computed` compares — and
-downstream results invalidate **with no virtual glue record at all**. §2's
-staleness hole is closed here rather than merely warned about.
+That placement is not a convenience, it is the identity story: the glued
+value's hash is known before identity is built.
+
+**What gets recorded (since 2026-10-21).** The Parameter keeps its own value;
+the glue is a history hop, the constant-head twin of §2's virtual record:
+
+```
+_record __constant__  crid(raw value)      ← declared_name = the Parameter, on THIS edge
+   │ (glue_inv, 'input')
+_invocation  <glue names>   function_hash = chain hash
+   │ output
+_record __constant_glue__   vrid = compute_glue_record_id(chain_hash, crid(raw), glued_hash)
+   │ (fn_inv, <argument>)
+_invocation  <the function>
+```
+
+- `__constants` holds the **raw** value, so variant labels and the call_id
+  read `config = <path>`, the value the user declared. The glue's identity is
+  a version key, `__constant_glue = {param: {chain, glued}}`. It is not a
+  call-site key, so an edited body or a changed glued value is a new version
+  at the same call site.
+- The function's edge binds `vrid`, so an edited glue body (`chain_hash`)
+  **or a changed glued value** (`glued_hash`, e.g. a config file edited behind
+  an unchanged path) moves the binding and the result goes stale.
+- `__constant_glue__` is its own record type, so "is this a variable input?"
+  is answered by the type: `provenance.NON_VARIABLE_INPUT_TYPES`. All the
+  type sets are owned by `scidb.provenance` (`GLUE_RECORD_TYPES`,
+  `NON_VARIABLE_INPUT_TYPES`, `INTERNAL_RECORD_TYPES`). An AST test refuses
+  the type strings anywhere else.
+- Readers (`invocation_edges_batch`, `invocation_call_ids_batch`,
+  `_build_upstream_closure`, `realized_inputless_schema_ids`) put such a param
+  back among the call's **constants** with its raw value, plus the
+  `constant_glue` detail beside it.
+
+**Single owners:**
+
+| Concept | Owner |
+|---|---|
+| The record a constant's edge binds | `provenance_save.constant_edge_rid` (`constant_bindings`, `record_run`) |
+| A glue record's id, either head | `glue.virtual_rid_map` / `glue.constant_glue_rid` (side by side) |
+| The rows of one glue hop | `provenance_save._add_glue_hop` |
+| A single-valued Parameter as its value | `parameter.single_value` |
+| The skip gate's target for a glued constant | computed once in `_for_each_prepare` (after `declared_spelling`), handed to the hook via `_constant_glue_ref` |
+
+**On the canvas (either head).** `pipeline_variants` reports `glue_chains`
+per argument, and `aggregate_pipeline_variants` carries it as
+`functions[...]["glue_chains"]` into the GUI's `AggregatedData.fn_glue_chains`.
+`graph_builder.build_edges` then leaves out the direct history `source → fn`
+edge wherever the drawn glue chain into that handle equals the recorded one
+(`history_glue_on_canvas`, which resolves the drawn chain with
+`edge_resolver.resolve_glue_chain`, the same owner the run uses). With no
+matching glue drawn, the direct edge stays, and an INFO line names it.
+
+**Until 2026-10-21 the glued value itself was recorded as the constant.** That
+did invalidate on an edit, but it caused two bugs. History named the Parameter
+with the glue's *output* (a dict where the user declared a path), and drew
+`Parameter → fn` straight past the glue. And the skip hook, built *before*
+prepare, hashed the raw value while history held the glued one, so a
+Parameter-fed glue step **never skipped**.
 
 The language rule inverts with it, for the same reason it exists: a glue node
 runs where its input exists, and prepare is Python on **both** run paths. So a
@@ -300,7 +354,7 @@ where scidb applies the chain:
 | Head | Applied | Identity |
 |---|---|---|
 | Variable | The Step-10/11 fusion point (§1) | Virtual glue record (§2) |
-| Parameter / plain constant | `apply_constant_glue`, before the version keys | The glued value in `__constants` |
+| Parameter / plain constant | `apply_constant_glue`, before the version keys | Raw value in `__constants` + `__constant_glue__` hop (§1) |
 | PathInput | Refused (`GlueUnsupportedInputError`) | — |
 
 `edge_resolver.resolve_source_binding` is the single place that decides which,

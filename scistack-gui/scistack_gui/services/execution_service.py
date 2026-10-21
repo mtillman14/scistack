@@ -27,6 +27,7 @@ from itertools import product
 from pathlib import Path
 
 from scidb.foreach_config import RunOptions
+from scidb.provenance import constants_identity_key
 
 from scistack_gui.ids import (
     ROOT_SCOPE,
@@ -551,7 +552,7 @@ def _apply_manual_output_types(
     )
     overridden, seen_constants = [], set()
     for v in targets:
-        key = tuple(sorted((v.get("constants") or {}).items()))
+        key = constants_identity_key(v.get("constants"))
         if key in seen_constants:
             continue
         seen_constants.add(key)
@@ -2319,7 +2320,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         seen_target_keys: set = set()
         for target in targets:
             target_key = (
-                tuple(sorted(target["constants"].items())),
+                constants_identity_key(target["constants"]),
                 target["output_type"],
             )
             if target_key in seen_target_keys:

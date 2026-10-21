@@ -87,6 +87,8 @@
     "src/components/Variants/variantCards.test.ts",
     "src/components/DAG/variableNodeText.ts",
     "src/components/DAG/variableNodeText.test.ts",
+    "src/components/DAG/inputPorts.ts",
+    "src/components/DAG/inputPorts.test.ts",
     "src/components/Sidebar/sourceLocation.ts",
     "src/components/Sidebar/sourceLocation.test.ts",
     "src/components/Sidebar/pathInputAliases.ts",

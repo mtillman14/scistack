@@ -98,6 +98,15 @@ class AggregatedData:
     translate with :meth:`constant_node` / :meth:`constant_args`, never by
     assuming they are equal."""
 
+    fn_glue_chains: dict[FnKey, dict[str, list[str]]] = field(
+        default_factory=lambda: defaultdict(dict)
+    )
+    """``{fkey: {argument: [glue node names]}}`` — the glue chain the recorded
+    runs passed each argument through (either head), as scidb recorded it
+    (``get_aggregated_variants``). :func:`build_edges` uses it so a glued
+    history input is drawn through its glue node rather than straight into
+    the function — see :func:`history_glue_on_canvas`."""
+
     def constant_node(self, fkey: FnKey, argument: str) -> str:
         """The Parameter node a call site's constant *argument* belongs to."""
         return self.fn_parameter_names.get(fkey, {}).get(argument) or argument
@@ -371,6 +380,7 @@ def group_call_sites_by_wiring(
             grouped.fn_parameter_names[gkey].update(
                 agg.fn_parameter_names.get(fkey, {})
             )
+            grouped.fn_glue_chains[gkey].update(agg.fn_glue_chains.get(fkey, {}))
         else:
             # Still reserve the group, so a node whose every call site is
             # historical does not vanish from the canvas between the run that
@@ -911,6 +921,9 @@ def aggregate_from_scidb(
         # {argument: Parameter node} as scidb resolved it — never re-derived
         # here (cleanup-audit B1: the canvas invented param__{argument}).
         agg.fn_parameter_names[fkey] = dict(fn_data.get("parameter_names") or {})
+        agg.fn_glue_chains[fkey] = {
+            arg: list(names) for arg, names in (fn_data.get("glue_chains") or {}).items()
+        }
         for arg, values in fn_data["constants"].items():
             agg.fn_constants[fkey].add(arg)
             node = agg.constant_node(fkey, arg)
@@ -1001,6 +1014,7 @@ def split_call_sites_by_claims(agg: "AggregatedData", claimed_wirings) -> "Aggre
             agg.fn_outputs[sub] = set(subset)
             agg.fn_constants[sub] = set(agg.fn_constants.get(fkey, set()))
             agg.fn_parameter_names[sub] = dict(agg.fn_parameter_names.get(fkey, {}))
+            agg.fn_glue_chains[sub] = dict(agg.fn_glue_chains.get(fkey, {}))
             agg.fn_variants_map[sub] = [
                 row
                 for row in agg.fn_variants_map.get(fkey, [])
@@ -1011,6 +1025,7 @@ def split_call_sites_by_claims(agg: "AggregatedData", claimed_wirings) -> "Aggre
             agg.fn_outputs,
             agg.fn_constants,
             agg.fn_parameter_names,
+            agg.fn_glue_chains,
             agg.fn_variants_map,
         ):
             table.pop(fkey, None)
@@ -1622,6 +1637,77 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
 
 
 
+def input_port_order(signature: list[str], names) -> list[str]:
+    """THE order of a function node's input ports.
+
+    Signature declaration order, then any name outside the signature (stale
+    DB data) alphabetically. What feeds an argument -- a variable, a
+    Parameter, a PathInput or nothing -- never moves it: the node used to
+    draw variable-fed ports first and Parameter-fed ones after, so a
+    Parameter-fed second argument was drawn last
+    (docs/claude/function-node-input-params.md §4).
+    """
+    rank = {name: i for i, name in enumerate(signature)}
+    return sorted(set(names), key=lambda n: (rank.get(n, len(signature)), n))
+
+
+def assign_input_ports(
+    nodes: list[dict], signatures: dict[str, list[str]]
+) -> int:
+    """Write ``data.input_ports`` on every function and glue node.
+
+    The one final pass, after every overlay that can add an input (manual
+    edges onto history nodes, manual nodes), so nothing appended later can
+    land out of order. ``input_ports`` is every argument the node has a port
+    for -- signature, ``input_params`` and ``constant_params`` -- in
+    :func:`input_port_order`; the frontend draws it as is and never
+    re-orders. ``input_params`` is re-ordered with the same rule so the
+    Inputs panel lists arguments the way the node draws them.
+
+    Logs INFO for a node whose ports the old variable-first rendering would
+    have drawn in a different order (the symptom, findable in scidb.log),
+    DEBUG for every node. Returns the number of nodes written.
+    """
+    written = 0
+    for node in nodes:
+        if node.get("type") not in ("functionNode", "glueNode"):
+            continue
+        data = node["data"]
+        signature = signatures.get(data.get("label"), [])
+        params = dict(data.get("input_params") or {})
+        constants = data.get("constant_params") or []
+        variable_first = list(params) + [c for c in constants if c not in params]
+        ports = input_port_order(
+            signature, set(signature) | set(params) | set(constants)
+        )
+        for p in ports:
+            if p not in params and p not in constants:
+                params[p] = ""
+        data["input_params"] = {
+            p: params[p] for p in input_port_order(signature, params)
+        }
+        data["input_ports"] = ports
+        written += 1
+        if variable_first != ports:
+            logger.info(
+                "[graph_builder] %s (%s): input ports in signature order %s "
+                "(variable-fed first would have drawn %s; Parameter-fed %s)",
+                node.get("id"),
+                data.get("label"),
+                ports,
+                variable_first,
+                constants,
+            )
+        else:
+            logger.debug(
+                "[graph_builder] %s (%s): input ports %s",
+                node.get("id"),
+                data.get("label"),
+                ports,
+            )
+    return written
+
+
 def build_function_nodes(
     fn_input_params: dict[FnKey, dict],
     fn_outputs: dict[FnKey, set],
@@ -1681,23 +1767,17 @@ def build_function_nodes(
         # data) so DB-derived handle order matches the manual-node path,
         # which already orders by signature (pipeline.py _fn_params_from_registry).
         sig_order = fn_params_map.get(fn, [])
-        order_key = {name: i for i, name in enumerate(sig_order)}
-        input_params = dict(
-            sorted(
-                fn_input_params[fkey].items(),
-                key=lambda kv: (order_key.get(kv[0], len(sig_order)), kv[0]),
-            )
-        )
-        constant_params = sorted(
-            fn_constants.get(fkey, set()),
-            key=lambda name: (order_key.get(name, len(sig_order)), name),
-        )
+        constant_params = input_port_order(sig_order, fn_constants.get(fkey, set()))
 
-        # Fill in any params the DB didn't capture.
-        known = set(input_params) | set(constant_params)
-        for name in fn_params_map.get(fn, []):
+        # Fill in any params the DB didn't capture, THEN order: appending
+        # after the sort put an unrecorded argument last whatever its
+        # position in the signature.
+        params = dict(fn_input_params[fkey])
+        known = set(params) | set(constant_params)
+        for name in sig_order:
             if name not in known:
-                input_params[name] = ""
+                params[name] = ""
+        input_params = {p: params[p] for p in input_port_order(sig_order, params)}
 
         # MATLAB fns render handles in MATLAB-signature order using param names
         # (e.g. "time", "force_left"). Non-MATLAB fns use the class names directly.
@@ -1783,6 +1863,56 @@ def build_function_nodes(
     return nodes
 
 
+def history_glue_on_canvas(
+    fn_glue_chains: "dict[FnKey, dict[str, list[str]]]",
+    manual_edges: list[dict],
+    manual_nodes: "dict[str, dict] | None",
+) -> tuple[set[tuple[str, str]], list[str]]:
+    """Which glued history inputs the canvas already draws through their glue.
+
+    Returns ``(represented, undrawn)``. ``represented`` holds ``(fn node id,
+    argument)`` for every argument whose recorded glue chain
+    (``fn_glue_chains``, scidb's fact) matches the chain a drawn glue node
+    feeds into that argument's handle — resolved by
+    ``edge_resolver.resolve_glue_chain``, the same owner the run uses, so the
+    picture and the run agree. For those, the DB-derived ``source → fn`` edge
+    would be a second, false path past the glue: history says the value went
+    ``source → glue → fn``, and the drawn chain already says exactly that.
+
+    ``undrawn`` names the glued history inputs with NO matching chain on the
+    canvas (glue node removed, renamed, or never placed); those keep their
+    direct edge, since dropping it would lose the connection entirely.
+
+    ``manual_edges`` must be the DRAWN edges (``edge_view.drawn_list``).
+    """
+    from scistack_gui.domain.edge_resolver import is_glue_node, resolve_glue_chain
+
+    nodes = manual_nodes or {}
+    drawn_chains: dict[tuple[str, str], list[str]] = {}
+    for edge in manual_edges:
+        source = edge.get("source", "")
+        handle = edge.get("targetHandle") or edge.get("target_handle") or ""
+        if not handle.startswith(IN_HANDLE_PREFIX) or not is_glue_node(source, nodes):
+            continue
+        chain, _head = resolve_glue_chain(source, manual_edges, nodes, {})
+        target = strip_placement(edge.get("target", ""))
+        drawn_chains[(target, handle[len(IN_HANDLE_PREFIX) :])] = chain
+
+    represented: set[tuple[str, str]] = set()
+    undrawn: list[str] = []
+    for fkey, chains in fn_glue_chains.items():
+        target = fn_node_id(*fkey)
+        for arg, recorded in sorted(chains.items()):
+            drawn = drawn_chains.get((target, arg))
+            if drawn is not None and list(drawn) == list(recorded):
+                represented.add((target, arg))
+            else:
+                undrawn.append(
+                    f"{fkey[0]}.{arg} via {recorded} (canvas: {drawn or 'no glue'})"
+                )
+    return represented, undrawn
+
+
 def build_edges(
     fn_input_params: dict[FnKey, dict],
     fn_outputs: dict[FnKey, set],
@@ -1793,8 +1923,16 @@ def build_edges(
     matlab_param_to_class: dict[str, dict[str, str]] | None = None,
     hidden_edge_ids: set[str] | None = None,
     fn_parameter_names: "dict[FnKey, dict[str, str]] | None" = None,
+    fn_glue_chains: "dict[FnKey, dict[str, list[str]]] | None" = None,
+    manual_nodes: "dict[str, dict] | None" = None,
 ) -> list[dict]:
     """Build React Flow edges (DB-derived + manual).
+
+    A history input recorded as passing through glue (``fn_glue_chains``)
+    whose glue chain is drawn on the canvas gets NO direct ``source → fn``
+    edge: the drawn ``source → glue → fn`` chain is that history fact
+    (:func:`history_glue_on_canvas`). Before, history drew the source straight
+    into the function beside the glue edge — two paths into one handle.
 
     Edges target/source the per-call-site node IDs (``fn__{fn}__{cid}``)
     so an input variable that feeds two different call sites of the same
@@ -1833,6 +1971,10 @@ def build_edges(
     # answerable from the log when it says WHICH edges came from history.
     hidden_hits: list[str] = []
     superseded_ids: list[str] = []
+    via_glue, glue_undrawn = history_glue_on_canvas(
+        fn_glue_chains or {}, manual_edges, manual_nodes
+    )
+    via_glue_hits: list[str] = []
 
     # Variable → function edges (one per call-site target).
     logger.debug("[graph_builder] building variable → function edges")
@@ -1841,6 +1983,9 @@ def build_edges(
         fn, cid = fkey
         target_id = fn_node_id(fn, cid)
         for param_name, in_type in params.items():
+            if (target_id, param_name) in via_glue:
+                via_glue_hits.append(f"{var_node_id(in_type)}->{fn}.{param_name}")
+                continue
             key = (var_node_id(in_type), target_id)
             if key not in seen_edges:
                 seen_edges.add(key)
@@ -1915,6 +2060,9 @@ def build_edges(
                 if n == const_name
             ] or [const_name]
             for arg in args:
+                if (target_id, arg) in via_glue:
+                    via_glue_hits.append(f"{param_node_id(const_name)}->{fn}.{arg}")
+                    continue
                 key = (param_node_id(const_name), target_id, arg)
                 if key in seen_edges:
                     continue
@@ -2060,6 +2208,22 @@ def build_edges(
         total_hidden,
         superseded,
     )
+    if via_glue_hits:
+        logger.info(
+            "[graph_builder] %d history edge(s) drawn through their glue node "
+            "instead of straight into the function (recorded glue chain matches "
+            "the canvas): %s",
+            len(via_glue_hits),
+            _edge_list_summary(via_glue_hits),
+        )
+    if glue_undrawn:
+        logger.info(
+            "[graph_builder] %d glued history input(s) have no matching glue "
+            "chain on the canvas, so their history edge goes straight into the "
+            "function: %s",
+            len(glue_undrawn),
+            _edge_list_summary(glue_undrawn),
+        )
     if db_edge_count or hidden_hits or superseded_ids:
         logger.info(
             "[graph_builder] build_edges detail: DB-derived (regenerated from "

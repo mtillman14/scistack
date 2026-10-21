@@ -21,6 +21,7 @@
     "src/webviewBuild.ts",
     "src/bundleImportCore.ts",
     "src/startupStatus.ts",
+    "src/debuggerStatus.ts",
     "src/*.test.ts"
   ]
 }

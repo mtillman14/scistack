@@ -858,14 +858,26 @@ class TestHandleIdsMatchTheFrontend:
         """Since 2026-10-01 (step 2) a Parameter feeds the argument's ordinary
         in__ port: one port per argument, whatever feeds it. The node must not
         render the retired param__ port, or a hand-drawn edge lands on a port
-        nothing binds."""
+        nothing binds.
+
+        Since 2026-10-21 there is no separate Parameter branch to check: every
+        port, Parameter-fed or not, comes from inputPorts(data) (backend-owned
+        signature order) through one map that writes in__{argument}."""
         from pathlib import Path
 
         from scistack_gui.ids import IN_HANDLE_PREFIX, PARAM_ID_PREFIX
 
         node = Path(__file__).parent.parent / "frontend/src/components/DAG/FunctionNode.tsx"
         source = node.read_text()
-        assert f"id: `{IN_HANDLE_PREFIX}${{c}}`" in source, (
+        assert "inputPorts(data).map(({ name: param" in source, (
+            "FunctionNode.tsx must draw every input port, Parameter-fed ones "
+            "included, from inputPorts(data)"
+        )
+        assert "constant_params ?? [])" not in source, (
+            "FunctionNode.tsx draws Parameter-fed ports separately again -- "
+            "they would be drawn after every variable-fed port"
+        )
+        assert f"id: `{IN_HANDLE_PREFIX}${{param}}`" in source, (
             "FunctionNode.tsx must render a Parameter's port as in__{argument}, "
             "what build_edges writes and resolve_function_edges binds"
         )

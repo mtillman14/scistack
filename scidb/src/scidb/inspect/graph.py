@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 
 from ..exceptions import NotFoundError
 from ..log import Log
-from ..provenance import parse_path_input_spec
+from ..provenance import constants_identity_key, parse_path_input_spec
 
 if TYPE_CHECKING:
     from ..database import DatabaseManager
@@ -236,11 +236,14 @@ def _node_states(db, fn_names, fn_registry=None) -> dict[str, dict]:
 
 
 def _variable_record_counts(duck) -> dict[str, int]:
+    from ..provenance import INTERNAL_RECORD_TYPES
+
     rows = duck._fetchall(
         "SELECT type, COUNT(*) FROM _record "
-        "WHERE type NOT IN ('__constant__', '__pathinput__', '__glue__') "
+        f"WHERE type NOT IN ({', '.join('?' for _ in INTERNAL_RECORD_TYPES)}) "
         "AND NOT COALESCE(excluded, FALSE) "
-        "GROUP BY type"
+        "GROUP BY type",
+        list(INTERNAL_RECORD_TYPES),
     )
     return {t: int(n) for t, n in rows}
 
@@ -296,9 +299,7 @@ def build_pipeline_graph(
         step["outputs"].setdefault(v["output_type"], set()).add(v["output_num"])
         for param, value in v["constants"].items():
             step["constants"].setdefault(param, set()).add(_value_str(value))
-        step["constant_keys"].add(
-            tuple(sorted((k, _value_str(val)) for k, val in v["constants"].items()))
-        )
+        step["constant_keys"].add(constants_identity_key(v["constants"]))
         step["call_ids"].add(v["call_id"])
         step["record_count"] += int(v["record_count"])
         step["variants"].append(

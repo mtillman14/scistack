@@ -86,7 +86,7 @@ def _reconstruct_glue_chains(glue):
 
     **Python glue** reaches a MATLAB run only for a CONSTANT-fed parameter,
     where ``scidb.glue.apply_constant_glue`` applies it during prepare
-    (Python's, on both run paths) so the glued value lands in ``__constants``.
+    (Python's, on both run paths), recording it as a ``__constant_glue__`` history hop.
     That needs a live callable, and this process has no function registry, so
     the body is loaded from the ``source_file`` the GUI recorded. If it cannot
     be loaded the spec still carries its hash, and the failure is reported
@@ -1173,8 +1173,8 @@ def for_each_save(
         state=state,
         result_tbl=result_tbl,
         # state.inputs, not the cached spec: prepare folded any constant-fed
-        # glue chain into the values, and that folded dict is what
-        # ForEachConfig hashed. Same rule as scidb.for_each's own save call.
+        # glue chain into the values (the version keys keep the RAW value and
+        # the glue's identity). Same rule as scidb.for_each's own save call.
         inputs=state.inputs if state.inputs is not None else inputs,
         outputs=outputs,
         save=bool(save),

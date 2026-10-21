@@ -503,15 +503,10 @@ class ForEachConfig:
         from scifor import ColName, PathInput, PathOutput
 
         from .input_spec import is_loadable
-        from .parameter import Parameter
-
-        def _unwrap_parameter(v):
-            if isinstance(v, Parameter) and len(v.alternatives) == 1:
-                return v.alternatives[0]
-            return v
+        from .parameter import single_value
 
         return {
-            k: _unwrap_parameter(v)
+            k: single_value(v)
             for k, v in self.inputs.items()
             if not is_loadable(v) and not isinstance(v, (ColName, PathOutput, PathInput))
         }

@@ -163,10 +163,10 @@ def append_and_refresh(line: str, target_file: Path) -> "dict | None":
     and refresh the registry. Returns an error dict on failure, or ``None``
     on success. Shared by every append-only entity-creation service.
 
-    Refreshes through :func:`_refresh_registries` rather than calling
-    ``registry.refresh_all`` itself: this used to be a second, Python-only
-    copy of that sequence, which dropped every MATLAB-registered entity from
-    the shared registry on each create."""
+    Refreshes through :func:`_reload_after_write` (whose full fallback is
+    ``registry_reload_service.refresh_registries``): this used to be a
+    second, Python-only reload sequence, which dropped every
+    MATLAB-registered entity from the shared registry on each create."""
     try:
         ensure_scidb_import(target_file)
         history.note_write(target_file)
@@ -893,11 +893,11 @@ def _reload_after_write(path: "Path | None") -> "str | None":
     many project modules, so there is no narrower way to re-read it, and
     being slow is much better than not reloading it at all.
 
-    Note what does *not* happen here: scistack.toml is never re-read. No
-    entity write can change which files are configured. The two things that
-    can -- add/remove path, and creating the entities file itself -- go
-    through ``services.registry_reload_service`` instead, and the Refresh
-    Code button keeps its full reload as the deliberate escape hatch.
+    The narrow paths never re-read scistack.toml: no entity write can change
+    which files are configured. The full fallback does (it is the same
+    ``registry_reload_service.refresh_registries`` the Refresh Code button
+    uses, which re-expands configured directories/globs), as do add/remove
+    path and creating the entities file itself.
     """
     from scistack_gui import matlab_registry, registry
 
@@ -938,22 +938,12 @@ def _refresh_registries() -> "str | None":
     post-write verification found nothing, reported "no longer resolves
     after the edit", and rolled a perfectly good write back.
     """
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.services.registry_reload_service import refresh_registries
 
     try:
-        if registry._config is not None:
-            registry.refresh_all()
-        else:
-            registry.refresh_module()
+        refresh_registries()
     except Exception as e:
         return f"Definition was written but refresh failed: {e}"
-
-    # No-op (with its own warning) when no MATLAB config was ever loaded, so
-    # a pure-Python project pays nothing for this.
-    try:
-        matlab_registry.refresh_all()
-    except Exception as e:
-        return f"Definition was written but the MATLAB refresh failed: {e}"
     return None
 
 

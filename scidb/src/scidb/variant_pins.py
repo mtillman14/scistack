@@ -280,7 +280,7 @@ def _type_parents(duck) -> dict[str, set]:
     invocation count.
     """
     from . import provenance_query as pq
-    from .provenance import CONSTANT_TYPE, GLUE_TYPE, PATHINPUT_TYPE
+    from .provenance import GLUE_TYPE, NON_VARIABLE_INPUT_TYPES
 
     (count,) = duck._fetchone("SELECT COUNT(*) FROM _invocation")
     cached = getattr(duck, _TYPE_GRAPH_ATTR, None)
@@ -295,8 +295,8 @@ def _type_parents(duck) -> dict[str, set]:
         "JOIN _record ri ON ri.record_id = ii.input_record_id "
         "JOIN _invocation_output io ON io.invocation_id = ii.invocation_id "
         "JOIN _record ro ON ro.record_id = io.output_record_id "
-        "WHERE ri.type NOT IN (?, ?)",
-        [GLUE_TYPE, CONSTANT_TYPE, PATHINPUT_TYPE],
+        f"WHERE ri.type NOT IN {pq._types_sql(NON_VARIABLE_INPUT_TYPES)}",
+        [GLUE_TYPE, *NON_VARIABLE_INPUT_TYPES],
     )
     glue_rids = [g for _o, _i, g in rows if g is not None]
     glue_src = pq.glue_source_batch(duck, glue_rids) if glue_rids else {}

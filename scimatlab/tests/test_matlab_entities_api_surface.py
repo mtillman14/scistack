@@ -129,9 +129,46 @@ def _split_top_level(args: str) -> list:
     return parts
 
 
+def _cell_literal_at(text: str, start: int) -> str:
+    """The contents of the ``{...}`` opening at ``text[start]``, quotes and
+    nesting respected."""
+    depth, quoted, end = 0, False, start
+    while end < len(text):
+        ch = text[end]
+        if quoted:
+            quoted = ch != "'"
+        elif ch == "'":
+            quoted = True
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1 : end]
+        end += 1
+    return text[start + 1 :]
+
+
+def _splatted_cell_args(text: str, var: str) -> list:
+    """Every element assigned into cell ``var`` in ``text``, in order.
+
+    ``entities.m`` builds its options conditionally -- ``opts = {'name',
+    name};`` then ``opts = [opts, {'root_folder', ...}];`` -- and passes
+    ``opts{:}``. The call's literal arguments say nothing about the pairs, so
+    the splat is expanded from the cell's assignments. Each assignment holds
+    whole name-value pairs, so pairing still shows up as an odd total.
+    """
+    found = []
+    pattern = rf"\b{re.escape(var)}\s*=\s*(?:\[\s*{re.escape(var)}\s*,\s*)?\{{"
+    for m in re.finditer(pattern, text):
+        found += _split_top_level(_cell_literal_at(text, m.end() - 1))
+    return found
+
+
 def _pathinput_call_args(text: str) -> list:
     """Argument lists of every ``scidb.PathInput(...)`` /
-    ``scifor.PathInput(...)`` construction in ``text``."""
+    ``scifor.PathInput(...)`` construction in ``text``, with a ``X{:}``
+    splat expanded to what was assigned into ``X``."""
     calls = []
     for match in re.finditer(r"\b(?:scidb|scifor)\.PathInput\(", text):
         # Skip the name when it sits inside a single-quoted char literal: an
@@ -148,7 +185,14 @@ def _pathinput_call_args(text: str) -> list:
             elif text[end] == ")":
                 depth -= 1
             end += 1
-        calls.append(_split_top_level(text[match.end() : end - 1]))
+        args = []
+        for arg in _split_top_level(text[match.end() : end - 1]):
+            splat = re.fullmatch(r"(\w+)\{:\}", arg)
+            if splat and splat.group(1) != "varargin":
+                args += _splatted_cell_args(text, splat.group(1))
+            else:
+                args.append(arg)
+        calls.append(args)
     return calls
 
 

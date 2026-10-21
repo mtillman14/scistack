@@ -27,6 +27,7 @@ import logging
 from datetime import datetime, timezone
 
 from scidb.foreach_config import RunOptions
+from scidb.provenance import constants_identity_key
 
 logger = logging.getLogger(__name__)
 
@@ -530,7 +531,7 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
             )
             seen_keys: set = set()
             for target in targets:
-                key = (tuple(sorted(target["constants"].items())), target["output_type"])
+                key = (constants_identity_key(target["constants"]), target["output_type"])
                 if key in seen_keys:
                     continue
                 seen_keys.add(key)

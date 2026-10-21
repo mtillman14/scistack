@@ -44,6 +44,10 @@ __all__ = [
     "strip_path_input_specs",
     "GLUE_INPUT_PARAM",
     "GLUE_TYPE",
+    "CONSTANT_GLUE_TYPE",
+    "GLUE_RECORD_TYPES",
+    "NON_VARIABLE_INPUT_TYPES",
+    "INTERNAL_RECORD_TYPES",
     "PATHINPUT_TYPE",
     "PATHINPUT_VALUE_TYPE",
     "SAVE_FUNCTION_NAME",
@@ -104,6 +108,25 @@ SAVE_FUNCTION_NAME = "__save__"
 # because they either filter on a concrete variable type or join ``_record_save``
 # (which a virtual record never has).
 GLUE_TYPE = "__glue__"
+
+# Sentinel ``type`` for the virtual record of a **Parameter-fed** glue chain —
+# the constant-head twin of :data:`GLUE_TYPE` (docs/claude/free-code-glue-nodes.md
+# §1): ``constant(raw) -> glue -> __constant_glue__ -> consumer``. Its own type,
+# so "is this input a variable?" is decided ONCE, when the record is written,
+# instead of by a source lookup in every reader. No schema location (a constant
+# has none), no save event, no data.
+CONSTANT_GLUE_TYPE = "__constant_glue__"
+
+# The type sets readers test against — THE owners; never spell the members
+# inline (in SQL or Python), or one reader drifts when a type is added.
+#: Every virtual glue record, either head.
+GLUE_RECORD_TYPES = (GLUE_TYPE, CONSTANT_GLUE_TYPE)
+#: Input records that are NOT a variable input: a constant, a PathInput spec,
+#: or a Parameter-fed glue record (a constant, reshaped). A variable-head glue
+#: record IS a variable input (it stands in for the reshaped variable).
+NON_VARIABLE_INPUT_TYPES = (CONSTANT_TYPE, PATHINPUT_TYPE, CONSTANT_GLUE_TYPE)
+#: Record types that are provenance plumbing, never user data.
+INTERNAL_RECORD_TYPES = (CONSTANT_TYPE, PATHINPUT_TYPE, GLUE_TYPE, CONSTANT_GLUE_TYPE)
 
 # ``param_name`` on a glue invocation's single input edge. Fixed rather than
 # taken from the glue's own signature: parameter names never bind anything

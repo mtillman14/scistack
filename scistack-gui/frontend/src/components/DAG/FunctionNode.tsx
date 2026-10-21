@@ -20,6 +20,7 @@ import { useVariantSelection } from '../../context/VariantSelectionContext'
 import type { VariantSelectionValue } from '../../context/VariantSelectionContext'
 import type { Variant } from './VariableNode'
 import { movePinsAfterRun, usePinGate } from '../Variants/RunPinGate'
+import { inputPorts } from './inputPorts'
 
 interface FnVariantRow {
   constants: Record<string, unknown>
@@ -33,6 +34,8 @@ interface FnVariantRow {
 interface FunctionNodeData {
   label: string
   input_params?: Record<string, string>  // param_name → type_name
+  // Every input port, in draw order — owned by the backend (inputPorts.ts).
+  input_ports?: string[]
   output_types?: string[]
   constant_params?: string[]
   variants?: FnVariantRow[]
@@ -341,33 +344,25 @@ function PipelineFunctionNode({ id, data }: Props) {
 
   const inputParams = data.input_params ?? {}
   const outTypes = data.output_types ?? []
-  const constParams = data.constant_params ?? []
-  // All left-side handles: variable inputs first (by param name), then
-  // parameters.
+  // All left-side handles, in the backend's signature order (inputPorts).
   //
   // Every input port is `in__{argument}`, whatever feeds it (backend
   // ids.in_handle, D-2026-10-01-1 step 2). A Parameter-fed argument used to be
   // `param__{argument}`, so one argument had two port names depending on
   // whether the node had run with the Parameter yet, and an edge drawn onto
-  // the one survived deleting the other. A name already in inputParams is
-  // skipped: two handles with one id make React Flow attach edges to only one.
+  // the one survived deleting the other.
   const columnSelections = data.columnSelections ?? {}
-  const leftHandles = [
-    ...Object.entries(inputParams).map(([param, type]) => {
-      const cols = describeColumns(columnSelections[param])
-      const base = type ? `${param}: ${type}` : param
-      return {
-        id: `in__${param}`,
-        label: param,
-        // The selection is on the handle's own tooltip as well as on the chip
-        // below, so hovering the wire tells you what it actually carries.
-        title: cols ? `${base} ⟨${cols}⟩` : base,
-      }
-    }),
-    ...constParams
-      .filter(c => !(c in inputParams))
-      .map(c => ({ id: `in__${c}`, label: c, title: c })),
-  ]
+  const leftHandles = inputPorts(data).map(({ name: param, type }) => {
+    const cols = describeColumns(columnSelections[param])
+    const base = type ? `${param}: ${type}` : param
+    return {
+      id: `in__${param}`,
+      label: param,
+      // The selection is on the handle's own tooltip as well as on the chip
+      // below, so hovering the wire tells you what it actually carries.
+      title: cols ? `${base} ⟨${cols}⟩` : base,
+    }
+  })
   // Only parameters with a real selection get a chip — an unrestricted input
   // is the default and saying so on every node would bury the ones that are
   // restricted.
@@ -671,15 +666,10 @@ function VariantFunctionNode({
   const outputs = data.output_types ?? []
   // Same handle set as the pipeline node — derived from `data` alone, so the
   // graph keeps the shape the user knows without any of the canvas's state.
-  const leftHandles = [
-    ...Object.entries(data.input_params ?? {}).map(([param, type]) => ({
-      id: `in__${param}`,
-      title: type ? `${param}: ${type}` : param,
-    })),
-    ...(data.constant_params ?? [])
-      .filter(c => !(c in (data.input_params ?? {})))
-      .map(c => ({ id: `in__${c}`, title: c })),
-  ]
+  const leftHandles = inputPorts(data).map(({ name: param, type }) => ({
+    id: `in__${param}`,
+    title: type ? `${param}: ${type}` : param,
+  }))
   const handleStyle = (
     index: number,
     total: number,

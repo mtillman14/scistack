@@ -13,8 +13,9 @@ Covers:
 - non-table (scalar) values skip the row contract
 - fusion through ``for_each``: both loaded-column naming modes, Merge inputs,
   PathInput refusal, and the per-schema-key opt-in
-- glue on a CONSTANT-fed parameter (the Parameter case): applied in prepare so
-  the glued value is what lands in ``__constants``, the inverted language
+- glue on a CONSTANT-fed parameter (the Parameter case): applied in prepare,
+  recorded as a ``__constant_glue__`` history hop with the RAW value in
+  ``__constants`` (test_constant_glue_provenance.py), the inverted language
   rule, and the EachOf recursion that used to drop glue entirely
 """
 
@@ -678,11 +679,10 @@ def glue_pick_high(config):
 
 class TestConstantGlue:
     """A ``Parameter``-fed parameter is glued in prepare, before the version
-    keys are built, so the GLUED value is what lands in ``__constants``.
-
-    That placement is the whole point: it makes an edited glue body invalidate
-    downstream results through ``skip_computed``'s ordinary binding compare,
-    with no virtual glue record — see ``apply_constant_glue``.
+    keys are built, so the glued value's hash can enter identity: the RAW
+    value stays in ``__constants`` and the consumer binds a virtual
+    ``__constant_glue__`` record — see ``apply_constant_glue`` and
+    test_constant_glue_provenance.py for the history side.
     """
 
     def test_a_single_valued_parameter_is_glued(self, db):
@@ -736,12 +736,10 @@ class TestConstantGlue:
         assert sorted(float(r) for r in results["Analyzed"]) == [6.0, 6.0, 12.0, 12.0]
 
     def test_editing_a_constant_glue_body_recomputes(self, db):
-        """The reason for the placement. ``__constants`` holds the POST-glue
-        value, so an edited body changes a binding ``skip_computed`` compares
-        and the consumer recomputes — with no virtual glue record involved.
-
-        If the raw Parameter value were recorded instead, the edit would leave
-        every downstream record green and stale (§2)."""
+        """An edited body changes the chain hash inside the virtual glue
+        record's id — a binding ``skip_computed`` compares — so the consumer
+        recomputes. If identity held only the raw Parameter value, the edit
+        would leave every downstream record green and stale (§2)."""
 
         def glue_triple_factor(factor):
             return factor * 3

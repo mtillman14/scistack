@@ -852,6 +852,12 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
             # (cleanup-audit F38) — what `provenance.call_site_wiring_ids`
             # groups steps by.
             "path_input_names": {},
+            # {argument: [glue node names]} the recorded runs passed the
+            # argument through — either head (a variable or a Parameter).
+            # Glue names are part of the call_id, so every variant of one
+            # call site agrees. The canvas uses it to draw a glued history
+            # input through its glue node, not straight into the function.
+            "glue_chains": {},
             "variant_count": 0,
             "variants": [],
         }
@@ -899,6 +905,9 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
             else:
                 all_var_types.add(type_val)
                 functions[fkey]["input_params"][param_name] = type_val
+
+        for param_name, names in (v.get("glue_chains") or {}).items():
+            functions[fkey]["glue_chains"][param_name] = list(names)
 
         # Track outputs
         if out not in functions[fkey]["outputs"]:
@@ -977,6 +986,7 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
             "constants": {k: list(v) for k, v in data["constants"].items()},
             "parameter_names": dict(data["parameter_names"]),
             "path_input_names": dict(data["path_input_names"]),
+            "glue_chains": {p: list(n) for p, n in data["glue_chains"].items()},
             "variant_count": data["variant_count"],
             "variants": data["variants"],
         }
@@ -4712,6 +4722,7 @@ class DatabaseManager:
                             "outputs": [var_type1, var_type2],
                             "constants": {param: [val1, val2]},
                             "parameter_names": {param: parameter node name},
+                            "glue_chains": {param: [glue node name, ...]},
                             "variant_count": int,
                             "variants": [
                                 {

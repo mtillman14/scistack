@@ -25,10 +25,12 @@ if TYPE_CHECKING:
     from ..database import DatabaseManager
 
 # Internal (non-variable) entity types in _record, excluded from user-facing
-# record counts everywhere. ``__glue__`` is a virtual provenance node for a
-# glue chain's never-saved output — it has no data, no _record_save row and
-# nothing loadable, so counting it would inflate every record total.
-_INTERNAL_RECORD_TYPES = ("__constant__", "__pathinput__", "__glue__")
+# record counts everywhere. The glue types are virtual provenance nodes for a
+# glue chain's never-saved output — no data, no _record_save row and nothing
+# loadable, so counting them would inflate every record total. The set is
+# owned by scidb.provenance; never spell its members here.
+from ..provenance import INTERNAL_RECORD_TYPES as _INTERNAL_RECORD_TYPES
+
 _NOT_INTERNAL_SQL = (
     "type NOT IN (" + ", ".join(f"'{t}'" for t in _INTERNAL_RECORD_TYPES) + ")"
 )

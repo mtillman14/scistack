@@ -48,6 +48,9 @@ dependencies = [
     # whatever scistackplot[mpl] pulls in.
     "matplotlib>=3.8",
     "duckdb>=0.9.0",
+    # server.py starts a debugpy listener when scistack.debug is on; without
+    # it every Run's debugger attach fails with "connection refused".
+    "debugpy>=1.6",
     # config.py falls back to tomli when tomllib is unavailable (<3.11).
     "tomli>=2.0 ; python_version < '3.11'",
 ]

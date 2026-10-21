@@ -1074,7 +1074,7 @@ def classify_matlab_file(
     """Classify a single .m file, reusing the last result while the file is
     unchanged.
 
-    Classification is the hot path of every ``refresh_all()``: it runs once
+    Classification is the hot path of every ``registry_reload_service.refresh_registries()``: it runs once
     per configured .m file, and the uncached body below opens the file up to
     three times (``parse_matlab_variable``, ``parse_matlab_function``, then
     ``is_matlab_entities_script``). On a project whose libraries live on an

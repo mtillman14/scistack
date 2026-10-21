@@ -1173,6 +1173,8 @@ def _build_graph(
         matlab_param_to_class=matlab_param_to_class,
         hidden_edge_ids=hidden_edge_ids,
         fn_parameter_names=agg.fn_parameter_names,
+        fn_glue_chains=agg.fn_glue_chains,
+        manual_nodes=manual_nodes,
     )
     logger.info("[pipeline] built %d edges", len(edges))
 
@@ -1639,6 +1641,18 @@ def _build_graph(
                 marked,
             )
     nodes += build_pipeline_nodes(db, pipeline_id)
+
+    # --- Input port order ---
+    # Last, so every overlay that can add an input (manual edges onto history
+    # nodes, manual and glue nodes) is already in. gb.input_port_order owns
+    # the order; the frontend draws data.input_ports as is.
+    signatures = dict(fn_params_map)
+    for n in nodes:
+        label = n["data"].get("label")
+        if n["type"] in ("functionNode", "glueNode") and label not in signatures:
+            signatures[label] = _fn_params_from_registry(label)
+    ported = gb.assign_input_ports(nodes, signatures)
+    logger.info("[pipeline] assigned input port order on %d node(s)", ported)
 
     # --- Endpoint classification (plot_/stat_ prefixes) ---
     # Detection lives in scidb (roles.endpoint_kind — same source of truth as

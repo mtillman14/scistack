@@ -295,6 +295,43 @@ def _constant_bindings(meta: dict) -> dict[str, Any]:
     return _parse_json_dict(meta.get("__constants"))
 
 
+def _constant_glue(meta: dict) -> dict[str, dict]:
+    """Parameter-fed glue identities from ``__constant_glue`` →
+    ``{param: {"chain": chain_hash, "glued": glued_hash}}``."""
+    from .glue import CONSTANT_GLUE_KEY
+
+    return _parse_json_dict(meta.get(CONSTANT_GLUE_KEY))
+
+
+def constant_edge_rid(raw_record_id: str, entry: "dict | None") -> str:
+    """The record a constant input's edge binds — THE one rule.
+
+    A plain constant binds its own constant record. A Parameter-fed glued
+    constant (``entry`` = its :data:`scidb.glue.CONSTANT_GLUE_KEY` entry)
+    binds the virtual ``__constant_glue__`` record
+    (:func:`scidb.glue.constant_glue_rid`), and the raw constant feeds that
+    record's glue hop instead — so history keeps the Parameter's declared value
+    and still invalidates on an edited glue body or glued value.
+
+    Every site that spells a constant's edge goes through here:
+    :func:`constant_bindings` (save identity and the skip gate's targets) and
+    :func:`record_run` (the edges it writes).
+    """
+    from .glue import constant_glue_rid
+
+    return constant_glue_rid(raw_record_id, entry) if entry else raw_record_id
+
+
+def constant_bindings(constants: dict, constant_glue: dict) -> list[Binding]:
+    """The input edges a call's constants contribute (``constants`` holds RAW
+    values; ``constant_glue`` is the call's ``__constant_glue`` value)."""
+    return [
+        Binding(param, constant_edge_rid(compute_constant_record_id(value),
+                                         constant_glue.get(param)), None)
+        for param, value in constants.items()
+    ]
+
+
 def _pathinput_specs(meta: dict) -> dict[str, str]:
     """PathInput identity keys from ``__inputs`` → ``{param_name: key_json_str}``.
 
@@ -425,8 +462,7 @@ def invocation_identity(meta: dict, bindings) -> str:
     as_table = _normalize_as_table(meta, loadable_params)
     distribute = bool(meta.get("__distribute", False))
     edges: list[Binding] = list(var_b)
-    for param, value in const_b.items():
-        edges.append(Binding(param, compute_constant_record_id(value), None))
+    edges.extend(constant_bindings(const_b, _constant_glue(meta)))
     edges.extend(_pathinput_bindings(meta))
     return compute_invocation_id(
         meta.get("__fn_hash") or "",
@@ -548,6 +584,7 @@ def record_run(
 
     import time
 
+    from .glue import CONSTANT_GLUE_KEY
     from .intent import parse_selector
     from .log import Log
 
@@ -580,6 +617,8 @@ def record_run(
     run_output_edges: dict[tuple[str, int], str] = {}
     seeded_invs: set[str] = set()  # inv_ids whose committed edges are loaded
     run_inv_ids: set[str] = set()
+    # param -> invocations whose Parameter-fed glue hop this run wrote
+    constant_glue_hops: dict[str, int] = {}
 
     # Invocation-level memo. The whole assembly above (binding set, constant
     # hashing, invocation_id, invocation/input/constant rows) depends only on a
@@ -608,6 +647,7 @@ def record_run(
             tuple(sorted(tuple(b) for b in g.bindings)),
             repr(meta.get("__inputs")),
             repr(meta.get("__constants")),
+            repr(meta.get(CONSTANT_GLUE_KEY)),
             repr(meta.get("__as_table")),
             bool(meta.get("__distribute", False)),
             tuple(_across_variants(meta)),
@@ -630,14 +670,22 @@ def record_run(
 
             # Assemble the full binding set (variables + constants) and the
             # constant entity/value rows it implies; constants carry no selector.
+            # A Parameter-fed glued constant binds its virtual glue record,
+            # and its raw constant feeds the glue hop (glued_hops below).
             bindings: list[Binding] = list(var_b)
+            const_glue = _constant_glue(meta)
+            glued_hops: dict[str, tuple[str, str, dict]] = {}  # param -> (crid, vrid, entry)
             for param, value in const_b.items():
                 # canonical_hash drives the record id too, so hash once and derive
                 # the id from it instead of calling compute_constant_record_id
                 # (which would re-hash the value).
                 ch = canonical_hash(value)
                 crid = constant_record_id_from_hash(ch)
-                bindings.append(Binding(param, crid, None))
+                entry = const_glue.get(param)
+                rid = constant_edge_rid(crid, entry)
+                bindings.append(Binding(param, rid, None))
+                if entry:
+                    glued_hops[param] = (crid, rid, entry)
                 constant_rows[crid] = (
                     crid,
                     constant_value_repr(value),
@@ -711,7 +759,26 @@ def record_run(
                 input_edges[(inv_id, b.param, b.rid)] = b.selector
             for param in const_b:
                 declared = parameter_names.get(param)
-                if declared:
+                if param in glued_hops:
+                    # The Parameter's name goes on the edge that carries its
+                    # RAW value — the glue hop's input — never on the
+                    # consumer's edge, which carries the glue's output.
+                    constant_glue_hops[param] = constant_glue_hops.get(param, 0) + 1
+                    _write_constant_glue_hop(
+                        param,
+                        *glued_hops[param],
+                        names=_parse_json_dict(meta.get("__glue")).get(param) or [],
+                        declared=declared,
+                        fn_name=fn_name,
+                        created_at=created_at,
+                        entity_rows=entity_rows,
+                        invocation_rows=invocation_rows,
+                        input_edges=input_edges,
+                        declared_edges=declared_edges,
+                        run_output_edges=run_output_edges,
+                        run_inv_ids=run_inv_ids,
+                    )
+                elif declared:
                     crid = next(b.rid for b in bindings if b.param == param)
                     declared_edges[(inv_id, param, crid)] = declared
 
@@ -871,6 +938,16 @@ def record_run(
             f"PathInput edge(s) named by declared PathInput; argument->declared "
             f"{renamed or 'all same-named'}"
         )
+    # The Parameter-fed glue hops (docs/claude/free-code-glue-nodes.md §1):
+    # INFO, because it is the line that says why the Parameter keeps its
+    # declared value and the canvas draws Parameter -> glue -> function.
+    if constant_glue_hops:
+        Log.info(
+            f"[provenance] fn={function_name}: Parameter-fed glue recorded as a "
+            f"history hop for {dict(sorted(constant_glue_hops.items()))} "
+            f"invocation(s) per param — the raw value names the Parameter, the "
+            f"function's edge binds the virtual glue record"
+        )
     _log_moved_path_inputs(duck, pathinput_spec_rows)
     _t_commit = time.perf_counter()
     _commit_graph(
@@ -910,6 +987,115 @@ def record_run(
     return run_id
 
 
+def _add_glue_hop(
+    *,
+    record_type: str,
+    virtual_rid: str,
+    schema_id: Any,
+    inv_id: str,
+    display: str,
+    chain_hash: str,
+    source_rid: str,
+    created_at: str,
+    entity_rows: dict,
+    invocation_rows: dict,
+    input_edges: dict,
+    run_output_edges: dict,
+    run_inv_ids: set,
+) -> None:
+    """The rows of ONE glue hop — ``source --(inv, 'input')--> inv -->
+    virtual`` — THE one writer of their shapes, for both heads
+    (:func:`_write_glue_nodes` for a variable, :func:`_write_constant_glue_hop`
+    for a Parameter), so a column change cannot reach one and miss the other.
+
+    * one ``_record`` row of ``record_type`` (``GLUE_TYPE`` /
+      ``CONSTANT_GLUE_TYPE``) — no ``_record_save`` row and no data, so never
+      loadable, never "latest", never in ``scidb report``;
+    * one ``_invocation`` named after the chain (``glue_a > glue_b``) with the
+      chain hash as its ``function_hash``, full width (a glue hop has no
+      level, so NULL);
+    * its input edge (source → glue) and output edge (glue → virtual).
+    """
+    from .provenance import GLUE_INPUT_PARAM
+
+    entity_rows.setdefault(
+        virtual_rid,
+        (virtual_rid, created_at, record_type, schema_id, None, None, False),
+    )
+    invocation_rows.setdefault(
+        inv_id, (inv_id, display, chain_hash, None, False, None, None, None)
+    )
+    input_edges.setdefault((inv_id, GLUE_INPUT_PARAM, source_rid), None)
+    run_output_edges.setdefault((inv_id, 0), virtual_rid)
+    run_inv_ids.add(inv_id)
+
+
+def _write_constant_glue_hop(
+    param: str,
+    raw_rid: str,
+    virtual_rid: str,
+    entry: dict,
+    *,
+    names: list,
+    declared: "str | None",
+    fn_name: str,
+    created_at: str,
+    entity_rows: dict,
+    invocation_rows: dict,
+    input_edges: dict,
+    declared_edges: dict,
+    run_output_edges: dict,
+    run_inv_ids: set,
+) -> str:
+    """Add the history hop of one Parameter-fed glue chain, returning the glue
+    invocation's id:
+
+        constant(raw) --(glue_inv, 'input')--> glue_inv --> __constant_glue__
+
+    The constant-head twin of :func:`_write_glue_nodes` (same row writer,
+    :func:`_add_glue_hop`). The virtual record has no schema location (a
+    constant has none). The declared Parameter name is stamped on the hop's
+    INPUT edge — the one carrying the raw value — so history names the
+    Parameter with what it was declared as.
+    """
+    from .log import Log
+    from .provenance import (
+        CONSTANT_GLUE_TYPE,
+        GLUE_INPUT_PARAM,
+        compute_glue_invocation_id,
+    )
+    from .provenance_query import GLUE_NAME_SEPARATOR
+
+    display = GLUE_NAME_SEPARATOR.join(str(n) for n in names) or "glue"
+    glue_inv = compute_glue_invocation_id(entry["chain"], raw_rid, entry["glued"])
+    _add_glue_hop(
+        record_type=CONSTANT_GLUE_TYPE,
+        virtual_rid=virtual_rid,
+        schema_id=None,
+        inv_id=glue_inv,
+        display=display,
+        chain_hash=entry["chain"],
+        source_rid=raw_rid,
+        created_at=created_at,
+        entity_rows=entity_rows,
+        invocation_rows=invocation_rows,
+        input_edges=input_edges,
+        run_output_edges=run_output_edges,
+        run_inv_ids=run_inv_ids,
+    )
+    if declared:
+        declared_edges[(glue_inv, GLUE_INPUT_PARAM, raw_rid)] = declared
+    # DEBUG per hop (one per invocation — thousands on a big run); record_run
+    # logs the INFO summary.
+    Log.debug(
+        f"[provenance] fn={fn_name}: param '{param}' <- glue [{display}] <- "
+        f"{'Parameter ' + repr(declared) if declared else 'constant'} "
+        f"(raw {raw_rid[:12]}, virtual {virtual_rid[:12]}, glued value "
+        f"{entry['glued']})"
+    )
+    return glue_inv
+
+
 def _write_glue_nodes(
     duck,
     created_at: str,
@@ -924,14 +1110,9 @@ def _write_glue_nodes(
     """Add the virtual glue records + their invocations and edges.
 
     **The data is not saved, but the provenance node is.** For each input
-    record flowing through a glue chain this writes:
-
-    * one ``_record`` row, ``type = '__glue__'``, same ``schema_id`` as the
-      record it reshapes — and *no* ``_record_save`` row and no data-table row,
-      so it is never loadable, never "latest", and never in ``scidb report``;
-    * one ``_invocation`` whose ``function_name`` is the chain (``glue_a >
-      glue_b``) and whose ``function_hash`` is the chain hash;
-    * its input edge (real record → glue) and output edge (glue → virtual).
+    record flowing through a glue chain this writes one hop
+    (:func:`_add_glue_hop`): a ``__glue__`` record at the same ``schema_id``
+    as the record it reshapes, the glue invocation, and its two edges.
 
     The consuming function's edges already point at the virtual rid, so
     ``invocation_id``, ``skip_computed`` staleness, ``upstream_provenance``'s
@@ -945,11 +1126,7 @@ def _write_glue_nodes(
         return
 
     from .log import Log
-    from .provenance import (
-        GLUE_INPUT_PARAM,
-        GLUE_TYPE,
-        compute_glue_invocation_id,
-    )
+    from .provenance import GLUE_TYPE, compute_glue_invocation_id
     from .provenance_query import GLUE_NAME_SEPARATOR
 
     # schema_id of each source record — the virtual record sits at the same
@@ -975,27 +1152,21 @@ def _write_glue_nodes(
             or "glue"
         )
         for src_rid, virt_rid in sorted(mapping.items()):
-            inv_id = compute_glue_invocation_id(chain_h, src_rid, set_sig)
-            entity_rows.setdefault(
-                virt_rid,
-                (
-                    virt_rid,
-                    created_at,
-                    GLUE_TYPE,
-                    schema_by_rid.get(src_rid),
-                    None,
-                    None,
-                    False,
-                ),
+            _add_glue_hop(
+                record_type=GLUE_TYPE,
+                virtual_rid=virt_rid,
+                schema_id=schema_by_rid.get(src_rid),
+                inv_id=compute_glue_invocation_id(chain_h, src_rid, set_sig),
+                display=display,
+                chain_hash=chain_h,
+                source_rid=src_rid,
+                created_at=created_at,
+                entity_rows=entity_rows,
+                invocation_rows=invocation_rows,
+                input_edges=input_edges,
+                run_output_edges=run_output_edges,
+                run_inv_ids=run_inv_ids,
             )
-            # Full width: a batch of only glue rows must still fill every
-            # `_invocation` column (a glue hop has no level, so NULL).
-            invocation_rows.setdefault(
-                inv_id, (inv_id, display, chain_h, None, False, None, None, None)
-            )
-            input_edges.setdefault((inv_id, GLUE_INPUT_PARAM, src_rid), None)
-            run_output_edges.setdefault((inv_id, 0), virt_rid)
-            run_inv_ids.add(inv_id)
             n_records += 1
 
     Log.debug(

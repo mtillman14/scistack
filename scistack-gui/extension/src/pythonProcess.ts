@@ -22,6 +22,7 @@ import * as readline from 'readline';
 import * as vscode from 'vscode';
 import { LogSink } from './sessionCore';
 import { PendingRequests } from './rpcPending';
+import { DebuggerStatus } from './debuggerStatus';
 
 type NotificationHandler = (method: string, params: Record<string, unknown>) => void;
 
@@ -32,6 +33,8 @@ interface ReadyParams {
   db_loaded?: boolean;
   /** Installed scistack-gui version ("0.0.0" = never installed); absent from servers older than the handshake. */
   version?: string | null;
+  /** Whether the debugpy listener started; absent from older servers. */
+  debugger?: DebuggerStatus;
 }
 
 export interface PythonProcessOptions {
@@ -74,6 +77,12 @@ export class PythonProcess {
    * that swaps in a different interpreter is judged by what is running now.
    */
   serverVersion: string | null | undefined;
+  /**
+   * The debugger status from this server's `ready` frame — undefined until
+   * ready, or from a server older than the field. Per process, like
+   * serverVersion: a restart reports afresh.
+   */
+  debuggerStatus: DebuggerStatus | undefined;
 
   constructor(
     readonly pythonPath: string,
@@ -346,6 +355,14 @@ export class PythonProcess {
         this.readyTimer = null;
       }
       this.serverVersion = (params as unknown as ReadyParams).version ?? null;
+      this.debuggerStatus = (params as unknown as ReadyParams).debugger;
+      if (this.debuggerStatus) {
+        const d = this.debuggerStatus;
+        this.outputChannel.appendLine(
+          `debugger: ${d.state}${d.port !== null ? ` on 127.0.0.1:${d.port}` : ''}` +
+          `${d.error ? ` — ${d.error}` : ''}`,
+        );
+      }
       this.readyResolve(params as unknown as ReadyParams);
       this.readyResolve = null;
       this.readyReject = null;

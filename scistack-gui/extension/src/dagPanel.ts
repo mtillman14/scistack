@@ -17,6 +17,7 @@ import { LogSink, sessionSlug } from './sessionCore';
 import { runInMatlabTerminal, isMatlabExtensionAvailable, isMatlabTerminalOpen } from './matlabTerminal';
 import { MatlabRunTracker } from './matlabRunTracker';
 import { matlabHolder, needsMatlabConnectionPrompt } from './matlabConnectionGate';
+import { decideAttach } from './debuggerStatus';
 
 // One debug session per database: `findExistingDebugSession` matches by
 // name, so a shared name would let one canvas adopt the other's debugger.
@@ -27,6 +28,8 @@ export class DagPanel {
   private disposables: vscode.Disposable[] = [];
   private disposeCallbacks: (() => void)[] = [];
   private debugSession: vscode.DebugSession | undefined;
+  /** The "debugger unavailable" popup is shown once per panel, not per Run. */
+  private debugUnavailableWarned = false;
   /**
    * Which MATLAB runs currently own the DuckDB file lock. Shared with this
    * session's DB file-watcher, which must not refresh the DAG while MATLAB
@@ -783,9 +786,24 @@ export class DagPanel {
       return;
     }
 
-    // This session's own port, not the configured base: two servers cannot
-    // share one debugpy listener, so SessionManager gives each its own.
-    const port = this.session.debugPort ?? cfg.get<number>('debugPort', 5678);
+    // Attach only to a listener the server says is running; the port is the
+    // one it reports (this session's own — two servers cannot share one).
+    const decision = decideAttach(
+      true,
+      this.session.python.debuggerStatus,
+      this.session.debugPort ?? cfg.get<number>('debugPort', 5678),
+    );
+    if (!decision.attach) {
+      if (decision.message) {
+        this.outputChannel.appendLine(decision.message);
+        if (!this.debugUnavailableWarned) {
+          this.debugUnavailableWarned = true;
+          vscode.window.showWarningMessage(decision.message);
+        }
+      }
+      return;
+    }
+    const port = decision.port;
     const folder = this.session.projectRoot
       ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.session.projectRoot))
       : vscode.workspace.workspaceFolders?.[0];

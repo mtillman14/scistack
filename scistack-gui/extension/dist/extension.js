@@ -616,6 +616,28 @@ function matlabHolder(sessions2, selfId) {
   return sessions2.find((s) => s.id !== selfId && s.matlabBusy)?.label;
 }
 
+// src/debuggerStatus.ts
+function decideAttach(debugEnabled, status, allocatedPort) {
+  if (!debugEnabled)
+    return { attach: false };
+  if (!status) {
+    return allocatedPort === void 0 ? { attach: false } : { attach: true, port: allocatedPort };
+  }
+  if (status.state === "listening" && status.port !== null) {
+    return { attach: true, port: status.port };
+  }
+  if (status.state === "failed") {
+    return {
+      attach: false,
+      message: `SciStack: scistack.debug is on, but the Python server could not start its debugger (${status.error ?? "unknown error"}), so Run will not stop at breakpoints. Install debugpy into the server's interpreter (pip install debugpy) and restart, or turn scistack.debug off.`
+    };
+  }
+  return {
+    attach: false,
+    message: "SciStack: scistack.debug was turned on after this server started; restart the server to enable breakpoints."
+  };
+}
+
 // src/dagPanel.ts
 var DEBUG_SESSION_BASE = "Attach to scistack-gui server";
 var DagPanel = class {
@@ -625,6 +647,8 @@ var DagPanel = class {
     this.outputChannel = outputChannel2;
     this.disposables = [];
     this.disposeCallbacks = [];
+    /** The "debugger unavailable" popup is shown once per panel, not per Run. */
+    this.debugUnavailableWarned = false;
     /**
      * Which MATLAB runs currently own the DuckDB file lock. Shared with this
      * session's DB file-watcher, which must not refresh the DAG while MATLAB
@@ -1267,7 +1291,22 @@ var DagPanel = class {
       this.debugSession = existing;
       return;
     }
-    const port = this.session.debugPort ?? cfg.get("debugPort", 5678);
+    const decision = decideAttach(
+      true,
+      this.session.python.debuggerStatus,
+      this.session.debugPort ?? cfg.get("debugPort", 5678)
+    );
+    if (!decision.attach) {
+      if (decision.message) {
+        this.outputChannel.appendLine(decision.message);
+        if (!this.debugUnavailableWarned) {
+          this.debugUnavailableWarned = true;
+          vscode2.window.showWarningMessage(decision.message);
+        }
+      }
+      return;
+    }
+    const port = decision.port;
     const folder = this.session.projectRoot ? vscode2.workspace.getWorkspaceFolder(vscode2.Uri.file(this.session.projectRoot)) : vscode2.workspace.workspaceFolders?.[0];
     const started = await vscode2.debug.startDebugging(folder, {
       name: this.debugSessionName(),
@@ -1721,6 +1760,13 @@ var PythonProcess = class {
         this.readyTimer = null;
       }
       this.serverVersion = params.version ?? null;
+      this.debuggerStatus = params.debugger;
+      if (this.debuggerStatus) {
+        const d = this.debuggerStatus;
+        this.outputChannel.appendLine(
+          `debugger: ${d.state}${d.port !== null ? ` on 127.0.0.1:${d.port}` : ""}${d.error ? ` \u2014 ${d.error}` : ""}`
+        );
+      }
       this.readyResolve(params);
       this.readyResolve = null;
       this.readyReject = null;

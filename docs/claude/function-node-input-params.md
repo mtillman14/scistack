@@ -136,17 +136,37 @@ documented at `filter_hidden`'s docstring and repeated at both call sites.
 
 ## 4. Ordering
 
-Handles render in `input_params` insertion order, so both paths sort by
-**registry signature order**, falling back to alphabetical for a parameter not
-in the signature (stale DB data):
+**One owner: `graph_builder.input_port_order(signature, names)`.** The order is
+registry signature order, then any name outside the signature (stale DB data)
+alphabetically. **What feeds an argument never moves it.**
 
-```python
-order_key = {name: i for i, name in enumerate(fn_params_map.get(fn, []))}
-input_params = dict(sorted(
-    fn_input_params[fkey].items(),
-    key=lambda kv: (order_key.get(kv[0], len(sig_order)), kv[0]),
-))
-```
+`graph_builder.assign_input_ports(nodes, signatures)` runs once, as the last
+node pass in `api/pipeline._build_graph`, after the manual-edge overlay and
+the manual and glue nodes. It writes:
+
+- `data.input_ports`: every argument (signature ∪ `input_params` ∪
+  `constant_params`) in that order. The frontend draws it as is through
+  `frontend/src/components/DAG/inputPorts.ts`, which both the canvas node and
+  the variant-graph node use, and never re-orders it.
+- `input_params`: re-ordered by the same rule, so the sidebar Inputs list
+  matches the node.
+
+`build_function_nodes` also sorts with `input_port_order`, and it fills in
+unrecorded arguments *before* sorting.
+
+Until 2026-10-21 there was no single owner, and three things each broke the
+order:
+1. The frontend drew `[...input_params, ...constant_params]`, so a
+   Parameter-fed argument was drawn after every variable-fed or unwired one.
+   `load_xsens_one_file(xsens_file_path, col_names, sheet_name)` drew
+   `col_names` third.
+2. The fill-in for unrecorded arguments ran after the sort and appended them
+   at the end.
+3. The manual-edge overlay appended keys after `build_function_nodes` had
+   sorted.
+
+`assign_input_ports` logs one INFO line for each node whose port order differs
+from the old variable-first drawing.
 
 `fn_params_map` comes from `_fn_params_from_registry` for Python functions
 (`inspect.signature`, dropping `_`-prefixed names) and from

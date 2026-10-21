@@ -188,19 +188,11 @@ def _reload_config_and_rescan() -> None:
     """Re-read scistack.toml from disk and reload both registries against
     the fresh config, then rebuild the cached scan result.
 
-    Deliberately NOT the same as ``_run_scan(force_refresh=True)`` /
-    ``_refresh_registries()`` -- those replay ``registry.refresh_all()`` /
-    ``matlab_registry.refresh_all()`` against the *stale* in-memory
-    ``_config`` object captured at the last load (see registry.py:
-    ``refresh_all`` calls ``load_from_config(_config)``, it never re-parses
-    the TOML file). That's fine for the existing "Refresh" button, which
-    only needs to pick up *content* changes in already-configured files.
-    But after :func:`~scistack_gui.config.add_path`/``remove_path``/
-    ``set_entities_file`` change *which paths are configured*, reusing the
-    stale config would silently fail to discover the new path until the
-    server restarts. So this re-runs ``load_config`` fresh first (see
-    ``services.registry_reload_service``, shared with the auto-create
-    fallback in ``services.target_file_service``).
+    Differs from ``_run_scan(force_refresh=True)`` only in re-resolving the
+    project root as well (``reload_registries_from_disk`` vs
+    ``refresh_registries``, both in ``services.registry_reload_service``):
+    after :func:`~scistack_gui.config.add_path`/``remove_path``/
+    ``set_entities_file`` the config itself has changed.
     """
     from scistack_gui.services.registry_reload_service import (
         reload_registries_from_disk,
@@ -349,22 +341,14 @@ def _run_scan(*, force_refresh: bool = False) -> None:
 
 def _refresh_registries() -> None:
     """Re-import configured files from disk (registry-backed mode only)."""
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.services.registry_reload_service import refresh_registries
 
     try:
-        if registry._config is not None:
-            registry.refresh_all()
-        else:
-            registry.refresh_module()
+        refresh_registries()
     except RuntimeError:
         logger.debug("Nothing to refresh in registry (no config/module loaded)")
     except Exception:
-        logger.exception("Failed to refresh Python registry before discovery scan")
-
-    try:
-        matlab_registry.refresh_all()
-    except Exception:
-        logger.exception("Failed to refresh MATLAB registry before discovery scan")
+        logger.exception("Failed to refresh registries before discovery scan")
 
     # Re-importing above may have re-registered scidb.Pipeline objects
     # (source -> GUI pipeline import — see pipeline_discovery.py); seed any

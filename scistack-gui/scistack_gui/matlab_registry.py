@@ -66,7 +66,7 @@ name-only-vs-registered treatment as _matlab_path_inputs above, via
 :func:`_register_matlab_parameter_object`."""
 
 _config: SciStackConfig | None = None
-"""Stored config for refresh_all()."""
+"""Stored config, re-used by registry_reload_service.refresh_registries in single-file mode."""
 
 _load_errors: list[dict] = []
 """Discovery failures from the most recent load/refresh — [{"source", "error"}, ...].
@@ -516,8 +516,8 @@ def load_from_sources(paths: list[Path]) -> None:
 def reload_source(path: Path) -> "str | None":
     """Re-parse one ``.m`` file. Returns an error string, or ``None``.
 
-    The narrow counterpart to :func:`refresh_all`, for editing a declaration
-    that lives in a MATLAB file. ``refresh_all`` re-classifies every
+    The narrow counterpart to :func:`~scistack_gui.services.registry_reload_service.refresh_registries`, for editing a declaration
+    that lives in a MATLAB file. ``registry_reload_service.refresh_registries()`` re-classifies every
     configured source to pick up a change in one of them -- 14.9 s for 303
     files on a real project (measured 2026-09-01) -- when the edit is known
     to have touched exactly this path.
@@ -726,33 +726,6 @@ def _register_matlab_parameter_object(
         path,
         len(values),
     )
-
-
-def refresh_all() -> dict:
-    """Re-scan all configured MATLAB paths.
-
-    Cheap when nothing changed — see ``matlab_parser.classify_matlab_file``,
-    which reuses each file's last classification while its ``(mtime_ns,
-    size)`` is unchanged. The call sites are left as full refreshes on
-    purpose: making the scan cheap preserves their semantics exactly, where
-    narrowing what they refresh would not.
-    """
-    import traceback
-
-    # Which caller asked, and why there were N of these in one session. Three
-    # full 141-file rescans inside 90 s showed up in a real log with no way to
-    # attribute them; one frame of context is enough to tell them apart.
-    _caller = "".join(traceback.format_stack(limit=3)[:-1]).strip().replace("\n", " | ")
-    logger.info("[matlab_registry] Starting refresh_all — requested by: %s", _caller)
-    if _config is None:
-        logger.warning("[matlab_registry] No MATLAB config loaded; nothing to refresh.")
-        return {
-            "matlab_functions": [],
-            "matlab_variables": [],
-            "matlab_path_inputs": [],
-            "matlab_parameters": [],
-        }
-    return load_from_config(_config)
 
 
 # ---------------------------------------------------------------------------

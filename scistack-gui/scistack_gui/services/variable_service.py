@@ -128,7 +128,7 @@ def create_variable(
         return {"ok": False, "error": f"Failed to write to module file: {e}"}
 
     # Narrow by default: the append above went into one file, so re-reading
-    # that file is the whole reload. Never refresh_all() here -- see
+    # that file is the whole reload. Never refresh_registries() here -- see
     # target_file_service._reload_after_write for the dispatch and the cost.
     from scistack_gui.services.target_file_service import _reload_after_write
 
@@ -223,14 +223,14 @@ def _create_matlab_variable(name: str, docstring: str | None = None) -> dict:
         return {"ok": False, "error": f"Failed to write .m file: {e}"}
 
     # Overwriting an existing .m could reuse the (mtime_ns, size) a previous
-    # scan cached this path under, which would make a LATER refresh_all()
+    # scan cached this path under, which would make a LATER refresh_registries()
     # serve the pre-write classification. Registration below is direct, so
     # this only guards that future scan -- see matlab_parser's cache.
     from scistack_gui.matlab_parser import invalidate_classify_cache
 
     invalidate_classify_cache(target_file)
 
-    # Register just this one file. The full matlab_registry.refresh_all()
+    # Register just this one file. The full refresh_registries()
     # this used to call re-classified every configured .m source (14.9 s for
     # 303 files on a real project) to learn about a file whose path we are
     # holding -- see target_file_service._reload_after_write.

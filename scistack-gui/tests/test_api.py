@@ -1279,6 +1279,50 @@ class TestRunEndpoint:
             with run_api._active_runs_lock:
                 run_api._active_runs.pop(run_id, None)
 
+    def test_crash_before_the_target_loop_reports_a_failed_run(
+        self, client, monkeypatch
+    ):
+        """Regression: ``unhashable type: 'dict'`` raised from target
+        derivation escaped the run thread. No run_done was pushed, so the GUI
+        showed the run spinning until the user cancelled it."""
+        from scistack_gui.api import run as run_api
+        from scistack_gui.services import execution_service
+
+        def crash(db, function_name):
+            raise TypeError("unhashable type: 'dict'")
+
+        monkeypatch.setattr(execution_service, "derive_fn_targets", crash)
+        emitted: list[dict] = []
+        monkeypatch.setattr(run_api, "push_message", lambda msg: emitted.append(msg))
+
+        r = client.post(
+            "/api/run", json={"function_name": "bandpass_filter", "variants": []}
+        )
+        assert r.status_code == 200
+        run_id = r.json()["run_id"]
+        _wait_for_threads("Thread-")
+
+        done = [m for m in emitted if m.get("type") == "run_done"]
+        assert len(done) == 1
+        assert done[0]["run_id"] == run_id
+        assert done[0]["success"] is False
+        assert done[0]["cancelled"] is False
+        assert "unhashable type: 'dict'" in done[0]["error"]
+        with run_api._active_runs_lock:
+            assert run_id not in run_api._active_runs
+
+    def test_crash_after_run_done_does_not_send_a_second_one(self, monkeypatch):
+        """A run already popped from the registry has told the frontend how
+        it ended; a late crash must not contradict that."""
+        from scistack_gui.api import run as run_api
+
+        emitted: list[dict] = []
+        monkeypatch.setattr(run_api, "push_message", lambda msg: emitted.append(msg))
+
+        run_api._report_crashed_run("already_done", "f", RuntimeError("late"))
+
+        assert emitted == []
+
 
 # ---------------------------------------------------------------------------
 # Run state: pipeline node run_state integration tests

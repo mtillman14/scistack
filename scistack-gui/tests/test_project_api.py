@@ -283,6 +283,72 @@ class TestLooseProjectCode:
         assert "now_fixed" in registry_resp["functions"]
         assert registry_resp["load_errors"] == []
 
+    def test_refresh_code_finds_files_created_after_startup(
+        self, loose_project_client, tmp_path, caplog
+    ):
+        # Regression: Refresh Code replayed the file list captured at
+        # startup, so a NEW file only appeared after a Restart.
+        (tmp_path / "added_later.py").write_text("def added_later(x):\n    return x\n")
+        (tmp_path / "added_later_m.m").write_text(
+            "function y = added_later_m(x)\ny = x;\nend\n"
+        )
+
+        with caplog.at_level("INFO", logger="scistack_gui.services.registry_reload_service"):
+            resp = loose_project_client.post("/api/refresh")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+
+        registry_resp = loose_project_client.get("/api/registry").json()
+        assert "added_later" in registry_resp["functions"]
+        assert "added_later_m" in registry_resp["matlab_functions"]
+        # Still there: the files known at startup.
+        assert "loose_fn" in registry_resp["functions"]
+        assert "bandpass_filter" in registry_resp["matlab_functions"]
+        # The log names what appeared.
+        assert any(
+            "+ " in r.getMessage() and "added_later.py" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_project_refresh_finds_files_created_after_startup(
+        self, loose_project_client, tmp_path
+    ):
+        (tmp_path / "added_later.py").write_text("def added_later(x):\n    return x\n")
+
+        resp = loose_project_client.post("/api/project/refresh")
+        assert resp.status_code == 200
+
+        code_resp = loose_project_client.get("/api/project/code").json()
+        all_fns = {f for mod in code_resp["modules"] for f in mod["functions"]}
+        assert "added_later" in all_fns
+
+
+class TestRefreshConfiguredDirectory:
+    def test_new_file_in_configured_directory(self, populated_db, tmp_path):
+        """scistack.toml mode: a directory entry is expanded again on
+        refresh, not replayed from the startup list."""
+        from scistack_gui import matlab_registry, registry
+        from scistack_gui.config import load_config
+        from scistack_gui.services.registry_reload_service import refresh_registries
+
+        pipelines = tmp_path / "pipelines"
+        pipelines.mkdir()
+        (pipelines / "first.py").write_text("def first_step(x):\n    return x\n")
+        (tmp_path / "scistack.toml").write_text('modules = ["pipelines"]\n')
+
+        config = load_config(tmp_path, tmp_path / "test.duckdb")
+        registry.load_from_config(config)
+        matlab_registry.load_from_config(config)
+        assert "second_step" not in registry._functions
+
+        (pipelines / "second.py").write_text("def second_step(x):\n    return x\n")
+        refresh_registries()
+
+        assert "first_step" in registry._functions
+        assert "second_step" in registry._functions
+        # The project did not move.
+        assert registry._config.project_root == config.project_root
+
 
 # ---------------------------------------------------------------------------
 # add_project_path / remove_project_path — Paths popup's editable list
@@ -296,8 +362,7 @@ class TestAddProjectPath:
     def test_add_discovers_new_code_without_restart(
         self, loose_project_client, tmp_path_factory
     ):
-        """The critical regression case: registry.refresh_all()/
-        matlab_registry.refresh_all() replay against a *stale* in-memory
+        """The critical regression case: replaying registry loads against a *stale* in-memory
         config and would NOT pick up a newly added path. The handler must
         re-read scistack.toml from disk (see api/project.py's
         _reload_config_and_rescan) so this works without a server restart.

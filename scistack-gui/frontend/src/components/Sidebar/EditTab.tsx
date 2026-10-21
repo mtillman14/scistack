@@ -41,6 +41,8 @@ interface Registry {
   variables: string[]
   matlab_functions?: string[]
   matlab_functions_mismatched?: string[]
+  /** Python + MATLAB functions merged, case-insensitively ordered. */
+  sidebar_functions?: string[]
   /**
    * {function name -> 'process' | 'plot' | 'stat' | 'glue'} from
    * scidb.discover.function_role. The classifier deliberately lives in
@@ -740,7 +742,9 @@ export default function EditTab() {
             }
           >
             {(() => {
-              const allFns = [...registry.functions, ...(registry.matlab_functions ?? [])]
+              // Already in display order (scistack_gui/domain/display_order.py);
+              // never re-sorted or concatenated here.
+              const allFns = registry.sidebar_functions ?? []
               const roles = registry.function_roles ?? {}
               const roleOf = (fn: string): FunctionRole => roles[fn] ?? 'process'
               const counts: Record<string, number> = { all: allFns.length }

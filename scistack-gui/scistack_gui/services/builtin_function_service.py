@@ -217,7 +217,7 @@ def replay_persisted_builtins(db) -> dict:
     """Re-register every persisted MATLAB builtin, and re-check Python ones.
 
     Called after startup DB init and after every registry refresh
-    (``matlab_registry.load_from_config``/``refresh_all`` clear the
+    (``matlab_registry.load_from_config``/``registry_reload_service.refresh_registries()`` clear the
     in-memory MATLAB registry, and a MATLAB builtin has no file on disk to
     be rediscovered from, so it must be explicitly replayed).
 

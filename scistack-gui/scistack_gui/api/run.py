@@ -785,6 +785,48 @@ def _run_in_thread(
         _notify_records_changed()
 
 
+def _report_crashed_run(run_id: str, function_name: str, exc: BaseException) -> None:
+    """Turn an exception that escaped ``_run_in_thread`` into a failed run.
+
+    ``_run_in_thread`` only guards the per-target loop; everything before it
+    (target derivation, variant resolution, pending-constant merging) used to
+    raise straight out of the thread. The traceback went to stderr, no
+    ``run_done`` was pushed, and the run spun in the GUI until cancelled —
+    the ``unhashable type: 'dict'`` crash in ``_apply_manual_output_types``
+    looked exactly like a hang.
+
+    Every path that pushes ``run_done`` pops the run from ``_active_runs``
+    first, so a run still registered here never told the frontend it ended.
+    One already popped did, and a second ``run_done`` would contradict it.
+    """
+    logger.error(
+        "[run_thread] '%s' crashed outside the per-target loop (run_id=%s)",
+        function_name,
+        run_id,
+        exc_info=exc,
+    )
+    with _active_runs_lock:
+        entry = _active_runs.pop(run_id, None)
+    if entry is None:
+        logger.info(
+            "[run_thread] run_done already sent before the crash (run_id=%s)", run_id
+        )
+        return
+    cancelled = entry["event"].is_set() or isinstance(exc, KeyboardInterrupt)
+    error = f"{type(exc).__name__}: {exc}"
+    push_message({"type": "run_output", "run_id": run_id, "text": f"Error: {error}\n"})
+    push_message(
+        {
+            "type": "run_done",
+            "run_id": run_id,
+            "success": False,
+            "error": error,
+            "cancelled": cancelled,
+            "force_cancelled": bool(entry.get("force_cancelled")),
+        }
+    )
+
+
 def _notify_records_changed() -> None:
     """Announce that a run has finished and may have written records.
 
@@ -1090,6 +1132,8 @@ def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict
                 req.where_filters,
                 req.node_id,
             )
+        except BaseException as exc:
+            _report_crashed_run(run_id, req.function_name, exc)
         finally:
             if hold:
                 logger.debug("[api/run] Releasing DB connection (run_id=%s)", run_id)

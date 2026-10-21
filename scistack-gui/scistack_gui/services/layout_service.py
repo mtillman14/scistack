@@ -10,6 +10,7 @@ import logging
 
 from scidb import BaseVariable
 
+from scistack_gui.domain.display_order import display_sorted
 from scistack_gui.ids import (
     PATH_INPUT_ID_PREFIX,
     ROOT_SCOPE,
@@ -379,7 +380,9 @@ def get_parameters() -> list[dict]:
                 getattr(p, "source_file", None), entities_file
             ),
         }
-        for name, p in registry.get_parameters_registry().items()
+        for name, p in display_sorted(
+            registry.get_parameters_registry().items(), name=lambda kv: kv[0]
+        )
     ]
 
 
@@ -434,7 +437,9 @@ def get_path_inputs() -> list[dict]:
 
     return [
         {"name": name, **path_input_display(obj)}
-        for name, obj in registry.get_path_inputs_registry().items()
+        for name, obj in display_sorted(
+            registry.get_path_inputs_registry().items(), name=lambda kv: kv[0]
+        )
     ]
 
 
@@ -740,7 +745,7 @@ def hide_parameter_value(
 
 def refresh_parameter_source(name: "str | None" = None) -> dict:
     """Re-read the TOML entities file and re-register everything it
-    declares, without paying for a full ``refresh_module()``/``refresh_all()``
+    declares, without paying for a full ``refresh_module()``/``registry_reload_service.refresh_registries()``
     (re-imports every module, re-parses every MATLAB source -- ~16.5s on a
     real project). ``registry.reload_entities_file()`` is a single TOML
     parse -- see its docstring for the measured cost comparison.

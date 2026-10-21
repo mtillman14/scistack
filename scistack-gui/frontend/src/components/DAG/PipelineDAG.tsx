@@ -701,7 +701,7 @@ export default function PipelineDAG() {
         // Endpoint badge/Show button must appear on the freshly dropped
         // node, before any run creates DB history.
         if (info.endpoint_kind) extra.endpoint_kind = info.endpoint_kind
-        return { input_params, output_types, constant_params: [] as string[], run_state: 'red' as const, ...extra }
+        return { input_params, input_ports: [...info.params], output_types, constant_params: [] as string[], run_state: 'red' as const, ...extra }
       } catch {
         return { run_state: 'red' as const }
       }

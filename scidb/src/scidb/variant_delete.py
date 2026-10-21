@@ -310,7 +310,7 @@ def _downstream(duck, seeds: set) -> set:
 def delete_plan(db: "DatabaseManager", targets: list[dict]) -> DeletePlan:
     """What :func:`delete_variant` would remove. Writes nothing."""
     from . import provenance_query as pq
-    from .provenance import GLUE_TYPE
+    from .provenance import GLUE_RECORD_TYPES
     from .variant_pins import active_pins
 
     duck = db._duck
@@ -334,7 +334,7 @@ def delete_plan(db: "DatabaseManager", targets: list[dict]) -> DeletePlan:
         out: dict = {}
         for rid in ids:
             t = types.get(rid)
-            if t and t != GLUE_TYPE:
+            if t and t not in GLUE_RECORD_TYPES:
                 out[t] = out.get(t, 0) + 1
         return dict(sorted(out.items()))
 
@@ -382,7 +382,7 @@ def delete_plan(db: "DatabaseManager", targets: list[dict]) -> DeletePlan:
 
     # Locations each variable would lose entirely.
     lost: dict = {}
-    affected_types = sorted({t for t in types.values() if t != GLUE_TYPE})
+    affected_types = sorted({t for t in types.values() if t not in GLUE_RECORD_TYPES})
     if affected_types:
         remaining = pq._chunked_in(
             duck,
@@ -396,7 +396,7 @@ def delete_plan(db: "DatabaseManager", targets: list[dict]) -> DeletePlan:
         lost_sids: dict = {}
         for rid in rids:
             t = types.get(rid)
-            if t and t != GLUE_TYPE and sids.get(rid) not in kept.get(t, set()):
+            if t and t not in GLUE_RECORD_TYPES and sids.get(rid) not in kept.get(t, set()):
                 lost_sids.setdefault(t, set()).add(sids.get(rid))
         all_lost = {s for v in lost_sids.values() for s in v if s is not None}
         locs = pq._schema_locations(duck, all_lost, list(db.dataset_schema_keys))
@@ -481,7 +481,7 @@ def delete_variant(
 ) -> DeleteResult:
     """Delete what :func:`delete_plan` names, in one transaction. Cannot be
     undone; leaves a tombstone."""
-    from .provenance import GLUE_TYPE
+    from .provenance import GLUE_RECORD_TYPES
     from .variant_pins import release_pin
 
     if not reason or not str(reason).strip():
@@ -529,7 +529,7 @@ def delete_variant(
         )
         deleted["_run"] = _delete_in(duck, "_run", "run_id", plan.run_ids)
         for t in sorted(types):
-            if t == GLUE_TYPE:
+            if t in GLUE_RECORD_TYPES:
                 continue
             table = f"{t}_data"
             if duck._table_exists(table):

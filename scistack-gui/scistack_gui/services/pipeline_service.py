@@ -12,6 +12,7 @@ import logging
 
 from scidb.roles import endpoint_kind
 
+from scistack_gui.domain.display_order import display_sorted
 from scistack_gui.ids import ROOT_SCOPE
 
 logger = logging.getLogger(__name__)
@@ -228,7 +229,12 @@ def get_registry() -> dict:
         logger.info("matlab_functions with name/file mismatch: %s", matlab_mismatched)
     if load_errors:
         logger.warning("get_registry: %d discovery load error(s): %s", len(load_errors), load_errors)
-    all_fns = sorted(set(registry._functions) | set(library_fns))
+    all_fns = display_sorted(set(registry._functions) | set(library_fns))
+    matlab_fns = display_sorted(matlab_fns)
+    # The sidebar's ONE list: Python and MATLAB ordered together, so a
+    # MATLAB name isn't stranded after every Python one (display_order.py).
+    sidebar_functions = display_sorted({*all_fns, *matlab_fns})
+    logger.debug("get_registry: sidebar function order %s", sidebar_functions)
     # Role (process / plot / stat / glue) comes from scidb, never re-derived
     # here or in the frontend: the prefixes already drive execution behaviour
     # inside scidb, so a second copy of the strings would drift (CLAUDE.md
@@ -238,8 +244,9 @@ def get_registry() -> dict:
 
     return {
         "functions": all_fns,
-        "variables": sorted(BaseVariable._all_subclasses.keys()),
+        "variables": display_sorted(BaseVariable._all_subclasses.keys()),
         "matlab_functions": matlab_fns,
+        "sidebar_functions": sidebar_functions,
         "matlab_functions_mismatched": matlab_mismatched,
         "function_roles": {
             name: function_role(name) for name in [*all_fns, *matlab_fns]
@@ -275,15 +282,12 @@ def get_variables_list() -> list[dict]:
 
 
 def refresh_module() -> dict:
-    """Re-import user module and refresh registries."""
-    from scistack_gui import matlab_registry, registry
+    """The Refresh Code button: re-import the project's code from disk,
+    including files created since startup (registry_reload_service)."""
+    from scistack_gui.services.registry_reload_service import refresh_registries
 
     try:
-        if registry._config is not None:
-            result = registry.refresh_all()
-        else:
-            result = registry.refresh_module()
-        matlab_registry.refresh_all()
+        result = refresh_registries()
     except RuntimeError as e:
         return {"ok": False, "error": str(e)}
     except Exception as e:

@@ -46,18 +46,33 @@ _Log.set_level("DEBUG", sink="console")
 # "__main__", which would fall outside the scistack_gui layer logger.
 logger = logging.getLogger("scistack_gui.server")
 
-# Optional: start a debugpy listener so VS Code can attach and hit breakpoints
-# inside user functions executed by /api/run. Enable by setting
-# SCISTACK_GUI_DEBUG=1 (optionally SCISTACK_GUI_DEBUG_PORT=<port>,
-# SCISTACK_GUI_DEBUG_WAIT=1 to block until the debugger attaches).
-if os.environ.get("SCISTACK_GUI_DEBUG"):
+def _start_debugger(env=os.environ) -> dict:
+    """Start the optional debugpy listener and return its status.
+
+    Enable by setting SCISTACK_GUI_DEBUG=1 (optionally
+    SCISTACK_GUI_DEBUG_PORT=<port>, SCISTACK_GUI_DEBUG_WAIT=1 to block until
+    the debugger attaches), so VS Code can attach and hit breakpoints inside
+    user functions executed by Run.
+
+    The returned status is the ONE answer to "is a debugger listening": it
+    rides on the ``ready`` frame (:func:`_send_ready`), and the extension
+    attaches only when ``state == "listening"``. Before this, a failed listen
+    was a warning logged before scidb.log was attached, and the extension
+    attached anyway — "connection refused 127.0.0.1:5678" on every run.
+
+    ``state`` is ``"off"`` (not requested), ``"listening"`` or ``"failed"``
+    (with ``error``).
+    """
+    if not env.get("SCISTACK_GUI_DEBUG"):
+        return {"state": "off", "port": None, "error": None}
+    port = None
     try:
+        port = int(env.get("SCISTACK_GUI_DEBUG_PORT", "5678"))
         import debugpy
 
-        _port = int(os.environ.get("SCISTACK_GUI_DEBUG_PORT", "5678"))
-        debugpy.listen(("127.0.0.1", _port))
-        logger.info(f"debugpy listening on 127.0.0.1:{_port} (attach from VS Code)")
-        if os.environ.get("SCISTACK_GUI_DEBUG_WAIT"):
+        debugpy.listen(("127.0.0.1", port))
+        logger.info(f"debugpy listening on 127.0.0.1:{port} (attach from VS Code)")
+        if env.get("SCISTACK_GUI_DEBUG_WAIT"):
             logger.info(
                 "SCISTACK_GUI_DEBUG_WAIT set — blocking until debugger attaches..."
             )
@@ -65,6 +80,12 @@ if os.environ.get("SCISTACK_GUI_DEBUG"):
             logger.info("debugger attached")
     except Exception as e:
         logger.warning(f"failed to start debugpy listener: {e}")
+        return {"state": "failed", "port": port, "error": f"{type(e).__name__}: {e}"}
+    return {"state": "listening", "port": port, "error": None}
+
+
+# Started at import, as early as possible, so breakpoints in startup code hit.
+_DEBUGGER_STATUS = _start_debugger()
 
 
 def _send(obj: dict) -> None:
@@ -93,15 +114,30 @@ def _send_ready(params: dict) -> None:
     Carries ``scistack_gui.__version__`` (the release tag, via hatch-vcs) so
     the extension can warn when the installed ``scistack-gui`` and the
     extension come from different releases. "0.0.0" = never-installed tree.
+
+    Also carries ``debugger`` (:func:`_start_debugger`'s status), and logs it
+    here because this runs after scidb.log is attached — the import-time
+    listen predates the file sink, so its own log line only reaches stderr.
     """
     from scistack_gui import __version__ as version
 
     logger.info("[startup] scistack-gui version %s", version)
+    dbg = _DEBUGGER_STATUS
+    if dbg["state"] == "failed":
+        logger.warning(
+            "[startup] debugger: scistack.debug is on but no debugpy listener "
+            "is running (port %s): %s — Run will not attach a debugger. "
+            "Install debugpy into this interpreter, or turn scistack.debug off.",
+            dbg["port"],
+            dbg["error"],
+        )
+    else:
+        logger.info("[startup] debugger: %s (port %s)", dbg["state"], dbg["port"])
     _send(
         {
             "jsonrpc": "2.0",
             "method": "ready",
-            "params": {**params, "version": version},
+            "params": {**params, "version": version, "debugger": dbg},
         }
     )
 

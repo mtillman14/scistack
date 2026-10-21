@@ -1,5 +1,7 @@
 # Constants are not necessarily scalars
 
+*Updated 2026-10-21: §2a, the GUI-layer sites and the source-scan guard.*
+
 *Written 2026-09-14, after `generate_matlab_command` crashed with
 `TypeError: unhashable type: 'dict'` on a project whose
 `scistack_entities.toml` declares `delsys_config` and `gaitrite_config` as
@@ -79,6 +81,52 @@ The batched and per-record variant keys are compared against each other
 identical**. Sharing one helper is what guarantees that; two hand-rolled copies
 is what put the warning in `variant_keys_batch`'s docstring in the first place.
 
+### 2a. The GUI-layer consumers (2026-10-21)
+
+The 2026-09-14 fix moved scidb's sites and `matlab_command._group_variants`,
+but the GUI kept six hand-built keys of its own. A real project hit one of
+them: running a **history** node that had a **drawn output edge** went through
+`_apply_manual_output_types`, which built
+`tuple(sorted(constants.items()))` and raised
+`TypeError: unhashable type: 'dict'` on the project's `delsys_config` table.
+
+The crash also showed a second defect. Target derivation runs *before*
+`_run_in_thread`'s per-target `try`, so the exception left the thread with
+nothing but a stderr traceback. No `run_done` was pushed and the run spun
+until the user cancelled it, so the crash looked like a hang.
+`api/run._report_crashed_run` now catches anything that escapes the thread.
+It logs the traceback to `scidb.log` and, if the run is still registered in
+`_active_runs` (every path that already sent `run_done` popped it first),
+pushes a failed `run_done`. Pipeline runs already caught everything.
+
+These sites now route through `constants_identity_key`:
+
+| Site | What it groups |
+|---|---|
+| `services/execution_service._apply_manual_output_types` | history targets → one per drawn output (**the crash**) |
+| `services/execution_service` (pipeline step loop, `seen_target_keys`) | dedup (constants, output) per step |
+| `services/code_export_service` (`seen_keys`) | dedup steps in exported code |
+| `services/matlab_command_service` (`seen_target_keys`) | dedup steps in MATLAB pipeline scripts |
+| `domain/variant_resolver.deduplicate_variants` | dedup before a node run |
+| `domain/variant_resolver.merge_pending_constants` (3 keys) | "does this pending combo already exist?" |
+| `scidb/inspect/graph.py` (`constant_keys`) | distinct variants per step for `scidb` CLI |
+
+`merge_pending_constants` and `inspect/graph.py` used `str(v)`, which is
+hashable but was a second recipe. One visible difference: `str` treated
+`1` and `"1"` as equal and `repr` does not. A pending value is coerced with
+`ast.literal_eval` before comparison, so the two only disagree when the
+recorded value is the *string* `"1"` and the user stages `1`. That is now a
+new combo (int 1) instead of being silently swallowed. This is correct: the
+function would receive a different type.
+
+**The guard.** `scistack-gui/tests/test_constants_identity_gui.py::test_no_hand_built_constants_key`
+AST-scans every tracked shipped `.py` (all `*/src/` plus
+`scistack-gui/scistack_gui/`, excluding tests and the owner) for a
+`tuple(...)`/`frozenset(...)` call whose argument iterates `.items()` of
+something named `constants`. Grep can't do this reliably because the
+docstrings quote the bad spelling. The one-off regression tests in §2 could
+only protect the sites they named; the guard protects every future site.
+
 ### What is *not* the same problem
 
 `str(val)` is fine wherever the result is only ever a display string or a
@@ -95,6 +143,11 @@ is specifically **hashing**.
 - `scistack-gui/tests/test_matlab.py::TestGroupVariantsNonScalarConstants` — a
   dict constant groups without raising, multi-output rows still collapse to one
   `for_each` call, and differing dict constants stay separate variants.
+- `scistack-gui/tests/test_constants_identity_gui.py` — dict constants through
+  `_apply_manual_output_types`, `deduplicate_variants` and
+  `merge_pending_constants`, plus the source-scan guard (§2a).
+- `scistack-gui/tests/test_api.py::TestRunEndpoint::test_crash_before_the_target_loop_reports_a_failed_run`
+  — a crash in target derivation ends as one failed `run_done`.
 
 ## 3. The other half: `distribute` and identical content
 
@@ -150,7 +203,8 @@ figure shows the overplotting signature.
 
 1. Grouping or de-duplicating by constants? Use
    `scidb.provenance.constants_identity_key`. Do not write
-   `tuple(sorted(constants.items()))`.
+   `tuple(sorted(constants.items()))`. The guard test
+   (§2a) fails if you do.
 2. Rendering a constant into MATLAB or Python source? Use
    `_format_matlab_value` / the existing formatter — do not `str()` it.
 3. Writing a test for either? Put a `dict` in the constants. A test whose

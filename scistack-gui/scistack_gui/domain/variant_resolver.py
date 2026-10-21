@@ -12,6 +12,8 @@ import logging
 from itertools import product as _product
 from typing import TYPE_CHECKING
 
+from scidb.provenance import constants_identity_key
+
 if TYPE_CHECKING:
     from scidb.foreach_config import RunOptions
 
@@ -126,7 +128,7 @@ def deduplicate_variants(targets: list[dict]) -> list[dict]:
     seen: set[tuple] = set()
     unique: list[dict] = []
     for v in targets:
-        key = tuple(sorted(v["constants"].items()))
+        key = constants_identity_key(v["constants"])
         if key not in seen:
             seen.add(key)
             unique.append(v)
@@ -191,10 +193,7 @@ def merge_pending_constants(
         sorted(pending_for_fn),
     )
 
-    existing_keys = {
-        tuple(sorted((k, str(v)) for k, v in t["constants"].items()))
-        for t in fn_variants
-    }
+    existing_keys = {constants_identity_key(t["constants"]) for t in fn_variants}
     template = fn_variants[0]
     initial_variant_count = len(fn_variants)
 
@@ -209,7 +208,7 @@ def merge_pending_constants(
         other_combos: list[dict] = []
         for v in fn_variants:
             other = {k: val for k, val in v["constants"].items() if k != const_name}
-            okey = tuple(sorted((k, str(val)) for k, val in other.items()))
+            okey = constants_identity_key(other)
             if okey not in other_seen:
                 other_seen.add(okey)
                 other_combos.append(other)
@@ -219,7 +218,7 @@ def merge_pending_constants(
             for other in other_combos:
                 new_constants = dict(other)
                 new_constants[const_name] = pval
-                key = tuple(sorted((k, str(v)) for k, v in new_constants.items()))
+                key = constants_identity_key(new_constants)
                 if key not in existing_keys:
                     existing_keys.add(key)
                     fn_variants.append(

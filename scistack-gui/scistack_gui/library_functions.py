@@ -8,7 +8,7 @@ from the user's own code.
 
 **They are deliberately NOT stored in** :mod:`scistack_gui.registry`.
 ``registry._functions`` holds functions discovered by scanning the user's
-source, and every ``load_from_config`` / ``refresh_all`` / ``refresh_module``
+source, and every ``load_from_config`` / ``registry_reload_service.refresh_registries()`` / ``refresh_module``
 clears it. A library function has no file on disk to be rediscovered from,
 so it used to be re-registered by replaying the persisted list — but only
 three call sites replayed, while several others (``api/project``,

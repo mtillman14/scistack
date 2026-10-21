@@ -11,6 +11,172 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzz. Dict-valued Parameter on a rewired history node runs; a run that crashes early says so — added 2026-10-21
+
+What changed (GUI): six GUI places that group targets by their constants
+built their own key, which can't be hashed when a constant is a dict (an
+inline table under `[parameters]`, such as `delsys_config = {...}`). Running a
+history node with a drawn output edge raised
+`TypeError: unhashable type: 'dict'` in `_apply_manual_output_types`. All six
+now use `scidb.provenance.constants_identity_key`. Separately, an exception
+before the per-target loop used to kill the run thread without sending
+`run_done`, so the run spun until you cancelled it. It now ends as a failed
+run. Doc: `docs/claude/constants-are-not-scalars.md` §2a.
+
+**Backend**
+1. Use a project whose `scistack_entities.toml` declares an inline-table
+   Parameter feeding a function that has already run.
+2. Reload the VS Code window so the backend edits load.
+
+**Frontend**
+1. On that function's node, draw an output edge to a different variable, then
+   click **Run**. It should run normally. Before the fix it spun with no output.
+2. Click **Export code** / **Run in MATLAB** on the same node. Neither should
+   error.
+3. (Failure path, optional) Any run that crashes before its first target
+   should now show a red failed state with `Error: <Type>: <message>` in the
+   run console. `scidb.log` should contain
+   `[run_thread] '<fn>' crashed outside the per-target loop` with a traceback.
+
+---
+
+## 0zzzzz. Parameter → glue → function: the Parameter keeps its value, the glue stays in the picture, the step skips — added 2026-10-21
+
+What changed (scidb + GUI): a Parameter that feeds a function through a glue
+node is now recorded in history as `Parameter (raw value) → glue →
+function`. Before:
+- the Parameter showed the glue's OUTPUT (e.g. a dict) as a value you never
+  added;
+- history drew `Parameter → function` straight past the glue node;
+- the step never skipped (it recomputed every location on every run).
+
+Plan: `.claude/plan-constant-glue-provenance-26-10-21.md`. Concept doc:
+`docs/claude/free-code-glue-nodes.md` §1.
+
+Backend: reload the VS Code window. The first run after this change
+recomputes once (the history shape changed; no migration).
+
+Frontend (the xsens case: `config` → `glue_xsens_config` →
+`load_xsens_one_file.col_names`):
+1. Un-hide anything you hid while working around this: the
+   `config → load_xsens_one_file` edge and the dict value on `config`. Those
+   are your hide statements, so they stay hidden until you un-hide them.
+2. Run `load_xsens_one_file`. Afterwards:
+   - `config` lists only the path value(s) you declared, with no dict;
+   - the canvas shows `config → glue_xsens_config → load_xsens_one_file`, with
+     no direct `config → load_xsens_one_file` edge;
+   - scidb.log has `[provenance] fn=load_xsens_one_file: Parameter-fed glue
+     recorded as a history hop` and `[graph_builder] 1 history edge(s) drawn
+     through their glue node`.
+3. Run it again with nothing changed: every location is skipped. scidb.log has
+   `[skip] load_xsens_one_file: 'col_names' is a Parameter-fed glued constant`
+   and `skipped=N (skip_computed, up to date)`.
+4. Edit a value inside `config.json` (same path) and run: it recomputes.
+5. Delete the glue node from the canvas: history's direct `config →
+   load_xsens_one_file` edge comes back. scidb.log: `glued history input(s)
+   have no matching glue chain on the canvas`.
+
+---
+
+## 0zzzzy. Function-node input dots follow the signature order — added 2026-10-21
+
+**What changed:** a function node used to draw every variable-fed or unwired
+input first and every Parameter-fed input after, so
+`load_xsens_one_file(xsens_file_path, col_names, sheet_name)` drew
+`col_names` third. Now the backend sends one ordered `input_ports` list (owner:
+`graph_builder.input_port_order`), and the node draws it as is. Plan:
+`.claude/plan-input-port-order-26-10-21.md`.
+
+**Backend**
+1. Reload the VS Code window so the backend edits load.
+2. After the graph loads, `scidb.log` should contain
+   `[pipeline] assigned input port order on N node(s)`. For a node whose order
+   changed, it should also have an INFO line
+   `... input ports in signature order [...] (variable-fed first would have drawn [...])`.
+
+**Frontend**
+1. Open the RERC pipeline. `load_xsens_one_file`'s left dots, top to bottom,
+   should be `xsens_file_path`, `col_names`, `sheet_name`. Hover each dot to
+   check its name.
+2. The existing edges should still attach to the same dots.
+3. Drag a fresh copy of a function with 3+ arguments onto the canvas. Its dots
+   should follow the signature.
+4. Open the Variants popup's graph for that node. Its dots should be in the same
+   order as on the canvas.
+5. In the sidebar Inputs list for a selected node, the arguments should be in
+   signature order.
+
+---
+
+## 0zzzzx. Debugger attach: no "connection refused 127.0.0.1:5678" — added 2026-10-21
+
+What changed: with `scistack.debug` on, every Python Run attached VS Code's
+debugger to port 5678 even when the server's debugpy listener had failed
+to start (e.g. debugpy was not installed), which gave "connection refused".
+Now the server reports its listener status in the `ready` frame
+(`server._start_debugger`), and the extension attaches only when that status
+is `listening` (`extension/src/debuggerStatus.ts`). `debugpy` is now a
+dependency of scistack-gui.
+
+Backend: `pip install -e scistack-gui` (or `pip install debugpy`) into the
+GUI's interpreter, then reload the VS Code window (extension bundle rebuilt).
+
+Frontend:
+1. `scistack.debug` on, debugpy installed: the SciStack output channel shows
+   `debugger: listening on 127.0.0.1:5678`; scidb.log has `[startup]
+   debugger: listening (port 5678)`. Run a Python function with a breakpoint
+   in it: the breakpoint is hit, with no "connection refused".
+2. `scistack.debug` on, debugpy NOT installed (`pip uninstall debugpy`):
+   scidb.log has a WARN `[startup] debugger: scistack.debug is on but no
+   debugpy listener is running ...`. Run: no "connection refused". A single
+   warning popup appears saying to install debugpy, and only once per canvas
+   (not on every Run). The run itself completes.
+3. `scistack.debug` off: scidb.log has `[startup] debugger: off`. Run: no
+   attach and no popup.
+
+---
+
+## 0zzzzw. Refresh Code finds files created after startup — added 2026-10-21
+
+What changed: Refresh Code used to re-read only the files that existed when
+the server started; a brand-new `.py`/`.m` file appeared only after Restart.
+It now re-expands the configured folders/globs (or the folder scan) at the
+same project root. One owner: `registry_reload_service.refresh_registries`.
+
+Backend: reload the VS Code window once to load this change.
+
+Frontend:
+1. With the GUI open, create a new `.py` (and/or `.m`) file containing a
+   function, inside a folder the project already scans.
+2. Click **Refresh Code** (no Restart). The function appears in the Process
+   list, in alphabetical position.
+3. `scidb.log` has `[registry_reload] Python module files: N now (1 added, 0
+   removed)` followed by `+ <path of the new file>`.
+4. Delete that file and Refresh Code again: it disappears, and the log shows
+   `- <path>`.
+
+---
+
+## 0zzzzv. Sidebar lists are alphabetical ignoring case, Python + MATLAB merged — added 2026-10-21
+
+What changed: the right sidebar's Process (and every role filter) list used
+to show the Python functions, then the MATLAB functions, each sorted with
+capitals first. It is now one list, A–Z ignoring case. Variables, Parameters
+and PathInputs use the same order (Parameters/PathInputs were previously in
+load order). One owner: `scistack_gui/domain/display_order.py`.
+
+Backend: reload the VS Code window (both bundles were rebuilt).
+
+Frontend:
+1. Open a project with both Python and MATLAB functions, some starting with
+   a capital (e.g. `EmgActivationAnalysisTEST_NormData`).
+2. Process list: `compute_vif_features`, then `EmgActivation…`, then
+   `load_xsens_one_file` — MATLAB names interleave with Python ones.
+3. Switch the role filter to All / Plot / Stat: same ordering rule.
+4. Variables, Parameters and PathInputs sections: A–Z ignoring case.
+
+---
+
 ## 0zzzzu. "SciStack: starting…" notification while the server loads — added 2026-10-21
 
 **What changed:** while a SciStack server starts (Open Pipeline, Restart

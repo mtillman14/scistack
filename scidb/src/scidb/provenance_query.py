@@ -20,7 +20,11 @@ from .bindings import signature_conflicts_with, variant_signature
 from .schema_values import from_schema_str
 from .provenance import (
     CONSTANT_TYPE,
+    CONSTANT_GLUE_TYPE,
+    GLUE_RECORD_TYPES,
     GLUE_TYPE,
+    INTERNAL_RECORD_TYPES,
+    NON_VARIABLE_INPUT_TYPES,
     PATHINPUT_TYPE,
     SAVE_FUNCTION_NAME,
     constants_identity_key,
@@ -32,6 +36,12 @@ logger = logging.getLogger(__name__)
 # (``glue_a > glue_b``). One separator, defined once, so the writer in
 # provenance_save and the reader below cannot drift.
 GLUE_NAME_SEPARATOR = " > "
+
+
+def _types_sql(types) -> str:
+    """``(?, ?, ...)`` for an ``IN`` over one of ``provenance``'s type sets
+    (pass the set itself as the parameters), so no query spells the members."""
+    return "(" + ", ".join("?" for _ in types) + ")"
 
 
 def _safe_literal(value_repr):
@@ -214,36 +224,53 @@ def runs_for_invocations_batch(duck, invocation_ids) -> dict:
 
 def glue_source_batch(duck, virtual_record_ids) -> dict:
     """Batched :func:`glue_source` — ``{virtual_record_id: {record_id,
-    variable_type, chain_names, chain_hash}}``, with the same
-    lowest-``input_record_id`` tie-break as the per-record function."""
+    variable_type, chain_names, chain_hash, constant_value, declared_name}}``,
+    with the same lowest-``input_record_id`` tie-break as the per-record
+    function.
+
+    Accepts virtual records of every ``GLUE_RECORD_TYPES`` type. A
+    **Parameter-fed** hop (a ``CONSTANT_GLUE_TYPE`` record, whose source is a
+    constant — see ``provenance_save._write_constant_glue_hop``) also reports
+    the RAW ``constant_value`` and the ``declared_name`` stamped on the hop's
+    input edge: the Parameter's value and name as declared. Whether a param
+    is a constant or a variable input is decided by the VIRTUAL record's own
+    type (``provenance.NON_VARIABLE_INPUT_TYPES``), never re-derived from
+    the source here. Both are ``None`` for a variable head.
+    """
     ids = list(dict.fromkeys(virtual_record_ids))
     if not ids:
         return {}
     rows = _chunked_in(
         duck,
         "SELECT io.output_record_id, ii.input_record_id, inv.function_name, "
-        "inv.function_hash, r.type "
+        "inv.function_hash, r.type, c.value_repr, ii.declared_name "
         "FROM _invocation_output io "
         "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
         "JOIN _invocation_input ii ON ii.invocation_id = io.invocation_id "
         "LEFT JOIN _record r ON r.record_id = ii.input_record_id "
+        "LEFT JOIN _constant c ON c.record_id = ii.input_record_id "
         "WHERE io.output_record_id IN ({ph})",
         ids,
     )
     best: dict = {}
-    for out_rid, src_rid, fn_name, fn_hash, src_type in rows:
+    for out_rid, src_rid, *rest in rows:
         prev = best.get(out_rid)
         if prev is None or src_rid < prev[0]:
-            best[out_rid] = (src_rid, fn_name, fn_hash, src_type)
-    return {
-        out_rid: {
+            best[out_rid] = (src_rid, *rest)
+    out: dict = {}
+    for out_rid, (src_rid, fn_name, fn_hash, src_type, value_repr, declared) in (
+        best.items()
+    ):
+        is_const = src_type == CONSTANT_TYPE
+        out[out_rid] = {
             "record_id": src_rid,
             "variable_type": src_type,
             "chain_names": (fn_name or "").split(GLUE_NAME_SEPARATOR),
             "chain_hash": fn_hash or "",
+            "constant_value": _safe_literal(value_repr) if is_const else None,
+            "declared_name": declared if is_const else None,
         }
-        for out_rid, (src_rid, fn_name, fn_hash, src_type) in best.items()
-    }
+    return out
 
 
 def invocation_call_ids_batch(duck, invocation_ids) -> dict:
@@ -281,7 +308,7 @@ def invocation_call_ids_batch(duck, invocation_ids) -> dict:
         ids,
     )
     glue_srcs = glue_source_batch(
-        duck, {row[2] for row in edge_rows if row[3] == GLUE_TYPE}
+        duck, {row[2] for row in edge_rows if row[3] in GLUE_RECORD_TYPES}
     )
     glue_invs = glue_invocation_ids(duck)
 
@@ -300,9 +327,14 @@ def invocation_call_ids_batch(duck, invocation_ids) -> dict:
             cfg["path_inputs"][param] = value_repr
         elif rtype == CONSTANT_TYPE:
             cfg["constants"][param] = _safe_literal(value_repr)
-        elif rtype == GLUE_TYPE:
+        elif rtype in GLUE_RECORD_TYPES:
             src = glue_srcs.get(in_rid) or {}
-            cfg["input_types"][param] = src.get("variable_type") or GLUE_TYPE
+            if rtype == CONSTANT_GLUE_TYPE:
+                # A Parameter-fed glue: the call's constant is the RAW value,
+                # exactly what the forward ForEachConfig recorded.
+                cfg["constants"][param] = src.get("constant_value")
+            else:
+                cfg["input_types"][param] = src.get("variable_type") or GLUE_TYPE
             cfg["glue_chains"][param] = (
                 src.get("chain_hash") or "",
                 tuple(src.get("chain_names") or ()),
@@ -451,14 +483,23 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
             inv_constants.setdefault(inv_id, {})
         next_frontier: list = []
         var_pairs: dict = {}  # inv_id -> [(param_name, in_rid), ...] for stable sort
+        # A Parameter-fed glued constant is a CONSTANT of the consumer, under
+        # the consumer's own name with its RAW value — exactly what the save
+        # path's branch_params recorded (from __constants) — not a variable
+        # input to walk into.
+        const_glue_src = glue_source_batch(
+            duck, [row[2] for row in in_rows if row[3] == CONSTANT_GLUE_TYPE]
+        )
         for inv_id, param_name, in_rid, rtype, value_repr in in_rows:
             if rtype == PATHINPUT_TYPE:
                 continue  # PathInput spec — neither variable nor sweep constant
-            if rtype == CONSTANT_TYPE:
+            if rtype in (CONSTANT_TYPE, CONSTANT_GLUE_TYPE):
                 # Namespace by the producing function name (as derived_branch_params).
                 fn_name = inv_fn_name.get(inv_id)
-                inv_constants[inv_id][f"{fn_name}.{param_name}"] = _safe_literal(
-                    value_repr
+                inv_constants[inv_id][f"{fn_name}.{param_name}"] = (
+                    (const_glue_src.get(in_rid) or {}).get("constant_value")
+                    if rtype == CONSTANT_GLUE_TYPE
+                    else _safe_literal(value_repr)
                 )
             else:
                 var_pairs.setdefault(inv_id, []).append((param_name, in_rid))
@@ -1616,8 +1657,8 @@ def glue_invocation_ids(duck) -> set:
         for row in duck._fetchall(
             "SELECT DISTINCT io.invocation_id FROM _invocation_output io "
             "JOIN _record r ON r.record_id = io.output_record_id "
-            "WHERE r.type = ?",
-            [GLUE_TYPE],
+            f"WHERE r.type IN {_types_sql(GLUE_RECORD_TYPES)}",
+            list(GLUE_RECORD_TYPES),
         )
     }
 
@@ -1667,6 +1708,12 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
     * ``path_inputs`` — ``{param: PathInput.to_key() JSON}``;
     * ``selectors`` — ``{param: raw selector JSON}`` (edges that carry one);
     * ``declared_names`` — ``{param: declared Parameter name}`` (recorded ones).
+    * ``constant_glue`` — ``{param: {glue_chain, glue_chain_hash,
+      glue_record_id, constant_record_id}}`` for each Parameter-fed glued
+      constant. Such a param is in ``constants`` with its RAW value (and in
+      ``declared_names`` under the Parameter's name), never in
+      ``var_inputs``; ``glue_record_id`` is the virtual record its edge
+      actually binds, for traversals.
 
     An invocation with no input edges is absent from the result.
 
@@ -1690,7 +1737,8 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
         ids,
     )
     glue_src = glue_source_batch(
-        duck, [in_rid for _i, _p, in_rid, rtype, *_ in rows if rtype == GLUE_TYPE]
+        duck,
+        [in_rid for _i, _p, in_rid, rtype, *_ in rows if rtype in GLUE_RECORD_TYPES],
     )
     out: dict = {}
     for inv_id, param_name, in_rid, rtype, value_repr, selector, declared in rows:
@@ -1702,6 +1750,7 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
                 "path_inputs": {},
                 "selectors": {},
                 "declared_names": {},
+                "constant_glue": {},
             }
         if selector is not None:
             edges["selectors"][param_name] = selector
@@ -1715,6 +1764,20 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
                 edges["path_inputs"][param_name] = value_repr
         elif rtype == CONSTANT_TYPE:
             edges["constants"][param_name] = _safe_literal(value_repr)
+        elif rtype == CONSTANT_GLUE_TYPE:
+            # A Parameter-fed glue (docs/claude/free-code-glue-nodes.md §1):
+            # the param is a CONSTANT with its raw value and the Parameter's
+            # declared name (both on the hop's input edge), the glue beside it.
+            src = glue_src.get(in_rid) or {}
+            edges["constants"][param_name] = src.get("constant_value")
+            if src.get("declared_name"):
+                edges["declared_names"][param_name] = src["declared_name"]
+            edges["constant_glue"][param_name] = {
+                "glue_chain": src.get("chain_names") or [],
+                "glue_chain_hash": src.get("chain_hash") or "",
+                "glue_record_id": in_rid,
+                "constant_record_id": src.get("record_id"),
+            }
         elif rtype == GLUE_TYPE:
             src = glue_src.get(in_rid) or {}
             edges["var_inputs"].append(
@@ -1775,7 +1838,9 @@ def stored_invocation_signature(duck, record_id: str):
     keeping one edge per param here is what made folding the names break
     skip_computed the first time) — and ``const_hashes`` maps
     ``param -> content_hash``, and ``path_inputs`` maps ``param -> PathInput
-    spec record id``. This is the new-table replacement for the old
+    spec record id``, and ``constant_glue`` maps ``param -> virtual
+    __constant_glue__ record id`` (a Parameter-fed glued constant — in
+    neither ``var_inputs`` nor ``const_hashes``). This is the new-table replacement for the old
     ``_lineage`` reads (function hash + input edges + constant records).
     """
     inv = producing_invocation(duck, record_id)
@@ -1798,7 +1863,13 @@ def stored_invocation_signature(duck, record_id: str):
     var_inputs: dict[str, list] = {}
     const_hashes: dict[str, str] = {}
     path_inputs: dict[str, str] = {}
+    constant_glue: dict[str, str] = {}
     for param, in_rid, selector, rtype, chash in rows:
+        if rtype == CONSTANT_GLUE_TYPE:
+            # A Parameter-fed glued constant: compared by its virtual record
+            # (the value, glue body and glued value are all in that id).
+            constant_glue[param] = in_rid
+            continue
         if rtype == PATHINPUT_TYPE:
             # PathInput spec record — identity since 2026-09-25, so staleness
             # compares it too (a different file is a different call).
@@ -1813,6 +1884,7 @@ def stored_invocation_signature(duck, record_id: str):
         "var_inputs": var_inputs,
         "const_hashes": const_hashes,
         "path_inputs": path_inputs,
+        "constant_glue": constant_glue,
         "run_options": run_options_label(*opts) if opts else run_options_label(False, None),
     }
 
@@ -1902,7 +1974,7 @@ def upstream_provenance(db, record_id: str, max_depth: int = 20) -> list[dict]:
         visited.add(rid)
 
         node = _fetch_record_node(duck, rid, schema_keys, restore=db.restore_schema_value)
-        if node is None or node["type"] in (CONSTANT_TYPE, PATHINPUT_TYPE):
+        if node is None or node["type"] in NON_VARIABLE_INPUT_TYPES:
             continue
 
         inv = producing_invocation(duck, rid)
@@ -2161,8 +2233,9 @@ def consumed_input_schema_ids(duck, record_ids) -> dict[str, frozenset]:
         f"JOIN _invocation_input ii ON ii.invocation_id = io.invocation_id "
         f"JOIN _record r ON r.record_id = ii.input_record_id "
         f"WHERE io.output_record_id IN ({placeholders}) "
-        f"AND r.type NOT IN (?, ?) AND r.schema_id IS NOT NULL",
-        ids + [CONSTANT_TYPE, PATHINPUT_TYPE],
+        f"AND r.type NOT IN {_types_sql(NON_VARIABLE_INPUT_TYPES)} "
+        f"AND r.schema_id IS NOT NULL",
+        ids + list(NON_VARIABLE_INPUT_TYPES),
     )
     acc: dict[str, set] = {}
     for rid, schema_id in rows:
@@ -2241,12 +2314,27 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
             for i in var_inputs
             if i.get("glue_chain")
         }
+        # Parameter-fed glue: ``constants`` holds the RAW value; the edge the
+        # call recorded binds the virtual glue record — a fixed rid per (raw
+        # value, chain, glued value), so prediction replays it as recorded
+        # instead of re-running the glue. Its chain is part of the call site.
+        constant_glue = {
+            p: g["glue_record_id"] for p, g in edges.get("constant_glue", {}).items()
+        }
+        glue_chains.update(
+            {
+                p: (g["glue_chain_hash"], tuple(g["glue_chain"]))
+                for p, g in edges.get("constant_glue", {}).items()
+                if g.get("glue_chain")
+            }
+        )
         path_inputs = dict(edges.get("path_inputs", {}))
         at = sorted(as_table) if as_table else []
         key = (
             tuple(sorted(input_types.items())),
             tuple(sorted(selectors.items())),
             constants_identity_key(constants),
+            tuple(sorted(constant_glue.items())),
             tuple(sorted(path_inputs.items())),
             tuple(sorted(glue_chains.items())),
             tuple(at),
@@ -2261,6 +2349,8 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
                 "input_types": input_types,
                 "selectors": selectors,
                 "constants": constants,
+                # {param: virtual glue rid} for Parameter-fed glued constants.
+                "constant_glue": constant_glue,
                 "path_inputs": path_inputs,
                 "glue_chains": glue_chains,
                 "as_table": at,
@@ -2644,6 +2734,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         "path_inputs": {},
         "selectors": {},
         "declared_names": {},
+        "constant_glue": {},
     }
 
     _t_group = _time.perf_counter()
@@ -2681,6 +2772,14 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
             for i in var_inputs
             if i.get("glue_chain")
         }
+        # Parameter-fed glue (a constant head) is part of the call site too.
+        glue_names.update(
+            {
+                p: list(g["glue_chain"])
+                for p, g in edges.get("constant_glue", {}).items()
+                if g.get("glue_chain")
+            }
+        )
         at = sorted(as_table) if as_table else []
 
         # NB: where= is NOT part of config-variant identity. A where= filter's
@@ -2905,20 +3004,13 @@ def variant_keys_batch(duck, record_ids) -> dict:
     inv_map = producing_invocation_batch(duck, ids)
     inv_ids = list(dict.fromkeys(inv[0] for inv in inv_map.values()))
 
-    consts: dict = {inv_id: {} for inv_id in inv_ids}
-    if inv_ids:
-        rows = _chunked_in(
-            duck,
-            "SELECT ii.invocation_id, ii.param_name, c.value_repr "
-            "FROM _invocation_input ii "
-            "JOIN _record r ON r.record_id = ii.input_record_id "
-            "JOIN _constant c ON c.record_id = ii.input_record_id "
-            "WHERE ii.invocation_id IN ({ph}) AND r.type = ?",
-            inv_ids,
-            tail_params=[CONSTANT_TYPE],
-        )
-        for inv_id, param_name, value_repr in rows:
-            consts[inv_id][param_name] = _safe_literal(value_repr)
+    # Through THE edge reader, so a Parameter-fed glued constant counts with
+    # its raw value exactly as the per-record form (invocation_inputs) does.
+    edges_by_inv = invocation_edges_batch(duck, inv_ids) if inv_ids else {}
+    consts: dict = {
+        inv_id: dict((edges_by_inv.get(inv_id) or {}).get("constants", {}))
+        for inv_id in inv_ids
+    }
 
     out: dict = {}
     for rid in ids:
@@ -3108,7 +3200,7 @@ def superseded_batch(duck, record_ids, max_depth: int = 50) -> dict:
             referenced,
         )
     )
-    testable = [rid for rid in referenced if types.get(rid) != GLUE_TYPE]
+    testable = [rid for rid in referenced if types.get(rid) not in GLUE_RECORD_TYPES]
     latest = latest_at_location_batch(duck, testable)
 
     def _is_superseded_input(rid: str) -> bool:
@@ -3345,8 +3437,12 @@ def _predict_config_invocations(
         return  # PathInput/no-DB-input config — realized_inputless_invocations covers it
     selectors = cfg["selectors"]
     across_variants = sorted(cfg.get("across_variants") or [])
+    # A Parameter-fed glued constant's edge binds the virtual glue record the
+    # config recorded (cfg["constant_glue"]), not the raw constant.
+    recorded_glue = cfg.get("constant_glue") or {}
     const_bindings = [
-        (p, compute_constant_record_id(v)) for p, v in cfg["constants"].items()
+        (p, recorded_glue.get(p) or compute_constant_record_id(v))
+        for p, v in cfg["constants"].items()
     ]
     # PathInput edges are identity (provenance_save._pathinput_bindings): the
     # stored spec is the verbatim `to_key()` the save path hashed.
@@ -3629,9 +3725,10 @@ def realized_inputless_invocations(
         "AND NOT EXISTS ("
         "  SELECT 1 FROM _invocation_input ii "
         "  JOIN _record ri ON ri.record_id = ii.input_record_id "
-        "  WHERE ii.invocation_id = inv.invocation_id AND ri.type NOT IN (?, ?)"
+        "  WHERE ii.invocation_id = inv.invocation_id "
+        f"  AND ri.type NOT IN {_types_sql(NON_VARIABLE_INPUT_TYPES)}"
         ")",
-        params + [CONSTANT_TYPE, PATHINPUT_TYPE],
+        params + list(NON_VARIABLE_INPUT_TYPES),
     )
     return {(inv_id, sid) for inv_id, sid in rows}
 
@@ -3653,8 +3750,9 @@ def is_inputless_function(duck, fn_name: str) -> bool:
         "SELECT 1 FROM _invocation inv "
         "JOIN _invocation_input ii ON ii.invocation_id = inv.invocation_id "
         "JOIN _record r ON r.record_id = ii.input_record_id "
-        "WHERE inv.function_name = ? AND r.type NOT IN (?, ?, ?) LIMIT 1",
-        [fn_name, CONSTANT_TYPE, PATHINPUT_TYPE, GLUE_TYPE],
+        "WHERE inv.function_name = ? "
+        f"AND r.type NOT IN {_types_sql(NON_VARIABLE_INPUT_TYPES)} LIMIT 1",
+        [fn_name, *NON_VARIABLE_INPUT_TYPES],
     )
     return not rows
 
@@ -3694,12 +3792,24 @@ def realized_inputless_schema_ids(duck, fn_name: str, const_rids: dict) -> set:
     out: set = set()
     for inv_id, sids in by_inv.items():
         rows = duck._fetchall(
-            "SELECT ii.param_name, ii.input_record_id FROM _invocation_input ii "
+            "SELECT ii.param_name, ii.input_record_id, r.type "
+            "FROM _invocation_input ii "
             "JOIN _record r ON r.record_id = ii.input_record_id "
-            "WHERE ii.invocation_id = ? AND r.type = ?",
-            [inv_id, CONSTANT_TYPE],
+            "WHERE ii.invocation_id = ? AND r.type IN (?, ?)",
+            [inv_id, CONSTANT_TYPE, CONSTANT_GLUE_TYPE],
         )
-        if dict(rows) == const_rids:
+        # A Parameter-fed glued constant is matched by its RAW constant (the
+        # hop's source) — the value the caller's const_rids are built from.
+        glue_src = glue_source_batch(
+            duck, [rid for _p, rid, t in rows if t == CONSTANT_GLUE_TYPE]
+        )
+        recorded = {
+            p: (glue_src.get(rid) or {}).get("record_id")
+            if t == CONSTANT_GLUE_TYPE
+            else rid
+            for p, rid, t in rows
+        }
+        if recorded == const_rids:
             out |= sids
     return out
 

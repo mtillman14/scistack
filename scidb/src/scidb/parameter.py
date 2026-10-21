@@ -415,6 +415,20 @@ def path_input_specs_of(inputs: "dict[str, Any]") -> dict[str, str]:
     }
 
 
+def single_value(value: Any) -> Any:
+    """A single-valued :class:`Parameter` as its one value; anything else as is.
+
+    THE owner of this unwrapping (``ForEachConfig._get_direct_constants`` and
+    ``glue.apply_constant_glue`` both use it). The wrapper is never part of
+    computation identity — ``Parameter(30)`` and ``30`` are the same input —
+    and a single-valued Parameter can reach prepare unexpanded on the MATLAB
+    bridge, which has no ``for_each`` Step 1 in front of it.
+    """
+    if isinstance(value, Parameter) and len(value.alternatives) == 1:
+        return value.alternatives[0]
+    return value
+
+
 def _declared_name_of(value: Any) -> "str | None":
     """The declared name a for_each input carries, if any: a named Parameter,
     a named PathInput, or an EachOf whose alternatives are one named
