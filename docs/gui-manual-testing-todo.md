@@ -11,6 +11,39 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzu. "SciStack: starting…" notification while the server loads — added 2026-10-21
+
+**What changed:** while a SciStack server starts (Open Pipeline, Restart
+Python Process, opening Plot Studio with no database), a progress notification
+now shows in the bottom-right of VS Code. It shows the server's current step
+and a running timer, and closes by itself once the GUI is ready. The extension
+code is in `extension/src/session.ts` (`withStartupStatus`), and the text comes
+from `extension/src/startupStatus.ts`.
+
+**Backend**
+1. Reload the VS Code window so the rebuilt `dist/extension.js` is loaded.
+
+**Frontend**
+1. Run **SciStack: Open Pipeline** on a project, preferably one on a network
+   drive. A notification titled `SciStack: starting <db name>` should appear at
+   once with the message `Starting Python… (0s)`. The timer should go up every
+   second.
+2. As discovery runs, the message should follow the server's steps:
+   `Loading project config...`, `Importing 3/25: foo.py`, then
+   `Opening database...`, each with the timer.
+3. When the pipeline tab appears, the notification should close by itself.
+   The **SciStack** output channel should show `Server ready in N.Ns — DB: ...`.
+4. **Restart Python Process** should show the same notification.
+5. Start again and click the notification's **Cancel** button. The server
+   should stop and **no** "failed to start" error should appear. The output
+   channel should show `Startup cancelled by user after N.Ns`.
+6. To check a failed start, point `scistack.pythonPath` at a bad interpreter.
+   The notification should close first, and then the usual failure message
+   should appear. The output channel should show
+   `Server failed to start after N.Ns`.
+
+---
+
 ## 0zzzzt. PathInput key patterns (`key_regex`) in the sidebar — added 2026-10-21
 
 **What changed:** a PathInput can now declare a **pattern per placeholder**

@@ -20,6 +20,7 @@
     "src/versionCheck.ts",
     "src/webviewBuild.ts",
     "src/bundleImportCore.ts",
+    "src/startupStatus.ts",
     "src/*.test.ts"
   ]
 }

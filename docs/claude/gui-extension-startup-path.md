@@ -103,6 +103,30 @@ guards the wiring). Per-file import times and the "Slow import" WARN are in
 `waitForReady` can also reject from the `exit` handler (child died) or the
 `error` handler (spawn failed).
 
+### The startup status notification
+
+While `waitForReady` is pending, `SessionManager.withStartupStatus` (in
+`session.ts`) shows a `vscode.window.withProgress` notification in the bottom
+right, titled `SciStack: starting <label>`. It exists because a slow start (a
+network drive, many imports) used to look the same as a failed one.
+
+- **Message.** The message is the latest `progress` line plus the elapsed
+  time, for example `Importing 3/25: foo.py (12s)`. The text comes only from
+  `startupStatus.ts`, which does not import `vscode` and is tested in
+  `startupStatus.test.ts`. A 1 s ticker keeps the timer moving while one step
+  is slow. Before the first `progress` line arrives (while Python itself is
+  importing), the message is `Starting Python…`.
+- **Wiring.** `PythonProcess.onProgress` delivers the `progress` lines.
+  `onNotification` never sees them, because `handleLine` consumes them.
+- **Closing.** The notification closes when `waitForReady` settles, either
+  way. This happens before `reportStartupFailure` runs, so the error message
+  never appears next to a stale "starting" notification.
+- **Cancel.** The notification has a **Cancel** button. Cancel kills the
+  child, logs `Startup cancelled by user after N.Ns`, and skips the failure
+  diagnosis, because the user stopped it on purpose.
+- **Logging.** `Server ready in N.Ns` and `Server failed to start after N.Ns`
+  give the total start time in the SciStack output channel.
+
 ---
 
 ## 2. Why the failure message needed diagnostics

@@ -1502,6 +1502,8 @@ var PythonProcess = class {
     this.outputChannel = outputChannel2;
     this.nextId = 1;
     this.notificationHandlers = [];
+    /** Listeners for startup `progress` lines (the status notification). */
+    this.progressHandlers = [];
     this.readyResolve = null;
     this.readyReject = null;
     this.readyTimer = null;
@@ -1673,6 +1675,13 @@ var PythonProcess = class {
     this.notificationHandlers.push(handler);
   }
   /**
+   * Register a handler for startup `progress` lines. These never reach
+   * `onNotification` handlers: they are startup-only, consumed here.
+   */
+  onProgress(handler) {
+    this.progressHandlers.push(handler);
+  }
+  /**
    * Kill the Python process.
    */
   kill() {
@@ -1699,6 +1708,8 @@ var PythonProcess = class {
     const params = msg.params ?? {};
     if (method === "progress") {
       this.outputChannel.appendLine(`  ${params.message}`);
+      for (const handler of this.progressHandlers)
+        handler(String(params.message ?? ""));
       if (this.readyResolve) {
         this.resetReadyTimer(this.readyTimeoutMs);
       }
@@ -1733,6 +1744,21 @@ var PythonProcess = class {
     }
   }
 };
+
+// src/startupStatus.ts
+var STARTUP_INITIAL_STATUS = "Starting Python\u2026";
+function startupStatusMessage(lastProgress, elapsedMs) {
+  const status = lastProgress?.trim() || STARTUP_INITIAL_STATUS;
+  return `${status} (${formatElapsed(elapsedMs)})`;
+}
+function formatElapsed(elapsedMs) {
+  const total = Math.max(0, Math.floor(elapsedMs / 1e3));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes === 0)
+    return `${seconds}s`;
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
 
 // src/versionCheck.ts
 var DEV_VERSION = "0.0.0";
@@ -2454,19 +2480,67 @@ var SessionManager = class {
       cwd: opts.cwd,
       debugPort: opts.debugPort
     });
+    const started = Date.now();
+    const elapsed = () => `${((Date.now() - started) / 1e3).toFixed(1)}s`;
+    let cancelled = false;
     try {
       const timeout = vscode4.workspace.getConfiguration("scistack").get("startupTimeoutMs", 6e4);
-      const ready = await python.waitForReady(timeout);
+      const ready = await this.withStartupStatus(python, opts.label, () => {
+        cancelled = true;
+        opts.log.appendLine(`Startup cancelled by user after ${elapsed()}`);
+        python.kill();
+      }, () => python.waitForReady(timeout));
       opts.log.appendLine(
-        `Server ready \u2014 DB: ${ready.db_name}, schema: [${(ready.schema_keys ?? []).join(", ")}]`
+        `Server ready in ${elapsed()} \u2014 DB: ${ready.db_name}, schema: [${(ready.schema_keys ?? []).join(", ")}]`
       );
       this.reportVersionMismatch(opts.log, ready.version);
       return python;
     } catch (err) {
       python.kill();
+      if (cancelled)
+        return void 0;
+      opts.log.appendLine(`Server failed to start after ${elapsed()}`);
       await reportStartupFailure(opts.log, this.channel, python, interpreterSource, err);
       return void 0;
     }
+  }
+  /**
+   * Show a bottom-right "SciStack: starting <label>" notification while
+   * `wait` runs, carrying the server's latest `progress` line and the
+   * elapsed time (`startupStatus.ts` owns the text). It closes by itself
+   * when `wait` settles, before any failure report is shown. Cancelling it
+   * calls `onCancel`, which stops the server.
+   */
+  withStartupStatus(python, label, onCancel, wait) {
+    return vscode4.window.withProgress(
+      {
+        location: vscode4.ProgressLocation.Notification,
+        title: `SciStack: starting ${label}`,
+        cancellable: true
+      },
+      async (progress, token) => {
+        const started = Date.now();
+        let last;
+        let done = false;
+        const show = () => {
+          if (!done)
+            progress.report({ message: startupStatusMessage(last, Date.now() - started) });
+        };
+        python.onProgress((message) => {
+          last = message;
+          show();
+        });
+        token.onCancellationRequested(onCancel);
+        show();
+        const ticker = setInterval(show, 1e3);
+        try {
+          return await wait();
+        } finally {
+          done = true;
+          clearInterval(ticker);
+        }
+      }
+    );
   }
   /**
    * Log both versions, and warn (once per extension host) when the installed

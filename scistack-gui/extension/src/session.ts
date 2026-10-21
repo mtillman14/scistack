@@ -28,6 +28,7 @@ import { DagPanel } from './dagPanel';
 import { PanelRegistry } from './panelRegistry';
 import { PlotPanel } from './plotPanel';
 import { PythonProcess } from './pythonProcess';
+import { startupStatusMessage } from './startupStatus';
 import { checkServerVersion } from './versionCheck';
 import { ExtensionIdentity, prepareBuildReport } from './webviewBuild';
 import { buildPlotOnlyServerArgs, buildServerArgs } from './serverArgs';
@@ -589,21 +590,72 @@ export class SessionManager {
       debugPort: opts.debugPort,
     });
 
+    const started = Date.now();
+    const elapsed = () => `${((Date.now() - started) / 1000).toFixed(1)}s`;
+    let cancelled = false;
     try {
       const timeout = vscode.workspace
         .getConfiguration('scistack')
         .get<number>('startupTimeoutMs', 60000);
-      const ready = await python.waitForReady(timeout);
+      const ready = await this.withStartupStatus(python, opts.label, () => {
+        cancelled = true;
+        opts.log.appendLine(`Startup cancelled by user after ${elapsed()}`);
+        python.kill();
+      }, () => python.waitForReady(timeout));
       opts.log.appendLine(
-        `Server ready — DB: ${ready.db_name}, schema: [${(ready.schema_keys ?? []).join(', ')}]`,
+        `Server ready in ${elapsed()} — DB: ${ready.db_name}, ` +
+        `schema: [${(ready.schema_keys ?? []).join(', ')}]`,
       );
       this.reportVersionMismatch(opts.log, ready.version);
       return python;
     } catch (err) {
       python.kill();
+      if (cancelled) return undefined;
+      opts.log.appendLine(`Server failed to start after ${elapsed()}`);
       await reportStartupFailure(opts.log, this.channel, python, interpreterSource, err);
       return undefined;
     }
+  }
+
+  /**
+   * Show a bottom-right "SciStack: starting <label>" notification while
+   * `wait` runs, carrying the server's latest `progress` line and the
+   * elapsed time (`startupStatus.ts` owns the text). It closes by itself
+   * when `wait` settles, before any failure report is shown. Cancelling it
+   * calls `onCancel`, which stops the server.
+   */
+  private withStartupStatus<T>(
+    python: PythonProcess,
+    label: string,
+    onCancel: () => void,
+    wait: () => Promise<T>,
+  ): Thenable<T> {
+    return vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `SciStack: starting ${label}`,
+        cancellable: true,
+      },
+      async (progress, token) => {
+        const started = Date.now();
+        let last: string | undefined;
+        let done = false;
+        const show = () => {
+          if (!done) progress.report({ message: startupStatusMessage(last, Date.now() - started) });
+        };
+        python.onProgress((message) => { last = message; show(); });
+        token.onCancellationRequested(onCancel);
+        show();
+        // Tick the elapsed time so a slow step (one big import) still looks alive.
+        const ticker = setInterval(show, 1000);
+        try {
+          return await wait();
+        } finally {
+          done = true;
+          clearInterval(ticker);
+        }
+      },
+    );
   }
 
   /**

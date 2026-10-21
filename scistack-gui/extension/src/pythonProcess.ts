@@ -55,6 +55,8 @@ export class PythonProcess {
   /** Requests awaiting a response; owns the rpcTimeoutMs backstop. */
   private pending: PendingRequests;
   private notificationHandlers: NotificationHandler[] = [];
+  /** Listeners for startup `progress` lines (the status notification). */
+  private progressHandlers: ((message: string) => void)[] = [];
   private readyResolve: ((params: ReadyParams) => void) | null = null;
   private readyReject: ((err: Error) => void) | null = null;
   private readyTimer: NodeJS.Timeout | null = null;
@@ -286,6 +288,14 @@ export class PythonProcess {
   }
 
   /**
+   * Register a handler for startup `progress` lines. These never reach
+   * `onNotification` handlers: they are startup-only, consumed here.
+   */
+  onProgress(handler: (message: string) => void): void {
+    this.progressHandlers.push(handler);
+  }
+
+  /**
    * Kill the Python process.
    */
   kill(): void {
@@ -322,6 +332,7 @@ export class PythonProcess {
     // inactivity timer so long-but-progressing startups don't time out.
     if (method === 'progress') {
       this.outputChannel.appendLine(`  ${params.message}`);
+      for (const handler of this.progressHandlers) handler(String(params.message ?? ''));
       if (this.readyResolve) {
         this.resetReadyTimer(this.readyTimeoutMs);
       }
