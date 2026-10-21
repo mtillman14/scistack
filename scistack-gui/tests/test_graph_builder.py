@@ -959,6 +959,7 @@ class TestPathInputDisplay:
             "template": "{s}/f.csv",
             "root_folder": "/data",
             "aliases": {},
+            "key_regex": {},
             "alternate_templates": [],
         }
 
@@ -969,7 +970,7 @@ class TestPathInputDisplay:
         display = path_input_display(obj)
         assert display["template"] == "{s}/a.csv"
         assert display["alternate_templates"] == [
-            {"template": "{s}/b.csv", "root_folder": "/x", "aliases": {}}
+            {"template": "{s}/b.csv", "root_folder": "/x", "aliases": {}, "key_regex": {}}
         ]
 
 

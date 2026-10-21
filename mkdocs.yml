@@ -1,7 +1,7 @@
 site_name: SciStack
 site_description: Scientific Data Versioning Framework
 # The full published URL, including Read the Docs' /<lang>/<version>/ path: the
-# i18n plugin builds the Code <-> With GUI toggle links from site_url's path, so
+# i18n plugin builds the Code <-> GUI toggle links from site_url's path, so
 # without it they point at the domain root (/ui/) and 404. RTD sets
 # READTHEDOCS_CANONICAL_URL during its builds; the fallback (local, CI) is latest.
 site_url: !ENV [READTHEDOCS_CANONICAL_URL, 'https://scistack.readthedocs.io/en/latest/']
@@ -35,7 +35,7 @@ theme:
 # i18n plugin only finds a locale's homepage among nav pages, and mkdocs build
 # --strict fails without one), and tabs-item.html skips it so no tab renders.
 #
-# This is the code-only ("en") nav. The "With GUI" variant has its own nav
+# This is the code-only ("en") nav. The "GUI" variant has its own nav
 # under plugins > i18n below. No section is shared any more (share one with a
 # YAML anchor, &name / *name, so its page list keeps one owner). Getting
 # Started and Example Projects differ: the GUI variant adds GUI-only pages (*.ui.md with no plain
@@ -84,7 +84,7 @@ not_in_nav: |
 # site-wide by content.tabs.link) in localStorage keyed by `scope`, which
 # defaults to each build's root. The GUI variant is a separate build under
 # /ui/, so without a shared scope the choice would reset when toggling
-# Code <-> With GUI. Tabs link by exact label: always "Python" and "MATLAB".
+# Code <-> GUI. Tabs link by exact label: always "Python" and "MATLAB".
 extra:
   scope: /
 
@@ -129,7 +129,7 @@ markdown_extensions:
 
 plugins:
   - search
-  # Two mirrored sites in one build: "Code" (no GUI) and "With GUI".
+  # Two mirrored sites in one build: "Code" (no GUI) and "GUI".
   # mkdocs-static-i18n is used for this, with each variant treated as a
   # "language". A page `foo.md` is shared; `foo.ui.md` replaces it in the GUI
   # variant only; a page that exists only as `foo.ui.md` is GUI-only. Missing
@@ -159,7 +159,7 @@ plugins:
           extra:
             variant: en
         - locale: ui
-          name: With GUI
+          name: GUI
           build: true
           theme:
             language: en

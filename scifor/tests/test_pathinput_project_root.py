@@ -20,6 +20,7 @@ import pytest
 from scifor.pathinput import (
     PathInput,
     clear_project_root,
+    enter_project_root,
     get_project_root,
     project_root,
     set_project_root,
@@ -172,3 +173,29 @@ class TestNoWalkingUp:
         child.mkdir()
         assert project_config_at(tmp_path) == tmp_path / "scistack.toml"
         assert project_config_at(child) is None
+
+
+class TestEnterProjectRoot:
+    """Every execution starts from the project root (the GUI calls this at
+    the top of each Python run thread; user code may have chdir'd since)."""
+
+    def test_moves_the_cwd_to_the_pinned_root(self, tmp_path, monkeypatch):
+        root = tmp_path / "proj"
+        root.mkdir()
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        set_project_root(root)
+        assert enter_project_root() == root.resolve()
+        assert os.getcwd() == str(root.resolve())
+
+    def test_without_a_pin_nothing_moves(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert enter_project_root() == tmp_path.resolve()
+        assert os.getcwd() == str(tmp_path.resolve())
+
+    def test_a_missing_root_leaves_the_cwd_alone(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        set_project_root(tmp_path / "gone")
+        assert enter_project_root() == tmp_path.resolve()
+        assert os.getcwd() == str(tmp_path.resolve())

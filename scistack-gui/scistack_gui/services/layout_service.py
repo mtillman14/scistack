@@ -454,6 +454,7 @@ def update_path_input(
     root_folder: "str | None" = None,
     alternate_templates: "list[dict] | None" = None,
     aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> dict:
     """Rewrite an existing PathInput's declaration in source.
 
@@ -465,7 +466,7 @@ def update_path_input(
     """
     from scistack_gui.services.path_input_service import update_path_input as _update
 
-    result = _update(name, template, root_folder, alternate_templates, aliases)
+    result = _update(name, template, root_folder, alternate_templates, aliases, key_regex)
     if result.get("ok"):
         _notify_dag_updated()
     return result

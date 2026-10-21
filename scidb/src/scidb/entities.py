@@ -34,6 +34,7 @@ The format::
     EMG_FILE = "{subject}/{session}_emg.csv"
     RAW_FILE = { template = "{subject}/raw.csv", root_folder = "/data/raw" }
     XSENS    = { template = "{session}/Xsens/{subject}_{session}.xlsx", aliases = { session = { BL = ["Baseline"] } } }
+    GAIT     = { template = "{subject}_{speed}{trial}.csv", key_regex = { subject = 'R2_\\d{3}', speed = '[A-Za-z]+' } }
 
     [library]                                  # only in a LIBRARY's file
     schema_keys = ["subject", "session"]       # its own schema vocabulary
@@ -54,7 +55,11 @@ unambiguous:
   which used to be a placeholder ``0`` indistinguishable from a real value.
 - **An inline table means the value under ``[parameters]``, and the field
   set under ``[path_inputs]``.** A PathInput has no dict-shaped value, so
-  a table there is unambiguously ``{template, root_folder, aliases}``.
+  a table there is unambiguously ``{template, root_folder, aliases,
+  key_regex}``. ``key_regex`` is ``{key = 'pattern'}`` -- what ``{key}``
+  matches on disk (``scifor.PathInput(key_regex=)``); single-quote it so
+  ``\\d`` is not a TOML escape. An aliased key also matches its declared
+  spellings, then canonicalizes.
   ``aliases`` is ``{key = {canonical = [spellings]}}`` -- several on-disk
   spellings of one schema-key value (``scifor.PathInput(aliases=)``,
   match-only). A canonical that is not a bare TOML key is quoted
@@ -64,8 +69,8 @@ unambiguous:
   parser in the path to turn it into ``1``
   (``feedback_zero_padded_schema_keys``).
 - **Anything this shape cannot say stays in Python, read-only**: custom
-  ``to_db``/``from_db``, a non-default ``schema_version``, PathInput
-  ``key_regex``/``regex``, or computed Parameter values.
+  ``to_db``/``from_db``, a non-default ``schema_version``, a whole-template
+  PathInput ``regex``, or computed Parameter values.
 
 Errors are **per entry**: one bad declaration is recorded with its name
 and line and skipped, never raised. The ``.py`` entities file it replaces
@@ -142,7 +147,7 @@ def default_entities_relpath(root: "Path | str", package: "str | None" = None) -
         package = own[0]
     return Path("src") / package / DEFAULT_ENTITIES_FILENAME
 
-_PATH_INPUT_KEYS = frozenset({"template", "root_folder", "aliases"})
+_PATH_INPUT_KEYS = frozenset({"template", "root_folder", "aliases", "key_regex"})
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +498,12 @@ def _load_path_inputs(data: dict, result: EntitiesFile) -> None:
             len(arms),
             [sorted(a.aliases) for a in arms],
         )
+        if any(a.key_regex for a in arms):
+            Log.info(
+                "[entities] path input %s: key_regex %s",
+                name,
+                [a.key_regex for a in arms],
+            )
 
 
 def _build_path_input_arms(raw_alts: list, name: str) -> "tuple[list, str | None]":
@@ -511,8 +522,8 @@ def _build_path_input_arms(raw_alts: list, name: str) -> "tuple[list, str | None
         if unknown:
             return [], (
                 f"unknown key(s) {', '.join(unknown)} -- a PathInput accepts "
-                f"only template, root_folder and aliases here; declare richer "
-                f"forms (key_regex, regex) in Python"
+                f"only template, root_folder, aliases and key_regex here; "
+                f"declare a whole-template regex in Python"
             )
         template = alt.get("template")
         if not isinstance(template, str) or not template:
@@ -523,11 +534,27 @@ def _build_path_input_arms(raw_alts: list, name: str) -> "tuple[list, str | None
         aliases, alias_err = _parse_path_input_aliases(alt.get("aliases"))
         if alias_err is not None:
             return [], alias_err
+        key_regex = alt.get("key_regex")
+        if key_regex is not None and not (
+            isinstance(key_regex, dict)
+            and all(isinstance(v, str) for v in key_regex.values())
+        ):
+            return [], (
+                "key_regex must be a table {key = 'pattern'} of strings "
+                "(single-quoted, so \\d is not a TOML escape)"
+            )
         try:
             # PathInput owns the rest of the validation: an alias key that is
-            # not a placeholder, a spelling claimed by two canonicals.
+            # not a placeholder, a spelling claimed by two canonicals, a
+            # key_regex pattern that does not compile or captures.
             arms.append(
-                PathInput(template, root_folder=root, aliases=aliases, name=name)
+                PathInput(
+                    template,
+                    root_folder=root,
+                    aliases=aliases,
+                    key_regex=key_regex,
+                    name=name,
+                )
             )
         except ValueError as exc:
             return [], str(exc)
@@ -1085,14 +1112,21 @@ def render_path_input_value(
     root_folder: "str | None" = None,
     alternates: "list[dict] | None" = None,
     aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> str:
     """A PathInput's RHS: a bare template string when that is all there is,
-    a ``{template, root_folder, aliases}`` table when there is a root or
-    aliases, an array of either when there are alternates. *aliases* belong
-    to the primary template; each alternate dict carries its own."""
-    arms = [_path_input_arm(template, root_folder, aliases)]
+    a ``{template, root_folder, aliases, key_regex}`` table when there is
+    more, an array of either when there are alternates. *aliases* and
+    *key_regex* belong to the primary template; each alternate dict carries
+    its own."""
+    arms = [_path_input_arm(template, root_folder, aliases, key_regex)]
     arms.extend(
-        _path_input_arm(alt.get("template", ""), alt.get("root_folder"), alt.get("aliases"))
+        _path_input_arm(
+            alt.get("template", ""),
+            alt.get("root_folder"),
+            alt.get("aliases"),
+            alt.get("key_regex"),
+        )
         for alt in (alternates or [])
     )
     if len(arms) == 1:
@@ -1101,15 +1135,37 @@ def render_path_input_value(
 
 
 def _path_input_arm(
-    template: str, root_folder: "str | None", aliases: "dict | None" = None
+    template: str,
+    root_folder: "str | None",
+    aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> str:
-    if not root_folder and not aliases:
+    if not root_folder and not aliases and not key_regex:
         return render_value(template)
     fields = [f"template = {render_value(template)}"]
     if root_folder:
         fields.append(f"root_folder = {render_value(root_folder)}")
     if aliases:
         fields.append(f"aliases = {_render_aliases(aliases)}")
+    if key_regex:
+        fields.append(f"key_regex = {_render_key_regex(key_regex)}")
+    return "{ " + ", ".join(fields) + " }"
+
+
+def _render_key_regex(key_regex: dict) -> str:
+    """``{ subject = 'R2_\\d{3}' }`` -- literal (single-quoted) strings, so a
+    pattern's backslashes are written as typed, not as TOML escapes. A
+    pattern holding ``'`` (or a control character) cannot be a literal
+    string and falls back to the escaped basic form; both read back
+    identically."""
+    fields = []
+    for key, pattern in key_regex.items():
+        pattern = str(pattern)
+        literal_ok = "'" not in pattern and not any(
+            ord(ch) < 0x20 or ord(ch) == 0x7F for ch in pattern
+        )
+        rendered = f"'{pattern}'" if literal_ok else _render_string(pattern)
+        fields.append(f"{_render_key(str(key))} = {rendered}")
     return "{ " + ", ".join(fields) + " }"
 
 

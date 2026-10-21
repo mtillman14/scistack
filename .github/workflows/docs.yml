@@ -37,7 +37,7 @@ jobs:
       - name: Build (strict)
         run: mkdocs build --strict
 
-      # Regression guard: the Code <-> With GUI toggle must never link to the
+      # Regression guard: the Code <-> GUI toggle must never link to the
       # domain root ("/" or "/ui/"). Those links 404 on Read the Docs, which
       # serves the site under /<lang>/<version>/ (site_url in mkdocs.yml owns
       # that path). Relative links, or links under site_url's path, are fine.

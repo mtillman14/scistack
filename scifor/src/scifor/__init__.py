@@ -56,7 +56,9 @@ from .outputs import COLUMN_NAME_ATTR, DB_ONLY_KWARGS, output_column_name
 from .pathinput import (
     PathInput,
     clear_listing_cache,
+    key_regex_pattern_error,
     clear_project_root,
+    enter_project_root,
     get_project_root,
     project_root,
     set_project_root,
@@ -105,7 +107,9 @@ __all__ = [
     "get_project_root",
     "project_root",
     "clear_listing_cache",
+    "key_regex_pattern_error",
     "clear_project_root",
+    "enter_project_root",
     # Filters
     "Col",
     "ColFilter",

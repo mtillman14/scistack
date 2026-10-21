@@ -60,9 +60,11 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     stored = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
     hidden = frozenset(pipeline_store.get_hidden_edge_ids(db, scope))
+    glue_ports: dict[str, "list[str]"] = {}
     drawn = tuple(
         e for e in visible_manual_edges(stored, hidden, manual_nodes)
         if not _on_retired_port(e)
+        and not _on_missing_glue_port(e, manual_nodes, glue_ports)
     )
     logger.info(
         "[edge_view] %s: scope=%s, %d drawn of %d stored manual edge(s), "
@@ -108,6 +110,64 @@ def _on_retired_port(edge: dict) -> bool:
             edge.get("source"),
             edge.get("target"),
             handle,
+        )
+    return True
+
+
+#: Stored edge ids already reported by _on_missing_glue_port (once per process).
+_REPORTED_MISSING_GLUE_PORT: set[str] = set()
+
+
+def _on_missing_glue_port(
+    edge: dict, manual_nodes: dict, glue_ports: dict
+) -> bool:
+    """A stored edge into a glue node's ``in__X`` where the glue's function no
+    longer has a parameter ``X``.
+
+    Renaming the glue's argument (the new-glue body starts as ``value``)
+    removes the port, so the canvas cannot draw the edge and the user cannot
+    select it to delete it. It stayed in storage, though, and the glue chain
+    followed the first incoming edge, which was this invisible one
+    (2026-10-21: ``in__value`` beside the live ``in__filepath``). Not drawn
+    and binds nothing, like a retired port. The stored row is left alone:
+    renaming the argument back brings the edge back.
+
+    *glue_ports* memoizes ``{glue label: params}`` for one view. A glue whose
+    signature cannot be read (no params) keeps all its edges, since the
+    canvas then renders a single unnamed handle and nothing is known to be
+    stale.
+    """
+    from scistack_gui.domain.edge_resolver import GLUE_NODE_TYPE
+    from scistack_gui.ids import IN_HANDLE_PREFIX, strip_placement
+
+    target = edge.get("target") or ""
+    meta = manual_nodes.get(target) or manual_nodes.get(strip_placement(target))
+    if not meta or meta.get("type") != GLUE_NODE_TYPE:
+        return False
+    handle = edge.get("targetHandle") or edge.get("target_handle") or ""
+    if not handle.startswith(IN_HANDLE_PREFIX):
+        return False
+    label = meta.get("label") or strip_placement(target)
+    if label not in glue_ports:
+        from scistack_gui.api.pipeline import _fn_params_from_registry
+
+        glue_ports[label] = _fn_params_from_registry(label)
+    params = glue_ports[label]
+    port = handle[len(IN_HANDLE_PREFIX):]
+    if not params or port in params:
+        return False
+    if edge.get("id") not in _REPORTED_MISSING_GLUE_PORT:
+        _REPORTED_MISSING_GLUE_PORT.add(edge.get("id"))
+        logger.warning(
+            "[edge_view] stored edge %s (%s -> %s) targets glue port %r, but "
+            "glue %r now takes %s; not drawn and binds nothing (the glue's "
+            "argument was renamed). Wire the source to the current port.",
+            edge.get("id"),
+            edge.get("source"),
+            target,
+            handle,
+            label,
+            params,
         )
     return True
 

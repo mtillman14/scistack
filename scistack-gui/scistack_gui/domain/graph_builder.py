@@ -586,7 +586,7 @@ def _path_input_content_variants(obj) -> list[tuple[str, str | None]]:
 
 
 def path_input_display(obj) -> dict:
-    """{"template", "root_folder", "aliases", "alternate_templates"} for a
+    """{"template", "root_folder", "aliases", "key_regex", "alternate_templates"} for a
     registry PathInput/EachOf-of-PathInput object — what a ``pathInput__``
     node shows. The first alternative is the primary template; the rest
     render as ``alternate_templates`` (same shape the old layout.json-authored
@@ -606,11 +606,13 @@ def path_input_display(obj) -> dict:
             str(primary.root_folder) if primary.root_folder is not None else None
         ),
         "aliases": _path_input_aliases(primary),
+        "key_regex": dict(getattr(primary, "key_regex", None) or {}),
         "alternate_templates": [
             {
                 "template": a.path_template,
                 "root_folder": str(a.root_folder) if a.root_folder is not None else None,
                 "aliases": _path_input_aliases(a),
+                "key_regex": dict(getattr(a, "key_regex", None) or {}),
             }
             for a in rest
         ],
@@ -1603,6 +1605,7 @@ def build_path_input_nodes(path_inputs: dict[str, dict]) -> list[dict]:
                     "template": pi["template"],
                     "root_folder": pi.get("root_folder"),
                     "aliases": pi.get("aliases") or {},
+                    "key_regex": pi.get("key_regex") or {},
                     "alternate_templates": pi.get("alternate_templates", []),
                     # Seeded from the registry with no run history
                     # (seed_undiscovered_path_inputs) — see DECLARED_ONLY.
@@ -3397,7 +3400,7 @@ def build_manual_node(
         ]
         extra = {"values": pending_vals}
     elif meta["type"] == "pathInputNode":
-        extra = {"template": "", "root_folder": None, "aliases": {}, "alternate_templates": []}
+        extra = {"template": "", "root_folder": None, "aliases": {}, "key_regex": {}, "alternate_templates": []}
     elif meta["type"] == "glueNode":
         # A glue node is a functionNode VARIANT: same in__{param} / out__
         # handle contract, so edges resolve with no new branch. What it does

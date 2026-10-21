@@ -10,7 +10,7 @@ pip install scistack   # one install for Python, MATLAB, the CLI, and the GUI ba
 
 SciStack does not do any analysis itself. It helps you run code-based analyses more effectively, whether you use your own code or build on someone else's.
 
-📖 **Documentation:** [Code](https://scistack.readthedocs.io/en/latest/) · [With GUI](https://scistack.readthedocs.io/en/latest/ui/)
+📖 **Documentation:** [Code](https://scistack.readthedocs.io/en/latest/) · [GUI](https://scistack.readthedocs.io/en/latest/ui/)
 
 ---
 
@@ -83,7 +83,7 @@ All three work from **Python and MATLAB**. Data saved from one language can be l
 3. Run **`SciStack: Open Pipeline`** from the Command Palette.
 4. Create a new database: give it a name and list your **schema keys**, the levels your data is organized by, such as `subject, session, trial`.
 
-That's it. You'll see a blank canvas, ready for your first function. The [With GUI docs](https://scistack.readthedocs.io/en/latest/ui/) walk through the rest.
+That's it. You'll see a blank canvas, ready for your first function. The [GUI docs](https://scistack.readthedocs.io/en/latest/ui/) walk through the rest.
 
 ## Quick start: code
 

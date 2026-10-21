@@ -209,6 +209,60 @@ class TestPathInputAliasesEndpoint:
         assert resp.json()["ok"], resp.json()
         assert 'X = "{session}/d.csv"' in entities.read_text()
 
+    def test_key_regex_is_written_as_a_literal_string(self, client, tmp_path):
+        entities = _toml_project(
+            tmp_path,
+            'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+            'X = "{subject}_{session}.csv"\n',
+        )
+
+        resp = client.put(
+            "/api/path-inputs/X",
+            json={
+                "template": "{subject}_{session}.csv",
+                "key_regex": {"subject": r"R2_\d{3}"},
+            },
+        )
+
+        assert resp.json()["ok"], resp.json()
+        assert "key_regex = { subject = 'R2_\\d{3}' }" in entities.read_text()
+
+    def test_bad_pattern_is_refused_with_its_reason_and_file_untouched(
+        self, client, tmp_path
+    ):
+        text = (
+            'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+            'X = "{subject}/d.csv"\n'
+        )
+        entities = _toml_project(tmp_path, text)
+
+        resp = client.put(
+            "/api/path-inputs/X",
+            json={"template": "{subject}/d.csv", "key_regex": {"subject": "(R2)_1"}},
+        )
+
+        assert not resp.json()["ok"]
+        assert "capturing group" in resp.json()["error"]
+        assert entities.read_text() == text
+
+    def test_editing_the_template_keeps_key_regex_the_panel_sends(self, client, tmp_path):
+        """The panel rewrites the WHOLE declaration; it sends key_regex on
+        every write, so a template edit must not drop it."""
+        entities = _toml_project(
+            tmp_path,
+            'variables = []\n\n[parameters]\n\n[path_inputs]\n'
+            "X = { template = \"{subject}/a.csv\", key_regex = { subject = 'R2_\\d{3}' } }\n",
+        )
+
+        resp = client.put(
+            "/api/path-inputs/X",
+            json={"template": "{subject}/b.csv", "key_regex": {"subject": r"R2_\d{3}"}},
+        )
+
+        assert resp.json()["ok"], resp.json()
+        assert "'R2_\\d{3}'" in entities.read_text()
+        assert "{subject}/b.csv" in entities.read_text()
+
 
 class TestRefreshParameterSourceEndpoint:
     """POST /parameters/{name}/refresh-source — the standalone trigger for

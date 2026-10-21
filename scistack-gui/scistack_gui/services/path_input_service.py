@@ -40,6 +40,7 @@ def create_path_input(
     root_folder: "str | None" = None,
     alternate_templates: "list[dict] | None" = None,
     aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> dict:
     """Append ``NAME = scidb.PathInput(...)`` (or, with ``alternate_templates``,
     ``NAME = scidb.EachOf(scidb.PathInput(...), scidb.PathInput(...), ...)``) to the
@@ -58,6 +59,9 @@ def create_path_input(
     from scistack_gui import registry
 
     err = _validate_name(name)
+    if err:
+        return {"ok": False, "error": err}
+    err = key_regex_error(key_regex, alternate_templates)
     if err:
         return {"ok": False, "error": err}
     if name in registry.get_path_inputs_registry():
@@ -92,16 +96,21 @@ def create_path_input(
             section="path_inputs",
             name=name,
             rendered=render_path_input_value(
-                template, root_folder, alternate_templates, aliases
+                template, root_folder, alternate_templates, aliases, key_regex
             ),
         )
     else:
         from scidb.source_edit import render_path_input
 
-        line = (
-            f"\n{name} = "
-            f"{render_path_input(template, root_folder, alternate_templates, name=name, aliases=aliases)}\n"
+        rendered = render_path_input(
+            template,
+            root_folder,
+            alternate_templates,
+            name=name,
+            aliases=aliases,
+            key_regex=key_regex,
         )
+        line = f"\n{name} = {rendered}\n"
         err = _append_and_refresh(line, target_file)
 
     if err:
@@ -115,6 +124,7 @@ def update_path_input(
     root_folder: "str | None" = None,
     alternate_templates: "list[dict] | None" = None,
     aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> dict:
     """Rewrite an existing PathInput declaration in place.
 
@@ -146,6 +156,11 @@ def update_path_input(
             ),
         }
 
+    err = key_regex_error(key_regex, alternate_templates)
+    if err:
+        logger.info("[path_input_service] Refusing to update %r: %s", name, err)
+        return {"ok": False, "error": err}
+
     from scidb.entities import render_path_input_value
     from scidb.source_edit import render_path_input
 
@@ -154,25 +169,59 @@ def update_path_input(
 
     logger.info(
         "[path_input_service] update_path_input: name=%r template=%r "
-        "root_folder=%r %d alternate(s) aliases=%s",
+        "root_folder=%r %d alternate(s) aliases=%s key_regex=%s",
         name,
         template,
         root_folder,
         len(alternate_templates or []),
         aliases or {},
+        key_regex or {},
     )
     return update_declaration(
         "path_input",
         name,
         python_expr=render_path_input(
-            template, root_folder, alternate_templates, name=name, aliases=aliases
+            template,
+            root_folder,
+            alternate_templates,
+            name=name,
+            aliases=aliases,
+            key_regex=key_regex,
         ),
         matlab_expr=render_matlab_path_input(
-            template, root_folder, alternate_templates, name=name, aliases=aliases
+            template,
+            root_folder,
+            alternate_templates,
+            name=name,
+            aliases=aliases,
+            key_regex=key_regex,
         ),
         toml_expr=render_path_input_value(
-            template, root_folder, alternate_templates, aliases
+            template, root_folder, alternate_templates, aliases, key_regex
         ),
     )
+
+
+def key_regex_error(
+    key_regex: "dict | None", alternate_templates: "list[dict] | None" = None
+) -> "str | None":
+    """The first bad ``key_regex`` pattern, as a sentence, or ``None``.
+
+    Checked BEFORE the write so the sidebar says "pattern does not compile"
+    rather than the generic "no longer resolves" a rolled-back write gives.
+    The rule itself is scifor's (``key_regex_pattern_error``), never a copy;
+    whether a key is a placeholder is left to PathInput at verification.
+    """
+    from scifor import key_regex_pattern_error
+
+    arms = [key_regex or {}] + [
+        alt.get("key_regex") or {} for alt in (alternate_templates or [])
+    ]
+    for arm in arms:
+        for key, pattern in arm.items():
+            error = key_regex_pattern_error(pattern)
+            if error is not None:
+                return f"Pattern for {{{key}}}: {error}"
+    return None
 
 

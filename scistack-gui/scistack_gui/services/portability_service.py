@@ -451,6 +451,7 @@ def apply_globals(
             pi.get("root_folder"),
             pi.get("alternate_templates"),
             pi.get("aliases"),
+            pi.get("key_regex"),
         )
         if not result.get("ok"):
             materialization_errors.append(

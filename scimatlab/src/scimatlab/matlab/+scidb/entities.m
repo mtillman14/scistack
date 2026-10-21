@@ -83,6 +83,12 @@ function varargout = entities(project_root)
             if isfield(arm, 'aliases_json') && strlength(string(arm.aliases_json)) > 0
                 opts = [opts, {'aliases', string(arm.aliases_json)}]; %#ok<AGROW>
             end
+            % key_regex: JSON text too ("" = none), decoded to the struct
+            % scifor.PathInput takes -- dropping it here silently lost a
+            % TOML-declared pattern on every MATLAB run.
+            if isfield(arm, 'key_regex_json') && strlength(string(arm.key_regex_json)) > 0
+                opts = [opts, {'key_regex', jsondecode(char(string(arm.key_regex_json)))}]; %#ok<AGROW>
+            end
             try
                 objs{j} = scidb.PathInput(arm.template, opts{:});
             catch err

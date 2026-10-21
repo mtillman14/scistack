@@ -45,6 +45,7 @@ import {
   withoutAlias,
   type PathInputAliases,
 } from './pathInputAliases'
+import { withPattern, withoutPattern, type PathInputKeyRegex } from './pathInputKeyRegex'
 import { formatLocation, isLockedForEditing } from './sourceLocation'
 import { useEntityEditability, useSourceEdit } from './useSourceEdit'
 
@@ -54,6 +55,7 @@ interface Props {
   template: string
   root_folder: string | null
   aliases: PathInputAliases
+  key_regex: PathInputKeyRegex
   alternate_templates: PathInputAlternate[]
 }
 
@@ -63,7 +65,7 @@ function parseTemplateKeys(template: string): string[] {
   return [...new Set(matches.map(m => m.slice(1, -1)))]
 }
 
-export default function PathInputSettingsPanel({ id, label, template, root_folder, aliases, alternate_templates }: Props) {
+export default function PathInputSettingsPanel({ id, label, template, root_folder, aliases, key_regex, alternate_templates }: Props) {
   const { bumpGraph } = useScope()
   const [deepCopyError, setDeepCopyError] = useState('')
   const [templateDraft, setTemplateDraft] = useState(template)
@@ -72,6 +74,8 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
   const [aliasKey, setAliasKey] = useState('')
   const [aliasCanonical, setAliasCanonical] = useState('')
   const [aliasSpellings, setAliasSpellings] = useState('')
+  const [patternKey, setPatternKey] = useState('')
+  const [patternDraft, setPatternDraft] = useState('')
   const { submit, error, readOnlyAt, saving, clearError } = useSourceEdit()
   // Declared outside the entities file: every edit control is locked up
   // front rather than taking input the write would refuse.
@@ -80,12 +84,14 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
   const inputsDisabled = saving || locked
 
   // The update rewrites the WHOLE declaration, so every write carries the
-  // aliases (and each alternate's own) — leaving them out would drop them.
+  // aliases and key patterns (and each alternate's own) — leaving them out
+  // would drop them.
   const write = (
     t: string,
     root: string,
     alts: PathInputAlternate[],
     al: PathInputAliases = aliases,
+    kr: PathInputKeyRegex = key_regex,
   ) =>
     submit('update_path_input', {
       name: label,
@@ -93,6 +99,7 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
       root_folder: root.trim() || null,
       alternate_templates: alts.length ? alts : null,
       aliases: al,
+      key_regex: kr,
     })
 
   const templateDirty =
@@ -126,6 +133,18 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
 
   const removeAlias = (key: string, canonical: string) =>
     write(template, rootDraft, alternate_templates, withoutAlias(aliases, key, canonical))
+
+  // Not trimmed: a pattern's spaces can be meaningful.
+  const addPattern = async () => {
+    const key = patternKey || keys[0] || ''
+    if (!key || !patternDraft) return
+    if (await write(template, rootDraft, alternate_templates, aliases, withPattern(key_regex, key, patternDraft))) {
+      setPatternDraft('')
+    }
+  }
+
+  const removePattern = (key: string) =>
+    write(template, rootDraft, alternate_templates, aliases, withoutPattern(key_regex, key))
 
   const [nameDraft, setNameDraft] = useState(label)
   const saveName = async () => {
@@ -281,6 +300,71 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
               disabled={inputsDisabled}
             >
               {saving ? '…' : 'Add'}
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section style={styles.section}>
+        <div style={styles.sectionTitle}>Key Patterns</div>
+        <div style={styles.hint}>
+          A regular expression for what a placeholder matches on disk — e.g.{' '}
+          <span style={styles.mono}>{'R2_\\d{3}'}</span> for subjects like R2_001
+          whose names contain the <span style={styles.mono}>_</span> separator,
+          or <span style={styles.mono}>[A-Za-z]+</span> to split{' '}
+          <span style={styles.mono}>{'{speed}{trial}'}</span>. An aliased key also
+          matches its alias spellings, then stores the value on the left.
+        </div>
+
+        {Object.keys(key_regex).length === 0 ? (
+          <div style={styles.empty}>No patterns — each placeholder matches any name.</div>
+        ) : (
+          Object.entries(key_regex).map(([k, p]) => (
+            <div key={k} style={styles.altRow}>
+              <div style={styles.altTemplateText}>
+                <span style={styles.aliasKey}>{k}</span> <span style={styles.aliasArrow}>~</span> {p}
+              </div>
+              <button
+                style={styles.removeBtn}
+                onClick={() => removePattern(k)}
+                disabled={inputsDisabled}
+                title="Remove this pattern"
+              >
+                ×
+              </button>
+            </div>
+          ))
+        )}
+
+        {keys.length > 0 && (
+          <div style={styles.aliasAddGrid}>
+            <select
+              style={locked ? styles.inputLocked : styles.input}
+              value={patternKey || keys[0]}
+              disabled={inputsDisabled}
+              aria-label="Pattern placeholder"
+              onChange={e => { setPatternKey(e.target.value); clearError() }}
+            >
+              {keys.map(k => <option key={k} value={k}>{k}</option>)}
+            </select>
+            <input
+              style={locked ? styles.inputLocked : styles.input}
+              placeholder="pattern, e.g. R2_\d{3}"
+              value={patternDraft}
+              disabled={inputsDisabled}
+              aria-label="Pattern"
+              onChange={e => { setPatternDraft(e.target.value); clearError() }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') addPattern()
+                if (e.key === 'Escape') { setPatternDraft(''); clearError() }
+              }}
+            />
+            <button
+              style={locked ? styles.addBtnLocked : styles.addBtn}
+              onClick={addPattern}
+              disabled={inputsDisabled}
+            >
+              {saving ? '…' : 'Set'}
             </button>
           </div>
         )}

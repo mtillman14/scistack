@@ -36,7 +36,7 @@ exists only to report one.)
 The TOML deliberately cannot express everything:
 
 - a Variable with a custom `to_db`/`from_db`, or a non-default `schema_version`
-- a PathInput needing `aliases`, `key_regex` or `regex`
+- a PathInput needing a whole-template `regex` (`aliases` and `key_regex` are expressible in TOML)
 - a Parameter whose value is computed rather than literal
 
 Those stay in Python (or MATLAB), read-only. `update_declaration` refuses to

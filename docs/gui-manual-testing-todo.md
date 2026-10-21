@@ -11,6 +11,79 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzt. PathInput key patterns (`key_regex`) in the sidebar — added 2026-10-21
+
+**What changed:** a PathInput can now declare a **pattern per placeholder**
+in the entities TOML, and you can edit the patterns from the sidebar. For
+example, `subject = 'R2_\d{3}'` captures a subject like `R2_001` whole, even
+though it contains the `_` separator. `speed = '[A-Za-z]+'` splits
+`{speed}{trial}`. An aliased key matches its pattern **or** any declared
+alias spelling, then stores the canonical value. Patterns reach MATLAB runs
+and `scidb.entities()`. Plan: `.claude/plan-pathinput-key-regex-toml-gui.md`.
+Doc: `docs/claude/pathinput-key-regex.md`.
+
+Also in this round:
+- Discovery matches a key that an earlier folder already captured as that
+  exact value, so `SS01/Pre_Op/SS01_Pre_Op_x.xlsx` is no longer dropped.
+- A walk that finds nothing logs a WARN naming the segment where it stopped
+  and the entries it rejected.
+- A stored edge into a glue port the glue no longer has (because its argument
+  was renamed) is no longer drawn and no longer feeds anything.
+- The false "`extracted_data` has no MATLAB classdef" warning is gone.
+
+**Backend:** reload the VS Code window, and reinstall scifor, scidb and
+scimatlab (MATLAB uses the site-packages copy). After a pattern edit,
+`scidb.log` should show `[path_input_service] update_path_input: ...
+key_regex={...}`. A MATLAB run should log `... emits 1 template(s) [... key_regex={...}]`,
+and the generated script should contain `key_regex=struct('subject', 'R2_\d{3}')`.
+
+**Frontend**
+1. Select a PathInput. Under **Key Patterns**, pick `subject`, type
+   `R2_\d{3}` and press **Set**. A row should appear (`subject ~ R2_\d{3}`).
+2. `src/scistack_entities.toml` should now hold
+   `key_regex = { subject = 'R2_\d{3}' }` on that entry, in single quotes.
+3. Edit the template or add an alias. The pattern should still be in the file.
+4. Set a pattern of `(R2)_1`. The save should be refused with "has a
+   capturing group; write (?:...) instead", and the file should be unchanged.
+5. With `session` aliased `01 ← Baseline` and the pattern `\d{2}`, run the
+   downstream function in Python and in MATLAB. A `Baseline` folder or file
+   should load as session `01`.
+6. RERC: run `loadXSENSOneFile` again. If discovery still finds nothing,
+   `scidb.log` should have a `pathinput_discover found nothing for
+   'xsens_path'` WARN that names the failing segment and some file names.
+7. The `glue_xsens_config` "2 incoming edges" WARN should be gone. It is
+   replaced by one `[edge_view] stored edge manual__9jtr3v ... targets glue
+   port 'in__value'` WARN.
+
+---
+
+## 0zzzzs. Every run starts from the project root folder — added 2026-10-21
+
+**What changed:** GUI runs now start in the project root. Before, a MATLAB
+terminal run started in the OS temp dir, and a Python run started wherever the
+previous run's code had left the working directory. Generated MATLAB scripts
+now begin with a guarded `cd('<root>')`, and each Python run thread calls
+`scifor.enter_project_root()`.
+
+**Backend**
+1. Reload the VS Code window so the backend edits load.
+2. Add a throwaway function that prints the working directory (MATLAB:
+   `disp(pwd)`; Python: `print(os.getcwd())`), or opens a file by a path
+   relative to the project root.
+
+**Frontend**
+1. Run a MATLAB node. The MATLAB terminal should print
+   `[SciStack] working directory: <project root>` before the pyenv preamble,
+   and `pwd` should still be the project root after the run.
+2. Run a Python node. `scidb.log` should show
+   `[pathinput] working directory ... (project root)`, and the printed cwd
+   should be the project root.
+3. In MATLAB, `cd` somewhere else and run again. It should start from the
+   root again.
+4. Run a whole MATLAB pipeline scope. It should show the same working-directory line.
+
+---
+
 ## 0zzzzr. StatStudio unit screen names a real level; no identical-data WARN — added 2026-10-20
 
 **What changed:** on the Step by step **Independent unit** screen, the sentence

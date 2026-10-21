@@ -2402,6 +2402,7 @@ class TestCollectEdgePathInputs:
                 "template": "{subject}.csv",
                 "root_folder": "/data",
                 "aliases": {},
+                "key_regex": {},
                 "alternate_templates": [],
             }
         }
@@ -2670,6 +2671,32 @@ class TestPathInputAliasesInMatlabCommand:
             'scifor.EachOf(scifor.PathInput("a.csv", name="x"), '
             'scifor.PathInput("{s}/b.csv", aliases=\'{"s": {"A": ["a"]}}\', name="x"))'
         )
+
+    def test_key_regex_is_emitted_as_a_struct_of_chars(self):
+        """2026-10-21: the run command re-renders the declaration, and a
+        TOML key_regex was silently dropped from every GUI MATLAB run."""
+        from scistack_gui.api.matlab_command import _format_path_input
+
+        pi = {
+            "name": "x",
+            "template": "{subject}_{session}.xlsx",
+            "aliases": {},
+            "key_regex": {"subject": r"R2_\d{3}", "session": "it's"},
+            "alternate_templates": [],
+        }
+        assert _format_path_input(pi) == (
+            'scifor.PathInput("{subject}_{session}.xlsx", '
+            "key_regex=struct('subject', 'R2_\\d{3}', 'session', 'it''s'), "
+            'name="x")'
+        )
+
+    def test_declared_path_input_carries_key_regex(self):
+        from scistack_gui.services.matlab_command_service import _declared_path_input
+
+        out = _declared_path_input(
+            "x", {"template": "{s}.csv", "key_regex": {"s": r"\d+"}}
+        )
+        assert out["key_regex"] == {"s": r"\d+"}
 
 
 class TestMatlabFnProxyHash:
@@ -3379,7 +3406,7 @@ class TestMatlabEntitiesBridge:
         assert payload["variables"] == ["StepLength"]
         assert payload["parameters"] == {"WINDOW": [10, 20], "RATE": [1000]}
         assert payload["path_inputs"] == {
-            "EMG": [{"template": "{subject}/emg.csv", "root_folder": "/data", "aliases_json": ""}]
+            "EMG": [{"template": "{subject}/emg.csv", "root_folder": "/data", "aliases_json": "", "key_regex_json": ""}]
         }
         assert payload["errors"] == []
 

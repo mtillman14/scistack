@@ -1,7 +1,7 @@
 {#-
   Override of mkdocs-material's partials/alternate.html.
 
-  The "languages" here are the two doc variants (Code / With GUI) built by
+  The "languages" here are the two doc variants (Code / GUI) built by
   mkdocs-static-i18n; see the i18n comment in mkdocs.yml. Rendered as a
   two-button toggle instead of Material's translate-icon dropdown. The plugin
   points each alt.link at the same page in that variant when one exists,
@@ -12,7 +12,7 @@
   The API reference (api/, internals/) is Code-only: it is absent from the
   "ui" nav in mkdocs.yml. Those pages still get built in the ui variant (by
   fallback, since legacy concept/guide pages link to them), so from an API
-  page the "With GUI" button goes to the GUI home rather than to an orphaned
+  page the "GUI" button goes to the GUI home rather than to an orphaned
   GUI copy. The home link is alt.link with this page's own url stripped off
   (alt.link is "<variant root><page.url>" whenever the page exists there).
 -#}

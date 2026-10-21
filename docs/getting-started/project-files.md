@@ -308,14 +308,16 @@ Values are taken exactly as written: `"01"` is the text `"01"`, never the number
 
 ### `[path_inputs]`
 
-*One entry per file input: `NAME = template` or `NAME = { template, root_folder }`.*
+*One entry per file input: `NAME = template` or `NAME = { template, root_folder, aliases, key_regex }`.*
 
 Each entry declares a [`PathInput`](../api/scifor.md#input-wrappers): a template that builds a file path for each location. `{subject}` and `{session}` are filled in with the current location's values.
 
 | Form | Meaning |
 |---|---|
 | `"{subject}/{session}_emg.csv"` | A template relative to the project root. |
-| `{ template = "...", root_folder = "D:/study/raw" }` | A template inside another folder, such as a data drive. These are the only two fields allowed. |
+| `{ template = "...", root_folder = "D:/study/raw" }` | A template inside another folder, such as a data drive. |
+| `{ template = "...", aliases = { session = { BL = ["Baseline"] } } }` | One value spelled several ways on disk. A folder named `Baseline` is stored as session `BL`. |
+| `{ template = "...", key_regex = { subject = 'R2_\d{3}' } }` | What a placeholder matches on disk, as a regular expression. Use it when a value contains a separator (`R2_001` in `{subject}_{session}.xlsx`), or when two placeholders touch (`{speed}{trial}`: `speed = '[A-Za-z]+'`). Write patterns in single quotes so `\d` stays as typed. Plain `( )` groups aren't allowed; use `(?: )`. If the key also has aliases, the alias spellings match too and are stored as the value on the left. |
 | `["{subject}/a.csv", "{subject}/b.csv"]` | Alternatives: a step using it runs once per template. |
 
 ### Using the declarations
@@ -354,7 +356,7 @@ Some declarations need code. These stay in a Python (or MATLAB) file listed in `
 | A parameter description | `Parameter(30, description="window, seconds")` |
 | A computed value | `Parameter(*range(10, 60, 10))` |
 | A variable with [custom storage](writing-functions.md#saving-your-own-classes) or a docstring | `class X(BaseVariable)` with `to_db`/`from_db`, or a MATLAB `classdef X < scidb.BaseVariable` with both methods |
-| PathInput matching options | `aliases=`, `key_regex=`, `regex=` |
+| A whole-template PathInput regex | `regex=True` (`aliases` and `key_regex` can go in the entities file; see above) |
 
 If the same name is declared both in code and in the entities file, the GUI shows the entities file's version.
 

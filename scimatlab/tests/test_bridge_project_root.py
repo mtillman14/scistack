@@ -90,7 +90,7 @@ class TestLoadEntitiesPins:
         the recorded key identical to the declaration."""
         payload = load_entities(str(project))
         assert payload["path_inputs"]["EMG"] == [
-            {"template": "data/{subject}.mat", "root_folder": None, "aliases_json": ""}
+            {"template": "data/{subject}.mat", "root_folder": None, "aliases_json": "", "key_regex_json": ""}
         ]
 
     def test_a_named_folder_without_a_config_is_still_the_root(self, tmp_path):
@@ -138,3 +138,26 @@ class TestLoadEntitiesAliases:
     def test_no_aliases_is_empty_text(self, tmp_path):
         root = self._project(tmp_path, 'X = "{subject}.csv"')
         assert load_entities(str(root))["path_inputs"]["X"][0]["aliases_json"] == ""
+
+
+class TestLoadEntitiesKeyRegex:
+    """``key_regex`` crosses as JSON text too; ``+scidb/entities.m``
+    jsondecodes it into the struct ``scifor.PathInput(key_regex=)`` takes.
+    Without it a TOML pattern was dropped on every MATLAB run (2026-10-21)."""
+
+    _project = TestLoadEntitiesAliases._project
+
+    def test_key_regex_rides_along_as_json(self, tmp_path):
+        import json
+
+        root = self._project(
+            tmp_path,
+            "X = { template = \"{subject}_{session}.xlsx\", "
+            "key_regex = { subject = 'R2_\\d{3}' } }",
+        )
+        arm = load_entities(str(root))["path_inputs"]["X"][0]
+        assert json.loads(arm["key_regex_json"]) == {"subject": r"R2_\d{3}"}
+
+    def test_no_key_regex_is_empty_text(self, tmp_path):
+        root = self._project(tmp_path, 'X = "{subject}.csv"')
+        assert load_entities(str(root))["path_inputs"]["X"][0]["key_regex_json"] == ""

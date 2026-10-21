@@ -235,6 +235,7 @@ export default function Sidebar() {
             root_folder={(selectedNode.data as PathInputNodeData).root_folder}
             alternate_templates={(selectedNode.data as PathInputNodeData).alternate_templates ?? []}
             aliases={(selectedNode.data as PathInputNodeData).aliases ?? {}}
+            key_regex={(selectedNode.data as PathInputNodeData).key_regex ?? {}}
           />
         )}
         {isPipelineNode(selectedNode) && (

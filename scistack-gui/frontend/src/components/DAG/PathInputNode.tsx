@@ -9,11 +9,13 @@
 
 import { Handle, Position } from '@xyflow/react'
 import { aliasCount, type PathInputAliases } from '../Sidebar/pathInputAliases'
+import type { PathInputKeyRegex } from '../Sidebar/pathInputKeyRegex'
 
 export interface PathInputAlternate {
   template: string
   root_folder: string | null
   aliases?: PathInputAliases
+  key_regex?: PathInputKeyRegex
 }
 
 export interface PathInputNodeData {
@@ -21,6 +23,7 @@ export interface PathInputNodeData {
   template: string
   root_folder: string | null
   aliases?: PathInputAliases
+  key_regex?: PathInputKeyRegex
   alternate_templates: PathInputAlternate[]
 }
 

@@ -196,7 +196,7 @@ SciStack is a _stack_ of tools. Start with the lightest one that does the job.
 | **`scidb`** | Everything in `scifor`, plus a database that saves every result along with how it was made. | Real projects you'll come back to, change, and share |
 | **SciStack GUI** | A VS Code extension that draws your `scidb` pipeline as a diagram you can run and inspect, with Plot Studio and Stat Studio built in. | Seeing the whole pipeline at once, and making figures and tables without writing code |
 
-All three work from **Python and MATLAB**. Use the **Code / With GUI** switch at the top of any page to see these docs for writing code or for using the GUI.
+All three work from **Python and MATLAB**. Use the **Code / GUI** switch at the top of any page to see these docs for writing code or for using the GUI.
 
 ## Why SciStack exists
 

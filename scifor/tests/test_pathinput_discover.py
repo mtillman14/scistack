@@ -503,3 +503,64 @@ class TestDiscoverAbsoluteTemplates:
         pi = PathInput("EMG/6MWT-{pass}.mat", root_folder=str(tmp_path), name="EMG/6MWT-{pass}.mat")
         combos = pi.discover()
         assert [c["pass"] for c in combos] == ["001"]
+
+
+class TestBoundKeysMatchLiterally:
+    """A key captured by an earlier segment is matched literally later on.
+
+    Regression (2026-10-21): the file segment re-captured ``subject`` and
+    ``session`` greedily, so a value holding the ``_`` delimiter captured
+    differently from its folder, conflicted, and every file was dropped —
+    ``0 combo(s)`` with nothing in the log to say why.
+    """
+
+    def test_underscore_in_session_value(self, tmp_path):
+        d = tmp_path / "SS01" / "Pre_Op" / "Xsens"
+        d.mkdir(parents=True)
+        (d / "SS01_Pre_Op_xsens_fast1.xlsx").touch()
+        pi = PathInput(
+            "{subject}/{session}/Xsens/{subject}_{session}_xsens_{speed}{trial}.xlsx",
+            root_folder=tmp_path,
+            name="xsens_path",
+        )
+        assert pi.discover() == [
+            {"subject": "SS01", "session": "Pre_Op", "speed": "fast", "trial": "1"}
+        ]
+
+    def test_alias_spelled_differently_in_folder_and_file(self, tmp_path):
+        d = tmp_path / "SS01" / "Baseline"
+        d.mkdir(parents=True)
+        (d / "SS01_BL.xlsx").touch()
+        pi = PathInput(
+            "{subject}/{session}/{subject}_{session}.xlsx",
+            root_folder=tmp_path,
+            aliases={"session": {"BL": ["Baseline"]}},
+            name="p",
+        )
+        assert pi.discover() == [{"subject": "SS01", "session": "BL"}]
+
+
+class TestZeroResultReport:
+    """A walk that finds nothing records the deepest segment it reached."""
+
+    def test_miss_names_the_failing_segment_and_entries(self, tmp_path):
+        d = tmp_path / "SS01" / "Xsens"
+        d.mkdir(parents=True)
+        (d / "SS01_XSENS_fast1.xlsx").touch()  # upper-case: pattern says xsens
+        pi = PathInput(
+            "{subject}/Xsens/{subject}_xsens_{speed}.xlsx",
+            root_folder=tmp_path,
+            name="p",
+        )
+        assert pi.discover() == []
+        miss = pi._deepest_miss
+        assert miss["seg_idx"] == 2
+        assert miss["rejected"] == ["SS01_XSENS_fast1.xlsx"]
+
+    def test_missing_literal_folder_is_the_miss(self, tmp_path):
+        (tmp_path / "SS01" / "XSENS_data").mkdir(parents=True)
+        pi = PathInput(
+            "{subject}/Xsens/{subject}.xlsx", root_folder=tmp_path, name="p"
+        )
+        assert pi.discover() == []
+        assert pi._deepest_miss["seg_idx"] == 1

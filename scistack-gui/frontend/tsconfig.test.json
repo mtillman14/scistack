@@ -91,6 +91,8 @@
     "src/components/Sidebar/sourceLocation.test.ts",
     "src/components/Sidebar/pathInputAliases.ts",
     "src/components/Sidebar/pathInputAliases.test.ts",
+    "src/components/Sidebar/pathInputKeyRegex.ts",
+    "src/components/Sidebar/pathInputKeyRegex.test.ts",
     "src/components/StatStudio/statsSpec.ts",
     "src/components/StatStudio/statsSpec.test.ts",
     "src/components/StatStudio/Guided/guideSteps.ts",

@@ -190,6 +190,7 @@ def render_path_input(
     name: str,
     qualifier: str = DEFAULT_QUALIFIER,
     aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> str:
     """``scidb.PathInput('{subject}/x.csv', name='RawData')``, or, with *alternates*,
     ``scidb.EachOf(scidb.PathInput(...), scidb.PathInput(...))``.
@@ -204,10 +205,15 @@ def render_path_input(
     ``root_folder=None``, so the common single-argument declaration stays
     readable.
     """
-    calls = [_path_input_call(template, root_folder, name, qualifier, aliases)]
+    calls = [_path_input_call(template, root_folder, name, qualifier, aliases, key_regex)]
     calls.extend(
         _path_input_call(
-            alt.get("template", ""), alt.get("root_folder"), name, qualifier, alt.get("aliases")
+            alt.get("template", ""),
+            alt.get("root_folder"),
+            name,
+            qualifier,
+            alt.get("aliases"),
+            alt.get("key_regex"),
         )
         for alt in (alternates or [])
     )
@@ -222,12 +228,15 @@ def _path_input_call(
     name: str,
     qualifier: str,
     aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> str:
     args = [repr(template)]
     if root_folder:
         args.append(f"root_folder={root_folder!r}")
     if aliases:
         args.append(f"aliases={aliases!r}")
+    if key_regex:
+        args.append(f"key_regex={key_regex!r}")
     # Required: the name is the PathInput's identity, and it must equal the
     # binding the declaration is written under (scidb.parameter.
     # path_input_declaration).

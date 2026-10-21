@@ -1338,6 +1338,12 @@ def load_entities(project_start=None) -> dict:
                 "aliases_json": (
                     json.dumps(arm.aliases) if getattr(arm, "aliases", None) else ""
                 ),
+                # JSON text for symmetry with aliases ("" = none); MATLAB
+                # jsondecodes it into the struct +scifor/PathInput.m takes
+                # (its fields are placeholder names, so a struct is safe).
+                "key_regex_json": (
+                    json.dumps(arm.key_regex) if getattr(arm, "key_regex", None) else ""
+                ),
             }
             for arm in _arms(obj)
         ]

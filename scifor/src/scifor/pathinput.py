@@ -58,6 +58,28 @@ def path_input_key(name: str) -> str:
     return json.dumps({"__type": "PathInput", "name": name})
 
 
+def key_regex_pattern_error(pattern: Any) -> "str | None":
+    """Why *pattern* cannot be a ``key_regex`` fragment, or ``None``.
+
+    THE one check, used by the constructor, the entities-file reader and the
+    GUI's live validation. The fragment is spliced into a named group inside
+    a ``fullmatch``, so it must be a string that compiles and has no
+    capturing group of its own (one would shift every group after it; use
+    ``(?:...)``). Anchors are unnecessary — the whole entry name must match.
+    """
+    if not isinstance(pattern, str) or not pattern:
+        return f"pattern must be a non-empty string, got {pattern!r}"
+    try:
+        compiled = re.compile(pattern)
+    except re.error as exc:
+        return f"pattern {pattern!r} does not compile: {exc}"
+    if compiled.groups:
+        return (
+            f"pattern {pattern!r} has a capturing group; write (?:...) instead"
+        )
+    return None
+
+
 def clear_listing_cache() -> None:
     """Forget every cached directory listing."""
     _DIR_CACHE.clear()
@@ -143,6 +165,46 @@ def get_project_root() -> "Path | None":
     return _project_root_override
 
 
+def enter_project_root() -> Path:
+    """Make the pinned project root the process's working directory.
+
+    Every execution starts from the project root, so a user function that
+    opens a relative path finds it in the same place no matter who launched
+    the run.  Called at the start of each run rather than once at startup:
+    a user function is free to ``os.chdir`` and the next run must not
+    inherit that.  The process stays there afterwards (there is no
+    "previous" directory worth restoring in a server process), matching the
+    generated MATLAB script, whose ``cd`` also sticks.
+
+    With no pin, :func:`project_root` *is* the cwd, so nothing moves.  A
+    pinned root that is not a directory is logged and left alone rather
+    than failing the run -- resolution against it would fail loudly anyway.
+    Returns the working directory the run starts in.
+    """
+    root = _project_root_override
+    try:
+        before = Path.cwd().resolve()
+    except FileNotFoundError:
+        # The old cwd was deleted out from under the process.
+        before = None
+    if root is None:
+        Log.info("[pathinput] working directory %s (no project root pinned)", before)
+        return before if before is not None else Path.cwd()
+    if not root.is_dir():
+        Log.warn(
+            "[pathinput] project root %s is not a directory -- run starts in %s",
+            root,
+            before,
+        )
+        return before if before is not None else Path.cwd()
+    if before != root:
+        os.chdir(root)
+        Log.info("[pathinput] working directory %s -> %s (project root)", before, root)
+    else:
+        Log.info("[pathinput] working directory %s (project root)", root)
+    return root
+
+
 def clear_project_root() -> None:
     """Drop the pinned project root (tests, and any caller switching projects
     inside one process)."""
@@ -203,7 +265,8 @@ class PathInput:
                 resolves the ambiguity explicitly. *pattern* is a raw regex
                 fragment (no capturing group) substituted into the named
                 group scifor builds internally; unrelated keys and
-                delimiter-separated segments are unaffected.
+                delimiter-separated segments are unaffected. On an aliased
+                key, the declared spellings also match (then canonicalize).
 
     Example:
         for_each(
@@ -247,9 +310,21 @@ class PathInput:
         # The cache ITSELF is module-level (`_DIR_CACHE`) — see there.
         self._dir_cache_reads = 0
         self._dir_cache_hits = 0
+        # Where the last discover() walk stopped; read by _log_zero_result.
+        self._deepest_miss: "dict | None" = None
         self.aliases = aliases or {}
         self._alias_reverse = self._build_alias_reverse(self.aliases)
         self.key_regex = self._validate_key_regex(key_regex or {})
+        for key in sorted(set(self.key_regex) & set(self._alias_reverse)):
+            Log.info(
+                "[pathinput] %r: {%s} matches pattern %r or the alias "
+                "spelling(s) %s, then canonicalizes through the aliases",
+                self.name,
+                key,
+                self.key_regex[key],
+                sorted(self._alias_reverse[key]),
+                layer="scifor",
+            )
 
     def _build_alias_reverse(
         self, aliases: "dict[str, dict[str, list[str]]]"
@@ -285,15 +360,37 @@ class PathInput:
         return reverse
 
     def _validate_key_regex(self, key_regex: "dict[str, str]") -> "dict[str, str]":
-        """Validate ``key_regex`` keys are actual template placeholders."""
+        """Validate ``key_regex``: every key a template placeholder, every
+        pattern accepted by :func:`key_regex_pattern_error`."""
         placeholder_set = set(self.placeholder_keys())
-        for key in key_regex:
+        for key, pattern in key_regex.items():
             if key not in placeholder_set:
                 raise ValueError(
                     f"PathInput key_regex key {key!r} is not a placeholder in "
                     f"template {self.path_template!r}"
                 )
+            error = key_regex_pattern_error(pattern)
+            if error is not None:
+                raise ValueError(f"PathInput key_regex for {key!r}: {error}")
         return dict(key_regex)
+
+    def _key_pattern(self, key: str) -> str:
+        """The regex fragment that captures an UNBOUND ``{key}``.
+
+        ``key_regex[key]`` when declared, else the default ``[^/\\]+``. An
+        aliased key with a declared pattern also accepts every declared
+        spelling literally (2026-10-21, user decision): aliases ARE on-disk
+        spellings, so a ``session = '\\d{2}'`` pattern must not drop a
+        ``Baseline`` folder declared as an alias of ``BL``. The match is then
+        canonicalized by the alias map, as before — regex first, alias second.
+        """
+        pattern = self.key_regex.get(key)
+        if pattern is None:
+            return r"[^/\\]+"
+        spellings = sorted(self._alias_reverse.get(key, {}), key=lambda s: (-len(s), s))
+        if not spellings:
+            return pattern
+        return "(?:" + "|".join([pattern, *(re.escape(s) for s in spellings)]) + ")"
 
     def to_key(self) -> str:
         """The IDENTITY of this PathInput: its name, as a JSON string.
@@ -915,6 +1012,7 @@ class PathInput:
         # round-trips the walk cost; `cached` says how many the listing cache
         # absorbed, which is the number that should climb on a re-open.
         reads_before, hits_before = self._dir_cache_reads, self._dir_cache_hits
+        self._deepest_miss = None
         with Log.timer(
             "pathinput_discover", layer="scifor", extra=str(root)
         ) as timer:
@@ -932,7 +1030,42 @@ class PathInput:
             self._dir_cache_hits - hits_before,
             layer="scifor",
         )
+        if not results:
+            self._log_zero_result(root, segments)
         return results
+
+    def _log_zero_result(self, root: Path, segments: list[str]) -> None:
+        """WARN where a zero-combo walk stopped and what it saw there.
+
+        A bare ``0 combo(s)`` cannot tell a wrong root from a typo'd folder
+        from a filename the pattern does not fit (2026-10-21: an XSENS run
+        found nothing and the log could not say why).
+        """
+        miss = self._deepest_miss
+        if miss is None:
+            Log.warn(
+                "pathinput_discover found nothing for %r under %s, and no "
+                "directory was listed — does the root exist?",
+                self.name,
+                root,
+                layer="scifor",
+            )
+            return
+        Log.warn(
+            "pathinput_discover found nothing for %r: the walk got as far as "
+            "segment %d of %d (%r) in %d director(ies), e.g. %s; pattern %s "
+            "matched none of its %d entr(ies), e.g. %s",
+            self.name,
+            miss["seg_idx"] + 1,
+            len(segments),
+            segments[miss["seg_idx"]],
+            miss["dirs"],
+            miss["directory"],
+            miss["pattern"],
+            miss["n_rejected"],
+            miss["rejected"] or "(directory empty or missing)",
+            layer="scifor",
+        )
 
     # ------------------------------------------------------------------
     # Internal recursive walker
@@ -965,15 +1098,20 @@ class PathInput:
                     not enforce_kind or _matches_kind(candidate, _expects_file(segment))
                 ):
                     results.append(dict(bindings))
+                else:
+                    self._note_miss(seg_idx, current_dir, segment, [segment])
             else:
                 if candidate.is_dir():
                     self._walk(
                         candidate, segments, seg_idx + 1, bindings, results, enforce_kind
                     )
+                else:
+                    self._note_miss(seg_idx, current_dir, segment, [segment])
             return
 
-        # Segment has placeholder(s) — build a regex
-        pattern = self._segment_to_regex(segment)
+        # Segment has placeholder(s) — build a regex. Keys an earlier segment
+        # already bound are matched literally (see _segment_to_regex).
+        pattern = self._segment_to_regex(segment, bindings)
 
         # Through the mtime-validated listing cache rather than a bare
         # os.listdir. This walk runs on every discovery, and every discovery on
@@ -984,11 +1122,16 @@ class PathInput:
         # fallback path; this was the one caller still going around it.
         entries = self._list_dir(current_dir)
         if not entries:
+            self._note_miss(seg_idx, current_dir, pattern, [])
             return
 
+        # Entries that did not survive this segment, for the zero-result
+        # report in discover() — the only way to see WHY a walk found nothing.
+        rejected: list[str] = []
         for entry in entries:
             m = re.fullmatch(pattern, entry)
             if m is None:
+                rejected.append(entry)
                 continue
 
             # Validate captured values against existing bindings
@@ -1030,6 +1173,7 @@ class PathInput:
                     consistent = False
                     break
             if not consistent:
+                rejected.append(f"{entry} (conflicts with {bindings})")
                 continue
 
             new_bindings = {**bindings, **clean_captured}
@@ -1038,33 +1182,77 @@ class PathInput:
             if is_last:
                 if not enforce_kind or _matches_kind(entry_path, _expects_file(segment)):
                     results.append(dict(new_bindings))
+                else:
+                    rejected.append(f"{entry} (wrong kind: file vs directory)")
             else:
                 if entry_path.is_dir():
                     self._walk(
                         entry_path, segments, seg_idx + 1, new_bindings, results, enforce_kind
                     )
+                else:
+                    rejected.append(f"{entry} (not a directory)")
+        if len(rejected) == len(entries):
+            self._note_miss(seg_idx, current_dir, pattern, rejected)
 
-    def _segment_to_regex(self, segment: str) -> str:
+    def _note_miss(
+        self, seg_idx: int, directory: Path, pattern: str, rejected: list[str]
+    ) -> None:
+        """Remember where a walk stopped, keeping the DEEPEST segment reached
+        — that is the one whose pattern disagrees with the files on disk."""
+        miss = self._deepest_miss
+        if miss is None or seg_idx > miss["seg_idx"]:
+            self._deepest_miss = {
+                "seg_idx": seg_idx,
+                "directory": str(directory),
+                "pattern": pattern,
+                "dirs": 1,
+                "rejected": rejected[:8],
+                "n_rejected": len(rejected),
+            }
+        elif seg_idx == miss["seg_idx"]:
+            miss["dirs"] += 1
+
+    def _segment_to_regex(
+        self, segment: str, bound: "dict[str, str] | None" = None
+    ) -> str:
         """Convert a template segment like ``{subject}_XSENS_{session}`` to a regex.
 
         A placeholder declared in ``key_regex`` uses its custom pattern
         instead of the default greedy ``[^/\\]+`` — needed to disambiguate
         placeholders that are adjacent with no delimiter between them (see
         the ``key_regex`` docstring on ``__init__``).
+
+        A placeholder already in *bound* (captured by an earlier segment) is
+        matched as that value's literal spelling(s), not re-captured. Before
+        2026-10-21 it was re-captured and compared afterwards, and a greedy
+        capture loses that comparison whenever a value holds the delimiter:
+        folder ``SS01``/``Pre_Op`` with file ``SS01_Pre_Op_x.xlsx`` captured
+        subject ``SS01_Pre``, conflicted with the folder, and the file was
+        silently dropped. An aliased key accepts every spelling of its
+        canonical, since the folder and the file may spell it differently.
         """
+        bound = bound or {}
         parts = _string.Formatter().parse(segment)
         regex = ""
         key_counts: dict[str, int] = {}
         for literal, field_name, _, _ in parts:
             if literal:
                 regex += re.escape(literal)
+            if field_name is not None and field_name in bound:
+                canonical = bound[field_name]
+                spellings = [canonical] + [
+                    s
+                    for s, c in self._alias_reverse.get(field_name, {}).items()
+                    if c == canonical and s != canonical
+                ]
+                regex += "(?:" + "|".join(re.escape(s) for s in spellings) + ")"
+                continue
             if field_name is not None:
                 # Handle duplicate keys in the same segment by numbering
                 key_counts[field_name] = key_counts.get(field_name, 0) + 1
                 count = key_counts[field_name]
                 group_name = field_name if count == 1 else f"{field_name}_{count}"
-                pattern = self.key_regex.get(field_name, r"[^/\\]+")
-                regex += f"(?P<{group_name}>{pattern})"
+                regex += f"(?P<{group_name}>{self._key_pattern(field_name)})"
         return regex
 
     def __repr__(self) -> str:

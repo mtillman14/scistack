@@ -805,3 +805,79 @@ class TestPathInputAliases:
 
         assert pi.aliases == aliases
         assert str(pi.root_folder) == "/data"
+
+
+# ---------------------------------------------------------------------------
+# PathInput key_regex
+# ---------------------------------------------------------------------------
+
+
+class TestPathInputKeyRegex:
+    """``key_regex = {key = 'pattern'}`` on a PathInput table (2026-10-21).
+    Single-quoted TOML strings keep ``\\d`` a backslash."""
+
+    def test_key_regex_reaches_the_path_input(self, tmp_path):
+        path = write(tmp_path, r"""
+            [path_inputs]
+            X = { template = "{subject}_{session}.xlsx", key_regex = { subject = 'R2_\d{3}' } }
+        """)
+        result = entities.load(path)
+
+        assert result.errors == []
+        assert result.path_inputs["X"].key_regex == {"subject": r"R2_\d{3}"}
+
+    def test_each_alternate_carries_its_own_key_regex(self, tmp_path):
+        path = write(tmp_path, r"""
+            [path_inputs]
+            X = [{ template = "{s}/a.csv", key_regex = { s = '\d+' } }, "{s}/b.csv"]
+        """)
+        obj = entities.load(path).path_inputs["X"]
+
+        assert [a.key_regex for a in obj.alternatives] == [{"s": r"\d+"}, {}]
+
+    @pytest.mark.parametrize(
+        "key_regex, message",
+        [
+            ("{ session = '(BL)' }", "capturing group"),
+            ("{ session = 'BL[' }", "does not compile"),
+            ("{ trial = '\\d+' }", "not a placeholder"),
+            ("{ session = 3 }", "key_regex must be a table"),
+            ("'BL'", "key_regex must be a table"),
+        ],
+    )
+    def test_bad_key_regex_rejects_only_that_entry(self, tmp_path, key_regex, message):
+        path = write(tmp_path, f"""
+            [path_inputs]
+            GOOD = "{{session}}/ok.csv"
+            BAD = {{ template = "{{session}}/d.csv", key_regex = {key_regex} }}
+        """)
+        result = entities.load(path)
+
+        assert sorted(result.path_inputs) == ["GOOD"]
+        assert [e.name for e in result.errors] == ["BAD"]
+        assert message in result.errors[0].message
+
+    def test_render_uses_literal_strings(self):
+        assert entities.render_path_input_value(
+            "{subject}.csv", key_regex={"subject": r"R2_\d{3}"}
+        ) == r"""{ template = "{subject}.csv", key_regex = { subject = 'R2_\d{3}' } }"""
+
+    def test_pattern_with_a_quote_falls_back_to_a_basic_string(self, tmp_path):
+        rendered = entities.render_path_input_value(
+            "{s}.csv", key_regex={"s": r"it's\d"}
+        )
+        path = write(tmp_path, f"[path_inputs]\nX = {rendered}\n")
+
+        assert entities.load(path).path_inputs["X"].key_regex == {"s": r"it's\d"}
+
+    def test_render_then_load_round_trips_with_aliases(self, tmp_path):
+        aliases = {"session": {"01": ["Baseline"]}}
+        key_regex = {"subject": r"R2_\d{3}", "session": r"\d{2}"}
+        rendered = entities.render_path_input_value(
+            "{subject}/{subject}_{session}.xlsx", None, None, aliases, key_regex
+        )
+        path = write(tmp_path, f"[path_inputs]\nX = {rendered}\n")
+        pi = entities.load(path).path_inputs["X"]
+
+        assert pi.aliases == aliases
+        assert pi.key_regex == key_regex

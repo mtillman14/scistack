@@ -106,3 +106,74 @@ class TestKeyRegexToKey:
         pi = PathInput("{speed}/{trial}.mat", name="{speed}/{trial}.mat")
         key = json.loads(pi.to_spec())
         assert "key_regex" not in key
+
+
+class TestPatternRule:
+    """``key_regex_pattern_error`` is THE rule (constructor, entities file,
+    GUI save all ask it)."""
+
+    def test_capturing_group_is_refused(self):
+        with pytest.raises(ValueError, match="capturing group"):
+            PathInput("{subject}.mat", key_regex={"subject": r"(R2)_\d+"}, name="p")
+
+    def test_non_capturing_group_is_fine(self):
+        PathInput("{subject}.mat", key_regex={"subject": r"(?:R2|R3)_\d+"}, name="p")
+
+    def test_pattern_that_does_not_compile_is_refused(self):
+        # An unclosed class. (An unclosed `{3` is NOT an error: Python's re
+        # reads an incomplete quantifier as literal text.)
+        with pytest.raises(ValueError, match="does not compile"):
+            PathInput("{subject}.mat", key_regex={"subject": r"R2_[0-9"}, name="p")
+
+    def test_empty_pattern_is_refused(self):
+        from scifor import key_regex_pattern_error
+
+        assert key_regex_pattern_error("") is not None
+        assert key_regex_pattern_error(r"R2_\d{3}") is None
+
+
+class TestUnderscoreInValue:
+    def test_subject_with_the_delimiter_is_captured_whole(self, tmp_path):
+        """2026-10-21: subject ``R2_001`` in ``{subject}_{session}.xlsx``
+        split at the first or last ``_`` without a pattern."""
+        for f in ["R2_001_BL.xlsx", "R2_002_POST.xlsx"]:
+            (tmp_path / f).touch()
+        pi = PathInput(
+            "{subject}_{session}.xlsx",
+            root_folder=tmp_path,
+            key_regex={"subject": r"R2_\d{3}"},
+            name="p",
+        )
+        assert sorted(pi.discover(), key=lambda c: c["subject"]) == [
+            {"subject": "R2_001", "session": "BL"},
+            {"subject": "R2_002", "session": "POST"},
+        ]
+
+
+class TestPatternWithAliases:
+    """Regex first, then alias canonicalization; declared alias spellings
+    always match even when the pattern alone would not (user decision
+    2026-10-21)."""
+
+    def test_regex_match_is_canonicalized_by_the_aliases(self, tmp_path):
+        (tmp_path / "S1_Baseline.csv").touch()
+        pi = PathInput(
+            "{subject}_{session}.csv",
+            root_folder=tmp_path,
+            key_regex={"session": r"[A-Z][a-z]+"},
+            aliases={"session": {"BL": ["Baseline"]}},
+            name="p",
+        )
+        assert pi.discover() == [{"subject": "S1", "session": "BL"}]
+
+    def test_alias_spelling_outside_the_pattern_still_matches(self, tmp_path):
+        for f in ["S1_Baseline.csv", "S1_02.csv", "S1_xyz.csv"]:
+            (tmp_path / f).touch()
+        pi = PathInput(
+            "{subject}_{session}.csv",
+            root_folder=tmp_path,
+            key_regex={"session": r"\d{2}"},
+            aliases={"session": {"01": ["Baseline"]}},
+            name="p",
+        )
+        assert sorted(c["session"] for c in pi.discover()) == ["01", "02"]

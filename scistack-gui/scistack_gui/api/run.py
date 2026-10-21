@@ -32,6 +32,7 @@ from scidb.database import DatabaseManager
 from scidb.foreach_config import RunOptions
 
 from scidb import for_each
+from scifor import enter_project_root
 from scistack_gui import registry
 from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.api.ws import push_message
@@ -185,6 +186,10 @@ def _run_in_thread(
     # Background threads don't inherit that local, so we re-register it here.
     logger.info("[run_thread] Setting current database for thread (run_id=%s)", run_id)
     db.set_current_db()
+    # Every execution starts from the project root (a previous run's user
+    # code may have chdir'd). MATLAB scripts do the same via
+    # matlab_command._working_directory_lines.
+    enter_project_root()
 
     logger.info(
         "[run_thread] Looking up function '%s' in registry (run_id=%s)",
@@ -1149,6 +1154,7 @@ def _run_pipeline_in_thread(
             "force_cancelled": False,
         }
     db.set_current_db()
+    enter_project_root()  # see _run_in_thread
     logger.info(
         "[pipeline_run] run_id=%s scope=%s mode=%s target=%r",
         run_id,

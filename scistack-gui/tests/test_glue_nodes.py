@@ -526,3 +526,45 @@ def test_glue_dir_is_registered_on_first_create(client, glue_project):
     client.post("/api/glue", json={"name": "first"})
     toml = (glue_project / "scistack.toml").read_text()
     assert "glue_dir" in toml
+
+
+class TestRenamedGluePort:
+    """An edge into a glue port the glue's function no longer has is not
+    drawn and binds nothing (edge_view._on_missing_glue_port).
+
+    Regression (2026-10-21): the new-glue body takes ``value``; the user wired
+    ``in__value``, renamed the argument to ``filepath`` and wired
+    ``in__filepath``. The ``in__value`` edge was invisible on the canvas (no
+    such handle) yet still stored, and the chain followed it because it was
+    first.
+    """
+
+    def _stale(self, monkeypatch, params):
+        from scistack_gui.api import pipeline as pipeline_api
+        from scistack_gui.domain.edge_view import _on_missing_glue_port
+
+        monkeypatch.setattr(pipeline_api, "_fn_params_from_registry", lambda n: params)
+        manual_nodes = {"g1": _glue_node("glue_cfg")}
+        edges = [
+            _edge("e_old", "param__config", "g1", "in__value"),
+            _edge("e_new", "param__config", "g1", "in__filepath"),
+            _edge("e_out", "g1", "fn__analyze", "in__cfg"),
+        ]
+        memo: dict = {}
+        return [e["id"] for e in edges if _on_missing_glue_port(e, manual_nodes, memo)]
+
+    def test_edge_into_a_renamed_port_is_not_drawn(self, monkeypatch):
+        assert self._stale(monkeypatch, ["filepath"]) == ["e_old"]
+
+    def test_unknown_signature_keeps_every_edge(self, monkeypatch):
+        assert self._stale(monkeypatch, []) == []
+
+    def test_chain_follows_the_live_edge_once_the_stale_one_is_gone(self):
+        manual_nodes = {"g1": _glue_node("glue_cfg")}
+        drawn = [
+            _edge("e_new", "var__Raw", "g1", "in__filepath"),
+            _edge("e_out", "g1", "fn__analyze", "in__cfg"),
+        ]
+        chain, head = resolve_glue_chain("g1", drawn, manual_nodes, {})
+        assert chain == ["glue_cfg"]
+        assert head is not None

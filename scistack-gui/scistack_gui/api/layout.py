@@ -121,6 +121,7 @@ class PathInputUpdate(BaseModel):
     root_folder: str | None = None
     alternate_templates: list[dict] | None = None
     aliases: dict[str, dict[str, list[str]]] | None = None
+    key_regex: dict[str, str] | None = None
 
 
 class PathInputRename(BaseModel):
@@ -250,10 +251,15 @@ def _update_path_input(req: PathInputUpdate) -> dict:
     ``alternate_templates`` re-renders it as ``EachOf(PathInput(...), ...)``
     under the same name — that is what "multiple templates" is, not a
     separate concept. ``aliases`` belong to the primary template (each
-    alternate dict carries its own).
+    alternate dict carries its own). ``key_regex`` likewise.
     """
     return layout_service.update_path_input(
-        req.name, req.template, req.root_folder, req.alternate_templates, req.aliases
+        req.name,
+        req.template,
+        req.root_folder,
+        req.alternate_templates,
+        req.aliases,
+        req.key_regex,
     )
 
 

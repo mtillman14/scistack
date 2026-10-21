@@ -419,6 +419,7 @@ def _declared_path_input(decl_name: str, display: dict) -> dict:
         "template": display.get("template", ""),
         "root_folder": display.get("root_folder"),
         "aliases": dict(display.get("aliases") or {}),
+        "key_regex": dict(display.get("key_regex") or {}),
         "alternate_templates": list(display.get("alternate_templates") or []),
     }
 
@@ -455,20 +456,29 @@ def resolve_path_input_params(
         _collect_edge_path_inputs(function_name, saved_pis, manual_edges, manual_nodes)
     )
     for param_name, pi in params.items():
-        arms = [(pi.get("name"), pi.get("template"), pi.get("aliases"))] + [
-            (a.get("name") or pi.get("name"), a.get("template"), a.get("aliases"))
+        arms = [
+            (pi.get("name"), pi.get("template"), pi.get("aliases"), pi.get("key_regex"))
+        ] + [
+            (
+                a.get("name") or pi.get("name"),
+                a.get("template"),
+                a.get("aliases"),
+                a.get("key_regex"),
+            )
             for a in pi.get("alternate_templates") or []
         ]
         logger.info(
             "generate_matlab_command: %s: PathInput %s bound to '%s' emits "
             "%d template(s) %s",
             function_name,
-            sorted({n for n, _, _ in arms}),
+            sorted({n for n, _, _, _ in arms}),
             param_name,
             len(arms),
             [
-                f"{n}: {t}" + (f" aliases={sorted(al)}" if al else "")
-                for n, t, al in arms
+                f"{n}: {t}"
+                + (f" aliases={sorted(al)}" if al else "")
+                + (f" key_regex={kr}" if kr else "")
+                for n, t, al, kr in arms
             ],
         )
     return params
@@ -828,8 +838,12 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         unresolvable_var_type_warning,
     )
 
+    # With variants, each variant's output_type is the class the command
+    # emits; `output_types` is then still params' raw MATLAB output-argument
+    # names (e.g. 'extracted_data' for class XSENS) and checking it warned
+    # about a class the script never names (2026-10-21).
     checked = (
-        set(output_types or [])
+        (set() if fn_variants else set(output_types or []))
         | set(_variable_input_type_names(variable_inputs))
         | _collect_var_types(
             fn_variants if fn_variants else (params.get("variants") or [])

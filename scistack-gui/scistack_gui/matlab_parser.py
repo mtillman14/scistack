@@ -802,15 +802,21 @@ def render_matlab_path_input(
     *,
     name: str,
     aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> str:
     """``scidb.PathInput('{s}/x.csv', root_folder='/d', name='X')``, or an
     ``scidb.EachOf(...)`` of them when *alternates* is given — the same
     shape :func:`scidb.source_edit.render_path_input` produces for Python.
-    *aliases* belong to the primary template; each alternate carries its own."""
-    calls = [_matlab_path_input_call(template, root_folder, name, aliases)]
+    *aliases* and *key_regex* belong to the primary template; each alternate
+    carries its own."""
+    calls = [_matlab_path_input_call(template, root_folder, name, aliases, key_regex)]
     calls.extend(
         _matlab_path_input_call(
-            alt.get("template", ""), alt.get("root_folder"), name, alt.get("aliases")
+            alt.get("template", ""),
+            alt.get("root_folder"),
+            name,
+            alt.get("aliases"),
+            alt.get("key_regex"),
         )
         for alt in (alternates or [])
     )
@@ -829,14 +835,34 @@ def render_matlab_aliases(aliases: dict) -> str:
     return render_matlab_value(json.dumps(aliases, separators=(", ", ": ")))
 
 
+def render_matlab_key_regex(key_regex: dict) -> str:
+    """PathInput ``key_regex`` as a MATLAB argument value:
+    ``struct('subject', 'R2_\\d{3}')``. A struct is safe here, unlike
+    aliases: its fields are template placeholder names, which are
+    identifiers. Single-quoted chars, so a backslash stays a backslash. The
+    ONE place a generated MATLAB expression spells key_regex (declarations
+    here, run commands in ``api.matlab_command._format_path_input_arm``)."""
+    fields = ", ".join(
+        f"{render_matlab_value(str(k))}, {render_matlab_value(str(p))}"
+        for k, p in key_regex.items()
+    )
+    return f"struct({fields})"
+
+
 def _matlab_path_input_call(
-    template: str, root_folder: "str | None", name: str, aliases: "dict | None" = None
+    template: str,
+    root_folder: "str | None",
+    name: str,
+    aliases: "dict | None" = None,
+    key_regex: "dict | None" = None,
 ) -> str:
     args = [render_matlab_value(template)]
     if root_folder:
         args.append(f"root_folder={render_matlab_value(root_folder)}")
     if aliases:
         args.append(f"aliases={render_matlab_aliases(aliases)}")
+    if key_regex:
+        args.append(f"key_regex={render_matlab_key_regex(key_regex)}")
     # Required — the name is the PathInput's identity (+scifor/PathInput.m).
     args.append(f"name={render_matlab_value(name)}")
     return f"scidb.PathInput({', '.join(args)})"
