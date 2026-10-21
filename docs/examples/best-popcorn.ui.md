@@ -9,7 +9,7 @@ This walkthrough answers that question entirely in the SciStack GUI. In the Code
 - How to choose a **schema** for a real dataset, and why its names matter.
 - How to **import a CSV** on the canvas with a library function, so each row becomes its own record.
 - How **roles** in Plot Studio turn the same data into different figures.
-- How Stat Studio picks the right **statistical test** from your study's design.
+- How Stat Studio picks the right **statistical test** from your study's design, and when to choose differently.
 - How a figure and its statistics stay **linked**.
 
 Before you start, [install](../getting-started/installation.md) the VS Code extension and the `scistack` package.
@@ -455,45 +455,63 @@ The means are about **7.3** for Butterburst, **6.4** for KettleKing and **5.5** 
 
 Before moving on, save the figure. In the **Saved plots** rail on the right, name it `Ratings by brand` and save it. Saving it lets the statistics link to it in the next step. Use **Save image** in the toolbar if you want a file for a slide.
 
-## Step 9: Is there any difference at all?
+## Step 9: Describe the study to Stat Studio
 
 Click **StatStudio** in Plot Studio's toolbar. Stat Studio opens in a new tab, already set up from the figure: `Rating` as the measure, `brand` grouped, and `participant` collapsed.
 
-First, check what Stat Studio worked out from the data, under **Design**:
+A new table opens in the **Step by step** view. Each screen asks one question, shows what Stat Studio found in your data, and recommends an answer. **What does this mean?** explains any idea a screen names. Press **Next →** to go on, or **← Back** to change an earlier answer. The first five screens describe the study:
 
-- **Unit: participant; n = 100.** Each person counts as one independent observation.
-- **brand: within.** Every participant appears at every brand, so brand is a repeated measure. This is what the grey lines showed.
-
-Two features of this study decide which test to use:
-
-- **Repeated measures.** The three sets of ratings come from the same people, so they aren't independent. Someone who loves popcorn rates all three brands highly.
-- **Ordinal ratings.** A 1–10 taste score is a ranking, not a physical measurement. A 6 is better than a 5, but the step from 5 to 6 isn't guaranteed to equal the step from 9 to 10.
-
-So in **Comparisons**, set the family to **nonparametric**. (If the section is empty, click **+ Analysis** first.) Leave both tests on **From the design**. Because `brand` is within-subject and has three levels, Stat Studio picks the **Friedman test** for the overall question. Friedman ranks the three brands within each participant, then asks whether one brand is ranked consistently higher than the others.
-
-Open the **Comparisons** tab on the right. The omnibus table should show χ²(2) ≈ 58.1 with p < 0.001. The brands are not equally liked.
+- **What did you measure?** `Rating`: 300 values from 100 participants.
+- **What is one independent thing you measured?** *Each participant counts once: 100 participants in total.* This is the most important question in statistics. Each person's three ratings belong together. A test that treated 300 ratings as 300 separate people would be far too sure of itself.
+- **What are you comparing?** `brand` is set to **Compare**, and `participant` to **Average over**. These are the roles from Plot Studio, in Stat Studio's words.
+- **Was each participant measured at every level?** Stat Studio recommends **Same participants, measured repeatedly**, because each of the 100 participants rated every brand. This is what the grey lines in the figure showed.
+- **Is anything missing?** *Every participant was measured at every level.* Nothing to decide.
 
 /// info | 📷 Screenshot
-**Show:** Stat Studio's Design readout (Unit: participant; n = 100; brand: within) and the Friedman result.
+**Show:** the "Was each participant measured at every level?" screen, with **Same participants, measured repeatedly** marked as recommended.
 ///
 
-## Step 10: Which one is best?
+## Step 10: Choose the test
 
-The pairwise table compares every pair of brands, using the **Wilcoxon signed-rank test**: Friedman's partner for two brands at a time. It pairs each person's two ratings, which is exactly the comparison the grey lines suggested.
+The next screens choose and run the tests.
 
-Three comparisons mean three chances of a fluke, so the p values are adjusted with the **Holm** correction. Butterburst is rated higher than both KettleKing and SeaSaltCo, with adjusted p < 0.001 for each.
+- **What is your main question?** Every pair of brands, which is 3 comparisons. Keep **Yes, an overall test and then the pairs**: first ask whether the brands differ at all, then which pairs differ.
+- **Which test?** Stat Studio checks the shape of the data and finds that *the values are roughly bell-shaped*, so it recommends a **paired t-test** for the pairs and an **ANOVA** overall. That's a reasonable default, but this study has a reason to choose differently. A 1–10 taste score is a ranking, not a physical measurement: a 6 is better than a 5, but the step from 5 to 6 isn't guaranteed to equal the step from 9 to 10. Tests based on **ranks** don't assume equal steps. Choose **Wilcoxon signed-rank test** under **Comparing pairs** and **Friedman test** under **Overall test**.
 
-Each row shows the difference with its direction, the confidence interval of that difference, and an effect size named exactly (here the rank-biserial *r*). Below the table, **Results as sentences** writes the same findings in words. Click **Copy sentences** to start your results section.
+Both are paired: Friedman ranks the three brands within each participant, and Wilcoxon compares each person's own two ratings. Tests for separate groups of people, such as the Mann–Whitney U test, are greyed out, and hovering over one says why: *brand is within*.
+
+/// info | 📷 Screenshot
+**Show:** the "Which test?" screen with the recommendation, and Wilcoxon signed-rank and Friedman selected.
+///
+
+- **How should false alarms be kept rare?** Three comparisons mean three chances of a fluke. Keep the recommended **Holm correction**, which adjusts the p values for that.
+- **How should the size of each difference be reported?** With Wilcoxon, the standard size is the **rank-biserial correlation**: from −1 to 1, how much more often one brand is rated higher than the other. Keep the **95% CI of the difference** for the uncertainty.
+
+## Step 11: Read the results
+
+- **Your results.** *3 of 3 comparisons ran; 3 significant at α = 0.05 after the correction.*
+
+The overall Friedman test gives χ²(2) = 58.08, p < .001: the brands are not equally liked. The pairs:
+
+| Comparison | Δ [95% CI] | Statistic | p (adj.) | Rank-biserial r |
+|---|---|---|---|---|
+| Butterburst − KettleKing | 1.00 [0.50, 1.00] | W = 479.00 | < .001 | 0.64 |
+| Butterburst − SeaSaltCo | 2.00 [1.50, 2.00] | W = 178.50 | < .001 | 0.90 |
+| KettleKing − SeaSaltCo | 1.00 [0.50, 1.00] | W = 631.50 | < .001 | 0.60 |
+
+Butterburst is rated higher than both other brands. Each row gives the difference with its direction (Butterburst − KettleKing), its confidence interval, and the effect size. The note under the table records everything a reader needs to know, such as the tests, the unit, n and the correction, and also anything the tests had to handle. For example, Wilcoxon sets aside the 28 participants who gave Butterburst and KettleKing the same score, and the note says so.
+
+Under the table, **Results as sentences** writes the same findings in words. Click **Copy sentences** to start your results section. The descriptive table below it shows each brand's mean (SD). To put a table in a paper, choose **html** and click **Copy**. It pastes into Word as a formatted table, with its note.
 
 /// note | A small difference from the Code version
-The Code version compared the best brand with each of the other two, and used a Bonferroni correction. Stat Studio compares **every** pair (including KettleKing against SeaSaltCo) and uses Holm by default, which is slightly less strict but still guards against flukes across all three comparisons. The conclusion is the same. You can switch to Bonferroni under **Correction**.
+The Code version compared the best brand with each of the other two, and used a Bonferroni correction. Stat Studio compares **every** pair (including KettleKing against SeaSaltCo) and uses Holm, which is slightly less strict but still guards against flukes across all three comparisons. The conclusion is the same. Choose **Bonferroni correction** on the false-alarms screen if you prefer it.
 ///
 
-Open the **Descriptives** tab for the summary table: each brand's mean (SD). Tick **median** under **Descriptives** in the left rail to add a column. To put the table in a paper, choose **html** above the results and click **Copy**. It pastes into Word as a formatted table, with a caption describing how it was made.
+Name the table `Popcorn statistics` and save it.
 
-## Step 11: Put the result on the figure
+## Step 12: Put the result on the figure
 
-Under **Brackets on the figure**, tick **Draw test brackets on the linked figure**, keep **Pairs** on the significant ones and **Label** on stars, then name the table `Popcorn statistics` under **Save** and save it.
+Click **Advanced** at the top of Stat Studio. It shows every setting at once, including the answers you just gave. Under **Brackets on the figure**, tick **Draw test brackets on the linked figure**, keep **Pairs** on the significant ones and **Label** on stars, and save the table again.
 
 Switch back to the Plot Studio tab. `Ratings by brand` now has brackets between the brands that differ, drawn from the test results rather than typed by hand. If the data or the test settings change, the brackets follow.
 
@@ -501,7 +519,7 @@ Switch back to the Plot Studio tab. `Ratings by brand` now has brackets between 
 **Show:** the final figure with significance brackets above the bars.
 ///
 
-## Step 12 (optional): Make it part of the pipeline
+## Step 13 (optional): Make it part of the pipeline
 
 So far, the figure and the table are saved views of the data. To make them **steps** in the pipeline, click **Add to pipeline**: in Plot Studio's toolbar for the figure, and in Stat Studio for the table. Each one appears on the canvas, connected to `Rating`.
 
@@ -516,7 +534,7 @@ Here's how the same analysis looks in code and in the GUI:
 | Setup | `configure_database("popcorn.duckdb", ["participant", "brand"])` | **SciStack: Open Pipeline**, schema keys `participant, brand` |
 | Import | A `load_ratings` function, run with `for_each` | A path input wired into `pandas.read_csv`, wired into `Rating` |
 | Summary per brand | A `summarize_ratings` function, run once per brand | Plot Studio: `brand` grouped, `participant` collapsed |
-| Overall test | A `friedman_test` function | Stat Studio: chosen from the design (within-subject, 3 levels) |
+| Overall test | A `friedman_test` function | Stat Studio Step by step: within-subject from the design; Friedman chosen because ratings are ranks |
 | Which is best | A `compare_to_best` function, Bonferroni | Stat Studio pairwise Wilcoxon, Holm |
 | Afterwards | `load(...)` any result; `get_provenance` | Saved plot and saved table; **Add to pipeline** for recorded steps |
 
@@ -531,4 +549,4 @@ The analysis supports a write-up like this:
 ## Where to go next
 
 - [Process](../gui/process.md), [Visualize](../gui/visualize.md) and [Summarize](../gui/summarize.md) describe each part of the GUI in more detail.
-- [Best Player](best-player.md) will be a second example, covering missing data, exclusions and trying several settings at once.
+- [Best Player](best-player.md): a second example, with missing data, leaving a player out, and statistics on groups of different people.

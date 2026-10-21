@@ -136,17 +136,15 @@ scidb --db <path> sql "SELECT r.content_hash, count(*) AS n,
 Each row is one group of locations holding identical data. Re-running the step
 with `distribute=true` should empty the result.
 
-This is now automatic: `scidb.provenance_query.identical_content_groups` is the
-query, and `scistackplotdb.load._log_identical_content` calls it from
-`load_variable`, emitting a WARN that names how many records share a payload and
-**which schema keys they differ by** — the keys that will overplot. It is
-diagnostic only: it never touches the frame and never raises (duplicate content
-is legal — a constant re-saved per subject is the benign case — and a
-diagnostic must not be able to break a load).
-
-Covered by `scidb/tests/test_provenance_read.py` (the query) and
-`scistackplotdb/tests/test_load_fetch.py::TestIdenticalContentWarning` (the
-warning fires and names `trial`; silent when records genuinely differ).
+**There is no automatic check (removed 2026-10-20, user decision).**
+`load_variable` used to run this query on every load (`identical_content_groups`
++ `_log_identical_content`) and WARN "N group(s) of records hold IDENTICAL
+data … should have run with distribute=True". It fired far more often on
+legitimate data than on the mistake: any scalar variable with few distinct
+values (1–10 ratings: 9 groups over 299 of 300 records; box-score points) has
+byte-identical records by nature. The query, the WARN and both tests were
+deleted; don't reinstate a load-time check. Use the SQL above by hand when a
+figure shows the overplotting signature.
 
 ## 4. If you are adding a consumer
 

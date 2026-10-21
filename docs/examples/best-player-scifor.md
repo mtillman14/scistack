@@ -11,6 +11,7 @@ This walkthrough uses `scifor` alone, with no database. It assumes you've worked
 - How a function can receive **several columns at once** (a whole box score line).
 - How to run one analysis **under several settings at once** with **`EachOf`**, a *parameter sweep*.
 - Why each result has to be **labelled with the settings that produced it**, and why that becomes a chore.
+- How **`scistackstats`** puts a confidence interval on each player's average and tests the gaps between players.
 
 ## The data
 
@@ -344,6 +345,78 @@ The definition decides the winner. If everyone counts, Harper (5 shots all seaso
 This is manageable here. In a larger project with several steps, each with its own settings, keeping track by hand quickly becomes error-prone. [Best Player - scidb](best-player-scidb.md) runs the same analysis and lets scidb keep track of which settings produced each result.
 ///
 
+## Step 5: Is Jordan's scoring more than two good games?
+
+`min_games=10` is a rule of thumb. Statistics can make the same point with evidence: how sure can you be of a player's scoring average, and is the gap between two players bigger than game-to-game luck?
+
+`scistackstats`, which comes with SciStack, answers both questions from a description of the analysis. It's the engine behind [Stat Studio](https://scistack.readthedocs.io/en/latest/ui/gui/summarize/) in the GUI. You describe the analysis the way you would describe a bar chart of points per game: **group** by `player`, one bar per player, and **collapse** `game`, so each bar averages that player's games.
+
+/// tab | Python
+```python
+from scistackplot import LongTable, PlotKind, PlotSpec, Role
+from scistackstats import Analysis, DescriptiveSpec, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
+
+design = PlotSpec(
+    measures=["points"],
+    roles={"player": Role.GROUP, "game": Role.COLLAPSE},
+    groups=["player"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(
+    design=design,
+    descriptives=DescriptiveSpec(cell="mean_ci95"),   # mean [95% CI] per player
+    comparisons=[Analysis()],                         # tests chosen from the data
+)
+
+tables = {"points": LongTable.from_frame(
+    stats[["player", "game", "points"]],
+    factors=["player", "game"],
+    measures=["points"],
+    schema_levels=["player", "game"],   # the schema, in order
+)}
+
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
+```
+///
+
+/// tab | MATLAB
+`scistackstats` is a Python package, and there's no MATLAB version of it yet. To get these tables from MATLAB data, save the table with `writetable(stats, "game_stats_roster.csv")` and run the Python code on that file.
+///
+
+First, the descriptive table: each player's points per game, with a **95% confidence interval**. The interval is the range the player's "true" scoring average probably lies in, based on the games you have.
+
+| | Avery | Blake | Casey | Devon | Emerson | Finley | Harper | Jordan |
+|---|---|---|---|---|---|---|---|---|
+| Mean [95% CI] | 21.5 [18.9, 24.1] | 12.4 [10.7, 14.1] | 14.8 [12.0, 17.6] | 7.7 [5.7, 9.7] | 11.1 [9.2, 12.9] | 5.7 [4.1, 7.3] | 3.7 [−0.1, 7.5] | 26.0 [13.3, 38.7] |
+| n | 20 | 20 | 18 | 20 | 16 | 20 | 3 | 2 |
+
+Look at the width of each interval. Over 20 games, Avery's average is pinned down to within about ±2.6 points. Jordan's two games (27 and 25 points) leave anything from 13 to 39 plausible. That's the statistical version of the `min_games` rule: two games don't say much about a player.
+
+Next, the comparisons. With 8 players there are 28 pairs. Running that many tests makes a few "significant" results likely by chance, so the p-values are adjusted with the **Holm** correction. Here are the rows that matter for Best Scorer:
+
+| Comparison | Δ [95% CI] | Statistic | p | p (adj.) | n |
+|---|---|---|---|---|---|
+| Avery − Jordan | −4.5 [−8.4, −0.6] | t(5.8) = −2.81 | .032 | .159 | 22 |
+| Avery − Casey | 6.7 [3.0, 10.4] | t(35.5) = 3.65 | < .001 | .011 | 38 |
+| Avery − Blake | 9.1 [6.1, 12.1] | t(32.9) = 6.08 | < .001 | < .001 | 40 |
+
+- **Avery outscored everyone who played most of the season.** Casey is the closest, and even that gap (6.7 points per game) has an adjusted p of .011.
+- **Jordan's lead over Avery is not convincing.** Unadjusted, p = .032 looks significant, but after adjusting for the 28 comparisons it's .159. Two games can't separate Jordan from Avery.
+
+So statistics back the `min_games=10` choice: **Avery is the best scorer** on the evidence available.
+
+/// note | How the tests were chosen
+`Analysis()` leaves the choice to scistackstats, and the note under each table explains it:
+
+- **The unit is one game for one player.** `game` is collapsed, and in the schema a game belongs to a player, so each box score line counts once: n = 119.
+- **`player` is between.** Each box score line belongs to only one player, so the players are independent groups, and the pairs are compared with **Welch's t-test**. Welch's version doesn't assume every player's scoring varies by the same amount.
+- **The data passed the checks** (residuals roughly normal, Shapiro–Wilk p = 0.47), so the tests use the values themselves rather than ranks. The overall test is a one-way ANOVA: F(7, 111) = 27.27, p < .001.
+- **Small groups are flagged, not hidden.** Every comparison with Jordan carries the note *cell has n=2*: the test ran, but it rests on two games.
+///
+
 ## The complete script
 
 //// details | Full script (click to expand)
@@ -354,6 +427,9 @@ This is manageable here. In a larger project with several steps, each with its o
 # best_player.py
 import pandas as pd
 from scifor import set_schema, for_each, EachOf
+from scistackplot import LongTable, PlotKind, PlotSpec, Role
+from scistackstats import Analysis, DescriptiveSpec, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
 
 
 def season_totals(games):
@@ -398,6 +474,23 @@ awards = for_each(
     as_table=True,
 )
 print(awards)
+
+# Is Jordan's scoring more than two good games? (scistackstats)
+design = PlotSpec(
+    measures=["points"],
+    roles={"player": Role.GROUP, "game": Role.COLLAPSE},
+    groups=["player"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(design=design, descriptives=DescriptiveSpec(cell="mean_ci95"),
+                 comparisons=[Analysis()])
+tables = {"points": LongTable.from_frame(
+    stats[["player", "game", "points"]], factors=["player", "game"], measures=["points"],
+    schema_levels=["player", "game"],
+)}
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
 ```
 ///
 

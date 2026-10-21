@@ -8,6 +8,7 @@ The answer depends on choices, such as how many games a player must have played 
 - **Excluding** data with a recorded reason, without deleting it.
 - **Parameter sweeps**: running one step under several settings at once.
 - **Variant tracking**: every result remembers the settings that produced it, so you can load exactly the answer you want and list every answer you've computed.
+- **Statistics on the stored records**: an exclusion applies to the tests too.
 
 It assumes you've worked through [Best Popcorn - scidb](best-popcorn-scidb.md), which introduces variables, `configure_database`, and saving results with `for_each`. [Best Player - scifor](best-player-scifor.md) is the same analysis without a database, for comparison.
 
@@ -560,6 +561,64 @@ Each variant lists **every setting that went into it**, including ones from earl
 
 Each setting is prefixed with the function it was passed to. `csv_path` was given to `load_game_stats` in Step 3, two steps before `pick_best`, and scidb carried it forward. A variant's settings describe how the whole result was produced, not just its last step. (When you load, the short name such as `min_games=10` is enough, as long as only one function has a setting by that name.)
 
+## Step 10: Is Jordan's scoring more than two good games?
+
+`min_games=10` is a rule of thumb. Statistics can back it with evidence: how sure can you be of each player's scoring average, and is the gap between two players bigger than game-to-game luck? `scistackstats`, which comes with SciStack and runs [Stat Studio](https://scistack.readthedocs.io/en/latest/ui/gui/summarize/) in the GUI, answers both questions. ([Best Player - scifor](best-player-scifor.md) explains this step in more detail.)
+
+You describe the analysis the way you would describe a bar chart of points per game: **group** by `player`, and **collapse** `game` so that each bar averages that player's games. `GameStats` has four columns, so `DV(..., columns=["points"])` picks the one to analyse. `load_stats_tables` reads the records from the database:
+
+/// tab | Python
+```python
+from scistackplot import PlotKind, PlotSpec, Role
+from scistackstats import DV, Analysis, DescriptiveSpec, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
+from scistackstatsdb import load_stats_tables
+
+design = PlotSpec(
+    measures=["GameStats"],
+    roles={"player": Role.GROUP, "game": Role.COLLAPSE},
+    groups=["player"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(
+    design=design,
+    dvs=[DV("GameStats", columns=["points"])],      # one column of a multi-column variable
+    descriptives=DescriptiveSpec(cell="mean_ci95"),  # mean [95% CI] per player
+    comparisons=[Analysis()],                        # tests chosen from the data
+)
+
+tables = load_stats_tables(db, spec)
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
+```
+///
+
+/// tab | MATLAB
+`scistackstats` is a Python package, and there's no MATLAB version of it yet. The database is the same file whichever language wrote it, so run the Python code on `best_player.duckdb` after the MATLAB steps.
+///
+
+**Morgan isn't in the tables**, and there's no filter in this code. The exclusion from Step 5 applies to the statistics as well, just as it did to every `for_each`. That's one decision, recorded once, applied everywhere.
+
+| | Avery | Blake | Casey | Devon | Emerson | Finley | Harper | Jordan |
+|---|---|---|---|---|---|---|---|---|
+| Mean [95% CI] | 21.5 [18.9, 24.1] | 12.4 [10.7, 14.1] | 14.8 [12.0, 17.6] | 7.7 [5.7, 9.7] | 11.1 [9.2, 12.9] | 5.7 [4.1, 7.3] | 3.7 [−0.1, 7.5] | 26.0 [13.3, 38.7] |
+| n | 20 | 20 | 18 | 20 | 16 | 20 | 3 | 2 |
+
+Over 20 games, Avery's average is known to within about ±2.6 points. Jordan's two games leave anything from 13 to 39 plausible.
+
+The 28 pairs of players are compared with Welch's t-tests, and the p-values are Holm-adjusted for running 28 tests. The rows that decide Best Scorer:
+
+| Comparison | Δ [95% CI] | Statistic | p | p (adj.) | n |
+|---|---|---|---|---|---|
+| Avery − Jordan | −4.5 [−8.4, −0.6] | t(5.8) = −2.81 | .032 | .159 | 22 |
+| Avery − Casey | 6.7 [3.0, 10.4] | t(35.5) = 3.65 | < .001 | .011 | 38 |
+| Avery − Blake | 9.1 [6.1, 12.1] | t(32.9) = 6.08 | < .001 | < .001 | 40 |
+
+Avery outscored everyone who played most of the season. Jordan's 4.5-point lead isn't convincing once the 28 comparisons are accounted for (adjusted p = .159), and the table's notes flag every comparison with Jordan as resting on *n=2*. The statistics agree with the `min_games=10` variant: **Avery is the best scorer**.
+
+These tables are printed, not saved. To make the statistics a recorded step, open `GameStats` in Stat Studio with the same design and click **Add to pipeline**. That creates a `stat_` step whose results are saved and tracked.
+
 ## Summary
 
 | Capability | What it did here |
@@ -570,6 +629,7 @@ Each setting is prefixed with the function it was passed to. `csv_path` was give
 | **Variant tracking** | Saved each result with its settings, without the function labelling anything |
 | **Loading a variant** (`load(metric=..., min_games=...)`) | Picked the exact answer wanted, and refused to guess between variants |
 | **Listing variants** (`list_versions`) | Listed every answer computed, with its full set of settings |
+| **Statistics** (`scistackstats`, `load_stats_tables`) | Confidence intervals and tests on `GameStats[points]`, with Morgan still excluded |
 
 ## The complete code
 
@@ -599,6 +659,10 @@ class BestPlayer(BaseVariable):
 import pandas as pd
 import scidb
 from scidb import EachOf
+from scistackplot import PlotKind, PlotSpec, Role
+from scistackstats import DV, Analysis, DescriptiveSpec, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
+from scistackstatsdb import load_stats_tables
 from scidb.inventory import schema_inventory, write_inventory_csv
 
 from player_variables import GameStats, SeasonStats, BestPlayer
@@ -675,6 +739,20 @@ for metric in ["fg_pct", "points_per_game"]:
 # Every variant, with its full set of settings
 for v in db.list_versions(BestPlayer):
     print(v["branch_params"])
+
+# Is Jordan's scoring more than two good games? (scistackstats; Morgan stays excluded)
+design = PlotSpec(
+    measures=["GameStats"],
+    roles={"player": Role.GROUP, "game": Role.COLLAPSE},
+    groups=["player"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(design=design, dvs=[DV("GameStats", columns=["points"])],
+                 descriptives=DescriptiveSpec(cell="mean_ci95"), comparisons=[Analysis()])
+tables = load_stats_tables(db, spec)
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
 ```
 ///
 

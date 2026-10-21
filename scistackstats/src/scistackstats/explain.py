@@ -393,9 +393,13 @@ def _step_unit(facts: "GuideFacts") -> StepGuide:
         step.facts.append(f"Each {dv.unit} counts once: {_n(dv.n_units or 0, dv.unit)} in total.")
         above = [k for k in dv.unit_keys if k != dv.unit]
         if above:
+            # The example is one of the unit's own levels (a game called
+            # "G01"), never an invented "01" the user's data doesn't have.
+            unit_levels = next((f.levels for f in facts.factors if f.name == dv.unit and f.levels), [])
+            example = f" (such as {unit_levels[0]})" if unit_levels else ""
             step.facts.append(
-                f"A {dv.unit} is identified within its {_and(above)}: {dv.unit} \"01\" in two different "
-                f"{above[-1]}s is two different {dv.unit}s.")
+                f"Each {dv.unit} is counted within its {_and(above)}: the same {dv.unit} name{example} under "
+                f"two different {above[-1]}s counts as two different {dv.unit}s.")
         if dv.averaged:
             step.facts.append(f"Several {_and(dv.averaged)} per {dv.unit} are averaged into one value first.")
         step.recommendation = (f"Counting each {dv.unit} once is right for most studies. To change it, set what "

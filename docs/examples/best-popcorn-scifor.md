@@ -10,6 +10,7 @@ This walkthrough answers that question with `scifor` alone: no database and no p
 - How `for_each` slices a table for you, and how iterating over _some_ of the schema keys **aggregates** over the rest.
 - How to compare every condition against one fixed condition with **`Fixed`**.
 - How **`as_table`** lets your function see the schema columns when it needs them.
+- How **`scistackstats`** picks and runs the tests from a description of the study, the same way Stat Studio does in the GUI.
 
 ## The data
 
@@ -633,6 +634,70 @@ Both languages use a normal approximation for the signed-rank test at this sampl
 
 The **Bonferroni correction** multiplies each p-value by the number of comparisons. Running several tests increases the chance that at least one is "significant" by luck alone, and the correction compensates for that. Both comparisons remain far below 0.05 after correction.
 
+## Step 6: The same statistics from the study's design
+
+Steps 4 and 5 took some work. You chose each test, reshaped the data for it, paired the ratings by hand, and applied the correction yourself. `scistackstats`, which comes with SciStack, does all of that from one description of the study. It's the same engine that runs [Stat Studio](https://scistack.readthedocs.io/en/latest/ui/gui/summarize/) in the GUI, so code and GUI give the same numbers.
+
+You describe the study the way you would describe a figure of it. **Group** by `brand`, because that's what you're comparing. **Collapse** `participant`, because each bar summarises all the participants. From those two roles, scistackstats works out the rest:
+
+- **The unit.** The collapsed key, `participant`, is the independent unit, with n = 100.
+- **Within or between.** Every participant rated every brand, so `brand` is a repeated measure (within-subject).
+- **The tests.** A within-subject factor with three levels gets the Friedman test overall and paired tests for each pair.
+
+`family="nonparametric"` asks for rank-based tests, for the same reason as in Step 4: the ratings are scores, not measurements.
+
+/// tab | Python
+
+```python
+from scistackplot import LongTable, PlotKind, PlotSpec, Role
+from scistackstats import Analysis, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
+
+design = PlotSpec(
+    measures=["rating"],
+    roles={"brand": Role.GROUP, "participant": Role.COLLAPSE},
+    groups=["brand"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(design=design, comparisons=[Analysis(family="nonparametric")])
+
+tables = {"rating": LongTable.from_frame(
+    ratings,
+    factors=["participant", "brand"],
+    measures=["rating"],
+    schema_levels=["participant", "brand"],   # the schema, in order
+)}
+
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
+```
+
+///
+
+/// tab | MATLAB
+`scistackstats` is a Python package, and there's no MATLAB version of it yet. To get these tables from MATLAB data, save the table with `writetable(ratings, "popcorn_ratings.csv")` and run the Python code on that file.
+///
+
+`describe_table` gives the descriptive table (each brand's mean (SD) and n), and `run` runs every comparison. `export_comparisons` writes both as Markdown. Other formats are `"txt"`, `"csv"`, `"latex"`, `"html"` (which pastes into Word as a table) and `"json"`. Here is the comparisons table it prints:
+
+| Comparison | Δ [95% CI] | Statistic | p | p (adj.) | Rank-biserial r | n |
+|---|---|---|---|---|---|---|
+| Butterburst − KettleKing | 1.00 [0.50, 1.00] | W = 479.00 | < .001 | < .001 | 0.64 | 100 |
+| Butterburst − SeaSaltCo | 2.00 [1.50, 2.00] | W = 178.50 | < .001 | < .001 | 0.90 | 100 |
+| KettleKing − SeaSaltCo | 1.00 [0.50, 1.00] | W = 631.50 | < .001 | < .001 | 0.60 | 100 |
+
+The overall test below it matches Step 4, χ²(2) = 58.08, p < .001, now with an effect size (Kendall's W = 0.29). A few things differ from Steps 4 and 5:
+
+- **Every pair is compared**, including KettleKing against SeaSaltCo, not just the best brand against the rest.
+- **Holm instead of Bonferroni.** Holm controls false alarms just as well, but misses fewer real differences. You can choose `Analysis(correction="bonferroni")` instead.
+- **Each difference has a size and a range.** Δ is the Hodges–Lehmann shift, the typical difference between the two brands' ratings, with its 95% confidence interval. The effect size is named exactly (rank-biserial *r*), so a reader knows which formula was used.
+- **The table explains itself.** The note under it states the tests, the unit, n and the correction, and lists anything the tests had to handle, such as the 28 participants who gave Butterburst and KettleKing the same score.
+
+/// note | What if you don't ask for rank-based tests?
+By default (`Analysis()`), scistackstats checks the data and picks tests from what it finds. These ratings look bell-shaped enough (Shapiro–Wilk p = 0.31), so it would pick a repeated-measures ANOVA and paired t-tests, and say why in the report. The conclusion is the same here. Asking for rank-based tests explicitly is the better choice for 1–10 scores, because a score of 6 vs 5 isn't guaranteed to be the same step as 10 vs 9.
+///
+
 ## Conclusion
 
 The analysis supports a write-up like this:
@@ -652,6 +717,7 @@ Here are the `scifor` features this walkthrough used:
 | Returning a one-row table adds columns to the result                 | `summary`, `posthoc`                        |
 | `Fixed(table, key=value)` pins an input to one condition             | `best` is always Butterburst                |
 | `as_table=True` keeps the schema columns for your function           | Pairing ratings by `participant`            |
+| `scistackstats` runs the statistics from the design (group / collapse) | Step 6: Friedman + every pair, Holm       |
 
 ## The complete script
 
@@ -666,6 +732,9 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 from scifor import set_schema, for_each, Fixed
+from scistackplot import LongTable, PlotKind, PlotSpec, Role
+from scistackstats import Analysis, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
 
 
 def summarize_ratings(ratings):
@@ -718,6 +787,22 @@ posthoc = for_each(
 )
 posthoc["p_bonferroni"] = (posthoc["p_value"] * len(posthoc)).clip(upper=1)
 print(posthoc)
+
+# The same statistics from the study's design (scistackstats)
+design = PlotSpec(
+    measures=["rating"],
+    roles={"brand": Role.GROUP, "participant": Role.COLLAPSE},
+    groups=["brand"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(design=design, comparisons=[Analysis(family="nonparametric")])
+tables = {"rating": LongTable.from_frame(
+    ratings, factors=["participant", "brand"], measures=["rating"],
+    schema_levels=["participant", "brand"],
+)}
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
 ```
 
 ///

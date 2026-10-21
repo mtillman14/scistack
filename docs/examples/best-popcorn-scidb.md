@@ -12,6 +12,7 @@ The statistics are the same as in the scifor version, so this page explains them
 - How to **import a CSV** so that each row becomes its own record at the right location.
 - How `scidb.for_each` **loads inputs from the database and saves outputs** for you.
 - How a run with **no iterated keys** produces a single dataset-wide result.
+- How **`scistackstats`** runs the statistics on records **read straight from the database**.
 - How to **read results back** and ask what produced them.
 
 ## The data
@@ -698,7 +699,51 @@ Each comparison is saved as a `BestVsChallenger` at the challenger's brand locat
 
 **Butterburst is the best popcorn:** it is rated higher than both KettleKing and SeaSaltCo, with Bonferroni-corrected p < 0.001 for each comparison.
 
-## Step 8: Read the results back
+## Step 8: The same statistics, straight from the database
+
+Steps 6 and 7 meant choosing each test and writing a function for it. `scistackstats`, which comes with SciStack, works out the tests from a description of the study. It's the engine behind [Stat Studio](https://scistack.readthedocs.io/en/latest/ui/gui/summarize/), so code and GUI give the same numbers. (The scifor version explains this step in more detail.)
+
+You describe the study the way you would describe a figure of it: **group** by `brand`, the thing you're comparing, and **collapse** `participant`, so that each brand summarises everyone. From that, scistackstats finds that `participant` is the unit (n = 100), that `brand` is within-subject (everyone rated every brand), and therefore that the Friedman test and paired Wilcoxon tests apply.
+
+With scidb, there's no table to build: `load_stats_tables` reads the `Rating` records from the database.
+
+/// tab | Python
+```python
+from scistackplot import PlotKind, PlotSpec, Role
+from scistackstats import Analysis, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
+from scistackstatsdb import load_stats_tables
+
+design = PlotSpec(
+    measures=["Rating"],                                   # the variable's name
+    roles={"brand": Role.GROUP, "participant": Role.COLLAPSE},
+    groups=["brand"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(design=design, comparisons=[Analysis(family="nonparametric")])
+
+tables = load_stats_tables(db, spec)
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
+```
+///
+
+/// tab | MATLAB
+`scistackstats` is a Python package, and there's no MATLAB version of it yet. The database is the same file whichever language wrote it, so run the Python code on `popcorn.duckdb` after the MATLAB steps.
+///
+
+| Comparison | Δ [95% CI] | Statistic | p | p (adj.) | Rank-biserial r | n |
+|---|---|---|---|---|---|---|
+| Butterburst − KettleKing | 1.00 [0.50, 1.00] | W = 479.00 | < .001 | < .001 | 0.64 | 100 |
+| Butterburst − SeaSaltCo | 2.00 [1.50, 2.00] | W = 178.50 | < .001 | < .001 | 0.90 | 100 |
+| KettleKing − SeaSaltCo | 1.00 [0.50, 1.00] | W = 631.50 | < .001 | < .001 | 0.60 | 100 |
+
+The overall test matches Step 6, χ²(2) = 58.08, p < .001 (Kendall's W = 0.29). Here every pair is compared and the p-values are Holm-adjusted. Each difference comes with a confidence interval and a named effect size, and a note under the table states the tests, the unit, n and the correction.
+
+These tables are printed, not saved: `run` doesn't write to the database. To make the statistics a recorded step, open `Rating` in Stat Studio with the same design and click **Add to pipeline**. That creates a `stat_` function whose results are saved and tracked like any other step.
+
+## Step 9: Read the results back
 
 This is where the database pays off. Open a **new** Python or MATLAB session in the same folder. Without re-running anything, connect to the database and load what was saved:
 
@@ -767,6 +812,7 @@ Here is what changed between the scifor and scidb versions:
 | Raw data | Read from the CSV each run | Imported once; each row becomes a `Rating` record at its own location |
 | One-off calculations | Called directly | Run through `for_each` with no keys, saved at the dataset level |
 | Settings (e.g. `n_comparisons`) | Not recorded | Saved with the result; different values make separate variants |
+| scistackstats input | A `LongTable` built from the table in memory | `load_stats_tables(db, spec)` reads the variable's records |
 | Afterwards | Gone when the session ends | `load(...)` any result; `get_provenance` / `provenance` shows how it was made |
 
 ## The complete code
@@ -803,6 +849,10 @@ import pandas as pd
 from scipy import stats
 import scidb
 from scidb import Fixed
+from scistackplot import PlotKind, PlotSpec, Role
+from scistackstats import Analysis, StatsSpec, describe_table, run
+from scistackstats import export_comparisons, export_descriptives
+from scistackstatsdb import load_stats_tables
 
 from popcorn_variables import Rating, BrandSummary, FriedmanTest, BestVsChallenger
 
@@ -876,6 +926,19 @@ posthoc = scidb.for_each(
     brand=challengers,
 )
 print(posthoc)
+
+# The same statistics from the study's design, read from the database
+design = PlotSpec(
+    measures=["Rating"],
+    roles={"brand": Role.GROUP, "participant": Role.COLLAPSE},
+    groups=["brand"],
+    kind=PlotKind.BAR,
+)
+spec = StatsSpec(design=design, comparisons=[Analysis(family="nonparametric")])
+tables = load_stats_tables(db, spec)
+print(export_descriptives(describe_table(spec, tables), spec, "md", tables=tables))
+report = run(spec, tables)
+print(export_comparisons(report, spec, "md", tables=tables))
 ```
 ///
 

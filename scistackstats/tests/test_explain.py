@@ -107,7 +107,13 @@ def test_preview_explains_the_unit_above_key_and_the_empty_cell():
     steps = _steps(_cbrace_spec(), _cbrace_table())
     unit = steps["unit"]
     assert any("8 subjects" in f for f in unit["facts"])
-    assert any("identified within its group" in f for f in unit["facts"])
+    above = [f for f in unit["facts"] if "counted within its group" in f]
+    assert above, unit["facts"]
+    # The example names a real subject from the data, never a made-up "01".
+    subjects = {str(s) for s in _cbrace_table().frame["subject"].unique()}
+    assert any(f"(such as {s})" in above[0] for s in subjects), above[0]
+    assert '"01"' not in above[0]
+    assert "under two different groups counts as two different subjects" in above[0]
     kinds = steps["within_between"]
     assert _choice(kinds, "group:between")["recommended"] and _choice(kinds, "group:between")["selected"]
     assert _choice(kinds, "session:within")["recommended"]

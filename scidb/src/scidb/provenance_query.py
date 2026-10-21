@@ -2930,36 +2930,6 @@ def variant_keys_batch(duck, record_ids) -> dict:
     return out
 
 
-def identical_content_groups(duck, variable_name: str) -> list[tuple[str, list[str]]]:
-    """``[(content_hash, [record_id, ...]), ...]`` for every group of two or
-    more non-excluded records of ``variable_name`` holding **byte-identical**
-    payloads.
-
-    Duplicate content across schema locations is legal and often correct (a
-    constant re-saved per subject, say), so this is an observation, not an
-    error. It is worth observing because it is the exact fingerprint of a
-    ``distribute=False`` run that should have been ``distribute=True``: the
-    function was handed the same input at every location of the iterated key
-    and returned the whole thing each time, so every location got the same
-    payload instead of its own piece. Downstream that is invisible — a plot
-    colored by that key draws N identical overlapping traces and shows what
-    looks like a single line in whichever colour was drawn last.
-
-    One query. Read-only; callers decide whether to warn.
-    """
-    rows = duck._fetchall(
-        "SELECT content_hash, record_id FROM _record "
-        "WHERE type = ? AND COALESCE(excluded, FALSE) = FALSE "
-        "AND content_hash IS NOT NULL "
-        "ORDER BY content_hash, record_id",
-        [variable_name],
-    )
-    groups: dict = {}
-    for content_hash, record_id in rows:
-        groups.setdefault(content_hash, []).append(record_id)
-    return [(h, rids) for h, rids in groups.items() if len(rids) > 1]
-
-
 def current_records_by_schema_batch(duck, variable_name: str) -> dict:
     """Batched :func:`_current_records_by_schema`, which delegates here.
 

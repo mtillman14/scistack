@@ -11,6 +11,29 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzr. StatStudio unit screen names a real level; no identical-data WARN — added 2026-10-20
+
+**What changed:** on the Step by step **Independent unit** screen, the sentence
+for a unit nested below another key now names one of the unit's own levels.
+It used to say *game "01" in two different players*. Separately, loading a
+variable no longer logs "N group(s) of records hold IDENTICAL data".
+
+**Frontend**
+1. Open Best Player's `GameStats` in Plot Studio (group `player`, collapse
+   `game`, `ColName` filtered to `points`), then click **StatStudio**.
+2. On **Independent unit**, the facts should read *Each game is counted within
+   its player: the same game name (such as G01) under two different players
+   counts as two different games.* `G01` must be a game that's in the data.
+3. In a study where the unit is the top key (Best Popcorn's `participant`),
+   this sentence shouldn't appear at all.
+
+**Log**
+4. Open Best Popcorn's `Rating` in Plot Studio. `scidb.log` should have no
+   `IDENTICAL data` WARN line, and no `identical_content` phase in the
+   `load_variable` timing line.
+
+---
+
 ## 0zzzzq. PathInput spelling aliases in the sidebar — added 2026-10-20
 
 **What changed:** a PathInput can now declare **spelling aliases** in the
