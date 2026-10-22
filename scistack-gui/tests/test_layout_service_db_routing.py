@@ -30,7 +30,7 @@ def other_db(tmp_path, populated_db):
 
 @pytest.fixture(autouse=True)
 def _no_ws(monkeypatch):
-    monkeypatch.setattr(layout_service, "_notify_dag_updated", lambda: None)
+    monkeypatch.setattr(layout_service, "_notify_dag_updated", lambda *a, **k: None)
 
 
 def test_pending_values_go_to_the_passed_db(populated_db, other_db):

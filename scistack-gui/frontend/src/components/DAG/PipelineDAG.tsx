@@ -46,6 +46,7 @@ import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
 import { applyDagreLayout } from '../../layout'
+import { CanvasRefreshLog, edgeMatchKey, nodeMatchKey } from './canvasRefreshLog'
 import { callBackend, isVSCodeMode, pageUndo, seedUndo } from '../../api'
 import { newChange, type Change } from '../../undo'
 import { useUndoShortcuts } from '../../hooks/useUndo'
@@ -192,11 +193,17 @@ export default function PipelineDAG() {
   const [clearDataOpen, setClearDataOpen] = useState(false)
   const dismissedWarnings = useRef<Set<string>>(new Set())
 
-  const fetchPipeline = useCallback(async () => {
+  // Which refresh dropped a just-placed node/edge (canvasRefreshLog.ts):
+  // one report per refresh into scidb.log via report_canvas_refresh.
+  const refreshLog = useRef(new CanvasRefreshLog())
+
+  const fetchPipeline = useCallback(async (trigger: string = 'unknown') => {
+    const refresh = refreshLog.current.start(trigger, performance.now())
     // Fetch pipeline first — _build_graph has a side effect (graduate_manual_node)
     // that writes to layout.json. Layout must be read AFTER that write, otherwise
     // savedPositions will have stale keys and dagre will recalculate positions.
     const data = await callBackend('get_pipeline', { pipeline_id: currentScope }) as { nodes: Node[]; edges: Edge[]; warnings?: GraphWarning[] }
+    const tPipeline = performance.now()
     // §7b of docs/claude/node-identity.md: two nodes wired identically
     // compute the same thing, so runs are attributed to one of them until
     // they differ. That is surprising and recoverable, so it is a popup and
@@ -212,6 +219,22 @@ export default function PipelineDAG() {
       return sameAsBefore ? prev : fresh
     })
     const layoutData = await callBackend('get_layout', { pipeline_id: currentScope }) as Record<string, unknown>
+    const tLayout = performance.now()
+    const report = refreshLog.current.apply(
+      refresh,
+      {
+        scope: currentScope,
+        nodeIds: data.nodes.map(n => n.id),
+        edgeIds: data.edges.map(e => e.id),
+        matchKeys: [
+          ...data.nodes.map(n => nodeMatchKey(n.type, (n.data as { label?: unknown }).label)),
+          ...data.edges.map(e => edgeMatchKey(e.source, e.target, e.targetHandle)),
+        ].filter((k): k is string => k !== null),
+      },
+      { get_pipeline_ms: tPipeline - refresh.startedAt, get_layout_ms: tLayout - tPipeline },
+      tLayout,
+    )
+    callBackend('report_canvas_refresh', { ...report }).catch(() => {})
     const savedPositions =
       (layoutData.positions ?? layoutData) as Record<string, { x: number; y: number }>  // handle both new and legacy format
 
@@ -287,12 +310,19 @@ export default function PipelineDAG() {
   }, [setNodes, setEdges, fitView, currentScope, getDirtyPatch])
 
   useEffect(() => {
-    fetchPipeline()
+    // Mount, scope switch, or bumpGraph() (graph_version counts the bumps).
+    fetchPipeline(`effect:graph_version=${graphVersion}`)
   }, [fetchPipeline, graphVersion])
 
-  // Refresh DAG whenever the backend signals that data changed.
+  // Refresh DAG whenever the backend signals that data changed. `source`
+  // labels it in scidb.log: db_watcher / matlab_run_end / server_restart
+  // (extension), put_layout / put_edge (layout_service); absent = server.
+  // VS Code nests it in params; the WebSocket keeps it at the top level.
   useBackendMessage(useCallback((msg) => {
-    if (msg.type === 'dag_updated' || msg.method === 'dag_updated') fetchPipeline()
+    if (msg.type === 'dag_updated' || msg.method === 'dag_updated') {
+      const params = (msg.params ?? msg) as { source?: string }
+      fetchPipeline(`dag_updated:${params.source ?? 'server'}`)
+    }
   }, [fetchPipeline]))
 
   // In VS Code the studio is its own editor tab, so the canvas stays visible
@@ -717,6 +747,7 @@ export default function PipelineDAG() {
     }
 
     buildFnData().then(fnExtra => {
+      refreshLog.current.addPending(nodeId, 'node', performance.now(), nodeMatchKey(nodeType, label))
       setNodes(prev => {
         // put_layout broadcasts dag_updated, so the refetched graph may
         // already contain this node — never append a duplicate id.
@@ -755,11 +786,14 @@ export default function PipelineDAG() {
       .then(res => {
         const r = res as { ok?: boolean; error?: string } | undefined
         if (r && r.ok === false) {
+          refreshLog.current.forget(nodeId)
           setNodes(prev => prev.filter(n => n.id !== nodeId))
           window.alert(r.error ?? `Could not place '${label}'.`)
+        } else {
+          refreshLog.current.confirm(nodeId, performance.now())
         }
       })
-      .catch(() => {})
+      .catch(() => refreshLog.current.forget(nodeId))
     pendingCreateRef.current.set(nodeId, create)
   }, [screenToFlowPosition, getNodes, setNodes, currentScope, bumpGraph])
 
@@ -829,6 +863,10 @@ export default function PipelineDAG() {
       id: edgeId,
       data: { manual: true },
     }
+    refreshLog.current.addPending(
+      edgeId, 'edge', performance.now(),
+      edgeMatchKey(connection.source, connection.target, connection.targetHandle),
+    )
     setEdges(prev => addEdge(edge, prev))
     callBackend('put_edge', {
       edge_id: edgeId,
@@ -836,7 +874,10 @@ export default function PipelineDAG() {
       target: connection.target,
       source_handle: connection.sourceHandle ?? null,
       target_handle: connection.targetHandle ?? null,
+    }).then(() => {
+      refreshLog.current.confirm(edgeId, performance.now())
     }).catch(err => {
+      refreshLog.current.forget(edgeId)
       window.alert(`Could not create connection: ${(err as Error).message}`)
       setEdges(prev => prev.filter(e => e.id !== edgeId))
     })

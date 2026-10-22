@@ -40,6 +40,7 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/client-error                  report_client_error
     POST /api/client-build                  report_client_build
     POST /api/client-timing                 report_client_timing
+    POST /api/client-canvas-refresh         report_canvas_refresh
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
 time in pandas and matplotlib, with the database touched only while the
@@ -63,6 +64,7 @@ from pydantic import BaseModel
 from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.services import plot_preset_service, plot_service, saved_plot_service
 from scistack_gui.services.client_build import report_client_build
+from scistack_gui.services.client_canvas import report_canvas_refresh
 from scistack_gui.services.client_errors import report_client_error
 from scistack_gui.services.client_timing import report_client_timing
 
@@ -327,6 +329,23 @@ class ClientTimingRequest(BaseModel):
     total_ms: float | None = None
 
 
+class CanvasRefreshRequest(BaseModel):
+    """One applied canvas refresh (frontend components/DAG/canvasRefreshLog.ts)."""
+
+    seq: int | None = None
+    trigger: str | None = None
+    scope: str | None = None
+    nodes: int | None = None
+    edges: int | None = None
+    get_pipeline_ms: float | None = None
+    get_layout_ms: float | None = None
+    total_ms: float | None = None
+    superseded_by: int | None = None
+    settled: int | None = None
+    folded: int | None = None
+    dropped: list[dict] | None = None
+
+
 # --- the calls ---------------------------------------------------------------
 
 
@@ -571,6 +590,11 @@ def _client_timing(req: ClientTimingRequest) -> dict:
     return report_client_timing(req.model_dump())
 
 
+def _canvas_refresh(req: CanvasRefreshRequest) -> dict:
+    """The canvas applied a refresh; write it (and anything it wiped) into the log."""
+    return report_canvas_refresh(req.model_dump())
+
+
 # ``db_optional=True`` on every row whose request model carries a
 # ``csv_path``: with one set, the service builds a ``CsvSource`` and the
 # database is never opened (each entry point is already written as
@@ -746,6 +770,11 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "report_client_timing", "/client-timing", ClientTimingRequest,
         _client_timing, holds_db_lock=False, needs_db=False, undoable=False,
+    ),
+    # And again: one canvas-refresh line (+ a WARN per wiped item), no database.
+    Handler(
+        "report_canvas_refresh", "/client-canvas-refresh", CanvasRefreshRequest,
+        _canvas_refresh, holds_db_lock=False, needs_db=False, undoable=False,
     ),
 )
 

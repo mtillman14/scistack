@@ -49,7 +49,7 @@ class TestPutLayoutAcceptsUndeclaredVariables:
 
         written = {}
         monkeypatch.setattr(
-            layout_service, "_notify_dag_updated", lambda: None, raising=False
+            layout_service, "_notify_dag_updated", lambda *a, **k: None, raising=False
         )
         monkeypatch.setattr(
             layout_store,

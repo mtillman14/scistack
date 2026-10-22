@@ -21,16 +21,20 @@ from scistack_gui.ids import (
 logger = logging.getLogger(__name__)
 
 
-def _notify_dag_updated() -> None:
+def _notify_dag_updated(source: str | None = None) -> None:
     """Broadcast dag_updated after a WIRING mutation (node create/delete,
     edge create/delete) so the canvas refetches and freshly placed nodes
     get their real DB-checked state — a re-dropped, re-wired function that
     is already computed must come back GREEN, not the frontend-local red
     (user-found 2026-07-19). Deliberately NOT called for position-only
-    writes: drags would trigger a full graph rebuild per drop."""
+    writes: drags would trigger a full graph rebuild per drop.
+
+    *source* labels the refresh it triggers in the canvas's
+    ``[client] canvas refresh`` lines (frontend DAG/canvasRefreshLog.ts), so
+    a placement's own refresh is told apart from the .duckdb watcher's."""
     from scistack_gui.api.ws import push_message
 
-    push_message({"type": "dag_updated"})
+    push_message({"type": "dag_updated", **({"source": source} if source else {})})
 
 
 def get_layout(pipeline_id: str = ROOT_SCOPE) -> dict:
@@ -124,7 +128,7 @@ def put_layout(
             node_id, x, y, node_type, label, pipeline_id=pipeline_id
         )
         logger.info("[layout_service] Manual node created/updated successfully")
-        _notify_dag_updated()
+        _notify_dag_updated("put_layout")
     else:
         logger.info("[layout_service] Updating node position only (no type/label)")
         layout_store.write_node_position(node_id, x, y, pipeline_id=pipeline_id)
@@ -267,7 +271,7 @@ def put_edge(
         }
     )
     logger.info("[layout_service] Edge created successfully")
-    _notify_dag_updated()
+    _notify_dag_updated("put_edge")
     return {"ok": True}
 
 

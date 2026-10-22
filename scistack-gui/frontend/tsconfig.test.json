@@ -89,6 +89,8 @@
     "src/components/DAG/variableNodeText.test.ts",
     "src/components/DAG/inputPorts.ts",
     "src/components/DAG/inputPorts.test.ts",
+    "src/components/DAG/canvasRefreshLog.ts",
+    "src/components/DAG/canvasRefreshLog.test.ts",
     "src/components/Sidebar/sourceLocation.ts",
     "src/components/Sidebar/sourceLocation.test.ts",
     "src/components/Sidebar/pathInputAliases.ts",

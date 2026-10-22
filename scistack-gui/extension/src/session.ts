@@ -169,15 +169,31 @@ export class Session {
       path.basename(this.dbPath) + '*',
     );
     this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
-    const onChange = () => this.onDbFileChanged();
+    const onChange = (uri: vscode.Uri) => this.onDbFileChanged(uri);
     this.watcher.onDidChange(onChange);
     this.watcher.onDidCreate(onChange);
   }
 
-  private onDbFileChanged(): void {
+  /** Changes seen inside the current debounce window, for the log line.
+   *  Since canvas-as-document (Stage 0a) the GUI's OWN layout writes land in
+   *  the .duckdb too, so this watcher also fires ~2 s after every drop/drag;
+   *  a suspected cause of placed nodes/edges vanishing briefly (2026-10-22,
+   *  see frontend DAG/canvasRefreshLog.ts). */
+  private watchBurst: { count: number; files: Set<string>; firstAt: number } | undefined;
+
+  private onDbFileChanged(uri?: vscode.Uri): void {
     if (this.watchDebounce) clearTimeout(this.watchDebounce);
+    if (!this.watchBurst) this.watchBurst = { count: 0, files: new Set(), firstAt: Date.now() };
+    this.watchBurst.count += 1;
+    if (uri) this.watchBurst.files.add(path.basename(uri.fsPath));
     this.watchDebounce = setTimeout(() => {
       this.watchDebounce = undefined;
+      const burst = this.watchBurst;
+      this.watchBurst = undefined;
+      const burstText = burst
+        ? ` [${burst.count} change event(s) to ${[...burst.files].join(', ') || '?'} over ` +
+          `${Date.now() - burst.firstAt} ms incl. ${DB_WATCH_DEBOUNCE_MS} ms debounce]`
+        : '';
       if (!this.dagPanel) return;
       // MATLAB writes to the WAL throughout a run, not just at the end. A
       // refresh now would fire graph RPCs at a database MATLAB currently
@@ -187,18 +203,21 @@ export class Session {
         if (!this.dagPanel.matlabRuns.isActive) {
           this.log.appendLine(
             'DuckDB file changed during this session\'s own Python run — ' +
-            'skipping the watcher refresh; the run\'s dag_updated follows run_done',
+            'skipping the watcher refresh; the run\'s dag_updated follows run_done' + burstText,
           );
           return;
         }
         this.log.appendLine(
           'DuckDB file changed while MATLAB owns the database — ' +
-          'deferring DAG refresh until the run finishes',
+          'deferring DAG refresh until the run finishes' + burstText,
         );
         return;
       }
-      this.log.appendLine('DuckDB file changed externally — refreshing DAG');
-      this.dagPanel.postMessage({ method: 'dag_updated', params: {} });
+      this.log.appendLine(
+        'DuckDB file changed (an external write OR this GUI\'s own layout write — ' +
+        'the watcher cannot tell) — refreshing DAG' + burstText,
+      );
+      this.dagPanel.postMessage({ method: 'dag_updated', params: { source: 'db_watcher' } });
     }, DB_WATCH_DEBOUNCE_MS);
   }
 
@@ -207,7 +226,7 @@ export class Session {
     if (!this.dagPanel) return;
     if (!this.dagPanel.matlabRuns.takeDeferredRefresh()) return;
     this.log.appendLine('MATLAB run finished — applying the deferred DAG refresh');
-    this.dagPanel.postMessage({ method: 'dag_updated', params: {} });
+    this.dagPanel.postMessage({ method: 'dag_updated', params: { source: 'matlab_run_end' } });
   }
 
   private stopDbWatcher(): void {
@@ -535,7 +554,7 @@ export class SessionManager {
     session.dagPanel?.reveal();
     // Re-fetch the registry (and DAG) so anything added since the last start
     // is reflected, and the header re-reads which database this is.
-    session.dagPanel?.postMessage({ method: 'dag_updated', params: {} });
+    session.dagPanel?.postMessage({ method: 'dag_updated', params: { source: 'server_restart' } });
     session.dagPanel?.postMessage({ method: 'db_changed', params: {} });
     return true;
   }
