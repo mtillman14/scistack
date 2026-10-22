@@ -52,7 +52,7 @@ beta — no migration). One prefix is what lets a Parameter keep its identity
 when a second value turns its declaration from a Constant into a Sweep: the
 id no longer encodes which form the source currently uses.
 
-The prefix is load-bearing beyond display — it appears in ``*.layout.json``
+The prefix is load-bearing beyond display — it appears in saved
 positions, ``_pipeline_hidden_nodes`` rows, synthesised edge ids and
 ``targetHandle``s, and ``edge_resolver``'s manual-edge resolution — so it is
 defined once here and referenced everywhere rather than spelled inline.
@@ -69,7 +69,7 @@ that recognition should not be a bare string literal repeated across layers.
 """
 
 #: Every prefix a DB-derived (non-manual) canonical id can start with —
-#: shared by the layout.json migration and anything else that needs to
+#: shared by anything that needs to
 #: distinguish "this id names real DB data" from a manual/opaque id.
 DB_DERIVED_PREFIXES = (VAR_ID_PREFIX, FN_ID_PREFIX, PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX)
 

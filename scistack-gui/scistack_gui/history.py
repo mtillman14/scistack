@@ -70,10 +70,11 @@ def tracked_tables() -> tuple[str, ...]:
     only reads the lists (one owner per table). The guard test
     ``test_every_gui_table_is_tracked`` fails when a new table is missed.
     """
-    from scistack_gui import intent_store, node_wiring, pipeline_store
+    from scistack_gui import intent_store, layout, node_wiring, pipeline_store
 
     return (
         *pipeline_store.UNDOABLE_TABLES,
+        *layout.UNDOABLE_TABLES,
         *intent_store.UNDOABLE_TABLES,
         *node_wiring.UNDOABLE_TABLES,
     )

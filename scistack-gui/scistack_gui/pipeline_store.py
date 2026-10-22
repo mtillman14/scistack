@@ -1,9 +1,9 @@
 """
 DuckDB-backed store for manually-declared pipeline nodes and edges.
 
-Replaces the manual_nodes / manual_edges sections of the JSON layout file so
-that DuckDB is the single source of truth for pipeline structure.  Node
-positions (x/y) remain in the JSON file as cosmetic data only.
+DuckDB is the single source of truth for pipeline structure. Node positions,
+the Parameter palette and notes live in the same file too, in tables owned
+by `layout`.
 
 Tables created in the user's .duckdb file:
 
@@ -332,6 +332,12 @@ def _ensure_tables(db) -> None:
     from scistack_gui import node_wiring
 
     node_wiring.ensure_tables(db)
+
+    # Node positions, the Parameter palette and item notes (formerly the
+    # `<name>.layout.json` sidecar; plan-canvas-as-document.md Stage 0a).
+    from scistack_gui import layout
+
+    layout.ensure_tables(db)
 
 
 # ---------------------------------------------------------------------------
@@ -756,8 +762,7 @@ def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None
     ``new_label`` also rewrites the label of the ``_pipeline_nodes`` rows
     it moves (and of still-ungraduated manual rows — ``pathInput__OLD__abc``
     — whose label is the old name, so they graduate onto the new node).
-    Layout positions live in layout.json, not here — see
-    ``layout.rebase_node_positions``. Returns per-store counts, for the log.
+    Layout positions are moved by ``layout.rebase_node_positions``. Returns per-store counts, for the log.
     """
     from scistack_gui import intent_store, node_wiring
     from scistack_gui.domain.graph_builder import connection_id

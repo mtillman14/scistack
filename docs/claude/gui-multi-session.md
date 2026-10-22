@@ -39,8 +39,7 @@ database file:
 | Resource | Keyed by |
 |---|---|
 | `scidb.log` | `scidb.log.log_path_for(db)` — beside the `.duckdb` |
-| `<name>.layout.json` | beside the `.duckdb` (`layout.py`) |
-| pipeline / intent / plot-cache tables | inside the `.duckdb` |
+| pipeline / intent / layout / plot-cache tables | inside the `.duckdb` (positions too, since 2026-10-21) |
 | push notifications | that process's own stdout |
 | React state | per webview iframe |
 

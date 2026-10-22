@@ -11,6 +11,33 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzb. Node positions, palette and notes live inside the .duckdb — added 2026-10-21
+
+What changed: node positions, the Parameter palette list and item notes are
+now tables in the project's `.duckdb`. The `<name>.layout.json` file next to
+it is no longer read or written (branch `canvas-as-document`, plan
+`.claude/plan-canvas-as-document.md` Stage 0a). Clean break: positions saved
+in an old `.layout.json` are lost once, so existing nodes are laid out again.
+
+**Backend**
+1. Reload the VS Code window so the backend picks up the change.
+2. After using the GUI, the project folder should contain no new or updated
+   `<name>.layout.json` (an old one may still be there; it is ignored and can
+   be deleted).
+
+**Frontend**
+1. Open an existing project. Nodes appear in auto-layout positions (once).
+2. Drag a few nodes, add a Parameter to the palette with "+", and write a note
+   on a variable.
+3. Reload the window. The positions, palette entry and note should all still
+   be there.
+4. Drag a node, then press undo. It should move back; redo moves it again.
+5. Drop a new node from the sidebar. It should land where you dropped it and
+   not vanish on the next refresh (the two-request drop race).
+
+---
+
+
 ## 0zzzzzz. Dict-valued Parameter on a rewired history node runs; a run that crashes early says so — added 2026-10-21
 
 What changed (GUI): six GUI places that group targets by their constants

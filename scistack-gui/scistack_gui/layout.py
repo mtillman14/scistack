@@ -1,80 +1,69 @@
 """
-Node position and pipeline structure persistence.
+Node positions, the Parameter palette and item notes.
 
-Positions (x/y) are stored in a JSON file alongside the .duckdb file:
-  experiment.duckdb  →  experiment.layout.json
+All three live in the project's ONE .duckdb file (plan
+``.claude/plan-canvas-as-document.md`` Stage 0a, 2026-10-21):
 
-Manual pipeline nodes and edges are stored in the DuckDB database via
-pipeline_store.  The JSON file retains only positions and the migration
-sentinel; all structural pipeline data lives in DuckDB.
+    _pipeline_node_positions    (pipeline_id, node_id, x, y)
+    _pipeline_palette_parameters (name, seq)    -- palette order = seq
+    _pipeline_notes             (note_key, text)
 
-JSON format (post-migration):
-{
-  "positions": { "node_id": { "x": float, "y": float }, ... },
-  "pipeline_db_migrated": true
-}
+They used to be a ``<name>.layout.json`` sidecar. That file is no longer read
+or written; positions in an old one are lost once (clean break, user
+decision 2026-10-21, ``feedback_beta_no_deprecation``) and those nodes are
+laid out again.
+
+Manual pipeline nodes and edges are stored via ``pipeline_store``. This
+module keeps its public functions; only the storage underneath changed. Being
+DuckDB rows, every write is undoable like any other GUI table
+(``UNDOABLE_TABLES``, read by ``history.tracked_tables``).
 """
 
-import json
 import logging
-import os
 import threading
 import time
 from contextlib import contextmanager
-from pathlib import Path
 
-from scistack_gui import history, pipeline_store
+from scistack_gui import pipeline_store
 from scistack_gui import library_lock as _library_lock
 from scistack_gui.ids import ROOT_SCOPE
-from scistack_gui.db import get_db, get_db_path
+from scistack_gui.db import get_db
 
 logger = logging.getLogger(__name__)
 
-# Serializes read-modify-write of the layout document. Every mutator below
-# loads the whole file, edits it and writes it back, so two overlapping
-# mutators mean the later write silently discards the earlier one's edit.
-#
-# This is NOT a Windows-only problem, though that is where it was first
-# caught (a sharing violation, errno 13, on an SMB share). The old _save
-# opened the target with "w", which truncates immediately, so on POSIX the
-# same overlap instead hands a CONCURRENT READER an empty or half-written
-# file: reverting this module and running tests/test_layout_concurrency.py
-# raises JSONDecodeError("Expecting value: line 1 column 1") out of _load,
-# verified on macOS 2026-09-01. Every platform was exposed; only the symptom
-# differed. That is why _load takes this lock too.
-#
-# This overlap is routine, not exotic: server.py runs one thread per RPC,
-# and a single node drop sends TWO put_layout calls ~1ms apart (the create
-# from PipelineDAG's onDrop, then the position-only re-center once React
-# Flow has measured the node). That collision lost three freshly dropped
-# nodes in one two-minute session -- see
-# .claude/plan-layout-write-race-and-duplicate-seed-roots.md.
-#
-# Reentrant because delete_node and write_manual_node call helpers that load
-# the document again inside the critical section.
-#
-# Process-local by decision (2026-09-01): a second GUI backend on the same
-# project would still interleave, and the DuckDB lock would not stop it
-# either (the GUI drops that lock between requests on purpose, db.py:40-46).
-# Not designed around for now; the real fix would be moving positions into
-# DuckDB, finishing the migration this module's docstring describes.
+POSITIONS_TABLE = "_pipeline_node_positions"
+PALETTE_TABLE = "_pipeline_palette_parameters"
+NOTES_TABLE = "_pipeline_notes"
+
+#: Every table this module creates, for undo (`scistack_gui.history`).
+UNDOABLE_TABLES: tuple[str, ...] = (POSITIONS_TABLE, PALETTE_TABLE, NOTES_TABLE)
+
+#: How each table travels on export (see ``pipeline_store.PORTABILITY``).
+#: Positions are captured per node by ``services.canvas_snapshot``; notes and
+#: the palette are project-wide.
+PORTABILITY: dict[str, str] = {
+    POSITIONS_TABLE: "canvas",
+    PALETTE_TABLE: "global",
+    NOTES_TABLE: "global",
+}
+
+# Serializes this module's multi-statement mutations (move, rebase,
+# graduate: read rows, then write rows) within one process. Each statement is
+# already atomic in DuckDB; the lock keeps two such sequences from
+# interleaving. server.py runs one thread per RPC, and a single node drop
+# sends TWO put_layout calls ~1ms apart (the create, then the re-centre), see
+# .claude/plan-layout-write-race-and-duplicate-seed-roots.md. Reentrant
+# because write_manual_node and delete_node call other writers inside it.
 _layout_lock = threading.RLock()
 
 # Contention is expected and harmless; only a wait long enough to be worth
 # explaining gets promoted out of debug.
 _CONTENTION_LOG_THRESHOLD = 0.05
 
-# The layout file lives next to the database, which in real deployments is a
-# network share. A sync client, an AV scanner or a stale SMB handle can deny
-# access for a moment with no SciStack process involved, so the final rename
-# is retried briefly before giving up.
-_SAVE_RETRY_ATTEMPTS = 5
-_SAVE_RETRY_INTERVAL = 0.05
-
 
 @contextmanager
 def _layout_write(operation: str):
-    """Hold :data:`_layout_lock` for one read-modify-write of the file."""
+    """Hold :data:`_layout_lock` for one multi-statement mutation."""
     start = time.monotonic()
     _layout_lock.acquire()
     waited = time.monotonic() - start
@@ -98,129 +87,68 @@ def _layout_write(operation: str):
         _layout_lock.release()
 
 
-def _layout_path() -> Path:
-    return get_db_path().with_suffix(".layout.json")
+def ensure_tables(db) -> None:
+    """Create this module's tables if absent. Called from
+    ``pipeline_store._ensure_tables``, so every path that touches the GUI
+    database gets them, like ``_intent`` and ``_node_wiring``."""
+    duck = db._duck
+    duck._execute("""
+        CREATE TABLE IF NOT EXISTS _pipeline_node_positions (
+            pipeline_id VARCHAR NOT NULL,
+            node_id     VARCHAR NOT NULL,
+            x           DOUBLE NOT NULL,
+            y           DOUBLE NOT NULL,
+            PRIMARY KEY (pipeline_id, node_id)
+        )
+    """)
+    duck._execute("""
+        CREATE TABLE IF NOT EXISTS _pipeline_palette_parameters (
+            name VARCHAR PRIMARY KEY,
+            seq  INTEGER NOT NULL
+        )
+    """)
+    duck._execute("""
+        CREATE TABLE IF NOT EXISTS _pipeline_notes (
+            note_key VARCHAR PRIMARY KEY,
+            text     VARCHAR NOT NULL
+        )
+    """)
 
 
-def _load() -> dict:
-    """Load and normalise the layout file (positions only).
+def _duck():
+    db = get_db()
+    pipeline_store._ensure_tables(db)
+    return db._duck
 
-    Positions are PER-SCOPE (nested pipelines): ``positions`` maps
-    ``pipeline_id -> {node_id: {x, y}}``. No older layout shape is upgraded:
-    beta, no installed base (migrations removed 2026-09-23).
-    """
-    p = _layout_path()
-    logger.debug("[layout] Loading layout file from %s", p)
-    # The read holds the lock too (reentrantly — mutators call this inside
-    # their own critical section). Windows refuses to replace a file another
-    # handle has open, so an unsynchronized reader would make a concurrent
-    # save burn its retries for no reason. Only the file access needs
-    # guarding; everything below it is in-memory.
-    with _layout_lock:
-        if not p.exists():
-            # Deliberately NOT a hand-maintained duplicate of the defaults set
-            # below (a second "what are the defaults" list next to the
-            # setdefault calls has already drifted out of sync once — missing
-            # path_inputs/sweeps after their removal, and separately missing
-            # "notes" entirely, both silent until a fresh/never-written project
-            # hit this branch). Empty dict + fall through to the same
-            # normalization every other path goes through.
-            logger.debug("[layout] Layout file does not exist, using empty defaults")
-            raw = {}
-        else:
-            with p.open() as f:
-                raw = json.load(f)
-    logger.debug("[layout] Loaded layout file with %d top-level keys", len(raw))
-    raw.setdefault("positions", {})
-    raw.setdefault("constants", [])
-    raw.setdefault("notes", {})
-    logger.debug(
-        "[layout] Layout has %d scope(s), %d constants",
-        len(raw["positions"]),
-        len(raw["constants"]),
+
+# ---------------------------------------------------------------------------
+# Position rows
+# ---------------------------------------------------------------------------
+
+
+def _upsert_position(duck, pipeline_id: str, node_id: str, x: float, y: float) -> None:
+    duck._execute(
+        f"INSERT INTO {POSITIONS_TABLE} (pipeline_id, node_id, x, y) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT (pipeline_id, node_id) DO UPDATE SET x = excluded.x, y = excluded.y",
+        [pipeline_id, node_id, float(x), float(y)],
     )
-    return raw
 
 
-def _scope_positions(data: dict, pipeline_id: str) -> dict:
-    """The (mutable) position dict for one scope, created on demand."""
-    return data["positions"].setdefault(pipeline_id, {})
-
-
-def _positions_all(data: dict) -> dict:
-    """Merged {node_id: {x, y}} across all scopes (node ids are unique) —
-    for the name-derivation helpers that scan canonical node ids."""
-    merged: dict = {}
-    for scope in data["positions"].values():
-        merged.update(scope)
-    return merged
-
-
-def _replace_with_retry(tmp: Path, target: Path) -> None:
-    """``os.replace(tmp, target)``, retrying transient permission denials."""
-    last: PermissionError | None = None
-    for attempt in range(1, _SAVE_RETRY_ATTEMPTS + 1):
-        try:
-            os.replace(tmp, target)
-            if attempt > 1:
-                logger.info(
-                    "[layout] save succeeded on attempt %d/%d",
-                    attempt,
-                    _SAVE_RETRY_ATTEMPTS,
-                )
-            return
-        except PermissionError as exc:
-            last = exc
-            logger.warning(
-                "[layout] save retry %d/%d after %s: %s",
-                attempt,
-                _SAVE_RETRY_ATTEMPTS,
-                type(exc).__name__,
-                exc,
-            )
-            if attempt < _SAVE_RETRY_ATTEMPTS:
-                time.sleep(_SAVE_RETRY_INTERVAL)
-    logger.error(
-        "[layout] save FAILED for %s after %d attempts: %s",
-        target,
-        _SAVE_RETRY_ATTEMPTS,
-        last,
+def _delete_position(duck, pipeline_id: str, node_id: str) -> None:
+    duck._execute(
+        f"DELETE FROM {POSITIONS_TABLE} WHERE pipeline_id = ? AND node_id = ?",
+        [pipeline_id, node_id],
     )
-    assert last is not None  # only reachable via the except branch
-    raise last
 
 
-def _save(data: dict) -> None:
-    """Write the layout document atomically.
-
-    ``json.dump`` straight into the target truncated it in place, so a write
-    that failed partway (or a process killed mid-write) left an unparseable
-    layout file -- every position lost, not just the one being written.
-    Serialize into a sibling temp file and ``os.replace`` it in, so a reader
-    sees either the old document or the new one and never a partial one.
-
-    The temp name carries pid + thread id so concurrent writers never share
-    one, whether or not they share :data:`_layout_lock`.
-    """
-    p = _layout_path()
-    logger.debug("[layout] Saving layout file to %s", p)
-    logger.debug(
-        "[layout] Writing %d positions, %d constants",
-        len(data.get("positions", {})),
-        len(data.get("constants", [])),
-    )
-    # Positions are cosmetic: restoring them needs no registry reload.
-    history.note_write(p, reload=False)
-    tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    try:
-        with tmp.open("w") as f:
-            json.dump(data, f, indent=2)
-        _replace_with_retry(tmp, p)
-    finally:
-        # A failed dump or an exhausted retry must not leave the temp behind
-        # (a successful replace already moved it, hence missing_ok).
-        tmp.unlink(missing_ok=True)
-    logger.debug("[layout] Layout file saved successfully")
+def _positions_by_scope(duck) -> dict:
+    out: dict = {}
+    for pid, nid, x, y in duck._fetchall(
+        f"SELECT pipeline_id, node_id, x, y FROM {POSITIONS_TABLE} "
+        "ORDER BY pipeline_id, node_id"
+    ):
+        out.setdefault(pid, {})[nid] = {"x": float(x), "y": float(y)}
+    return out
 
 
 def read_positions_by_scope() -> dict:
@@ -229,27 +157,25 @@ def read_positions_by_scope() -> dict:
     The scope a DB-derived node's position lives in IS its scope membership
     (see domain.scope_filter.node_scope), so graph filtering reads this.
     """
-    return {k: dict(v) for k, v in _load()["positions"].items()}
+    positions = _positions_by_scope(_duck())
+    logger.debug(
+        "[layout] read_positions_by_scope: %d scope(s), %d position(s)",
+        len(positions),
+        sum(len(v) for v in positions.values()),
+    )
+    return positions
 
 
 def drop_scope_positions(pipeline_id: str) -> None:
-    """Remove a deleted scope's position map (scope teardown)."""
-    with _layout_write("drop_scope_positions"):
-        data = _load()
-        if data["positions"].pop(pipeline_id, None) is not None:
-            _save(data)
+    """Remove a deleted scope's positions (scope teardown)."""
+    _duck()._execute(f"DELETE FROM {POSITIONS_TABLE} WHERE pipeline_id = ?", [pipeline_id])
+    logger.info("[layout] drop_scope_positions: scope %r", pipeline_id)
 
 
 def drop_node_positions(node_id: str) -> None:
     """Remove one node's position from every scope (position only — no
     manual-node/hide side effects, unlike delete_node)."""
-    with _layout_write("drop_node_positions"):
-        data = _load()
-        changed = False
-        for scope in data["positions"].values():
-            changed = scope.pop(node_id, None) is not None or changed
-        if changed:
-            _save(data)
+    _duck()._execute(f"DELETE FROM {POSITIONS_TABLE} WHERE node_id = ?", [node_id])
 
 
 def move_node_position(
@@ -278,18 +204,19 @@ def move_node_position(
     which carry no scope in their id at all.
     """
     with _layout_write("move_node_position"):
-        data = _load()
-        pos = None
-        for scope in data["positions"].values():
-            found = scope.pop(node_id, None)
-            if found is not None:
-                pos = found
-                break
-        node_id = new_node_id or node_id
-        if pos is None:
+        duck = _duck()
+        row = duck._fetchone(
+            f"SELECT pipeline_id, x, y FROM {POSITIONS_TABLE} WHERE node_id = ? "
+            "ORDER BY pipeline_id LIMIT 1",
+            [node_id],
+        )
+        if row is not None:
+            _delete_position(duck, row[0], node_id)
+            pos = {"x": float(row[1]), "y": float(row[2])}
+        else:
             pos = {"x": default_x, "y": default_y}
-        _scope_positions(data, new_pipeline_id)[node_id] = pos
-        _save(data)
+        node_id = new_node_id or node_id
+        _upsert_position(duck, new_pipeline_id, node_id, pos["x"], pos["y"])
     logger.info(
         "[layout] move_node_position: %r -> scope %r (%.1f, %.1f)",
         node_id, new_pipeline_id, pos["x"], pos["y"],
@@ -300,20 +227,18 @@ def move_node_position(
 def read_layout(pipeline_id: str = ROOT_SCOPE) -> dict:
     """Return one SCOPE's layout (positions + manual nodes from DB).
 
-    Defaults to the root scope, which is where every pre-scoping document
-    lives — existing callers see exactly what they saw before nesting.
-    ``manual_edges`` is intentionally unfiltered here: DB-derived nodes'
-    scope membership is graph_builder's business (service layer filters
-    edges when composing a scoped canvas).
+    Defaults to the root scope. ``manual_edges`` is intentionally unfiltered
+    here: DB-derived nodes' scope membership is graph_builder's business
+    (service layer filters edges when composing a scoped canvas).
     """
-    data = _load()
+    duck = _duck()
     db = get_db()
     return {
         "pipeline_id": pipeline_id,
-        "positions": dict(_scope_positions(data, pipeline_id)),
+        "positions": dict(_positions_by_scope(duck).get(pipeline_id, {})),
         "manual_nodes": pipeline_store.get_manual_nodes(db, pipeline_id),
         "manual_edges": pipeline_store.get_manual_edges(db),
-        "constants": data.get("constants", []),
+        "constants": read_constants(),
     }
 
 
@@ -321,18 +246,13 @@ def write_node_position(
     node_id: str, x: float, y: float, pipeline_id: str = ROOT_SCOPE
 ) -> None:
     logger.info(
-        "[layout] write_node_position called (node_id=%r, x=%.1f, y=%.1f, scope=%r)",
+        "[layout] write_node_position (node_id=%r, x=%.1f, y=%.1f, scope=%r)",
         node_id,
         x,
         y,
         pipeline_id,
     )
-    with _layout_write("write_node_position"):
-        data = _load()
-        logger.info("[layout] Writing position to JSON")
-        _scope_positions(data, pipeline_id)[node_id] = {"x": x, "y": y}
-        _save(data)
-    logger.info("[layout] Node position written successfully")
+    _upsert_position(_duck(), pipeline_id, node_id, x, y)
 
 
 def write_manual_node(
@@ -343,16 +263,11 @@ def write_manual_node(
     label: str,
     pipeline_id: str = ROOT_SCOPE,
 ) -> None:
-    # Position goes to JSON; structural info goes to DB.
-    #
-    # The DB write goes FIRST, and that order is load-bearing: the structural
-    # row is what makes the node exist, while the position is cosmetic. When
-    # the JSON write ran first and raised (a concurrent writer's sharing
-    # violation on the share), it took the whole function down before the DB
-    # write, so the node was never created at all and vanished on the next
-    # DAG refresh -- the user re-dropped the same node three times in one
-    # session. A node at a default position is recoverable; a node that was
-    # never created is not.
+    # The structural row goes FIRST, and that order is load-bearing: it is
+    # what makes the node exist, while the position is cosmetic. A node at a
+    # default position is recoverable; a node that was never created is not
+    # (the user re-dropped the same node three times in one session when the
+    # position write ran first and failed, 2026-09-01).
     logger.info(
         "[layout] write_manual_node called (node_id=%r, type=%r, label=%r, x=%.1f, y=%.1f, scope=%r)",
         node_id,
@@ -362,7 +277,6 @@ def write_manual_node(
         y,
         pipeline_id,
     )
-    logger.info("[layout] Writing node metadata to DuckDB")
     db = get_db()
     pipeline_store.write_manual_node(db, node_id, node_type, label, pipeline_id)
     # If the user is re-adding a node that was previously hidden, unhide it
@@ -400,16 +314,12 @@ def write_manual_node(
             canonical_id = f"{prefix}{label}"
             pipeline_store.unhide_node(db, canonical_id, pipeline_id)
             logger.debug("[layout] Unhid canonical node %r", canonical_id)
-    logger.info("[layout] Writing position to JSON")
-    with _layout_write("write_manual_node"):
-        data = _load()
-        _scope_positions(data, pipeline_id)[node_id] = {"x": x, "y": y}
-        _save(data)
+    _upsert_position(_duck(), pipeline_id, node_id, x, y)
     logger.info("[layout] Manual node written successfully")
 
 
 def delete_node(node_id: str) -> None:
-    """Remove a node's position (JSON) and manual-node entry (DB).
+    """Remove a node's position and manual-node entry.
 
     For DB-derived nodes (var__, fn__, param__, pathInput__), also mark them
     as hidden so _build_graph won't recreate them from pipeline history.
@@ -437,13 +347,7 @@ def delete_node(node_id: str) -> None:
     manual_nodes = pipeline_store.get_manual_nodes(db)
     positions_by_scope = read_positions_by_scope()
     scope_id = node_scope(node_id, manual_nodes, positions_by_scope)
-    logger.info("[layout] Removing position from JSON")
-    with _layout_write("delete_node"):
-        data = _load()
-        for scope in data["positions"].values():
-            scope.pop(node_id, None)
-        _save(data)
-    logger.info("[layout] Deleting node metadata from DuckDB")
+    drop_node_positions(node_id)
     pipeline_store.delete_node(db, node_id)
     # Hide DB-derived nodes so they don't reappear from list_pipeline_variants().
     bare_id = strip_placement(node_id)
@@ -455,55 +359,65 @@ def delete_node(node_id: str) -> None:
     logger.info("[layout] Node deleted successfully")
 
 
+# ---------------------------------------------------------------------------
+# The Parameter palette
+# ---------------------------------------------------------------------------
+
+
 def read_constants() -> list[str]:
-    return _load()["constants"]
+    """Palette Parameter names, in the order they were added."""
+    return [n for (n,) in _duck()._fetchall(f"SELECT name FROM {PALETTE_TABLE} ORDER BY seq")]
 
 
 def read_all_constant_names() -> list[str]:
     """All Parameter names visible in the palette or already on the canvas.
 
     Sources (unioned):
-    - ``constants[]``: palette items created via the "+" button.
+    - the palette: items created via the "+" button.
     - manual Parameter nodes in DB (type ``parameterNode``).
     - Canonical DB-derived Parameter IDs in positions (``param__name``,
       possibly placement-qualified as ``param__name::{pipeline_id}``).
     """
     from scistack_gui.ids import PARAM_ID_PREFIX, strip_placement
 
-    data = _load()
-    names: set[str] = set(data["constants"])
+    names: set[str] = set(read_constants())
     manual_nodes = pipeline_store.get_manual_nodes(get_db())
     # Manually dragged Parameter nodes — label is the true parameter name.
     for meta in manual_nodes.values():
         if meta.get("type") == "parameterNode":
             names.add(meta["label"])
     # Canonical DB-derived Parameter nodes not already covered by manual_nodes.
-    for node_id in _positions_all(data):
-        bare_id = strip_placement(node_id)
-        if bare_id.startswith(PARAM_ID_PREFIX) and node_id not in manual_nodes:
-            names.add(bare_id[len(PARAM_ID_PREFIX) :])
+    for scope in read_positions_by_scope().values():
+        for node_id in scope:
+            bare_id = strip_placement(node_id)
+            if bare_id.startswith(PARAM_ID_PREFIX) and node_id not in manual_nodes:
+                names.add(bare_id[len(PARAM_ID_PREFIX) :])
     return sorted(names)
 
 
 def write_constant(name: str) -> None:
-    with _layout_write("write_constant"):
-        data = _load()
-        if name not in data["constants"]:
-            data["constants"].append(name)
-        _save(data)
+    duck = _duck()
+    duck._execute(
+        f"INSERT INTO {PALETTE_TABLE} (name, seq) "
+        f"SELECT ?, COALESCE(MAX(seq), 0) + 1 FROM {PALETTE_TABLE} "
+        "ON CONFLICT (name) DO NOTHING",
+        [name],
+    )
 
 
 def delete_parameter_from_palette(name: str) -> None:
-    """Remove a name from the layout.json palette list. Distinct from
+    """Remove a name from the palette list. Distinct from
     layout_service.delete_parameter, which hides the NODE."""
-    with _layout_write("delete_parameter_from_palette"):
-        data = _load()
-        data["constants"] = [c for c in data["constants"] if c != name]
-        _save(data)
+    _duck()._execute(f"DELETE FROM {PALETTE_TABLE} WHERE name = ?", [name])
+
+
+# ---------------------------------------------------------------------------
+# Notes
+# ---------------------------------------------------------------------------
 
 
 def read_notes() -> dict[str, str]:
-    return dict(_load()["notes"])
+    return {k: t for k, t in _duck()._fetchall(f"SELECT note_key, text FROM {NOTES_TABLE}")}
 
 
 def write_note(key: str, text: str) -> None:
@@ -513,18 +427,23 @@ def write_note(key: str, text: str) -> None:
     — e.g. ``"variable:Position"`` or ``"submodule:pipe_abc123"`` (submodules
     key by pipeline_id, which survives renames; every other kind keys by its
     registered name). An empty/whitespace-only ``text`` removes the entry
-    entirely, so the file doesn't accumulate empty-string notes.
+    entirely, so the table doesn't accumulate empty-string notes.
     """
     logger.info("[layout] write_note called (key=%r, len(text)=%d)", key, len(text))
-    with _layout_write("write_note"):
-        data = _load()
-        stripped = text.strip()
-        if stripped:
-            data["notes"][key] = text
-        else:
-            data["notes"].pop(key, None)
-        _save(data)
-    logger.debug("[layout] Note written successfully (key=%r)", key)
+    duck = _duck()
+    if text.strip():
+        duck._execute(
+            f"INSERT INTO {NOTES_TABLE} (note_key, text) VALUES (?, ?) "
+            "ON CONFLICT (note_key) DO UPDATE SET text = excluded.text",
+            [key, text],
+        )
+    else:
+        duck._execute(f"DELETE FROM {NOTES_TABLE} WHERE note_key = ?", [key])
+
+
+# ---------------------------------------------------------------------------
+# Id changes
+# ---------------------------------------------------------------------------
 
 
 def rebase_node_positions(
@@ -534,32 +453,33 @@ def rebase_node_positions(
 ) -> int:
     """Move the saved position of EVERY placement of *old_bare* (bare and
     ``::scope``-qualified) onto the same placement of *new_bare* — the
-    layout.json half of a canonical id changing (a rename; the DB half is
+    layout half of a canonical id changing (a rename; the node-row half is
     ``pipeline_store.rebase_node``). ``note_keys=(old, new)`` also moves
     that item's note, which is keyed by name (see :func:`write_note`).
     Returns how many positions moved."""
     from scistack_gui.intent_store import _rebase
 
     moved = 0
+    note_moved = False
     with _layout_write("rebase_node_positions"):
-        data = _load()
-        for scope in data["positions"].values():
-            for nid in list(scope):
+        duck = _duck()
+        for pid, scope in _positions_by_scope(duck).items():
+            for nid, pos in scope.items():
                 new_id = _rebase(nid, old_bare, new_bare)
                 if new_id is None:
                     continue
-                pos = scope.pop(nid)
-                scope.setdefault(new_id, pos)
+                _delete_position(duck, pid, nid)
+                if new_id not in scope:
+                    _upsert_position(duck, pid, new_id, pos["x"], pos["y"])
                 moved += 1
-        note_moved = False
         if note_keys is not None:
             old_key, new_key = note_keys
-            note = data["notes"].pop(old_key, None)
-            if note is not None:
-                data["notes"].setdefault(new_key, note)
+            notes = read_notes()
+            if old_key in notes:
+                duck._execute(f"DELETE FROM {NOTES_TABLE} WHERE note_key = ?", [old_key])
+                if new_key not in notes:
+                    write_note(new_key, notes[old_key])
                 note_moved = True
-        if moved or note_moved:
-            _save(data)
     logger.info(
         "[layout] rebase_node_positions %s -> %s: %d position(s), note moved=%s",
         old_bare, new_bare, moved, note_moved,
@@ -578,8 +498,8 @@ def graduate_manual_node(old_id: str, new_id: str, take_old_position: bool = Fal
     the entity-node case). Default False keeps the target's position.
     """
     with _layout_write("graduate_manual_node"):
-        data = _load()
-        for scope in data["positions"].values():
+        duck = _duck()
+        for pid, scope in _positions_by_scope(duck).items():
             old_pos = scope.get(old_id)
             if old_pos and (new_id not in scope or take_old_position):
                 if new_id in scope:
@@ -588,7 +508,7 @@ def graduate_manual_node(old_id: str, new_id: str, take_old_position: bool = Fal
                         "target's position %s with the hand-placed %s",
                         old_id, new_id, scope[new_id], old_pos,
                     )
-                scope[new_id] = old_pos
-            scope.pop(old_id, None)
-        _save(data)
+                _upsert_position(duck, pid, new_id, old_pos["x"], old_pos["y"])
+            if old_id in scope:
+                _delete_position(duck, pid, old_id)
     pipeline_store.graduate_manual_node(get_db(), old_id, new_id)

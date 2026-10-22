@@ -185,20 +185,20 @@ class TestRecording:
 
 class TestFiles:
     def test_layout_positions_merge_and_undo(self, client, layout_path):
-        existed = layout_path.exists()
-        original = layout_path.read_bytes() if existed else None
+        """Positions are rows since plan-canvas-as-document Stage 0a: the
+        gesture records a row change, no file, and undo removes the row."""
         # One gesture, two requests (a drop sends create + re-centre).
         client.put("/api/layout/n_drop", json={"x": 1, "y": 2}, headers=_change("g1"))
         client.put("/api/layout/n_drop", json={"x": 5, "y": 6}, headers=_change("g1"))
         assert layout_store.read_layout()["positions"]["n_drop"] == {"x": 5.0, "y": 6.0}
 
         record = history.get_record("g1")
-        assert len(record.files) == 1
-        assert not next(iter(record.files.values())).reload, "positions need no reload"
+        assert record.files == {}
+        assert "_pipeline_node_positions" in record.rows
 
         assert _undo(client, "g1")["status"] == "ok"
         assert "n_drop" not in layout_store.read_layout()["positions"]
-        assert (layout_path.read_bytes() if layout_path.exists() else None) == original
+        assert not layout_path.exists()
 
     def test_project_alias_file_restored(self, client, tmp_path):
         toml_file = tmp_path / "scistack.toml"
@@ -299,10 +299,8 @@ _WRITE_ALLOWLIST = {
     ("services/code_export_service.py", "export_pipeline_to_code"): "export",
     ("services/portability_service.py", "export_pipeline_to_file"): "export",
     ("bundle_section.py", "import_"): "writes a NEW project's code (bundle import), not an edit to undo",
-    ("bundle_section.py", "_verbatim_import"): "writes a NEW project's layout (bundle import), not an edit to undo",
     ("services/plot_service.py", "_figure_filename"): "export manifest",
     ("services/stats_service.py", "export"): "export",
-    ("layout.py", "_replace_with_retry"): "helper; its caller _save notes the write",
 }
 
 _WRITE_MODES = re.compile(r"[wax+]")

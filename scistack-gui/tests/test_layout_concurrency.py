@@ -27,10 +27,13 @@ Two defects, both covered here:
   the same Raw_EMG node three times in two minutes.
 
 See .claude/plan-layout-write-race-and-duplicate-seed-roots.md.
+
+Since plan-canvas-as-document Stage 0a (2026-10-21) positions and notes are
+DuckDB rows, not a JSON file: each write is one statement, so the lost-update
+shape cannot recur by construction. These tests pin that the same concurrent
+RPC shapes still lose nothing.
 """
 
-import json
-import os
 import threading
 
 import pytest
@@ -62,13 +65,13 @@ def _hammer(targets, threads=8, iterations=10):
     return errors
 
 
-def _saved_positions(layout_path) -> dict:
-    """Every saved position, merged across scopes, read straight off disk."""
-    raw = json.loads(layout_path.read_text())
+def _saved_positions() -> dict:
+    """Every saved position, merged across scopes, read from the database."""
     merged: dict = {}
-    for scope in raw["positions"].values():
+    for scope in layout_store.read_positions_by_scope().values():
         merged.update(scope)
     return merged
+
 
 
 class TestConcurrentWrites:
@@ -100,10 +103,10 @@ class TestConcurrentWrites:
         expected = {
             f"var__N{idx}_{i}" for idx in range(threads) for i in range(iterations)
         }
-        assert set(_saved_positions(layout_path)) == expected
+        assert set(_saved_positions()) == expected
 
     def test_position_and_note_writes_do_not_clobber_each_other(self, layout_path):
-        """Different *sections* of the document still share one file.
+        """Positions and notes are separate tables; neither write may clobber the other.
 
         Positions and notes never touch the same key, so an unlocked run
         loses whole notes/positions rather than corrupting either.
@@ -118,8 +121,7 @@ class TestConcurrentWrites:
         errors = _hammer([write_position, write_note], threads=8, iterations=10)
         assert not errors, f"concurrent position+note writes raised: {errors[:3]}"
 
-        raw = json.loads(layout_path.read_text())
-        positions = _saved_positions(layout_path)
+        positions = _saved_positions()
         # Threads alternate targets, so even indices wrote positions.
         expected_positions = {
             f"var__P{idx}_{i}" for idx in range(0, 8, 2) for i in range(10)
@@ -128,7 +130,7 @@ class TestConcurrentWrites:
             f"variable:V{idx}_{i}" for idx in range(1, 8, 2) for i in range(10)
         }
         assert set(positions) == expected_positions
-        assert set(raw["notes"]) == expected_notes
+        assert set(layout_store.read_notes()) == expected_notes
 
     def test_drop_sequence_keeps_node_and_position(self, layout_path):
         """The exact 11:00:52 shape: create + re-center for ONE node id.
@@ -157,76 +159,20 @@ class TestConcurrentWrites:
                 errors.append(exc)
 
         workers = [threading.Thread(target=create), threading.Thread(target=recenter)]
-        for w in workers:
-            w.start()
-        for w in workers:
-            w.join()
+class TestOneFile:
+    def test_no_layout_sidecar_is_written(self, layout_path):
+        """Positions, the palette and notes all live in the .duckdb (user
+        requirement 2026-10-21: one file per project)."""
+        layout_store.write_node_position("var__A", 1.0, 2.0)
+        layout_store.write_note("variable:A", "a note")
+        layout_store.write_constant("cutoff")
+        assert not layout_path.exists()
+        assert not list(layout_path.parent.glob("*.layout.json*"))
 
-        assert not errors, f"concurrent drop sequence raised: {errors[:3]}"
-        assert node_id in pipeline_store.get_manual_nodes(get_db())
-        assert node_id in _saved_positions(layout_path)
-
-
-class TestAtomicSave:
-    def test_save_failure_leaves_file_intact(self, layout_path, monkeypatch):
-        """A failed write must not truncate the document that was there.
-
-        ``json.dump`` straight into the target left an unparseable file —
-        every position lost, not just the one being written.
-        """
-        layout_store.write_node_position("var__Keep", 1.0, 2.0)
-        before = layout_path.read_text()
-
-        def exploding_dump(data, fp, **kwargs):
-            fp.write('{"positions": {"var__Par')  # a realistic partial write
-            raise OSError("disk went away mid-write")
-
-        monkeypatch.setattr(layout_store.json, "dump", exploding_dump)
-
-        with pytest.raises(OSError):
-            layout_store.write_node_position("var__Doomed", 3.0, 4.0)
-
-        monkeypatch.undo()
-        assert layout_path.read_text() == before
-        assert set(_saved_positions(layout_path)) == {"var__Keep"}
-        # The temp file must not survive a failed write.
-        assert not list(layout_path.parent.glob("*.tmp"))
-
-    def test_save_retries_transient_permission_error(self, layout_path, monkeypatch):
-        """A share can deny access for a moment with no SciStack process
-        involved (sync client, AV scanner, stale SMB handle)."""
-        real_replace = os.replace
-        calls = {"n": 0}
-
-        def flaky_replace(src, dst):
-            calls["n"] += 1
-            if calls["n"] == 1:
-                raise PermissionError(13, "Permission denied", str(dst))
-            return real_replace(src, dst)
-
-        monkeypatch.setattr(layout_store.os, "replace", flaky_replace)
-
-        layout_store.write_node_position("var__Retried", 5.0, 6.0)
-
-        monkeypatch.undo()
-        assert calls["n"] == 2, "expected exactly one retry"
-        assert "var__Retried" in _saved_positions(layout_path)
-
-    def test_save_gives_up_after_repeated_permission_errors(
-        self, layout_path, monkeypatch
-    ):
-        """Retrying is bounded — a genuinely locked file still reports."""
-
-        def always_denied(src, dst):
-            raise PermissionError(13, "Permission denied", str(dst))
-
-        monkeypatch.setattr(layout_store.os, "replace", always_denied)
-
-        with pytest.raises(PermissionError):
-            layout_store.write_node_position("var__Never", 7.0, 8.0)
-
-        monkeypatch.undo()
-        assert not list(layout_path.parent.glob("*.tmp"))
+    def test_an_old_sidecar_is_ignored(self, layout_path):
+        """Clean break: an existing .layout.json is not read."""
+        layout_path.write_text('{"positions": {"main": {"var__Old": {"x": 1, "y": 2}}}}')
+        assert "var__Old" not in _saved_positions()
 
 
 class TestManualNodeWriteOrder:
@@ -241,12 +187,12 @@ class TestManualNodeWriteOrder:
         the node exist; the position is cosmetic and recoverable.
         """
 
-        def denied(_data):
-            raise PermissionError(13, "Permission denied", str(layout_path))
+        def denied(*_args):
+            raise RuntimeError("position write failed")
 
-        monkeypatch.setattr(layout_store, "_save", denied)
+        monkeypatch.setattr(layout_store, "_upsert_position", denied)
 
-        with pytest.raises(PermissionError):
+        with pytest.raises(RuntimeError):
             layout_store.write_manual_node(
                 "var__Raw_EMG__abqvvj", 672.6, 128.9, "variableNode", "Raw_EMG"
             )
@@ -261,7 +207,7 @@ class TestManualNodeWriteOrder:
         )
 
         assert "var__Raw_EMG__vipabc" in pipeline_store.get_manual_nodes(get_db())
-        assert _saved_positions(layout_path)["var__Raw_EMG__vipabc"] == {
+        assert _saved_positions()["var__Raw_EMG__vipabc"] == {
             "x": 690.9,
             "y": 147.9,
         }

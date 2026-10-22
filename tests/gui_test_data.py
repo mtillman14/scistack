@@ -171,18 +171,10 @@ def stat_vo2_summary(max_vo2):
 if __name__ == "__main__":
     db_path = Path("test_gui.duckdb")
 
-    # Remove previous run so we start fresh — this must also clear the
-    # layout file (test_gui.layout.json), not just the .duckdb: node
-    # positions/manual-node scope assignments there are keyed by ids that
-    # can reference stale wiring hashes, call sites, or scopes from a
-    # prior schema/pipeline shape. Leaving it around after regenerating
-    # the DB is exactly the kind of staleness that produces corrupted-
-    # looking canvases (disappearing nodes, edges to nowhere).
+    # Remove previous run so we start fresh. Node positions live inside the
+    # .duckdb (no layout sidecar since 2026-10-21), so this clears them too.
     for f in Path(".").glob("test_gui.duckdb*"):
         f.unlink()
-    layout_file = Path("test_gui.layout.json")
-    if layout_file.exists():
-        layout_file.unlink()
 
     db = configure_database(db_path, ["subject"])
     # print(f"Database: {db_path}")

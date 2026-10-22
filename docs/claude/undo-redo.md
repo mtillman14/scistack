@@ -27,7 +27,7 @@ back; redo writes its *after* side.
 | Manual nodes, pipelines (tabs), uses, hypotheses, hidden ports, node config, builtin fns, parameter value groups, PathInput history/renames | DuckDB `_pipeline*`, `_node_config`, `_hypotheses` | `pipeline_store` | rows (`pipeline_store.UNDOABLE_TABLES`) |
 | Execution intent: wiring/edges, hides, pins, pending constants, run options, column selections, schema location, variant selection | DuckDB `_intent` | `intent_store` | rows (`intent_store.UNDOABLE_TABLES`) |
 | Canvas node ↔ wiring association (allocated function node ids) | DuckDB `_node_wiring` | `node_wiring` | rows (`node_wiring.UNDOABLE_TABLES`). Runs write it too: they are not undoable, and the conflict check below protects their writes |
-| Node positions | `<db>.layout.json` | `layout` | file (`note_write(..., reload=False)`) |
+| Node positions, Parameter palette, notes | DuckDB `_pipeline_node_positions`, `_pipeline_palette_parameters`, `_pipeline_notes` (the `.layout.json` sidecar until 2026-10-21) | `layout` | rows (`layout.UNDOABLE_TABLES`) |
 | `scistack.toml` (paths, entities file, glue dir, aliases, colours) | file | `config` | file |
 | Entities file (Parameters, PathInputs) | TOML / `.py` / `.m` | `services.target_file_service` | file |
 | Glue sources | files in glue dir | `services.glue_service` | file |

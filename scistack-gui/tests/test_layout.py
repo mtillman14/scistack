@@ -1,8 +1,9 @@
 """
 Tests for scistack_gui.layout — the node-position / manual-node persistence layer.
 
-All tests use the `layout_path` fixture which ensures scistack_gui.db._db_path
-points at a temp directory, so layout.py reads/writes a temp JSON file.
+All tests use the `layout_path` fixture, which points scistack_gui.db._db_path
+at a temp database. Positions, the palette and notes are tables in it (no
+sidecar file since plan-canvas-as-document Stage 0a).
 """
 
 import json
@@ -17,8 +18,7 @@ from scistack_gui.db import get_db
 
 
 class TestReadLayout:
-    def test_missing_file_returns_defaults(self, layout_path):
-        assert not layout_path.exists()
+    def test_fresh_database_returns_defaults(self, layout_path):
         result = layout_store.read_layout()
         assert result == {
             "pipeline_id": "main",
@@ -28,20 +28,28 @@ class TestReadLayout:
             "manual_edges": [],
         }
 
-    def test_existing_empty_file_returns_defaults(self, layout_path):
+    def test_a_stale_layout_file_is_not_read(self, layout_path):
         layout_path.write_text(
-            json.dumps(
-                {
-                    "positions": {},
-                    "manual_nodes": {},
-                    "constants": [],
-                    "manual_edges": [],
-                }
-            )
+            json.dumps({"positions": {"main": {"fn__x": {"x": 1, "y": 2}}}, "constants": ["c"]})
         )
         result = layout_store.read_layout()
         assert result["positions"] == {}
         assert result["manual_nodes"] == {}
+        assert result["constants"] == []
+
+    def test_palette_keeps_insertion_order_and_dedups(self, layout_path):
+        for name in ("zeta", "alpha", "zeta", "mid"):
+            layout_store.write_constant(name)
+        assert layout_store.read_constants() == ["zeta", "alpha", "mid"]
+        layout_store.delete_parameter_from_palette("alpha")
+        assert layout_store.read_constants() == ["zeta", "mid"]
+
+    def test_positions_and_notes_are_undoable_tables(self, layout_path):
+        """Every layout table is tracked for undo, like any GUI table."""
+        from scistack_gui import history
+
+        tracked = set(history.tracked_tables())
+        assert set(layout_store.UNDOABLE_TABLES) <= tracked
 
 
 # ---------------------------------------------------------------------------
