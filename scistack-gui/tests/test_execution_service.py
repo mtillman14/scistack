@@ -356,67 +356,56 @@ class TestGraduatedPathInputNodeIsRunnable:
         )
         return db
 
-    #: The wiring the canvas computes for this call site — from the
-    #: PARTITIONED view, exactly as group_call_sites_by_wiring does. The whole
-    #: point of this class is that `derive_target_for_node` must agree with it.
-    CANVAS_WIRING_INPUTS = ({}, {"Out"}, {"filepath_or_buffer": "test_pi"})
+    def _stored_node(self, db, output: str = "Out", placement: "str | None" = None) -> str:
+        """A stored function node wired the way the canvas draws this call
+        site: the PathInput into ``filepath_or_buffer``, an output edge.
 
-    def _canvas_node_id(self, db, placement: str | None = None) -> str:
-        """The id the canvas gives this call site.
-
-        Allocated since 2026-09-22, so it is looked up — and allocated here if
-        no build has happened yet, which is what the canvas would have done
-        (``docs/claude/node-identity.md``).
-        """
+        Since plan-canvas-as-document Stage 4 a node runs from its STORED
+        edges, so the node and its edges are rows (what adoption writes), and
+        the recorded row is found by the wiring those edges state."""
         from scistack_gui import node_wiring
-        from scistack_gui.domain.graph_builder import wiring_id
+        from scistack_gui import pipeline_store as ps
+        from scistack_gui.ids import in_handle, path_input_node_id, var_node_id
 
-        node_wiring.ensure_tables(db)
-        wid = wiring_id("read_csv_like", *self.CANVAS_WIRING_INPUTS)
-        node_id = node_wiring.node_for_wiring(db, wid)
-        if node_id is None:
-            node_id = str(node_wiring.mint_node_id("read_csv_like"))
-            node_wiring.record(db, node_id, wid)
+        node_id = str(node_wiring.mint_node_id("read_csv_like"))
+        ps.write_manual_node(db, node_id, "functionNode", "read_csv_like")
+        ps.write_manual_edge(db, {
+            "id": f"pi_{output}", "source": str(path_input_node_id("test_pi")),
+            "target": node_id, "targetHandle": in_handle("filepath_or_buffer"),
+        })
+        ps.write_manual_edge(db, {
+            "id": f"out_{output}", "source": node_id, "target": str(var_node_id(output)),
+        })
         return f"{node_id}::{placement}" if placement else node_id
 
     def test_graduated_node_resolves_to_its_history(self, populated_db, monkeypatch):
         db = self._db_with_history(populated_db, monkeypatch)
-        targets = derive_target_for_node(db, self._canvas_node_id(db))
+        targets = derive_target_for_node(db, self._stored_node(db))
         assert len(targets) == 1, (
-            "the graduated node's embedded wiring must match its own recorded "
-            "history — an empty list is the 'connect it to an output variable "
-            "node first' error on a node that has already run"
+            "the node's stated PathInput wiring must match its own recorded "
+            "history: the partitioned view and the raw variant hash alike"
         )
         assert targets[0]["output_type"] == "Out"
+        assert targets[0].get("call_id") == "call1", "the recorded row, not an inferred one"
 
     def test_graduated_node_resolves_with_a_placement_suffix(
         self, populated_db, monkeypatch
     ):
-        """graduate_manual_node targets a placement-qualified id, which is
-        what /api/run actually sends."""
+        """What /api/run sends for a node placed by ``{id}::{scope}``."""
         db = self._db_with_history(populated_db, monkeypatch)
-        targets = derive_target_for_node(db, self._canvas_node_id(db, "main"))
-        assert len(targets) == 1
+        targets = derive_target_for_node(db, self._stored_node(db, placement="main"))
+        assert len(targets) == 1 and targets[0].get("call_id") == "call1"
 
-    def test_a_genuinely_different_wiring_still_matches_nothing(
+    def test_a_genuinely_different_wiring_runs_from_its_edges(
         self, populated_db, monkeypatch
     ):
-        """The fix must not make the comparison match everything — a node
-        whose wiring really isn't in history still resolves to no targets."""
-        from scistack_gui import node_wiring
-        from scistack_gui.domain.graph_builder import wiring_id
-
+        """The comparison must not match everything: a node whose stated
+        wiring is not in history gets no recorded row. Since Stage 4 it runs
+        from its edges instead (a first run of that wiring)."""
         db = self._db_with_history(populated_db, monkeypatch)
-        # A node that really does have a different wiring: allocated, and
-        # associated with a wiring nothing in history holds.
-        other_wid = wiring_id(
-            "read_csv_like", {}, {"Different"}, {"filepath_or_buffer": "test_pi"}
-        )
-        node_wiring.ensure_tables(db)
-        other = str(node_wiring.mint_node_id("read_csv_like"))
-        node_wiring.record(db, other, other_wid)
-
-        assert derive_target_for_node(db, other) == []
+        targets = derive_target_for_node(db, self._stored_node(db, output="Different"))
+        assert [t["output_type"] for t in targets] == ["Different"]
+        assert not targets[0].get("call_id"), "inferred, not the recorded row"
 
 
 class TestDefaultSchemaLevel:

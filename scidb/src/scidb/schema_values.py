@@ -18,7 +18,8 @@ in DuckDB. Two rules live here and NOWHERE else:
 
 * :func:`canonical_numeric_value` — every spelling of a number a
   ``numeric``-declared key may receive, collapsed to one identity BEFORE
-  ``schema_str`` writes it.
+  ``schema_str`` writes it. The rule itself is scifor's
+  (``scifor.schema_types``); this raises scidb's error type.
 
 A leaf: ``database`` (which wraps DuckDB), ``foreach``, ``state``,
 ``locations``, ``filters`` and ``provenance_query`` all need the rule, and
@@ -28,13 +29,14 @@ A leaf: ``database`` (which wraps DuckDB), ``foreach``, ``state``,
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
-from .exceptions import SchemaKeyTypeError
+from scifor.schema_types import VALID_SCHEMA_KEY_TYPES  # noqa: F401 - re-export
+from scifor.schema_types import SchemaKeyTypeError as _SciforSchemaKeyTypeError
+from scifor.schema_types import canonical_numeric_value as _scifor_canonical_numeric_value
 
-#: The declarable schema-key types (``[schema_key_types]`` in the project
-#: config).
-VALID_SCHEMA_KEY_TYPES = ("numeric", "string")
+from .exceptions import SchemaKeyTypeError
 
 
 def schema_str(value: Any) -> str:
@@ -52,33 +54,26 @@ def schema_str(value: Any) -> str:
 def canonical_numeric_value(key: str, value: Any) -> Any:
     """Canonical value for a schema key declared ``"numeric"``.
 
-    Collapses every spelling of the same number to one identity: ints stay
-    ints, integral floats become ints (MATLAB doubles arrive as ``1.0``),
-    digit strings lose leading zeros (``"001"`` → 1), and float-like strings
-    normalize through ``float`` (``"1.50"`` → 1.5).  Values that cannot be
-    read as a number violate the declaration and raise SchemaKeyTypeError —
-    declared types are enforced, never guessed around.
+    The rule is scifor's (``scifor.canonical_numeric_value``, the one owner
+    since 2026-10-21: standalone scifor and scidb must read ``"001"`` the
+    same way). This only re-raises its error as scidb's
+    :class:`SchemaKeyTypeError`, which subclasses scifor's.
     """
-    if isinstance(value, bool):
-        raise SchemaKeyTypeError(
-            f"Schema key '{key}' is declared numeric but got a bool: {value!r}"
-        )
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value) if value.is_integer() else value
-    if isinstance(value, str):
-        s = value.strip()
-        if s.isdigit():
-            return int(s)
-        try:
-            f = float(s)
-            return int(f) if f.is_integer() else f
-        except ValueError:
-            pass
-    raise SchemaKeyTypeError(
-        f"Schema key '{key}' is declared numeric but got a non-numeric value: {value!r}"
-    )
+    with scidb_key_type_errors():
+        return _scifor_canonical_numeric_value(key, value)
+
+
+@contextmanager
+def scidb_key_type_errors():
+    """Re-raise scifor's ``SchemaKeyTypeError`` as scidb's (its subclass), for
+    callers of the shared ``scifor.schema_types`` helpers: scidb's callers
+    catch, and MATLAB reports, the scidb type."""
+    try:
+        yield
+    except _SciforSchemaKeyTypeError as exc:
+        if isinstance(exc, SchemaKeyTypeError):
+            raise
+        raise SchemaKeyTypeError(str(exc)) from None
 
 
 def from_schema_str(value: Any) -> Any:

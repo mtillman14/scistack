@@ -11,6 +11,51 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzc. The canvas is a stored document; Clear data keeps it — added 2026-10-22
+
+What changed (branch `canvas-as-document`, plan
+`.claude/plan-canvas-as-document.md` Stages 1-6, walkthrough
+`docs/claude/canvas-as-document-explained.md`): the first canvas build after a
+script or MATLAB-terminal run STORES the steps it recorded (adoption), with a
+notification. After that only stored nodes and edges are drawn. Removing an
+edge or node hides it (it stays in the restore panel) and it never comes back
+from history. A hand-placed function node no longer folds into a same-named
+history node. New toolbar button **Clear data…**.
+
+**Backend**
+1. Reload the VS Code window so the backend picks up the change.
+2. In `scidb.log` after opening a project that ran from a script: one
+   `[adoption] adopted step <fn> (...) into scope main with N edge(s)` per step,
+   then `[pipeline] document view scope=main: {...}`. On the next refresh,
+   `[adoption] plan:` adopts nothing.
+3. Optional: `python -m scistack_gui.canvas_shape_cli combos <db>` lists steps
+   whose constant combinations were not a full product.
+
+**Frontend**
+1. Open a project that has only ever run from a script. A dialog **"Added from
+   recorded runs"** names the steps; the canvas looks exactly as before.
+2. Close and reopen the tab: no dialog the second time.
+3. Select an edge into a step and delete it. Refresh: it stays gone. Open the
+   hidden-edges restore panel: it is listed; restore it (or redraw it) and the
+   step is runnable again. With the edge removed, Run on the step says the
+   input is disconnected.
+4. Drag a second copy of a function that already has a node from the sidebar:
+   both nodes stay on the canvas; the new one is red.
+4b. Rewire a step's output: draw the new output edge, then remove the old one.
+   Run: only the new output is written. (Drawing a second output edge without
+   removing the first now makes the step write both.)
+5. Run a script that changes a step's inputs (`python pipeline.py`), then
+   refresh: a second node for that step appears, with the dialog (expected
+   until step names, Q6).
+6. Click **Clear data…**: the dialog lists record counts per variable. Type
+   `clear` and click **Clear data**. Every node, edge and Parameter value stays;
+   nodes turn red. Run a step: it runs with the same inputs and values as
+   before.
+7. MATLAB (Stage 6): run a pipeline from the MATLAB terminal on a fresh
+   database, then open the GUI: the steps are added like a script run's.
+
+---
+
 ## 0zzzzzzb. Node positions, palette and notes live inside the .duckdb — added 2026-10-21
 
 What changed: node positions, the Parameter palette list and item notes are
@@ -37,6 +82,40 @@ in an old `.layout.json` are lost once, so existing nodes are laid out again.
 
 ---
 
+## 0zzzzzza. Schema Keys "Numeric" checkbox; a digit-only key pattern declares a key numeric — added 2026-10-21
+
+What changed (GUI): each schema key in a PathInput panel's **Schema Keys**
+section now has a **Numeric** checkbox. Ticking it declares the key numeric
+for the whole project, so `"001"`, `"1"` and `1` are one value. The type is
+stored in the database (`scidb.schema_types`), so MATLAB and Python runs see
+it too. Saving a key pattern that only matches digits (e.g. `trial = '\d+'`)
+for an undeclared key ticks the box for you. Doc:
+`docs/claude/schema-key-types.md` ("Stored in the database").
+
+**Backend**
+1. Reload the VS Code window so the backend edits load.
+2. Use a database where `trial` holds plain values (`1`, `2`, `3`) and
+   `session` holds text (`BL`, `MT`).
+
+**Frontend**
+1. Select a PathInput whose template has `{trial}` and `{session}`. Each schema
+   key pill has a **Numeric** checkbox; hovering it says "Project-wide". A
+   placeholder that is not a schema key has no checkbox.
+2. Tick **Numeric** for `trial`. It stays ticked. Select a different PathInput
+   with `{trial}`: it is ticked there too. `scidb key-types` in a terminal
+   shows `trial numeric`.
+3. Tick **Numeric** for `session`. It is refused with a red "not numbers"
+   message, and the box stays unticked.
+4. Untick `trial`. Save one record with trial `001` (or run a loader on a
+   zero-padded file), then tick `trial` again. A yellow box appears instead:
+   "Declare 'trial' numeric? … '001' → '1' … re-run …". **Cancel** leaves it
+   unticked; **Declare numeric** ticks it.
+5. Untick `trial`, then add a key pattern `trial` = `\d+` and save. The box
+   ticks itself and a grey note says "'trial' declared numeric: the pattern only
+   matches digits". With zero-padded values stored, you get a hint telling you
+   to tick it instead.
+6. `scidb.log` should show `schema key types: 'trial' None -> 'numeric'
+   (source=gui)` for each change (`source=gui:key_regex` for step 5).
 
 ## 0zzzzzz. Dict-valued Parameter on a rewired history node runs; a run that crashes early says so — added 2026-10-21
 

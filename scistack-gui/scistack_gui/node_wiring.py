@@ -88,7 +88,7 @@ UNDOABLE_TABLES: tuple[str, ...] = ("_node_wiring",)
 
 #: Portability (see ``pipeline_store.PORTABILITY``): which recorded wiring a
 #: node has run as is a fact about run history, so it travels only with it.
-PORTABILITY: dict[str, str] = {"_node_wiring": "history"}
+PORTABILITY: dict[str, str] = {"_node_wiring": "history", "_adopted": "history"}
 
 
 def ensure_tables(db) -> None:
@@ -432,4 +432,52 @@ def forget_all(db) -> int:
         "setting keyed by an old one stops resolving",
         n,
     )
+    return n
+
+
+# ---------------------------------------------------------------------------
+# `_adopted`: what canvas adoption has already turned into document rows
+# ---------------------------------------------------------------------------
+#
+# plan-canvas-as-document Stage 2 (`services/adoption.py`, the one writer;
+# `docs/claude/canvas-as-document-explained.md` Step 1). A graph build copies
+# whatever history would draw that is not stored yet into the document, ONCE.
+# This table is the "once": without it, a node or edge the user removed would
+# be adopted straight back from history on the next build.
+#
+# One row per SUBJECT: `node:{bare node id}`, `edge:{connection id}`,
+# `value:{Parameter}={value}`, `combo:{fn}:{call id}`. Not undoable (adoption
+# is not an edit; see `history.UNTRACKED_TABLES`) and append-only.
+
+ADOPTED_TABLE = "_adopted"
+
+
+def ensure_adopted_table(db) -> None:
+    """Create ``_adopted`` if absent (from ``pipeline_store._ensure_tables``)."""
+    _duck(db)._execute("""
+        CREATE TABLE IF NOT EXISTS _adopted (
+            subject    VARCHAR PRIMARY KEY,
+            node_id    VARCHAR NOT NULL DEFAULT '',
+            scope      VARCHAR NOT NULL DEFAULT 'main',
+            adopted_at VARCHAR NOT NULL DEFAULT ''
+        )
+    """)
+
+
+def adopted_subjects(db) -> set[str]:
+    """Every subject adoption has already written. Raises like the reads above."""
+    return {r[0] for r in _rows(db, "SELECT subject FROM _adopted")}
+
+
+def mark_adopted(db, rows) -> int:
+    """Record ``(subject, node_id, scope)`` rows as adopted. Idempotent."""
+    now = _now()
+    n = 0
+    for subject, node_id, scope in rows:
+        _duck(db)._execute(
+            "INSERT INTO _adopted (subject, node_id, scope, adopted_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT (subject) DO NOTHING",
+            [subject, node_id or "", scope or ROOT_SCOPE, now],
+        )
+        n += 1
     return n

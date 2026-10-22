@@ -488,6 +488,10 @@ class PipelineBinding:
                 new_options["schema_keys"] = [
                     km.get(k, k) for k in new_options["schema_keys"]
                 ]
+            if new_options.get("schema_key_types"):
+                new_options["schema_key_types"] = _rename_keys(
+                    new_options["schema_key_types"], km
+                )
             if new_options.get("share_limits") is not None:
                 new_options["share_limits"] = {
                     inp: [km.get(k, k) for k in keys]

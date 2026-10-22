@@ -159,9 +159,9 @@ class TestManualNodeLogging:
             targets = derive_target_for_node(get_db(), fn_node)
 
         assert len(targets) == 1, "the new wiring runs from its own edges"
-        [line] = _messages(caplog, "matches none of the")
+        [line] = _messages(caplog, "recorded row(s) of it")
         assert line.levelno == logging.INFO
-        assert "First run of this wiring" in line.getMessage()
+        assert "first run of this wiring" in line.getMessage()
         assert "cannot run" not in line.getMessage()
 
     def test_manual_fn_node_state_is_logged_at_info(self, client, caplog):

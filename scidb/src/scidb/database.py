@@ -25,7 +25,7 @@ from sciduckdb import (
     count_null_list_elements,
 )
 
-from . import provenance_query
+from . import provenance_query, schema_types
 from .bindings import variant_signature
 from .exceptions import (
     AmbiguousVersionError,
@@ -37,7 +37,6 @@ from .hashing import canonical_hash, frame_path_counts, generate_record_id
 from .log import Log
 from .parameter import parameter_node_name
 from .schema_values import (
-    VALID_SCHEMA_KEY_TYPES,
     canonical_numeric_value,
     from_schema_str,
     schema_str,
@@ -674,6 +673,13 @@ def configure_database(
             has to bridge spellings (e.g. trial=1 matching "6MWT-001.mat"),
             which raises SchemaKeyTypeError asking for a declaration.
 
+            The DATABASE owns the declaration (``scidb.schema_types``); this
+            argument writes to it. A key with no stored type gets this one,
+            the same stored type is a no-op, and a different stored type
+            raises ``SchemaKeyTypeConflictError``. Omitting the argument
+            uses whatever is stored. Change a stored type with
+            ``db.set_schema_key_type`` or the GUI's Numeric checkbox.
+
     Returns:
         The DatabaseManager instance
     """
@@ -725,7 +731,8 @@ def configure_database(
     Log.info(
         f"configure_database: path={dataset_db_path}, "
         f"schema_keys={list(dataset_schema_keys)}, "
-        f"schema_key_types={schema_key_types or {}} | {_run_context()}"
+        f"schema_key_types={schema_types.describe(db.dataset_schema_key_types)} "
+        f"(stored in the database) | {_run_context()}"
     )
 
     return db
@@ -1129,6 +1136,8 @@ class DatabaseManager:
                 DDL runs and every write on the connection fails at the DuckDB
                 level — used by inspection tooling (scidb.inspect / the scidb
                 CLI) so it can never contend for the write lock.
+            dataset_schema_key_types: Declared key types to record in the
+                database (see ``configure_database(schema_key_types=...)``).
         """
         self.dataset_db_path = Path(dataset_db_path)
 
@@ -1139,22 +1148,13 @@ class DatabaseManager:
             )
         self.dataset_schema_keys = list(dataset_schema_keys)
 
-        key_types = dict(dataset_schema_key_types or {})
-        unknown_keys = set(key_types) - set(self.dataset_schema_keys)
-        if unknown_keys:
-            raise ValueError(
-                f"schema_key_types declares keys that are not schema keys: "
-                f"{sorted(unknown_keys)}. Schema keys: {self.dataset_schema_keys}"
-            )
-        bad_types = {
-            k: t for k, t in key_types.items() if t not in VALID_SCHEMA_KEY_TYPES
-        }
-        if bad_types:
-            raise ValueError(
-                f"schema_key_types values must be one of "
-                f"{VALID_SCHEMA_KEY_TYPES}, got: {bad_types}"
-            )
-        self.dataset_schema_key_types = key_types
+        # Validated before the file is opened; recorded in the database once
+        # its tables exist (scidb.schema_types.declare, below). The database
+        # is the one owner of the declaration: see dataset_schema_key_types.
+        declared_key_types = schema_types.validate(
+            dataset_schema_key_types, self.dataset_schema_keys
+        )
+        self._schema_key_types: dict[str, str] = {}
 
         # Declared level order (`[schema_keys]`) is NOT snapshotted here: see
         # the `dataset_schema_key_order` property. Asked once now so the
@@ -1202,9 +1202,74 @@ class DatabaseManager:
                     from .variant_delete import ensure_tombstone_table
 
                     ensure_tombstone_table(self._duck)
+                with timer.phase("ensure_schema_key_type_table"):
+                    schema_types.ensure_table(self._duck)
+            with timer.phase("schema_key_types"):
+                self._refresh_schema_key_types()
+                if declared_key_types:
+                    try:
+                        schema_types.declare(self, declared_key_types)
+                    except Exception:
+                        # A refused declaration must not leave the file
+                        # locked: the caller never gets a manager to close.
+                        self._duck.close()
+                        raise
 
         self._closed = False  # Track connection open/closed state
         self._inspector = None  # lazy scidb.inspect.Inspector (see .inspect)
+
+    @property
+    def dataset_schema_key_types(self) -> dict[str, str]:
+        """Declared schema-key types, as stored in THIS database.
+
+        Read-only view of ``scidb.schema_types``, the one owner. Read from the
+        database at open and on :meth:`reopen` (another process — the GUI, a
+        MATLAB run — may have changed it in between), and replaced by every
+        write. Cached because ``canonicalize_metadata`` asks once per saved
+        item. Change it with :meth:`set_schema_key_type`.
+        """
+        return self._schema_key_types
+
+    def _refresh_schema_key_types(self) -> None:
+        """Re-read the declaration from the database (``schema_types``)."""
+        previous = getattr(self, "_schema_key_types", {})
+        current = schema_types.read_types(self._duck)
+        self._schema_key_types = current
+        if current != previous:
+            self._forget_schema_key_kinds()
+
+    def set_schema_key_type(
+        self,
+        key: str,
+        key_type: "str | None",
+        *,
+        confirm_respelling: bool = False,
+        source: str = "api",
+    ) -> dict:
+        """Declare schema key *key* ``"numeric"`` or ``"string"``, or clear it
+        (``None``). See :func:`scidb.schema_types.set_type`; returns the impact."""
+        return schema_types.set_type(
+            self, key, key_type, confirm_respelling=confirm_respelling, source=source
+        )
+
+    def declare_schema_key_types(
+        self, key_types: dict, *, dry_run: bool = False, source: str = "for_each"
+    ) -> None:
+        """Record ``schema_key_types=`` from a call (``for_each``, the MATLAB
+        bridge) the way ``configure_database`` does: store what is missing,
+        ignore what matches, raise ``SchemaKeyTypeConflictError`` on a
+        difference. *dry_run* checks without writing."""
+        schema_types.declare(
+            self,
+            schema_types.validate(key_types, self.dataset_schema_keys),
+            source=source,
+            dry_run=dry_run,
+        )
+
+    def schema_key_type_impact(self, key: str, key_type: "str | None") -> dict:
+        """What :meth:`set_schema_key_type` would do to the stored values,
+        without writing (:func:`scidb.schema_types.impact`)."""
+        return schema_types.impact(self, key, key_type)
 
     def canonicalize_metadata(self, metadata: dict) -> dict:
         """Apply declared schema-key types to addressing metadata.
@@ -5316,6 +5381,9 @@ class DatabaseManager:
         else:
             self._duck.reopen()
         self._closed = False
+        # Another process (the GUI, a MATLAB run) may have changed the
+        # declaration while this connection was closed.
+        self._refresh_schema_key_types()
 
     @property
     def inspect(self):

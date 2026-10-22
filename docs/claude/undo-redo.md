@@ -66,8 +66,14 @@ allowlist with a reason).
   from the "never delete, mark hidden" rule** (decision 2026-10-03): undo
   restores an exact earlier state, and redo brings back the identical
   row (same id).
-- Records live in memory, at most 500. A backend restart forgets them, and
-  the frontend gets `unknown` and drops the entry.
+- Records live in memory, at most 500, AND every non-empty one is written to
+  `_canvas_change` in the .duckdb (since 2026-10-21, plan-canvas-as-document
+  Q5): an append-only audit trail of GUI edits (`history.list_changes`), never
+  pruned, not itself undoable. After a backend restart the first read reloads
+  the newest 500, so the backend can still undo/redo a change made before the
+  restart; the conflict check makes replaying an old record exactly as safe as
+  a fresh one. The frontend stacks are still in memory: seeding them from the
+  log after a restart is the remaining (frontend) half.
 
 ## The frontend half
 

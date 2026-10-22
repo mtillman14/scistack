@@ -332,12 +332,20 @@ def _ensure_tables(db) -> None:
     from scistack_gui import node_wiring
 
     node_wiring.ensure_tables(db)
+    # `_adopted`: which recorded nodes/edges/values canvas adoption already
+    # stored, so a removed one is never adopted back (services/adoption.py).
+    node_wiring.ensure_adopted_table(db)
 
     # Node positions, the Parameter palette and item notes (formerly the
     # `<name>.layout.json` sidecar; plan-canvas-as-document.md Stage 0a).
     from scistack_gui import layout
 
     layout.ensure_tables(db)
+
+    # The persisted undo/audit log of GUI edits (history.AUDIT_TABLE).
+    from scistack_gui import history
+
+    history.ensure_tables(db)
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +752,30 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     from scistack_gui import node_wiring
 
     node_wiring.rekey_node(db, old_id, new_id)
+    # The canvas is a document (plan-canvas-as-document Stage 3): a node is
+    # drawn only if it is a stored row. Folding a hand-placed entity box into
+    # its canonical node must therefore leave the canonical node a row of its
+    # own, or the fold would take the node off the canvas. An existing row
+    # (adopted, or folded into before) is left as it is.
+    from scistack_gui.ids import strip_placement
+
+    row = _duck(db)._fetchone(
+        "SELECT node_type, label, pipeline_id FROM _pipeline_nodes WHERE node_id = ?",
+        [old_id],
+    )
+    canonical = str(strip_placement(new_id))
+    if row is not None:
+        created = _duck(db)._fetchone(
+            "SELECT 1 FROM _pipeline_nodes WHERE node_id = ?", [canonical]
+        ) is None
+        if created:
+            _upsert_node(db, canonical, row[0], row[1], row[2] or ROOT_SCOPE)
+        logger.info(
+            "[pipeline_store] folded %s into %s (%s)",
+            old_id,
+            canonical,
+            "canonical row created" if created else "canonical row already stored",
+        )
     _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id])
     rename_edge_endpoints(db, old_id, new_id)
 
@@ -916,6 +948,29 @@ def get_pending_constants(db) -> dict[str, set[str]]:
     from scistack_gui import intent_store
 
     return intent_store.pending_constants(db)
+
+
+def get_stated_constants(db) -> dict[str, set[str]]:
+    """``{Parameter: {value}}`` that are part of the canvas document but no
+    longer pending (``intent_store.CONSTANT_STATED``)."""
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    return intent_store.stated_constants(db)
+
+
+def promote_pending_constant(db, const_name: str, value: str) -> None:
+    """Pending → stated, once the value has run everywhere it is used."""
+    _ensure_tables(db)
+    from scistack_gui import intent_store
+
+    intent_store.promote_pending_constant(db, const_name, value)
+    logger.info(
+        "[pipeline_store] pending value %s=%s has run everywhere it is used; "
+        "it is now a stated value of the Parameter",
+        const_name,
+        value,
+    )
 
 
 # ---------------------------------------------------------------------------

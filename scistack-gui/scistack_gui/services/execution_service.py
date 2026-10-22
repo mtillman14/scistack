@@ -30,10 +30,10 @@ from scidb.foreach_config import RunOptions
 from scidb.provenance import constants_identity_key
 
 from scistack_gui.ids import (
+    FN_ID_PREFIX,
     ROOT_SCOPE,
     fn_nodes_prefix,
     handle_name,
-    legacy_fn_node_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,11 +45,14 @@ def _infer_wired_constants(
     constants_registry: dict,
     *,
     fn_variants: "list[dict] | None" = None,
+    stated: "dict[str, set[str]] | None" = None,
     log_context: str,
 ) -> dict[str, list]:
     """Infer values for a never-run wiring's Parameter params, in priority
     order: staged pending values; then, if *fn_variants* is given, any
-    known value from OTHER real DB history call sites of the same function
+    known value from OTHER real DB history call sites of the same function;
+    then the Parameter's STATED values (*stated*, keyed by declared name:
+    ``pipeline_store.get_stated_constants``)
     (a constant's known values are a function-level property, e.g. a
     shared window_seconds constant already has a real value from a
     different call site — see ``derive_target_for_node``'s docstring for
@@ -100,13 +103,15 @@ def _infer_wired_constants(
             except (ValueError, SyntaxError):
                 typed_vals.append(raw)
         if not typed_vals and fn_variants is not None:
+            # Keyed by repr, not a set of values: a constant may be a dict
+            # (docs/claude/constants-are-not-scalars.md), which is unhashable.
             known_vals = {
-                v["constants"][param_name]
+                repr(v["constants"][param_name]): v["constants"][param_name]
                 for v in fn_variants
                 if param_name in v.get("constants", {})
             }
             if known_vals:
-                typed_vals = sorted(known_vals, key=str)
+                typed_vals = [known_vals[k] for k in sorted(known_vals)]
                 logger.debug(
                     "[execution] %s: parameter '%s' has no pending value — "
                     "reusing known value(s) %s from other call site(s) of "
@@ -115,6 +120,24 @@ def _infer_wired_constants(
                     param_name,
                     typed_vals,
                 )
+        if not typed_vals and stated and stated.get(decl_name):
+            # The Parameter's STATED values (canvas-as-document): what ran or
+            # was adopted, kept on the canvas after its history is gone. This
+            # is what a run after a clear-data uses, so it computes the same
+            # combinations it did before the clear.
+            for raw in sorted(stated[decl_name]):
+                try:
+                    typed_vals.append(ast.literal_eval(raw))
+                except (ValueError, SyntaxError):
+                    typed_vals.append(raw)
+            logger.info(
+                "[execution] %s: parameter '%s' (declared '%s') has no pending or "
+                "recorded value; using its stated value(s) %r",
+                log_context,
+                param_name,
+                decl_name,
+                typed_vals,
+            )
         if typed_vals:
             inferred[param_name] = typed_vals
         # `.values` and not the Parameter itself: `bool(Parameter())` raises
@@ -529,241 +552,160 @@ def _inferred_targets(resolved, inferred_constants: dict[str, list]) -> list[dic
     ]
 
 
-def _apply_manual_output_types(
-    targets: list[dict], manual_output_types: list[str], log_context: str
-) -> list[dict]:
-    """History targets with their output replaced by the drawn output edges.
+def _document_function_nodes(db, function_name: str) -> list[str]:
+    """Stored function-node rows labelled *function_name*, every scope, that
+    are not hidden in their own scope. The name-scoped run's node set."""
+    from scistack_gui import pipeline_store
 
-    The one owner of "a drawn output edge on a history node is what the run
-    saves into", for both run paths: the name-scoped ``derive_fn_targets`` and
-    the per-node ``derive_target_for_node``. The per-node path had no copy of
-    this at all, so a history node rewired to a new output kept saving into
-    the recorded one (docs/claude/hidden-path-input-identity.md). One target
-    per (constant values, drawn output) — rows that differed only in their
-    recorded output collapse.
-    """
-    if not targets or not manual_output_types:
-        return targets
-    logger.info(
-        "[execution] %s: overriding DB output types %s with manual wiring %s",
-        log_context,
-        sorted({t.get("output_type") for t in targets}),
-        manual_output_types,
-    )
-    overridden, seen_constants = [], set()
-    for v in targets:
-        key = constants_identity_key(v.get("constants"))
-        if key in seen_constants:
+    manual_nodes = pipeline_store.get_manual_nodes(db)
+    hidden_by_scope: dict[str, set[str]] = {}
+    out = []
+    for nid, meta in sorted(manual_nodes.items()):
+        if meta.get("type") != "functionNode" or meta.get("label") != function_name:
             continue
-        seen_constants.add(key)
-        for out in manual_output_types:
-            overridden.append({**v, "output_type": out})
-    return overridden
+        scope = meta.get("pipeline_id") or ROOT_SCOPE
+        if scope not in hidden_by_scope:
+            hidden_by_scope[scope] = pipeline_store.get_hidden_node_ids(db, scope)
+        if nid in hidden_by_scope[scope]:
+            continue
+        out.append(nid)
+    return out
+
+
+def ensure_document(db, scope: "str | None" = None, *, reason: str) -> None:
+    """Build *scope*'s graph (without run states) so canvas adoption has stored
+    whatever history holds that the document does not yet.
+
+    For a run path reached before any canvas was built since the last script
+    run (a test, the CLI, a run request from a stale tab): it would otherwise
+    find history the document does not hold and run nothing. The build is the
+    ONE place adoption happens, so this asks it rather than adopting here.
+    """
+    from scistack_gui.api.pipeline import _build_graph
+
+    scope = scope or ROOT_SCOPE
+    logger.info("[execution] building %s's canvas so adoption is current (%s)", scope, reason)
+    _build_graph(db, scope, run_states=False)
+
+
+def _target_key(t: dict) -> str:
+    return json.dumps(
+        [
+            t.get("output_type"),
+            constants_identity_key(t.get("constants")),
+            t.get("bindings") or {},
+            t.get("glue_chains") or {},
+        ],
+        sort_keys=True,
+        default=str,
+    )
 
 
 def derive_fn_targets(db, function_name: str) -> list[dict]:
-    """The for_each target(s) a function node represents.
+    """The for_each target(s) of every stored function node labelled
+    *function_name*: the NAME-scoped run (no node named).
 
-    Each target: ``{"input_types": {param: type-or-list}, "output_type":
-    str, "constants": {name: typed value}}`` — DB pipeline variants when
-    history exists (manual output wiring overrides stale DB outputs),
-    otherwise inferred from manual edges + pending constants. Returns []
-    when nothing is derivable (no history AND no output wiring). PathInput-
-    backed params are NOT resolved here — they're never part of
-    ``input_types``/DB history at all (see ``build_run_inputs``), so
-    resolving them at derivation time would mean threading a new field
-    through every branch of this function AND ``derive_target_for_node``
-    for no benefit; ``build_run_inputs`` resolves them once, right before
-    execution, from the target this function already returns.
+    Since 2026-10-22 (plan-canvas-as-document Stage 4) this is exactly the
+    union of :func:`derive_target_for_node` over those nodes, so the
+    name-scoped and node-scoped runs can no longer disagree. The name-scoped
+    path used to run history's recorded wirings with the drawn edges spliced in
+    (``reconcile_manual_inputs``, deleted) and fall back to inferring from
+    hand-placed nodes' edges, a second derivation of what a node runs.
 
-    Every returned target has already been filtered against hidden
-    constant values (``filter_hidden_constant_value_targets``) — a hidden
-    value is excluded from both never-run and previously-run combos, and
-    from both this (name-scoped) path and ``derive_target_for_node``'s
-    (node-scoped) path, so the per-node Run and pipeline Run threads (both
-    of which bottom out in one of these two functions) can't accidentally
-    run something the user unchecked.
+    Returns ``[]`` when no stored node has that label (after making adoption
+    current: :func:`ensure_document`). Duplicate targets (two nodes stating
+    the same wiring) are kept once.
     """
-    from scistack_gui import pipeline_store
-    from scistack_gui.api.pipeline import _fn_params_from_registry
-    from scistack_gui.domain.edge_resolver import (
-        infer_manual_fn_output_types,
-        resolve_function_edges,
-    )
-    from scistack_gui.ids import fn_node_id
-    from scistack_gui.domain.variant_resolver import filter_hidden_constant_value_targets
-
-    hidden_values = _hidden_constant_values(db)
-
-    all_variants = db.list_pipeline_variants()
-    # Bindings are attached HERE, not on the way out: every filter below
-    # (disconnected wiring, hidden constant values) reads them, so a target
-    # that reached them binding-less would be judged on an empty wiring.
-    fn_variants = _attach_db_path_inputs(
-        db,
-        function_name,
-        [v for v in all_variants if v["function_name"] == function_name],
-    )
-    # Each history target carries the wiring the one owner gives it, so the
-    # name-scoped reconcile below maps it to the node the canvas drew it on.
-    from scistack_gui.domain.variant_resolver import HISTORY_WIRING_KEY
-
-    _wiring_of: dict[int, str] = {}
-    for _v, _wid in history_variant_wirings(db, function_name, fn_variants):
-        _wiring_of.setdefault(id(_v), _wid)
-    fn_variants = [
-        {**v, HISTORY_WIRING_KEY: _wiring_of[id(v)]} if id(v) in _wiring_of else v
-        for v in fn_variants
-    ]
-
-    # Name-scoped: no node is named, so every scope's hides apply
-    # (edge_view.run_scope(db, None)), the same rule as hidden nodes.
-    from scistack_gui.domain.edge_view import effective_edges
-
-    view = effective_edges(db, None, caller=f"derive_fn_targets({function_name})")
-    all_edges = view.drawn_list
-    manual_nodes = view.manual_nodes
-    hidden_edge_ids = set(view.hidden_edge_ids)
-
-    fn_node_ids = {legacy_fn_node_id(function_name)}  # legacy/manual edges
-    for v in fn_variants:
-        cid = v.get("call_id")
-        if cid:
-            fn_node_ids.add(fn_node_id(function_name, cid))
-    for nid, meta in manual_nodes.items():
-        if meta["type"] == "functionNode" and meta["label"] == function_name:
-            fn_node_ids.add(nid)
-    # Manual edges may reference WIRING-GROUPED node ids (fn__{fn}__{wid} —
-    # the canvas groups call sites since 2026-07-18) whose suffix is not any
-    # call_id: adopt any edge endpoint whose parsed fn name matches.
-    from scistack_gui.ids import parse_fn_node_id
-
-    for edge in all_edges:
-        for endpoint in (edge.get("source"), edge.get("target")):
-            if endpoint and endpoint not in fn_node_ids:
-                parsed_ep = parse_fn_node_id(endpoint)
-                if parsed_ep is not None and parsed_ep[0] == function_name:
-                    fn_node_ids.add(endpoint)
-
-    manual_output_types = infer_manual_fn_output_types(
-        fn_node_ids, all_edges, manual_nodes, existing_node_labels={},
-    )
-
-    from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
-
-    # Manual edges onto a history node's handles are authoritative for the
-    # parameters they feed (hidden-and-reconnected OR never bound) — see
-    # graph_builder.manual_input_overrides. Runs whenever there is anything
-    # to reconcile, not only when an edge is hidden: a manual edge onto a
-    # parameter history never bound has no hidden edge to trigger on.
-    if fn_variants and (hidden_edge_ids or all_edges):
-        before = len(fn_variants)
-        from scistack_gui.node_wiring import token_resolver
-
-        fn_variants = reconcile_manual_inputs(
-            fn_variants,
-            function_name,
-            hidden_edge_ids,
-            all_edges,
-            manual_nodes,
-            # Name-scoped: no node is named, so each target's wiring is mapped
-            # to whichever node holds it. Without this the drawn edge is looked
-            # for under the wiring rather than the node id it was stored
-            # against, finds nothing, and the run silently ignores it.
-            token_resolver(db),
-        )
-        if len(fn_variants) != before:
-            logger.info(
-                "[execution] '%s': %d target(s) excluded — disconnected wiring",
-                function_name,
-                before - len(fn_variants),
-            )
-
-    fn_variants = _apply_manual_output_types(
-        fn_variants, manual_output_types, f"'{function_name}'"
-    )
-
-    if fn_variants:
-        return _attach_column_selections(
-            db,
-            fn_node_ids,
-            filter_hidden_constant_value_targets(fn_variants, hidden_values),
-            function_name,
-            name_scoped=True,
-        )
-
-    # Never-run fallback: infer the call from manual edges.
-    resolved = resolve_function_edges(
-        fn_node_ids=fn_node_ids,
-        manual_edges=all_edges,
-        manual_nodes=manual_nodes,
-        existing_node_labels={},
-    )
-    if not resolved.output_types:
+    node_ids = _document_function_nodes(db, function_name)
+    if not node_ids:
+        ensure_document(db, ROOT_SCOPE, reason=f"name-scoped run of '{function_name}'")
+        node_ids = _document_function_nodes(db, function_name)
+    if not node_ids:
         logger.warning(
-            "[execution] '%s': no DB history and no output "
-            "wiring — no targets derivable",
+            "[execution] '%s': no function node with that label is on any canvas "
+            "— no targets derivable",
             function_name,
         )
         return []
-
-    inferred_constants: dict[str, list] = {}
-    if resolved.parameter_params:
-        from scistack_gui import registry
-
-        pending = pipeline_store.get_pending_constants(db)
-        inferred_constants = _infer_wired_constants(
-            resolved.parameter_params,
-            pending,
-            registry.get_parameters_registry(),
-            log_context=f"'{function_name}'",
-        )
-
-    return _attach_column_selections(
-        db,
-        fn_node_ids,
-        filter_hidden_constant_value_targets(
-            _inferred_targets(resolved, inferred_constants), hidden_values
-        ),
+    out: list[dict] = []
+    seen: set[str] = set()
+    for nid in node_ids:
+        for t in derive_target_for_node(db, nid):
+            key = _target_key(t)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(t)
+    logger.info(
+        "[execution] '%s' (name-scoped): %d target(s) from %d stored node(s) %s",
         function_name,
-        name_scoped=True,
+        len(out),
+        len(node_ids),
+        node_ids,
     )
+    return out
+
+
+def document_disconnected_ports(
+    node_id: str, hidden_edge_ids, resolved, manual_nodes: "dict | None" = None
+) -> list[str]:
+    """Input ports of *node_id* whose edge is HIDDEN with no visible stored
+    edge covering the port: the node is disconnected and must not run.
+
+    The document form of ``graph_builder.hidden_wirings``. Every edge is a
+    stored row now, and removing one hides its connection
+    (``layout_service.delete_edge``), so the hidden connection ids name the
+    node's ports directly (``graph_builder.connection_id``: ``e__{src}__{tgt}
+    __{port}``). A port fed by another visible edge is covered.
+    """
+    from scistack_gui.domain.graph_builder import endpoint_ref
+
+    ref = endpoint_ref(node_id, manual_nodes)
+    marker = f"__{ref}__"
+    covered = set(resolved.bindings) if resolved is not None else set()
+    ports: set[str] = set()
+    for cid in hidden_edge_ids or ():
+        if not cid.startswith("e__") or marker not in cid:
+            continue
+        port = cid.rsplit("__", 1)[-1]
+        if port and port not in covered:
+            ports.add(port)
+    return sorted(ports)
 
 
 def derive_target_for_node(db, node_id: str) -> list[dict]:
-    """The for_each target(s) that ONE SPECIFIC function node represents.
+    """The for_each target(s) that ONE stored function node represents.
 
-    ``derive_fn_targets`` resolves by function NAME across every node/call
-    site sharing that name — correct as long as a name has only ever had
-    ONE wiring, but the same function name can now legitimately have
-    multiple independent wirings on one canvas (e.g. compute_rolling_vo2
-    fed by RawVO2 in one node and by RawHeartRate in another — see
-    api/pipeline.py's wiring-conflict guard, which keeps such nodes from
-    merging/showing each other's state). Resolving purely by name can't
-    tell them apart for EXECUTION either: clicking Run on the RawHeartRate
-    node used to silently re-run the RawVO2 node's real DB history instead
-    (found via a real GUI session). This resolves by the exact node
-    clicked, using its own embedded wiring (already-graduated nodes) or
-    its own resolved edges (still-manual nodes) to select only the
-    matching real history / infer a fresh target — never anything
-    belonging to a different node that merely shares the label.
+    **From the document** (plan-canvas-as-document Stage 4, user decision D1
+    2026-10-22). The node's STORED edges decide what runs:
 
-    Returns the same shape as ``derive_fn_targets`` (a list of
-    ``{"input_types", "output_type", "constants"}`` dicts — one per known
-    constant-value variant of THIS wiring, or one freshly-inferred target
-    if it has never been run), or ``[]`` if ``node_id`` isn't a function
-    node or nothing is derivable from it.
+    1. its stated wiring is computed from its stored edges, nothing else;
+    2. the recorded rows of exactly that wiring are run, so a re-run of an
+       unchanged step reuses the exact typed constants, column selectors and
+       AcrossVariants pooling history recorded (no superfluous re-runs: a
+       recorded ``6.0`` is never re-typed from text);
+    3. with no recorded row of that wiring (never run, rewired, or the data
+       was cleared), targets are built from the edges and the Parameters'
+       values (pending, then known values of the function, then declared,
+       then stated).
 
-    Every returned target has already been filtered against hidden
-    constant values, same as ``derive_fn_targets`` — see that function's
-    docstring.
+    A node with a hidden input and no visible edge on that port is
+    disconnected and runs nothing (:func:`document_disconnected_ports`).
+
+    What is gone: running a node's last RECORDED wiring (``_node_wiring``'s
+    current shape) with the drawn edges spliced in. Under adoption every node
+    on a canvas is a stored row with stored edges, so the recorded wiring is
+    something to compare against, not something to execute.
+
+    Returns ``[]`` for anything that is not a stored function node (after one
+    attempt to make adoption current), or when nothing is derivable. Every
+    returned target has already been filtered against hidden constant values.
     """
     from scistack_gui import pipeline_store
-    from scistack_gui.api.pipeline import _fn_params_from_registry
     from scistack_gui.domain.edge_resolver import resolve_function_edges
     from scistack_gui.domain.graph_builder import wiring_id
-    from scistack_gui.ids import parse_fn_node_id
     from scistack_gui.domain.variant_resolver import filter_hidden_constant_value_targets
+    from scistack_gui.ids import strip_placement
 
     # The canvas this node is on decides which hides apply — a value
     # unchecked in one hypothesis must not exclude it from another.
@@ -775,259 +717,125 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     # not disconnect this node.
     from scistack_gui.domain.edge_view import effective_edges, run_scope
 
-    view = effective_edges(
-        db, run_scope(db, node_id), caller=f"derive_target_for_node({node_id})"
-    )
-    manual_nodes = view.manual_nodes
-    all_edges = view.drawn_list
-    hidden_edge_ids = set(view.hidden_edge_ids)
+    def _view():
+        return effective_edges(
+            db, run_scope(db, node_id), caller=f"derive_target_for_node({node_id})"
+        )
 
-    meta = manual_nodes.get(node_id)
-    parsed = parse_fn_node_id(node_id)
-    resolved = None
-    if meta is not None:
-        if meta["type"] != "functionNode":
-            logger.info(
-                "[execution] node %s: no targets — it is a manual %s, not a function node",
-                node_id,
-                meta["type"],
-            )
-            return []
-        function_name = meta["label"]
-        node_wiring = None  # resolved from this node's own edges, below
-    elif parsed is not None:
-        function_name = parsed[0]
-        from scistack_gui import node_wiring as _node_wiring_store
-
-        # The node's CURRENT wiring — the shape it most recently ran as, which
-        # is also the shape the canvas draws. NOT every wiring it has ever run
-        # as: a node the user rewired away from GAITRite-only should not
-        # re-run GAITRite-only records from its own Run button just because it
-        # once did (docs/claude/node-identity.md, "what a node IS versus what
-        # it HAS RUN AS"). Its older shapes stay its history — provenance and
-        # the Variants panel show them.
-        node_wiring = _node_wiring_store.current_wiring(db, node_id)
-        if node_wiring is None:
-            # The id no longer encodes a wiring, so there is nothing to fall
-            # back to: a function node with no association is one this GUI has
-            # never seen run, and deriving targets for it by guessing is how
-            # a click on one node silently executed another node's history.
-            logger.info(
-                "[execution] node %s ('%s'): no recorded wiring — this node has "
-                "never run and nothing in _node_wiring claims it",
-                node_id,
-                function_name,
-            )
-            return []
-        history = _node_wiring_store.wirings_for_node(db, node_id)
-        if len(history) > 1:
-            logger.info(
-                "[execution] node %s ('%s') has run as %d shape(s) %s — running "
-                "its current one, %s",
-                node_id,
-                function_name,
-                len(history),
-                sorted(history),
-                node_wiring,
-            )
-    else:
-        # Neither a manual row nor an id in the function-node grammar. Since
-        # 2026-09-29 the identity pass re-keys a run hand-dragged node out of
-        # this state, so reaching here means a build has not run since — or an
-        # id nothing recognises at all.
+    view = _view()
+    bare = str(strip_placement(node_id))
+    meta = view.manual_nodes.get(node_id) or view.manual_nodes.get(bare)
+    if meta is None and bare.startswith(FN_ID_PREFIX):
+        # A function node history knows but the document does not hold yet:
+        # a run reached before any build adopted it.
+        ensure_document(db, run_scope(db, node_id), reason=f"run of {node_id}")
+        view = _view()
+        meta = view.manual_nodes.get(node_id) or view.manual_nodes.get(bare)
+    if meta is None:
         logger.warning(
-            "[execution] node %s: no targets — not a manual node and not a "
-            "function-node id ids.parse_fn_node_id recognises; refresh the canvas "
-            "so the identity pass can re-key it",
+            "[execution] node %s: no targets — it is not a stored node on any "
+            "canvas (refresh the canvas; a node from a run is stored when a "
+            "build adopts it)",
             node_id,
         )
         return []
+    if meta["type"] != "functionNode":
+        logger.info(
+            "[execution] node %s: no targets — it is a %s, not a function node",
+            node_id,
+            meta["type"],
+        )
+        return []
+    function_name = meta["label"]
+    manual_nodes = view.manual_nodes
+    all_edges = view.drawn_list
+
+    resolved = resolve_function_edges(
+        fn_node_ids={node_id},
+        manual_edges=all_edges,
+        manual_nodes=manual_nodes,
+        existing_node_labels={},
+    )
+    disconnected = document_disconnected_ports(
+        node_id, view.hidden_edge_ids, resolved, manual_nodes
+    )
+    if disconnected:
+        logger.info(
+            "[execution] node %s ('%s'): no targets — disconnected: input port(s) "
+            "%s have a hidden edge and no visible edge in its place",
+            node_id,
+            function_name,
+            disconnected,
+        )
+        return []
+    if not resolved.output_types:
+        logger.info(
+            "[execution] node %s ('%s'): no targets — no output edge drawn",
+            node_id,
+            function_name,
+        )
+        return []
+    # The variable_types_view shape — the same one record_dispatch_wirings
+    # hashes, and the one history records.
+    stated_inputs = {p: t for p, t in resolved.input_types.items() if t}
+    stated_wiring = wiring_id(
+        function_name,
+        stated_inputs,
+        set(resolved.output_types),
+        resolved.path_input_params,
+    )
 
     all_variants = db.list_pipeline_variants()
-    # Same as derive_fn_targets: bind first, so every filter below sees the
-    # target's real wiring rather than an empty one.
+    # Bind first, so every filter below sees the target's real wiring rather
+    # than an empty one.
     fn_variants = _attach_db_path_inputs(
         db,
         function_name,
         [v for v in all_variants if v["function_name"] == function_name],
     )
-
-    if node_wiring is None:
-        # Manual (not yet graduated) node — resolve ITS OWN wiring from
-        # its own edges only, never from any other node sharing the label.
-        resolved = resolve_function_edges(
-            fn_node_ids={node_id},
-            manual_edges=all_edges,
-            manual_nodes=manual_nodes,
-            existing_node_labels={},
-        )
-        if not resolved.output_types:
-            logger.info(
-                "[execution] node %s ('%s'): no targets — a never-run node with "
-                "no output edge drawn",
-                node_id,
-                function_name,
-            )
-            return []
-        # The variable_types_view shape — the same one record_dispatch_wirings
-        # hashes. This was `ts[0]` (first candidate only), which for a
-        # multi-type input computed a wiring the dispatch record never matched.
-        inferred_inputs = {p: t for p, t in resolved.input_types.items() if t}
-        node_wiring = wiring_id(
-            function_name,
-            inferred_inputs,
-            set(resolved.output_types),
-            resolved.path_input_params,
-        )
-
-    # PathInputs are part of the wiring shape, so both sides of this
-    # comparison must carry them or a PathInput-fed node matches nothing.
-    # Each variant's wiring comes from the ONE owner the canvas uses — the
-    # call site's outputs split by Run claims — not from its own output alone.
+    # Each variant's wiring from the ONE owner the canvas uses (the call
+    # site's outputs split by Run claims).
     pi_by_call = _db_path_input_params(db, function_name)
-    candidate_wirings = history_variant_wirings(
-        db, function_name, fn_variants, pi_by_call
+    candidate_wirings = history_variant_wirings(db, function_name, fn_variants, pi_by_call)
+    matching = [v for v, wid in candidate_wirings if wid == stated_wiring]
+    logger.info(
+        "[execution] node %s ('%s'): stated wiring %s (inputs=%s, outputs=%s, "
+        "path inputs=%s) — %d recorded row(s) of it among %d of this function%s",
+        node_id,
+        function_name,
+        stated_wiring,
+        stated_inputs,
+        sorted(resolved.output_types),
+        resolved.path_input_params,
+        len(matching),
+        len(candidate_wirings),
+        "" if matching else "; first run of this wiring: it runs from its edges and values",
     )
-    matching = [v for v, wid in candidate_wirings if wid == node_wiring]
-    if not matching and candidate_wirings:
-        # "This node matches no history" is indistinguishable, from the
-        # outside, from "this node has no history" — both surface as the
-        # same empty list and the same generic error at api/run.py. Show the
-        # comparison that failed, since a node visibly green on the canvas
-        # reaching here means the two sides hashed the SAME call site
-        # differently (see wiring_id's note on the PathInput term).
-        #
-        # Only a GRADUATED node (resolved is None) is stuck here. A manual
-        # node falls through to running its own edges — a first run of a
-        # new wiring, which is normal and must not read as a failure
-        # (scidb.log 2026-09-25: this WARN preceded a successful run).
-        stuck = resolved is None
-        logger.log(
-            logging.WARNING if stuck else logging.INFO,
-            "[execution] node %s ('%s'): wiring %s matches none of the %d "
-            "candidate variant(s) — computed %s. %s",
-            node_id,
-            function_name,
-            node_wiring,
-            len(candidate_wirings),
-            [
-                {
-                    "wiring_id": wid,
-                    "call_id": v.get("call_id"),
-                    "input_types": v.get("input_types"),
-                    "output_type": v.get("output_type"),
-                    "path_inputs": pi_by_call.get(v.get("call_id"), {}),
-                }
-                for v, wid in candidate_wirings
-            ],
-            "This node cannot run even though history exists for its function."
-            if stuck
-            else "First run of this wiring: the node runs from its own edges.",
-        )
-    if matching and hidden_edge_ids:
-        # Which history targets this node would run, before hidden edges and
-        # drawn edges are applied: the input to the "did the hide take?"
-        # question (scidb.log 2026-10-01 22:48).
-        logger.info(
-            "[execution] node %s ('%s'): %d matching history target(s) before "
-            "reconcile: %s",
-            node_id,
-            function_name,
-            len(matching),
-            [
-                {
-                    "output": t.get("output_type"),
-                    "constants": t.get("constants") or {},
-                    "parameter_names": t.get("parameter_names") or {},
-                }
-                for t in matching[:10]
-            ],
-        )
-    if matching and (hidden_edge_ids or all_edges):
-        from scistack_gui.domain.variant_resolver import reconcile_manual_inputs
-
-        before = len(matching)
-        # THIS node's token — the id's trailing segment, which is what the
-        # hidden-edge ids and the drawn edges on it are keyed by. Every target
-        # here is already scoped to this one node, so the mapping is constant.
-        _node_token = parsed[1] if parsed is not None else None
-        matching = reconcile_manual_inputs(
-            matching,
-            function_name,
-            hidden_edge_ids,
-            all_edges,
-            manual_nodes,
-            (lambda _fn, wiring: _node_token or wiring),
-        )
-        if len(matching) != before:
-            logger.info(
-                "[execution] node %s ('%s'): %d target(s) excluded — disconnected wiring",
-                node_id,
-                function_name,
-                before - len(matching),
-            )
     if matching:
-        # Outputs drawn on THIS node replace the recorded ones — the same owner
-        # derive_fn_targets uses, scoped to the one node clicked.
-        from scistack_gui.domain.edge_resolver import infer_manual_fn_output_types
-
-        matching = _apply_manual_output_types(
-            matching,
-            infer_manual_fn_output_types(
-                {node_id}, all_edges, manual_nodes, existing_node_labels={},
-            ),
-            f"node {node_id} ('{function_name}')",
-        )
+        # A recorded row has the stated wiring's types by construction (equal
+        # wiring ids); what it adds is the exact recorded detail. Glue chains
+        # come from the stored edges when the row did not record one.
+        for t in matching:
+            if resolved.glue_chains and not t.get("glue_chains"):
+                t["glue_chains"] = dict(resolved.glue_chains)
         return _attach_column_selections(
             db,
             {node_id},
             filter_hidden_constant_value_targets(matching, hidden_values),
             function_name,
         )
-    if resolved is None:
-        # An already-graduated node whose embedded wiring matches nothing
-        # in current history (stale) — nothing safe to run as this node.
-        # The warning above has already spelled out the failed comparison.
-        # Name the drawn edges: they exist but are NOT consulted for a node
-        # that has a recorded wiring, and the old wording ("no manual edges")
-        # sent a real 2026-09-28 diagnosis the wrong way.
-        from scistack_gui.ids import strip_placement
 
-        bare = strip_placement(node_id)
-        drawn = sorted(
-            f"{e.get('source')}->{e.get('target')}"
-            for e in all_edges
-            if bare in (strip_placement(e.get("source") or ""), strip_placement(e.get("target") or ""))
-        )
-        logger.info(
-            "[execution] node %s ('%s'): no targets — its recorded wiring %s "
-            "matches no history, and a node with a recorded wiring does not "
-            "infer from its drawn edges (%d drawn: %s)",
-            node_id,
-            function_name,
-            node_wiring,
-            len(drawn),
-            drawn,
-        )
-        return []
-
-    # Never run with this wiring before — infer constant values from (in
-    # order): pending (staged-but-unrun) values, then real DB history for
-    # this FUNCTION regardless of wiring (a constant's known values are a
-    # function-level property — e.g. compute_rolling_vo2's window_seconds
-    # already has a real, known value from the RawVO2 call site, and a
-    # user wiring the SAME shared constant node into a new RawHeartRate
-    # wiring clearly means to reuse it, not re-stage it from scratch).
+    # No recorded row of this wiring: build from the edges and the values.
     inferred_constants: dict[str, list] = {}
     if resolved.parameter_params:
         from scistack_gui import registry
 
-        pending = pipeline_store.get_pending_constants(db)
         inferred_constants = _infer_wired_constants(
             resolved.parameter_params,
-            pending,
+            pipeline_store.get_pending_constants(db),
             registry.get_parameters_registry(),
             fn_variants=fn_variants,
+            stated=pipeline_store.get_stated_constants(db),
             log_context=f"'{function_name}' (node {node_id})",
         )
 
@@ -1157,6 +965,24 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     hidden_edge_ids = set(view.hidden_edge_ids)
     if not hidden_edge_ids:
         return None
+
+    # The document rule first: the one derive_target_for_node applies
+    # (document_disconnected_ports), on the node named or on every stored
+    # node of this function.
+    from scistack_gui.domain.edge_resolver import resolve_function_edges
+
+    for nid in [node_id] if node_id else _document_function_nodes(db, function_name):
+        resolved = resolve_function_edges(
+            fn_node_ids={nid},
+            manual_edges=view.drawn_list,
+            manual_nodes=view.manual_nodes,
+            existing_node_labels={},
+        )
+        ports = document_disconnected_ports(nid, hidden_edge_ids, resolved, view.manual_nodes)
+        if ports:
+            return (
+                f"input '{ports[0]}' is disconnected — reconnect it before running"
+            )
 
     manual_index = manual_edge_handle_index(view.drawn_list)
 
@@ -2084,91 +1910,37 @@ def _matlab_glue_sources():
 
 
 def _scope_function_node_ids(db, pipeline_id: str, identity=None) -> list[tuple[str, str]]:
-    """Distinct (node_id, function_label) pairs whose nodes live in
-    ``pipeline_id`` — manual function nodes by pipeline_id, DB-derived
-    fn__ nodes by where their position is saved (same membership rule as
-    the canvas).
+    """``[(node_id, function label)]`` for every function node drawn on
+    ``pipeline_id``'s canvas — one entry per NODE, never per function name.
 
-    One entry per WIRING, not per function name: the same function name
-    can have more than one independent wiring on a canvas at once (e.g.
-    compute_rolling_vo2 fed by RawVO2 in one node and by RawHeartRate in
-    another — see api/pipeline.py's wiring-conflict guard). Collapsing to
-    distinct names here would make ``build_backend_pipeline`` derive
-    targets by name (``derive_fn_targets``, which resolves across EVERY
-    wiring sharing that name) instead of by the exact node
-    (``derive_target_for_node``) — silently pipeline-running a sibling
-    wiring's real DB history that isn't even the one on screen, and
-    resurrecting a stale node for it once the run lands. See
-    derive_target_for_node's docstring for the same bug, previously fixed
-    for the single-node Run path but not this one.
+    **Read off the canvas itself** (plan-canvas-as-document Stage 4): the
+    scope's built graph, without run states. Until 2026-10-22 this assembled
+    the list from three sources (hand-placed rows, positioned history nodes,
+    and unplaced history wirings resolved through ``ensure_node_identities``),
+    a second copy of the canvas's membership rules. The build is now the one
+    owner of "what is on this canvas", and it also adopts whatever history
+    holds that the document does not, so a step a script just ran compiles.
+
+    The ids are the ones the canvas draws (placement-qualified where a node is
+    placed in this scope by ``{id}::{scope}``); ``derive_target_for_node``
+    accepts either spelling. ``identity`` is accepted for the callers that
+    still pass it and is not needed.
     """
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store
-    from scistack_gui.ids import fn_node_id, parse_fn_node_id
-    from scistack_gui.domain.scope_filter import node_scope
+    from scistack_gui.api.pipeline import _build_graph
 
-    manual_nodes = pipeline_store.get_manual_nodes(db)
-    positions_by_scope = layout_store.read_positions_by_scope()
-
-    seen: set[str] = set()
-    node_ids: list[tuple[str, str]] = []
-
-    def _add(nid: str, label: str) -> None:
-        if nid not in seen:
-            seen.add(nid)
-            node_ids.append((nid, label))
-
-    for nid, meta in manual_nodes.items():
-        if (
-            meta.get("type") == "functionNode"
-            and (meta.get("pipeline_id") or ROOT_SCOPE) == pipeline_id
-        ):
-            _add(nid, meta["label"])
-    placed_wirings: set[tuple[str, str]] = set()
-    for _scope_id, positions in positions_by_scope.items():
-        for nid in positions:
-            parsed = parse_fn_node_id(nid)
-            if parsed is None or nid in manual_nodes:
-                continue
-            placed_wirings.add(parsed)
-            if node_scope(nid, manual_nodes, positions_by_scope) == pipeline_id:
-                _add(nid, parsed[0])
-    # DB-derived wirings with NO saved position default to root — one
-    # entry per distinct (fn_name, wiring_id) among the unplaced variants,
-    # not one per fn_name (a name can have several unplaced wirings at
-    # once, each needing its own step).
-    if pipeline_id == ROOT_SCOPE:
-        from scistack_gui.api.pipeline import ensure_node_identities
-
-        # The node id a wiring belongs to is LOOKED UP, never spelled. Two
-        # wirings can share one node (it was rewired and run), so deriving an
-        # id from each would give that node two steps; and under allocated ids
-        # a derived id names no node at all, so the step would compile to
-        # nothing (docs/claude/node-identity.md).
-        #
-        # `ensure_node_identities` rather than a plain read: this list is
-        # built from HISTORY, and history can hold a wiring written since the
-        # canvas last refreshed — a script run, a terminal MATLAB run, another
-        # window. Asking the one resolver to settle it is the alternative to
-        # inventing an id here, which is the bug this change removes.
-        identity = identity or ensure_node_identities(db)
-        variants_by_fn: dict[str, list[dict]] = {}
-        for v in db.list_pipeline_variants():
-            variants_by_fn.setdefault(v["function_name"], []).append(v)
-        # Wirings from the one owner the canvas uses (history_variant_wirings),
-        # so a call site with several outputs compiles the step its node IS.
-        for fn, variants in variants_by_fn.items():
-            for _v, wiring in history_variant_wirings(db, fn, variants):
-                # Only the node's CURRENT shape compiles a step. A wiring it
-                # used to run as is history: compiling it would re-run
-                # something the user rewired away from, and under the same
-                # node id, so the two steps would collide.
-                if not identity.is_current(fn, wiring):
-                    continue
-                wid = identity.token(fn, wiring)
-                if (fn, wid) not in placed_wirings:
-                    _add(fn_node_id(fn, wid), fn)
-    return node_ids
+    graph = _build_graph(db, pipeline_id, run_states=False)
+    out = [
+        (n["id"], n["data"]["label"])
+        for n in graph.get("nodes", [])
+        if n.get("type") == "functionNode"
+    ]
+    logger.info(
+        "[execution] scope %s compiles %d function node(s): %s",
+        pipeline_id,
+        len(out),
+        [nid for nid, _ in out],
+    )
+    return out
 
 
 def _scope_function_labels(db, pipeline_id: str, identity=None) -> list[str]:

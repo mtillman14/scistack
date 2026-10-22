@@ -139,7 +139,8 @@ def edge_dedup_key(
     This is the single definition used both to dedup manual edges against
     DB-derived ones inside build_edges AND to re-check that invariant after
     something rewrites edge endpoints mid-build (graduation, the legacy
-    wiring migration) — see drop_superseded_manual_edges.
+    wiring migration) — since 2026-10-22 the build dedups by connection in
+    ``domain.adoption.document_view`` (drop_superseded_manual_edges is gone).
     """
     src = strip_placement(source)
     tgt = strip_placement(target)
@@ -156,46 +157,6 @@ def is_manual_edge(edge: dict) -> bool:
     carry no ``data`` at all.
     """
     return bool((edge.get("data") or {}).get("manual"))
-
-
-def drop_superseded_manual_edges(edges: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Remove manual edges that now duplicate a DB-derived edge.
-
-    build_edges already applies this rule, but it runs BEFORE the graduation
-    of manual nodes — at which point a manual edge still names the manual
-    node ids (``fn__read_csv__2qxdue``) while the DB-derived edge names the
-    call-site ids, so the two don't compare equal and BOTH are emitted.
-    Graduation then rewrites the manual edge's endpoints onto the DB-derived
-    ids (in the DB via pipeline_store.rename_edge_endpoints, and in-memory so
-    the response isn't missing edges), which is exactly what turns it into a
-    duplicate. The legacy wiring migration's edge rewrites do the same thing.
-
-    So: whenever endpoints are rewritten mid-build, re-run this. The
-    invariant it protects is that a build's response equals what an
-    immediate rebuild would produce — without it the canvas draws two
-    identical wires until the next unrelated refresh, and deleting one
-    leaves its twin (the permanent-duplicate failure that endpoint dedup
-    was introduced to fix in the first place).
-
-    The manual row itself is untouched in the DB (hide, never delete): if
-    the DB-derived edge later disappears, the manual edge renders again.
-
-    Returns (kept_edges, dropped_edges).
-    """
-    db_keys = {
-        edge_dedup_key(e["source"], e["target"], e.get("targetHandle"))
-        for e in edges
-        if not is_manual_edge(e)
-    }
-    kept, dropped = [], []
-    for e in edges:
-        if is_manual_edge(e) and (
-            edge_dedup_key(e["source"], e["target"], e.get("targetHandle")) in db_keys
-        ):
-            dropped.append(e)
-        else:
-            kept.append(e)
-    return kept, dropped
 
 
 @dataclass
@@ -1442,6 +1403,8 @@ def build_parameter_nodes(
     hidden_values: "dict[str, set[str]] | None" = None,
     value_groups: "dict[str, dict] | None" = None,
     entities_file: "str | None" = None,
+    *,
+    stated_values: "dict[str, set[str]] | None" = None,
 ) -> list[dict]:
     """Build React Flow **Parameter** nodes.
 
@@ -1479,15 +1442,23 @@ def build_parameter_nodes(
     used only to set each node's ``declared_in_entities_file`` flag via
     :func:`is_declared_in_entities_file` -- lets the GUI offer "refresh from
     file" only where a re-read of that file can actually change the value.
+
+    stated_values: ``{param_name: {value strings}}`` STATED on the canvas
+    document (``pipeline_store.get_stated_constants``): values a run used or
+    adoption stored. Shown like a pending value (record count 0 when history
+    has none), so a Parameter keeps its values after a clear-data. A
+    Parameter with stated values gets a node even with no history and no
+    declaration (plan-canvas-as-document §4).
     """
     source_parameters = source_parameters or {}
     hidden_values = hidden_values or {}
     value_groups = value_groups or {}
+    stated_values = stated_values or {}
     # One shape for every Parameter: its declared values, stringified.
     source_values: dict[str, list] = {
         name: [str(v) for v in p.values] for name, p in source_parameters.items()
     }
-    all_names = sorted(set(const_counts) | set(source_values))
+    all_names = sorted(set(const_counts) | set(source_values) | set(stated_values))
     logger.info(
         "[graph_builder] build_parameter_nodes: building %d parameter node(s)",
         len(all_names),
@@ -1513,7 +1484,10 @@ def build_parameter_nodes(
             for val, cnt in sorted(const_counts.get(const_name, {}).items())
         ]
         existing_values = {v["value"] for v in values}
-        for pval in sorted(pending_constants.get(const_name, set())):
+        for pval in sorted(
+            set(pending_constants.get(const_name, set()))
+            | set(stated_values.get(const_name, set()))
+        ):
             if pval not in existing_values:
                 values.append(
                     {
@@ -1586,7 +1560,8 @@ def build_parameter_nodes(
                     # because source declares it. Such a node is on a canvas
                     # only where it has been placed (scope_filter).
                     DECLARED_ONLY: const_name not in const_counts
-                    and not pending_constants.get(const_name),
+                    and not pending_constants.get(const_name)
+                    and not stated_values.get(const_name),
                 },
             }
         )
@@ -2165,7 +2140,7 @@ def build_edges(
         #
         # NOTE: this pass only catches manual edges that ALREADY name the
         # DB-derived ids. Ones graduated later in this same build are caught
-        # by drop_superseded_manual_edges, which keys on the same function.
+        # by domain.adoption.document_view, which keeps one edge per connection.
         dedup_key = edge_dedup_key(
             me["source"],
             me["target"],
@@ -2542,9 +2517,11 @@ def manual_input_overrides(
     still-visible history edge (EachOf of both — the same picture means the
     same thing on a fresh node; replacing is what hiding the edge is for).
 
-    Shared by the display overlay (overlay_manual_inputs) and the execution
-    path (variant_resolver.reconcile_manual_inputs) so the panel can never
-    show a binding the run would not use, or vice versa.
+    Used by identity (``stated_wiring_claims``: the wiring a node STATES) and
+    the run-state cascade (``input_params_with_manual_edges``). The display
+    overlay and the run-path splice that also used it are gone
+    (plan-canvas-as-document Stage 5): a node's inputs and its run now both
+    come from its stored edges directly.
 
     ``input_params``: the call site's RECORDED variable inputs, DB shape
     (bare string when single). ``manual_index``: manual_edge_handle_index.
@@ -3035,98 +3012,123 @@ def _claim_stated_wirings(
             holders.append(str(node_id))
 
 
-def collect_manual_input_overrides(
-    nodes: list[dict],
-    fn_input_params: dict[FnKey, dict],
-    fn_constants: dict[FnKey, set],
-    manual_edges: "list[dict] | tuple",
-    manual_nodes: "dict[str, dict] | None",
-    hidden_edge_ids: "set[str] | frozenset[str]" = frozenset(),
-) -> dict[str, dict[str, str]]:
-    """``{node_id: {param: variable_label}}`` — manual_input_overrides
-    evaluated for every wiring-grouped function node in *nodes*.
+def document_stated_claims(
+    manual_nodes: "dict[str, dict]",
+    drawn_edges: "list[dict] | tuple",
+    current_by_node: dict,
+    history,
+) -> dict[tuple[str, str], list[str]]:
+    """``{(fn_name, wiring): [node_id, ...]}`` for stored function nodes that
+    have NEVER run, by the wiring their stored edges state, restricted to
+    wirings *history* holds.
 
-    Node ids at this point are the bare ``fn__{fn}__{wid}`` (build_function_
-    nodes runs before scope resolution); manual edge targets may carry a
-    ``::scope`` suffix, which manual_edge_handle_index strips.
+    Rule 1 of ``node-identity.md`` §7a ("exactly one node states W → that
+    node"), for the nodes ``stated_wiring_claims`` cannot see: that one folds
+    drawn edges into a node's RECORDED wiring, so only nodes already in
+    ``_node_wiring`` can state anything. A hand-placed node a SCRIPT then ran
+    (same wiring, no dispatch record) used to be folded in by graduation;
+    graduation is gone (canvas-as-document Stage 5), so it claims here instead
+    of a third node being minted beside it.
+
+    One wiring per arm of an EachOf (variable sources and PathInputs alike),
+    since a run records one per arm. Pure.
     """
-    manual_index = manual_edge_handle_index(manual_edges)
-    if not manual_index:
-        return {}
-    result: dict[str, dict[str, str]] = {}
+    from itertools import product
+
+    from scistack_gui.domain.edge_resolver import path_input_arm_bindings, resolve_function_edges
+
+    history = set(history or ())
+    claims: dict[tuple[str, str], list[str]] = {}
+    for node_id, meta in sorted((manual_nodes or {}).items()):
+        if meta.get("type") != "functionNode" or node_id in (current_by_node or {}):
+            continue
+        fn = meta.get("label")
+        resolved = resolve_function_edges(
+            fn_node_ids={node_id},
+            manual_edges=drawn_edges,
+            manual_nodes=manual_nodes,
+            existing_node_labels={},
+        )
+        if not fn or not resolved.output_types:
+            continue
+        variables = {p: ts for p, ts in resolved.input_type_candidates.items() if ts}
+        names = sorted(variables)
+        for combo in product(*(variables[p] for p in names)):
+            inputs = dict(zip(names, combo, strict=True))
+            for arm in path_input_arm_bindings(resolved.path_input_params):
+                key = (fn, wiring_id(fn, inputs, set(resolved.output_types), arm))
+                if key in history:
+                    holders = claims.setdefault(key, [])
+                    if node_id not in holders:
+                        holders.append(node_id)
+    if claims:
+        logger.info("[graph_builder] never-run stored nodes state recorded wiring(s): %s", claims)
+    return claims
+
+
+def document_input_params(
+    nodes: list[dict],
+    drawn_edges: "list[dict] | tuple",
+    manual_nodes: "dict[str, dict] | None",
+    existing_node_labels: "dict[str, str] | None" = None,
+) -> int:
+    """Every function node's displayed inputs, from its STORED edges.
+
+    plan-canvas-as-document Stage 3/5: the edges ARE the inputs. This
+    replaces the overlay that patched a history node's recorded inputs with
+    the edges drawn onto it (``collect_manual_input_overrides`` +
+    ``overlay_manual_inputs``, deleted): there were two sources for one input,
+    kept in agreement by hand. Now:
+
+    * a handle fed by a drawn variable edge shows that variable (an EachOf
+      shows its first source, as a hand-placed node always has);
+    * a handle history recorded a variable on, with NO drawn edge any more
+      (the user removed it), shows ``""`` (unwired), not the stale type;
+    * PathInput- and Parameter-fed handles are left as built.
+
+    ``input_params`` stays ``{param: str}`` (every frontend consumer types it
+    that way). Run on bare ids, before scope resolution. Returns the number of
+    nodes whose inputs changed; one DEBUG line per such node.
+    """
+    from scistack_gui.domain.edge_resolver import resolve_function_edges
+
+    manual_nodes = manual_nodes or {}
+    labels = existing_node_labels or {n["id"]: n["data"].get("label") for n in nodes}
+    changed = 0
     for node in nodes:
         if node.get("type") != "functionNode":
             continue
-        parsed = parse_fn_node_id(node["id"])
-        if parsed is None:
-            continue
-        fn, wid = parsed
-        fkey: FnKey = (fn, wid)
-        overrides = manual_input_overrides(
-            fn,
-            wid,
-            fn_input_params.get(fkey, {}),
-            fn_constants.get(fkey, set()),
-            manual_index,
-            manual_nodes,
-            hidden_edge_ids,
-        )
-        if overrides:
-            result[node["id"]] = overrides
-    return result
-
-
-def overlay_manual_inputs(nodes: list[dict], overrides_by_node: dict[str, dict]) -> int:
-    """Apply manual input overrides to the built function nodes' data:
-    ``input_params[param]`` becomes the handle's visible source (what the
-    handles, the Inputs column picker and the code exporter read) and
-    ``manual_inputs`` carries the full override per param, so a consumer —
-    or a log reader — can tell an overlay from a recorded binding. Returns
-    the number of nodes touched.
-
-    ``input_params`` stays ``{param: str}``: every frontend consumer types it
-    that way, and DB-derived values are always bare (provenance records one
-    variable type per input). An EachOf override (list) therefore shows its
-    FIRST source there — the same choice the fresh-node path makes
-    (``api/pipeline.py``: ``inferred_inputs = {p: ts[0]}``) — with the whole
-    list in ``manual_inputs``. The Inputs column picker is per parameter, so
-    one column set applies to every source of an EachOf handle either way
-    (docs/claude/column-selection.md, Known limitations).
-
-    One DEBUG line per touched node lists every parameter with its origin,
-    because "why does this handle say what it says" is exactly the question
-    that was unanswerable from scidb.log before (2026-09-15).
-    """
-    touched = 0
-    if not overrides_by_node:
-        return touched
-    for node in nodes:
-        overrides = overrides_by_node.get(node["id"])
-        if not overrides:
-            continue
         data = node["data"]
-        params = dict(data.get("input_params") or {})
-        for param, sources in overrides.items():
-            params[param] = sources[0] if isinstance(sources, list) else sources
-        data["input_params"] = params
-        data["manual_inputs"] = {
-            p: (list(s) if isinstance(s, list) else s) for p, s in overrides.items()
-        }
-        touched += 1
-        origins = {
-            p: ("manual" if p in overrides else ("history" if t else "unbound"))
-            for p, t in params.items()
-        }
-        logger.debug(
-            "[graph_builder] %s input_params after manual overlay: %s (origins=%s, "
-            "manual_inputs=%s, constants=%s)",
-            node["id"],
-            params,
-            origins,
-            data["manual_inputs"],
-            data.get("constant_params"),
+        before = dict(data.get("input_params") or {})
+        resolved = resolve_function_edges(
+            fn_node_ids={node["id"]},
+            manual_edges=drawn_edges,
+            manual_nodes=manual_nodes,
+            existing_node_labels=labels,
         )
-    return touched
+        drawn = {p: ts[0] for p, ts in resolved.input_type_candidates.items() if ts}
+        not_variables = (
+            set(resolved.path_input_params)
+            | set(resolved.parameter_params)
+            | set(data.get("constant_params") or [])
+        )
+        after = dict(before)
+        for param, value in before.items():
+            if param in drawn or param in not_variables:
+                continue
+            if isinstance(value, str) and value and _parse_path_input_spec(value) is None:
+                after[param] = ""
+        after.update(drawn)
+        if after != before:
+            data["input_params"] = after
+            changed += 1
+            logger.debug(
+                "[graph_builder] %s inputs from its stored edges: %s (was %s)",
+                node["id"],
+                after,
+                before,
+            )
+    return changed
 
 
 def hidden_wirings(
@@ -3607,16 +3609,20 @@ def merge_manual_nodes(
     manual_nodes: dict[str, dict],
     saved_positions: dict[str, dict],
 ) -> tuple[list[str], list[GraduationAction]]:
-    """Determine which manual nodes to add and which to graduate.
+    """Determine which manual nodes to add and which entity boxes to fold.
 
-    A manual function node graduates to its DB-derived counterpart only
-    when there is exactly one DB node with the same (type, label).  If the
-    same function name has multiple DB nodes (one per for_each call site),
-    we cannot pick a canonical target unambiguously, so the manual node is
-    kept as a separate node — the user can wire it up and run it to
-    produce a real call site of its own.
+    **Entity folding only** (since 2026-10-22, plan-canvas-as-document Stage
+    5): a hand-placed variable, Parameter or PathInput box folds into the one
+    canonical node of that entity, because edges, hides and runs name an
+    entity by type or name (``endpoint_ref``), so two boxes of one entity
+    could not mean two things (user decision D3: keep today's folding).
+    Function nodes are always added as themselves; they used to graduate onto
+    a same-named history node, which swapped their id.
 
-    Graduation targets the manual node's OWN placement
+    An entity box folds when there is exactly one existing node with the same
+    (type, label).
+
+    Folding targets the manual node's OWN placement
     (``placement_id(canonical_id, meta["pipeline_id"])``), not the bare
     canonical id — this is what lets two manual nodes with the same label
     in DIFFERENT scopes (e.g. a duplicated pipeline re-running identical,
@@ -3646,6 +3652,15 @@ def merge_manual_nodes(
 
     for node_id, meta in manual_nodes.items():
         if node_id in existing_ids:
+            continue
+        if meta["type"] not in ENTITY_NODE_TYPES:
+            # Function (and glue) nodes never graduate (plan-canvas-as-document
+            # Stage 5). A hand-placed function node is its own step: a run
+            # claims its wiring at dispatch, so the node that ran IS the
+            # history node, with the same id, and there is no twin to fold
+            # into. The id swap graduation used to do is where node config
+            # was orphaned (D-2026-09-22-4).
+            to_add.append(node_id)
             continue
         key = (meta["type"], meta["label"])
         candidates = db_nodes_by_label.get(key, [])

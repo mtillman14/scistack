@@ -200,6 +200,12 @@ def put_edge(
     positions_by_scope = layout_store.read_positions_by_scope()
     scope_id = node_scope(target, manual_nodes, positions_by_scope)
     hidden_here = pipeline_store.get_hidden_edge_ids(db, scope_id)
+    if edge_id in hidden_here and candidate not in hidden_here:
+        # A hide made with no port matches by the edge's own id
+        # (pipeline_store._hidden_connection_id). Removing a stored edge hides
+        # it (D2, 2026-10-22), so redrawing that same edge must unhide it, or
+        # its stored row stays hidden under the id it is redrawn with.
+        candidate = edge_id
     if not target_handle and candidate not in hidden_here:
         # A redraw with no port (an API caller; the canvas always sends one)
         # names the two NODES only. Restore the one hidden connection between
@@ -279,41 +285,46 @@ def delete_edge(
     from scistack_gui.ids import ROOT_SCOPE
 
     logger.info("[layout_service] delete_edge called (edge_id=%r)", edge_id)
-    # Whether an edge is "manual" is decided by ACTUAL membership in the
-    # manual-edges table, not the `manual__` id prefix — that prefix is
-    # only the frontend's own naming convention for edges it creates via
-    # onConnect; put_edge accepts any caller-supplied id, so a manual edge
-    # can legitimately have a differently-shaped id (e.g. existing tests
-    # PUT arbitrary ids like "e_del").
-    is_manual = any(e["id"] == edge_id for e in pipeline_store.get_manual_edges(db))
-    if is_manual:
-        pipeline_store.delete_manual_edge(db, edge_id)
-        logger.info("[layout_service] Manual edge hard-deleted")
-    else:
-        # DB-derived edge: never delete data, only hide it — build_edges
-        # excludes it on every rebuild until unhide_edge (see put_edge's
-        # reconnect-detection) or the restore panel brings it back. Scoped
-        # to the edge's own scope (derived from its endpoints — same
-        # canonical id shared by another pipeline's independent placement
-        # of this wiring must stay visible there; see
-        # plan-scope-hidden-nodes-edges.md).
-        manual_nodes = pipeline_store.get_manual_nodes(db)
-        positions_by_scope = layout_store.read_positions_by_scope()
-        scope_id = (
-            node_scope(target, manual_nodes, positions_by_scope)
-            if target
-            else node_scope(source, manual_nodes, positions_by_scope)
-            if source
-            else ROOT_SCOPE
-        )
-        logger.info(
-            "[layout_service] delete_edge: hiding DB-derived edge in scope=%r",
-            scope_id,
-        )
-        pipeline_store.hide_edge(
-            db, edge_id, source, target, source_handle, target_handle, scope_id
-        )
-        logger.info("[layout_service] DB-derived edge hidden")
+    # Every removal is a HIDE, drawn edge or not (user decision D2,
+    # 2026-10-22: auditable in `_intent` + `_canvas_change`, undoable). Since
+    # canvas adoption a node's edges are stored rows, and a hard delete would
+    # leave nothing to audit or restore. The stored row stays; its connection
+    # is hidden, which `edge_view` already applies to drawn edges
+    # (`graph_builder.manual_edge_is_hidden`), and redrawing the same
+    # connection unhides it (`put_edge`). A stored edge's own endpoints fill in
+    # whatever the caller did not send, so the hide matches by connection.
+    stored = next(
+        (e for e in pipeline_store.get_manual_edges(db) if e["id"] == edge_id), None
+    )
+    if stored is not None:
+        source = source or stored.get("source", "")
+        target = target or stored.get("target", "")
+        source_handle = source_handle or stored.get("sourceHandle")
+        target_handle = target_handle or stored.get("targetHandle")
+    # Scoped to the edge's own scope (derived from its endpoints): the same
+    # connection on another pipeline's independent placement stays visible
+    # there (plan-scope-hidden-nodes-edges.md).
+    manual_nodes = pipeline_store.get_manual_nodes(db)
+    positions_by_scope = layout_store.read_positions_by_scope()
+    scope_id = (
+        node_scope(target, manual_nodes, positions_by_scope)
+        if target
+        else node_scope(source, manual_nodes, positions_by_scope)
+        if source
+        else ROOT_SCOPE
+    )
+    pipeline_store.hide_edge(
+        db, edge_id, source, target, source_handle, target_handle, scope_id
+    )
+    logger.info(
+        "[layout_service] edge %s (%s -> %s, %s) hidden in scope=%r (%s)",
+        edge_id,
+        source,
+        target,
+        target_handle,
+        scope_id,
+        "stored row kept" if stored is not None else "no stored row",
+    )
     _notify_dag_updated()
     return {"ok": True}
 
@@ -473,8 +484,37 @@ def update_path_input(
 
     result = _update(name, template, root_folder, alternate_templates, aliases, key_regex)
     if result.get("ok"):
+        result["schema_key_types"] = _auto_declare_schema_key_types(
+            key_regex, alternate_templates
+        )
         _notify_dag_updated()
     return result
+
+
+def _auto_declare_schema_key_types(key_regex, alternate_templates) -> dict:
+    """A saved digit-only ``key_regex`` declares an undeclared schema key
+    numeric (``schema_key_type_service.auto_declare_from_key_regex``). Never
+    fails the save it follows: the declaration is a convenience, the
+    entities-file write already succeeded."""
+    from scistack_gui.services.schema_key_type_service import (
+        auto_declare_from_key_regex,
+        digit_only_keys,
+    )
+
+    empty = {"declared": [], "hints": []}
+    if not digit_only_keys(key_regex, alternate_templates):
+        return empty
+    try:
+        from scistack_gui.db import db_connection, get_db
+
+        with db_connection("auto_declare_schema_key_types"):
+            return auto_declare_from_key_regex(get_db(), key_regex, alternate_templates)
+    except Exception:  # noqa: BLE001 - see docstring
+        logger.warning(
+            "[layout_service] auto-declaring schema key types from key_regex failed",
+            exc_info=True,
+        )
+        return empty
 
 
 #: The note key a PathInput's sidebar note lives under — mirrors the

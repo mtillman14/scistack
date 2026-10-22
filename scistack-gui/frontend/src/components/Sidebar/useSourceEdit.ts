@@ -29,6 +29,8 @@ export interface SourceEditResult {
   file?: string
   line?: number | null
   unchanged?: boolean
+  /** update_path_input: schema keys a digit-only key_regex declared numeric. */
+  schema_key_types?: { declared: string[]; hints: { key: string; reason: string }[] }
 }
 
 export interface SourceEditState {
@@ -36,6 +38,8 @@ export interface SourceEditState {
   submit: (method: string, params: Record<string, unknown>) => Promise<boolean>
   /** Human-readable failure, or '' — render this, don't swallow it. */
   error: string
+  /** The last successful result, for edits that report more than ok. */
+  lastResult: SourceEditResult | null
   /** Where a read-only declaration lives, for a "declared in foo.py:42" hint. */
   readOnlyAt: { file: string; line: number | null } | null
   saving: boolean
@@ -46,6 +50,7 @@ export function useSourceEdit(): SourceEditState {
   const [error, setError] = useState('')
   const [readOnlyAt, setReadOnlyAt] = useState<{ file: string; line: number | null } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [lastResult, setLastResult] = useState<SourceEditResult | null>(null)
 
   const clearError = useCallback(() => {
     setError('')
@@ -65,6 +70,7 @@ export function useSourceEdit(): SourceEditState {
         }
         return false
       }
+      setLastResult(res ?? null)
       return true
     } catch (err) {
       // A genuine transport/server failure, as opposed to a refused write.
@@ -75,7 +81,7 @@ export function useSourceEdit(): SourceEditState {
     }
   }, [])
 
-  return { submit, error, readOnlyAt, saving, clearError }
+  return { submit, error, readOnlyAt, saving, clearError, lastResult }
 }
 
 export type EditableEntityKind = 'parameter' | 'path_input'

@@ -87,6 +87,77 @@ def key_regex_pattern_error(pattern: Any) -> "str | None":
     return None
 
 
+try:  # Python 3.11+
+    from re import _parser as _regex_parser
+except ImportError:  # pragma: no cover - Python 3.10
+    import sre_parse as _regex_parser  # type: ignore[no-redef]
+
+
+def key_regex_is_digit_only(pattern: Any) -> bool:
+    """Whether the ``key_regex`` fragment *pattern* can only match digits.
+
+    ``\\d+``, ``[0-9]{3}``, ``\\d+|\\d{2}`` and ``(?:\\d)+`` can; ``[A-Za-z]+``,
+    ``.+``, ``\\w+`` and ``R2_\\d{3}`` cannot. The GUI uses it to declare a
+    key ``numeric`` when such a regex is saved for an undeclared key
+    (``docs/claude/schema-key-types.md``). Walks the parsed regex and answers
+    False for anything it does not recognize, so an unusual pattern is never
+    mistaken for a numeric one.
+    """
+    if key_regex_pattern_error(pattern) is not None:
+        return False
+    p = _regex_parser
+    digits = range(ord("0"), ord("9") + 1)
+    repeats = {p.MAX_REPEAT, p.MIN_REPEAT}
+    if hasattr(p, "POSSESSIVE_REPEAT"):
+        repeats.add(p.POSSESSIVE_REPEAT)
+
+    def in_set(items) -> bool:
+        for op, av in items:
+            if op is p.LITERAL:
+                if av not in digits:
+                    return False
+            elif op is p.RANGE:
+                if av[0] not in digits or av[1] not in digits:
+                    return False
+            elif op is p.CATEGORY:
+                if av is not p.CATEGORY_DIGIT:
+                    return False
+            else:  # NEGATE and anything else
+                return False
+        return True
+
+    def walk(sub) -> bool:
+        for op, av in sub:
+            if op is p.LITERAL:
+                if av not in digits:
+                    return False
+            elif op is p.IN:
+                if not in_set(av):
+                    return False
+            elif op in repeats:
+                if not walk(av[2]):
+                    return False
+            elif op is p.SUBPATTERN:
+                if not walk(av[-1]):
+                    return False
+            elif op is p.BRANCH:
+                if not all(walk(branch) for branch in av[1]):
+                    return False
+            elif getattr(p, "ATOMIC_GROUP", None) is not None and op is p.ATOMIC_GROUP:
+                if not walk(av):
+                    return False
+            elif op is p.AT:
+                continue  # an anchor matches no character
+            else:
+                return False
+        return True
+
+    try:
+        return walk(_regex_parser.parse(pattern))
+    except Exception:  # noqa: BLE001 - unrecognized structure means "no"
+        return False
+
+
 def clear_listing_cache() -> None:
     """Forget every cached directory listing."""
     _DIR_CACHE.clear()
@@ -893,6 +964,7 @@ class PathInput:
         user_explicit_keys: "set | None" = None,
         log=None,
         condense_numeric: bool = False,
+        key_types: "dict[str, str] | None" = None,
     ) -> "tuple[dict, list[dict] | None]":
         """Fill empty metadata iterables from filesystem discovery.
 
@@ -932,6 +1004,10 @@ class PathInput:
                 explicitly via ``schema_key_types`` instead; this flag is for
                 policy-free standalone use only. See
                 ``docs/claude/schema-key-types.md``.
+            key_types: Declared ``{key: "numeric" | "string"}``. ``numeric``
+                keys are always converted; ``string`` keys never are, even
+                with ``condense_numeric``. Combos that become identical are
+                de-duplicated (``scifor.schema_types.canonicalize_combos``).
 
         Returns:
             ``(metadata_iterables, discovered_combos | None)``.
@@ -948,21 +1024,13 @@ class PathInput:
             f"PathInput discovery: template={self.path_template!r}, "
             f"root_folder={self.root_folder!r}, matching_files={len(combos)}"
         )
-        if condense_numeric and combos:
-            condensed_combos = []
-            for combo in combos:
-                new_combo = dict(combo)
-                for key, value in combo.items():
-                    if isinstance(value, str) and value.isdigit():
-                        condensed = int(value)
-                        if str(condensed) != value:
-                            _log(
-                                f"condensed discovered value: {key}={value!r} "
-                                f"-> {condensed!r}"
-                            )
-                        new_combo[key] = condensed
-                condensed_combos.append(new_combo)
-            combos = condensed_combos
+        if combos and (condense_numeric or key_types):
+            # One conversion rule (scifor.schema_types), shared with scidb.
+            from .schema_types import canonicalize_combos
+
+            combos = canonicalize_combos(
+                combos, key_types, condense_undeclared=condense_numeric, log=_log
+            )
         if not combos:
             return metadata_iterables, None
 

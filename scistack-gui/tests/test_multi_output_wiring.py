@@ -95,11 +95,19 @@ def rewired_and_run(client, tmp_path):
     _registry._functions["load_one"] = load_one
     for_each(load_one, inputs={"filepath": raw}, outputs=[Table], subject=[1, 2], session=["pre", "post"])
 
-    (node,) = _fn_nodes(_graph(client), "load_one")
+    graph = _graph(client)
+    (node,) = _fn_nodes(graph, "load_one")
     node_id = node["id"]
     db = _gui_db.get_db()
 
-    # Rewire the output: draw node -> Table2.
+    # Rewire the output: remove node -> Table, draw node -> Table2. Since
+    # canvas adoption (2026-10-22) the visible edges ARE the outputs, so a
+    # second output edge drawn beside the first adds an output; it no longer
+    # replaces the recorded one.
+    old = next(e for e in graph["edges"] if e["source"] == node_id and e["target"] == "var__Table")
+    assert client.request(
+        "DELETE", f"/api/edges/{old['id']}", json={"source": old["source"], "target": old["target"]}
+    ).status_code == 200
     r = client.put(
         "/api/edges/manual__out2",
         json={"source": node_id, "target": "var__Table2", "source_handle": None, "target_handle": None},
@@ -138,12 +146,13 @@ class TestARewiredOutputKeepsItsNode:
         from scistack_gui.services.execution_service import derive_target_for_node
 
         client, db, node_id, _graph_after = rewired_and_run
-        # Remove the drawn edge: the RECORDED history alone must now match.
-        assert client.delete("/api/edges/manual__out2").status_code in (200, 404)
+        # The node's stored edges state the wiring it ran as, so its Run finds
+        # the recorded rows of it (D1), not a fresh inference.
         _graph(client)
         targets = derive_target_for_node(db, node_id)
         assert targets, "the node's Run matched none of its own history"
         assert {t["output_type"] for t in targets} == {"Table2"}
+        assert all(t.get("call_id") for t in targets), "recorded rows, not inferred"
 
 
 # ---------------------------------------------------------------------------

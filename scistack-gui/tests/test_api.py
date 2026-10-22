@@ -377,7 +377,8 @@ class TestEdgesEndpoints:
         assert len(matching) == 1
         assert matching[0]["target"] == "C"
 
-    def test_delete_edge_removes_it(self, client):
+    def test_delete_edge_hides_it(self, client):
+        """D2 (2026-10-22): removing an edge is a hide, drawn edge or not."""
         client.put(
             "/api/edges/e_del",
             json={
@@ -389,8 +390,10 @@ class TestEdgesEndpoints:
         )
         r = client.delete("/api/edges/e_del")
         assert r.status_code == 200
-        layout = client.get("/api/layout").json()
-        assert not any(e["id"] == "e_del" for e in layout["manual_edges"])
+        data = client.get("/api/pipeline").json()
+        assert not any(e["id"] == "e_del" for e in data["edges"])
+        hidden = client.get("/api/edges/hidden").json()["edges"]
+        assert any(h["edge_id"] == "e_del" for h in hidden)
 
     def test_delete_nonexistent_edge_is_ok(self, client):
         r = client.delete("/api/edges/ghost_edge")
@@ -556,15 +559,19 @@ class TestDisconnectedEdges:
         data = client.get("/api/pipeline").json()
         assert any(e["id"] == "manual__newconst" for e in data["edges"])
 
-    def test_manual_edge_delete_still_hard_deletes_not_hides(self, client):
-        client.put(
-            "/api/edges/manual__x",
-            json={"source": "A", "target": "B", "source_handle": None, "target_handle": None},
-        )
+    def test_manual_edge_delete_hides_and_keeps_the_row(self, client):
+        """D2 (2026-10-22): auditable and undoable, so never a hard delete.
+        The stored row stays; redrawing the connection unhides it."""
+        body = {"source": "A", "target": "B", "source_handle": None, "target_handle": None}
+        client.put("/api/edges/manual__x", json=body)
         r = client.request("DELETE", "/api/edges/manual__x")
         assert r.status_code == 200
         layout = client.get("/api/layout").json()
-        assert not any(e["id"] == "manual__x" for e in layout["manual_edges"])
+        assert any(e["id"] == "manual__x" for e in layout["manual_edges"])
+        hidden = client.get("/api/edges/hidden").json()["edges"]
+        assert any(h["edge_id"] == "manual__x" for h in hidden)
+        r = client.put("/api/edges/manual__x", json=body)
+        assert r.json().get("unhidden")
         hidden = client.get("/api/edges/hidden").json()["edges"]
         assert not any(h["edge_id"] == "manual__x" for h in hidden)
 
@@ -1795,7 +1802,10 @@ class TestManualInputEdgesOnHistoryNodes:
             "one and only reason it renders 'n/a'"
         )
         assert node["data"]["input_params"]["signal"] == "RawSignal"
-        assert node["data"]["manual_inputs"] == {"side": "SideTable"}
+        # No `manual_inputs` any more: every input is a stored edge, so there
+        # is no overlay to tell apart from a recorded binding
+        # (graph_builder.document_input_params, canvas-as-document Stage 5).
+        assert "manual_inputs" not in node["data"]
         # Node identity is untouched: saved position/config still key off it.
         assert node["id"] == bp_node_id
 
@@ -1888,14 +1898,18 @@ class TestManualInputEdgesOnHistoryNodes:
         fresh = next(n for n in data["nodes"] if n["id"] == "mf_fresh")
         assert fresh["data"]["input_params"]["side"] == "SideTable"
 
-    def test_bare_fresh_node_still_graduates(self, wide, bp_node_id):
-        # The existing one-candidate-wins UX for an UNWIRED fresh node.
+    def test_bare_fresh_node_stays_its_own_node(self, wide, bp_node_id):
+        # Until 2026-10-22 an UNWIRED fresh node graduated into the one
+        # same-named history node (an id swap). Function nodes no longer
+        # graduate (plan-canvas-as-document Stage 5): the user placed a node,
+        # and it stays, beside the history node.
         wide.put(
             "/api/layout/mf_bare",
             json={"x": 10, "y": 0, "node_type": "functionNode", "label": "bandpass_filter"},
         )
         ids = {n["id"] for n in wide.get("/api/pipeline").json()["nodes"]}
-        assert "mf_bare" not in ids
+        assert "mf_bare" in ids
+        assert bp_node_id in ids
 
     # --- the id does not move, so there is nothing to carry ----------------
     #
@@ -2093,12 +2107,13 @@ class TestManualInputEdgesOnHistoryNodes:
 
 
 class TestGraduationCarriesNodeConfig:
-    """Settings made on a fresh node must survive its graduation into the
-    history node — in the SAME response that graduates it, and without
-    leaving an orphaned config row behind. Real symptom: three
-    "saved node config(s) match no node" warnings for fresh-node ids
-    (`fn__grSides__5c9r0r`, ...) whose settings had silently vanished.
-    See .claude/plan-graduation-config-migration.md.
+    """Settings made on a placed function node stay on THAT node.
+
+    Until 2026-10-22 a bare fresh node graduated into the one same-named
+    history node and its config had to be migrated across in the same response
+    (.claude/plan-graduation-config-migration.md). Function nodes no longer
+    graduate (plan-canvas-as-document Stage 5), so there is nothing to move:
+    the fresh node keeps its id, its settings and its own run.
     """
 
     FRESH = "fn__bandpass_filter__zz9fr3"
@@ -2113,16 +2128,10 @@ class TestGraduationCarriesNodeConfig:
             == 200
         )
 
-    def _graduated(self, data, bp_node_id):
-        ids = {n["id"] for n in data["nodes"]}
-        assert self.FRESH not in ids, "the bare fresh node must graduate"
-        return next(
-            n for n in data["nodes"] if n["id"] in (bp_node_id, f"{bp_node_id}::main")
-        )
+    def _node(self, data, node_id):
+        return next(n for n in data["nodes"] if n["id"] in (node_id, f"{node_id}::main"))
 
-    def test_setting_shows_on_the_graduated_node_in_the_graduating_response(
-        self, client, bp_node_id, caplog
-    ):
+    def test_the_setting_stays_on_the_fresh_node(self, client, bp_node_id, caplog):
         import logging
 
         from scistack_gui import pipeline_store
@@ -2131,71 +2140,59 @@ class TestGraduationCarriesNodeConfig:
             client,
             {"schemaLevel": ["subject"], "columnSelections": {"signal": {"columns": ["a"]}}},
         )
-
         with caplog.at_level(logging.WARNING, logger="scistack_gui.domain.graph_builder"):
             data = client.get("/api/pipeline").json()
 
-        node = self._graduated(data, bp_node_id)
-        assert node["data"]["schemaLevel"] == ["subject"]
-        # Normalised on the way through the intent store: the one shape, not the
-        # raw blob the panel happened to send.
-        assert node["data"]["columnSelections"] == {
+        fresh = self._node(data, self.FRESH)
+        assert fresh["data"]["schemaLevel"] == ["subject"]
+        assert fresh["data"]["columnSelections"] == {
             "signal": {"columns": ["a"], "iterate": False}
         }
-
-        configs = pipeline_store.get_node_configs(_gui_db.get_db())
-        assert self.FRESH not in configs, "moved, not copied"
-        # caplog.records spans the whole test call at every level — the INFO
-        # lines from put_layout / update_node_config legitimately name the
-        # fresh id. Only a WARN naming it (the orphan check) is a failure.
-        naming_fresh = [
-            f"{r.name}:{r.levelname}: {r.getMessage()}"
+        history = self._node(data, bp_node_id)
+        assert history["data"].get("schemaLevel") != ["subject"], "not copied onto the history node"
+        assert self.FRESH in pipeline_store.get_node_configs(_gui_db.get_db())
+        orphans = [
+            r.getMessage()
             for r in caplog.records
             if r.levelno >= logging.WARNING and self.FRESH in r.getMessage()
         ]
-        assert naming_fresh == [], (
-            "the orphan WARN must not name an id whose config was migrated"
-        )
-        # And it sticks on the next, unrelated rebuild.
-        again = self._graduated(client.get("/api/pipeline").json(), bp_node_id)
-        assert again["data"]["schemaLevel"] == ["subject"]
+        assert orphans == [], "the fresh node's config matches a node, so it is no orphan"
 
-    def test_migrated_setting_reaches_the_run(self, client, bp_node_id, monkeypatch):
+    def test_a_setting_reaches_the_run_of_the_node_it_was_set_on(
+        self, client, bp_node_id, monkeypatch
+    ):
         from scifor import ColumnSelection
 
+        from scistack_gui import pipeline_store
         from scistack_gui.api import run as run_api
 
-        self._place_fresh(client, {"columnSelections": {"signal": {"columns": ["a"]}}})
-        client.get("/api/pipeline")  # graduates
-
+        client.get("/api/pipeline")  # adopts the history node
+        pipeline_store.update_node_config(
+            _gui_db.get_db(), bp_node_id, {"columnSelections": {"signal": {"columns": ["a"]}}}
+        )
         captured: list[dict] = []
         monkeypatch.setattr(run_api, "for_each", lambda *a, **k: captured.append(k) or None)
-        client.post("/api/run", json={"function_name": "bandpass_filter", "variants": []})
+        client.post(
+            "/api/run",
+            json={"function_name": "bandpass_filter", "variants": [], "node_id": bp_node_id},
+        )
         _wait_for_threads("Thread-")
 
         sel = captured[0]["inputs"]["signal"]
         assert isinstance(sel, ColumnSelection) and sel.columns == ["a"]
 
-    def test_fresh_node_setting_replaces_the_history_nodes_and_is_logged(
-        self, client, bp_node_id, caplog
+    def test_a_fresh_nodes_setting_does_not_reach_the_history_node(
+        self, client, bp_node_id
     ):
-        import logging
-
         from scistack_gui import pipeline_store
 
         pipeline_store.update_node_config(
             _gui_db.get_db(), f"{bp_node_id}::main", {"schemaLevel": ["session"]}
         )
         self._place_fresh(client, {"schemaLevel": ["subject"]})
-
-        # The move is the intent store's now (rekey_subject), so capture the
-        # whole GUI namespace rather than one module's logger.
-        with caplog.at_level(logging.INFO, logger="scistack_gui"):
-            data = client.get("/api/pipeline").json()
-
-        node = self._graduated(data, bp_node_id)
-        assert node["data"]["schemaLevel"] == ["subject"], "the fresh node's setting wins"
-        assert "['session']" in caplog.text, "the replaced value is logged verbatim"
+        data = client.get("/api/pipeline").json()
+        assert self._node(data, bp_node_id)["data"]["schemaLevel"] == ["session"]
+        assert self._node(data, self.FRESH)["data"]["schemaLevel"] == ["subject"]
 
     def test_sub_scope_graduation_keeps_the_setting_on_the_sub_canvas(self, client):
         pid = client.post("/api/pipelines", json={"name": "loading"}).json()["pipeline_id"]

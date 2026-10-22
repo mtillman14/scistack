@@ -1,5 +1,7 @@
 """Custom exceptions for scidb."""
 
+from scifor.schema_types import SchemaKeyTypeError as _SciforSchemaKeyTypeError
+
 
 class SciStackError(Exception):
     """Base exception for all scidb errors."""
@@ -53,14 +55,15 @@ class PipelineCycleError(SciStackError):
     pass
 
 
-class SchemaKeyTypeError(SciStackError):
+class SchemaKeyTypeError(SciStackError, _SciforSchemaKeyTypeError):
     """Raised when a schema key's spelling is ambiguous or violates its type.
 
     Two situations:
     - A PathInput numeric fallback had to bridge spellings (e.g. trial=1
       matched "001" on disk) for a schema key with no declared type — the
       dataset has proven the spelling ambiguous, so the user must declare
-      the key numeric or string via configure_database(schema_key_types=...).
+      the key numeric or string (the GUI's Numeric checkbox,
+      db.set_schema_key_type, or configure_database(schema_key_types=...)).
     - A key declared "numeric" received a value that is not numeric.
     """
 
@@ -68,6 +71,22 @@ class SchemaKeyTypeError(SciStackError):
     # recording a per-combo skip: the failure is a configuration problem
     # that would repeat identically for every combo.
     scifor_fatal = True
+
+
+class SchemaKeyTypeConflictError(SciStackError, ValueError):
+    """``configure_database(schema_key_types=...)`` disagrees with the type the
+    database already stores for a key (``scidb.schema_types`` owns it)."""
+
+    pass
+
+
+class SchemaKeyTypeChangeError(SciStackError, ValueError):
+    """A schema-key type change would re-spell or merge stored values and was
+    not confirmed. ``.impact`` is ``scidb.schema_types.impact``'s dict."""
+
+    def __init__(self, message: str, impact: dict):
+        super().__init__(message)
+        self.impact = impact
 
 
 class DatabaseLockedError(SciStackError):

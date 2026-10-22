@@ -8,10 +8,12 @@ mutate records, invocations, or lineage, and never delete anything. Reads
 stay on ``Inspector`` (strictly read-only); the two facades are separate so
 the read-only guarantee is structural, not conventional.
 
-**The one exception** (user decision 2026-09-30): ``delete_variant`` really
+**The two exceptions**: ``delete_variant`` (user decision 2026-09-30) really
 deletes an erroneous variant and everything computed from it, through
-``scidb.variant_delete``. It is a dry-run-first, all-or-nothing operation with
-a required reason and a tombstone. Do not add a second one without asking.
+``scidb.variant_delete``; ``clear_data`` (user request 2026-10-21) deletes
+every record for debugging from a clean slate, through ``scidb.clear_data``.
+Both are dry-run-first, all-or-nothing operations with a required reason and
+a tombstone. Do not add a third one without asking.
 
 **How to add a new write capability** (keep this checklist honest):
 
@@ -149,6 +151,35 @@ class Mutator:
         )
 
     @_mutation
+    def set_schema_key_type(
+        self, key: str, key_type: "str | None", confirm_respelling: bool = False
+    ) -> MutationResult:
+        """Declare schema key *key* ``numeric`` / ``string``, or clear it
+        (``None``) — ``scidb.schema_types.set_type``, the owner. Refuses a
+        change that re-spells stored values unless *confirm_respelling*.
+
+        The primitive records a ``source`` (here ``"cli"``) but no free-text
+        reason, so ``reason`` is that source.
+        """
+        impact = self._db.set_schema_key_type(
+            key, key_type, confirm_respelling=confirm_respelling, source="cli"
+        )
+        changed = impact["from"] != key_type
+        return MutationResult(
+            operation="set_schema_key_type",
+            target={"key": key, "key_type": key_type or "undeclared"},
+            reason="cli",
+            detail=(
+                f"{impact['from'] or 'undeclared'} -> {key_type or 'undeclared'}; "
+                f"{len(impact['respelled'])} of {impact['n_values']} stored value(s) "
+                f"will be spelled differently by new saves (old rows keep theirs)"
+                if changed
+                else "already declared so; nothing written"
+            ),
+            extra={"impact": impact},
+        )
+
+    @_mutation
     def pin_variant(self, variable, selection: dict, reason: str) -> MutationResult:
         """Make one variant the DEFAULT of ``variable`` (``scidb.variant_pins``).
 
@@ -219,6 +250,46 @@ class Mutator:
                 "deleted_rows": result.deleted_rows,
                 "released_pins": result.released_pins,
                 "by_variable": result.plan.by_variable,
+            },
+        )
+
+    @_mutation
+    def clear_data(
+        self,
+        reason: str,
+        expect_fingerprint: str | None = None,
+        backup: bool = False,
+    ) -> MutationResult:
+        """REALLY delete every record and its run history, keeping the
+        pipeline, the run log and every declaration (``scidb.clear_data``).
+
+        The second write that crosses the bright line (user request
+        2026-10-21, for debugging from a clean slate). All or nothing,
+        requires a reason, leaves a tombstone, and refuses a GUI project
+        until its canvas is stored rather than derived from history.
+        """
+        from ..clear_data import clear_data
+
+        result = clear_data(
+            self._db, reason, expect_fingerprint=expect_fingerprint, backup=backup
+        )
+        return MutationResult(
+            operation="clear_data",
+            target={"all": True},
+            reason=reason,
+            detail=(
+                f"deleted {result.plan.total_records} record(s) "
+                f"{result.plan.by_variable}; kept {result.plan.runs_kept} run(s) "
+                f"in the run log; tombstone {result.tombstone.tombstone_id}"
+                + (f"; released pins {result.released_pins}" if result.released_pins else "")
+                + (f"; backup {result.backup_path}" if result.backup_path else "")
+            ),
+            extra={
+                "tombstone_id": result.tombstone.tombstone_id,
+                "deleted_rows": result.deleted_rows,
+                "released_pins": result.released_pins,
+                "by_variable": result.plan.by_variable,
+                "backup_path": str(result.backup_path) if result.backup_path else None,
             },
         )
 

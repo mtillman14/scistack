@@ -682,11 +682,22 @@ class TestRunManualNodeEndToEnd:
         )
         assert r.status_code == 200, r.text
 
-        new = _nodes(_graph(client))[0]["id"]
+        graph = _graph(client)
+        new = _nodes(graph)[0]["id"]
         edge = next(
             e for e in pipeline_store_edges(db) if e["id"] == "manual__out_short"
         )
         assert edge["source"] == new, "the drawn edge was left on the old id"
+
+        # Rewiring the output is: draw the new one, remove the old one. Since
+        # canvas adoption (2026-10-22) both visible output edges ARE outputs,
+        # so a drawn output no longer replaces the recorded one by itself.
+        old = next(
+            e for e in graph["edges"] if e["source"] == new and e["target"] == "var__LoadedTable"
+        )
+        assert client.request(
+            "DELETE", f"/api/edges/{old['id']}", json={"source": old["source"], "target": old["target"]}
+        ).status_code == 200
 
         targets = derive_target_for_node(db, new)
         assert targets, "the re-keyed node has nothing to run"

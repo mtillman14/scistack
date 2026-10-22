@@ -8,6 +8,32 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-10-22-1 — The canvas is a stored document; history annotates, never draws
+
+**Context.** Settings (intent-and-fact) and node ids (node-identity) had
+been split from fact, but topology had not: most of a run project's canvas
+was re-derived from provenance on every build, then patched with what the
+user drew (graduation, overlays, hides of history edges,
+`reconcile_manual_inputs`). Every recurring canvas bug came from that union,
+and clear-data would have erased the pipeline.
+**Decision.** (1) *Adoption*: a build stores whatever history would draw that
+the document lacks, once, under the id the build already gives it
+(`services/adoption.py`, marker `_adopted`), with a notification (Q1).
+Recorded Parameter values become STATED constants, never pending (pending
+overrides). Missing combinations of a non-Cartesian step become hidden
+combos (Q2a). (2) *Document view*: only stored rows are drawn
+(`domain/adoption.document_view`). (3) *Run from the document*: a node's
+stored edges decide its wiring; recorded rows of that wiring supply the exact
+values (D1: no superfluous re-runs); otherwise edges + values. (4) Removing
+an edge or node HIDES it and keeps the row (D2). Function nodes never
+graduate; entity boxes still fold (D3). Step names (Q6) deferred.
+**Consequences.** Deleted: function-node graduation, overlays,
+`drop_superseded_manual_edges`, `reconcile_manual_inputs`,
+`_apply_manual_output_types`, the history-wiring run path. A script run that
+records a new wiring for an existing step adds a second node (until Q6).
+**Doc:** [canvas-as-document-explained.md](canvas-as-document-explained.md),
+plan `.claude/plan-canvas-as-document.md`.
+
 ## D-2026-10-17-3 — Generated `stat_` code calls scistackstats, it does not restate it
 
 **Context.** Plot codegen emits literal seaborn so exported figures are

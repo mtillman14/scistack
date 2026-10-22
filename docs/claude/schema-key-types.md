@@ -33,8 +33,92 @@ configure_database(path, ["subject", "trial"],
 ```
 
 Validation at construction: declared keys must be schema keys; values must be
-`"numeric"` or `"string"`. Not persisted in the DB (dataset in testing mode;
-declarations live in user code like the schema keys themselves).
+`"numeric"` or `"string"`.
+
+### Stored in the database (2026-10-21, user decision)
+
+The declaration used to live only in the `configure_database` call, so the GUI
+(which opens the DB without it) never saw it. A key's type decides how values
+are **stored**, so it now lives with the data. The owner is
+`scidb/src/scidb/schema_types.py`; table `_schema_key_type`, append-only
+(newest row per key wins, NULL = cleared; `history()` answers "when did trial
+become numeric").
+
+| Route | Behaviour |
+|---|---|
+| `configure_database(schema_key_types=...)` (`declare`) | key with no stored type → stored; same type → no-op (DEBUG); different type → `SchemaKeyTypeConflictError` |
+| no argument | uses what is stored (the GUI's route) |
+| `db.set_schema_key_type(key, type_or_None, confirm_respelling=False)` (`set_type`) | the GUI checkbox / CLI writer; appends a row |
+| `db.schema_key_type_impact(key, type)` (`impact`) | read-only: `respelled` (`'001'→'1'`), `merged` (two stored spellings → one), `invalid` (`'r'`) |
+
+- A change (or first declaration) that re-spells stored values raises
+  `SchemaKeyTypeChangeError` (`.impact`) unless confirmed. **Nothing is
+  migrated** (beta policy): old rows keep their spelling, so the loaders must
+  be re-run. Values that cannot be numbers block `numeric` with
+  `SchemaKeyTypeError`.
+- `DatabaseManager.dataset_schema_key_types` is a read-only property over a
+  cache: read at open and on `reopen()` (another process may have changed it),
+  replaced on every write, and a change drops `_schema_key_numeric_cache`.
+- The `configure_database` header log line shows the STORED types; every write
+  logs INFO with old → new and the impact.
+- A refused declaration closes the connection before raising, so the file is
+  not left locked.
+- Tests: `scidb/tests/test_schema_key_types_stored.py`.
+- Plan: `.claude/plan-schema-key-types-gui.md`.
+
+### One rule, owned by scifor (2026-10-21)
+
+`scifor/src/scifor/schema_types.py` owns `canonical_numeric_value`,
+`VALID_SCHEMA_KEY_TYPES` and `SchemaKeyTypeError`. It also owns the helpers
+both layers apply it with: `canonicalize_values` (explicit iterables, deduped),
+`canonicalize_combos` (discovered combos, deduped; `condense_undeclared` is
+standalone's automatic `condense_numeric`) and `numeric_match_keys` (string
+keys excluded from the zero-padding bridge).
+
+- scidb's `schema_values.canonical_numeric_value` is a thin wrapper that
+  re-raises as scidb's `SchemaKeyTypeError`, which subclasses scifor's.
+  `schema_values.scidb_key_type_errors()` does the same around the helpers.
+- `condense_numeric` used a bare `int()`. It now uses the rule, and also
+  de-duplicates combos that collapse.
+
+### Who declares, per mode
+
+| Mode | Owner | Argument |
+|---|---|---|
+| scidb (Python/MATLAB) | the database | `configure_database`, `for_each(schema_key_types=)`, and the bridge's `for_each_prepare(schema_key_types=)` all **write** to it (`DatabaseManager.declare_schema_key_types`; `dry_run` only checks) |
+| standalone scifor | the call | `scifor.for_each(schema_key_types=)`: `numeric` converts explicit and discovered values; `string` keeps spelling and matches exactly; keys not listed are condensed automatically |
+
+scidb never passes types down to `scifor.for_each`. It applies the database's
+types itself (Step 5) before handing over `_all_combos`, and scifor's Step 2.6
+only runs when it built the combos itself (`standalone`). MATLAB mirrors this:
+`+scifor/for_each.m` takes the `schema_key_types` option (with
+`canonical_numeric_values` and `exact_string_key_loader` going through Python's
+rule), `PathInput.apply_discovery` takes a 5th `key_types` argument, and
+`scifor.key_types_to_py` is the one struct→dict conversion.
+
+### Digit-only key patterns and the GUI
+
+- `scifor.key_regex_is_digit_only(pattern)` (in `pathinput.py`, next to
+  `key_regex_pattern_error`) walks the parsed regex and returns False for
+  anything it doesn't recognize.
+- `scistack_gui/services/schema_key_type_service.py`:
+  - `get_schema_key_types`, `schema_key_type_impact`, `set_schema_key_type`
+    (returns `needs_confirm` with the impact instead of raising);
+  - `auto_declare_from_key_regex`: after `update_path_input` saves, a key that
+    every arm matches with a digit-only pattern, that is a schema key, and that
+    is undeclared is declared numeric (`source=gui:key_regex`). This only
+    happens if nothing would be re-spelled; otherwise it returns a hint (user
+    decision Q2: GUI saves only, never a hand-edited TOML).
+- RPCs: `get_schema_key_types`, `schema_key_type_impact`, `set_schema_key_type`
+  (not undoable: it is a database write).
+- Frontend: `components/Sidebar/schemaKeyTypes.ts` (pure helpers, node tests);
+  the Numeric checkbox is in `PathInputSettingsPanel`'s Schema Keys section.
+  The confirm box is inline, because webviews have no `window.confirm`.
+- CLI: `scidb key-types [--history]` and
+  `scidb set-key-type KEY numeric|string|none [--confirm]` (Mutator).
+- Tests: `scifor/tests/test_scifor_schema_key_types.py`,
+  `scistack-gui/tests/test_schema_key_types_gui.py`,
+  `frontend/src/components/Sidebar/schemaKeyTypes.test.ts`.
 
 ## Where each piece lives (layering per CLAUDE.md NOTE 3)
 

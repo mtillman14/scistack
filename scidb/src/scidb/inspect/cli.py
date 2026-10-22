@@ -413,6 +413,38 @@ def _cmd_unpin(mut: Mutator, args) -> None:
     _emit_json(result) if args.json else print(render.render_mutation_result(result))
 
 
+def _cmd_key_types(insp: Inspector, args) -> None:
+    rows_in = insp.schema_key_types(history=args.history)
+    if args.json:
+        _emit_json(rows_in)
+        return
+    if args.history:
+        if not rows_in:
+            print("(no schema key types ever declared)")
+            return
+        rows = [
+            [r["key"], r["key_type"] or "(cleared)", r["declared_at"], r["source"]]
+            for r in rows_in
+        ]
+        print(render.format_table(["key", "type", "declared", "source"], rows))
+        return
+    rows = [
+        [r["key"], r["key_type"] or "undeclared", r["loads_as"], str(r["n_values"])]
+        for r in rows_in
+    ]
+    print(render.format_table(["key", "type", "loads as", "values"], rows))
+
+
+_KEY_TYPE_CHOICES = {"numeric": "numeric", "string": "string", "none": None}
+
+
+def _cmd_set_key_type(mut: Mutator, args) -> None:
+    result = mut.set_schema_key_type(
+        args.key, _KEY_TYPE_CHOICES[args.type], confirm_respelling=args.confirm
+    )
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
 def _cmd_pins(insp: Inspector, args) -> None:
     pins = insp.variant_pins(args.name, history=args.history)
     if args.json:
@@ -487,6 +519,36 @@ def _cmd_delete_variant(mut: Mutator, args) -> None:
     result = mut.delete_variant(
         targets, args.reason, expect_fingerprint=args.fingerprint or plan.fingerprint
     )
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_clear_data(mut: Mutator, args) -> None:
+    from ..clear_data import ClearRefused, clear_plan
+
+    plan = clear_plan(mut._db)
+    if plan.has_canvas:
+        raise CLIError(
+            "this database has a GUI canvas, and part of it may still come only "
+            "from the run history a clear deletes. Clear it from the GUI "
+            "(SciStack: Clear All Data), which stores the canvas first. Nothing "
+            "was deleted."
+        )
+    if not args.yes:
+        # A dry run is the default: the plan is printed and nothing is touched.
+        if args.json:
+            _emit_json(plan)
+        else:
+            print(render.render_clear_plan(plan))
+            print("\nNothing was deleted. Re-run with --yes to delete exactly this.")
+        return
+    try:
+        result = mut.clear_data(
+            args.reason,
+            expect_fingerprint=args.fingerprint or plan.fingerprint,
+            backup=args.backup,
+        )
+    except ClearRefused as exc:
+        raise CLIError(str(exc)) from exc
     _emit_json(result) if args.json else print(render.render_mutation_result(result))
 
 
@@ -1261,6 +1323,25 @@ def _add_commands(
     p.set_defaults(_write_handler=_cmd_delete_variant)
 
     p = sub.add_parser(
+        "clear-data",
+        parents=[parent],
+        help="REALLY delete every record and its run history, keeping the "
+        "pipeline and the run log (write; prints the plan and stops unless "
+        "--yes; leaves a tombstone). Refused for a GUI project for now.",
+    )
+    p.add_argument("--reason", required=True, help="Why (stored on the tombstone).")
+    p.add_argument("--yes", action="store_true", help="Delete, rather than only plan.")
+    p.add_argument(
+        "--fingerprint", default=None,
+        help="Refuse unless the plan still has this fingerprint (from a dry run).",
+    )
+    p.add_argument(
+        "--backup", action="store_true",
+        help="Copy the database to <name>.duckdb.bak-<timestamp> first.",
+    )
+    p.set_defaults(_write_handler=_cmd_clear_data)
+
+    p = sub.add_parser(
         "tombstones", parents=[parent], help="Every variant deletion ever made."
     )
     p.add_argument("name", nargs="?", default=None, help="Only those touching this variable.")
@@ -1274,6 +1355,31 @@ def _add_commands(
         "--history", action="store_true", help="Every pin ever made, released too."
     )
     p.set_defaults(_handler=_cmd_pins)
+
+    p = sub.add_parser(
+        "key-types",
+        parents=[parent],
+        help="Declared schema-key types (numeric/string), stored in the database.",
+    )
+    p.add_argument(
+        "--history", action="store_true", help="Every declaration ever written."
+    )
+    p.set_defaults(_handler=_cmd_key_types)
+
+    p = sub.add_parser(
+        "set-key-type",
+        parents=[parent],
+        help="Declare a schema key numeric or string, or clear it (write).",
+    )
+    p.add_argument("key", help="Schema key, e.g. trial.")
+    p.add_argument("type", choices=sorted(_KEY_TYPE_CHOICES), help="'none' clears it.")
+    p.add_argument(
+        "--confirm",
+        action="store_true",
+        help="Accept a change that re-spells stored values ('001' -> 1); rows "
+        "already saved keep their spelling, so re-run the loaders after.",
+    )
+    p.set_defaults(_write_handler=_cmd_set_key_type)
 
 
 def build_parser() -> argparse.ArgumentParser:

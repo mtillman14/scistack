@@ -68,6 +68,9 @@ from .exceptions import (
     OutputSaveError,
     PipelineCycleError,
     ReservedMetadataKeyError,
+    SchemaKeyTypeChangeError,
+    SchemaKeyTypeConflictError,
+    SchemaKeyTypeError,
     SciStackError,
 )
 from .exclusions import exclude_schema, include_schema, list_exclusions
@@ -197,6 +200,9 @@ __all__ = [
     "AmbiguousParamError",
     "DatabaseLockedError",
     "PipelineCycleError",
+    "SchemaKeyTypeError",
+    "SchemaKeyTypeConflictError",
+    "SchemaKeyTypeChangeError",
     "GlueError",
     "GlueRowsChangedError",
     "GlueSchemaKeysAlteredError",

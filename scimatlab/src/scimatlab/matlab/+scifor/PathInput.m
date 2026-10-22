@@ -281,7 +281,7 @@ classdef PathInput < handle
             end
         end
 
-        function [iterables_out, combos] = apply_discovery(obj, metadata_iterables, user_explicit_keys, condense_numeric)
+        function [iterables_out, combos] = apply_discovery(obj, metadata_iterables, user_explicit_keys, condense_numeric, key_types)
         %APPLY_DISCOVERY  Fill empty metadata iterables from filesystem discovery.
         %
         %   [ITERABLES, COMBOS] = pi.apply_discovery(METADATA_ITERABLES, USER_EXPLICIT_KEYS)
@@ -302,6 +302,9 @@ classdef PathInput < handle
         %   declared-only schema_key_types contract must opt in explicitly
         %   instead; this flag is for policy-free standalone scifor use
         %   only. See docs/claude/schema-key-types.md.
+        %   KEY_TYPES (default struct()) declares key -> 'numeric' | 'string':
+        %   numeric keys are always converted, string keys never are (same
+        %   as Python's key_types=).
         %
         %   Returns ITERABLES (same struct with empty template keys filled
         %   from disk) and COMBOS — a cell array of structs to drive iteration
@@ -309,6 +312,9 @@ classdef PathInput < handle
         %   used instead.
             if nargin < 4
                 condense_numeric = false;
+            end
+            if nargin < 5
+                key_types = struct();
             end
 
             % Marshal metadata_iterables -> py.dict of key -> py.list(str).
@@ -336,7 +342,8 @@ classdef PathInput < handle
             end
 
             res = obj.py_obj.apply_discovery(py_iter, py_explicit, ...
-                pyargs('condense_numeric', condense_numeric));
+                pyargs('condense_numeric', condense_numeric, ...
+                       'key_types', scifor.key_types_to_py(key_types)));
             out_iter = res{1};
             py_combos = res{2};
 

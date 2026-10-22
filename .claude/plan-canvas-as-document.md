@@ -299,3 +299,59 @@ clear-data layout-rollback problem. The only other file is the opt-in
   branches, rejected); (C) default to a new node + a notification action
   "merge into <node>" that moves the wiring onto the old node and hides its
   old edges. Recommended: A, with C as the fallback for unnamed calls.
+
+- **Design walkthrough (2026-10-22):** `docs/claude/canvas-as-document-explained.md`
+  (glossary + running example + the deviations from this plan).
+- **D1 (2026-10-22): no superfluous re-runs.** A node's STORED edges decide its
+  wiring. The recorded rows of that same wiring supply the exact typed constants,
+  column selectors and AcrossVariants pooling. "Edges + values" applies only when
+  no recorded row of the stated wiring exists. Follow-up, not now: adopt recorded
+  selectors (the `columns` aspect) and pooling (a new per-input statement) so that
+  the fallback path also carries them after a clear-data.
+- **D2 (2026-10-22): removing an edge, drawn or adopted, is a hide** (auditable
+  via `_intent` + `_canvas_change`, undoable); never a hard delete.
+- **D3 (2026-10-22): keep today's entity folding.** The edge model
+  (`endpoint_ref` = `var:{type}` / `param:{name}` / `pi:{name}`) makes two boxes
+  of one entity indistinguishable to edges, hides and runs. Boxes with their own
+  meaning (a variant selector per box) are a possible future feature.
+- **Q6: deferred** (user, 2026-10-22). Until it lands, a script run that records
+  a new wiring for an existing step adopts a second node, with a toast.
+
+## 11. Progress (branch `canvas-as-document`)
+
+- **Stage 0a** committed 4cabe32a (tests pass, user 2026-10-21).
+- **Stage 0** built 2026-10-21, pytest unrun: `domain/canvas_shape.py`
+  (`canvas_shape`, `diff_shapes`, `canvas_sources`), per-build INFO line
+  `[pipeline] canvas_sources scope=...`, `python -m scistack_gui.canvas_shape_cli
+  capture|compare DB SHAPES.json` for real databases, tests
+  `tests/test_canvas_shape.py` (populated_db golden: script-run canvas is 100%
+  derived today).
+- **Q3 scidb clear** built, pytest unrun (see plan-clear-data.md status).
+- **Q5 backend** built, pytest unrun: `_canvas_change` log in history.py
+  (persist on store/undo/redo, reload newest 500 on first read, `list_changes`).
+  Frontend stack seeding after a restart: deferred to the Stage 2 frontend work.
+- Q6 (step names): not answered; proceeding on the recommendation (A + C)
+  when Stage 2 needs it.
+- **Stages 1-6 BUILT 2026-10-22, pytest unrun** (user runs the suites). The
+  map of where each piece lives is `docs/claude/canvas-as-document-explained.md`
+  Part 8; ADR D-2026-10-22-1.
+  - Stage 1: the recipe was already scidb's; added `scidb.wirings` (step shape,
+    `missing_combinations`, `non_cartesian_report`) + forward==backward parity
+    tests, CLI `canvas_shape_cli combos`.
+  - Stage 2: adoption (`domain/adoption.py`, `services/adoption.py`, `_adopted`),
+    stated values, hidden combos for non-Cartesian steps, audit event,
+    notification; deferred inside undo recordings. GUI clear-data
+    (`services/clear_service.py`, dialog) shipped here (Q3).
+  - Stage 3: `document_view` in `_build_graph`; inputs from stored edges;
+    stored-row membership in `scope_filter`.
+  - Stage 4: `derive_target_for_node` from stored edges (D1);
+    `derive_fn_targets` = union over stored nodes; `_scope_function_node_ids`
+    reads the built canvas; document disconnection.
+  - Stage 5: deleted function graduation, overlays, `drop_superseded_manual_edges`,
+    `reconcile_manual_inputs`, `_apply_manual_output_types`; removal = hide (D2);
+    docs updated (edge-model, node-identity §11, intent-and-fact §12,
+    manual-edges-on-history-nodes retired, decisions.md).
+  - Stage 6: no MATLAB-specific code (adoption is origin-agnostic); needs a
+    real MATLAB terminal run (GUI §0zzzzzzc step 7).
+  - Not done: §8a's "run an exported script" test tier; Q6; the D1 follow-up
+    (adopt recorded selectors and pooling); Q5's frontend undo-stack seeding.

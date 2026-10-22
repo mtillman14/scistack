@@ -20,7 +20,6 @@ from scistack_gui.domain.graph_builder import (
     build_manual_node,
     build_path_input_nodes,
     build_variable_nodes,
-    drop_superseded_manual_edges,
     edge_dedup_key,
     filter_hidden,
     find_cycle,
@@ -1752,108 +1751,6 @@ class TestBuildEdges:
         assert any(e["source"] == "var__Raw" for e in edges)
 
 
-class TestDropSupersededManualEdges:
-    """build_edges' endpoint dedup runs BEFORE manual nodes graduate, so a
-    manual edge still naming the manual node ids doesn't compare equal to the
-    DB-derived edge for the same wire. Graduation then rewrites its endpoints
-    onto the DB-derived ids — creating the duplicate. This pass re-checks the
-    invariant after any mid-build endpoint rewrite.
-    """
-
-    F_CID = _cid("f-call")
-    F_NODE = f"fn__f__{F_CID}"
-
-    def _db(self, source, target, **kw):
-        return {"id": f"e__{source}__{target}", "source": source, "target": target, **kw}
-
-    def _manual(self, source, target, **kw):
-        return {
-            "id": f"manual__{source}{target}",
-            "source": source,
-            "target": target,
-            "data": {"manual": True},
-            **kw,
-        }
-
-    def test_graduated_manual_edge_dropped(self):
-        """The examples/vo2max/scidb.log case: the first build after a run
-        emitted 4 edges for 2 connections; the next rebuild emitted 2."""
-        edges = [
-            self._db("pathInput__test_pi", self.F_NODE, targetHandle="in__filepath"),
-            self._db(self.F_NODE, "var__cpet_data_raw"),
-            # Endpoints just rewritten by graduation onto the DB-derived ids.
-            self._manual(
-                "pathInput__test_pi", self.F_NODE, targetHandle="in__filepath"
-            ),
-            self._manual(self.F_NODE, "var__cpet_data_raw"),
-        ]
-        kept, dropped = drop_superseded_manual_edges(edges)
-        assert len(kept) == 2, [(e["id"], e["source"], e["target"]) for e in kept]
-        assert not any(is_manual_edge(e) for e in kept)
-        assert len(dropped) == 2
-
-    def test_placement_suffix_still_matches(self):
-        """graduate_manual_node targets a placement-qualified id; the
-        DB-derived key is always bare."""
-        edges = [
-            self._db(self.F_NODE, "var__Out"),
-            self._manual(f"{self.F_NODE}::main", "var__Out::main"),
-        ]
-        kept, dropped = drop_superseded_manual_edges(edges)
-        assert len(kept) == 1
-        assert len(dropped) == 1
-
-    def test_path_input_to_different_param_is_kept(self):
-        """Same PathInput feeding a DIFFERENT parameter is a real second
-        connection, not a duplicate."""
-        edges = [
-            self._db("pathInput__p", self.F_NODE, targetHandle="in__first"),
-            self._manual("pathInput__p", self.F_NODE, targetHandle="in__second"),
-        ]
-        kept, dropped = drop_superseded_manual_edges(edges)
-        assert len(kept) == 2
-        assert dropped == []
-
-    def test_ungraduated_manual_edge_is_kept(self):
-        """A manual edge to a node that has NOT graduated names a different
-        connection and must survive."""
-        edges = [
-            self._db(self.F_NODE, "var__Out"),
-            self._manual("fn__f__2qxdue", "var__Out"),
-        ]
-        kept, dropped = drop_superseded_manual_edges(edges)
-        assert len(kept) == 2
-        assert dropped == []
-
-    def test_idempotent_on_an_already_clean_build(self):
-        """Unconditional in the pipeline, so a build with no rewrites must
-        come through untouched."""
-        edges = [
-            self._db("var__Raw", self.F_NODE, targetHandle="in__signal"),
-            self._manual("var__Other", self.F_NODE, targetHandle="in__extra"),
-        ]
-        kept, dropped = drop_superseded_manual_edges(edges)
-        assert kept == edges
-        assert dropped == []
-        assert drop_superseded_manual_edges(kept)[0] == edges
-
-    def test_two_manual_edges_for_the_same_wire_both_dropped(self):
-        edges = [
-            self._db(self.F_NODE, "var__Out"),
-            dict(self._manual(self.F_NODE, "var__Out"), id="manual__a"),
-            dict(self._manual(self.F_NODE, "var__Out"), id="manual__b"),
-        ]
-        kept, dropped = drop_superseded_manual_edges(edges)
-        assert [e["id"] for e in kept] == [f"e__{self.F_NODE}__var__Out"]
-        assert {e["id"] for e in dropped} == {"manual__a", "manual__b"}
-
-    def test_manual_only_wire_survives_with_no_db_edge(self):
-        edges = [self._manual(self.F_NODE, "var__Out")]
-        kept, dropped = drop_superseded_manual_edges(edges)
-        assert len(kept) == 1
-        assert dropped == []
-
-
 class TestEdgeDedupKey:
     def test_path_input_keys_on_param(self):
         a = edge_dedup_key("pathInput__p", "fn__f", "in__one")
@@ -2467,16 +2364,16 @@ class TestMergeManualNodes:
         assert to_add == []
         assert graduations == []
 
-    def test_function_graduation_with_single_call_site(self):
-        """One DB-derived call site → manual fn graduates to that call_id
-        (as its own placement in its own scope)."""
+    def test_a_function_node_never_graduates(self):
+        """plan-canvas-as-document Stage 5: one same-named history node used to
+        swallow a hand-placed function node (an id swap that orphaned its
+        config). A function node is now always its own step."""
         cid = _cid("only")
         existing = [self._db_node(f"fn__bp__{cid}", "functionNode", "bp")]
         manual = {"uuid-old": {"type": "functionNode", "label": "bp", "pipeline_id": "main"}}
         to_add, graduations = merge_manual_nodes(existing, manual, saved_positions={})
-        assert "uuid-old" not in to_add
-        assert len(graduations) == 1
-        assert graduations[0].new_id == f"fn__bp__{cid}::main"
+        assert "uuid-old" in to_add
+        assert graduations == []
 
     def test_function_no_graduation_when_multiple_call_sites(self):
         """Multiple DB-derived call sites for the same fn → manual node stays
@@ -3272,89 +3169,61 @@ class TestManualInputOverrides:
         assert manual_input_overrides(self.FN, wid, history, set(), index) == {}
 
 
-class TestOverlayManualInputs:
+class TestDocumentInputParams:
+    """A function node's displayed inputs come from its STORED edges
+    (``document_input_params``, plan-canvas-as-document Stage 3/5). It
+    replaced the overlay that patched a history node's recorded inputs."""
+
     FN = "grSides"
+    NODE = "fn__grSides__0123456789abcdef"
 
-    def _graph(self, history, manual_edges, hidden=frozenset(), extra_nodes=()):
-        from scistack_gui.domain.graph_builder import (
-            collect_manual_input_overrides,
-            wiring_id,
-        )
-        from scistack_gui.ids import fn_node_id
-
-        wid = wiring_id(self.FN, history, {"GRTable"}, {})
-        node_id = fn_node_id(self.FN, wid)
-        fn_input_params = {(self.FN, wid): dict(history)}
-        nodes = [
+    def _nodes(self, input_params):
+        return [
             {
-                "id": node_id,
+                "id": self.NODE,
                 "type": "functionNode",
-                "data": {
-                    "label": self.FN,
-                    "input_params": {**history, "side": ""},
-                    "constant_params": [],
-                },
+                "data": {"label": self.FN, "input_params": dict(input_params), "constant_params": []},
             },
-            {"id": "var__Demographics", "type": "variableNode", "data": {}},
-            *extra_nodes,
+            {"id": "var__Demographics", "type": "variableNode", "data": {"label": "Demographics"}},
+            {"id": "var__GAITRiteLoaded", "type": "variableNode", "data": {"label": "GAITRiteLoaded"}},
         ]
+
+    def _edge(self, source, port, target=None):
+        return {"id": f"e_{port}", "source": source, "target": target or self.NODE, "targetHandle": f"in__{port}"}
+
+    def test_a_drawn_edge_fills_the_handle(self):
+        nodes = self._nodes({"gr": "GAITRiteLoaded", "side": ""})
         edges = [
-            {**e, "target": e["target"].replace("{node}", node_id)} for e in manual_edges
+            self._edge("var__GAITRiteLoaded", "gr"),
+            self._edge("var__Demographics", "side", target=f"{self.NODE}::main"),
         ]
-        overrides = collect_manual_input_overrides(
-            nodes, fn_input_params, {(self.FN, wid): set()}, edges, {}, hidden
-        )
-        return nodes, node_id, wid, fn_input_params, overrides
+        from scistack_gui.domain.graph_builder import document_input_params
 
-    def test_overlay_fills_the_unbound_handle(self):
-        from scistack_gui.domain.graph_builder import overlay_manual_inputs
+        assert document_input_params(nodes, edges, {}) == 1
+        assert nodes[0]["data"]["input_params"] == {"gr": "GAITRiteLoaded", "side": "Demographics"}
 
-        nodes, node_id, _, _, overrides = self._graph(
-            {"gr": "GAITRiteLoaded"},
-            [
-                {
-                    "id": "manual__1",
-                    "source": "var__Demographics",
-                    "target": "{node}::main",
-                    "targetHandle": "in__side",
-                }
-            ],
-        )
-        assert overrides == {node_id: {"side": "Demographics"}}
-        assert overlay_manual_inputs(nodes, overrides) == 1
-        data = nodes[0]["data"]
-        assert data["input_params"] == {"gr": "GAITRiteLoaded", "side": "Demographics"}
-        assert data["manual_inputs"] == {"side": "Demographics"}
+    def test_a_recorded_input_with_no_stored_edge_shows_unwired(self):
+        """The user removed the edge: the handle must not keep the stale type."""
+        from scistack_gui.domain.graph_builder import document_input_params
 
-    def test_each_of_shows_first_source_and_keeps_the_list(self):
-        # input_params stays {param: str} for every frontend consumer; the
-        # full list rides in manual_inputs (same first-source choice the
-        # fresh-node path makes).
-        from scistack_gui.domain.graph_builder import overlay_manual_inputs
+        nodes = self._nodes({"gr": "GAITRiteLoaded"})
+        assert document_input_params(nodes, [], {}) == 1
+        assert nodes[0]["data"]["input_params"] == {"gr": ""}
 
-        nodes, node_id, _, _, overrides = self._graph(
-            {"gr": "GAITRiteLoaded"},
-            [
-                {
-                    "id": "manual__1",
-                    "source": "var__Demographics",
-                    "target": "{node}",
-                    "targetHandle": "in__gr",
-                }
-            ],
-        )
-        overlay_manual_inputs(nodes, overrides)
-        data = nodes[0]["data"]
-        assert data["input_params"]["gr"] == "GAITRiteLoaded"
-        assert data["manual_inputs"] == {"gr": ["GAITRiteLoaded", "Demographics"]}
+    def test_nothing_changes_when_the_edges_match(self):
+        from scistack_gui.domain.graph_builder import document_input_params
 
-    def test_no_manual_edges_touches_nothing(self):
-        from scistack_gui.domain.graph_builder import overlay_manual_inputs
+        nodes = self._nodes({"gr": "GAITRiteLoaded"})
+        assert document_input_params(nodes, [self._edge("var__GAITRiteLoaded", "gr")], {}) == 0
+        assert nodes[0]["data"]["input_params"] == {"gr": "GAITRiteLoaded"}
 
-        nodes, _, _, _, overrides = self._graph({"gr": "GAITRiteLoaded"}, [])
-        assert overrides == {}
-        assert overlay_manual_inputs(nodes, overrides) == 0
-        assert "manual_inputs" not in nodes[0]["data"]
+    def test_each_of_shows_the_first_source(self):
+        from scistack_gui.domain.graph_builder import document_input_params
+
+        nodes = self._nodes({"gr": ""})
+        edges = [self._edge("var__GAITRiteLoaded", "gr"), {**self._edge("var__Demographics", "gr"), "id": "e2"}]
+        document_input_params(nodes, edges, {})
+        assert nodes[0]["data"]["input_params"]["gr"] in ("GAITRiteLoaded", "Demographics")
 
 
 class TestRunStatePropagationFollowsManualEdges:

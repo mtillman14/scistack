@@ -274,11 +274,11 @@ def test_differently_wired_manual_node_does_not_graduate_or_show_green(client):
     )
 
 
-def test_unwired_manual_node_still_graduates_immediately(client):
-    """The flip side: a manual node with NO wiring info yet (just placed,
-    nothing connected) has no basis to claim it's "different" from the
-    single existing candidate, so it must still graduate/show real state
-    immediately — the existing, deliberate UX this fix must not break."""
+def test_unwired_manual_node_stays_its_own_node(client):
+    """Function nodes no longer graduate (plan-canvas-as-document Stage 5).
+    Until 2026-10-22 an unwired same-label node folded into the one history
+    node, swapping its id. It is now its own node, red until it is wired and
+    run."""
     client.put(
         "/api/layout/mf_bp3",
         json={"x": 0, "y": 0, "node_type": "functionNode", "label": "bandpass_filter"},
@@ -290,8 +290,9 @@ def test_unwired_manual_node_still_graduates_immediately(client):
         for n in nodes
         if n["type"] == "functionNode" and n["data"]["label"] == "bandpass_filter"
     ]
-    assert len(bp_nodes) == 1, "an unwired same-label node must graduate, not duplicate"
-    assert bp_nodes[0]["data"]["run_state"] == "green"
+    assert len(bp_nodes) == 2, "the placed node stays beside the history node"
+    placed = next(n for n in bp_nodes if n["id"] == "mf_bp3")
+    assert placed["data"]["run_state"] == "red"
 
 
 def test_manual_node_graduates_after_running_despite_shared_label_ambiguity(client):
@@ -484,9 +485,13 @@ def test_disconnected_duplicate_survives_wired_siblings_graduation(client):
         for n in nodes
         if n["type"] == "functionNode" and n["data"]["label"] == "bandpass_filter"
     ]
+    # The wired placeholder STATES the recorded wiring, so it claims that
+    # history (node-identity rule 1, graph_builder.document_stated_claims) and
+    # is re-keyed into the id grammar; the disconnected one survives as its
+    # own node. Nothing is deleted.
     assert len(bp_nodes) == 2, (
-        "the disconnected duplicate must survive as its own manual node "
-        f"when its wired sibling graduates, got {[n['id'] for n in bp_nodes]}"
+        "the disconnected duplicate must survive as its own node, got "
+        f"{[n['id'] for n in bp_nodes]}"
     )
     assert "mf_disconnected" in {n["id"] for n in bp_nodes}, (
         "the disconnected node's manual id must remain (demoted back to a "

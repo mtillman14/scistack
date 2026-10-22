@@ -396,7 +396,10 @@ class TestScopedPositions:
         layout_store.delete_node("m1")
 
         assert "m1" not in layout_store.read_layout(pipeline_id=pid)["positions"]
-        assert "m1" not in ps.get_manual_nodes(db)
+        # The row is kept and the node hidden in its own scope (never delete,
+        # mark hidden; canvas-as-document 2026-10-22).
+        assert "m1" in ps.get_manual_nodes(db)
+        assert "m1" in ps.get_hidden_node_ids(db, pid)
 
 
 # ---------------------------------------------------------------------------
@@ -521,11 +524,12 @@ class TestScopedGraph:
         assert "var__RawSignal" in root_ids
         assert "var__RawSignal" not in sub_ids
 
-    def test_graduation_preserves_sub_scope_membership(self, client):
-        """A manual node whose label matches exactly one DB-derived node
-        GRADUATES into it — and because the position transfer is
-        scope-aware, the canonical node inherits the sub-scope membership
-        (it moves off the root canvas onto the sub canvas)."""
+    def test_a_placed_function_node_stays_on_its_sub_canvas(self, client):
+        """Function nodes no longer graduate (plan-canvas-as-document Stage
+        5). Until 2026-10-22 a manual node whose label matched exactly one
+        history node folded into it and dragged the history node onto the sub
+        canvas. Now each stays where it is: the placed node on the sub canvas,
+        the history node on root."""
         pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
             "pipeline_id"
         ]
@@ -548,15 +552,11 @@ class TestScopedGraph:
             ]
         }
 
-        canonical = {
-            i for i in (root_ids | sub_ids) if i.startswith("fn__bandpass_filter__")
-        }
-        assert len(canonical) == 1
-        assert canonical <= sub_ids, (
-            "graduated node must live on the sub canvas (position scope)"
-        )
-        assert not (canonical & root_ids)
-        assert "sub_fn_node" not in (root_ids | sub_ids)  # replaced
+        history = {i for i in root_ids if i.startswith("fn__bandpass_filter__")}
+        assert len(history) == 1, "the history node stays on root"
+        assert "sub_fn_node" in sub_ids
+        assert "sub_fn_node" not in root_ids
+        assert not (history & sub_ids)
 
     def test_position_moves_db_derived_node_between_scopes(self, client):
         """Dragging a DB-derived node onto a sub-canvas (position write in
@@ -1303,32 +1303,31 @@ class TestDuplicatePipeline:
         new_pid = r.json()["pipeline_id"]
 
         db = get_db()
-        original_ids = set(ps.get_manual_nodes(db, pid))
-        copy_nodes = ps.get_manual_nodes(db, new_pid)
-        copy_ids = set(copy_nodes)
-        assert original_ids.isdisjoint(copy_ids)  # fresh node ids
-        assert {(n["type"], n["label"]) for n in copy_nodes.values()} == {
+        # Read through the canvases: the duplicate's compile check builds the
+        # copy, and the build folds the copied VARIABLE boxes into their one
+        # canonical node (entity folding, D3), which renames their rows.
+        orig = client.get("/api/pipeline", params={"pipeline_id": pid}).json()
+        copy = client.get("/api/pipeline", params={"pipeline_id": new_pid}).json()
+        assert {(n["type"], n["data"]["label"]) for n in copy["nodes"]} >= {
             ("variableNode", "RawSignal"),
             ("functionNode", "custom_proc"),
             ("variableNode", "FilteredSignal"),
         }
+        copy_fn = next(n for n in copy["nodes"] if n["data"]["label"] == "custom_proc")
+        orig_fn = next(n for n in orig["nodes"] if n["data"]["label"] == "custom_proc")
+        assert copy_fn["id"] != orig_fn["id"]  # a fresh function node id
         # Config forked to the new node id.
-        fn_copy = next(n for n in copy_nodes.values() if n["type"] == "functionNode")
-        assert fn_copy.get("config") == {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}
+        fn_row = ps.get_manual_nodes(db, new_pid)[copy_fn["id"]]
+        assert fn_row.get("config") == {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}
 
-        # Edges duplicated onto the new node ids.
-        id_by_label = {n["label"]: nid for nid, n in copy_nodes.items()}
-        copy_edges = [
-            e for e in ps.get_manual_edges(db)
-            if e["source"] in copy_ids or e["target"] in copy_ids
-        ]
-        in_edge = next(e for e in copy_edges if e["target"] == id_by_label["custom_proc"])
-        assert in_edge["source"] == id_by_label["RawSignal"]
-        out_edge = next(e for e in copy_edges if e["source"] == id_by_label["custom_proc"])
-        assert out_edge["target"] == id_by_label["FilteredSignal"]
+        # Edges duplicated onto the copy.
+        label = {n["id"]: n["data"]["label"] for n in copy["nodes"]}
+        pairs = {(label.get(e["source"]), label.get(e["target"])) for e in copy["edges"]}
+        assert ("RawSignal", "custom_proc") in pairs
+        assert ("custom_proc", "FilteredSignal") in pairs
 
         # The original is untouched.
-        assert set(ps.get_manual_nodes(db, pid)) == original_ids
+        assert orig_fn["id"] in ps.get_manual_nodes(db, pid)
 
     def test_duplicate_includes_graduated_nodes_without_corrupting_original(self, client):
         """The seeded bandpass_filter graph (root scope) is DB-derived
@@ -1391,27 +1390,30 @@ class TestDuplicatePipeline:
         they visually overlapped into what looked like disappeared nodes,
         with zero-length edges between them looking like dangling stubs.
         Solidified positions must be distinct from each other."""
+        # Since canvas adoption (2026-10-22) the seeded nodes are stored rows
+        # in `main` once any build has run, so nothing needs "solidifying":
+        # the original keeps them by its rows, and no shared fallback
+        # position is ever written. What this protects is unchanged: after a
+        # duplicate, main still draws every one of its nodes, not collapsed.
+        before = {
+            (n["type"], n["data"]["label"])
+            for n in client.get("/api/pipeline").json()["nodes"]
+        }
         r = client.post("/api/pipelines/main/duplicate", json={"name": "main_copy"})
         assert r.status_code == 200
 
+        after_nodes = client.get("/api/pipeline").json()["nodes"]
+        after = {(n["type"], n["data"]["label"]) for n in after_nodes}
+        assert before <= after
+        assert {"RawSignal", "bandpass_filter", "FilteredSignal"} <= {
+            n["data"]["label"] for n in after_nodes
+        }
         positions = client.get("/api/layout", params={"pipeline_id": "main"}).json()[
             "positions"
         ]
-        solidified = [
-            (node_id, (pos["x"], pos["y"]))
-            for node_id, pos in positions.items()
-            if node_id.endswith("::main")
-            and any(
-                node_id.startswith(f"{p}__")
-                for p in ("var", "fn", "const", "pathInput")
-            )
-        ]
-        # The seeded graph has at least RawSignal, bandpass_filter, and
-        # FilteredSignal — all previously unpositioned.
-        assert len(solidified) >= 3
-        coords = [c for _, c in solidified]
+        coords = [(p["x"], p["y"]) for p in positions.values()]
         assert len(set(coords)) == len(coords), (
-            f"solidified nodes must not share coordinates, got {solidified}"
+            f"saved positions in main must not share coordinates, got {positions}"
         )
 
     def test_duplicate_keeps_submodule_use_pointing_at_same_child(self, client):
@@ -1709,21 +1711,21 @@ class TestScopedNodeEdgeHiding:
         assert r.status_code == 200
         copy_pid = r.json()["pipeline_id"]
 
-        # duplicate_pipeline copies the wiring as a fresh MANUAL edge, which
-        # then graduates in place (rewired, not removed — see
-        # pipeline_store.graduate_manual_node) alongside the real DB-derived
-        # edge for the same connection, so two edges into FilteredSignal
-        # coexist in the copy. Target the DB-derived one specifically (its
-        # id is deterministic — e__{fn}__{wiring_id}__{out_type} — see
-        # graph_builder.build_edges) since that's the one this fix scopes;
-        # the leftover manual duplicate is a separate, unrelated mechanism.
+        # duplicate_pipeline copies the wiring as fresh stored edges between
+        # the copied nodes. The function node is its own node in the copy
+        # (function nodes no longer graduate, canvas-as-document Stage 5), so
+        # its edge is a different connection from the original's.
         copy_edges = client.get(
             "/api/pipeline", params={"pipeline_id": copy_pid}
         ).json()["edges"]
         fs_id = self._node_id(client, copy_pid, "variableNode", "FilteredSignal")
-        db_edge = next(
-            e for e in copy_edges if e["target"] == fs_id and e["id"].startswith("e__")
-        )
+        db_edge = next(e for e in copy_edges if e["target"] == fs_id)
+        main_fs_id = self._node_id(client, "main", "variableNode", "FilteredSignal")
+        main_edge_ids = {
+            e["id"] for e in client.get("/api/pipeline").json()["edges"]
+            if e["target"] == main_fs_id
+        }
+        assert main_edge_ids
 
         r = client.request(
             "DELETE",
@@ -1737,15 +1739,11 @@ class TestScopedNodeEdgeHiding:
         ).json()["edges"]
         assert not any(e["id"] == db_edge["id"] for e in copy_edges_after)
 
-        # The original's own bandpass_filter -> FilteredSignal DB-derived
-        # edge must still be there — used to fail: hiding it in the copy
-        # hid the same bare edge id everywhere.
-        main_fs_id = self._node_id(client, "main", "variableNode", "FilteredSignal")
+        # The original's own bandpass_filter -> FilteredSignal edge must still
+        # be there: a hide is scoped to the copy (it used to hide the same
+        # bare edge id everywhere).
         main_edges = client.get("/api/pipeline").json()["edges"]
-        assert any(
-            e["target"] == main_fs_id and e["id"] == db_edge["id"]
-            for e in main_edges
-        )
+        assert {e["id"] for e in main_edges if e["target"] == main_fs_id} == main_edge_ids
 
     def test_delete_output_var_does_not_delete_its_producing_fn(self, client):
         """Regression: deleting a leaf OUTPUT variable node used to also

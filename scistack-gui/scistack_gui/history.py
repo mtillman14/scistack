@@ -154,14 +154,336 @@ def note_write(path: "str | Path", *, reload: bool = True) -> None:
 
 def get_record(change_id: str) -> "ChangeRecord | None":
     with _lock:
+        _ensure_loaded()
         return _records.get(change_id)
 
 
 def clear() -> None:
-    """Forget every record (tests; a database switch)."""
+    """Forget every record held in memory (tests; a database switch). The
+    persisted log is untouched: the next read reloads from it."""
+    global _loaded_for
     with _lock:
         _records.clear()
         _pk_cache.clear()
+        _loaded_for = None
+
+
+# ---------------------------------------------------------------------------
+# The persisted change log (plan-canvas-as-document Q5)
+# ---------------------------------------------------------------------------
+#
+# Every non-empty record is also written to ``_canvas_change`` in the
+# project's .duckdb, so (a) there is an append-only audit trail of GUI edits
+# that outlives the process, and (b) undo/redo of a change made before a
+# restart works: the first read after a restart reloads the newest
+# MAX_RECORDS. Replaying an old record is safe for the same reason replaying a
+# recent one is: `_conflicts` refuses when any touched row or file no longer
+# holds what the record left there (a script run in between, say).
+#
+# The table is NOT itself undoable (it is the undo log) and is never pruned:
+# memory holds MAX_RECORDS, the table holds everything. No user identity
+# (feedback_no_user_identity).
+
+AUDIT_TABLE = "_canvas_change"
+
+#: GUI tables deliberately NOT in ``tracked_tables`` (guard:
+#: ``test_every_gui_table_is_tracked``), and why.
+UNTRACKED_TABLES: dict[str, str] = {
+    AUDIT_TABLE: "the undo log itself",
+    "_adopted": "canvas adoption markers: written by graph builds, never by an undoable edit",
+}
+
+#: How the table travels on export (see ``pipeline_store.PORTABILITY``).
+PORTABILITY: dict[str, str] = {AUDIT_TABLE: "history"}
+
+#: The database path the in-memory records were loaded for (None: not yet).
+_loaded_for: "str | None" = None
+
+
+def ensure_tables(db) -> None:
+    """Create ``_canvas_change`` if absent (from ``pipeline_store._ensure_tables``)."""
+    db._duck._execute("""
+        CREATE TABLE IF NOT EXISTS _canvas_change (
+            change_id   VARCHAR PRIMARY KEY,
+            seq         BIGINT NOT NULL,
+            created_at  DOUBLE NOT NULL,
+            updated_at  DOUBLE NOT NULL,
+            label       VARCHAR NOT NULL,
+            method      VARCHAR NOT NULL,
+            state       VARCHAR NOT NULL,
+            summary     VARCHAR NOT NULL,
+            record_json VARCHAR NOT NULL
+        )
+    """)
+
+
+def _enc(value):
+    """A row value as JSON, keeping the types DuckDB hands back."""
+    import base64
+    import datetime as _dt
+    import decimal
+
+    if isinstance(value, (_dt.datetime, _dt.date, _dt.time)):
+        return {"__t": type(value).__name__, "v": value.isoformat()}
+    if isinstance(value, decimal.Decimal):
+        return {"__t": "decimal", "v": str(value)}
+    if isinstance(value, (bytes, bytearray)):
+        return {"__t": "bytes", "v": base64.b64encode(bytes(value)).decode("ascii")}
+    if isinstance(value, (list, tuple)):
+        return {"__t": "list", "v": [_enc(v) for v in value]}
+    if isinstance(value, dict):
+        return {"__t": "dict", "v": {k: _enc(v) for k, v in value.items()}}
+    return value
+
+
+def _dec(value):
+    import base64
+    import datetime as _dt
+    import decimal
+
+    if not isinstance(value, dict) or "__t" not in value:
+        return value
+    t, v = value["__t"], value["v"]
+    if t == "datetime":
+        return _dt.datetime.fromisoformat(v)
+    if t == "date":
+        return _dt.date.fromisoformat(v)
+    if t == "time":
+        return _dt.time.fromisoformat(v)
+    if t == "decimal":
+        return decimal.Decimal(v)
+    if t == "bytes":
+        return base64.b64decode(v)
+    if t == "list":
+        return [_dec(x) for x in v]
+    if t == "dict":
+        return {k: _dec(x) for k, x in v.items()}
+    raise ValueError(f"unknown encoded type {t!r}")
+
+
+def _row(values) -> "Row | None":
+    return None if values is None else tuple(_dec(v) for v in values)
+
+
+def record_to_json(rec: ChangeRecord) -> str:
+    import base64
+    import json
+
+    def b64(b):
+        return None if b is None else base64.b64encode(b).decode("ascii")
+
+    return json.dumps(
+        {
+            "columns": {t: list(c) for t, c in rec.columns.items()},
+            "keys": {t: list(c) for t, c in rec.keys.items()},
+            "rows": {
+                table: [
+                    [[_enc(k) for k in key],
+                     None if b is None else [_enc(v) for v in b],
+                     None if a is None else [_enc(v) for v in a]]
+                    for key, (b, a) in diff.items()
+                ]
+                for table, diff in rec.rows.items()
+            },
+            "files": {
+                path: {"before": b64(f.before), "after": b64(f.after), "reload": f.reload}
+                for path, f in rec.files.items()
+            },
+        }
+    )
+
+
+def record_from_json(
+    change_id: str, label: str, method: str, state: str, created_at: float, text: str
+) -> ChangeRecord:
+    import base64
+    import json
+
+    data = json.loads(text)
+
+    def unb64(s):
+        return None if s is None else base64.b64decode(s)
+
+    return ChangeRecord(
+        change_id=change_id,
+        label=label,
+        method=method,
+        columns={t: tuple(c) for t, c in data["columns"].items()},
+        keys={t: tuple(c) for t, c in data["keys"].items()},
+        rows={
+            table: {tuple(_dec(k) for k in key): (_row(b), _row(a)) for key, b, a in entries}
+            for table, entries in data["rows"].items()
+        },
+        files={
+            path: FileChange(unb64(f["before"]), unb64(f["after"]), bool(f["reload"]))
+            for path, f in data["files"].items()
+        },
+        state=state,
+        created_at=created_at,
+    )
+
+
+def _db_key() -> "str | None":
+    from scistack_gui.db import get_db_path, is_loaded
+
+    if not is_loaded():
+        return None
+    return str(get_db_path())
+
+
+def _ensure_loaded() -> None:
+    """Load the newest persisted records once per open database. Never raises:
+    an unreadable log costs undo of old changes, not the edit at hand."""
+    global _loaded_for
+    key = _db_key()
+    if key is None or _loaded_for == key:
+        return
+    _loaded_for = key
+    from scistack_gui.db import db_connection
+
+    t0 = time.monotonic()
+    try:
+        with db_connection("history load"):
+            duck = _duck()
+            if not duck._table_exists(AUDIT_TABLE):
+                return
+            rows = duck._fetchall(
+                f"SELECT change_id, label, method, state, created_at, record_json "
+                f"FROM {AUDIT_TABLE} ORDER BY seq DESC LIMIT ?",
+                [MAX_RECORDS],
+            )
+    except Exception:
+        logger.exception("[history] loading the persisted change log failed")
+        return
+    loaded = 0
+    for change_id, label, method, state, created_at, text in reversed(rows):
+        if change_id in _records or state == EVENT_STATE:
+            # An event (adoption) is audit only: nothing to undo.
+            continue
+        try:
+            _records[change_id] = record_from_json(
+                change_id, label, method, state, created_at, text
+            )
+            loaded += 1
+        except Exception:
+            logger.exception("[history] persisted change %s is unreadable; skipped", change_id)
+    # Records made in this process before the load stay newest.
+    for change_id in [c for c in _records if c not in {r[0] for r in rows}]:
+        _records.move_to_end(change_id)
+    logger.info(
+        "[history] loaded %d persisted change(s) for %s (%.1fms)",
+        loaded,
+        key,
+        (time.monotonic() - t0) * 1000,
+    )
+
+
+def _persist(rec: ChangeRecord) -> None:
+    """Write *rec* (insert or update) to the log. Never raises."""
+    if rec.empty or _db_key() is None:
+        return
+    from scistack_gui.db import DatabaseLockedError, db_connection, get_db
+
+    t0 = time.monotonic()
+    try:
+        with db_connection("history persist"):
+            duck = _duck()
+            if not duck._table_exists(AUDIT_TABLE):
+                ensure_tables(get_db())
+            now = time.time()
+            duck._execute(
+                f"INSERT INTO {AUDIT_TABLE} (change_id, seq, created_at, updated_at, "
+                "label, method, state, summary, record_json) "
+                f"SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM {AUDIT_TABLE} "
+                "ON CONFLICT (change_id) DO UPDATE SET updated_at = excluded.updated_at, "
+                "label = excluded.label, state = excluded.state, "
+                "summary = excluded.summary, record_json = excluded.record_json",
+                [
+                    rec.change_id,
+                    rec.created_at,
+                    now,
+                    rec.label,
+                    rec.method,
+                    rec.state,
+                    rec.summary(),
+                    record_to_json(rec),
+                ],
+            )
+    except DatabaseLockedError as exc:
+        logger.warning("[history] change %s not persisted — database locked (%s)", rec.change_id, exc)
+        return
+    except Exception:
+        logger.exception("[history] persisting change %s failed", rec.change_id)
+        return
+    logger.debug(
+        "[history] persisted change %s state=%s (%.1fms)",
+        rec.change_id,
+        rec.state,
+        (time.monotonic() - t0) * 1000,
+    )
+
+
+def list_changes(limit: int = 50) -> list[dict]:
+    """The persisted audit trail, newest first:
+    ``[{change_id, created_at, updated_at, label, method, state, summary}]``."""
+    from scistack_gui.db import db_connection
+
+    if _db_key() is None:
+        return []
+    with db_connection("history list"):
+        duck = _duck()
+        if not duck._table_exists(AUDIT_TABLE):
+            return []
+        rows = duck._fetchall(
+            f"SELECT change_id, created_at, updated_at, label, method, state, summary "
+            f"FROM {AUDIT_TABLE} ORDER BY seq DESC LIMIT ?",
+            [int(limit)],
+        )
+    keys = ("change_id", "created_at", "updated_at", "label", "method", "state", "summary")
+    return [dict(zip(keys, r)) for r in rows]
+
+
+#: ``_canvas_change.state`` of a row that records something the GUI did on
+#: its own (canvas adoption) rather than an undoable edit. Never loaded as an
+#: undo record (``_ensure_loaded``).
+EVENT_STATE = "event"
+
+
+def is_recording() -> bool:
+    """Whether an undoable handler's recording window is open in this context.
+
+    Canvas adoption checks this: a write made inside the window would become
+    part of the user's undo step, and undoing that step would then remove the
+    adopted rows while the adoption marker says they were adopted, so they
+    would never come back (plan-canvas-as-document §8b: adoption is not an
+    undo step)."""
+    return _active.get() is not None
+
+
+def log_event(db, label: str, method: str, summary: str) -> "str | None":
+    """Append an audit-only row to ``_canvas_change`` (state
+    :data:`EVENT_STATE`) and return its id. Never raises: losing an audit line
+    must not fail the graph build that wrote it."""
+    import uuid
+
+    change_id = f"{method}-{uuid.uuid4().hex[:12]}"
+    empty = ChangeRecord(change_id, label, method)
+    try:
+        duck = db._duck
+        if not duck._table_exists(AUDIT_TABLE):
+            ensure_tables(db)
+        now = time.time()
+        duck._execute(
+            f"INSERT INTO {AUDIT_TABLE} (change_id, seq, created_at, updated_at, "
+            "label, method, state, summary, record_json) "
+            f"SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM {AUDIT_TABLE}",
+            [change_id, now, now, label, method, EVENT_STATE, summary, record_to_json(empty)],
+        )
+    except Exception:
+        logger.exception("[history] audit event %s (%s) not written", method, label)
+        return None
+    logger.info("[history] audit event id=%s method=%s %s", change_id, method, summary)
+    return change_id
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +638,7 @@ def recording(change_id: str, *, label: str, method: str):
         files = {p: f for p, f in files.items() if f.before != f.after}
         new = ChangeRecord(change_id, label, method, columns, keys, rows, files)
         stored = _store(new)
+        _persist(stored)
         logger.info(
             "[history] history_record id=%s method=%s label=%r %s merged=%s "
             "snapshot_ms=%.1f+%.1f",
@@ -330,6 +653,7 @@ def recording(change_id: str, *, label: str, method: str):
 
 
 def _store(new: ChangeRecord) -> ChangeRecord:
+    _ensure_loaded()
     old = _records.get(new.change_id)
     if old is None or old.state != "applied":
         if old is not None:
@@ -391,6 +715,7 @@ def _side(pair: tuple, direction: str, *, target: bool):
 def _apply(change_id: str, direction: str) -> dict:
     goal = "undone" if direction == "undo" else "applied"
     with _lock:
+        _ensure_loaded()
         rec = _records.get(change_id)
         if rec is None:
             logger.info("[history] %s id=%s -> unknown", direction, change_id)
@@ -401,6 +726,7 @@ def _apply(change_id: str, direction: str) -> dict:
             return {**base, "status": "noop"}
         if rec.empty:
             rec.state = goal
+            _persist(rec)
             logger.info("[history] %s id=%s -> empty", direction, change_id)
             return {**base, "status": "empty"}
 
@@ -430,6 +756,7 @@ def _apply(change_id: str, direction: str) -> dict:
                 _write_rows(rec, "redo" if direction == "undo" else "undo")
             raise
         rec.state = goal
+        _persist(rec)
         reload = any(f.reload for f in rec.files.values())
         logger.info(
             "[history] %s id=%s method=%s -> ok %s reload=%s (%.1fms)",

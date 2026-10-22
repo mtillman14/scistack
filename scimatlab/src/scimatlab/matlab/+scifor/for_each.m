@@ -61,6 +61,14 @@ function varargout = for_each(fn, inputs, varargin)
 %                       scidb.for_each takes it. Applied by Python's
 %                       scifor.filter_combo_indices, the one owner of the
 %                       rule. (default: none)
+%       schema_key_types - struct: key -> 'numeric' | 'string'. 'numeric':
+%                       every spelling of a number is one value ("001", 1),
+%                       explicit and discovered alike. 'string': spelling
+%                       is kept and a PathInput matches the key exactly (no
+%                       zero-padding). Keys not listed keep the automatic
+%                       behaviour (digit-only DISCOVERED values become
+%                       numbers). Standalone only: scidb.for_each applies the
+%                       database's types itself. (default: none)
 %       _all_combos   - Pre-built cell array of combo structs (from DB
 %                       wrappers that pre-filter). Bypasses cartesian_product.
 %       _row_selection - Cell array aligned with _all_combos: per combo, a
@@ -298,7 +306,8 @@ function varargout = for_each(fn, inputs, varargin)
             % never reached when driven through scidb.for_each (which
             % always supplies opts.all_combos, mirroring the Python
             % isolation boundary -- see docs/claude/schema-key-types.md).
-            [filled, discovered_combos] = pi.apply_discovery(iter_struct, user_explicit_keys, true);
+            [filled, discovered_combos] = pi.apply_discovery(iter_struct, ...
+                user_explicit_keys, true, opts.schema_key_types);
             for i = 1:numel(meta_keys)
                 if isempty(meta_values{i}) && isfield(filled, char(meta_keys(i)))
                     meta_values{i} = filled.(char(meta_keys(i)));
@@ -405,6 +414,33 @@ function varargout = for_each(fn, inputs, varargin)
         if any(drop_idx)
             meta_keys(drop_idx) = [];
             meta_values(drop_idx) = [];
+        end
+
+        % --- Declared key types (standalone only; scidb.for_each applies
+        %     the database's types before it hands over all_combos) ---
+        %   numeric: explicit values collapse to one spelling through the
+        %   one Python rule, so trial=[1] and a discovered "001" agree.
+        %   string: the PathInput loader matches that key exactly.
+        kt_fields = fieldnames(opts.schema_key_types);
+        if ~isempty(kt_fields)
+            scifor.Log.info('schema key types: %s (declared in this call)', ...
+                char(py.scifor.schema_types.describe( ...
+                    scifor.key_types_to_py(opts.schema_key_types))));
+            string_keys = string.empty;
+            for f = 1:numel(kt_fields)
+                k = string(kt_fields{f});
+                kt = string(opts.schema_key_types.(kt_fields{f}));
+                if kt == "string"
+                    string_keys(end+1) = k; %#ok<AGROW>
+                end
+                idx = find(meta_keys == k, 1);
+                if kt == "numeric" && ~isempty(idx) && ~isempty(meta_values{idx})
+                    meta_values{idx} = canonical_numeric_values(k, meta_values{idx});
+                end
+            end
+            if ~isempty(string_keys) && isempty(opts.pathinput_loader)
+                opts.pathinput_loader = @(pi_obj, nv) exact_string_key_loader(pi_obj, nv, string_keys);
+            end
         end
     end
 
@@ -2449,6 +2485,7 @@ function [meta_args, opts] = split_options(varargin)
     opts.resolved_path_outputs = struct();
     opts.share_limits = struct();
     opts.schema_keys = string.empty;
+    opts.schema_key_types = struct();  % key -> 'numeric' | 'string' (standalone)
     opts.mapping_inputs = struct();  % {param -> string array of data column
                                      % names} for struct-valued records; see
                                      % extract_data
@@ -2586,6 +2623,14 @@ function [meta_args, opts] = split_options(varargin)
                     opts.schema_keys = string(varargin{i+1});
                     i = i + 2;
                     continue;
+                case "schema_key_types"
+                    % struct: key -> 'numeric' | 'string'. Validated by
+                    % Python (scifor.schema_types.validate_key_types).
+                    opts.schema_key_types = varargin{i+1};
+                    py.scifor.schema_types.validate_key_types( ...
+                        scifor.key_types_to_py(opts.schema_key_types));
+                    i = i + 2;
+                    continue;
                 case "_log_fn"
                     % Deprecated — ignored. scifor logs through scifor.Log
                     % (scistacklog facade) directly; accepted so existing
@@ -2599,6 +2644,46 @@ function [meta_args, opts] = split_options(varargin)
     end
 end
 
+
+
+function out = canonical_numeric_values(key, vals)
+%CANONICAL_NUMERIC_VALUES  Explicit values of a numeric-declared key, through
+%   the ONE rule (Python scifor.canonical_numeric_value): "001" -> 1, 1.0 -> 1.
+%   Returns a double row vector, duplicates removed (first kept). A value that
+%   is not a number raises scifor:SchemaKeyTypeError.
+    if ~iscell(vals)
+        if isstring(vals) || ischar(vals)
+            vals = cellstr(string(vals));
+        else
+            vals = num2cell(vals);
+        end
+    end
+    out = zeros(1, numel(vals));
+    for j = 1:numel(vals)
+        v = vals{j};
+        if isnumeric(v) || islogical(v)
+            py_v = py.float(double(v));
+        else
+            py_v = py.str(char(string(v)));
+        end
+        try
+            out(j) = double(py.scifor.canonical_numeric_value(char(key), py_v));
+        catch err
+            error('scifor:SchemaKeyTypeError', '%s', err.message);
+        end
+    end
+    out = unique(out, 'stable');
+end
+
+
+function filepath = exact_string_key_loader(pi_obj, meta_nv, string_keys)
+%EXACT_STRING_KEY_LOADER  Per-combo PathInput load where STRING-declared keys
+%   match only literally (no zero-padding bridge): every other key stays
+%   eligible for the numeric fallback (Python numeric_match_keys).
+    keys = string(meta_nv(1:2:end));
+    eligible = keys(~ismember(keys, string_keys));
+    filepath = pi_obj.load_with_captures(meta_nv, eligible);
+end
 
 
 function names = db_only_kwargs()

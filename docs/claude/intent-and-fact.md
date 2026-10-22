@@ -268,3 +268,16 @@ id (placement suffix, manual row, else root `main`), reads resolve
 scope, and runs / compiled pipelines / both exports read the hides of the
 canvas they run from. `global` holds the rows written before that date;
 they apply everywhere until a canvas shadows them.
+
+## 12. Since 2026-10-22: topology is intent too (canvas-as-document)
+
+The third application of the cut, after settings (this document) and ids
+(`node-identity.md`): which nodes and edges exist is now intent, stored as
+rows (`_pipeline_nodes`, `wiring` statements), and history only ANNOTATES
+them (run state, counts, variant rows) by node id. History reaches the
+document through one write, adoption (`services/adoption.py`), once per node,
+edge and value. The `constants` aspect gained a second state: PENDING (`True`,
+"run this next", overrides) and STATED (`"stated"`, "belongs to the
+Parameter", survives a clear-data); `auto_clean_pending_constants` now
+promotes pending to stated instead of deleting it. D-2026-10-22-1;
+walkthrough `canvas-as-document-explained.md`.

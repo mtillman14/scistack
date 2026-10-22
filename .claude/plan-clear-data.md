@@ -140,3 +140,27 @@ GUI (`scistack-gui/tests/test_clear_data.py`):
 
 ## Out of scope / follow-ups
 - MATLAB entry point (`scidb.clear_data` via bridge): not now.
+
+## Status 2026-10-21 (branch `canvas-as-document`)
+
+scidb half BUILT: `scidb/clear_data.py` (`clear_plan`, `clear_data`, `ClearRefused`),
+`Mutator.clear_data`, `scidb clear-data [--yes] [--fingerprint] [--backup]`,
+`variant_delete.write_tombstone` (shared), `variant_pins.forget_type_graph`.
+Tests `scidb/tests/test_clear_data.py`, unrun. Changes from the plan above:
+`_run` KEPT (user Q4), `_schema` KEPT (location interning; avoids re-using
+schema ids under anything that cached one), no keeper hooks (the GUI clear
+will be "adopt everything, then clear_data(allow_canvas=True)" at
+plan-canvas-as-document Stage 2). A database with GUI tables is refused.
+
+## Status 2026-10-22: GUI half BUILT (canvas-as-document Stage 2)
+
+`scistack_gui/services/clear_service.py`: `clear_data_plan` builds every
+canvas first (adoption stores what history would draw), then `clear_plan`;
+`clear_data` adopts again, then `scidb.clear_data.clear_data(...,
+allow_canvas=True)`. RPCs `clear_data_plan` / `clear_data` (api/project.py),
+dialog `ClearDataDialog.tsx` ("Clear data…" in the canvas toolbar; type
+`clear`; backup checkbox, default on). No snapshot/restore and no keeper hooks:
+the canvas is stored, so a clear cannot touch it. Undo history is kept (a clear
+touches no tracked table). The VS Code command palette entry was not added
+(the toolbar button covers it). Tests: `tests/test_canvas_document.py::
+TestClearDataKeepsTheCanvas`, pytest unrun.

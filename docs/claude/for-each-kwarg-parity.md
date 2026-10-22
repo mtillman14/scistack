@@ -14,6 +14,7 @@ Built 2026-10-18. Plan: `.claude/plan-for-each-kwarg-parity.md`.
 | `fn`, `inputs` | 1st, 2nd positional | same |
 | `outputs` | 3rd positional, optional: names, classes, or a count | 3rd positional, required: variable types |
 | `dry_run`, `as_table`, `distribute`, `where`, `locations`, `share_limits`, `schema_keys` | real | real (same defaults) |
+| `schema_key_types` | real: the call owns it (standalone) | real: RECORDED in the database, which owns it (`docs/claude/schema-key-types.md`) |
 | `save`, `db`, `introspect`, `skip_computed`, `schema_filter`, `finalized`, `glue`, `parameter_names`, `pipeline` | accepted, logged (INFO `discard_db_only_kwargs`), ignored | real |
 | `categorical` (MATLAB only) | real | real — applied to the RETURNED table after saving |
 | `preload`, `parallel` (MATLAB only, legacy) | ignored | accepted, ignored |

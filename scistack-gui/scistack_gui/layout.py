@@ -348,8 +348,11 @@ def delete_node(node_id: str) -> None:
     positions_by_scope = read_positions_by_scope()
     scope_id = node_scope(node_id, manual_nodes, positions_by_scope)
     drop_node_positions(node_id)
-    pipeline_store.delete_node(db, node_id)
-    # Hide DB-derived nodes so they don't reappear from list_pipeline_variants().
+    # The stored row is KEPT (canvas-as-document, 2026-10-22; never delete,
+    # mark hidden). Since adoption, a node from a run is a stored row too, and
+    # the `_adopted` marker stops it from being adopted again; deleting the
+    # row as well would leave a hidden node that could never be unhidden. The
+    # build skips hidden rows (api/pipeline._build_graph).
     bare_id = strip_placement(node_id)
     logger.info(
         "[layout] Marking node as hidden in scope=%r (so it won't be auto-recreated there)",

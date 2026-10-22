@@ -183,7 +183,7 @@ class TestForEachNumericDeclared:
 
 class TestForEachUndeclared:
     def test_resolution_raises_declare_error(self, db_undeclared, padded_tree):
-        with pytest.raises(SchemaKeyTypeError, match="schema_key_types"):
+        with pytest.raises(SchemaKeyTypeError, match="set_schema_key_type"):
             for_each(
                 read_name,
                 {

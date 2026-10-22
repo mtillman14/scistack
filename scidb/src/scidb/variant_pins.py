@@ -272,6 +272,16 @@ def _release(db, pin: VariantPin, reason: str) -> VariantPin:
 _TYPE_GRAPH_ATTR = "_scidb_variant_pin_type_graph"
 
 
+def forget_type_graph(duck) -> None:
+    """Drop the cached type graph. Its fingerprint is the invocation COUNT,
+    which a delete lowers and later saves can raise back to the cached value
+    with a different graph; every real delete (``variant_delete``,
+    ``clear_data``) calls this after committing."""
+    if getattr(duck, _TYPE_GRAPH_ATTR, None) is not None:
+        setattr(duck, _TYPE_GRAPH_ATTR, None)
+        Log.debug("variant_pins: type graph cache dropped")
+
+
 def _type_parents(duck) -> dict[str, set]:
     """``{variable type: {direct input variable types}}`` from the graph.
 

@@ -440,6 +440,7 @@ def for_each_prepare(
     locations=None,
     parameter_names=None,
     source_text=None,
+    schema_key_types=None,
 ):
     """Bridge entry: run scidb.for_each's prepare phase in Python.
 
@@ -509,6 +510,10 @@ def for_each_prepare(
         as on the Python path, so one provenance recipe serves both languages.
         The returned ``glue_chains`` entry tells MATLAB which params to apply
         which nodes to.
+    schema_key_types : dict or None
+        ``{key: "numeric" | "string"}`` from MATLAB's ``schema_key_types=``.
+        Recorded in the database (``DatabaseManager.declare_schema_key_types``)
+        before prepare, exactly like Python ``scidb.for_each``.
 
     Returns
     -------
@@ -555,6 +560,18 @@ def for_each_prepare(
 
     # Normalize db to None or a live DatabaseManager (MATLAB may pass py.None).
     resolved_db = db if db is not None and not isinstance(db, type(None)) else None
+
+    # schema_key_types=: recorded in the database, which owns it, exactly as
+    # Python scidb.for_each does. Prepare below reads the stored declaration.
+    if schema_key_types:
+        from scidb.database import get_database
+
+        decl_db = resolved_db if resolved_db is not None else get_database()
+        decl_db.declare_schema_key_types(
+            {str(k): str(v) for k, v in dict(schema_key_types).items()},
+            dry_run=bool(dry_run),
+            source="for_each (MATLAB)",
+        )
 
     # Step 1.5: Resolve for_columns (iterate-mode ColumnSelection) inputs.
     # The Python-only path does this in scidb.for_each before _for_each_prepare;

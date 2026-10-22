@@ -20,6 +20,11 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
 %                             exactly only.  Undeclared keys raise
 %                             scidb:SchemaKeyTypeError the first time a
 %                             PathInput resolution has to bridge spellings.
+%                             The DATABASE stores the types: this records
+%                             any key that has none, a matching stored type
+%                             is a no-op, and a different one is an error.
+%                             Omit it to use what is stored (the GUI's
+%                             Numeric checkbox writes the same table).
 %
 %   Example:
 %       scidb.configure_database( ...
@@ -46,25 +51,13 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
         dataset_db_path = fullfile(pwd, dataset_db_path);
     end
 
-    % Convert schema_key_types struct -> py.dict (validated Python-side)
-    kt_fields = fieldnames(options.schema_key_types);
-    py_key_types = py.dict();
-    for i = 1:numel(kt_fields)
-        py_key_types.update(pyargs(kt_fields{i}, ...
-            char(string(options.schema_key_types.(kt_fields{i})))));
-    end
-
-    % Call Python's configure_database
-    if isempty(kt_fields)
-        db = py.scidb.configure_database( ...
-            char(dataset_db_path), ...
-            py_schema_keys);
-    else
-        db = py.scidb.configure_database( ...
-            char(dataset_db_path), ...
-            py_schema_keys, ...
-            pyargs('schema_key_types', py_key_types));
-    end
+    % Call Python's configure_database. schema_key_types is recorded in the
+    % database, which owns it (scidb.schema_types): omitting it uses what is
+    % stored, and a different stored type raises SchemaKeyTypeConflictError.
+    db = py.scidb.configure_database( ...
+        char(dataset_db_path), ...
+        py_schema_keys, ...
+        pyargs('schema_key_types', scifor.key_types_to_py(options.schema_key_types)));
 
     % Verify the Python environment is working
     py_db = py.scidb.database.get_database();

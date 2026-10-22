@@ -9,6 +9,8 @@ transports (``api/handlers.py``; ``PROJECT_HANDLERS`` at the bottom).
     POST   /api/project/entities-file  set_entities_file
     DELETE /api/project/entities-file  clear_entities_file
     POST   /api/project/refresh        refresh_project    — re-run both scans
+    GET    /api/project/clear-data/plan clear_data_plan — what a clear would delete
+    POST   /api/project/clear-data     clear_data         — delete records, keep the canvas
 
 Every mutation notifies ``dag_updated`` on success (the row says so), on
 both transports alike.
@@ -481,6 +483,25 @@ def _refresh_project() -> dict:
     return refresh_project_sync()
 
 
+class ClearDataRequest(BaseModel):
+    #: The plan's fingerprint the user confirmed (clear_data_plan).
+    fingerprint: str
+    reason: str = "cleared from the GUI"
+    backup: bool = False
+
+
+def _clear_data_plan(db) -> dict:
+    from scistack_gui.services.clear_service import clear_data_plan
+
+    return clear_data_plan(db)
+
+
+def _clear_data(db, req: ClearDataRequest) -> dict:
+    from scistack_gui.services.clear_service import clear_data
+
+    return clear_data(db, req.reason, req.fingerprint, backup=req.backup)
+
+
 _NO_DB = {"needs_db": False}
 
 PROJECT_HANDLERS: tuple[Handler, ...] = (
@@ -492,6 +513,11 @@ PROJECT_HANDLERS: tuple[Handler, ...] = (
     Handler("set_entities_file", "/project/entities-file", PathBody, _set_entities_file, notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="set entities file"),
     Handler("clear_entities_file", "/project/entities-file", None, _clear_entities_file, http_method="DELETE", notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="clear entities file"),
     Handler("refresh_project", "/project/refresh", None, _refresh_project, notify_dag_updated=True, **_NO_DB, undoable=False),
+    # Clear all data, keep the pipeline (plan-clear-data.md, GUI half).
+    # Not undoable: it deletes records (a tombstone and the optional backup
+    # are the way back).
+    Handler("clear_data_plan", "/project/clear-data/plan", None, _clear_data_plan, http_method="GET", undoable=False),
+    Handler("clear_data", "/project/clear-data", ClearDataRequest, _clear_data, notify_dag_updated=True, undoable=False),
 )
 
 install_routes(router, PROJECT_HANDLERS)

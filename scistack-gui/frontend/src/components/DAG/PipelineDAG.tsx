@@ -41,6 +41,7 @@ import GlueNode from './GlueNode'
 import PlotStudio from '../PlotStudio/PlotStudio'
 import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
 import VariantsPopup from '../Variants/VariantsPopup'
+import ClearDataDialog from './ClearDataDialog'
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
@@ -101,11 +102,15 @@ interface HiddenPorts {
 /**
  * A warning the graph build wants the user to see.
  *
- * `wiring_ambiguity` is the only kind today: two or more function nodes in
- * one scope state identical wiring, so they compute the same thing and runs
- * are attributed to one of them. Never auto-merged — silently collapsing two
- * nodes a person created is a worse failure than a message they can act on
- * (docs/claude/node-identity.md §7b).
+ * Two kinds:
+ * - `wiring_ambiguity`: two or more function nodes in one scope state
+ *   identical wiring, so they compute the same thing and runs are attributed
+ *   to one of them. Never auto-merged — silently collapsing two nodes a
+ *   person created is a worse failure than a message they can act on
+ *   (docs/claude/node-identity.md §7b).
+ * - `adopted`: steps a script or MATLAB-terminal run recorded were added to
+ *   the canvas as stored nodes and edges (canvas adoption, user decision Q1:
+ *   automatic, with a notification). Sent once, by the build that adopted.
  */
 interface GraphWarning {
   kind: string
@@ -183,6 +188,8 @@ export default function PipelineDAG() {
   // Today there is one kind (`wiring_ambiguity`); the shape is deliberately
   // generic so the next one does not need a second channel.
   const [graphWarnings, setGraphWarnings] = useState<GraphWarning[]>([])
+  // The "Clear data, keep the pipeline" dialog (ClearDataDialog).
+  const [clearDataOpen, setClearDataOpen] = useState(false)
   const dismissedWarnings = useRef<Set<string>>(new Set())
 
   const fetchPipeline = useCallback(async () => {
@@ -1009,6 +1016,14 @@ export default function PipelineDAG() {
             >
               ▶ Run endpoints
             </button>
+            <button
+              style={styles.clearDataBtn}
+              onClick={() => setClearDataOpen(true)}
+              type="button"
+              title="Delete every record and its run history; keep every canvas (nodes, edges, values)"
+            >
+              Clear data…
+            </button>
           </div>
         </Panel>
       </ReactFlow>
@@ -1113,6 +1128,14 @@ export default function PipelineDAG() {
           }}
         />
       )}
+      {clearDataOpen && (
+        <ClearDataDialog
+          onClose={() => {
+            setClearDataOpen(false)
+            bumpGraph()
+          }}
+        />
+      )}
       {variantsTarget && (
         <VariantsPopup
           variable={variantsTarget}
@@ -1147,7 +1170,11 @@ function GraphWarningDialog({
     <div style={warningStyles.overlay} onClick={onDismiss}>
       <div style={warningStyles.dialog} onClick={e => e.stopPropagation()}>
         <div style={warningStyles.title}>
-          {warnings.length === 1 ? 'Two nodes are wired the same' : 'Nodes are wired the same'}
+          {warnings.every(w => w.kind === 'adopted')
+            ? 'Added from recorded runs'
+            : warnings.length === 1
+              ? 'Two nodes are wired the same'
+              : 'Nodes are wired the same'}
         </div>
         {warnings.map(w => (
           <div key={w.signature} style={warningStyles.item}>
@@ -1213,6 +1240,15 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     cursor: 'pointer',
     userSelect: 'none',
+  },
+  clearDataBtn: {
+    padding: '4px 10px',
+    background: '#2a2a4a',
+    color: '#e0a0a0',
+    border: '1px solid #5a3a3a',
+    borderRadius: 4,
+    cursor: 'pointer',
+    fontSize: 12,
   },
   runEndpointsBtn: {
     padding: '4px 10px',

@@ -1486,6 +1486,26 @@ class Inspector:
         return out
 
     @_timed
+    def schema_key_types(self, history: bool = False) -> list[dict]:
+        """Each schema key's declared type, as stored in the database
+        (``scidb.schema_types``), with how it loads and how many values it
+        has. ``history=True`` returns every declaration ever written instead."""
+        from .. import schema_types
+
+        if history:
+            return schema_types.history(self._duck)
+        declared = self._db.dataset_schema_key_types
+        return [
+            {
+                "key": key,
+                "key_type": declared.get(key),
+                "loads_as": "numbers" if self._db.schema_key_is_numeric(key) else "strings",
+                "n_values": len(self._duck.distinct_schema_values(key)),
+            }
+            for key in self._db.dataset_schema_keys
+        ]
+
+    @_timed
     def exclusions(self) -> list[ExclusionRecord]:
         """Currently-excluded schema combinations (read side of the Phase 5
         write commands; the write side lives on mutate.Mutator)."""

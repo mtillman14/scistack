@@ -147,3 +147,22 @@ Edge existence, visibility and identity are not kind-specific.
 - A stored drawn edge on `param__X` is not drawn and binds nothing. Redraw it
   onto `in__X`.
 - A hide on a `param__X` port reappears once.
+
+## Since 2026-10-22: every edge is a stored row (canvas-as-document)
+
+D-2026-10-22-1. A build ADOPTS every history edge the document does not hold
+yet (`services/adoption.py`): it is written as a drawn edge whose id is its
+connection id, once (`_adopted` marker, subject `edge:{connection id}`). The
+build then draws only stored edges (`domain/adoption.document_view`; a history
+copy of a drawn connection stands in for it and is tagged `data.manual`, one
+per connection). So:
+
+- "history edge" vs "drawn edge" no longer differ on the canvas; the
+  connection id is still the one identity.
+- Removing an edge, drawn or not, HIDES its connection and keeps the row
+  (D2, `layout_service.delete_edge`); redrawing it unhides (`put_edge`).
+- A removed edge is never adopted back (the marker), even though history
+  still records it.
+- A node runs from its stored edges (`execution_service.derive_target_for_node`);
+  a hidden input with no visible edge on that port disconnects it
+  (`document_disconnected_ports`). `reconcile_manual_inputs` is deleted.

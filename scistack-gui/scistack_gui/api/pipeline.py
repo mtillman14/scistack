@@ -99,127 +99,6 @@ def _build_matlab_fn_proxy(fn_name: str):
     return proxy
 
 
-def _own_state_for_function(
-    db: DatabaseManager,
-    fn_name: str,
-    fn_out_types: set[str],
-    call_id: str | None = None,
-) -> str:
-    """
-    Return the own run state ("green"/"grey"/"red") for a single function
-    by calling scidb.check_node_state.
-
-    When ``call_id`` is provided, restricts the state computation to records
-    produced by that specific for_each call site. Used for manual (not yet
-    graduated) function nodes, which fall outside the batched
-    ``_compute_run_states`` pass since they have no recorded call site yet.
-
-    Falls back to "red" for unregistered functions (never executed or not
-    importable in this session).
-    """
-    from scidb import BaseVariable, check_node_state
-
-    # lookup_function also covers library references, which resolve by
-    # import — without it a pandas.read_csv node reads as permanently red.
-    fn_obj = registry.lookup_function(fn_name)
-    if fn_obj is None:
-        # Try MATLAB registry — build a proxy with the right hash.
-        from scistack_gui import matlab_registry
-
-        if matlab_registry.is_matlab_function(fn_name):
-            fn_obj = _build_matlab_fn_proxy(fn_name)
-        else:
-            # Function not registered in this session — can't run state check.
-            return "red"
-
-    output_classes = [
-        BaseVariable._all_subclasses[t]
-        for t in fn_out_types
-        if t in BaseVariable._all_subclasses
-    ]
-    if not output_classes:
-        return "red"
-
-    try:
-        result = check_node_state(fn_obj, output_classes, db=db, call_id=call_id)
-        state = result["state"]
-        counts = result.get("counts", {})
-        logger.debug(
-            "state(%s call_id=%s): %s (up_to_date=%d, stale=%d, missing=%d)",
-            fn_name,
-            call_id,
-            state,
-            counts.get("up_to_date", 0),
-            counts.get("stale", 0),
-            counts.get("missing", 0),
-        )
-        return state
-    except Exception:
-        logger.exception(
-            "check_node_state failed for %s call_id=%s — falling back to red",
-            fn_name,
-            call_id,
-        )
-        return "red"
-
-
-def _wiring_conflicts_with_candidate(
-    inferred_inputs: dict[str, str],
-    output_types: list[str],
-    candidate_input_params: dict,
-    candidate_output_types,
-) -> bool:
-    """Whether a manual function node's OWN resolved wiring actively
-    contradicts a candidate DB call site's real wiring.
-
-    Absence of wiring info is NOT a conflict — a freshly-placed, still
-    unwired function node has no basis to distinguish "this is the same
-    call site" from "this is a different one", so it graduates into a
-    single matching candidate immediately (existing UX — see
-    test_graduation_preserves_sub_scope_membership, which places a bare
-    functionNode with no edges at all and expects it to graduate). A
-    conflict is only genuine once the manual node is ACTIVELY wired to a
-    variable type that differs from the candidate's for that same param
-    or output (e.g. compute_rolling_vo2 fed by RawHeartRate instead of
-    the candidate's RawVO2).
-    """
-    for param, var_type in inferred_inputs.items():
-        real_type = candidate_input_params.get(param)
-        if real_type and real_type != var_type:
-            return True
-        if not real_type:
-            # The manual node ACTIVELY binds a variable to a parameter the
-            # candidate has no variable on (added to the signature after the
-            # candidate's runs, or left unbound there). That is a different
-            # wiring, not missing information: graduating would fold this
-            # node into the candidate and the edge would then only be
-            # honoured as an overlay on it (graph_builder.manual_input_
-            # overrides) — the user dragged a fresh node precisely to get a
-            # separate call site (grSides/Demographics, 2026-09-15).
-            return True
-    if output_types and candidate_output_types:
-        if not set(output_types) & set(candidate_output_types):
-            return True
-    return False
-
-
-def _find_db_fn_candidate(
-    agg, fn_label: str, wiring: str
-) -> tuple[dict, set] | None:
-    """Real (input_params, output_types) for a DB-derived (fn_label,
-    wiring) call site group, or None if it doesn't exist.
-
-    ``agg`` here must be the WIRING-GROUPED aggregate (post
-    ``group_call_sites_by_wiring`` — see ``_build_graph``), whose keys are
-    ``(fn_name, wiring_id)``, matching what a DB-derived function node id
-    (``fn__{fn_name}__{wiring_id}``) encodes.
-    """
-    key = (fn_label, wiring)
-    if key not in agg.fn_input_params and key not in agg.fn_outputs:
-        return None
-    return agg.fn_input_params.get(key, {}), agg.fn_outputs.get(key, set())
-
-
 #: Ambiguity signatures already reported in this process, so "two nodes are
 #: wired identically" is said ONCE rather than on every graph build. The popup
 #: still arrives with every response (the panel that shows it may have mounted
@@ -384,6 +263,25 @@ def _resolve_node_identity(
         hidden_edge_ids,
         current_by_node,
     )
+    # Stored nodes that have never run state a wiring too (rule 1). Without
+    # this, a hand-placed node whose exact wiring a script then ran got a
+    # third node beside it once graduation was removed (Stage 5).
+    # A removed (hidden) row keeps its row (never delete) but must not claim.
+    from scistack_gui import pipeline_store as _ps_hidden
+
+    hidden_everywhere = _ps_hidden.get_hidden_node_ids(db, None)
+    claimable = {
+        nid: meta
+        for nid, meta in manual_nodes.items()
+        if nid not in hidden_everywhere
+    }
+    for key, holders in gb.document_stated_claims(
+        claimable, manual_edges, current_by_node, history
+    ).items():
+        merged = stated_by.setdefault(key, [])
+        for node_id in holders:
+            if node_id not in merged:
+                merged.append(node_id)
     plan = node_identity.resolve_identities(
         history,
         associations=associations,
@@ -775,13 +673,18 @@ def _build_graph(
     pending_constants, removals = gb.auto_clean_pending_constants(
         pending_constants, agg
     )
+    # A value that has run everywhere it is used stops being PENDING (it no
+    # longer overrides) but stays STATED: values are part of the canvas
+    # document and outlive their history (plan-canvas-as-document §4).
     for const_name, pval in removals:
-        _ps.remove_pending_constant(db, const_name, pval)
-    if removals:
-        logger.debug(
-            "[pipeline] removed %d pending constant value(s) that are now in database",
-            len(removals),
-        )
+        _ps.promote_pending_constant(db, const_name, pval)
+    stated_constants = _ps.get_stated_constants(db)
+    logger.debug(
+        "[pipeline] %d pending value(s) promoted to stated; %d Parameter(s) "
+        "carry stated values",
+        len(removals),
+        len(stated_constants),
+    )
 
     # --- Disconnected wirings (hidden required inbound edges) ---
     # Computed on the PRE-GROUPING agg — every call site sharing a wiring
@@ -904,6 +807,9 @@ def _build_graph(
     # --- Group call sites by wiring (one canvas node per fn + IO shape) ---
     # Constant-value call sites become variant rows (with their own state
     # chips) inside one node; staged pending values get synthesized rows.
+    # The per-call-site aggregate, before grouping: canvas adoption reads the
+    # recorded steps from it (services/adoption.gui_recorded_wirings).
+    history_agg = agg
     logger.info("[pipeline] Grouping call sites by wiring")
     agg, run_states, wiring_member_map = gb.group_call_sites_by_wiring(
         agg,
@@ -945,23 +851,15 @@ def _build_graph(
 
     saved_configs: dict[str, dict | None] = {}
     for fn in fn_names:
-        # Manual nodes can use either the legacy `fn__{fn}` ID or the
-        # composite `fn__{fn}__{call_id}` ID.  Look up the legacy form
-        # first (matches the pre-call-id node), then any composite manual
-        # node for this fn_name as a fallback.
-        cfg = node_configs.get(legacy_fn_node_id(fn)) or manual_nodes.get(legacy_fn_node_id(fn), {}).get(
-            "config"
-        )
-        if cfg is None:
-            for _nid, meta in manual_nodes.items():
-                if (
-                    meta.get("type") == "functionNode"
-                    and meta.get("label") == fn
-                    and meta.get("config")
-                ):
-                    cfg = meta["config"]
-                    break
-        saved_configs[fn] = cfg
+        # Only the legacy pre-call-id `fn__{fn}` node. Until 2026-10-22 this
+        # also took the config of ANY hand-placed node with the same label,
+        # so a fresh node's settings showed on the history node it would
+        # graduate into. Function nodes no longer graduate (canvas-as-document
+        # Stage 5), so that fallback put one node's settings on another.
+        # A node's settings are keyed by its own id (node_configs).
+        saved_configs[fn] = node_configs.get(legacy_fn_node_id(fn)) or manual_nodes.get(
+            legacy_fn_node_id(fn), {}
+        ).get("config")
 
     matlab_functions = set(_mr.get_all_function_names())
     matlab_output_order = {
@@ -1069,6 +967,13 @@ def _build_graph(
         hidden_const_values,
         _ps.get_parameter_value_groups(db),
         entities_file,
+        # A hidden Parameter stays off the canvas: its stated values must not
+        # bring its node back (the same rule source_parameters follows above).
+        stated_values={
+            name: values
+            for name, values in stated_constants.items()
+            if f"{ids.PARAM_ID_PREFIX}{name}" not in hidden_ids
+        },
     )
     const_node_count = len(nodes) - var_node_count
     nodes += gb.build_path_input_nodes(agg.path_inputs)
@@ -1105,42 +1010,10 @@ def _build_graph(
         fn_node_count,
     )
 
-    # --- Manual input edges onto history nodes ---
-    # The edges visible on the DAG are the ground truth, for display and for
-    # execution (docs/claude/manual-edges-on-history-nodes.md). A history
-    # node's input_params come from provenance above; a manual variable edge
-    # the user drew onto one of its in__ handles must show there too, or the
-    # handle, the Inputs column picker and the code export all describe a
-    # wiring the run (variant_resolver.reconcile_manual_inputs, same rule
-    # owner) will not use. Node identity is untouched: the overlay is on the
-    # built node data only.
-    #
-    # **Nothing is repaired afterwards any more** (Stage 6 of
-    # `.claude/plan-node-identity.md`). Until 2026-09-22 a run through an
-    # overlay produced a SECOND node — history recorded the effective wiring,
-    # and the id was a hash of the recorded wiring — so the build had to
-    # detect that, rewrite the manual edge onto the new node and carry every
-    # `_intent` statement across (`superseded_manual_input_overrides` +
-    # `_migrate_node_statements`). Under allocated ids the run's wiring is
-    # claimed by the node that STATED it (`_resolve_node_identity`), so there
-    # is no new node, nothing to rewrite and nothing to carry. Both functions
-    # are gone rather than left as dead paths.
-    input_overrides = gb.collect_manual_input_overrides(
-        nodes,
-        agg.fn_input_params,
-        agg.fn_constants,
-        manual_edges_for_fn_lookup,
-        manual_nodes,
-        hidden_edge_ids,
-    )
-    if input_overrides:
-        overlaid = gb.overlay_manual_inputs(nodes, input_overrides)
-        if overlaid:
-            logger.info(
-                "[pipeline] manual input overlay applied to %d history node(s): %s",
-                overlaid,
-                input_overrides,
-            )
+    # Inputs drawn onto a node are shown from its stored edges, after the
+    # document view (gb.document_input_params). The overlay that patched a
+    # history node with the edges drawn onto it is gone (canvas-as-document
+    # Stage 5): there is one source for an input, its edge.
 
     # --- Tag disconnected function nodes ---
     # By this point agg is grouped by NODE, so a function node id's trailing
@@ -1191,177 +1064,50 @@ def _build_graph(
         len(saved_positions),
         len(positions_by_scope),
     )
+    # Hidden rows are not drawn. A removed node keeps its stored row (never
+    # delete; layout.delete_node only hides it), so the hide is what takes it
+    # off this canvas.
+    hidden_rows = sorted(
+        nid
+        for nid in manual_nodes
+        if nid in hidden_ids or ids.strip_placement(nid) in hidden_ids
+    )
+    if hidden_rows:
+        logger.debug("[pipeline] %d hidden stored row(s) not drawn: %s", len(hidden_rows), hidden_rows)
     mergeable_manual_nodes = {
         nid: meta
         for nid, meta in manual_nodes.items()
-        if meta.get("type") != "pipelineNode"
+        if meta.get("type") != "pipelineNode" and nid not in hidden_rows
     }
     to_add, graduations = gb.merge_manual_nodes(
         nodes, mergeable_manual_nodes, saved_positions
     )
 
-    # Function-node graduation refinement — merge_manual_nodes decides by
-    # (type, label) alone, which is no longer sufficient now that multiple
-    # real call sites can share one function name (e.g. compute_rolling_vo2
-    # fed by RawVO2 in one node, RawHeartRate in another). Two passes, both
-    # keyed off each manual function node's OWN resolved wiring:
-    #
-    # Pass 1 (reject): merge_manual_nodes proposed graduation because
-    # exactly one label-matched candidate exists — but "exactly one"
-    # candidate isn't necessarily the RIGHT one once other wirings share
-    # the label. Absence of wiring info (never wired yet) is NOT treated
-    # as a conflict — see test_graduation_preserves_sub_scope_membership,
-    # a bare unwired node with a single real candidate must still graduate
-    # immediately, the original one-candidate-wins UX.
-    #
-    # Pass 2 (promote): merge_manual_nodes REFUSED to graduate at all
-    # because 0 or >1 candidates share the label — but if this manual
-    # node's own wiring uniquely matches exactly one of them (however many
-    # OTHER same-named candidates also exist), it should still graduate.
-    # Without this, a manual node that's already been run successfully
-    # (and shows green) never merges with its own real counterpart once a
-    # second same-named wiring exists: a permanent duplicate "replica"
-    # node stays on the canvas forever (found via a real GUI session).
+    # Function nodes no longer graduate (plan-canvas-as-document Stage 5):
+    # `merge_manual_nodes` folds entity boxes only. The wiring-matching passes
+    # that used to sit here (reject a label match whose wiring conflicts,
+    # promote a unique wiring match, prefer the graduation with wiring
+    # evidence) existed to decide which same-named history node a hand-placed
+    # function node "really" was. A node that ran claims its wiring at
+    # dispatch, so it IS that history node under its own id, and nothing is
+    # left to decide.
     existing_node_labels = {n["id"]: n["data"]["label"] for n in nodes}
 
-    def _resolve_manual_fn_wiring(node_id: str, fn_label: str):
-        resolved = resolve_function_edges(
-            fn_node_ids={node_id},
-            manual_edges=manual_edges_list,
-            manual_nodes=manual_nodes,
-            existing_node_labels=existing_node_labels,
-        )
-        # Identity comparison against a DB candidate: the variable_types_view
-        # shape (bare for one type), the same one history records.
-        inferred_inputs = {p: t for p, t in resolved.input_types.items() if t}
-        return resolved, inferred_inputs
-
-    validated_graduations = []
-    for action in graduations:
-        meta = manual_nodes[action.old_id]
-        if meta["type"] != "functionNode":
-            validated_graduations.append(action)
-            continue
-        resolved, inferred_inputs = _resolve_manual_fn_wiring(action.old_id, meta["label"])
-        candidate_parsed = ids.parse_fn_node_id(action.new_id)
-        candidate = (
-            _find_db_fn_candidate(agg, meta["label"], candidate_parsed[1])
-            if candidate_parsed is not None
-            else None
-        )
-        conflict = candidate is not None and _wiring_conflicts_with_candidate(
-            inferred_inputs, resolved.output_types, candidate[0], candidate[1]
-        )
-        if not conflict:
-            validated_graduations.append(action)
-        else:
-            logger.warning(
-                "[pipeline] graduation candidate %s -> %s rejected: manual "
-                "node's own wiring (inputs=%s, outputs=%s) conflicts with "
-                "the candidate's real wiring (inputs=%s, outputs=%s) — "
-                "keeping %s as a separate manual node",
-                action.old_id,
-                action.new_id,
-                inferred_inputs,
-                resolved.output_types,
-                candidate[0] if candidate else None,
-                candidate[1] if candidate else None,
-                action.old_id,
-            )
-            to_add.append(action.old_id)
-    graduations = validated_graduations
-
-    still_to_add = []
-    for node_id in to_add:
-        meta = manual_nodes[node_id]
-        if meta["type"] != "functionNode":
-            still_to_add.append(node_id)
-            continue
-        resolved, inferred_inputs = _resolve_manual_fn_wiring(node_id, meta["label"])
-        if not resolved.output_types:
-            still_to_add.append(node_id)
-            continue
-        # The node id's trailing segment is the node's TOKEN, which is the
-        # wiring only for a node that has never been rewired — so the manual
-        # node's own computed wiring has to go through the same mapping the
-        # graph was built with before it can be compared with one.
-        my_wiring = token_for(
-            meta["label"],
-            gb.wiring_id(
-                meta["label"],
-                inferred_inputs,
-                set(resolved.output_types),
-                resolved.path_input_params,
-            ),
-        )
-        matches = [
-            n["id"]
-            for n in nodes
-            if n["type"] == "functionNode"
-            and n["data"]["label"] == meta["label"]
-            and (ids.parse_fn_node_id(n["id"]) or (None, None))[1] == my_wiring
-        ]
-        if len(matches) != 1:
-            still_to_add.append(node_id)
-            continue
-        target_id = ids.placement_id(matches[0], meta.get("pipeline_id") or ids.ROOT_SCOPE)
-        if target_id in saved_positions:
-            still_to_add.append(node_id)
-            continue
-        logger.debug(
-            "[pipeline] wiring-matched graduation: %s -> %s (inputs=%s, outputs=%s)",
-            node_id,
-            target_id,
-            inferred_inputs,
-            resolved.output_types,
-        )
-        graduations.append(gb.GraduationAction(old_id=node_id, new_id=target_id))
-    to_add = still_to_add
-
-    # Collision guard — the passes above each decide, per manual node,
-    # "does THIS ONE graduate" without knowing about siblings. Two manual
-    # nodes sharing a label can independently resolve to the SAME target
-    # (e.g. one wired-and-run, one left completely unwired: Pass 1's
-    # "absence of wiring is not a conflict" rule lets the unwired one
-    # graduate too, since from its own perspective there's no evidence it's
-    # different). graduate_manual_node only deletes the manual row and
-    # never creates the target (it already exists from real DB data), so a
-    # second graduation to the same target silently deletes that manual
-    # node with nothing left to show for it — found via a real GUI session
-    # (two compute_rolling_vo2 placeholders, one wired to RawVO2 and run,
-    # one left completely disconnected; running the first made the second
-    # vanish, see plan-duplicate-manual-node-graduation-collision.md).
-    #
-    # Resolve by preferring the graduation with actual wiring evidence (a
-    # non-empty inferred input/output type — i.e. it matched its candidate
-    # on more than "you were the only option") over one that only passed
-    # because it had no wiring to contradict anything. Ties (or all-unwired
-    # collisions) keep one deterministically; the rest are demoted back to
-    # a normal (red, unrun) manual node instead of being deleted.
-    def _has_wiring_evidence(action: gb.GraduationAction) -> bool:
-        meta = manual_nodes[action.old_id]
-        if meta["type"] != "functionNode":
-            return True
-        resolved, inferred_inputs = _resolve_manual_fn_wiring(action.old_id, meta["label"])
-        return bool(inferred_inputs) or bool(resolved.output_types)
-
+    # Collision guard, entities only: two hand-placed boxes of one entity can
+    # both resolve to the same canonical node. One folds; the others stay
+    # separate boxes (today's behaviour, user decision D3) rather than being
+    # deleted with nothing left to show for them.
     by_target: dict[str, list[gb.GraduationAction]] = {}
     for action in graduations:
         by_target.setdefault(action.new_id, []).append(action)
-
     deduped_graduations = []
     for target_id, actions in by_target.items():
-        if len(actions) == 1:
-            deduped_graduations.append(actions[0])
-            continue
-        ranked = sorted(actions, key=lambda a: not _has_wiring_evidence(a))
-        winner, losers = ranked[0], ranked[1:]
+        winner, losers = actions[0], actions[1:]
         deduped_graduations.append(winner)
         for loser in losers:
             logger.warning(
-                "[pipeline] graduation collision on target %s: %s and %s "
-                "both resolved to the same target — keeping %s, demoting "
-                "%s back to a separate manual node",
+                "[pipeline] fold collision on target %s: %s and %s both fold "
+                "into it — keeping %s, %s stays a separate box",
                 target_id,
                 winner.old_id,
                 loser.old_id,
@@ -1483,61 +1229,38 @@ def _build_graph(
                     state_output_types,
                 )
             if state_output_types:
-                # _own_state_for_function checks scidb.check_node_state
-                # without a call_id, so it answers "has THIS FUNCTION NAME
-                # ever produced these outputs" — blind to which inputs fed
-                # it. Two manual nodes can share a function name while
-                # being wired to different inputs (e.g. compute_rolling_vo2
-                # fed by RawVO2 vs. by RawHeartRate); without this guard,
-                # the second would read the first's completed run as its
-                # own and show green despite never having been run. Same
-                # conflict check the graduation-candidate validation above
-                # uses — an unwired/partially-wired node is still trusted
-                # (no basis to say it's different), only an ACTIVE mismatch
-                # forces red.
-                found_any_history = False
-                compatible_with_some_history = False
-                for fn_name, wid in agg.fn_input_params:
-                    if fn_name != fn_label:
-                        continue
-                    found_any_history = True
-                    real_inputs, real_outputs = _find_db_fn_candidate(
-                        agg, fn_label, wid
-                    )
-                    if not _wiring_conflicts_with_candidate(
-                        inferred_inputs, state_output_types, real_inputs, real_outputs
-                    ):
-                        compatible_with_some_history = True
-                        break
-                trust_history = not found_any_history or compatible_with_some_history
-                if trust_history:
-                    manual_fn_state = _own_state_for_function(
-                        db, fn_label, set(state_output_types)
-                    )
-                else:
-                    manual_fn_state = "red"
+                # The colour of the step this node STATES: the run state of
+                # whichever node history attributes that wiring to, else red.
+                # Until 2026-10-22 this read the state by function NAME and
+                # guarded it with a wiring-conflict heuristic shared with
+                # graduation; both are gone with graduation (Stage 5). A
+                # wiring is the one thing that says which history is this
+                # node's.
+                stated_wiring = gb.wiring_id(
+                    fn_label,
+                    {p: t for p, t in resolved.input_types.items() if t},
+                    set(state_output_types),
+                    resolved.path_input_params,
+                )
+                owner = identity.node_by_wiring.get((fn_label, stated_wiring))
+                manual_fn_state = (
+                    run_states.get(str(owner)) or "red" if owner is not None else "red"
+                )
                 # INFO: a manual node's colour is decided here and nowhere
-                # the run-state pass logs (propagate_run_states covers only
-                # DB-derived call sites), so without this line "why is this
+                # the run-state pass logs, so without this line "why is this
                 # node red/green" has no answer in scidb.log.
                 logger.info(
-                    "[pipeline] manual fn node %s (%s): state=%s — outputs=%s, "
-                    "inputs=%s, history for %s: %s",
+                    "[pipeline] manual fn node %s (%s): state=%s — states wiring %s "
+                    "(outputs=%s, inputs=%s), %s",
                     node_id,
                     fn_label,
                     manual_fn_state,
+                    stated_wiring,
                     state_output_types,
                     inferred_inputs,
-                    fn_label,
-                    (
-                        "none (state read by function name + outputs)"
-                        if not found_any_history
-                        else "compatible call site found (state read by "
-                        "function name + outputs)"
-                        if compatible_with_some_history
-                        else "every call site conflicts with this wiring "
-                        "(forced red)"
-                    ),
+                    f"recorded under node {owner}"
+                    if owner is not None
+                    else "which history has never run",
                 )
             else:
                 manual_fn_state = "red"
@@ -1551,7 +1274,13 @@ def _build_graph(
         node = gb.build_manual_node(
             node_id,
             meta,
-            pending_constants,
+            # A hand-placed Parameter shows its stated values too, not just
+            # the pending ones (values outlive history: plan §4).
+            {
+                name: set(pending_constants.get(name, set()))
+                | set(stated_constants.get(name, set()))
+                for name in set(pending_constants) | set(stated_constants)
+            },
             manual_fn_state,
             resolved_input_params,
             resolved_output_types,
@@ -1580,25 +1309,68 @@ def _build_graph(
             len(graduations),
         )
 
-    # --- Re-dedup after endpoint rewrites ---
-    # build_edges deduped manual edges against DB-derived ones, but that ran
-    # BEFORE graduation above, which rewrites manual-edge endpoints onto
-    # DB-derived node ids — exactly what turns a manual edge into a
-    # duplicate of a DB-derived one. Without
-    # this pass the FIRST build after a run returns both copies of every
-    # just-graduated wire (the next, unrelated rebuild returns the correct
-    # set), so the canvas draws doubled edges until something else refreshes
-    # it. Unconditional and idempotent: with no rewrites it drops nothing.
-    edges, superseded_edges = gb.drop_superseded_manual_edges(edges)
-    if superseded_edges:
+    # --- Adoption (plan-canvas-as-document Stage 2) ---
+    # Whatever history would draw that the document does not store yet is
+    # stored now, once, under the id it already has, so this build and every
+    # later one draw the same picture whether or not history is still there.
+    # Inside an undoable handler's recording window it is NOT written (it is
+    # not an undo step; see services/adoption.py) and the plan is only drawn.
+    from scistack_gui import history as _history
+    from scistack_gui.domain.adoption import document_view
+    from scistack_gui.services import adoption as _adoption
+
+    adoption_plan, combo_hides = _adoption.plan_for_build(
+        db,
+        nodes=nodes,
+        edges=edges,
+        manual_nodes=manual_nodes,
+        drawn_edges=manual_edges_list,
+        positions_by_scope=positions_by_scope,
+        agg=history_agg,
+        scidb_agg=scidb_agg,
+    )
+    adoption_event = None
+    deferred_adoption = None
+    if not adoption_plan.empty or combo_hides:
+        if _history.is_recording():
+            deferred_adoption = adoption_plan
+            logger.info(
+                "[pipeline] adoption deferred (inside an undoable edit's recording "
+                "window; the next plain build stores it): %s",
+                adoption_plan.summary(),
+            )
+        else:
+            adoption_event = _adoption.write(db, adoption_plan, combo_hides)
+            manual_nodes = _ps.get_manual_nodes(db)
+            edge_view = effective_edges(
+                db, pipeline_id, caller=f"_build_graph({pipeline_id}) after adoption"
+            )
+            manual_edges_list = edge_view.drawn_list
+
+    # --- The document view (Stage 3) ---
+    # Only stored rows are drawn. History annotates the nodes kept (run
+    # state, counts, variant rows), joined by id; it no longer decides what
+    # exists. This also replaces the duplicate-edge cleanup graduation needed
+    # (drop_superseded_manual_edges): one edge per connection survives.
+    nodes, edges, document_counts = document_view(
+        nodes,
+        edges,
+        manual_nodes=manual_nodes,
+        drawn_edges=manual_edges_list,
+        pending=deferred_adoption,
+    )
+    logger.info("[pipeline] document view scope=%s: %s", pipeline_id, document_counts)
+    inputs_changed = gb.document_input_params(
+        nodes,
+        manual_edges_list + (deferred_adoption.edges if deferred_adoption else []),
+        manual_nodes,
+        existing_node_labels,
+    )
+    if inputs_changed:
         logger.info(
-            "[pipeline] dropped %d manual edge(s) superseded by DB-derived "
-            "edges after endpoint rewriting: %s",
-            len(superseded_edges),
-            ", ".join(
-                f"{e['id']} ({e['source']} -> {e['target']})"
-                for e in superseded_edges
-            ),
+            "[pipeline] %d function node(s) show inputs from their stored edges "
+            "that differ from what history recorded",
+            inputs_changed,
         )
 
     logger.info("[pipeline] Filtering graph to scope %s", pipeline_id)
@@ -1706,6 +1478,16 @@ def _build_graph(
         )
 
     result = {"nodes": nodes, "edges": edges, "pipeline_id": pipeline_id}
+    # How much of this canvas is stored rows vs. re-derived from run history
+    # on every build (plan-canvas-as-document Stage 0). The stages that
+    # follow drive `nodes_derived` and `edges_derived` to zero.
+    from scistack_gui.domain.canvas_shape import canvas_sources
+
+    logger.info(
+        "[pipeline] canvas_sources scope=%s: %s",
+        pipeline_id,
+        canvas_sources(result, set(manual_nodes)),
+    )
     if identity_warnings:
         # §7b: a popup, not just a log line. Two nodes stating identical
         # wiring compute identical things, so the state is almost certainly
@@ -1713,6 +1495,10 @@ def _build_graph(
         # reads. It is also recoverable (rewire one), which is why nothing is
         # merged and the message says what will happen until they differ.
         result["warnings"] = identity_warnings
+    # Q1 (user, 2026-10-21): adoption is automatic, with a notification.
+    notice = _adoption.notification(adoption_plan, adoption_event) if adoption_event else None
+    if notice is not None:
+        result.setdefault("warnings", []).append(notice)
     return result
 
 

@@ -54,4 +54,9 @@ def test_manual_edges_go_to_the_passed_db(populated_db, other_db):
     assert pipeline_store.get_manual_edges(populated_db) == []
 
     layout_service.delete_edge(other_db, "manual__route1")
-    assert pipeline_store.get_manual_edges(other_db) == []
+    # Removing an edge hides it and keeps the row (D2, 2026-10-22); the hide
+    # lands in the database it was asked about.
+    assert [e["edge_id"] for e in pipeline_store.list_hidden_edges(other_db)] == [
+        "manual__route1"
+    ]
+    assert pipeline_store.list_hidden_edges(populated_db) == []

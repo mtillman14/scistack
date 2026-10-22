@@ -1064,12 +1064,86 @@ def remove_pending_constant(db, const_name: str, value: str) -> int:
     )
 
 
+#: The two states a `constants` statement can be in (canvas-as-document,
+#: `docs/claude/canvas-as-document-explained.md` Step 1).
+#:
+#: * PENDING (`True`, every row written before 2026-10-22): "run this value
+#:   next". It OVERRIDES the recorded value on the next Run
+#:   (`execution_service.apply_pending_overrides`).
+#: * STATED: "this value belongs to the Parameter". It is part of the canvas
+#:   document and survives a clear-data, but changes nothing about what a run
+#:   of recorded rows computes. Written by adoption (recorded values) and by
+#:   `promote_pending_constant` once a pending value has run everywhere.
+CONSTANT_PENDING = True
+CONSTANT_STATED = "stated"
+
+
 def pending_constants(db) -> dict[str, set[str]]:
+    """``{Parameter: {value}}`` still PENDING: the override set. Stated values
+    are deliberately not here (see :data:`CONSTANT_STATED`)."""
     out: dict[str, set[str]] = {}
     for s in load_statements(db, aspect=ASPECT_CONSTANTS, subject_kind=SUBJECT_PARAMETER):
-        if s.key is not None:
+        if s.key is not None and s.value != CONSTANT_STATED:
             out.setdefault(s.subject_ref, set()).add(s.key)
     return out
+
+
+def stated_constants(db) -> dict[str, set[str]]:
+    """``{Parameter: {value}}`` that are STATED (not pending)."""
+    out: dict[str, set[str]] = {}
+    for s in load_statements(db, aspect=ASPECT_CONSTANTS, subject_kind=SUBJECT_PARAMETER):
+        if s.key is not None and s.value == CONSTANT_STATED:
+            out.setdefault(s.subject_ref, set()).add(s.key)
+    return out
+
+
+def state_constants(db, values) -> int:
+    """Write ``(Parameter, value)`` pairs as STATED, never touching a value
+    that already has a statement (pending wins: it is the user's newer word).
+    Returns how many were written."""
+    existing: set[tuple[str, str]] = {
+        (s.subject_ref, s.key)
+        for s in load_statements(db, aspect=ASPECT_CONSTANTS, subject_kind=SUBJECT_PARAMETER)
+        if s.key is not None
+    }
+    statements = [
+        Statement(
+            subject_kind=SUBJECT_PARAMETER,
+            subject_ref=name,
+            aspect=ASPECT_CONSTANTS,
+            value=CONSTANT_STATED,
+            key=str(value),
+            scope=GLOBAL_SCOPE,
+            stated_at=_now(),
+        )
+        for name, value in values
+        if (name, str(value)) not in existing
+    ]
+    if statements:
+        put_statements(db, statements)
+    return len(statements)
+
+
+def promote_pending_constant(db, const_name: str, value: str) -> None:
+    """A pending value that has now run everywhere it is used becomes STATED.
+
+    Until 2026-10-22 it was deleted instead (``auto_clean_pending_constants``):
+    the value moved from intent to fact, and a clear-data took it off the
+    Parameter. Stated, it stays on the canvas and stops overriding."""
+    put_statements(
+        db,
+        [
+            Statement(
+                subject_kind=SUBJECT_PARAMETER,
+                subject_ref=const_name,
+                aspect=ASPECT_CONSTANTS,
+                value=CONSTANT_STATED,
+                key=str(value),
+                scope=GLOBAL_SCOPE,
+                stated_at=_now(),
+            )
+        ],
+    )
 
 
 # ---------------------------------------------------------------------------

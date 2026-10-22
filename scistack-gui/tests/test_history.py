@@ -288,7 +288,7 @@ def test_every_gui_table_is_tracked():
     for path in GUI_PKG.rglob("*.py"):
         created |= set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", path.read_text()))
     assert created, "the scan found no tables — the pattern is stale"
-    assert created == set(history.tracked_tables()), (
+    assert created == set(history.tracked_tables()) | set(history.UNTRACKED_TABLES), (
         "a GUI table must be listed in its module's UNDOABLE_TABLES "
         "(docs/claude/undo-redo.md)"
     )
@@ -301,6 +301,7 @@ _WRITE_ALLOWLIST = {
     ("bundle_section.py", "import_"): "writes a NEW project's code (bundle import), not an edit to undo",
     ("services/plot_service.py", "_figure_filename"): "export manifest",
     ("services/stats_service.py", "export"): "export",
+    ("canvas_shape_cli.py", "main"): "diagnostic output file the user named, not a project edit",
 }
 
 _WRITE_MODES = re.compile(r"[wax+]")
@@ -394,3 +395,72 @@ def test_write_allowlist_names_existing_functions():
         if name not in defined:
             stale.append(f"{rel} {name}")
     assert stale == [], f"_WRITE_ALLOWLIST entries name no existing function: {stale}"
+
+
+# ---------------------------------------------------------------------------
+# The persisted change log (plan-canvas-as-document Q5)
+# ---------------------------------------------------------------------------
+
+
+class TestPersistedLog:
+    def test_a_change_is_logged_and_its_state_follows_undo(self, client):
+        client.post("/api/pipelines", json={"name": "Logged"}, headers=_change("p1", "Create"))
+        (entry,) = [c for c in history.list_changes() if c["change_id"] == "p1"]
+        assert entry["state"] == "applied"
+        assert "_pipelines" in entry["summary"]
+        assert _undo(client, "p1")["status"] == "ok"
+        (entry,) = [c for c in history.list_changes() if c["change_id"] == "p1"]
+        assert entry["state"] == "undone"
+
+    def test_undo_survives_a_restart(self, client):
+        """history.clear() drops every in-memory record, as a backend restart
+        does; the first read reloads them from the .duckdb."""
+        before = _pipeline_ids(client)
+        reply = client.post("/api/pipelines", json={"name": "Survivor"}, headers=_change("p2"))
+        pid = reply.json()["pipeline_id"]
+        history.clear()
+        assert _undo(client, "p2")["status"] == "ok"
+        assert _pipeline_ids(client) == before
+        history.clear()
+        assert _redo(client, "p2")["status"] == "ok"
+        assert pid in _pipeline_ids(client)
+
+    def test_an_old_change_still_refuses_on_conflict(self, client):
+        """Replaying a reloaded record is as safe as a fresh one."""
+        client.put("/api/layout/n_old", json={"x": 1, "y": 2}, headers=_change("p3"))
+        history.clear()
+        layout_store.write_node_position("n_old", 9.0, 9.0)  # someone else moved it
+        reply = _undo(client, "p3")
+        assert reply["status"] == "conflict"
+        assert layout_store.read_layout()["positions"]["n_old"] == {"x": 9.0, "y": 9.0}
+
+    def test_empty_records_are_not_logged(self, populated_db):
+        with history.recording("p4", label="nothing", method="m"):
+            pass
+        assert all(c["change_id"] != "p4" for c in history.list_changes())
+
+    def test_the_log_is_not_itself_undoable(self):
+        assert history.AUDIT_TABLE not in history.tracked_tables()
+
+
+def test_record_json_round_trip_keeps_types():
+    import datetime as dt
+
+    rec = history.ChangeRecord(
+        change_id="x",
+        label="l",
+        method="m",
+        columns={"t": ("k", "a", "b", "c")},
+        keys={"t": ("k",)},
+        rows={
+            "t": {
+                ("k1",): (None, ("k1", dt.datetime(2026, 10, 21, 12, 0), b"\x00\x01", [1, "two"])),
+                ("k2",): (("k2", 1.5, None, True), None),
+            }
+        },
+        files={"/tmp/f": history.FileChange(b"old", None, False)},
+        state="undone",
+        created_at=123.0,
+    )
+    back = history.record_from_json("x", "l", "m", "undone", 123.0, history.record_to_json(rec))
+    assert back == rec

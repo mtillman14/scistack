@@ -69,6 +69,11 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       hold fixed; each group's [min max] is appended as a
 %                       trailing positional arg (declare `<input>_limits`
 %                       trailing parameters in share_limits field order).
+%       schema_key_types - struct: schema key -> 'numeric' | 'string'.
+%                       Recorded in the DATABASE, which owns it: a key with
+%                       no stored type gets this one, the same type is a
+%                       no-op, a different one is an error. Accepted so a
+%                       scifor.for_each call runs here unchanged.
 %       categorical   - If true, convert metadata columns of the RETURNED
 %                       table to categorical (scifor.categorize_metadata),
 %                       after saving. (default: false)
@@ -376,6 +381,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'glue', py_glue, ...
                'parameter_names', py_parameter_names, ...
                'locations', py_locations, ...
+               'schema_key_types', scifor.key_types_to_py(opts.schema_key_types), ...
                'source_text', fn_source));
     scidb.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
 
@@ -1925,6 +1931,8 @@ function [meta_args, opts] = split_options(varargin)
     opts.share_limits = struct();
     opts.schema_keys = string.empty;
     opts.schema_keys_given = false;
+    % struct key -> 'numeric' | 'string'; recorded in the database (see help).
+    opts.schema_key_types = struct();
     opts.schema_filter = struct();
     % Glue chains: struct mapping an INPUT name to a function handle, or a
     % cell array of handles applied in order, reshaping that input's loaded
@@ -1948,7 +1956,7 @@ function [meta_args, opts] = split_options(varargin)
     reserved_opts = ["dryrun", "save", "preload", "astable", "db", ...
                      "parallel", "distribute", "where", "introspect", ...
                      "skipcomputed", "finalized", "categorical", "sharelimits", ...
-                     "schemakeys", "schemafilter", "glue", "parameternames", "locations", ...
+                     "schemakeys", "schemakeytypes", "schemafilter", "glue", "parameternames", "locations", ...
                      "fnname", "fnhash", "pipeline"];
 
     meta_args = {};
@@ -2016,6 +2024,11 @@ function [meta_args, opts] = split_options(varargin)
                     % (same function scidb.for_each's Python path uses).
                     opts.schema_keys = string(varargin{i+1});
                     opts.schema_keys_given = true;
+                    i = i + 2; continue;
+                case "schema_key_types"
+                    % struct: schema key -> 'numeric' | 'string'. The
+                    % database owns it; for_each_prepare records it there.
+                    opts.schema_key_types = varargin{i+1};
                     i = i + 2; continue;
                 case "schema_filter"
                     % struct: schema key -> explicit value list, overriding

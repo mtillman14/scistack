@@ -30,6 +30,13 @@ from .outputs import discard_db_only_kwargs, output_column_name
 from .pathinput import PathInput
 from .pathoutput import PathOutput
 from .schema import expand_schema_keys, get_schema
+from .schema_types import (
+    canonicalize_combos,
+    canonicalize_values,
+    numeric_match_keys,
+    validate_key_types,
+)
+from .schema_types import describe as describe_key_types
 
 # Periodic progress guards (module-level so tests can monkeypatch).
 # A progress line is emitted when the outermost iterated key's value changes,
@@ -95,6 +102,7 @@ def for_each(
     locations: "LocationFilter | dict | None" = None,
     share_limits: "dict[str, list[str]] | None" = None,
     schema_keys: "list[str] | None" = None,
+    schema_key_types: "dict[str, str] | None" = None,
     _all_combos: list[dict] | None = None,
     _log_fn: "Callable[[str], None] | None" = None,
     _progress_fn: "Callable[[dict], None] | None" = None,
@@ -152,6 +160,15 @@ def for_each(
                     sugar for passing ``key=[]`` for each one by hand (each
                     still auto-resolves via a DataFrame scan of the inputs).
                     Mutually exclusive with explicit **metadata_iterables.
+        schema_key_types: Optional ``{key: "numeric" | "string"}``
+                    (``scifor.schema_types``). ``numeric``: every spelling of
+                    one number is one value, from every source (explicit
+                    values, discovered files). ``string``: spelling is kept
+                    and a PathInput matches the key exactly (no
+                    zero-padding). Keys not listed keep the automatic
+                    behaviour: digit-only DISCOVERED values become numbers.
+                    In scidb.for_each the database owns this instead; there
+                    the argument records the type in the database.
         _all_combos: Pre-built list of metadata dicts; skips itertools.product().
                      Used by DB wrappers that pre-filter schema combinations.
         _log_fn: Deprecated — ignored. scifor now logs through the
@@ -196,6 +213,7 @@ def for_each(
     # here. Set them aside before anything reads metadata_iterables as
     # iteration axes, so a call written for scidb.for_each runs unchanged.
     metadata_iterables = discard_db_only_kwargs(metadata_iterables)
+    key_types = validate_key_types(schema_key_types)
 
     # Step -1: EachOf expansion — must be first, before any other logic.
     # Each alternative becomes an independent recursive for_each() call;
@@ -241,6 +259,7 @@ def for_each(
                 locations=locations,
                 share_limits=share_limits,
                 schema_keys=schema_keys,
+                schema_key_types=schema_key_types,
                 _progress_fn=_progress_fn,
                 _cancel_check=_cancel_check,
                 _path_input_resolver=_path_input_resolver,
@@ -307,6 +326,10 @@ def for_each(
     # still empty from PathInput filesystem discovery. Keys the user passed
     # with explicit (non-empty) values assert intent and are never
     # overwritten.
+    # Standalone = no caller pre-built the combos. scidb always does, after
+    # applying the DATABASE's key types itself, so the declaration below only
+    # ever governs a standalone loop.
+    standalone = _all_combos is None
     if _all_combos is None:
         user_explicit_keys = {
             k
@@ -355,6 +378,7 @@ def for_each(
                 user_explicit_keys,
                 log=lambda msg: Log.debug(msg, layer="scifor"),
                 condense_numeric=True,
+                key_types=key_types,
             )
             if discovered_combos is not None:
                 _all_combos = discovered_combos
@@ -386,6 +410,26 @@ def for_each(
                         f"column, or use a PathInput with a {{{key}}} "
                         f"placeholder."
                     )
+
+    # Step 2.6: declared key types (standalone only — see `standalone`).
+    # Explicit values of a numeric key collapse to one spelling, so trial=[1]
+    # and a discovered "001" are the same trial; discovered combos were
+    # already converted by apply_discovery. A string key turns off the
+    # zero-padding bridge when a PathInput is resolved per combo.
+    if standalone and key_types:
+        Log.info(
+            "schema key types: %s (declared in this call)",
+            describe_key_types(key_types),
+            layer="scifor",
+        )
+        for key, key_type in key_types.items():
+            values = metadata_iterables.get(key)
+            if isinstance(values, list) and values:
+                metadata_iterables[key] = canonicalize_values(key, values, key_type)
+        if _all_combos is not None:
+            _all_combos = canonicalize_combos(_all_combos, key_types)
+        if _path_input_resolver is None and any(t == "string" for t in key_types.values()):
+            _path_input_resolver = _exact_string_key_resolver(key_types)
 
     # Step 3: Validate distribute parameter and resolve target key.
     # (The schema is the caller's dataset schema. Until 2026-09-20 scidb
@@ -1151,6 +1195,20 @@ def _resolve_path_outputs(kwargs: dict, metadata: dict, column: "str | None") ->
         name: (v.resolve(metadata, column) if isinstance(v, PathOutput) else v)
         for name, v in kwargs.items()
     }
+
+
+def _exact_string_key_resolver(key_types: dict):
+    """A per-combo PathInput resolver under which ``string``-declared keys
+    match only literally (no ``1`` ↔ ``"001"`` bridge); every other key keeps
+    the numeric fallback (``schema_types.numeric_match_keys``)."""
+
+    def resolve(pi: PathInput, metadata: dict):
+        path, _ = pi.load_with_captures(
+            metadata, numeric_match=numeric_match_keys(metadata.keys(), key_types)
+        )
+        return path
+
+    return resolve
 
 
 def _resolve_path_inputs(kwargs: dict, metadata: dict, resolver=None) -> dict:
@@ -1976,6 +2034,7 @@ def resolve_pathinput_discovery(
     log=None,
     condense_numeric: bool = False,
     unsupplyable_keys: "set | None" = None,
+    key_types: "dict[str, str] | None" = None,
 ) -> "tuple[dict, list[dict] | None]":
     """Fill empty metadata iterables from PathInput filesystem discovery,
     then drop any key a fully static PathInput (no ``{key}`` placeholders)
@@ -1998,6 +2057,8 @@ def resolve_pathinput_discovery(
             there. Defaults to False so scidb's declared-only
             ``schema_key_types`` contract is unaffected; the standalone
             scifor call site opts in explicitly.
+        key_types: Declared schema-key types, forwarded to
+            ``PathInput.apply_discovery`` (``scifor.schema_types``).
         unsupplyable_keys: Keys that provably have NO source — neither the
             caller, nor the DB, nor this template can fill them — and which
             the caller is therefore going to drop from the iteration anyway.
@@ -2015,7 +2076,11 @@ def resolve_pathinput_discovery(
     if pi is None:
         return metadata_iterables, None
     metadata_iterables, discovered_combos = pi.apply_discovery(
-        metadata_iterables, user_explicit_keys, log=log, condense_numeric=condense_numeric
+        metadata_iterables,
+        user_explicit_keys,
+        log=log,
+        condense_numeric=condense_numeric,
+        key_types=key_types,
     )
     placeholder_keys = set(pi.placeholder_keys())
     if any(isinstance(v, list) and len(v) == 0 for v in metadata_iterables.values()):

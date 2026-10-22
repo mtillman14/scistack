@@ -52,6 +52,10 @@ def node_scope(node_id: str, manual_nodes: dict, positions_by_scope: dict) -> st
     """
     meta = manual_nodes.get(node_id)
     if meta is not None:
+        # A bare position wins over the row's scope, as in _resolve_in_scope.
+        for scope_id, positions in positions_by_scope.items():
+            if node_id in positions:
+                return scope_id
         return meta.get("pipeline_id") or ROOT_SCOPE
     parsed = parse_placement_id(node_id)
     if parsed is not None:
@@ -90,17 +94,36 @@ def _resolve_in_scope(
     """
     meta = manual_nodes.get(node_id)
     if meta is not None:
-        if (meta.get("pipeline_id") or ROOT_SCOPE) == scope_id:
-            return node_id
         # A hand-placed node that has run keeps its (allocated) id, so it is
         # ALSO a DB node, and can be placed in another scope by placement id:
         # duplicating a hypothesis does exactly that. Checking only the row's
         # own scope dropped every such node from the copy (scidb.log
         # 2026-10-01 23:03, "placed in [..., 'pipe_bf2a723782c5']" yet not in
         # that view).
+        #
+        # The placed spelling wins in the row's OWN scope too (2026-10-22). An
+        # adopted node keeps the id it had before it was stored, and a node
+        # positioned under `{id}::{scope}` was drawn under that id: answering
+        # with the bare id would orphan its position and every edge naming it
+        # (plan-canvas-as-document Stage 3).
         candidate = placement_id(node_id, scope_id)
         if candidate in positions_by_scope.get(scope_id, {}):
             return candidate
+        # A bare position is still the membership record: dragging a node
+        # onto another canvas writes its position there. Since adoption a node
+        # from a run is a stored row too, and its row's scope is where it was
+        # FIRST drawn, so a bare position elsewhere must win over it or a move
+        # would not take (test_position_moves_db_derived_node_between_scopes).
+        if node_id in positions_by_scope.get(scope_id, {}):
+            return node_id
+        if any(
+            node_id in positions
+            for sid, positions in positions_by_scope.items()
+            if sid != scope_id
+        ):
+            return None
+        if (meta.get("pipeline_id") or ROOT_SCOPE) == scope_id:
+            return node_id
         return None
 
     parsed = parse_placement_id(node_id)
@@ -181,10 +204,18 @@ def resolve_scope_view(
     placed_by_edge = []
     for n in nodes:
         resolved = _resolve(n["id"])
-        if n["id"] not in manual_nodes and parse_placement_id(n["id"]) is None:
+        if parse_placement_id(n["id"]) is None:
             placed = placement_id(n["id"], scope_id)
             if placed in edge_placed and resolved != placed:
-                if resolved is not None and resolved in positions_by_scope.get(scope_id, {}):
+                # A stored row drawn here under its bare id (its own scope,
+                # nothing positioned under the placed spelling): the edge
+                # names the same node, so map it rather than rename the node.
+                # Since adoption (2026-10-22) a node that ran is a stored row
+                # too, so this case is no longer only DB-derived nodes.
+                if resolved is not None and (
+                    resolved in positions_by_scope.get(scope_id, {})
+                    or n["id"] in manual_nodes
+                ):
                     # Positioned here under its bare id: the edge names the
                     # same node by its placed spelling -- map, don't move it
                     # (moving would orphan its saved position).

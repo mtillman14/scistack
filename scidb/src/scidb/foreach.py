@@ -45,7 +45,9 @@ from .input_spec import find_pathinput, is_loadable, spec_name, type_name, varia
 from .entities import declared_spelling
 from .parameter import check_path_input_names, declared_input_names, path_input_specs_of
 from .roles import endpoint_kind as _roles_endpoint_kind
-from .schema_values import canonical_numeric_value, schema_str
+from scifor import schema_types as _scifor_schema_types
+
+from .schema_values import schema_str, scidb_key_type_errors
 from .variant import match_bare_name
 from .filters import Filter
 from .foreach_config import ForEachConfig
@@ -256,6 +258,7 @@ def for_each(
     skip_computed: bool = False,
     schema_filter: "dict[str, list] | None" = None,
     schema_keys: "list[str] | None" = None,
+    schema_key_types: "dict[str, str] | None" = None,
     locations: "Any" = None,
     share_limits: "dict[str, list[str]] | None" = None,
     finalized: bool = False,
@@ -321,6 +324,15 @@ def for_each(
                     operation. Cannot be combined with explicit
                     **metadata_iterables. Implemented via scifor's
                     ``expand_schema_keys()``, shared with scifor.for_each().
+        schema_key_types: Optional ``{key: "numeric" | "string"}``. The
+                    DATABASE owns schema-key types (``scidb.schema_types``),
+                    so this records them there exactly as
+                    ``configure_database(schema_key_types=...)`` does: a key
+                    with no stored type gets this one, the same type is a
+                    no-op, a different one raises
+                    ``SchemaKeyTypeConflictError``. Accepted so a call
+                    written for ``scifor.for_each`` runs here unchanged.
+                    ``dry_run=True`` checks without writing.
         locations: Optional ``scifor.LocationFilter`` (or its mapping form)
                     naming which schema locations to run: ragged ``include``
                     prefixes plus a standing ``exclude_levels`` rule. Passed
@@ -408,6 +420,7 @@ def for_each(
                 "skip_computed": skip_computed,
                 "schema_filter": schema_filter,
                 "schema_keys": schema_keys,
+                "schema_key_types": schema_key_types,
                 "share_limits": share_limits,
                 # Dropped from this list until 2026-09-23 (cleanup-audit F18):
                 # a step registered with a location selection replayed over
@@ -421,6 +434,22 @@ def for_each(
                 "_progress_fn": _progress_fn,
                 "_cancel_check": _cancel_check,
             },
+        )
+
+    # --- schema_key_types: recorded in the DATABASE, which owns it
+    #     (scidb.schema_types). Done once, here, before the EachOf recursion
+    #     below — which therefore does not forward it: every alternative
+    #     reads the stored declaration. ---
+    if schema_key_types:
+        _decl_db = db if db is not None else database_or_none()
+        if _decl_db is None:
+            raise DatabaseNotConfiguredError(
+                "for_each(schema_key_types=...) records the types in the database, "
+                "but no database is configured. Call configure_database() first, "
+                "or use scifor.for_each for a run without a database."
+            )
+        _decl_db.declare_schema_key_types(
+            schema_key_types, dry_run=dry_run, source="for_each"
         )
 
     # --- Normalize where clause: convert string to RawFilter ---
@@ -1961,14 +1990,13 @@ def _resolve_iterables(
         stringify_count = 0
         for key in list(metadata_iterables.keys()):
             if key in _sk_set:
-                values = metadata_iterables[key]
-                if _sk_types.get(key) == "numeric":
-                    # Declared-numeric keys canonicalize unconditionally —
-                    # every spelling of the same number ("001", 1, 1.0)
-                    # collapses to one identity before stringification.
-                    # dict.fromkeys dedupes spellings that collapsed.
-                    values = list(
-                        dict.fromkeys(canonical_numeric_value(key, v) for v in values)
+                # Declared-numeric keys canonicalize unconditionally — every
+                # spelling of the same number ("001", 1, 1.0) collapses to one
+                # identity before stringification (scifor owns the rule and
+                # the de-duplication).
+                with scidb_key_type_errors():
+                    values = _scifor_schema_types.canonicalize_values(
+                        key, metadata_iterables[key], _sk_types.get(key)
                     )
                 metadata_iterables[key] = [schema_str(v) for v in values]
                 stringify_count += 1
@@ -1976,35 +2004,24 @@ def _resolve_iterables(
 
         # Filesystem-discovered combos carry disk spellings ("001"); apply
         # the same declared-numeric canonicalization so discovery-driven and
-        # explicit-iterable runs agree on schema-key identity.
-        if _discovered_combos is not None and _sk_types:
-            canon_keys = [k for k, t in _sk_types.items() if t == "numeric"]
-            for combo in _discovered_combos:
+        # explicit-iterable runs agree on schema-key identity. Combos that
+        # collapse (both "6MWT-1.mat" and "6MWT-001.mat" on disk) are
+        # de-duplicated so one identity is not iterated twice.
+        canon_keys = [k for k, t in _sk_types.items() if t == "numeric"]
+        if _discovered_combos is not None and canon_keys:
+            with scidb_key_type_errors():
+                canonical = _scifor_schema_types.canonicalize_combos(
+                    _discovered_combos, _sk_types
+                )
+            for combo in canonical:
                 for k in canon_keys:
                     if k in combo:
-                        combo[k] = schema_str(canonical_numeric_value(k, combo[k]))
-            if canon_keys:
-                # Canonicalization can collapse combos that differed only in
-                # spelling (both "6MWT-1.mat" and "6MWT-001.mat" on disk) —
-                # dedupe so the same identity is not iterated twice.
-                seen = set()
-                deduped = []
-                for combo in _discovered_combos:
-                    sig = tuple(sorted(combo.items()))
-                    if sig not in seen:
-                        seen.add(sig)
-                        deduped.append(combo)
-                if len(deduped) != len(_discovered_combos):
-                    Log.debug(
-                        f"deduped {len(_discovered_combos) - len(deduped)} "
-                        f"discovered combo(s) that collapsed under "
-                        f"canonicalization"
-                    )
-                _discovered_combos[:] = deduped
-                Log.debug(
-                    f"canonicalized numeric schema key(s) {canon_keys} in "
-                    f"{len(_discovered_combos)} discovered combo(s)"
-                )
+                        combo[k] = schema_str(combo[k])
+            _discovered_combos[:] = canonical
+            Log.debug(
+                f"canonicalized numeric schema key(s) {canon_keys} in "
+                f"{len(_discovered_combos)} discovered combo(s)"
+            )
     else:
         Log.debug("no database available for schema stringification, skipping")
     return metadata_iterables, _discovered_combos, needs_resolve, resolved_db
@@ -5370,11 +5387,11 @@ def _load_pathinput_checked(
                 f"PathInput resolved {key}={load_kw[key]!r} to '{spelling}' "
                 f"on disk (template {pi.path_template!r}) — the spelling of "
                 f"schema key '{key}' is ambiguous (zero-padded filenames). "
-                f"Declare its type once to fix its identity: "
-                f"configure_database(..., schema_key_types={{'{key}': "
-                f"'numeric'}}) to treat values as numbers (canonical, no "
-                f"leading zeros), or 'string' to make spelling significant "
-                f"(exact matches only)."
+                f"Declare its type once to fix its identity (it is stored in "
+                f"the database): tick 'Numeric' for '{key}' in the GUI, or "
+                f"db.set_schema_key_type('{key}', 'numeric'), to treat values "
+                f"as numbers (canonical, no leading zeros); or 'string' to "
+                f"make spelling significant (exact matches only)."
             )
         Log.debug(f"pathinput resolved spellings (declared numeric): {resolutions}")
     return path

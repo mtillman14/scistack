@@ -120,12 +120,15 @@ class TestDeleteNode:
         layout_store.delete_node("fn__foo")
         assert "fn__foo" not in layout_store.read_layout()["positions"]
 
-    def test_delete_manual_node_removes_both_entries(self, layout_path):
+    def test_delete_manual_node_hides_it_and_keeps_its_row(self, layout_path):
+        """Never delete, mark hidden (canvas-as-document, 2026-10-22): the
+        position goes, the stored row stays, and the node is hidden."""
         layout_store.write_manual_node("m1", 0.0, 0.0, "functionNode", "fn_x")
         layout_store.delete_node("m1")
         data = layout_store.read_layout()
         assert "m1" not in data["positions"]
-        assert "m1" not in data["manual_nodes"]
+        assert "m1" in data["manual_nodes"]
+        assert "m1" in pipeline_store.get_hidden_node_ids(get_db(), "main")
 
     def test_delete_nonexistent_node_is_a_noop(self, layout_path):
         layout_store.delete_node("nonexistent__node")  # must not raise

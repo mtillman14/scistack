@@ -470,10 +470,10 @@ def table_portability() -> dict[str, str]:
     ``UNDOABLE_TABLES``). The guard test ``test_every_gui_table_is_classified``
     fails when a new table is not classified, so nothing is left out of an
     export by accident."""
-    from scistack_gui import intent_store, layout, node_wiring, pipeline_store
+    from scistack_gui import history, intent_store, layout, node_wiring, pipeline_store
 
     out: dict[str, str] = {}
-    for module in (pipeline_store, intent_store, node_wiring, layout):
+    for module in (pipeline_store, intent_store, node_wiring, layout, history):
         out.update(module.PORTABILITY)
     return out
 

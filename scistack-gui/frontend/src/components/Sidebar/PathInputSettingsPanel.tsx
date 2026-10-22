@@ -32,7 +32,7 @@
  * which read as the field reverting rather than the write being refused.
  */
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { callBackend } from '../../api'
 import { useScope } from '../../context/ScopeContext'
 import type { PathInputAlternate } from '../DAG/PathInputNode'
@@ -46,6 +46,13 @@ import {
   type PathInputAliases,
 } from './pathInputAliases'
 import { withPattern, withoutPattern, type PathInputKeyRegex } from './pathInputKeyRegex'
+import {
+  declaredNote,
+  impactSummary,
+  numericCheckbox,
+  type SchemaKeyTypesResponse,
+  type SetSchemaKeyTypeResult,
+} from './schemaKeyTypes'
 import { formatLocation, isLockedForEditing } from './sourceLocation'
 import { useEntityEditability, useSourceEdit } from './useSourceEdit'
 
@@ -76,7 +83,47 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
   const [aliasSpellings, setAliasSpellings] = useState('')
   const [patternKey, setPatternKey] = useState('')
   const [patternDraft, setPatternDraft] = useState('')
-  const { submit, error, readOnlyAt, saving, clearError } = useSourceEdit()
+  const { submit, error, readOnlyAt, saving, clearError, lastResult } = useSourceEdit()
+
+  // Schema-key types: the Numeric checkbox (schemaKeyTypes.ts). Project-wide
+  // and stored in the database, so re-read after every successful edit — a
+  // digit-only key pattern may have declared a key numeric.
+  const [keyTypes, setKeyTypes] = useState<SchemaKeyTypesResponse | null>(null)
+  const [keyTypeError, setKeyTypeError] = useState('')
+  const [keyTypeBusy, setKeyTypeBusy] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<{ key: string; text: string } | null>(null)
+  const loadKeyTypes = useCallback(() => {
+    callBackend('get_schema_key_types', {})
+      .then(res => setKeyTypes(res as SchemaKeyTypesResponse))
+      .catch(err => setKeyTypeError((err as Error).message || 'Could not read schema key types'))
+  }, [])
+  useEffect(() => { loadKeyTypes() }, [loadKeyTypes, lastResult])
+
+  const setNumeric = async (key: string, numeric: boolean, confirm = false) => {
+    setKeyTypeBusy(true)
+    setKeyTypeError('')
+    try {
+      const res = (await callBackend('set_schema_key_type', {
+        key,
+        key_type: numeric ? 'numeric' : null,
+        confirm_respelling: confirm,
+      })) as SetSchemaKeyTypeResult
+      if (res.needs_confirm && res.impact) {
+        setPendingConfirm({ key, text: impactSummary(res.impact) })
+      } else if (!res.ok) {
+        setKeyTypeError(res.error || 'The change was refused.')
+      } else {
+        setPendingConfirm(null)
+      }
+    } catch (err) {
+      setKeyTypeError((err as Error).message || 'Request failed')
+    } finally {
+      setKeyTypeBusy(false)
+      loadKeyTypes()
+    }
+  }
+  const regexDeclared = lastResult?.schema_key_types?.declared ?? []
+  const regexHints = lastResult?.schema_key_types?.hints ?? []
   // Declared outside the entities file: every edit control is locked up
   // front rather than taking input the write would refuse.
   const editability = useEntityEditability('path_input', label)
@@ -448,10 +495,48 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Schema Keys</div>
           <div style={styles.keysRow}>
-            {keys.map(k => (
-              <span key={k} style={styles.keyPill}>{k}</span>
-            ))}
+            {keys.map(k => {
+              const box = numericCheckbox(keyTypes?.keys.find(i => i.key === k), keyTypeBusy)
+              return (
+                <span key={k} style={styles.keyTypeRow}>
+                  <span style={styles.keyPill}>{k}</span>
+                  {box.shown && (
+                    <label style={styles.numericLabel} title={box.title}>
+                      <input
+                        type="checkbox"
+                        checked={box.checked}
+                        disabled={box.disabled}
+                        onChange={e => setNumeric(k, e.target.checked)}
+                      />
+                      Numeric
+                    </label>
+                  )}
+                </span>
+              )
+            })}
           </div>
+          {pendingConfirm && (
+            <div style={styles.confirmBox}>
+              <div>Declare '{pendingConfirm.key}' numeric? {pendingConfirm.text}</div>
+              <div style={styles.addRow}>
+                <button
+                  style={styles.addBtn}
+                  disabled={keyTypeBusy}
+                  onClick={() => setNumeric(pendingConfirm.key, true, true)}
+                >
+                  Declare numeric
+                </button>
+                <button style={styles.cancelBtn} onClick={() => setPendingConfirm(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+          {regexDeclared.length > 0 && <div style={styles.noteText}>{declaredNote(regexDeclared)}</div>}
+          {regexHints.map(h => (
+            <div key={h.key} style={styles.noteText}>{h.reason}</div>
+          ))}
+          {keyTypeError && <div style={styles.errorText}>{keyTypeError}</div>}
         </section>
       )}
     </div>
@@ -617,6 +702,42 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 3,
     padding: '2px 6px',
     color: '#fbbf24',
+  },
+  keyTypeRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+  },
+  numericLabel: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 2,
+    fontSize: 10,
+    color: '#aaa',
+    cursor: 'pointer',
+  },
+  confirmBox: {
+    marginTop: 8,
+    background: 'rgba(217, 119, 6, 0.12)',
+    border: '1px solid #d97706',
+    borderRadius: 4,
+    padding: '6px 8px',
+    fontSize: 11,
+    color: '#fcd9a8',
+  },
+  cancelBtn: {
+    background: 'transparent',
+    border: '1px solid #555',
+    borderRadius: 3,
+    color: '#ccc',
+    fontSize: 11,
+    padding: '3px 8px',
+    cursor: 'pointer',
+  },
+  noteText: {
+    marginTop: 6,
+    fontSize: 11,
+    color: '#9ca3af',
   },
   empty: {
     color: '#555',

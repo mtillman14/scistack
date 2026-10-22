@@ -476,3 +476,18 @@ moves its state with `rebase_node` and `rebase_node_positions`. See
 spells `fn_node_id(fn, wiring_id(...))` against a real database has to do the
 same; the pure-domain tests, which use the default `token_for`, are unaffected
 because there the token still is the wiring.
+
+## 11. Since 2026-10-22: graduation is gone (canvas-as-document Stage 5)
+
+D-2026-10-22-1. The id swap this document left open (D-2026-09-22-4) is
+closed by removal: function nodes never graduate. A hand-placed function node
+that runs claims its wiring at dispatch, so it IS the history node under its
+own id; one with a non-grammar id is re-keyed by `IdentityPlan.rekeys` as
+before. Every node from history is stored as a `_pipeline_nodes` row under the
+id identity resolution gave it (adoption, `services/adoption.py`), so a node's
+existence no longer depends on history. A never-run hand-placed node is
+coloured by the wiring it STATES (`identity.node_by_wiring`), not by its
+function name; `_wiring_conflicts_with_candidate`, `_find_db_fn_candidate` and
+`_own_state_for_function` are deleted. Entity boxes (variables, Parameters,
+PathInputs) still fold into their canonical node (user decision D3); the fold
+now leaves the canonical node a stored row.

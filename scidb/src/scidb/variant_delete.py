@@ -133,6 +133,37 @@ def ensure_tombstone_table(duck) -> None:
     """)
 
 
+def write_tombstone(
+    duck, reason: str, targets: list[dict], by_variable: dict, record_ids: list[str]
+) -> Tombstone:
+    """Write one tombstone row: the audit trail of every real delete (this
+    module's variant delete and ``scidb.clear_data``'s clear). The caller
+    holds the transaction."""
+    ensure_tombstone_table(duck)
+    tomb = Tombstone(
+        tombstone_id=uuid.uuid4().hex[:16],
+        deleted_at=datetime.now().isoformat(),
+        reason=str(reason),
+        targets=list(targets),
+        by_variable=dict(by_variable),
+        record_ids=list(record_ids),
+    )
+    duck._execute(
+        f"INSERT INTO {TOMBSTONE_TABLE} (tombstone_id, deleted_at, "
+        "reason, targets_json, counts_json, record_ids_json) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            tomb.tombstone_id,
+            tomb.deleted_at,
+            tomb.reason,
+            json.dumps(tomb.targets, sort_keys=True, default=str),
+            json.dumps(tomb.by_variable, sort_keys=True),
+            json.dumps(tomb.record_ids),
+        ],
+    )
+    return tomb
+
+
 def tombstones(db: "DatabaseManager", variable: str | None = None) -> list[Tombstone]:
     """Every deletion ever made, oldest first (only those that touched
     ``variable`` when given)."""
@@ -539,27 +570,7 @@ def delete_variant(
         )
         deleted["_record"] = _delete_in(duck, "_record", "record_id", plan.record_ids)
 
-        tomb = Tombstone(
-            tombstone_id=uuid.uuid4().hex[:16],
-            deleted_at=datetime.now().isoformat(),
-            reason=str(reason),
-            targets=list(targets),
-            by_variable=plan.by_variable,
-            record_ids=plan.record_ids,
-        )
-        duck._execute(
-            f"INSERT INTO {TOMBSTONE_TABLE} (tombstone_id, deleted_at, "
-            "reason, targets_json, counts_json, record_ids_json) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            [
-                tomb.tombstone_id,
-                tomb.deleted_at,
-                tomb.reason,
-                json.dumps(tomb.targets, sort_keys=True, default=str),
-                json.dumps(tomb.by_variable, sort_keys=True),
-                json.dumps(tomb.record_ids),
-            ],
-        )
+        tomb = write_tombstone(duck, reason, targets, plan.by_variable, plan.record_ids)
         released = []
         for variable in plan.pins_to_release:
             if release_pin(db, variable, f"variant deleted (tombstone {tomb.tombstone_id})"):
@@ -572,6 +583,9 @@ def delete_variant(
         except Exception:  # pragma: no cover - rollback of a dead txn
             pass
         raise
+    from .variant_pins import forget_type_graph
+
+    forget_type_graph(duck)
     Log.info(
         f"delete_variant: tombstone {tomb.tombstone_id}: deleted rows={deleted}; "
         f"released pins={released}; reason={reason!r} "

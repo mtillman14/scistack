@@ -4,7 +4,7 @@ A constant may be a ``dict`` (an inline table under ``[parameters]`` in
 ``scistack_entities.toml`` *is* the value), so ``tuple(sorted(constants.items()))``
 is unhashable on real projects. scidb's sites moved to the one owner on
 2026-09-14; six GUI sites kept their own copy, and
-``_apply_manual_output_types`` crashed a node run with
+``_apply_manual_output_types`` (since removed) crashed a node run with
 ``TypeError: unhashable type: 'dict'`` (2026-10-21).
 
 See docs/claude/constants-are-not-scalars.md.
@@ -21,7 +21,7 @@ from scistack_gui.domain.variant_resolver import (
     deduplicate_variants,
     merge_pending_constants,
 )
-from scistack_gui.services.execution_service import _apply_manual_output_types
+from scistack_gui.services.execution_service import _target_key
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -37,20 +37,20 @@ def _target(config, out="Recorded", hz=10):
     }
 
 
-class TestApplyManualOutputTypes:
-    def test_dict_constant_does_not_raise(self):
-        out = _apply_manual_output_types([_target(CONFIG_A)], ["Drawn"], "test")
-        assert [t["output_type"] for t in out] == ["Drawn"]
+class TestNameScopedTargetKey:
+    """The name-scoped run unions its nodes' targets and keeps each once
+    (``execution_service._target_key``); ``_apply_manual_output_types``, which
+    crashed here, is gone with the history-wiring run path (canvas-as-document
+    Stage 4)."""
 
-    def test_rows_differing_only_in_recorded_output_collapse(self):
-        targets = [_target(dict(CONFIG_A), out="A"), _target(dict(CONFIG_A), out="B")]
-        out = _apply_manual_output_types(targets, ["Drawn"], "test")
-        assert len(out) == 1
+    def test_dict_constant_does_not_raise(self):
+        assert _target_key(_target(CONFIG_A))
+
+    def test_equal_dict_constants_are_one_target(self):
+        assert _target_key(_target(dict(CONFIG_A))) == _target_key(_target(dict(CONFIG_A)))
 
     def test_different_dicts_stay_separate(self):
-        targets = [_target(CONFIG_A), _target(CONFIG_B)]
-        out = _apply_manual_output_types(targets, ["X", "Y"], "test")
-        assert len(out) == 4
+        assert _target_key(_target(CONFIG_A)) != _target_key(_target(CONFIG_B))
 
 
 class TestVariantResolver:

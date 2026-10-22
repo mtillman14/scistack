@@ -233,7 +233,7 @@ Installing `scidb` adds a `scidb` command for inspecting a database. Most comman
 | `sql "SELECT ..."` | Read-only SQL. |
 | `report` | Collect finalized `plot_`/`stat_` results into an HTML report folder. |
 | `verify --against BUNDLE` | Compare a re-run with an exported history (runs no code). |
-| `exclude`, `include`, `pin`, `unpin`, `delete-variant` | **Write.** Exclusions, a variable's default variant, and permanent variant deletion. `delete-variant` prints a plan and stops unless you pass `--yes`. |
+| `exclude`, `include`, `pin`, `unpin`, `delete-variant`, `clear-data` | **Write.** Exclusions, a variable's default variant, permanent variant deletion, and `clear-data`: delete every record and its run history while keeping the pipeline, the run log and every declaration (`--backup` copies the database first; refused for a GUI project for now). Both deletes print a plan and stop unless you pass `--yes`. |
 
 ## Logging
 

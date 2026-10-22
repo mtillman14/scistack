@@ -59,12 +59,15 @@ def _fn_node(graph) -> str:
 
 
 def _history_edge(graph, node, source_prefix) -> dict:
+    # Since canvas adoption (2026-10-22) every edge is a stored row (and
+    # carries `data.manual`), and the canvas draws one edge per connection, so
+    # "the" edge from *source_prefix* into *node* is simply the one drawn. In
+    # a duplicated tab it is the copy's own edge, not the original's.
     edges = [
         e
         for e in graph["edges"]
         if strip_placement(e["target"]) == strip_placement(node)
         and strip_placement(e["source"]).startswith(source_prefix)
-        and not (e.get("data") or {}).get("manual")
     ]
     assert len(edges) == 1, edges
     return edges[0]

@@ -56,6 +56,7 @@ from .outputs import COLUMN_NAME_ATTR, DB_ONLY_KWARGS, output_column_name
 from .pathinput import (
     PathInput,
     clear_listing_cache,
+    key_regex_is_digit_only,
     key_regex_pattern_error,
     clear_project_root,
     enter_project_root,
@@ -65,6 +66,11 @@ from .pathinput import (
 )
 from .pathoutput import PathOutput
 from .schema import expand_schema_keys, get_schema, set_schema
+from .schema_types import (
+    VALID_SCHEMA_KEY_TYPES,
+    SchemaKeyTypeError,
+    canonical_numeric_value,
+)
 
 # The release tag owns the version (hatch-vcs writes it into the installed
 # metadata); "0.0.0" marks a source tree that was never installed.
@@ -80,6 +86,10 @@ __all__ = [
     "set_schema",
     "get_schema",
     "expand_schema_keys",
+    # Schema-key types (numeric / string)
+    "VALID_SCHEMA_KEY_TYPES",
+    "SchemaKeyTypeError",
+    "canonical_numeric_value",
     # Batch execution
     "for_each",
     "ColumnFunctionError",
@@ -108,6 +118,7 @@ __all__ = [
     "project_root",
     "clear_listing_cache",
     "key_regex_pattern_error",
+    "key_regex_is_digit_only",
     "clear_project_root",
     "enter_project_root",
     # Filters

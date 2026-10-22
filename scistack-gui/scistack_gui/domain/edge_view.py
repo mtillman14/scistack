@@ -57,23 +57,41 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     from scistack_gui import pipeline_store
     from scistack_gui.domain.graph_builder import visible_manual_edges
 
+    from scistack_gui.ids import strip_placement
+
     stored = pipeline_store.get_manual_edges(db)
     manual_nodes = pipeline_store.get_manual_nodes(db)
     hidden = frozenset(pipeline_store.get_hidden_edge_ids(db, scope))
+    # An edge into or out of a HIDDEN node is not drawn and binds nothing
+    # (canvas-as-document, 2026-10-22). Before adoption, a hidden node's
+    # edges were history edges and vanished with it; now they are stored
+    # rows, so the hide has to reach them here, the one view every reader
+    # uses. Otherwise hiding a PathInput and drawing another onto the same
+    # port ran an EachOf of both.
+    hidden_nodes = pipeline_store.get_hidden_node_ids(db, scope)
     glue_ports: dict[str, "list[str]"] = {}
-    drawn = tuple(
-        e for e in visible_manual_edges(stored, hidden, manual_nodes)
-        if not _on_retired_port(e)
-        and not _on_missing_glue_port(e, manual_nodes, glue_ports)
-    )
+    on_hidden_node: list[str] = []
+    drawn_list = []
+    for e in visible_manual_edges(stored, hidden, manual_nodes):
+        if _on_retired_port(e) or _on_missing_glue_port(e, manual_nodes, glue_ports):
+            continue
+        ends = {e.get("source") or "", e.get("target") or ""}
+        if hidden_nodes and any(
+            end in hidden_nodes or strip_placement(end) in hidden_nodes for end in ends
+        ):
+            on_hidden_node.append(e.get("id"))
+            continue
+        drawn_list.append(e)
+    drawn = tuple(drawn_list)
     logger.info(
         "[edge_view] %s: scope=%s, %d drawn of %d stored manual edge(s), "
-        "%d hidden edge id(s)",
+        "%d hidden edge id(s), %d edge(s) on a hidden node",
         caller,
         scope if scope is not None else "(all scopes)",
         len(drawn),
         len(stored),
         len(hidden),
+        len(on_hidden_node),
     )
     return EdgeView(
         scope=scope,

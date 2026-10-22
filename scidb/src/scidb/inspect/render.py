@@ -1138,6 +1138,28 @@ def render_delete_plan(plan) -> str:
     return "\n".join(lines)
 
 
+def render_clear_plan(plan) -> str:
+    """``scidb clear-data`` without ``--yes``: what WOULD be deleted."""
+    lines = [
+        f"Would delete {plan.total_records} record(s) and their run history "
+        f"(cannot be undone; a tombstone is kept)   fingerprint {plan.fingerprint}"
+    ]
+    for variable, n in plan.by_variable.items():
+        lines.append(f"  {variable:<24} {n:>6}")
+    rows = {t: n for t, n in plan.table_rows.items() if n}
+    if rows:
+        lines.append("  rows by table: " + ", ".join(f"{t}={n}" for t, n in rows.items()))
+    lines.append(
+        f"  kept: the run log ({plan.runs_kept} run(s)), variable registrations, "
+        f"schema exclusions, pins (released), tombstones, every GUI table"
+    )
+    if plan.pins_to_release:
+        lines.append(f"  pins released: {', '.join(plan.pins_to_release)}")
+    for w in plan.warnings:
+        lines.append(f"  warning: {w}")
+    return "\n".join(lines)
+
+
 def render_mutation_result(result: MutationResult) -> str:
     target = " ".join(f"{k}={v}" for k, v in result.target.items()) or "-"
     lines = [f"{result.operation}: {target}", f"reason: {result.reason}"]

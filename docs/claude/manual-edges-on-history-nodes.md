@@ -1,4 +1,12 @@
-# Manual edges onto history nodes
+# Manual edges onto history nodes (RETIRED 2026-10-22)
+
+> **Retired.** Since plan-canvas-as-document Stages 2-5 (D-2026-10-22-1) there
+> is no "history node" with drawn edges laid over it: a build stores every node
+> and edge history would draw (adoption), only stored rows are drawn, and a
+> node runs from its stored edges. The overlay (`overlay_manual_inputs`) and
+> the run-path splice (`reconcile_manual_inputs`) described below are deleted.
+> Read `canvas-as-document-explained.md` instead. Kept for the history of why.
+
 
 **Rule: the edges visible on the DAG are the ground truth — for display and
 for execution — whether they came from history or were drawn by the user.**
