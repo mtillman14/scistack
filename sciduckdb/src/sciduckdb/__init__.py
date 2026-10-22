@@ -3,6 +3,7 @@
 from .sciduckdb import (
     SciDuck,
     bulk_df_to_storage_rows,
+    column_type_change,
     dataframe_to_storage_rows,
     _flatten_dict,
     infer_data_columns,
@@ -34,6 +35,7 @@ __all__ = [
     "storage_to_python_column",
     "infer_data_columns",
     "record_schema_mismatch",
+    "column_type_change",
     "_storage_signature",
     "value_to_storage_row",
     "dataframe_to_storage_rows",

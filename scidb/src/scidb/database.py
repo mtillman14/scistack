@@ -15,6 +15,7 @@ import pandas as pd
 from sciduckdb import (
     SciDuck,
     bulk_df_to_storage_rows,
+    column_type_change,
     dataframe_to_storage_rows,
     infer_data_columns,
     record_schema_mismatch,
@@ -425,6 +426,21 @@ def _set_nested_value(d, path, value):
     for key in path[:-1]:
         d = d.setdefault(key, {})
     d[path[-1]] = value
+
+
+def _sample_values(frames: list, col, limit: int = 3) -> list:
+    """Up to ``limit`` distinct non-empty values of column ``col`` across
+    ``frames`` — the examples a ColumnTypeChangedError shows."""
+    seen: list = []
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame) or col not in frame.columns:
+            continue
+        for v in frame[col].dropna().tolist():
+            if v not in seen:
+                seen.append(v)
+                if len(seen) >= limit:
+                    return seen
+    return seen
 
 
 def _flatten_struct_columns(df):
@@ -1538,17 +1554,166 @@ class DatabaseManager:
         (``to_db``) record's stored columns from the metadata columns of a
         loaded input (``scimatlab.bridge.codec_storage_columns``).
         """
+        return list(self.stored_data_column_types(table_name))
+
+    def stored_data_column_types(self, table_name: str) -> dict[str, str]:
+        """``{column: DuckDB type}`` of a variable's ``<Type>_data`` table, in
+        stored order (``record_id`` excluded); ``{}`` when it does not exist.
+        The one reader of the stored columns (``stored_data_columns`` is its
+        key view)."""
         if not self._duck._table_exists(table_name):
-            return []
-        return [
-            row[0]
+            return {}
+        return {
+            row[0]: row[1]
             for row in self._duck._fetchall(
-                "SELECT column_name FROM information_schema.columns "
+                "SELECT column_name, data_type FROM information_schema.columns "
                 "WHERE table_name = ? AND column_name <> 'record_id' "
                 "ORDER BY ordinal_position",
                 [table_name],
             )
-        ]
+        }
+
+    def _stored_empty_columns(
+        self, table_name: str, col_types: dict[str, str]
+    ) -> set[str]:
+        """Which of ``col_types`` hold no value in any stored row (all NULL,
+        or NaN in a float column) — one aggregate query. The stored DATA is
+        the owner of "is this column's type still undecided"; no flag is
+        persisted that could disagree with it."""
+        if not col_types:
+            return set()
+        exprs = []
+        for col, ddb_type in col_types.items():
+            cond = f'"{col}" IS NOT NULL'
+            if ddb_type.strip().upper() in ("DOUBLE", "FLOAT", "REAL"):
+                cond += f' AND NOT isnan("{col}")'
+            exprs.append(f"COUNT(*) FILTER (WHERE {cond})")
+        counts = self._duck._fetchall(
+            f'SELECT {", ".join(exprs)} FROM "{table_name}"'
+        )[0]
+        return {col for col, n in zip(col_types, counts) if n == 0}
+
+    def _reconcile_column_types(
+        self,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        data_col_types: dict,
+        dtype_meta: dict,
+        frames: list,
+    ) -> tuple[dict, dict]:
+        """The one owner of "may this save's column TYPES go into the
+        variable's existing DataFrame table". Call it right after
+        ``_check_column_set`` on every DataFrame save path; store and upsert
+        with what it returns.
+
+        Per column (rule for a column with values: sciduckdb
+        ``column_type_change``):
+        - this save is empty in it -> the stored type and metadata stand;
+        - the stored column is still empty -> converted in place to this
+          save's type (a blank first CSV load, values in a later one);
+        - integer column, fractional values -> widened to DOUBLE;
+        - text column, numbers -> stored as text;
+        - otherwise -> ColumnTypeChangedError, before anything is changed.
+
+        Returns the MERGED ``(data_col_types, dtype_meta)``: the stored type
+        and metadata wherever they stand, so the ``_variables.dtype`` upsert
+        never overwrites a decided column with this save's guess. History:
+        scidb.log 2026-10-22, IP_SPINAL_STIMULATION blank then 'Y'.
+        """
+        if dtype_meta.get("mode") != "dataframe" or dtype_meta.get("custom"):
+            return data_col_types, dtype_meta
+        stored_types = self.stored_data_column_types(table_name)
+        if not stored_types:
+            return data_col_types, dtype_meta
+        t0 = time.perf_counter()
+        type_name = variable_class.__name__
+        stored_metas = (self.get_dtype_meta(type_name) or {}).get("columns", {})
+        in_metas = dtype_meta.get("columns", {})
+
+        changes = {}
+        for col, in_type in data_col_types.items():
+            s_type = stored_types.get(col)
+            if s_type is None or in_metas.get(col, {}).get("empty"):
+                continue
+            change = column_type_change(s_type, in_type)
+            if change != "same" or stored_metas.get(col, {}).get("empty", col not in stored_metas):
+                changes[col] = change
+        empty = self._stored_empty_columns(
+            table_name, {c: stored_types[c] for c in changes}
+        )
+
+        new_types = dict(data_col_types)
+        new_metas = dict(in_metas)
+        alters: list[tuple[str, str, bool]] = []  # (column, new type, stored empty)
+        conflicts = []
+        for col, in_type in data_col_types.items():
+            s_type = stored_types.get(col)
+            if s_type is None:
+                continue
+            s_meta = stored_metas.get(col)
+            change = changes.get(col, "same")
+            if col in empty:
+                if s_type.upper() != in_type.upper():
+                    alters.append((col, in_type, True))
+                continue  # this save's type and metadata decide the column
+            if in_metas.get(col, {}).get("empty") or change in ("same", "as_text"):
+                new_types[col] = s_type
+                if s_meta is not None and not s_meta.get("empty"):
+                    new_metas[col] = s_meta
+                if change == "as_text":
+                    Log.info(
+                        f"[save] {type_name}: column {col} is stored as text; "
+                        f"this save's {in_type} values are stored as text too"
+                    )
+                continue
+            if change == "widen":
+                alters.append((col, in_type, False))
+                continue
+            conflicts.append(
+                (col, s_type, in_type, _sample_values(frames, col))
+            )
+
+        if conflicts:
+            from .exceptions import ColumnTypeChangedError
+
+            n_existing = self._duck._fetchall(
+                f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
+            )[0][0]
+            err = ColumnTypeChangedError(type_name, conflicts, n_existing)
+            Log.error(f"[save] {err}")
+            raise err
+
+        if alters:
+            self._duck._execute(
+                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
+            )
+            for col, new_type, was_empty in alters:
+                using = f" USING CAST(NULL AS {new_type})" if was_empty else ""
+                self._duck._execute(
+                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{col}" '
+                    f"SET DATA TYPE {new_type}{using}"
+                )
+                Log.info(
+                    f"[save] {type_name}: column {col} "
+                    + (
+                        f"was empty in every stored record; its type is now "
+                        f"{new_type}, decided by this save's values"
+                        if was_empty
+                        else f"widened {stored_types[col]} -> {new_type} for "
+                        f"this save's fractional values"
+                    )
+                )
+            self._create_variable_view(variable_class)
+
+        Log.debug(
+            f"[save] {type_name}: column types reconciled in "
+            f"{time.perf_counter() - t0:.3f}s — {len(data_col_types)} column(s), "
+            f"{len(changes)} checked against stored data, "
+            f"{len(empty)} still empty, {len(alters)} altered"
+        )
+        merged_meta = dict(dtype_meta)
+        merged_meta["columns"] = new_metas
+        return new_types, merged_meta
 
     def _ensure_columnar_table(
         self,
@@ -1717,6 +1882,9 @@ class DatabaseManager:
 
         # Ensure table exists, with this save's columns.
         self._check_column_set(table_name, variable_class, list(data_col_types))
+        data_col_types, dtype_meta = self._reconcile_column_types(
+            table_name, variable_class, data_col_types, dtype_meta, [data]
+        )
         if not self._duck._table_exists(table_name):
             data_cols_sql = ", ".join(
                 f'"{col}" {dtype}' for col, dtype in data_col_types.items()
@@ -1847,7 +2015,15 @@ class DatabaseManager:
             data_col_types = {c: str(first_data[c].dtype) for c in first_data.columns}
             dtype_meta = {"custom": True}
         else:
-            data_col_types, dtype_meta = infer_data_columns(first_data)
+            # The rest of the batch types columns that the first frame
+            # leaves blank (a spread CSV whose first subject has no value).
+            data_col_types, dtype_meta = infer_data_columns(
+                first_data,
+                more_frames=(
+                    [d for d, _ in data_items[1:]]
+                    if isinstance(first_data, pd.DataFrame) else ()
+                ),
+            )
         is_dataframe = dtype_meta.get("mode") == "dataframe"
 
         # Reference-schema selection: a leading degenerate record (e.g. an
@@ -1943,6 +2119,10 @@ class DatabaseManager:
             self._ensure_columnar_table(table_name, variable_class, first_data)
         else:
             self._check_column_set(table_name, variable_class, list(data_col_types))
+            data_col_types, dtype_meta = self._reconcile_column_types(
+                table_name, variable_class, data_col_types, dtype_meta,
+                [d for d, _ in data_items],
+            )
         if not is_custom and not self._duck._table_exists(table_name):
             data_cols_sql = ", ".join(
                 f'"{col}" {dtype}' for col, dtype in data_col_types.items()

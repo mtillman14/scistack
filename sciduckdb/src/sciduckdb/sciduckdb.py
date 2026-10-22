@@ -204,6 +204,23 @@ def _convert_for_json(value: Any) -> Any:
     return value
 
 
+def _str_to_storage(value: Any) -> Any:
+    """The stored form of one cell of a VARCHAR column — the one owner.
+
+    Empty (None / NaN / pd.NA / NaT) -> NULL, so a blank never becomes the
+    text 'nan'. A non-string (a number arriving in a text column, or a
+    batch mixing numbers and strings) -> its text, integral floats without
+    '.0' (``_schema_str``: 123.0 -> "123", as a CSV wrote it).
+    """
+    if isinstance(value, np.generic):
+        value = value.item()
+    if _is_missing_cell(value):
+        return None
+    if isinstance(value, str):
+        return value
+    return _schema_str(value)
+
+
 def _python_to_storage(value: Any, meta: dict) -> Any:
     """Convert a Python value to its DuckDB-storable form."""
     ptype = meta.get("python_type", "")
@@ -218,6 +235,9 @@ def _python_to_storage(value: Any, meta: dict) -> Any:
             value = value.item()
         elif isinstance(value, np.generic):
             value = value.item()
+
+    if ptype == "str":
+        return _str_to_storage(value)
 
     if ptype == "ndarray":
         arr = value
@@ -330,6 +350,9 @@ def count_nan_array_elements(values) -> int:
 
 def storage_to_python(value: Any, meta: dict) -> Any:
     """Restore a stored DuckDB value back to its original Python type."""
+    if meta.get("empty"):
+        # An undecided (all-empty) column: missing, as pandas reads a blank.
+        return np.nan
     ptype = meta.get("python_type", "")
 
     if ptype == "ndarray":
@@ -408,6 +431,9 @@ def storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
     right pandas dtype for those.  Complex types use pd.Series.apply, which is
     still faster than an explicit Python for-loop.
     """
+    if meta.get("empty"):
+        # An undecided (all-empty) column: missing, as pandas reads a blank.
+        return pd.Series(np.nan, index=series.index, dtype=float, name=series.name)
     ptype = meta.get("python_type", "")
 
     # Scalar types: DuckDB already returns the right pandas dtype — no-op.
@@ -474,36 +500,110 @@ def _is_missing_cell(value: Any) -> bool:
         return False
 
 
-def _representative_cell(col_series: pd.Series, col_name: Any) -> Any:
-    """The cell whose type decides a DataFrame column's DuckDB type.
+# Column metadata of a DataFrame column that is empty (NULL / NaN / None /
+# NaT) in every row of every record of a save: no type is decided yet. It is
+# stored as an all-NULL VARCHAR placeholder and loads back as NaN; the first
+# save that brings values decides the type (scidb's _reconcile_column_types
+# converts the stored column then). The flag describes the data, never a
+# promise: a later save re-derives it.
+_EMPTY_COLUMN_META = {"python_type": "str", "empty": True}
 
-    The first NON-MISSING cell of an object column. Typing from row 0 alone
-    broke on 2026-10-22: ``pd.read_csv`` gives a mostly-blank Y/N column
-    (IP_SPINAL_STIMULATION) object dtype holding float NaN then 'Y', so row
-    0's NaN typed the column DOUBLE and the insert failed on 'Y'. A typed
-    (non-object) column already says what it holds — NaN in float64 is a
-    float — so row 0 stands. An all-missing object column keeps row 0.
+# pd.api.types.infer_dtype verdicts (skipna=True) for the non-missing cells
+# of an object column, mapped to the DuckDB type the batch decides.
+_INFERRED_KIND_TYPES = {
+    "string": ("VARCHAR", "str"),
+    "boolean": ("BOOLEAN", "bool"),
+    "integer": ("BIGINT", "int"),
+    "floating": ("DOUBLE", "float"),
+    "mixed-integer-float": ("DOUBLE", "float"),
+    "decimal": ("DOUBLE", "float"),
+}
+
+
+def _batch_column_type(cells: pd.Series, col_name: Any) -> tuple[str, dict]:
+    """The DuckDB type of one DataFrame column, judged over the WHOLE batch.
+
+    ``cells`` is the column across every record of one save (one run's
+    output: every iteration, every schema level). History, scidb.log
+    2026-10-22: ``pd.read_csv`` of a CERNER pull gave IP_SPINAL_STIMULATION
+    (mostly blank, some 'Y') object dtype; typing from row 0 read NaN and
+    made it DOUBLE, then 'Y' failed the insert. The re-run spread the CSV one
+    record per subject and the first subject was blank, so the judgement
+    must cross records, not just rows. The rule:
+
+    - every cell empty -> undecided (``_EMPTY_COLUMN_META``, VARCHAR placeholder)
+    - every non-empty cell numeric -> BIGINT (all integers) / DOUBLE
+    - any non-empty cell a string -> VARCHAR (numbers in it stored as text)
+    - array / list / dict / datetime cells -> the first non-empty cell's
+      type, as before
     """
-    first = col_series.iloc[0]
-    if col_series.dtype != object or not _is_missing_cell(first):
-        return first
-    for i, cell in enumerate(col_series):
-        if not _is_missing_cell(cell):
-            logger.info(
-                "infer_data_columns: column %r typed from row %d (%s); rows "
-                "0..%d are missing", col_name, i, type(cell).__name__, i - 1,
-            )
-            return cell
-    return first
+    if cells.dtype != object:
+        present = cells[cells.notna()]
+        if present.empty:
+            return "VARCHAR", dict(_EMPTY_COLUMN_META)
+        cell_val = present.iloc[0]
+        if isinstance(cell_val, np.generic):
+            cell_val = cell_val.item()
+        return _infer_duckdb_type(cell_val)
+
+    present = [v for v in cells.tolist() if not _is_missing_cell(v)]
+    if not present:
+        return "VARCHAR", dict(_EMPTY_COLUMN_META)
+    first = present[0]
+    if isinstance(first, np.generic):
+        first = first.item()
+    if any(isinstance(v, (np.ndarray, list, tuple, dict)) for v in present):
+        # to_python.m sends array cells as Python lists (via .tolist()).
+        # Normalise to ndarray so _infer_duckdb_type handles them correctly.
+        if isinstance(first, list) and len(first) > 0:
+            first = np.asarray(first)
+        return _infer_duckdb_type(first)
+    kind = pd.api.types.infer_dtype(present, skipna=True)
+    if kind == "integer" and len(present) < len(cells):
+        # Integers with blanks: a BIGINT column cannot hold NaN; pandas
+        # makes the same call (int column + NaN -> float64).
+        return "DOUBLE", {"python_type": "float"}
+    if kind in _INFERRED_KIND_TYPES:
+        ddb_type, ptype = _INFERRED_KIND_TYPES[kind]
+        return ddb_type, {"python_type": ptype}
+    if any(isinstance(v, str) for v in present):
+        logger.info(
+            "infer_data_columns: column %r holds strings mixed with other "
+            "values (%s) -> VARCHAR, non-strings stored as text", col_name, kind,
+        )
+        return "VARCHAR", {"python_type": "str"}
+    return _infer_duckdb_type(first)
+
+
+def _batch_frame(sample: pd.DataFrame, more_frames: list | tuple) -> pd.DataFrame:
+    """``sample`` plus every DataFrame of ``more_frames``, as one frame (one
+    concat; a column a record lacks reads as missing there)."""
+    frames = [f for f in more_frames if isinstance(f, pd.DataFrame) and len(f)]
+    if not frames:
+        return sample
+    t0 = time.perf_counter()
+    big = pd.concat([sample, *frames], ignore_index=True, sort=False)
+    logger.debug(
+        "infer_data_columns: typed %d column(s) over %d record(s), %d row(s) "
+        "in %.3fs", len(sample.columns), len(frames) + 1, len(big),
+        time.perf_counter() - t0,
+    )
+    return big
 
 
 def infer_data_columns(
-    sample_value: Any, data_col_name: str | None = None
+    sample_value: Any,
+    data_col_name: str | None = None,
+    *,
+    more_frames: list | tuple = (),
 ) -> tuple[dict, dict]:
     """
     From a sample data value, return:
       - data_col_types: dict of {col_name: duckdb_type_str}
       - dtype_meta: metadata dict for round-trip restoration
+
+    ``more_frames``: the rest of a DataFrame batch. Each column's type is
+    judged over the sample AND these (see ``_batch_column_type``).
     """
     # DataFrame mode: each DataFrame column → its own DuckDB column.
     # One DuckDB row is stored per DataFrame row; the column type reflects
@@ -515,20 +615,13 @@ def infer_data_columns(
             "columns": {},
             "df_columns": list(sample_value.columns),
         }
+        batch = _batch_frame(sample_value, more_frames)
         for col_name in sample_value.columns:
-            col_series = sample_value[col_name]
-            if len(sample_value) == 0:
+            if len(batch) == 0:
                 ddb_type = "VARCHAR"
                 col_meta = {"python_type": "str"}
             else:
-                cell_val = _representative_cell(col_series, col_name)
-                if isinstance(cell_val, np.generic):
-                    cell_val = cell_val.item()
-                # to_python.m sends array cells as Python lists (via .tolist()).
-                # Normalise to ndarray so _infer_duckdb_type handles them correctly.
-                if isinstance(cell_val, list) and len(cell_val) > 0:
-                    cell_val = np.asarray(cell_val)
-                ddb_type, col_meta = _infer_duckdb_type(cell_val)
+                ddb_type, col_meta = _batch_column_type(batch[col_name], col_name)
             col_types[col_name] = ddb_type
             meta["columns"][col_name] = col_meta
         return col_types, meta
@@ -610,6 +703,48 @@ def _storage_signature(ddb_type: str) -> tuple[str, int]:
     else:
         category = t
     return (category, depth)
+
+
+_INTEGER_DDB_TYPES = {
+    "TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT",
+    "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT",
+}
+_FLOAT_DDB_TYPES = {"FLOAT", "REAL", "DOUBLE"}
+
+
+def column_type_change(stored_type: str, incoming_type: str) -> str:
+    """What a save of ``incoming_type`` values does to a stored column of
+    ``stored_type`` that already holds values — the one owner of the rule.
+
+    - ``"same"``: the values fit as they are (equal types, or one numeric
+      kind into a wider one: BIGINT values into DOUBLE).
+    - ``"widen"``: an integer column receives fractions; the column becomes
+      DOUBLE (user decision D1, 2026-10-22: no stored number changes value).
+    - ``"as_text"``: a VARCHAR column receives numbers; they are stored as
+      text (user decision D2, 2026-10-22).
+    - ``"refuse"``: anything else (text into a numeric column, scalar vs
+      array, temporal vs number). The save is refused, nothing written.
+
+    A stored column that is still EMPTY takes any type; that check needs the
+    data, so it is the caller's (scidb ``_reconcile_column_types``).
+    """
+    s = stored_type.strip().upper()
+    i = incoming_type.strip().upper()
+    if s == i:
+        return "same"
+    s_cat, s_depth = _storage_signature(s)
+    i_cat, i_depth = _storage_signature(i)
+    if s_depth != i_depth:
+        return "refuse"
+    if s_depth == 0 and s in _INTEGER_DDB_TYPES and (
+        i in _FLOAT_DDB_TYPES or i.startswith("DECIMAL")
+    ):
+        return "widen"
+    if s_cat == i_cat:
+        return "same"
+    if s_depth == 0 and s_cat == "string" and i_cat == "numeric":
+        return "as_text"
+    return "refuse"
 
 
 def record_schema_mismatch(ref_col_types: dict, rec_col_types: dict) -> str | None:
@@ -732,8 +867,10 @@ def bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) -
                 ]
             else:
                 col_arrays[col] = raw.tolist()
+        elif ptype == "str":
+            col_arrays[col] = [_str_to_storage(v) for v in raw.tolist()]
         else:
-            # Scalar types (float, int, str, bool …): tolist() converts numpy
+            # Scalar types (float, int, bool …): tolist() converts numpy
             # scalars to Python builtins, which is what DuckDB expects.
             col_arrays[col] = raw.tolist()
 

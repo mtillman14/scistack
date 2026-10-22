@@ -163,6 +163,46 @@ class ColumnSetChangedError(SciStackError):
         )
 
 
+class ColumnTypeChangedError(SciStackError):
+    """Raised by a save whose values contradict the type of a data column
+    the variable already stores values in (user decision 2026-10-22: refuse,
+    never silently re-type stored data).
+
+    A column's type is decided by the first save that brings it non-empty
+    values; a column that is still empty takes any type, an integer column
+    widens to DOUBLE, and a text column takes numbers as text. What is left —
+    text into a numeric column, a scalar where an array is stored, and so
+    on — lands here. Nothing is written for the save.
+    """
+
+    def __init__(
+        self,
+        variable: str,
+        conflicts: "list[tuple[str, str, str, list]]",
+        n_existing: int,
+    ) -> None:
+        # conflicts: (column, stored type, incoming type, sample values)
+        self.variable = variable
+        self.conflicts = list(conflicts)
+        self.n_existing = n_existing
+        lines = [
+            f"  {col}: stored as {stored} in the existing records, but this "
+            f"save has {incoming} values (e.g. {', '.join(repr(v) for v in sample)})"
+            for col, stored, incoming, sample in self.conflicts
+        ]
+        super().__init__(
+            f"{variable} already stores {n_existing} record(s), and this save's "
+            f"values do not fit {len(self.conflicts)} of its column type(s), "
+            f"so nothing was saved:\n" + "\n".join(lines) + "\n"
+            f"A column's type is set by the first save that has values in it. "
+            f"To fix it, make the function return values of the stored type "
+            f"(for pandas.read_csv: dtype={{column: str}} keeps a column as "
+            f"text), save into a NEW variable (for example {variable}_2), or "
+            f"delete {variable}'s existing records (in the GUI: Variants popup "
+            f"-> Delete) and run again."
+        )
+
+
 def _preview(names: "list[str]", limit: int = 4) -> str:
     shown = ", ".join(names[:limit])
     return shown + (f", ... +{len(names) - limit} more" if len(names) > limit else "")
