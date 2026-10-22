@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any
 
+from scicanonicalhash.datetimes import datetime_hash_bytes
+
 logger = logging.getLogger(__name__)
 
 
@@ -218,6 +220,14 @@ def _serialize_for_hash(obj: Any) -> bytes:
     fast = _SCALAR_BYTES.get(type(obj))
     if fast is not None:
         return fast(obj)
+
+    # Datetimes (datetime.datetime, pd.Timestamp, pd.NaT, np.datetime64): one
+    # canonical spelling across the three types, zone included — owner
+    # scicanonicalhash.datetimes. Before the ndarray branch, which an
+    # np.datetime64 scalar (it has tobytes/dtype/shape) would otherwise take.
+    dt_bytes = datetime_hash_bytes(obj)
+    if dt_bytes is not None:
+        return dt_bytes
 
     # Primitives - use JSON for stability
     if isinstance(obj, (type(None), bool, int, float, str)):

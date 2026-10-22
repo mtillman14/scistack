@@ -12,7 +12,7 @@ pip install -e $SCRIPT_DIR/scistacklog --no-deps
 pip install -e $SCRIPT_DIR/scicanonicalhash --no-deps
 pip install -e $SCRIPT_DIR/path-gen --no-deps
 pip install -e $SCRIPT_DIR/scifor --no-deps
-pip install -e $SCRIPT_DIR/sciduckdb --no-deps
+pip install -e $SCRIPT_DIR/sciduckdb --no-deps  # depends on scicanonicalhash
 
 # csv-stats: its own repo (github.com/mtillman14/csv-stats), the owner of every
 # descriptive formula. Editable when cloned beside the packages (gitignored).

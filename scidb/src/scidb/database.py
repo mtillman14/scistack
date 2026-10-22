@@ -24,6 +24,13 @@ from sciduckdb import (
     unflatten_dict,
     value_to_storage_row,
     count_null_list_elements,
+    is_datetime_meta,
+    merge_tz_columns,
+    storage_column_names,
+    storage_column_types,
+    stored_tz_companions,
+    tz_companions,
+    user_column_types,
 )
 
 from . import provenance_query, schema_types
@@ -1363,7 +1370,12 @@ class DatabaseManager:
         ensure_provenance_tables(self._duck)
 
     def _check_column_set(
-        self, table_name: str, variable_class: type[BaseVariable], columns
+        self,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        columns,
+        *,
+        dtype_meta: dict | None = None,
     ) -> None:
         """The one owner of "may this save write these data columns into the
         variable's existing table". Call it before the create-if-missing
@@ -1379,12 +1391,32 @@ class DatabaseManager:
           as an opaque DuckDB Binder Error, and a MISSING one silently
           overwrote the variable's column list, so old records loaded
           without their columns.
+
+        A datetime column's ``__tz`` zone companion (``dtype_meta``'s
+        datetime columns, sciduckdb.datetimes) is not a column of its own
+        here: when this save turns a still-empty column into a datetime one,
+        ``_reconcile_column_types`` adds the companion.
         """
         if not self._duck._table_exists(table_name):
             return
-        existing = self.stored_data_columns(table_name)
+        stored_types = self.stored_data_column_types(table_name)
+        existing = list(stored_types)
         new = [str(c) for c in columns]
         if set(existing) == set(new):
+            return
+        # This save's companions and the stored ones: a datetime column
+        # meeting non-datetime values is a TYPE question, answered (and
+        # refused) by _reconcile_column_types, not a column-set change.
+        companions = set(tz_companions(dtype_meta)) | set(
+            stored_tz_companions(stored_types)
+        )
+        if companions and (set(existing) - companions) == (set(new) - companions):
+            Log.debug(
+                f"[save] {variable_class.__name__}: column set matches; only "
+                f"datetime zone column(s) differ "
+                f"({sorted((set(new) ^ set(existing)) & companions)}), "
+                f"reconciled with the column types"
+            )
             return
         added = [c for c in new if c not in set(existing)]
         removed = [c for c in existing if c not in set(new)]
@@ -1629,9 +1661,12 @@ class DatabaseManager:
         type_name = variable_class.__name__
         stored_metas = (self.get_dtype_meta(type_name) or {}).get("columns", {})
         in_metas = dtype_meta.get("columns", {})
+        # Datetime zone companions follow their column (sciduckdb.datetimes):
+        # judged through it, and re-derived from the merged metadata below.
+        user_types = user_column_types(data_col_types, dtype_meta)
 
         changes = {}
-        for col, in_type in data_col_types.items():
+        for col, in_type in user_types.items():
             s_type = stored_types.get(col)
             if s_type is None or in_metas.get(col, {}).get("empty"):
                 continue
@@ -1642,11 +1677,11 @@ class DatabaseManager:
             table_name, {c: stored_types[c] for c in changes}
         )
 
-        new_types = dict(data_col_types)
+        new_types = dict(user_types)
         new_metas = dict(in_metas)
         alters: list[tuple[str, str, bool]] = []  # (column, new type, stored empty)
         conflicts = []
-        for col, in_type in data_col_types.items():
+        for col, in_type in user_types.items():
             s_type = stored_types.get(col)
             if s_type is None:
                 continue
@@ -1705,15 +1740,34 @@ class DatabaseManager:
                 )
             self._create_variable_view(variable_class)
 
-        Log.debug(
-            f"[save] {type_name}: column types reconciled in "
-            f"{time.perf_counter() - t0:.3f}s — {len(data_col_types)} column(s), "
-            f"{len(changes)} checked against stored data, "
-            f"{len(empty)} still empty, {len(alters)} altered"
-        )
         merged_meta = dict(dtype_meta)
         merged_meta["columns"] = new_metas
-        return new_types, merged_meta
+        # A column that just became a datetime one (it was empty in every
+        # stored record) gets its zone companion now; every other datetime
+        # column has had one since its first save.
+        missing_tz = [c for c in tz_companions(merged_meta) if c not in stored_types]
+        if missing_tz:
+            self._duck._execute(
+                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
+            )
+            for comp in missing_tz:
+                self._duck._execute(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN "{comp}" VARCHAR'
+                )
+            self._create_variable_view(variable_class)
+            Log.info(
+                f"[save] {type_name}: added datetime zone column(s) {missing_tz} "
+                f"(NULL = naive) for column(s) that are now datetimes"
+            )
+
+        Log.debug(
+            f"[save] {type_name}: column types reconciled in "
+            f"{time.perf_counter() - t0:.3f}s — {len(user_types)} column(s), "
+            f"{len(changes)} checked against stored data, "
+            f"{len(empty)} still empty, {len(alters)} altered, "
+            f"{len(missing_tz)} zone column(s) added"
+        )
+        return storage_column_types(new_types, merged_meta), merged_meta
 
     def _ensure_columnar_table(
         self,
@@ -1881,7 +1935,9 @@ class DatabaseManager:
         is_dataframe = isinstance(data, pd.DataFrame)
 
         # Ensure table exists, with this save's columns.
-        self._check_column_set(table_name, variable_class, list(data_col_types))
+        self._check_column_set(
+            table_name, variable_class, list(data_col_types), dtype_meta=dtype_meta
+        )
         data_col_types, dtype_meta = self._reconcile_column_types(
             table_name, variable_class, data_col_types, dtype_meta, [data]
         )
@@ -2118,7 +2174,9 @@ class DatabaseManager:
         if is_custom:
             self._ensure_columnar_table(table_name, variable_class, first_data)
         else:
-            self._check_column_set(table_name, variable_class, list(data_col_types))
+            self._check_column_set(
+                table_name, variable_class, list(data_col_types), dtype_meta=dtype_meta
+            )
             data_col_types, dtype_meta = self._reconcile_column_types(
                 table_name, variable_class, data_col_types, dtype_meta,
                 [d for d, _ in data_items],
@@ -4245,9 +4303,11 @@ class DatabaseManager:
 
         # Bulk-fetch data rows in chunks to avoid very long IN clauses.
         all_record_ids = records["record_id"].tolist()
-        data_cols = list(dtype_meta.get("columns", {}).keys())
-        if not data_cols:
+        if not dtype_meta.get("columns"):
             return pd.DataFrame()
+        # Stored columns: datetime zone companions included, folded back by
+        # merge_tz_columns below (owner sciduckdb.datetimes).
+        data_cols = storage_column_names(dtype_meta)
 
         data_select = ", ".join(f'"{c}"' for c in data_cols)
         chunk_size = 500
@@ -4274,6 +4334,7 @@ class DatabaseManager:
             if len(chunks) > 1
             else chunks[0].copy()
         )
+        merge_tz_columns(data_df, dtype_meta, where=f"load_all_as_df({type_name})")
 
         result = self._assemble_df_from_records_and_data(
             records,
@@ -4444,9 +4505,12 @@ class DatabaseManager:
                         )
                     t_chunk_deserialize += time.perf_counter() - _t
             else:
-                # Native path
+                # Native path. Stored columns are selected (datetime zone
+                # companions included) and folded back right after the fetch.
                 data_cols = list(dtype_meta.get("columns", {}).keys())
-                data_select = ", ".join(f'"{c}"' for c in data_cols)
+                data_select = ", ".join(
+                    f'"{c}"' for c in storage_column_names(dtype_meta)
+                )
                 sql = (
                     f'SELECT record_id, {data_select} FROM "{table_name}" '
                     f"WHERE record_id IN ({placeholders})"
@@ -4454,6 +4518,7 @@ class DatabaseManager:
                 _t = time.perf_counter()
                 chunk_df = self._duck._fetchdf(sql, chunk)
                 t_chunk_sql += time.perf_counter() - _t
+                merge_tz_columns(chunk_df, dtype_meta, where=f"load({type_name})")
 
                 if len(chunk_df) > 0:
                     _t = time.perf_counter()
@@ -4471,7 +4536,12 @@ class DatabaseManager:
                             ).reset_index(drop=True)
                             result = {}
                             for c, meta in columns_meta.items():
-                                if c in group_df.columns:
+                                if c in group_df.columns and is_datetime_meta(meta):
+                                    # Restored by merge_tz_columns; the Series
+                                    # keeps its dtype (unit, zone), a list
+                                    # would not — and the hash includes it.
+                                    result[c] = group_df[c]
+                                elif c in group_df.columns:
                                     # Optimized: use tolist() instead of iloc[i] (5-10x faster)
                                     result[c] = [
                                         storage_to_python(val, meta)

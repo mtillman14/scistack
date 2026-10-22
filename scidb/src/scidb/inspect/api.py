@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
+from sciduckdb import stored_tz_companions
 
 from ..exceptions import AmbiguousVersionError, NotFoundError
 from ..log import Log
@@ -470,10 +471,14 @@ class Inspector:
             default=name,
         )
         col_rows = self._duck._fetchall(
-            "SELECT column_name FROM information_schema.columns "
+            "SELECT column_name, data_type FROM information_schema.columns "
             "WHERE table_name = ? ORDER BY ordinal_position",
             [table_name],
         )
+        # A datetime column's __tz zone companion is storage, not a data
+        # column (owner sciduckdb.datetimes).
+        zone_cols = stored_tz_companions({r[0]: r[1] for r in col_rows})
+        col_rows = [r for r in col_rows if r[0] not in zone_cols]
 
         level_rows = self._duck._fetchall(
             "SELECT s.schema_level, COUNT(DISTINCT r.record_id) "

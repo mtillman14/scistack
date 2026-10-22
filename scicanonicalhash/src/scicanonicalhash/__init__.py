@@ -5,13 +5,29 @@ of Python objects, essential for cache key computation, data versioning,
 and reproducibility in data pipelines.
 """
 
+from scicanonicalhash.datetimes import (
+    is_datetime_value,
+    is_missing_datetime,
+    utc_ns,
+    zone_from_label,
+    zone_label,
+)
 from scicanonicalhash.hashing import (
     canonical_hash,
     frame_path_counts,
     generate_record_id,
 )
 
-__all__ = ["canonical_hash", "frame_path_counts", "generate_record_id"]
+__all__ = [
+    "canonical_hash",
+    "frame_path_counts",
+    "generate_record_id",
+    "is_datetime_value",
+    "is_missing_datetime",
+    "utc_ns",
+    "zone_from_label",
+    "zone_label",
+]
 # The release tag owns the version (hatch-vcs writes it into the installed
 # metadata); "0.0.0" marks a source tree that was never installed.
 from importlib import metadata as _metadata  # noqa: E402

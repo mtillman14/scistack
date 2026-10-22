@@ -21,6 +21,17 @@ from .sciduckdb import (
     count_null_list_elements,
     schema_keys_from_db,
 )
+from .datetimes import (
+    DatetimeStorageError,
+    is_datetime_meta,
+    merge_tz_columns,
+    storage_column_names,
+    storage_column_types,
+    stored_tz_companions,
+    tz_column_name,
+    tz_companions,
+    user_column_types,
+)
 
 __all__ = [
     "SciDuck",
@@ -42,4 +53,13 @@ __all__ = [
     "bulk_df_to_storage_rows",
     "_flatten_dict",
     "unflatten_dict",
+    "DatetimeStorageError",
+    "is_datetime_meta",
+    "merge_tz_columns",
+    "storage_column_names",
+    "storage_column_types",
+    "stored_tz_companions",
+    "tz_column_name",
+    "tz_companions",
+    "user_column_types",
 ]

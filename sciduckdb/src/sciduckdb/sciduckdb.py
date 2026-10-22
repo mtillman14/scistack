@@ -22,6 +22,21 @@ from typing import Any
 import duckdb
 import numpy as np
 import pandas as pd
+from scicanonicalhash import is_missing_datetime
+
+from .datetimes import (
+    DATETIME_PTYPE,
+    INSTANT_TYPE,
+    column_unit,
+    datetime_meta,
+    datetime_series_to_storage,
+    datetime_to_storage,
+    is_datetime_meta,
+    merge_tz_columns,
+    storage_column_names,
+    storage_column_types,
+    tz_column_name,
+)
 
 logger = logging.getLogger("sciduck")
 
@@ -168,10 +183,11 @@ def _infer_duckdb_type(value: Any) -> tuple[str, dict]:
             meta["ndarray_keys"] = ndarray_keys
         return "JSON", meta
 
-    # --- datetime ---
-    if isinstance(value, (datetime.datetime, pd.Timestamp)):
-        meta["python_type"] = "datetime"
-        return "TIMESTAMP", meta
+    # --- datetime (pd.NaT and np.datetime64 included) ---
+    # TIMESTAMP_NS holding UTC, plus the <col>__tz companion added by
+    # storage_column_types — owner sciduckdb.datetimes.
+    if isinstance(value, (datetime.datetime, pd.Timestamp, np.datetime64)):
+        return INSTANT_TYPE, datetime_meta()
     if isinstance(value, datetime.date):
         meta["python_type"] = "date"
         return "DATE", meta
@@ -419,6 +435,11 @@ def storage_to_python(value: Any, meta: dict) -> Any:
     if ptype == "str":
         return str(value) if value is not None else None
 
+    if ptype == DATETIME_PTYPE:
+        # The zone is folded in by merge_tz_columns (it needs the companion
+        # column); here only a missing value is normalised: NULL is NaT.
+        return pd.NaT if _is_missing_cell(value) else value
+
     return value
 
 
@@ -437,7 +458,8 @@ def storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
     ptype = meta.get("python_type", "")
 
     # Scalar types: DuckDB already returns the right pandas dtype — no-op.
-    if ptype in ("float", "int", "bool", "str", ""):
+    # Datetimes too: merge_tz_columns has already restored them.
+    if ptype in ("float", "int", "bool", "str", "", DATETIME_PTYPE):
         return series
 
     # JSON blob types: decode string once per cell, but at column granularity.
@@ -536,7 +558,13 @@ def _batch_column_type(cells: pd.Series, col_name: Any) -> tuple[str, dict]:
     - any non-empty cell a string -> VARCHAR (numbers in it stored as text)
     - array / list / dict / datetime cells -> the first non-empty cell's
       type, as before
+    - a datetime64 column (naive or tz-aware), or an object column whose
+      every cell is NaT -> datetime even when it holds no value: the dtype
+      already says what it is, and a datetime column needs its __tz
+      companion from the first save (sciduckdb.datetimes)
     """
+    if pd.api.types.is_datetime64_any_dtype(cells.dtype):
+        return INSTANT_TYPE, datetime_meta(column_unit(cells.dtype))
     if cells.dtype != object:
         present = cells[cells.notna()]
         if present.empty:
@@ -546,8 +574,11 @@ def _batch_column_type(cells: pd.Series, col_name: Any) -> tuple[str, dict]:
             cell_val = cell_val.item()
         return _infer_duckdb_type(cell_val)
 
-    present = [v for v in cells.tolist() if not _is_missing_cell(v)]
+    all_cells = cells.tolist()
+    present = [v for v in all_cells if not _is_missing_cell(v)]
     if not present:
+        if all_cells and all(is_missing_datetime(v) for v in all_cells):
+            return INSTANT_TYPE, datetime_meta()
         return "VARCHAR", dict(_EMPTY_COLUMN_META)
     first = present[0]
     if isinstance(first, np.generic):
@@ -604,6 +635,10 @@ def infer_data_columns(
 
     ``more_frames``: the rest of a DataFrame batch. Each column's type is
     judged over the sample AND these (see ``_batch_column_type``).
+
+    ``data_col_types`` are the STORED columns: each datetime column is
+    followed by its ``<col>__tz`` companion (sciduckdb.datetimes), which
+    ``dtype_meta["columns"]`` never lists.
     """
     # DataFrame mode: each DataFrame column → its own DuckDB column.
     # One DuckDB row is stored per DataFrame row; the column type reflects
@@ -624,7 +659,7 @@ def infer_data_columns(
                 ddb_type, col_meta = _batch_column_type(batch[col_name], col_name)
             col_types[col_name] = ddb_type
             meta["columns"][col_name] = col_meta
-        return col_types, meta
+        return storage_column_types(col_types, meta), meta
 
     # Dict mode: each key → its own DuckDB column (nested dicts are flattened)
     if isinstance(sample_value, dict):
@@ -646,13 +681,13 @@ def infer_data_columns(
             ddb_type, col_meta = _infer_duckdb_type(val)
             col_types[col_name] = ddb_type
             meta["columns"][col_name] = col_meta
-        return col_types, meta
+        return storage_column_types(col_types, meta), meta
 
     # Single-column mode — use provided name or default to "value"
     col_name = data_col_name or "value"
     ddb_type, col_meta = _infer_duckdb_type(sample_value)
     meta = {"mode": "single_column", "columns": {col_name: col_meta}}
-    return {col_name: ddb_type}, meta
+    return storage_column_types({col_name: ddb_type}, meta), meta
 
 
 # DuckDB type categories used by _storage_signature.  Records can only share a
@@ -675,7 +710,11 @@ _NUMERIC_DDB_TYPES = {
     "REAL",
     "DOUBLE",
 }
-_TEMPORAL_DDB_TYPES = {"DATE", "TIME", "TIMESTAMP", "INTERVAL"}
+# Temporal types are each their own category. One shared "temporal" bucket
+# made column_type_change call TIMESTAMP vs TIMESTAMP_NS (or even INTERVAL)
+# "same", letting DuckDB cast a save into a column whose values mean
+# something else (datetime round-trip work, 2026-10-22).
+_TEMPORAL_DDB_TYPES = {"DATE", "TIME", "TIMESTAMP", INSTANT_TYPE, "TIMESTAMPTZ", "INTERVAL"}
 
 
 def _storage_signature(ddb_type: str) -> tuple[str, int]:
@@ -699,7 +738,7 @@ def _storage_signature(ddb_type: str) -> tuple[str, int]:
     elif t == "JSON":
         category = "json"
     elif t in _TEMPORAL_DDB_TYPES:
-        category = "temporal"
+        category = "temporal:" + t
     else:
         category = t
     return (category, depth)
@@ -788,7 +827,8 @@ def dataframe_to_storage_rows(df: pd.DataFrame, dtype_meta: dict) -> list:
     """Convert a DataFrame to a list of per-row storage values.
 
     Returns a list of lists: one inner list per DataFrame row, each containing
-    one storage-ready value per column in the order defined by dtype_meta["columns"].
+    one storage-ready value per STORED column (``storage_column_types``
+    order: a datetime column's value is followed by its zone label).
     """
     col_metas = dtype_meta["columns"]
     rows = []
@@ -796,6 +836,9 @@ def dataframe_to_storage_rows(df: pd.DataFrame, dtype_meta: dict) -> list:
         row = []
         for col, col_meta in col_metas.items():
             cell_val = df[col].iloc[i]
+            if is_datetime_meta(col_meta):
+                row.extend(datetime_to_storage(cell_val))
+                continue
             if isinstance(cell_val, np.generic):
                 cell_val = cell_val.item()
             # to_python.m sends array cells as Python lists (via .tolist()).
@@ -842,11 +885,16 @@ def bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) -
     # Build per-column storage arrays using column-level operations.
     col_arrays: dict = {}
     nan_counts: dict = {}
+    dt_counts: dict = {}
     for col, col_meta in col_metas.items():
         ptype = col_meta.get("python_type", "")
         raw = big_df[col]
 
-        if ptype == "ndarray":
+        if ptype == DATETIME_PTYPE:
+            instants, labels, dt_counts[col] = datetime_series_to_storage(raw.tolist())
+            col_arrays[col] = instants
+            col_arrays[tz_column_name(col)] = labels
+        elif ptype == "ndarray":
             vals = raw.to_numpy()
             n_nan = count_nan_array_elements(vals)
             if n_nan:
@@ -882,8 +930,17 @@ def bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) -
             "array column(s) contain NaN — stored as NULL, reload as NaN: %s",
             nan_counts,
         )
+    if dt_counts:
+        mixed = [c for c, n in dt_counts.items() if n["naive"] and n["aware"]]
+        logger.log(
+            logging.INFO if mixed else logging.DEBUG,
+            "datetime column(s) stored as UTC TIMESTAMP_NS + zone column: %s%s",
+            dt_counts,
+            f" — {mixed} mix naive and tz-aware values (NULL zone = naive)"
+            if mixed else "",
+        )
 
-    cols_in_order = list(col_metas.keys())
+    cols_in_order = storage_column_names(dtype_meta)
     n = len(big_df)
     return [
         (expanded_rids[i],) + tuple(col_arrays[col][i] for col in cols_in_order)
@@ -894,22 +951,28 @@ def bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) -
 def value_to_storage_row(value: Any, dtype_meta: dict) -> list:
     """Convert a data value to a list of storage-ready column values.
 
-    For DataFrames use dataframe_to_storage_rows() instead.
+    For DataFrames use dataframe_to_storage_rows() instead. One value per
+    STORED column: a datetime is followed by its zone label.
     """
     mode = dtype_meta.get("mode", "single_column")
     col_metas = dtype_meta["columns"]
+
+    def cell(val, col_meta) -> list:
+        if is_datetime_meta(col_meta):
+            return list(datetime_to_storage(val))
+        return [_python_to_storage(val, col_meta)]
 
     if mode == "multi_column":
         if dtype_meta.get("nested"):
             flat, _ = _flatten_dict(value)
         else:
             flat = value
-        return [_python_to_storage(flat[col], col_metas[col]) for col in col_metas]
+        return [v for col in col_metas for v in cell(flat[col], col_metas[col])]
     else:
         # Single column — get the one key (could be "value" or a named column)
         col_name = next(iter(col_metas))
         col_meta = col_metas[col_name]
-        return [_python_to_storage(value, col_meta)]
+        return cell(value, col_meta)
 
 
 # ---------------------------------------------------------------------------
@@ -1948,7 +2011,7 @@ class SciDuck:
         # Select all schema columns so non-contiguous keys appear in results
         all_schema_cols = self.dataset_schema
         schema_select = ", ".join(f's."{c}"' for c in all_schema_cols)
-        data_cols = list(dtype_meta["columns"].keys())
+        data_cols = storage_column_names(dtype_meta)
         data_select = ", ".join(f'v."{c}"' for c in data_cols)
 
         sql = (
@@ -1968,6 +2031,7 @@ class SciDuck:
             sql += " WHERE " + " AND ".join(conditions)
 
         df = self._fetchdf(sql, params or None)
+        merge_tz_columns(df, dtype_meta, where=f"SciDuck.load({name})")
 
         mode = dtype_meta.get("mode", "single_column")
         columns_meta = dtype_meta.get("columns", {})
@@ -1978,10 +2042,16 @@ class SciDuck:
             data_cols = list(columns_meta.keys())
             result = {}
             for c, meta in columns_meta.items():
-                if c in df.columns:
-                    result[c] = [
-                        storage_to_python(df[c].iloc[i], meta) for i in range(len(df))
-                    ]
+                if c not in df.columns:
+                    continue
+                if is_datetime_meta(meta):
+                    # Already restored by merge_tz_columns; the Series keeps
+                    # its dtype (unit, zone), a list would not.
+                    result[c] = df[c].reset_index(drop=True)
+                    continue
+                result[c] = [
+                    storage_to_python(df[c].iloc[i], meta) for i in range(len(df))
+                ]
             df_columns = dtype_meta.get("df_columns", data_cols)
             return pd.DataFrame(result, columns=df_columns)
 

@@ -26,3 +26,15 @@ loaded = duck.load("MyVar", subject="S01", session=1)
 - **Schema validation**: Validates dataset schema consistency across sessions
 
 Note: all schema key values are coerced to strings before storage.
+
+## Datetimes
+
+A datetime value (`datetime.datetime`, `pd.Timestamp`, `np.datetime64`, NaT) is
+stored as two columns: `<col>` `TIMESTAMP_NS` holding the UTC instant (or a
+naive value's wall clock), and `<col>__tz` `VARCHAR` holding that value's zone
+(`"Europe/Berlin"`, `"UTC"`, `"+02:00"`; NULL = naive). Zones are per value, so
+one column may hold several zones and naive values. Loads give back each value
+in its own zone. The `__tz` column exists from the column's first save and is
+never listed in the variable's data columns. In raw SQL, filter on
+`<col>__tz IS NULL` to tell naive rows apart. Owner: `sciduckdb.datetimes`;
+design: `docs/claude/datetime-roundtrip.md`.

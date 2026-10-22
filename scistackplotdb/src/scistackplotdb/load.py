@@ -21,6 +21,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from sciduckdb import stored_tz_companions
 from scistacklog import Log
 from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX
 from scistackplot.framesize import format_extent, frame_extent
@@ -170,6 +171,18 @@ def data_column_types_for(db, variable: str) -> dict[str, str]:
             layer=LAYER,
         )
         for name in shadowed:
+            del types[name]
+
+    # A datetime column's __tz zone companion is storage, not a column to
+    # plot (owner sciduckdb.datetimes). Its datetime column loads as the
+    # stored UTC instant / naive wall clock: plots do not restore zones.
+    zone_cols = stored_tz_companions(types)
+    if zone_cols:
+        Log.debug(
+            "variable %r: datetime zone column(s) %s left out of the data columns",
+            variable, sorted(zone_cols), layer=LAYER,
+        )
+        for name in zone_cols:
             del types[name]
     return types
 

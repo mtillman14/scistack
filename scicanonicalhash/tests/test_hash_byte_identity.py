@@ -138,15 +138,25 @@ def _frames():
     yield "series", pd.Series([1.0, 2.0], name="s")
 
 
+_NEWLY_HASHABLE = {"datetime-tz"}
+
+
 @pytest.mark.parametrize("name,frame", list(_frames()), ids=lambda x: x if isinstance(x, str) else "")
 def test_frames_match_twice(name, frame):
     """Twice: the first call verifies the fast path for this signature, the
     second uses the cached verdict — both must give the frozen bytes.
 
     Identical behaviour includes FAILING identically: a frame the frozen
-    serializer cannot hash (pd.NA in a string column, tz-aware Timestamps)
-    must still raise, not start producing a hash nothing before could."""
+    serializer cannot hash (pd.NA in a string column) must still raise, not
+    start producing a hash nothing before could. The one deliberate exception
+    is datetimes (_NEWLY_HASHABLE): tz-aware Timestamps hash since the
+    datetime round-trip work (2026-10-22, owner scicanonicalhash.datetimes),
+    and nothing that hashed before changes a byte."""
     if not _serializable(frame):
+        if name in _NEWLY_HASHABLE:
+            first = hashing._serialize_for_hash(frame)
+            assert hashing._serialize_for_hash(frame) == first
+            return
         for _ in range(2):
             with pytest.raises(ValueError):
                 hashing._serialize_for_hash(frame)

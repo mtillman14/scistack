@@ -27,6 +27,11 @@ assert canonical_hash(42) == canonical_hash(42)  # Deterministic
 4. pandas Series (via name + array serialization)
 5. Dicts (sorted keys, recursive serialization)
 6. Lists/tuples (order-preserving, recursive serialization)
+7. Datetimes: `datetime.datetime`, `pd.Timestamp`, `np.datetime64` (any unit) and NaT.
+   One spelling across the three types for the same value; an aware value hashes
+   its UTC instant PLUS its zone label (`zone_label`: IANA name, `"UTC"`, or a
+   fixed offset like `"+02:00"`), which sciduckdb stores and restores. Owner:
+   `scicanonicalhash.datetimes`. `datetime64` ARRAYS keep their raw-bytes form.
 
 ## `generate_record_id`
 
