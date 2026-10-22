@@ -2316,3 +2316,26 @@ def test_a_function_does_not_shadow_itself_under_two_spellings(tmp_path, caplog)
 
     assert replaced is True, "the same file must re-register without complaint"
     assert "shadows previous definition" not in caplog.text
+
+
+def test_functions_dir_is_folded_into_modules_and_survives_add_path(tmp_path):
+    """The third writable surface (GUI-created functions): its files are
+    discovered, and every config write carries the key through."""
+    from scistack_gui.config import load_config
+
+    db_path = tmp_path / "proj.duckdb"
+    db_path.write_text("")
+    fdir = tmp_path / "src" / "scistack_functions"
+    fdir.mkdir(parents=True)
+    (fdir / "made_here.py").write_text("def made_here(x):\n    return x\n")
+    toml_file = tmp_path / "scistack.toml"
+    toml_file.write_text('modules = []\nfunctions_dir = "src/scistack_functions"\n')
+
+    cfg = load_config(None, db_path)
+    assert cfg.functions_dir is not None
+    assert any(Path(m).name == "made_here.py" for m in cfg.modules)
+
+    shared_repo = tmp_path / "shared_repo"
+    shared_repo.mkdir()
+    add_path(db_path, shared_repo)
+    assert _read_raw_section(toml_file)["functions_dir"] == "src/scistack_functions"

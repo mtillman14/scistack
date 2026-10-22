@@ -415,3 +415,143 @@ class TestAHiddenNodesEdgesBindNothing:
         client.request("DELETE", f"/api/layout/{var['id']}")
         after = effective_edges(populated_db, "main", caller="test").drawn_list
         assert not any(e["source"].split("::")[0] == var["id"].split("::")[0] for e in after)
+
+
+# ---------------------------------------------------------------------------
+# D1 follow-up: recorded selectors and run options survive a clear-data
+# ---------------------------------------------------------------------------
+
+
+class TestRecordedSettingsSurviveAClear:
+    def _with_recorded(self, db, monkeypatch, **extra):
+        rows = [dict(v, **extra) for v in db.list_pipeline_variants()]
+        monkeypatch.setattr(db, "list_pipeline_variants", lambda *a, **k: [dict(r) for r in rows])
+        return rows
+
+    def test_what_every_row_agrees_on_becomes_the_nodes_settings(
+        self, client, populated_db, bp_node_id, monkeypatch
+    ):
+        from scistack_gui.services.adoption import recorded_node_settings
+
+        _graph(client)
+        self._with_recorded(
+            populated_db,
+            monkeypatch,
+            selectors={"signal": {"columns": ["a"], "iterate": False}},
+            distribute=True,
+            across_variants=["signal"],
+        )
+        settings = recorded_node_settings(populated_db, {bp_node_id: "bandpass_filter"})
+        assert settings[bp_node_id]["columnSelections"] == {
+            "signal": {"columns": ["a"], "iterate": False}
+        }
+        assert settings[bp_node_id]["runOptions"]["distribute"] is True
+        assert settings[bp_node_id]["runOptions"]["across_variants"] == ["signal"]
+
+    def test_rows_that_disagree_leave_it_unset(self, client, populated_db, bp_node_id, monkeypatch):
+        from scistack_gui.services.adoption import recorded_node_settings
+
+        _graph(client)
+        rows = self._with_recorded(populated_db, monkeypatch)
+        rows.append({**rows[0], "call_id": "other", "distribute": True})
+        settings = recorded_node_settings(populated_db, {bp_node_id: "bandpass_filter"})
+        assert "runOptions" not in settings.get(bp_node_id, {})
+
+    def test_adoption_stores_them_on_the_node(self, client, populated_db, bp_node_id, monkeypatch):
+        from scistack_gui import pipeline_store
+
+        self._with_recorded(populated_db, monkeypatch, distribute=True)
+        _graph(client)  # the adopting build
+        cfg = pipeline_store.get_node_config(populated_db, bp_node_id)
+        assert cfg.get("runOptions", {}).get("distribute") is True
+
+    def test_pooling_reaches_a_run_built_from_edges(self):
+        from scistack_gui.services.execution_service import _apply_node_pooling
+
+        t = {"bindings": {"signal": {"kind": "variable", "ref": ["Raw"]}}, "constants": {}}
+        [out] = _apply_node_pooling([t], ["signal"], "test")
+        assert out["bindings"]["signal"]["pool_variants"] is True
+        assert "pool_variants" not in t["bindings"]["signal"], "input not mutated"
+
+
+# ---------------------------------------------------------------------------
+# Step names (Q6): a named script run belongs to the node of that name
+# ---------------------------------------------------------------------------
+
+from scidb import BaseVariable as _BaseVariable  # noqa: E402
+
+
+class StepRewireSignal(_BaseVariable):
+    pass
+
+
+class TestStepNames:
+    def test_names_are_unique_per_function(self, client, populated_db):
+        from scistack_gui.step_names import ensure_step_names, step_names
+
+        out = ensure_step_names(
+            populated_db, [("fn__f__a", "pkg.f"), ("fn__f__b", "pkg.f"), ("fn__g__c", "g")]
+        )
+        assert out == {"fn__f__a": "f", "fn__f__b": "f_2", "fn__g__c": "g"}
+        assert step_names(populated_db)["fn__f__b"] == "f_2"
+        # Existing names are kept.
+        assert ensure_step_names(populated_db, [("fn__f__b", "pkg.f")]) == {"fn__f__b": "f_2"}
+
+    def test_a_named_script_rewire_moves_the_node_not_a_new_one(
+        self, client, populated_db, bp_node_id
+    ):
+        """The Q6 case: a script edited to feed the step a different input,
+        run under the step's name, rewires THAT node."""
+        import numpy as np
+        from conftest import FilteredSignal, bandpass_filter
+
+        from scidb import for_each
+        from scistack_gui.step_names import set_step_name
+
+        _graph(client)  # adopt
+        set_step_name(populated_db, bp_node_id, "filter")
+        for subj in (1, 2):
+            for sess in ("pre", "post"):
+                StepRewireSignal.save(np.zeros(10), subject=subj, session=sess)
+        for_each(
+            bandpass_filter,
+            {"signal": StepRewireSignal, "low_hz": 20},
+            [FilteredSignal],
+            subject=[1, 2],
+            session=["pre", "post"],
+            step="filter",
+        )
+
+        graph = _graph(client)
+        bp = [n for n in graph["nodes"] if n["data"].get("label") == "bandpass_filter"]
+        assert [n["id"].split("::")[0] for n in bp] == [bp_node_id], "no second node"
+        sources = {
+            e["source"].split("::")[0]
+            for e in graph["edges"]
+            if e["target"].split("::")[0] == bp_node_id and e.get("targetHandle") == "in__signal"
+        }
+        assert sources == {"var__StepRewireSignal"}, f"the old input still drawn: {sources}"
+        assert not [w for w in graph.get("warnings", []) if w.get("kind") == "adopted"
+                    and "bandpass_filter" in w.get("functions", [])]
+
+    def test_export_writes_the_step_name(self, client, populated_db, bp_node_id):
+        from scistack_gui.services.code_export_service import export_pipeline_to_code
+        from scistack_gui.step_names import step_name_of
+
+        _graph(client)
+        script = export_pipeline_to_code(populated_db, "main")["script"]
+        assert step_name_of(populated_db, bp_node_id) == "bandpass_filter"
+        assert "step='bandpass_filter'" in script
+
+    def test_claims_are_by_function_and_newest_step(self):
+        from types import SimpleNamespace
+
+        from scistack_gui.step_names import step_claims
+
+        agg = SimpleNamespace(
+            fn_input_params={("f", "c1"): {}, ("g", "c2"): {}},
+            fn_steps={("f", "c1"): ["old", "filter"], ("g", "c2"): ["filter"]},
+        )
+        rows = {"nf": {"type": "functionNode", "label": "f"}}
+        claims = step_claims(agg, lambda fkey: f"w_{fkey[1]}", rows, {"nf": "filter"})
+        assert claims == {("f", "w_c1"): ["nf"]}, "g's run named 'filter' is not f's node"

@@ -109,6 +109,10 @@ class ChangeRecord:
     files: dict[str, FileChange] = field(default_factory=dict)
     state: str = "applied"  # "applied" | "undone"
     created_at: float = field(default_factory=time.time)
+    #: The client's undo stack ("page", "plot"), so a restarted surface seeds
+    #: its own stack only (:func:`recent_changes`). Empty: not known (a record
+    #: from before 2026-10-22, a script, a test).
+    surface: str = ""
 
     @property
     def empty(self) -> bool:
@@ -289,6 +293,7 @@ def record_to_json(rec: ChangeRecord) -> str:
                 path: {"before": b64(f.before), "after": b64(f.after), "reload": f.reload}
                 for path, f in rec.files.items()
             },
+            "surface": rec.surface,
         }
     )
 
@@ -320,6 +325,7 @@ def record_from_json(
         },
         state=state,
         created_at=created_at,
+        surface=str(data.get("surface") or ""),
     )
 
 
@@ -441,6 +447,68 @@ def list_changes(limit: int = 50) -> list[dict]:
         )
     keys = ("change_id", "created_at", "updated_at", "label", "method", "state", "summary")
     return [dict(zip(keys, r)) for r in rows]
+
+
+def recent_changes(surface: str, limit: int = 200) -> dict:
+    """What a restarted *surface* should put back on its undo stack:
+    ``{"past": [{change_id, label}], "future": [...]}``, each oldest first
+    (the frontend's stack order: the last element is the next undo / redo).
+
+    Plan-canvas-as-document Q5: undo survives a restart. The records are the
+    persisted ``_canvas_change`` rows (never events); a record is replayed
+    exactly as one made before the restart would be, and ``undo`` refuses on
+    a conflict, so seeding is safe even if something changed in between.
+
+    * **past**: records in state ``applied``, in the order they were made.
+    * **future**: records in state ``undone`` that are still redoable: undone
+      AFTER the newest applied record was made. An undone record followed by
+      a new edit was dropped from the redo side when that edit was made, and
+      stays dropped.
+
+    Only records whose surface is *surface* are returned. A record from
+    before surfaces were recorded (2026-10-22) has none and is left out: it
+    may belong to another stack.
+    """
+    import json
+
+    from scistack_gui.db import db_connection
+
+    out: dict = {"past": [], "future": []}
+    if _db_key() is None:
+        return out
+    with db_connection("history recent"):
+        duck = _duck()
+        if not duck._table_exists(AUDIT_TABLE):
+            return out
+        rows = duck._fetchall(
+            f"SELECT change_id, label, state, created_at, updated_at, record_json "
+            f"FROM {AUDIT_TABLE} WHERE state != ? ORDER BY seq DESC LIMIT ?",
+            [EVENT_STATE, int(limit) * 4],
+        )
+    mine = []
+    for change_id, label, state, created_at, updated_at, text in rows:
+        try:
+            rec_surface = (json.loads(text) or {}).get("surface") or ""
+        except ValueError:
+            continue
+        if rec_surface == surface:
+            mine.append((change_id, label, state, created_at, updated_at))
+    mine.reverse()  # oldest first
+    applied = [m for m in mine if m[2] == "applied"]
+    newest_applied = max((m[3] for m in applied), default=0.0)
+    out["past"] = [{"change_id": m[0], "label": m[1]} for m in applied][-int(limit):]
+    undone = sorted(
+        (m for m in mine if m[2] == "undone" and m[4] > newest_applied), key=lambda m: m[4]
+    )
+    out["future"] = [{"change_id": m[0], "label": m[1]} for m in undone][-int(limit):]
+    logger.info(
+        "[history] recent_changes surface=%s: %d to undo, %d to redo (of %d persisted for it)",
+        surface,
+        len(out["past"]),
+        len(out["future"]),
+        len(mine),
+    )
+    return out
 
 
 #: ``_canvas_change.state`` of a row that records something the GUI did on
@@ -606,7 +674,7 @@ def exclusive():
 
 
 @contextmanager
-def recording(change_id: str, *, label: str, method: str):
+def recording(change_id: str, *, label: str, method: str, surface: "str | None" = None):
     """Record one undoable call under *change_id*.
 
     Nothing is stored if the block raises. A second recording under the same
@@ -636,7 +704,7 @@ def recording(change_id: str, *, label: str, method: str):
             for path, (b, reload) in rec.files.items()
         }
         files = {p: f for p, f in files.items() if f.before != f.after}
-        new = ChangeRecord(change_id, label, method, columns, keys, rows, files)
+        new = ChangeRecord(change_id, label, method, columns, keys, rows, files, surface=surface or "")
         stored = _store(new)
         _persist(stored)
         logger.info(
@@ -669,6 +737,7 @@ def _store(new: ChangeRecord) -> ChangeRecord:
             logger.debug("[history] forgot oldest record %s", gone)
         return new
     # Merge: keep the earliest before, take the latest after.
+    old.surface = old.surface or new.surface
     for table, diff in new.rows.items():
         merged = old.rows.setdefault(table, {})
         old.columns.setdefault(table, new.columns[table])

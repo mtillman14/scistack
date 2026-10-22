@@ -481,6 +481,12 @@ def _run_in_thread(
                 # run of its own.
                 glue_arg = build_run_glue(v, function_name) or None
                 parameter_names_arg = build_run_declared_names(v) or None
+                # The node's step name (Q6): its runs are named however they
+                # are started, so a later script run of the same step name is
+                # attributed to this node.
+                from scistack_gui.step_names import step_name_of
+
+                step_arg = step_name_of(db, node_id) if node_id else None
                 logger.debug(
                     "[run_thread] Built inputs for %d param(s): %s (run_id=%s)",
                     len(inputs),
@@ -615,6 +621,7 @@ def _run_in_thread(
                         skip_computed=False,
                         glue=glue_arg,
                         parameter_names=parameter_names_arg,
+                        step=step_arg,
                         _progress_fn=_progress_fn,
                         _cancel_check=_is_cancelled,
                         # The picker's pair, applied to the COMBO list by

@@ -46,7 +46,7 @@ import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
 import { applyDagreLayout } from '../../layout'
-import { callBackend, isVSCodeMode, pageUndo } from '../../api'
+import { callBackend, isVSCodeMode, pageUndo, seedUndo } from '../../api'
 import { newChange, type Change } from '../../undo'
 import { useUndoShortcuts } from '../../hooks/useUndo'
 import UndoButtons from '../UndoButtons'
@@ -414,6 +414,8 @@ export default function PipelineDAG() {
   // sidebar edits share one stack). A Plot Studio opened over the canvas
   // registers its own, which shadows this one while it is open.
   useUndoShortcuts(pageUndo)
+  // Undo survives a restart: put back the page's persisted steps once.
+  useEffect(() => { void seedUndo(pageUndo) }, [])
 
   // Cmd/Ctrl+C / Cmd/Ctrl+V, ignored while typing in a text field (so
   // editing a node's name/value keeps using the browser's native copy).

@@ -15,7 +15,7 @@ Built 2026-10-18. Plan: `.claude/plan-for-each-kwarg-parity.md`.
 | `outputs` | 3rd positional, optional: names, classes, or a count | 3rd positional, required: variable types |
 | `dry_run`, `as_table`, `distribute`, `where`, `locations`, `share_limits`, `schema_keys` | real | real (same defaults) |
 | `schema_key_types` | real: the call owns it (standalone) | real: RECORDED in the database, which owns it (`docs/claude/schema-key-types.md`) |
-| `save`, `db`, `introspect`, `skip_computed`, `schema_filter`, `finalized`, `glue`, `parameter_names`, `pipeline` | accepted, logged (INFO `discard_db_only_kwargs`), ignored | real |
+| `save`, `db`, `introspect`, `skip_computed`, `schema_filter`, `finalized`, `glue`, `parameter_names`, `step`, `pipeline` | accepted, logged (INFO `discard_db_only_kwargs`), ignored | real |
 | `categorical` (MATLAB only) | real | real — applied to the RETURNED table after saving |
 | `preload`, `parallel` (MATLAB only, legacy) | ignored | accepted, ignored |
 
@@ -77,3 +77,15 @@ Adding a public scidb kwarg: add it to scifor (both languages) or to
 `track_lineage` (2026-10-18): a no-op since d80b96ec (bipartite rewrite);
 provenance is always recorded and is part of record identity. `skip_computed`
 is gated only by its own value (plus db/outputs/not-dry-run preconditions).
+
+## `step` (2026-10-22)
+
+`for_each(..., step="filter")` names the pipeline step a run is. DB-only
+(scifor discards it). Recorded on the run in `_run_step(run_id, step)` (its own
+table, so existing databases gain it on open with no migration), reported on
+each variant as `steps`, never identity (renaming re-runs nothing). Ambient in
+Python (`scidb.intent.run_step` / `set_ambient_step`, like the origin), so
+EachOf alternatives inherit it; MATLAB's `scidb.for_each(..., 'step', "x")`
+sets it through `set_ambient_step` and clears it on exit. The GUI uses it to
+attribute a script run to the canvas node of that step name
+(`scistack_gui/step_names.py`); code export writes it.

@@ -130,6 +130,11 @@ class IdentityPlan:
     #: node-keyed state across (``pipeline_store.rebase_node`` +
     #: ``layout.rebase_node_positions``) before persisting ``to_record``.
     rekeys: dict[str, str] = field(default_factory=dict)
+    #: ``{node_id: new wiring}`` — nodes a NAMED script run moved to a wiring
+    #: they had not run as (step names, canvas-as-document Q6). The build
+    #: retires their stored edges the new wiring does not have
+    #: (``services.adoption.retire_rewired_edges``). Filled by the caller.
+    rewired_by_step: dict[str, str] = field(default_factory=dict)
 
     def token(self, fn_name: str, wiring: str) -> str:
         """The node-id SUFFIX for a wiring — what the grouped graph is keyed

@@ -355,3 +355,39 @@ clear-data layout-rollback problem. The only other file is the opt-in
     real MATLAB terminal run (GUI §0zzzzzzc step 7).
   - Not done: §8a's "run an exported script" test tier; Q6; the D1 follow-up
     (adopt recorded selectors and pooling); Q5's frontend undo-stack seeding.
+
+## 12. Follow-ups (2026-10-22, after v0.1.52), built, pytest unrun
+
+1. **D1 follow-up: recorded settings survive a clear-data.** Adoption stores
+   what every recorded row of a node's current wiring agrees on as the node's
+   own settings (`services/adoption.recorded_node_settings`): column
+   selectors (`columnSelections`) and run options `distribute`, `as_table`,
+   `across_variants` (`runOptions`); never over a setting the user made; a
+   disagreement is logged and left unset. scidb's `pipeline_variants` now
+   reports raw `distribute` / `as_table`. The fallback run path applies
+   `runOptions.across_variants` as binding pooling
+   (`execution_service._apply_node_pooling`).
+2. **§8a round-trip test:** `tests/test_export_round_trip.py`: canvas → GUI
+   run → export → run the script in its own process → 0 new records, same
+   invocation ids, nothing adopted.
+3. **Q5 frontend: undo after a restart.** Changes record their surface; RPC
+   `history_recent`; `seedUndo(pageUndo)` on canvas mount
+   (docs/claude/undo-redo.md "Undo survives a restart").
+4. **Q6: step names, option A.** `for_each(step=)` (scidb, scifor discards,
+   MATLAB both), `_run_step`, variants report `steps`; GUI
+   `step_names.py` (node's `step` in its config blob; export assigns names,
+   GUI/compiled/MATLAB runs pass them); identity: a named run's wiring is
+   claimed by the node of that step name (after an existing record);
+   `IdentityPlan.rewired_by_step` + `adoption.retire_rewired_edges` hide the
+   old wiring's stored edges so the node follows the script. Option C (a
+   "merge into" action for UNNAMED script runs) is not built. No UI to rename
+   a step yet (export assigns `fn`, `fn_2`, ...). The MATLAB *pipeline*
+   command does not pass step names (single-node MATLAB runs do).
+5. **New Python functions from the GUI.** `functions_dir` (config, default
+   `src/scistack_functions/`, folded into discovery like `glue_dir`; shared
+   `_fold_code_dir` / `_set_code_dir`); `services/function_code_service.py`
+   (create / read / save with rollback, reusing glue's helpers); RPCs
+   `create_function`, `get_function_code`, `save_function_code`; the
+   functions tab's "+" offers New function (default) / Python library /
+   MATLAB library; sidebar `FunctionCodeSection` edits a GUI-created
+   function's body. Python only.

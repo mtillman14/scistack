@@ -238,6 +238,10 @@ def document_view(
     dropped_nodes = sorted(n["id"] for n in nodes if id(n) not in kept_ids)
 
     drawn = {edge_connection_id(e, manual_nodes) for e in drawn_edges}
+    # A drawn edge counts only while it is in the CURRENT stored view: one
+    # hidden during this build (a named script rewire, retire_rewired_edges)
+    # is still tagged `data.manual` in the edge list built before the hide.
+    drawn_ids = {e.get("id") for e in drawn_edges}
     if pending is not None:
         drawn |= pending.edge_ids
     by_connection: dict[str, dict] = {}
@@ -245,7 +249,7 @@ def document_view(
     dropped_edges: list[str] = []
     for e in edges:
         connection = edge_connection_id(e, manual_nodes)
-        if not (is_manual_edge(e) or connection in drawn):
+        if not (connection in drawn or (is_manual_edge(e) and e.get("id") in drawn_ids)):
             dropped_edges.append(e["id"])
             continue
         if connection not in by_connection:

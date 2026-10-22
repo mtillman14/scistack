@@ -595,3 +595,19 @@ records a new wiring for an existing step adds a second node (Q6).
   original's, so they run its recorded rows and show its colour.
 - **Redrawing a removed edge under its own id unhides it**
   (`layout_service.put_edge`), even with no port.
+
+### Follow-ups built 2026-10-22 (after v0.1.52)
+
+- **Recorded settings travel with an adopted node**
+  (`services/adoption.recorded_node_settings`): column selectors and the run
+  options `distribute` / `as_table` / `across_variants`, so a run after a
+  clear-data computes the same call. Only what every recorded row of the
+  wiring agrees on.
+- **Step names** (Q6 option A): `for_each(..., step="filter")` →
+  `_run_step`; the canvas node whose step name is `filter`
+  (`scistack_gui/step_names.py`, its config blob's `step`) claims that run's
+  wiring even when the script changed it, and its old stored edges are hidden
+  (`adoption.retire_rewired_edges`). Code export gives every exported node a
+  step name and writes it; GUI runs pass it. Unnamed script runs still add a
+  second node when they change a step's wiring.
+- **Export round trip** is tested end to end (`tests/test_export_round_trip.py`).

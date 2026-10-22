@@ -632,6 +632,16 @@ def ensure_provenance_tables(duck) -> None:
         )
     """)
 
+    # The step name a run was given (`for_each(..., step="filter")`), when it
+    # was given one. Its own table rather than a `_run` column: an existing
+    # database gains it on open, with no migration (beta rule). Not identity.
+    duck._execute("""
+        CREATE TABLE IF NOT EXISTS _run_step (
+            run_id VARCHAR PRIMARY KEY,
+            step   VARCHAR NOT NULL
+        )
+    """)
+
     # Many-to-many: which invocations a run (re)produced.
     duck._execute("""
         CREATE TABLE IF NOT EXISTS _run_invocation (

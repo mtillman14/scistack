@@ -32,6 +32,7 @@ it (``document_view(pending=...)``) and the next plain build stores it.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 
@@ -118,6 +119,93 @@ def missing_combo_hides(db, wirings, adopted: set) -> list[dict]:
             sorted(w.constant_axes),
             len(missing),
         )
+    return out
+
+
+def recorded_node_settings(db, labels: "dict[str, str]") -> dict[str, dict]:
+    """``{node_id: {"columnSelections": ..., "runOptions": ...}}``: what the
+    recorded runs of each adopted function node's CURRENT wiring agree on.
+
+    Plan D1 follow-up (2026-10-22). A node's re-run uses its recorded rows,
+    which carry their selectors and options; after a clear-data there are no
+    rows, and the fallback builds targets from the node's edges, values and
+    settings. So the settings must hold what the rows held:
+
+    * the column selector of each input (a Python ``Var["knee"]``);
+    * ``distribute``, ``as_table`` and ``across_variants`` (AcrossVariants
+      pooling), the identity-bearing run options.
+
+    Only what EVERY recorded row of the wiring agrees on is kept; a
+    disagreement (one call site selected columns, another did not) is logged
+    and left unset, since no single setting reproduces both.
+    """
+    from scistack_gui import node_wiring
+    from scistack_gui.domain import column_selection as _cs
+    from scistack_gui.services.execution_service import (
+        _attach_db_path_inputs,
+        history_variant_wirings,
+    )
+
+    wanted: dict[str, str] = {}
+    for node_id in labels:
+        wiring = node_wiring.current_wiring(db, node_id)
+        if wiring is not None:
+            wanted[node_id] = wiring
+    if not wanted:
+        return {}
+    by_fn: dict[str, list[dict]] = {}
+    for v in db.list_pipeline_variants():
+        by_fn.setdefault(v["function_name"], []).append(v)
+
+    out: dict[str, dict] = {}
+    for node_id, wiring in sorted(wanted.items()):
+        fn = labels[node_id]
+        variants = _attach_db_path_inputs(db, fn, [dict(v) for v in by_fn.get(fn, [])])
+        rows = [v for v, wid in history_variant_wirings(db, fn, variants) if wid == wiring]
+        if not rows:
+            continue
+        settings: dict = {}
+
+        selections: dict = {}
+        params = sorted({p for r in rows for p in (r.get("input_types") or {})})
+        for param in params:
+            seen = {
+                json.dumps(_cs.normalize((r.get("selectors") or {}).get(param)), sort_keys=True)
+                for r in rows
+            }
+            if len(seen) > 1:
+                logger.warning(
+                    "[adoption] %s: recorded runs used different column selections "
+                    "for '%s' (%s); none is stored on the node",
+                    node_id,
+                    param,
+                    sorted(seen),
+                )
+                continue
+            sel = json.loads(next(iter(seen)))
+            if sel is not None:
+                selections[param] = sel
+        if selections:
+            settings["columnSelections"] = selections
+
+        options: dict = {}
+        for key, default in (("distribute", False), ("as_table", []), ("across_variants", [])):
+            seen = {json.dumps(r.get(key, default), sort_keys=True, default=str) for r in rows}
+            if len(seen) > 1:
+                logger.warning(
+                    "[adoption] %s: recorded runs used different '%s' (%s); not stored",
+                    node_id,
+                    key,
+                    sorted(seen),
+                )
+                continue
+            value = json.loads(next(iter(seen)))
+            if value and value != default:
+                options[key] = value
+        if options:
+            settings["runOptions"] = {"distribute": False, **options}
+        if settings:
+            out[node_id] = settings
     return out
 
 
@@ -218,6 +306,21 @@ def write(db, plan: AdoptionPlan, combos: list[dict]) -> "str | None":
             )
         for edge in plan.edges:
             intent_store.write_manual_edge(db, edge)
+        # What the recorded runs of each adopted step agree on (selectors, run
+        # options) becomes the node's own settings, never overriding one the
+        # user already made. Written with the node, so once.
+        from scistack_gui import pipeline_store as ps
+
+        fn_labels = {nid: label for nid, t, label, _s in plan.nodes if t == "functionNode"}
+        for node_id, recorded in recorded_node_settings(db, fn_labels).items():
+            existing = ps.get_node_config(db, node_id) or {}
+            new = {k: v for k, v in recorded.items() if not existing.get(k)}
+            if not new:
+                continue
+            ps.update_node_config(db, node_id, {**existing, **new})
+            logger.info(
+                "[adoption] %s keeps its recorded settings: %s", node_id, new
+            )
         written_values = intent_store.state_constants(db, plan.values)
         for c in combos:
             intent_store.hide_combo(db, c["node_id"], c["function_name"], c["variant_key"])
@@ -258,6 +361,77 @@ def write(db, plan: AdoptionPlan, combos: list[dict]) -> "str | None":
         (time.perf_counter() - t0) * 1000.0,
     )
     return event
+
+
+def retire_rewired_edges(
+    db,
+    rewired: "dict[str, str]",
+    edges: list[dict],
+    drawn_edges,
+    manual_nodes: dict,
+) -> list[str]:
+    """Hide the stored edges of each node a NAMED script run rewired
+    (``IdentityPlan.rewired_by_step``) that its new wiring does not have.
+    Returns the hidden connection ids.
+
+    *edges* is the build's edge list, whose history edges for the node are
+    its NEW wiring's (the build draws a node's current wiring). Every stored
+    edge into or out of the node whose connection is not among them is the
+    old wiring's and is hidden (never deleted: the restore panel lists it).
+    The new wiring's edges are then adopted like any other.
+
+    Once per (node, wiring) (``_adopted`` subject ``rewire:...``); not inside
+    an undoable edit's recording (same reason as adoption itself).
+    """
+    from scistack_gui import history, library_lock, node_wiring
+    from scistack_gui import pipeline_store as ps
+    from scistack_gui.domain.graph_builder import edge_connection_id, is_manual_edge
+
+    if not rewired or history.is_recording():
+        return []
+    adopted = node_wiring.adopted_subjects(db)
+    hidden: list[str] = []
+    marks = []
+    for node_id, wiring in sorted(rewired.items()):
+        subject = f"rewire:{node_id}:{wiring}"
+        if subject in adopted:
+            continue
+        keep = {
+            edge_connection_id(e, manual_nodes)
+            for e in edges
+            if not is_manual_edge(e)
+            and node_id in (str(strip_placement(e["source"])), str(strip_placement(e["target"])))
+        }
+        scope = (manual_nodes.get(node_id) or {}).get("pipeline_id") or ROOT_SCOPE
+        for e in drawn_edges:
+            ends = (str(strip_placement(e.get("source") or "")), str(strip_placement(e.get("target") or "")))
+            if node_id not in ends:
+                continue
+            connection = edge_connection_id(e, manual_nodes)
+            if connection in keep:
+                continue
+            with library_lock.library_writes():
+                ps.hide_edge(
+                    db,
+                    e["id"],
+                    e.get("source"),
+                    e.get("target"),
+                    e.get("sourceHandle"),
+                    e.get("targetHandle"),
+                    scope,
+                )
+            hidden.append(connection)
+        marks.append((subject, node_id, scope))
+        logger.info(
+            "[adoption] node %s follows its named script run to wiring %s: %d old "
+            "edge(s) hidden",
+            node_id,
+            wiring,
+            sum(1 for _ in hidden),
+        )
+    if marks:
+        node_wiring.mark_adopted(db, marks)
+    return hidden
 
 
 def notification(plan: AdoptionPlan, event: "str | None") -> "dict | None":

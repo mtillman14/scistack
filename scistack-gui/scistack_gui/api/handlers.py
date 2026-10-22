@@ -171,7 +171,10 @@ class Handler:
         # definition): library-owned pipelines refuse it (library_lock).
         if self.undoable and change:
             with history.recording(
-                change["id"], label=change.get("label") or self.label, method=self.name
+                change["id"],
+                label=change.get("label") or self.label,
+                method=self.name,
+                surface=change.get("surface"),
             ), library_lock.user_edit(self.name):
                 result = self.call(*args, **kwargs)
         elif self.undoable:
@@ -220,7 +223,14 @@ def _valid_change(raw: Any) -> "dict | None":
             raw = None
     if isinstance(raw, dict) and isinstance(raw.get("id"), str) and raw["id"]:
         label = raw.get("label")
-        return {"id": raw["id"], "label": label if isinstance(label, str) else None}
+        surface = raw.get("surface")
+        return {
+            "id": raw["id"],
+            "label": label if isinstance(label, str) else None,
+            # Which undo stack the client pushed it onto ("page", "plot"), so
+            # a restarted page can seed ITS stack and no other (history.recent).
+            "surface": surface if isinstance(surface, str) else None,
+        }
     logger.warning("[history] ignoring malformed change metadata: %r", raw)
     return None
 

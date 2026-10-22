@@ -1349,13 +1349,22 @@ def _commit_graph(
         )
         # `origin` is ambient (scidb.intent.current_origin): set by whoever
         # started the run, read here by the one place that records it.
-        from .intent import current_origin
+        from .intent import current_origin, current_step
 
         duck.con.execute(
             "INSERT INTO _run (run_id, timestamp, function_name, "
             "where_clause, origin) VALUES (?, ?, ?, ?, ?)",
             [run_id, created_at, function_name, where_clause, current_origin()],
         )
+        # The step name, when the call gave one (for_each(step=...)).
+        step = current_step()
+        if step:
+            duck.con.execute(
+                "INSERT INTO _run_step (run_id, step) VALUES (?, ?) "
+                "ON CONFLICT (run_id) DO NOTHING",
+                [run_id, step],
+            )
+            logger.info("run %s of %s recorded as step %r", run_id, function_name, step)
         _timed(
             "3f_run_invocation",
             lambda: duck._bulk_insert(

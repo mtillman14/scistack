@@ -839,14 +839,52 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             log_context=f"'{function_name}' (node {node_id})",
         )
 
+    inferred = _apply_node_pooling(
+        _inferred_targets(resolved, inferred_constants),
+        RunOptions.from_config(
+            (pipeline_store.get_node_config(db, node_id) or {}).get("runOptions")
+        ).across_variants,
+        f"node {node_id} ('{function_name}')",
+    )
     return _attach_column_selections(
         db,
         {node_id},
-        filter_hidden_constant_value_targets(
-            _inferred_targets(resolved, inferred_constants), hidden_values
-        ),
+        filter_hidden_constant_value_targets(inferred, hidden_values),
         function_name,
     )
+
+
+def _apply_node_pooling(targets: list[dict], pooled, log_context: str) -> list[dict]:
+    """Mark the node's ``across_variants`` inputs as pooled on targets built
+    from its edges. A recorded row already carries its pooling on the binding
+    (``_attach_db_path_inputs``); a target built from edges (never run, or
+    after a clear-data) gets it from the node's run options, which adoption
+    copies from the recorded runs (``services.adoption.recorded_node_settings``).
+    """
+    pooled = set(pooled or ())
+    if not pooled or not targets:
+        return targets
+    from scistack_gui.domain.edge_resolver import BINDING_VARIABLE
+
+    applied: set[str] = set()
+    out = []
+    for t in targets:
+        bindings = dict(t.get("bindings") or {})
+        for param in pooled:
+            b = bindings.get(param)
+            if b and b.get("kind") == BINDING_VARIABLE and not b.get("pool_variants"):
+                bindings[param] = {**b, "pool_variants": True}
+                applied.add(param)
+        out.append({**t, "bindings": bindings})
+    missing = sorted(pooled - {p for t in out for p in (t.get("bindings") or {})})
+    logger.info(
+        "[execution] %s: inputs %s pool every variant (AcrossVariants, from the "
+        "node's run options)%s",
+        log_context,
+        sorted(applied) or sorted(pooled),
+        f"; not an input of this node: {missing}" if missing else "",
+    )
+    return out
 
 
 def record_dispatch_wirings(
@@ -1992,7 +2030,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
     from scidb.pipeline import Pipeline
 
     from scidb import for_each
-    from scistack_gui import pipeline_store, registry
+    from scistack_gui import pipeline_store, registry, step_names
     from scistack_gui.domain.variant_resolver import (
         filter_hidden_targets,
         hidden_call_ids_for_fn,
@@ -2128,6 +2166,9 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 or None,
                 distribute=step_options.distribute,
                 as_table=step_options.as_table,
+                # The node's step name (Q6), so a compiled run and its code
+                # export are named like the node.
+                step=step_names.step_name_of(db, node_id),
                 **schema_iterables,
             )
 

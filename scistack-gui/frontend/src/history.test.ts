@@ -18,6 +18,7 @@ import {
   peekUndo,
   pushLocal,
   pushServer,
+  seededStack,
   type LocalEntry,
 } from './history.js'
 
@@ -113,4 +114,23 @@ test('what each backend answer means', () => {
   assert.equal(outcome('conflict'), 'drop')
   assert.match(dropNotice('undo', 'connect', 'conflict', ['_intent(x) changed since']), /Cannot undo "connect".*_intent/)
   assert.match(dropNotice('redo', 'connect', 'unknown'), /no longer available/)
+})
+
+test('a restarted surface is seeded from the persisted log, oldest first', () => {
+  const s = seededStack(
+    EMPTY,
+    [{ changeId: 'a', label: 'A' }, { changeId: 'b', label: 'B' }],
+    [{ changeId: 'c', label: 'C' }],
+  )
+  assert.equal(peekUndo(s)?.label, 'B')
+  assert.equal(peekRedo(s)?.label, 'C')
+})
+
+test('a live stack is never replaced by a seed', () => {
+  const live = pushServer(EMPTY, 'x', 'X')
+  assert.strictEqual(seededStack(live, [{ changeId: 'a', label: 'A' }], []), live)
+})
+
+test('seeding nothing leaves the stack as it is', () => {
+  assert.strictEqual(seededStack(EMPTY, [], []), EMPTY)
 })

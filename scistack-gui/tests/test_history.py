@@ -250,11 +250,12 @@ class TestFiles:
 
 def test_pop_change_strips_and_validates():
     params = {"name": "x", "_change": {"id": "abc", "label": "L"}}
-    assert pop_change(params) == {"id": "abc", "label": "L"}
+    assert pop_change(params) == {"id": "abc", "label": "L", "surface": None}
     assert params == {"name": "x"}
     assert pop_change({"_change": "not json"}) is None
     assert pop_change({"_change": {"label": "no id"}}) is None
-    assert pop_change({"_change": json.dumps({"id": "s"})}) == {"id": "s", "label": None}
+    assert pop_change({"_change": json.dumps({"id": "s"})}) == {"id": "s", "label": None, "surface": None}
+    assert pop_change({"_change": {"id": "p", "surface": "page"}})["surface"] == "page"
     assert pop_change({}) is None
 
 
@@ -464,3 +465,50 @@ def test_record_json_round_trip_keeps_types():
     )
     back = history.record_from_json("x", "l", "m", "undone", 123.0, history.record_to_json(rec))
     assert back == rec
+
+
+# ---------------------------------------------------------------------------
+# A restarted surface seeds its undo stack (plan-canvas-as-document Q5)
+# ---------------------------------------------------------------------------
+
+
+class TestRecentChanges:
+    def _edit(self, db, cid, surface="page"):
+        with history.recording(cid, label=f"L{cid}", method="m", surface=surface):
+            db._duck._execute(f"INSERT INTO _node_config VALUES ('{cid}', '{{}}')")
+
+    def test_applied_steps_come_back_in_order_and_undone_ones_as_redo(self, populated_db):
+        for cid in ("r1", "r2", "r3"):
+            self._edit(populated_db, cid)
+        assert history.undo("r3")["status"] == "ok"
+        history.clear()  # the restart: in-memory records gone, the log stays
+
+        recent = history.recent_changes("page")
+        assert [e["change_id"] for e in recent["past"]] == ["r1", "r2"]
+        assert [e["change_id"] for e in recent["future"]] == ["r3"]
+        # ...and a seeded step really undoes after the restart.
+        assert history.undo("r2")["status"] == "ok"
+
+    def test_an_undo_followed_by_a_new_edit_is_not_redoable(self, populated_db):
+        self._edit(populated_db, "s1")
+        assert history.undo("s1")["status"] == "ok"
+        self._edit(populated_db, "s2")
+        recent = history.recent_changes("page")
+        assert [e["change_id"] for e in recent["past"]] == ["s2"]
+        assert recent["future"] == []
+
+    def test_another_surfaces_steps_are_left_out(self, populated_db):
+        self._edit(populated_db, "p_page")
+        self._edit(populated_db, "p_plot", surface="plot")
+        self._edit(populated_db, "p_none", surface=None)
+        recent = history.recent_changes("page")
+        assert [e["change_id"] for e in recent["past"]] == ["p_page"]
+
+    def test_the_handler_answers_for_a_surface(self, client):
+        client.post(
+            "/api/pipelines",
+            json={"name": "Seeded"},
+            headers={CHANGE_HEADER: json.dumps({"id": "h1", "label": "L", "surface": "page"})},
+        )
+        r = client.get("/api/history/recent", params={"surface": "page"}).json()
+        assert [e["change_id"] for e in r["past"]] == ["h1"]

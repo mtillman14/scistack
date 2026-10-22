@@ -24,6 +24,7 @@ import {
   peekUndo,
   pushLocal as pushLocalEntry,
   pushServer as pushServerEntry,
+  seededStack,
   type LocalEntry,
   type ServerEntry,
   type ServerStatus,
@@ -138,6 +139,18 @@ export class UndoStack {
   clear(): void {
     if (this.stack === EMPTY) return
     this.stack = EMPTY
+    this.emit()
+  }
+
+  /** Start a restarted surface from its persisted steps (`seededStack`). */
+  seed(past: { changeId: string; label: string }[], future: { changeId: string; label: string }[]): void {
+    const next = seededStack(this.stack, past, future)
+    if (next === this.stack) return
+    this.stack = next
+    console.info(`[undo:${this.name}] seeded from the persisted log`, {
+      undo: next.past.length,
+      redo: next.future.length,
+    })
     this.emit()
   }
 

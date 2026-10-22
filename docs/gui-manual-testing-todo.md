@@ -11,6 +11,40 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzd. New functions from the GUI; step names; undo after restart — added 2026-10-22
+
+What changed: (1) the functions tab's **+** now offers **New function** (default),
+**Python library** and **MATLAB library**; a new function is a file in
+`src/scistack_functions/` with a **Code** editor under its settings. (2) Exported
+scripts name every step (`step='...'`) and a script run of a named step that
+changes its wiring rewires THAT node (no second node). (3) Undo/redo of canvas
+edits works after reloading the window. (4) After **Clear data…**, a step that
+ran with column selections or distribute/as_table/AcrossVariants runs the same
+way.
+
+**Backend**
+1. Reload the VS Code window.
+2. `scidb.log`: `[history] recent_changes surface=page: N to undo` on load;
+   `[step_names] named runs claim wiring(s)` after a named script run;
+   `[adoption] ... keeps its recorded settings` when a step is adopted.
+
+**Frontend**
+1. Functions tab → **+** → keep **New function**, type `my_step`, Enter. It
+   appears under the process role; drag it onto the canvas, select it: the
+   **Code** section shows `def my_step(data): return data`. Edit, **Save**.
+   Type a syntax error and Save: an error says it was not saved, and the old
+   body is still there.
+2. **+** → **Python library**, `numpy.mean`: still added as before.
+3. Move a node, reload the window, press undo: the node moves back.
+4. Export the pipeline: each `for_each(...)` ends with `step='<name>'`. Edit the
+   script so one step reads a different variable, run it, refresh the canvas:
+   that node now has the new input edge, the old one is in the hidden-edges
+   panel, and there is no second node.
+
+---
+
+---
+
 ## 0zzzzzzc. The canvas is a stored document; Clear data keeps it — added 2026-10-22
 
 What changed (branch `canvas-as-document`, plan

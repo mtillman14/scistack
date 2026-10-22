@@ -780,7 +780,7 @@ def _variable_input_type_names(variable_inputs: "dict | None") -> list[str]:
     return names
 
 
-def _run_origin_lines() -> list[str]:
+def _run_origin_lines(step: "str | None" = None) -> list[str]:
     """Label the runs this script starts as GUI runs.
 
     A command the GUI generated read the intent store (column selections, run
@@ -790,10 +790,16 @@ def _run_origin_lines() -> list[str]:
     is a ``py.*`` call); ``setenv`` would not do, because Python's
     ``os.environ`` is a snapshot taken at interpreter start.
     """
-    return ["py.scidb.intent.set_ambient_origin('gui');"]
+    lines = ["py.scidb.intent.set_ambient_origin('gui');"]
+    if step:
+        # The node's step name (Q6): every run this script starts is named
+        # like the node, so a later script run of that name is attributed
+        # to it. Cleared again by _run_origin_reset_lines.
+        lines.append(f"py.scidb.intent.set_ambient_step({_matlab_char(step)});")
+    return lines
 
 
-def _run_origin_reset_lines() -> list[str]:
+def _run_origin_reset_lines(step: "str | None" = None) -> list[str]:
     """Put the origin back to ``script`` once the generated run is over.
 
     ``set_ambient_origin`` has no scope to exit, and a MATLAB session outlives
@@ -801,7 +807,15 @@ def _run_origin_reset_lines() -> list[str]:
     prompt afterwards would be recorded as a GUI run. Emitted on BOTH the
     success path and the catch path, since the catch rethrows.
     """
-    return ["py.scidb.intent.set_ambient_origin('script');"]
+    lines = ["py.scidb.intent.set_ambient_origin('script');"]
+    if step:
+        lines.append("py.scidb.intent.set_ambient_step(py.None);")
+    return lines
+
+
+def _matlab_char(text: str) -> str:
+    """*text* as a MATLAB char literal ('it''s')."""
+    return "'" + str(text).replace("'", "''") + "'"
 
 
 # ---------------------------------------------------------------------------
@@ -965,6 +979,7 @@ def generate_matlab_command(
     run_id: "str | None" = None,
     parameter_names: "dict[str, str] | None" = None,
     locations: "dict | None" = None,
+    step: "str | None" = None,
 ) -> str:
     """Generate a complete MATLAB script to run a pipeline function.
 
@@ -1050,7 +1065,7 @@ def generate_matlab_command(
     # addpath entries, timed per directory (cleanup-audit F29)
     lines.extend(timing.addpath_section(addpath_dirs))
     lines.extend(
-        timing.section(_run_origin_lines(), "scistack_t_origin__", "run_origin")
+        timing.section(_run_origin_lines(step), "scistack_t_origin__", "run_origin")
     )
 
     lines.extend(
@@ -1184,10 +1199,10 @@ def generate_matlab_command(
         lines.extend(
             _run_marker_finish_lines(db_path, run_id, ok=False, indent="    ")
         )
-        lines.extend("    " + line for line in _run_origin_reset_lines())
+        lines.extend("    " + line for line in _run_origin_reset_lines(step))
         lines.append("    rethrow(scistack_err__);")
         lines.append("end")
-        lines.extend(_run_origin_reset_lines())
+        lines.extend(_run_origin_reset_lines(step))
         lines.extend(timing.total_lines())
         lines.extend(_run_marker_finish_lines(db_path, run_id, ok=True))
         return "\n".join(lines)
@@ -1247,10 +1262,10 @@ def generate_matlab_command(
     lines.extend(
         _run_marker_finish_lines(db_path, run_id, ok=False, indent="    ")
     )
-    lines.extend("    " + line for line in _run_origin_reset_lines())
+    lines.extend("    " + line for line in _run_origin_reset_lines(step))
     lines.append("    rethrow(scistack_err__);")
     lines.append("end")
-    lines.extend(_run_origin_reset_lines())
+    lines.extend(_run_origin_reset_lines(step))
     lines.extend(timing.total_lines())
     lines.extend(_run_marker_finish_lines(db_path, run_id, ok=True))
     return "\n".join(lines)

@@ -107,6 +107,12 @@ class AggregatedData:
     history input is drawn through its glue node rather than straight into
     the function — see :func:`history_glue_on_canvas`."""
 
+    fn_steps: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    """``{(fn_name, REAL call id): [step names]}`` — the ``for_each(step=...)``
+    names of the runs behind each call site, oldest first (canvas-as-document
+    Q6). Keyed by the real call id (:func:`call_id_of`), so splitting a call
+    site by claims never loses it."""
+
     def constant_node(self, fkey: FnKey, argument: str) -> str:
         """The Parameter node a call site's constant *argument* belongs to."""
         return self.fn_parameter_names.get(fkey, {}).get(argument) or argument
@@ -894,6 +900,8 @@ def aggregate_from_scidb(
                 # real counts land from scidb_agg["constants"] below.
                 agg.const_counts[node][str(val)] = 1
         agg.fn_variants_map[fkey] = fn_data["variants"]
+        if fn_data.get("steps"):
+            agg.fn_steps[fkey] = list(fn_data["steps"])
 
     for const_name, const_data in scidb_agg["constants"].items():
         for val_entry in const_data["values"]:

@@ -282,6 +282,26 @@ def _resolve_node_identity(
         for node_id in holders:
             if node_id not in merged:
                 merged.append(node_id)
+    # Named runs (for_each(step=...)) claim before anything a node merely
+    # states: a step name says which node a script run IS, even when the run
+    # changed the wiring (Q6, step_names). A wiring already associated with a
+    # node keeps it (resolve_identities checks the record first).
+    from scistack_gui import step_names as _step_names
+
+    names = _step_names.step_names(db)
+    by_step = _step_names.step_claims(
+        agg,
+        lambda fkey: gb.wiring_id(
+            fkey[0],
+            agg.fn_input_params.get(fkey, {}),
+            agg.fn_outputs.get(fkey, set()),
+            pi_by_fkey.get(fkey, {}),
+        ),
+        {nid: meta for nid, meta in manual_nodes.items() if nid not in hidden_everywhere},
+        names,
+    )
+    for key, holders in by_step.items():
+        stated_by[key] = list(holders)
     plan = node_identity.resolve_identities(
         history,
         associations=associations,
@@ -308,6 +328,33 @@ def _resolve_node_identity(
             )
     for node_id, wiring, scope in plan.to_record:
         node_wiring.record(db, node_id, wiring, scope=scope)
+
+    # A NAMED script run that gave its node a wiring the node had not run as
+    # is a rewire of that node from code. The build retires the node's stored
+    # edges the new wiring lacks (services.adoption.retire_rewired_edges), so
+    # the canvas follows the script instead of drawing both wirings.
+    previously_recorded = {row["wiring_id"] for row in associations}
+    for (fn, wiring), holders in by_step.items():
+        node = plan.node_by_wiring.get((fn, wiring))
+        if node is None or wiring in previously_recorded:
+            continue
+        node = str(node)
+        if node not in holders and not any(plan.rekeys.get(h) == node for h in holders):
+            continue
+        before = current_by_node.get(node) or next(
+            (current_by_node.get(h) for h in holders if plan.rekeys.get(h) == node), None
+        )
+        if before and before != wiring:
+            plan.rewired_by_step[node] = wiring
+            logger.info(
+                "[pipeline] step %r of '%s' ran as a new wiring %s (was %s): node %s "
+                "follows it",
+                names.get(node) or next((names.get(h) for h in holders), None),
+                fn,
+                wiring,
+                before,
+                node,
+            )
 
     warnings = []
     for ambiguity in plan.ambiguities:
@@ -1319,6 +1366,18 @@ def _build_graph(
     from scistack_gui.domain.adoption import document_view
     from scistack_gui.services import adoption as _adoption
 
+    # A named script run that rewired a step (Q6): the step's old stored
+    # edges are hidden first, so adoption below adds the new wiring's edges
+    # instead of drawing both wirings on one node.
+    retired = _adoption.retire_rewired_edges(
+        db, identity.rewired_by_step, edges, manual_edges_list, manual_nodes
+    )
+    if retired:
+        edge_view = effective_edges(
+            db, pipeline_id, caller=f"_build_graph({pipeline_id}) after a named rewire"
+        )
+        manual_edges_list = edge_view.drawn_list
+        hidden_edge_ids = set(edge_view.hidden_edge_ids)
     adoption_plan, combo_hides = _adoption.plan_for_build(
         db,
         nodes=nodes,

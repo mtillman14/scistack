@@ -570,6 +570,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     from scistack_gui import matlab_registry
     from scistack_gui import registry
     from scistack_gui.api.matlab_command import generate_matlab_command as _fmt
+    from scistack_gui.step_names import step_name_of as _step_name_of
     from scistack_gui.domain import schema_selection as _schema_selection
     from scistack_gui.db import get_db_path
     from scistack_gui.domain.edge_resolver import infer_manual_fn_output_types
@@ -821,6 +822,8 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         # run_id it got from start_run; a preview or a copy-to-clipboard
         # with no run behind it passes none and the script writes none.
         run_id=params.get("run_id"),
+        # The node's step name (Q6), so a MATLAB run is named like the node.
+        step=_step_name_of(db, _node_id) if _node_id else None,
     )
     logger.info(
         "generate_matlab_command: fn=%s, command_length=%d", function_name, len(cmd)

@@ -150,3 +150,24 @@ export function dropNotice(
   const what = conflicts.length ? `: ${conflicts.slice(0, 3).join('; ')}${conflicts.length > 3 ? '…' : ''}` : ''
   return `Cannot ${verb.toLowerCase()} "${label}" — it was changed since${what}`
 }
+
+/**
+ * The stack a restarted surface starts from: the backend's persisted steps
+ * (`history_recent`), oldest first on both sides. Only an EMPTY stack is
+ * seeded, so a live session's own order is never replaced. Capped like any
+ * other stack.
+ */
+export function seededStack(
+  stack: Stack,
+  past: { changeId: string; label: string }[],
+  future: { changeId: string; label: string }[],
+): Stack {
+  if (stack.past.length || stack.future.length) return stack
+  if (!past.length && !future.length) return stack
+  const entry = (e: { changeId: string; label: string }): ServerEntry => ({
+    kind: 'server',
+    changeId: e.changeId,
+    label: e.label,
+  })
+  return { past: capped(past.map(entry)), future: future.map(entry) }
+}

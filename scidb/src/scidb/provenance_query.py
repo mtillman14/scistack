@@ -2728,6 +2728,9 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     _t = _time.perf_counter()
     outputs_by_inv = invocation_outputs_batch(duck, step_ids)
     _add("outputs", _t)
+    _t = _time.perf_counter()
+    steps_by_inv = run_steps_by_invocation(duck)
+    _add("steps", _t)
     _no_edges = {
         "var_inputs": [],
         "constants": {},
@@ -2856,6 +2859,11 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                         pooled,
                     ),
                     "across_variants": pooled,
+                    # The same options as values, not a label: the GUI stores
+                    # them on a node it adopts from this history, so a re-run
+                    # from the canvas (even after a clear-data) is this call.
+                    "distribute": bool(distribute),
+                    "as_table": list(at),
                     # {param: [glue node name, ...]} — the reshaping this call
                     # site interposed on its inputs. Part of the variant so a
                     # GUI target derived from history re-runs WITH its glue.
@@ -2886,6 +2894,11 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
                 if output_num is not None and (prev is None or output_num < prev):
                     groups[gkey]["output_num"] = output_num
             group_records[gkey].add(out_rid)
+            # The step names of the runs that produced this variant
+            # (for_each(step=...), `_run_step`). Reported, never identity.
+            for _step in steps_by_inv.get(inv_id, ()):
+                if _step not in groups[gkey].setdefault("steps", []):
+                    groups[gkey]["steps"].append(_step)
 
     _add("group", _t_group)
 
@@ -2899,6 +2912,25 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         extra=f"{len(inv_rows)} invocation(s) -> {len(annotated)} variant(s)",
     )
     return annotated
+
+
+def run_steps_by_invocation(duck) -> dict[str, list[str]]:
+    """``{invocation_id: [step name, ...]}``: the step names
+    (``for_each(step=...)``, ``_run_step``) of every run that produced each
+    invocation, oldest run first. One query. Empty on a database with no
+    named runs."""
+    if not duck._table_exists("_run_step"):
+        return {}
+    out: dict[str, list[str]] = {}
+    for inv_id, step in duck._fetchall(
+        "SELECT ri.invocation_id, rs.step FROM _run_invocation ri "
+        "JOIN _run_step rs ON rs.run_id = ri.run_id "
+        "JOIN _run r ON r.run_id = ri.run_id ORDER BY r.timestamp"
+    ):
+        steps = out.setdefault(inv_id, [])
+        if step not in steps:
+            steps.append(step)
+    return out
 
 
 def _annotate_variants(duck, groups: dict, group_records: dict) -> list[dict]:

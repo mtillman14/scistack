@@ -728,6 +728,64 @@ def set_ambient_origin(origin: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# The run's step name, as ambient state
+# ---------------------------------------------------------------------------
+# ``for_each(..., step="filter")`` names WHICH pipeline step a run is, so the
+# GUI can attribute a script run to the canvas node of that name even when
+# the run's wiring changed (plan-canvas-as-document Q6, option A). Like the
+# origin, it is set by whoever starts the run and read where it is recorded
+# (``_run_step``, provenance_save), so it travels as a context variable rather
+# than through every internal signature. It is NOT identity: renaming a step
+# never re-runs anything.
+
+STEP_MAX_LEN = 200
+
+_current_step: _contextvars.ContextVar[str | None] = _contextvars.ContextVar(
+    "scidb_run_step", default=None
+)
+
+
+def current_step() -> "str | None":
+    """The step name of the run in progress, or ``None``."""
+    return _current_step.get()
+
+
+def check_step(step) -> str:
+    """*step* if it is a usable step name, else a ``ValueError`` saying why."""
+    if not isinstance(step, str) or not step.strip():
+        raise ValueError(f"step= must be a non-empty string; got {step!r}")
+    if len(step) > STEP_MAX_LEN:
+        raise ValueError(f"step= is longer than {STEP_MAX_LEN} characters")
+    return step.strip()
+
+
+def set_ambient_step(step: "str | None") -> "str | None":
+    """Set (or, with ``None``/empty, clear) the step name for later runs on
+    this thread — the cross-language entry point (MATLAB cannot use ``with``;
+    ``+scidb/for_each.m`` sets it around one call and clears it after)."""
+    value = check_step(step) if step else None
+    _current_step.set(value)
+    return value
+
+
+class run_step:
+    """``with run_step("filter"): ...`` — name every run started inside."""
+
+    def __init__(self, step: str):
+        self.step = check_step(step)
+        self._token = None
+
+    def __enter__(self):
+        self._token = _current_step.set(self.step)
+        return self
+
+    def __exit__(self, *exc):
+        if self._token is not None:
+            _current_step.reset(self._token)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # The stored shape (read contract)
 # ---------------------------------------------------------------------------
 # The intent STORE is GUI-owned (scistack_gui.intent_store creates and writes

@@ -161,10 +161,13 @@ export default function EditTab() {
   const [glueSubmitting, setGlueSubmitting] = useState(false)
   const glueInputRef = useRef<HTMLInputElement>(null)
 
-  // Manual built-in/library function reference (numpy.mean, a MATLAB
-  // builtin, ...) — distinct from auto-discovered functions above.
+  // The functions tab's +: a NEW function the user writes ('new': one file in
+  // the project's functions_dir, function_code_service), or a reference to a
+  // built-in/library function (numpy.mean, a MATLAB builtin). Until
+  // 2026-10-22 only the reference existed, so a new name failed with
+  // "'name' not found in 'builtins'".
   const [addingBuiltin, setAddingBuiltin] = useState(false)
-  const [builtinLang, setBuiltinLang] = useState<'python' | 'matlab'>('python')
+  const [builtinLang, setBuiltinLang] = useState<'new' | 'python' | 'matlab'>('new')
   const [builtinDraft, setBuiltinDraft] = useState('')
   const [builtinError, setBuiltinError] = useState('')
   const [builtinSubmitting, setBuiltinSubmitting] = useState(false)
@@ -380,13 +383,19 @@ export default function EditTab() {
       return
     }
     setBuiltinSubmitting(true)
-    callBackend('create_builtin_function', { language: builtinLang, reference })
+    const request = builtinLang === 'new'
+      ? callBackend('create_function', { name: reference })
+      : callBackend('create_builtin_function', { language: builtinLang, reference })
+    request
       .then(data => {
         const d = data as { ok?: boolean; error?: string }
         if (d.ok) {
           setBuiltinDraft('')
           setAddingBuiltin(false)
           setBuiltinError('')
+          // A new function is a process step: show that role so it is not
+          // filtered out of view.
+          if (builtinLang === 'new') selectRole('process')
           fetchRegistry()
         } else {
           setBuiltinError(d.error || 'Failed')
@@ -734,7 +743,7 @@ export default function EditTab() {
                 <button
                   style={styles.addBtn}
                   onClick={() => setAddingBuiltin(true)}
-                  title="Add a built-in/library function you didn't write yourself (e.g. numpy.mean, or a MATLAB command)"
+                  title="New function (write it here), or a built-in/library function you didn't write yourself (numpy.mean, a MATLAB command)"
                 >
                   +
                 </button>
@@ -839,19 +848,21 @@ export default function EditTab() {
                   <select
                     value={builtinLang}
                     onChange={e => {
-                      setBuiltinLang(e.target.value as 'python' | 'matlab')
+                      setBuiltinLang(e.target.value as 'new' | 'python' | 'matlab')
                       setBuiltinError('')
                     }}
                     style={{ fontSize: 12 }}
+                    title="New function: write it here (a file in the project's functions directory). Library: reference one you did not write."
                   >
-                    <option value="python">Python</option>
-                    <option value="matlab">MATLAB</option>
+                    <option value="new">New function</option>
+                    <option value="python">Python library</option>
+                    <option value="matlab">MATLAB library</option>
                   </select>
                   <input
                     ref={builtinInputRef}
                     style={{ ...styles.draftInput, flex: 1 }}
                     value={builtinDraft}
-                    placeholder={builtinLang === 'python' ? 'numpy.mean' : 'mean'}
+                    placeholder={builtinLang === 'new' ? 'my_function' : builtinLang === 'python' ? 'numpy.mean' : 'mean'}
                     onChange={e => { setBuiltinDraft(e.target.value); setBuiltinError('') }}
                     onKeyDown={e => {
                       if (e.key === 'Enter') commitBuiltinDraft()
@@ -865,7 +876,7 @@ export default function EditTab() {
                 </div>
                 {builtinSubmitting && (
                   <div style={{ ...styles.errorText, color: '#999' }}>
-                    {builtinLang === 'matlab' ? 'Validating with MATLAB…' : 'Validating…'}
+                    {builtinLang === 'new' ? 'Creating…' : builtinLang === 'matlab' ? 'Validating with MATLAB…' : 'Validating…'}
                   </div>
                 )}
                 {!builtinSubmitting && builtinError && (

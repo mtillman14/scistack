@@ -18,6 +18,7 @@ import { useMemo } from 'react'
 import { useStore } from '@xyflow/react'
 import EditTab from './EditTab'
 import FunctionSettingsPanel from './FunctionSettingsPanel'
+import FunctionCodeSection from './FunctionCodeSection'
 import GlueSettingsPanel from './GlueSettingsPanel'
 import type { SchemaSelection, RunOptions, WhereFilter, ColumnSelectionMap, UnusedIntentMap } from './FunctionSettingsPanel'
 import ParameterSettingsPanel from './ParameterSettingsPanel'
@@ -195,6 +196,13 @@ export default function Sidebar() {
             inputParams={(selectedNode.data as FnNodeData).input_params ?? {}}
             columnSelections={(selectedNode.data as FnNodeData).columnSelections ?? {}}
             unusedIntent={(selectedNode.data as FnNodeData).unusedIntent}
+          />
+        )}
+        {isFunctionNode(selectedNode) && (
+          // Remount per node: it seeds a draft buffer from the file.
+          <FunctionCodeSection
+            key={selectedNode.id}
+            label={(selectedNode.data as FnNodeData).label}
           />
         )}
         {isGlueNode(selectedNode) && (

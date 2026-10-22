@@ -461,6 +461,42 @@ def unflatten_dict(flat, path_map):
 # ---------------------------------------------------------------------------
 
 
+def _is_missing_cell(value: Any) -> bool:
+    """True for a scalar missing marker (None, NaN, pd.NA, NaT); never for
+    an array/list cell, which is data even when it holds NaN."""
+    if value is None:
+        return True
+    if isinstance(value, (np.ndarray, list, tuple, dict)):
+        return False
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _representative_cell(col_series: pd.Series, col_name: Any) -> Any:
+    """The cell whose type decides a DataFrame column's DuckDB type.
+
+    The first NON-MISSING cell of an object column. Typing from row 0 alone
+    broke on 2026-10-22: ``pd.read_csv`` gives a mostly-blank Y/N column
+    (IP_SPINAL_STIMULATION) object dtype holding float NaN then 'Y', so row
+    0's NaN typed the column DOUBLE and the insert failed on 'Y'. A typed
+    (non-object) column already says what it holds — NaN in float64 is a
+    float — so row 0 stands. An all-missing object column keeps row 0.
+    """
+    first = col_series.iloc[0]
+    if col_series.dtype != object or not _is_missing_cell(first):
+        return first
+    for i, cell in enumerate(col_series):
+        if not _is_missing_cell(cell):
+            logger.info(
+                "infer_data_columns: column %r typed from row %d (%s); rows "
+                "0..%d are missing", col_name, i, type(cell).__name__, i - 1,
+            )
+            return cell
+    return first
+
+
 def infer_data_columns(
     sample_value: Any, data_col_name: str | None = None
 ) -> tuple[dict, dict]:
@@ -485,7 +521,7 @@ def infer_data_columns(
                 ddb_type = "VARCHAR"
                 col_meta = {"python_type": "str"}
             else:
-                cell_val = col_series.iloc[0]
+                cell_val = _representative_cell(col_series, col_name)
                 if isinstance(cell_val, np.generic):
                     cell_val = cell_val.item()
                 # to_python.m sends array cells as Python lists (via .tolist()).
@@ -852,6 +888,27 @@ class SciDuck:
         except Exception:
             pass
 
+    def _unregister_frame(self, view: str) -> None:
+        """Drop a registered pandas view without masking the caller's error.
+
+        The one owner of the ``finally`` cleanup for every register/unregister
+        site. Inside an explicit transaction a failed statement leaves the
+        transaction aborted, and DuckDB then refuses ``unregister`` too
+        ("Current transaction is aborted"). Raised from a ``finally``, that
+        second error REPLACES the real one: on 2026-10-22 a save failed with
+        ConversionException ('Y' -> DOUBLE) but every scidb log line and the
+        GUI only said TransactionException. A leaked view is harmless — the
+        next ``register`` of the same name replaces it — so the failure is
+        logged and swallowed.
+        """
+        try:
+            self.con.unregister(view)
+        except Exception as exc:
+            logger.debug(
+                "unregister(%s) failed (%s: %s); the view is replaced on next "
+                "register", view, type(exc).__name__, exc,
+            )
+
     def _execute(self, sql: str, params=None):
         # NOTE: DuckDB's Python connection returns itself from execute(), so
         # execute() and fetchXxx() share the same connection state.  All callers
@@ -988,7 +1045,7 @@ class SciDuck:
                 self._recover_from_autocommit_failure()
                 raise
             finally:
-                self.con.unregister("_bulk_insert_df")
+                self._unregister_frame("_bulk_insert_df")
 
     def _bulk_update(self, table: str, key_cols, set_cols, rows) -> int:
         """Update many rows with a single vectorized ``UPDATE ... FROM``.
@@ -1029,7 +1086,7 @@ class SciDuck:
                 self._recover_from_autocommit_failure()
                 raise
             finally:
-                self.con.unregister("_bulk_update_df")
+                self._unregister_frame("_bulk_update_df")
         return len(rows)
 
     def _begin(self):
@@ -1156,7 +1213,7 @@ class SciDuck:
                 self._recover_from_autocommit_failure()
                 raise
             finally:
-                self.con.unregister(view)
+                self._unregister_frame(view)
 
     def _fetchdf_with_frame(
         self, sql: str, frame, *, view: str = "_query_frame", params=None
@@ -1198,7 +1255,7 @@ class SciDuck:
                 self._recover_from_autocommit_failure()
                 raise
             finally:
-                self.con.unregister(view)
+                self._unregister_frame(view)
 
     def _fetchone(self, sql: str, params=None):
         """First result row, or ``None`` — the locked counterpart to

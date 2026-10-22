@@ -50,11 +50,19 @@ def export_pipeline_to_code(db, pipeline_id: str) -> dict:
     pipeline_ids = _closure_pipeline_ids(db, pipeline_id)
 
     fn_labels: set[str] = set()
+    fn_nodes: list[tuple[str, str]] = []
     for pid in pipeline_ids:
         graph = get_pipeline_graph(db, pid)
         for node in graph["nodes"]:
             if node["type"] == "functionNode":
                 fn_labels.add(node["data"]["label"])
+                fn_nodes.append((node["id"], node["data"]["label"]))
+
+    # Every exported step gets a step name (Q6) if it has none, so the script
+    # and the canvas agree on which node each for_each is from then on.
+    from scistack_gui.step_names import ensure_step_names
+
+    ensure_step_names(db, fn_nodes)
 
     matlab_fns = {f for f in fn_labels if matlab_registry.is_matlab_function(f)}
     python_fns = fn_labels - matlab_fns
@@ -352,6 +360,10 @@ def _generate_python_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
             call += ", distribute=True"
         if spec.options.get("as_table"):
             call += f", as_table={spec.options['as_table']!r}"
+        # The node's step name (Q6): a run of this script is attributed to
+        # that node even if the script is later edited to wire it differently.
+        if spec.options.get("step"):
+            call += f", step={spec.options['step']!r}"
         if spec.metadata_iterables:
             call += f", **{iterables_src}"
         call += ")"
@@ -509,6 +521,8 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
         derive_target_for_node,
     )
 
+    from scistack_gui.step_names import step_name_of
+
     pending_consts = ps.get_pending_constants(db)
 
     steps: list = []
@@ -535,7 +549,7 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
                 if key in seen_keys:
                     continue
                 seen_keys.add(key)
-                steps.append((fn_label, target, options))
+                steps.append((fn_label, {**target, "step": step_name_of(db, node_id)}, options))
     return steps
 
 
@@ -626,6 +640,8 @@ def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
         if glue_src:
             call += f", 'glue', {glue_src}"
         call += _matlab_run_option_args(options, inputs)
+        if target.get("step"):
+            call += f", 'step', {_matlab_str(target['step'])}"
         if iter_args:
             call += f", {iter_args}"
         call += ");"

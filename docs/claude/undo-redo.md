@@ -117,3 +117,18 @@ allowlist with a reason).
 
 Nothing else is needed. A local-only edit (React state) uses
 `useHistoryState(stack, initial, label)` instead of `useState`.
+
+## Undo survives a restart (2026-10-22)
+
+Every change now records its SURFACE (the client stack's name, `page` or
+`plot`, sent in `_change.surface`; `ChangeRecord.surface`, kept in
+`record_json`). On mount the canvas calls `seedUndo(pageUndo)` (api.ts), which
+asks `history_recent` (`history.recent_changes`) for the page's persisted
+steps and seeds the empty stack: applied records become the undo side in the
+order they were made; undone records become the redo side only if they were
+undone after the newest applied record was made (a later edit had already
+dropped them from the redo side). Records from before surfaces were recorded,
+and Plot Studio's, are left out. Replaying a seeded step is as safe as a live
+one: `undo` refuses on conflict. Audit-only rows (adoption events) are never
+seeded. Tests: `tests/test_history.py::TestRecentChanges`,
+`frontend/src/history.test.ts` (`seededStack`).

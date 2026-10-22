@@ -52,6 +52,11 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       runs in the language of the run, so a MATLAB pipeline
 %                       needs MATLAB glue. See
 %                       docs/claude/free-code-glue-nodes.md.
+%       step          - string: a name for this pipeline STEP, recorded on
+%                       the run (`_run_step`). Not identity. The GUI uses it to
+%                       attribute this run to the canvas node of the same step
+%                       name, even when the wiring changed. See
+%                       scidb.intent.run_step (Python).
 %       parameter_names - struct: input name -> the DECLARED Parameter name
 %                       that fed it (e.g. struct('gaitRiteConfig',
 %                       'gaitrite_config')). Recorded on the constant's
@@ -100,6 +105,13 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
     % --- Parse options vs metadata name-value pairs ---
     [meta_args, opts] = split_options(varargin{:});
+    % --- step: ambient in Python for this call (read where the run is
+    % recorded); cleared when this function exits, however it exits. ---
+    if strlength(opts.step) > 0
+        py.scidb.intent.set_ambient_step(char(opts.step));
+        step_cleanup = onCleanup(@() py.scidb.intent.set_ambient_step(py.None)); %#ok<NASGU>
+        scidb.Log.info('for_each step: %s', char(opts.step));
+    end
 
     dry_run = opts.dry_run;
     do_save = opts.save;
@@ -1941,6 +1953,8 @@ function [meta_args, opts] = split_options(varargin)
     opts.glue = struct();
     % Input name -> declared Parameter name (see the parameter_names help).
     opts.parameter_names = struct();
+    % The step name ('' = none). See the step help.
+    opts.step = "";
     % Schema location selection as JSON text ('' = none). See the help.
     opts.locations = '';
     opts.fn_name_override = '';
@@ -2043,6 +2057,9 @@ function [meta_args, opts] = split_options(varargin)
                     i = i + 2; continue;
                 case "parameter_names"
                     opts.parameter_names = varargin{i+1};
+                    i = i + 2; continue;
+                case "step"
+                    opts.step = string(varargin{i+1});
                     i = i + 2; continue;
                 case "locations"
                     opts.locations = varargin{i+1};

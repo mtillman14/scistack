@@ -3,6 +3,7 @@
     GET  /api/history/status   history_status — undoable methods + counts
     POST /api/history/undo     history_undo   — restore a change's before side
     POST /api/history/redo     history_redo   — restore a change's after side
+    GET  /api/history/recent   history_recent — a restarted surface's undo/redo steps
 
 The records themselves are ``scistack_gui.history``; the order in which a
 user undoes them is the frontend's (one stack per surface). See
@@ -33,6 +34,17 @@ router = APIRouter()
 
 class ChangeRef(BaseModel):
     change_id: str
+
+
+class RecentQuery(BaseModel):
+    surface: str = "page"
+    limit: int = 200
+
+
+def _recent(req: RecentQuery) -> dict:
+    """The steps a restarted surface puts back on its undo stack
+    (``history.recent_changes``)."""
+    return history.recent_changes(req.surface, req.limit)
 
 
 def _status() -> dict:
@@ -106,6 +118,7 @@ _SELF = {"needs_db": False, "holds_db_lock": False}
 
 HISTORY_HANDLERS: tuple[Handler, ...] = (
     Handler("history_status", "/history/status", None, _status, http_method="GET", **_SELF),
+    Handler("history_recent", "/history/recent", RecentQuery, _recent, http_method="GET", **_SELF),
     Handler("history_undo", "/history/undo", ChangeRef, _undo, undoable=False, **_SELF),
     Handler("history_redo", "/history/redo", ChangeRef, _redo, undoable=False, **_SELF),
 )

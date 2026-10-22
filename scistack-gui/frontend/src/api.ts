@@ -97,6 +97,31 @@ const inFlight = new Map<string, Promise<unknown>>();
  */
 export const pageUndo = new UndoStack((method, params) => callBackend(method, params), 'page');
 
+/**
+ * Put a restarted surface's undo/redo steps back, from the backend's persisted
+ * change log (`history_recent`, plan-canvas-as-document Q5). Once per stack
+ * and only while it is empty, so a live session's own order is never
+ * replaced. A failure leaves the stack empty: undo of earlier edits is lost,
+ * nothing else.
+ */
+const seeded = new WeakSet<UndoStack>();
+export async function seedUndo(stack: UndoStack = pageUndo): Promise<void> {
+  if (seeded.has(stack)) return;
+  seeded.add(stack);
+  try {
+    const r = await send('history_recent', { surface: stack.name }) as {
+      past?: { change_id: string; label: string }[];
+      future?: { change_id: string; label: string }[];
+    };
+    stack.seed(
+      (r?.past ?? []).map(e => ({ changeId: e.change_id, label: e.label })),
+      (r?.future ?? []).map(e => ({ changeId: e.change_id, label: e.label })),
+    );
+  } catch (err) {
+    console.warn('[undo] history_recent failed; earlier edits cannot be undone', err);
+  }
+}
+
 export interface CallOptions {
   /** The surface whose undo stack records this request; default pageUndo,
    * null = record on the backend but push onto no stack. */
@@ -147,8 +172,13 @@ export async function callBackend(
     const label = (await undoableMethods())[method];
     if (label !== undefined) {
       change.label ??= label;
-      const result = await send(method, { ...params, _change: { id: change.id, label: change.label } });
       const stack = options.stack === undefined ? pageUndo : options.stack;
+      // The stack's name travels with the change so a restarted surface can
+      // put back ITS steps and no other (seedUndo, history_recent).
+      const result = await send(method, {
+        ...params,
+        _change: { id: change.id, label: change.label, surface: stack?.name ?? null },
+      });
       if (stack && !refused(result)) stack.pushServer(change.id, change.label);
       return result;
     }
@@ -254,6 +284,9 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     refresh_module:         { path: '/api/refresh', method: 'POST' },
     create_variable:        { path: '/api/variables/create', method: 'POST', body: true },
     create_builtin_function: { path: '/api/functions/builtin', method: 'POST', body: true },
+    create_function:        { path: '/api/functions/new', method: 'POST', body: true },
+    get_function_code:      { path: (p) => `/api/functions/${encodeURIComponent(p.name as string)}/code` },
+    save_function_code:     { path: (p) => `/api/functions/${encodeURIComponent(p.name as string)}/code`, method: 'PUT', body: true },
     get_project_code:       { path: '/api/project/code' },
     refresh_project:        { path: '/api/project/refresh', method: 'POST' },
     clear_data_plan:        { path: '/api/project/clear-data/plan' },
@@ -389,6 +422,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     // Undo / redo (docs/claude/undo-redo.md). The change id is in the body;
     // a request's own undo metadata travels in the X-SciStack-Change header.
     history_status:         { path: '/api/history/status' },
+    history_recent:         { path: (p) => `/api/history/recent?surface=${encodeURIComponent((p.surface as string) ?? 'page')}` },
     history_undo:           { path: '/api/history/undo', method: 'POST', body: true },
     history_redo:           { path: '/api/history/redo', method: 'POST', body: true },
   };

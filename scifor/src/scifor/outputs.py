@@ -28,6 +28,7 @@ DB_ONLY_KWARGS: frozenset[str] = frozenset(
         "finalized",
         "glue",
         "parameter_names",
+        "step",
         "pipeline",
     }
 )

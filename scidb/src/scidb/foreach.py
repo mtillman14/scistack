@@ -264,6 +264,7 @@ def for_each(
     finalized: bool = False,
     glue: "dict[str, Any] | None" = None,
     parameter_names: "dict[str, str] | None" = None,
+    step: "str | None" = None,
     pipeline: Any = _PIPELINE_UNSET,
     _inject_combo_metadata: bool = False,
     _pre_combo_hook: "Callable[[dict], bool] | None" = None,
@@ -370,6 +371,12 @@ def for_each(
                     ``scidb.parameter.declared_input_names``.
         _inject_combo_metadata: If True, inject current-combo metadata keys
                     as extra kwargs to fn (used by scihist for generates_file).
+        step: A name for this pipeline STEP, recorded on the run (`_run_step`).
+                    Not identity: renaming it re-runs nothing. The GUI uses it
+                    to attribute a script run to the canvas node of the same
+                    step name, even when the run's wiring changed (code
+                    export writes it). Consequence: ``step`` is a reserved
+                    name and cannot be used as a schema key.
         pipeline: Deferred-registration control. Omitted (default): if a
                     Pipeline is active (``db.pipeline(name)``), REGISTER this
                     call as a deferred step and return a Step handle — nothing
@@ -429,12 +436,50 @@ def for_each(
                 "finalized": finalized,
                 "glue": glue,
                 "parameter_names": parameter_names,
+                "step": step,
                 "_inject_combo_metadata": _inject_combo_metadata,
                 "_pre_combo_hook": _pre_combo_hook,
                 "_progress_fn": _progress_fn,
                 "_cancel_check": _cancel_check,
             },
         )
+
+    # --- step: ambient for the whole call (EachOf alternatives included), read
+    #     where the run is recorded (provenance_save, `_run_step`). ---
+    if step is not None:
+        from .intent import check_step, current_step, run_step
+
+        step = check_step(step)
+        if current_step() != step:
+            with run_step(step):
+                return for_each(
+                    fn,
+                    inputs,
+                    outputs,
+                    dry_run=dry_run,
+                    save=save,
+                    as_table=as_table,
+                    db=db,
+                    distribute=distribute,
+                    where=where,
+                    introspect=introspect,
+                    skip_computed=skip_computed,
+                    schema_filter=schema_filter,
+                    schema_keys=schema_keys,
+                    schema_key_types=schema_key_types,
+                    locations=locations,
+                    share_limits=share_limits,
+                    finalized=finalized,
+                    glue=glue,
+                    parameter_names=parameter_names,
+                    step=step,
+                    pipeline=None,
+                    _inject_combo_metadata=_inject_combo_metadata,
+                    _pre_combo_hook=_pre_combo_hook,
+                    _progress_fn=_progress_fn,
+                    _cancel_check=_cancel_check,
+                    **metadata_iterables,
+                )
 
     # --- schema_key_types: recorded in the DATABASE, which owns it
     #     (scidb.schema_types). Done once, here, before the EachOf recursion

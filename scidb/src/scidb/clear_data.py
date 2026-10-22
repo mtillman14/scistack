@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 #: intent tables is emptied).
 KEPT_BY_CLEAR: dict[str, str] = {
     "_run": "the run log: that a run happened, when, and its origin (user decision 2026-10-21)",
+    "_run_step": "part of the run log: the step name a run was given (for_each(step=...))",
     "_schema": "location interning; a re-save after the clear reuses the same schema ids",
     "_variant_pin": "audit trail; active pins are RELEASED, rows kept",
     "_variant_tombstone": "the audit trail of every real delete, this clear included",

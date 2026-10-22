@@ -865,6 +865,9 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
             # call site agrees. The canvas uses it to draw a glued history
             # input through its glue node, not straight into the function.
             "glue_chains": {},
+            # Step names (for_each(step=...)) of the runs behind this call
+            # site, oldest first. Reported, never identity.
+            "steps": [],
             "variant_count": 0,
             "variants": [],
         }
@@ -915,6 +918,9 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
 
         for param_name, names in (v.get("glue_chains") or {}).items():
             functions[fkey]["glue_chains"][param_name] = list(names)
+        for step in v.get("steps") or ():
+            if step not in functions[fkey]["steps"]:
+                functions[fkey]["steps"].append(step)
 
         # Track outputs
         if out not in functions[fkey]["outputs"]:
@@ -994,6 +1000,7 @@ def aggregate_pipeline_variants(variants: list[dict]) -> dict:
             "parameter_names": dict(data["parameter_names"]),
             "path_input_names": dict(data["path_input_names"]),
             "glue_chains": {p: list(n) for p, n in data["glue_chains"].items()},
+            "steps": list(data["steps"]),
             "variant_count": data["variant_count"],
             "variants": data["variants"],
         }

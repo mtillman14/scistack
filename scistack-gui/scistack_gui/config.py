@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 # Sits beside ``src/scistack_entities.toml`` (scidb's DEFAULT_ENTITIES_RELPATH)
 # because both are GUI-owned write targets, not user modules.
 DEFAULT_GLUE_RELPATH = "src/scistack_glue"
+DEFAULT_FUNCTIONS_RELPATH = "src/scistack_functions"
 
 
 def _config_path(project_root: Path, raw) -> Path:
@@ -247,6 +248,14 @@ class SciStackConfig:
     The file is persistence, not a place the user navigates to — glue is
     written and edited through the GUI's code panel (D1a)."""
 
+    functions_dir: Path | None = None
+    """Directory GUI-created **functions** are written into (default
+    ``src/scistack_functions/``, one ``.py`` file per function, edited in the
+    GUI's code panel). The third writable surface, under the same rule as
+    ``glue_dir``: one designated, GUI-owned location, never a user's
+    hand-written module. A function found anywhere else is discovered and
+    usable, but read-only in the GUI."""
+
     variable_file: Path | None = None
     """A ``.py`` file of entity declarations, **read-only**.
 
@@ -326,6 +335,31 @@ class SciStackConfig:
             or self.matlab_entities_file is not None
             or self.matlab_variable_dir is not None
         )
+
+
+def _fold_code_dir(project_root: Path, section: dict, key: str, modules: list) -> "Path | None":
+    """Resolve a GUI code directory (``glue_dir``, ``functions_dir``) from the
+    config *section* and append its ``.py`` files to *modules* (in place), so
+    ordinary discovery finds them. A hand-written config never lists these
+    files, so load_config does. Returns the directory, or ``None``."""
+    logger.info("[config] Processing %s", key)
+    raw = section.get(key)
+    if raw is None:
+        logger.debug("[config] No %s configured", key)
+        return None
+    directory = _config_path(project_root, raw)
+    logger.info("[config] %s set to: %s", key, directory)
+    if directory.is_dir():
+        found = [p for p in _walk_source_files(directory, ".py") if not _is_test_file(p)]
+        new_files = [p for p in found if not any(_same_path(p, m) for m in modules)]
+        modules.extend(new_files)
+        logger.info(
+            "[config] %s contributed %d module file(s) (%d already covered)",
+            key,
+            len(new_files),
+            len(found) - len(new_files),
+        )
+    return directory
 
 
 def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
@@ -481,31 +515,12 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
             toml_path,
         )
 
-    # --- glue_dir (the second writable surface: one file per glue node) ---
-    logger.info("[config] Processing glue_dir")
-    glue_dir: Path | None = None
-    raw_gd = section.get("glue_dir")
-    if raw_gd is not None:
-        glue_dir = _config_path(project_root, raw_gd)
-        logger.info("[config] glue_dir set to: %s", glue_dir)
-        # Folded into modules so glue nodes are found by ordinary discovery —
-        # they are real functions in real files, and get no new discovery path.
-        # A hand-written config never maintains this, so load_config does.
-        if glue_dir.is_dir():
-            found = [
-                p for p in _walk_source_files(glue_dir, ".py") if not _is_test_file(p)
-            ]
-            new_files = [
-                p for p in found if not any(_same_path(p, m) for m in modules)
-            ]
-            modules.extend(new_files)
-            logger.info(
-                "[config] glue_dir contributed %d module file(s) (%d already covered)",
-                len(new_files),
-                len(found) - len(new_files),
-            )
-    else:
-        logger.debug("[config] No glue_dir configured")
+    # --- glue_dir and functions_dir: the GUI's code surfaces, one file per
+    # glue node / per GUI-created function. Folded into modules so what the
+    # GUI writes is found by ordinary discovery: real functions in real
+    # files, no new discovery path. ---
+    glue_dir = _fold_code_dir(project_root, section, "glue_dir", modules)
+    functions_dir = _fold_code_dir(project_root, section, "functions_dir", modules)
 
     # --- variable_file (legacy .py declarations, read-only) ---
     logger.info("[config] Processing variable_file")
@@ -655,6 +670,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
         modules=modules,
         entities_file=entities_file,
         glue_dir=glue_dir,
+        functions_dir=functions_dir,
         variable_file=variable_file,
         packages=packages,
         auto_discover=auto_discover,
@@ -700,6 +716,8 @@ def _log_declaration_surfaces(config) -> None:
 
     if config.glue_dir is not None:
         lines.append(f"  writable  {config.glue_dir}  (glue nodes, one file each)")
+    if config.functions_dir is not None:
+        lines.append(f"  writable  {config.functions_dir}  (GUI-created functions, one file each)")
 
     if config.entities_file is not None:
         lines.append(f"  writable  {config.entities_file}  (TOML, GUI writes here)")
@@ -1646,21 +1664,36 @@ def set_entities_file(
 
 
 def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
-    """Set (or auto-create) the glue-node directory and write the key into
-    scistack.toml. Returns the resolved directory.
+    """Set (or auto-create) the glue-node directory (see :func:`_set_code_dir`)."""
+    return _set_code_dir(db_path, "glue_dir", DEFAULT_GLUE_RELPATH, dir_path)
 
-    The mirror of :func:`set_entities_file` for the *second* writable surface
-    (see ``SciStackConfig.glue_dir``). Same rules: loose-script projects only,
+
+def set_functions_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
+    """Set (or auto-create) the directory GUI-created functions are written
+    into (``SciStackConfig.functions_dir``; see :func:`_set_code_dir`)."""
+    return _set_code_dir(db_path, "functions_dir", DEFAULT_FUNCTIONS_RELPATH, dir_path)
+
+
+def _set_code_dir(
+    db_path: Path, key: str, default_relpath: str, dir_path: "Path | str | None" = None
+) -> Path:
+    """Set (or auto-create) a GUI code directory (*key*: ``glue_dir`` or
+    ``functions_dir``) and write the key into scistack.toml. Returns the
+    resolved directory.
+
+    The mirror of :func:`set_entities_file` for the GUI's code surfaces
+    (see ``SciStackConfig.glue_dir`` / ``functions_dir``). Same rules: loose-script projects only,
     relative paths resolve against :func:`resolve_project_root`, an existing
     directory is left alone.
 
-    Defaults to ``<project_root>/src/scistack_glue/``. The directory is
-    created empty — a glue node is one file per node, written by the GUI's
+    Defaults to ``<project_root>/{default_relpath}``. The directory is
+    created empty: one file per glue node or function, written by the GUI's
     code panel, and there is no package ``__init__`` to scaffold because
     discovery walks the directory for ``.py``/``.m`` files rather than
     importing it as a package.
     """
-    logger.info("[config] set_glue_dir: db_path=%s, dir_path=%s", db_path, dir_path)
+    op = f"set_{key}"
+    logger.info("[config] %s: db_path=%s, dir_path=%s", op, db_path, dir_path)
     project_root = resolve_project_root(None, db_path)
     toml_path = locate_config_at(project_root)
 
@@ -1668,7 +1701,7 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
     if is_first_write:
         target_path = project_root / "scistack.toml"
         section: dict = {}
-        logger.info("[config] set_glue_dir: no config found, will create %s", target_path)
+        logger.info("[config] %s: no config found, will create %s", op, target_path)
     else:
         target_path = toml_path
         section = _load_raw_scistack_section(toml_path)
@@ -1679,7 +1712,7 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
 
     if is_first_write:
         _seed_first_write(
-            db_path, project_root, raw_modules, raw_sources, "set_glue_dir"
+            db_path, project_root, raw_modules, raw_sources, op
         )
 
     if dir_path is not None:
@@ -1690,13 +1723,13 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
             else _normalize(project_root / raw_target)
         )
     else:
-        glue_dir = _normalize(project_root / DEFAULT_GLUE_RELPATH)
+        glue_dir = _normalize(project_root / default_relpath)
 
     if not glue_dir.exists():
         glue_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("[config] set_glue_dir: created directory %s", glue_dir)
+        logger.info("[config] %s: created directory %s", op, glue_dir)
     else:
-        logger.info("[config] set_glue_dir: %s already exists", glue_dir)
+        logger.info("[config] %s: %s already exists", op, glue_dir)
 
     try:
         glue_dir_for_toml: "Path | str" = _portable_relpath(
@@ -1710,13 +1743,15 @@ def set_glue_dir(db_path: Path, dir_path: "Path | str | None" = None) -> Path:
         {
             **section,
             "modules": raw_modules,
-            "glue_dir": glue_dir_for_toml,
+            key: glue_dir_for_toml,
             "matlab": {**section.get("matlab", {}), "sources": raw_sources},
         },
     )
     logger.info(
-        "[config] set_glue_dir: wrote %s (glue_dir=%s, toml value=%s)",
+        "[config] %s: wrote %s (%s=%s, toml value=%s)",
+        op,
         target_path,
+        key,
         glue_dir,
         glue_dir_for_toml,
     )
