@@ -237,24 +237,34 @@ def put_edge(
         _notify_dag_updated()
         return {"ok": True, "unhidden": candidate}
 
-    # Checked against manual edges only (not the full DB-derived data-lineage
-    # graph): computing that graph (domain.pipeline_service.get_pipeline_graph
-    # -> api.pipeline._build_graph) has a side effect — it PERSISTS manual-node
-    # graduation as part of building the response — so calling it here, before
-    # this edge's wiring is fully in place, can graduate a node prematurely on
-    # its still-incomplete wiring (regression found via
+    # Checked against the edges the canvas DRAWS (edge_view.effective_edges),
+    # not every stored row: since D2 (2026-10-22) removing an edge hides it
+    # and keeps the row, and a removed edge closing a "cycle" rejected the
+    # user's rewiring (scidb.log 2026-10-22 17:51: LoadedData -> fn was
+    # removed, then fn -> LoadedData was refused three times).
+    # Not the full graph build (domain.pipeline_service.get_pipeline_graph ->
+    # api.pipeline._build_graph): it PERSISTS manual-node graduation as part
+    # of building the response, so calling it here, before this edge's wiring
+    # is in place, can graduate a node prematurely (regression found via
     # test_differently_wired_manual_node_does_not_graduate_or_show_green and
-    # friends). A cycle closed purely through immutable, already-executed
-    # DB-derived edges plus this one new manual edge won't be caught here —
-    # it still surfaces at run time as scidb's PipelineCycleError.
-    existing_edges = [
-        e for e in pipeline_store.get_manual_edges(db) if e["id"] != edge_id
-    ]
+    # friends). A cycle closed through history edges not yet adopted as
+    # stored rows still surfaces at run time as scidb's PipelineCycleError.
+    from scistack_gui.domain.edge_view import effective_edges
+
+    view = effective_edges(db, scope_id, caller="put_edge cycle check")
+    existing_edges = [e for e in view.drawn if e["id"] != edge_id]
     cycle_path = find_cycle(existing_edges, source, target)
     if cycle_path is not None:
+        by_ends = {(e["source"], e["target"]): e["id"] for e in existing_edges}
         logger.warning(
-            "[layout_service] put_edge rejected — would create a cycle: %s",
+            "[layout_service] put_edge rejected — would create a cycle: %s "
+            "(closed by drawn edge(s) %s)",
             " -> ".join(cycle_path),
+            [
+                by_ends[pair]
+                for pair in zip(cycle_path[1:], cycle_path[2:])
+                if pair in by_ends
+            ],
         )
         raise ValueError(
             f"connecting '{source}' to '{target}' would create a dependency "

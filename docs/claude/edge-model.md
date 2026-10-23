@@ -161,6 +161,10 @@ per connection). So:
   connection id is still the one identity.
 - Removing an edge, drawn or not, HIDES its connection and keeps the row
   (D2, `layout_service.delete_edge`); redrawing it unhides (`put_edge`).
+  Every reader of stored rows must therefore go through
+  `edge_view.effective_edges`, including `put_edge`'s cycle check: it read
+  raw rows until 2026-10-22, and a removed edge refused the rewiring that
+  replaced it as a "cycle" (`test_api.py::test_put_edge_ignores_a_removed_edge_in_the_cycle_check`).
 - A removed edge is never adopted back (the marker), even though history
   still records it.
 - A node runs from its stored edges (`execution_service.derive_target_for_node`);

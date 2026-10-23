@@ -434,6 +434,21 @@ class TestEdgesEndpoints:
         edges = client.get("/api/pipeline").json()["edges"]
         assert not any(e["id"] == "e_n3_n1" for e in edges)
 
+    def test_put_edge_ignores_a_removed_edge_in_the_cycle_check(self, client):
+        # Removing an edge hides it and keeps the stored row (D2). The cycle
+        # check must see the canvas, not the row: n1 -> n2 removed, so
+        # drawing n2 -> n1 closes nothing (scidb.log 2026-10-22 17:51).
+        client.put(
+            "/api/edges/e_n1_n2",
+            json={"source": "n1", "target": "n2", "source_handle": None, "target_handle": None},
+        )
+        assert client.delete("/api/edges/e_n1_n2").status_code == 200
+        r = client.put(
+            "/api/edges/e_n2_n1",
+            json={"source": "n2", "target": "n1", "source_handle": None, "target_handle": None},
+        )
+        assert r.status_code == 200, r.json()
+
     def test_put_edge_upsert_of_same_id_is_not_a_self_cycle(self, client):
         # Re-PUTting the SAME edge_id with a different source/target is an
         # update, not a new edge — the edge's own stale row must not count

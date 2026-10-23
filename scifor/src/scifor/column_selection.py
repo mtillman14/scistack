@@ -8,8 +8,8 @@ class ColumnSelection:
     Wraps a DataFrame with column selection for use in for_each() inputs.
 
     After filtering the DataFrame for the current combo, extracts only the
-    specified columns. Single column -> returns numpy array of values.
-    Multiple columns -> returns a sub-DataFrame.
+    specified columns. Single column -> its value for a one-row combo, else a
+    numpy array (``column_value``). Multiple columns -> a sub-DataFrame.
 
     Example:
         for_each(
@@ -20,7 +20,7 @@ class ColumnSelection:
 
     When ``iterate=True`` the selection means "run fn once per column" rather
     than "pass these columns as one argument." The per-combo loop feeds each
-    column (as a single-column array) to fn in turn and reassembles the
+    column (``column_value``, as above) to fn in turn and reassembles the
     per-column results into one wide row. All iterate selections in a single
     for_each() call must share the same column set (zipped by name).
 
@@ -103,6 +103,25 @@ class ColumnSelection:
                 f"excl={self.excl_columns!r}]"
             )
         return f"{name}[{self.columns!r}, iterate={self.iterate}]"
+
+
+def column_value(column: Any) -> Any:
+    """What a function receives for ONE selected column of one combo: the
+    cell itself when the combo has one row, else a numpy array of the column.
+
+    The one owner for every single-column delivery: a single-column
+    ``ColumnSelection``, each pass of ``for_columns`` (scifor), and scidb's
+    per-combo selection. A record saved as a one-row table (a CSV spread one
+    record per subject) gives each column one value per subject, and that
+    value is what the function means (scidb.log 2026-10-22: ``value.split``
+    on a pandas ``StringArray``). ``to_numpy`` rather than ``.values``: on
+    pandas 3 a text column is a string dtype, and ``.values`` returns a pandas
+    extension array, not numpy. A plain input with one data column already
+    unwraps one row the same way (``foreach._extract_data``).
+    """
+    if len(column) == 1:
+        return column.iloc[0]
+    return column.to_numpy()
 
 
 def _display_name(obj: Any) -> str:

@@ -11,7 +11,7 @@ stored or loaded from the database.
 ## Python Syntax
 
 ```python
-# Single column → function receives numpy array
+# Single column → the value for a one-row combo, else a numpy array
 for_each(fn, inputs={"x": MyVar["col_a"]}, outputs=[Result], subject=[1, 2, 3])
 
 # Multiple columns → function receives DataFrame subset
@@ -59,7 +59,8 @@ directly on the instance in the `selected_columns` property
 
 | Selection | Python return type | MATLAB return type |
 |-----------|-------------------|-------------------|
-| Single column | `numpy.ndarray` (`.values` of the column) | numeric/cell array (table column) |
+| Single column, one row | the cell itself (a `str`, `float`, ...) | the 1x1 value (table column) |
+| Single column, several rows | `numpy.ndarray` (`.to_numpy()`, never a pandas extension array) | numeric/cell array (table column) |
 | Multiple columns | `pandas.DataFrame` (subset of columns) | MATLAB `table` (subtable) |
 
 ## How It Works (Python)
@@ -73,8 +74,8 @@ directly on the instance in the `selected_columns` property
    `scifor.ColumnSelection` around the loaded DataFrame; anything else
    (can't bulk-load) is wrapped in `PerComboLoader`, resolved per-combo by
    `_resolve_per_combo_loader` calling `spec.data.load(**load_kw)`.
-4. Either way, the per-combo *extraction* (dropping to a numpy array for one
-   column, or a DataFrame subset for several) is scifor's job —
+4. Either way, the per-combo *extraction* (one column through
+   `scifor.column_value`, or a DataFrame subset for several) is scifor's job —
    `scifor/src/scifor/foreach.py`'s `prepare_input`/column-selection
    handling, unchanged by which package constructed the wrapper.
 

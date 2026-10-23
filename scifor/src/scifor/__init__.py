@@ -23,7 +23,7 @@ Example:
 """
 
 from .colname import ColName
-from .column_selection import ColumnSelection
+from .column_selection import ColumnSelection, column_value
 from .discovery import (
     BENIGN_TOPLEVEL_CALLS,
     ModuleWalkError,
@@ -103,6 +103,7 @@ __all__ = [
     "Fixed",
     "Merge",
     "ColumnSelection",
+    "column_value",
     "ColName",
     "EachOf",
     "require_alternatives",

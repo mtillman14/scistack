@@ -49,8 +49,12 @@ in-memory DataFrame) — and likewise in MATLAB standalone scifor
 ## Semantics
 
 - The function runs once **per column** per schema combo and must take the
-  iterated column as a single-column argument (a numpy array, same as
-  `MyVar["col"]`).
+  iterated column as a single-column argument, delivered as `MyVar["col"]` is
+  (`scifor.column_value`): the **cell itself** when the combo has one row (a
+  plain `str`, `float`, ...), else a **numpy array** (`.to_numpy()`; on pandas 3
+  a text column's `.values` is a pandas `StringArray`/`ArrowStringArray`, which
+  has no `.split` and is not numpy). History: scidb.log 2026-10-22, a CSV
+  spread one record per subject, where every call of `value.split("|")` raised.
 - **Per-column return → output columns** (see "Multi-output per column" below):
   a **scalar** yields one column named after the source column; a **dict /
   pandas Series / 1-row DataFrame** (struct / 1-row table in MATLAB) yields one
@@ -65,9 +69,9 @@ in-memory DataFrame) — and likewise in MATLAB standalone scifor
 
 ## as_table interaction
 
-By default each per-column call receives the iterated column as a **bare
-array** (numpy in Python / numeric vector in MATLAB), matching single-column
-`ColumnSelection` semantics. When the iterate input is named in `as_table`
+By default each per-column call receives the iterated column bare (the cell
+for one row, else a numpy array in Python / the table column in MATLAB),
+matching single-column `ColumnSelection` semantics. When the iterate input is named in `as_table`
 (either `as_table=True` for all inputs or a list including it), each per-column
 call instead receives a **table/DataFrame containing all schema key columns +
 the one current column** — mirroring the non-iterate `ColumnSelection` as_table
@@ -197,6 +201,18 @@ deterministic across combos, so they propagate immediately instead of being
 swallowed by the per-combo `[skip]` handler — Python via a dedicated
 `ForColumnsError(ValueError)` re-raised before the generic `except`; MATLAB via
 an identifier check that `rethrow`s `forColumnsDuplicate`/`forColumnsBadReturn`.
+
+**The function raising on a column fails that combo, not the run.** The column
+loop still runs every column and raises one `ColumnFunctionError` naming each
+failing column, but `for_each` records it like any other function error: that
+combo saves nothing (no partial row), the run continues, and the end-of-run
+summary groups identical reasons (`failed: 33 × "ColumnFunctionError: ..."`).
+Until 2026-10-22 it aborted the run on the assumption that a bad column is bad
+everywhere. A failure can depend on one subject's cell, and the abort left 32 of
+33 subjects unrun while dataframe mode (same function, same error) ran them
+all. MATLAB `run_column_iteration` already fell through to the per-combo skip.
+Tests: `scifor/tests/test_foreach_standalone.py::test_iterate_function_failure_*`,
+`test_iterate_column_failure_on_every_combo_is_one_summary_reason`.
 
 The argmax→label use case combines this with as_table: return
 `{"value": v[col].max(), "best": v.loc[v[col].idxmax(), "intervention"]}` to get

@@ -1,51 +1,30 @@
-# Does for_each (-> save_batch) call a custom to_db? Run from /workspace.
-import tempfile
-from dataclasses import dataclass
-from pathlib import Path
+import datetime, numpy as np, pandas as pd
+from scidb import configure_database, BaseVariable
 
-import numpy as np
-import pandas as pd
-from scidb import BaseVariable, configure_database, for_each
+db = configure_database("/tmp/nat_check.duckdb", ["subject"])
 
+class When(BaseVariable):
+    schema_version = 1
 
-@dataclass
-class Trajectory:
-    t: np.ndarray
-    label: str
+cases = {
+    "S01": pd.Timestamp("2026-01-01 10:00"),
+    "S02": pd.NaT,
+    "S03": datetime.datetime(2026, 1, 3, 12, 0),
+}
+for subj, v in cases.items():
+    When.save(v, subject=subj)
 
+for subj in cases:
+    rec = When.load(subject=subj)
+    print(subj, repr(cases[subj]), "->", repr(rec.data), type(rec.data).__name__, "isna:", pd.isna(rec.data))
 
-class RawT(BaseVariable):
-    pass
+class When64(BaseVariable):
+    schema_version = 1
 
-
-class MarkerTrajectory(BaseVariable):
-    def to_db(self) -> pd.DataFrame:
-        print("[repro] to_db called")
-        return pd.DataFrame({"t": self.data.t, "label": self.data.label})
-
-    @classmethod
-    def from_db(cls, df: pd.DataFrame) -> Trajectory:
-        print("[repro] from_db called")
-        return Trajectory(t=df["t"].to_numpy(), label=str(df["label"].iloc[0]))
-
-
-def make_traj(raw):
-    return Trajectory(t=np.asarray(raw, dtype=float), label="heel")
-
-
-db = configure_database(Path(tempfile.mkdtemp()) / "repro.duckdb", ["subject"])
-RawT.save(np.array([0.0, 0.1, 0.2]), subject="S01")
-
-print("[repro] direct save:")
-MarkerTrajectory.save(Trajectory(t=np.array([1.0, 2.0]), label="direct"), subject="S02")
-v = MarkerTrajectory.load(subject="S02")
-print("[repro]   loaded type:", type(v.data).__name__)
-
-print("[repro] for_each save:")
-try:
-    for_each(make_traj, {"raw": RawT}, [MarkerTrajectory], subject=["S01"])
-    v = MarkerTrajectory.load(subject="S01")
-    print("[repro]   loaded type:", type(v.data).__name__)
-except Exception as e:
-    print("[repro]   FAILED:", type(e).__name__, e)
-db.close()
+for subj, v in {"S01": np.datetime64("2026-01-01T10:00"), "S02": np.datetime64("NaT")}.items():
+    try:
+        When64.save(v, subject=subj)
+        rec = When64.load(subject=subj)
+        print("np", subj, repr(v), "->", repr(rec.data))
+    except Exception as e:
+        print("np", subj, "FAILED:", type(e).__name__, e)

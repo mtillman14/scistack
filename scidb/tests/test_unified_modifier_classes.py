@@ -88,11 +88,9 @@ class TestBareDataFrameInputsUnderScidb:
         df = pd.DataFrame({"subject": ["1", "2"], "a": [10.0, 20.0], "b": [1.0, 2.0]})
 
         results = for_each(
-            # ColumnSelection always returns a numpy array for a single
-            # selected column, even for a 1-row match -- it never collapses
-            # to a scalar (pre-existing scifor semantics, unrelated to this
-            # refactor: see ColumnSelection's own docstring).
-            lambda v: float(v[0]),
+            # A single selected column of a 1-row match arrives as the value
+            # itself (scifor.column_value, 2026-10-22).
+            lambda v: float(v),
             {"v": SciforColumnSelection(df, ["a"])},
             [],
             save=False,
@@ -122,8 +120,8 @@ class TestBareDataFrameInputsUnderScidb:
         df = pd.DataFrame({"subject": ["1", "2"], "a": [10.0, 20.0]})
 
         results = for_each(
-            # Same ColumnSelection-always-returns-an-array semantics as above.
-            lambda v: float(v[0]),
+            # Same one-row-is-the-value rule as above.
+            lambda v: float(v),
             {"v": SciforFixed(SciforColumnSelection(df, ["a"]), subject="1")},
             [],
             save=False,

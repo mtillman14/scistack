@@ -713,3 +713,52 @@ class TestEveryColumnFromMetadata:
 
     def test_an_unregistered_type_has_no_metadata_answer(self, db):
         assert db.data_column_names(OtherData) is None
+
+
+# ---------------------------------------------------------------------------
+# One-row records: each per-column call gets the cell itself
+# ---------------------------------------------------------------------------
+
+
+class AsiaText(BaseVariable):
+    pass
+
+
+class AsiaLevel(BaseVariable):
+    pass
+
+
+class TestForColumnsOneRowRecords:
+    """scidb.log 2026-10-22: a CSV spread one record per subject is a one-row
+    table per subject, and for_columns handed each call a pandas StringArray,
+    so `value.split("|")` raised on every column. The function now gets the
+    subject's cell, a plain str, after the full save/load round trip."""
+
+    def test_text_cells_arrive_as_plain_strs(self, db):
+        for subject, (a, b) in {"1": ("C5|C6", "L1|L2"), "2": ("T1|T2", "S1|S2")}.items():
+            AsiaText.save(
+                pd.DataFrame({"ASIA_A": [a], "ASIA_B": [b]}),
+                db=db,
+                subject=subject,
+                session="A",
+            )
+        received = []
+
+        def first_level(value):
+            received.append(value)
+            return value.split("|")[0]
+
+        for_each(
+            first_level,
+            inputs={"value": AsiaText.for_columns()},
+            outputs=[AsiaLevel],
+            db=db,
+            subject=[],
+            session=[],
+        )
+
+        assert received and all(type(r) is str for r in received), [
+            type(r).__name__ for r in received
+        ]
+        assert AsiaLevel.load(db=db, subject="1", session="A").data["ASIA_A"].iloc[0] == "C5"
+        assert AsiaLevel.load(db=db, subject="2", session="A").data["ASIA_B"].iloc[0] == "S1"

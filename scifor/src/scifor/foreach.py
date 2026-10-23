@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     import pandas as pd
 
 from .colname import ColName
-from .column_selection import ColumnSelection
+from .column_selection import ColumnSelection, column_value
 from .each_of import EachOf, require_alternatives
 from .fixed import Fixed
 from .locations import LocationFilter, filter_combos
@@ -1019,13 +1019,6 @@ def for_each(
                 fn_elapsed,
                 layer="scifor",
             )
-        except ColumnFunctionError as e:
-            # The function failed on specific columns. This is deterministic
-            # across combos (a bad column is bad everywhere), so surface it as a
-            # hard error naming every offending column rather than silently
-            # skipping the whole combo.
-            Log.error(f"[error] {metadata_str}: {e}", layer="scifor", exc_info=True)
-            raise
         except ForColumnsError:
             # Structural for_columns errors are deterministic across combos and
             # indicate a return-contract bug — surface immediately, don't skip.
@@ -1282,7 +1275,8 @@ def _run_column_iteration(
     An iterate input named in ``as_table_set`` is sliced to a DataFrame holding
     all schema key columns plus that one column (mirroring the non-iterate
     ColumnSelection as_table behavior at ``_prepare_input``); otherwise it is
-    sliced to a bare single-column numpy array (the default).
+    sliced by ``column_value`` (the default): the cell for a one-row combo,
+    else a numpy array of the column.
 
     The per-column return is expanded into output columns by
     ``_expand_column_result``: a scalar yields one column named after the source
@@ -1327,7 +1321,7 @@ def _run_column_iteration(
                 keep = [c for c in df.columns if c in schema_keys] + [col]
                 call_kwargs[name] = df[keep]
             else:
-                call_kwargs[name] = df[col].values
+                call_kwargs[name] = column_value(df[col])
         try:
             res = fn(**call_kwargs)
         except Exception as e:
@@ -1348,9 +1342,11 @@ def _run_column_iteration(
             f"for_columns: {fn_name} raised on {len(failures)} of "
             f"{len(iterate_columns)} iterated column(s). These columns could not "
             f"be processed:\n{detail}\n"
-            f"Hint: schema keys are already excluded; restrict the selection to "
-            f"data columns (e.g. ColumnSelection(df, columns=[...])) or ensure "
-            f"these columns are numeric."
+            f"Each call gets one column of this combo: its value when the combo "
+            f"has one row, else a numpy array of the column. Schema keys are "
+            f"already excluded; to skip columns the function cannot handle, "
+            f"narrow the selection (ColumnSelection(df, columns=[...]) or "
+            f"excl_columns=[...])."
         )
         raise ColumnFunctionError(message, failures)
 
@@ -1894,7 +1890,7 @@ def _apply_column_selection(df: "pd.DataFrame", columns: list[str]) -> Any:
             f"Column(s) {missing} not found. Available columns: {list(df.columns)}"
         )
     if len(columns) == 1:
-        return df[columns[0]].values
+        return column_value(df[columns[0]])
     return df[columns]
 
 

@@ -408,7 +408,7 @@ def test_merge_two_dataframes():
 
 
 def test_column_selection_single():
-    """ColumnSelection extracts a single column as array."""
+    """A single selected column of a one-row combo is that row's value."""
     set_schema(["subject"])
     df = pd.DataFrame({"subject": [1, 2], "speed": [1.5, 2.5], "force": [10.0, 20.0]})
     received = []
@@ -422,9 +422,74 @@ def test_column_selection_single():
         inputs={"speed": ColumnSelection(df, ["speed"])},
         subject=[1, 2],
     )
-    assert len(received) == 2
-    np.testing.assert_array_equal(received[0], np.array([1.5]))
-    np.testing.assert_array_equal(received[1], np.array([2.5]))
+    assert received == [1.5, 2.5]
+    assert all(np.ndim(r) == 0 for r in received)
+
+
+# A text column the way pandas 3 loads it (dtype "str"; on pandas 2 the
+# explicit "string" dtype has the same extension-array `.values`).
+_TEXT_DTYPE = "str" if int(pd.__version__.split(".")[0]) >= 3 else "string"
+
+
+def test_column_value_one_row_text_is_a_plain_str():
+    """One row of a text column is a plain Python str, not a pandas array
+    (scidb.log 2026-10-22: `value.split("|")` on a StringArray)."""
+    s = pd.Series(["C5|C6"], dtype=_TEXT_DTYPE)
+    v = scifor.column_value(s)
+    assert type(v) is str and v.split("|") == ["C5", "C6"]
+
+
+def test_column_value_several_rows_is_a_numpy_array():
+    """Several rows give a numpy array, also for a text column, whose
+    `.values` is a pandas extension array."""
+    s = pd.Series(["a", "b"], dtype=_TEXT_DTYPE)
+    v = scifor.column_value(s)
+    assert isinstance(v, np.ndarray) and list(v) == ["a", "b"]
+    n = scifor.column_value(pd.Series([1.0, 2.0]))
+    assert isinstance(n, np.ndarray) and n.dtype == np.float64
+
+
+def test_column_selection_multirow_single_is_an_array():
+    """A single selected column of a multi-row combo is a numpy array."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 1, 2], "speed": [1.5, 1.6, 2.5]})
+    received = []
+
+    for_each(
+        lambda speed: received.append(speed) or 0,
+        inputs={"speed": ColumnSelection(df, ["speed"])},
+        subject=[1, 2],
+    )
+    assert isinstance(received[0], np.ndarray) and list(received[0]) == [1.5, 1.6]
+    assert received[1] == 2.5
+
+
+def test_iterate_one_row_text_columns_get_plain_strs():
+    """for_columns over a one-row-per-subject text table: each call gets that
+    subject's cell as a str (the CSV-per-subject case from scidb.log
+    2026-10-22, where every call raised on a StringArray)."""
+    set_schema(["subject"])
+    df = pd.DataFrame(
+        {
+            "subject": [1, 2],
+            "ASIA_A": pd.Series(["C5|C6", "T1|T2"], dtype=_TEXT_DTYPE),
+            "ASIA_B": pd.Series(["L1|L2", "S1|S2"], dtype=_TEXT_DTYPE),
+        }
+    )
+    received = []
+
+    def first_level(value):
+        received.append(value)
+        return value.split("|")[0]
+
+    result = for_each(
+        first_level,
+        inputs={"value": ColumnSelection(df, ["ASIA_A", "ASIA_B"], iterate=True)},
+        subject=[1, 2],
+    )
+    assert all(type(r) is str for r in received)
+    assert list(result["ASIA_A"]) == ["C5", "T1"]
+    assert list(result["ASIA_B"]) == ["L1", "S1"]
 
 
 def test_column_selection_multiple():
@@ -525,13 +590,14 @@ def test_as_table_with_multi_column_selection():
 
 
 def test_as_table_false_with_column_selection_returns_array():
-    """as_table=False (default) + single ColumnSelection returns array, not DataFrame."""
+    """as_table=False (default) + single ColumnSelection returns array, not
+    DataFrame (several rows per combo; one row gives the value itself)."""
     set_schema(["subject"])
     df = pd.DataFrame(
         {
-            "subject": [1, 2],
-            "signal": [10.0, 20.0],
-            "noise": [0.1, 0.2],
+            "subject": [1, 1, 2, 2],
+            "signal": [10.0, 11.0, 20.0, 21.0],
+            "noise": [0.1, 0.1, 0.2, 0.2],
         }
     )
     received = []
@@ -824,9 +890,16 @@ def test_iterate_multirow_dataframe_return_raises():
         )
 
 
+def _summary_event(events):
+    summaries = [e for e in events if e.get("event") == "summary"]
+    assert len(summaries) == 1
+    return summaries[0]
+
+
 def test_iterate_function_failure_lists_all_bad_columns(capsys):
-    """A function that fails on some columns raises ColumnFunctionError naming
-    EVERY offending column (not just the first), and logs it to stderr."""
+    """A function that fails on some columns fails that combo with a
+    ColumnFunctionError naming EVERY offending column (not just the first),
+    and the failure is logged to stderr."""
     set_schema(["subject"])
     # Two numeric columns the function can handle; two string columns it can't.
     df = pd.DataFrame(
@@ -838,41 +911,78 @@ def test_iterate_function_failure_lists_all_bad_columns(capsys):
             "label2": ["p", "q"],
         }
     )
+    events = []
 
-    with pytest.raises(scifor.ColumnFunctionError) as excinfo:
-        for_each(
-            lambda v: float(np.mean(np.asarray(v, dtype=float))),
-            inputs={
-                "v": ColumnSelection(
-                    df, ["good1", "label1", "good2", "label2"], iterate=True
-                )
-            },
-            subject=[1],
-        )
+    result = for_each(
+        lambda v: float(np.mean(np.asarray(v, dtype=float))),
+        inputs={
+            "v": ColumnSelection(
+                df, ["good1", "label1", "good2", "label2"], iterate=True
+            )
+        },
+        subject=[1],
+        _progress_fn=events.append,
+    )
 
-    err = excinfo.value
+    assert result is None or result.empty
+    s = _summary_event(events)
+    assert s["completed"] == 0 and s["failed"] == 1
+    (reason,) = s["failure_reasons"]
+    assert reason.startswith("ColumnFunctionError:")
     # Both bad columns are reported; neither good column is.
-    failed_cols = {col for col, _ in err.failures}
-    assert failed_cols == {"label1", "label2"}
-    msg = str(err)
-    assert "label1" in msg and "label2" in msg
-    assert "good1" not in msg and "good2" not in msg
+    assert "label1" in reason and "label2" in reason
+    assert "good1" not in reason and "good2" not in reason
+    assert s["failure_reasons"][reason] == ["subject=1"]
     # The full error is echoed to stderr for visibility.
     assert "label1" in capsys.readouterr().err
 
 
-def test_iterate_function_failure_propagates_not_skipped():
-    """Per-column failures are a hard error, not a swallowed [skip] that yields
-    an empty result."""
+def test_iterate_function_failure_fails_the_combo_not_the_run():
+    """A per-column failure fails ITS combo only, like any function error:
+    the run carries on and the other combos produce their rows. A failure can
+    depend on one subject's data (scidb.log 2026-10-22: the whole run stopped
+    on the first subject, and 32 subjects never ran)."""
     set_schema(["subject"])
-    df = pd.DataFrame({"subject": [1, 1], "label": ["x", "y"]})
+    df = pd.DataFrame({"subject": [1, 2], "a": ["bad", "2.0"]})
+    events = []
 
-    with pytest.raises(scifor.ColumnFunctionError):
-        for_each(
-            lambda v: float(np.mean(np.asarray(v, dtype=float))),
-            inputs={"v": ColumnSelection(df, ["label"], iterate=True)},
-            subject=[1],
-        )
+    result = for_each(
+        lambda v: float(v),
+        inputs={"v": ColumnSelection(df, ["a"], iterate=True)},
+        subject=[1, 2],
+        _progress_fn=events.append,
+    )
+
+    s = _summary_event(events)
+    assert s["completed"] == 1 and s["failed"] == 1
+    (reason,) = s["failure_reasons"]
+    assert reason.startswith("ColumnFunctionError:") and "a:" in reason
+    assert s["failure_reasons"][reason] == ["subject=1"]
+    assert list(result["subject"]) == [2]
+    assert list(result["a"]) == [2.0]
+
+
+def test_iterate_column_failure_on_every_combo_is_one_summary_reason():
+    """A column bad for every combo still reads as ONE reason in the summary,
+    counted once per combo."""
+    set_schema(["subject"])
+    # Same cell value everywhere: the reason text carries the value, so the
+    # same error on different values is (correctly) a different reason.
+    df = pd.DataFrame({"subject": [1, 2, 3], "label": ["x", "x", "x"]})
+    events = []
+
+    for_each(
+        lambda v: float(np.mean(np.asarray(v, dtype=float))),
+        inputs={"v": ColumnSelection(df, ["label"], iterate=True)},
+        subject=[1, 2, 3],
+        _progress_fn=events.append,
+    )
+
+    s = _summary_event(events)
+    assert s["failed"] == 3
+    (reason,) = s["failure_reasons"]
+    assert "label" in reason
+    assert s["failure_reasons"][reason] == ["subject=1", "subject=2", "subject=3"]
 
 
 # ---------------------------------------------------------------------------
@@ -1012,10 +1122,19 @@ def test_iterate_excl_columns_lets_run_succeed_after_failure():
     def fn(v):
         return float(np.mean(np.asarray(v, dtype=float)))
 
-    # Without exclusion: hard error naming both bad columns.
-    with pytest.raises(scifor.ColumnFunctionError) as excinfo:
-        for_each(fn, inputs={"v": ColumnSelection(df, iterate=True)}, subject=[1, 2])
-    assert {c for c, _ in excinfo.value.failures} == {"label1", "label2"}
+    # Without exclusion: every combo fails, the reason naming both bad columns.
+    events = []
+    failed = for_each(
+        fn,
+        inputs={"v": ColumnSelection(df, iterate=True)},
+        subject=[1, 2],
+        _progress_fn=events.append,
+    )
+    assert failed is None or failed.empty
+    s = _summary_event(events)
+    assert s["failed"] == 2
+    for reason in s["failure_reasons"]:
+        assert "label1" in reason and "label2" in reason and "good" not in reason
 
     # Excluding them: the run completes over the remaining numeric column.
     result = for_each(
@@ -2223,7 +2342,7 @@ class TestSelectRowsHook:
             return frame[frame["__rec"] == "r-a"].drop(columns=["__rec"])
 
         result = for_each(
-            lambda x: str(x[0]) if hasattr(x, "__len__") else str(x),
+            lambda x: str(x),
             {"x": ColumnSelection(df, ["a", "b"], iterate=True)},
             outputs=["out"],
             _select_rows=select,

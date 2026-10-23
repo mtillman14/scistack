@@ -57,6 +57,34 @@ datetimes keep their TimeZone and NaT through save/load. Plans:
 
 ---
 
+## 0zzzzzze. Rewiring after removing an edge; a per-column failure fails one subject — added 2026-10-22
+
+What changed: (1) drawing an edge is checked for a cycle against the edges you
+can SEE: a removed (hidden) edge no longer refuses a rewiring. (2) With a
+column selection set to **per column**, a function that raises on a subject's
+column fails that subject only; the run carries on to the others.
+
+**Backend**
+1. Reload the VS Code window.
+2. `scidb.log`: `[edge_view] put_edge cycle check: ... N drawn of M stored` on
+   every drawn edge; a refused edge's WARN ends `(closed by drawn edge(s) [...])`.
+
+**Frontend**
+1. Wire `A → f`, then remove that edge. Draw `f → A`: it is accepted (before:
+   "would create a dependency cycle").
+2. Wire `A → f → A` with both edges visible: still refused, and the WARN names
+   the edge that closed it.
+3. Run a per-column function that raises for some subjects only: the run ends
+   "N failed combo(s)", the other subjects have output, and the log has one
+   `failed: N × "ColumnFunctionError: ..."` line per distinct reason (before:
+   "failed with exception" on the first subject).
+4. SRALab project: `parse_loaded_data_asia_per_session` with the 11 ASIA
+   columns **per column**. Each call now gets the subject's cell as a `str`,
+   so `value.split("|")` works. Subject 2204674 (2 rows) gets a numpy array,
+   which is expected.
+
+---
+
 ## 0zzzzzzd. New functions from the GUI; step names; undo after restart — added 2026-10-22
 
 What changed: (1) the functions tab's **+** now offers **New function** (default),

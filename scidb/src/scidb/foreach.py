@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from scifor.foreach import resolve_pathinput_discovery as _scifor_resolve_pathinput_discovery
 from scifor.pathinput import PathInput
+from scifor.column_selection import column_value as _column_value
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -5563,7 +5564,9 @@ def _to_dataframe(data: Any, cls_name: str) -> "pd.DataFrame":
 
 
 def _apply_per_combo_col_selection(raw: Any, columns: list, cls_name: str) -> Any:
-    """Apply column selection to raw data, returning array (1 col) or DataFrame (multi-col)."""
+    """Apply column selection to raw data: one column as scifor delivers it
+    (``column_value``: the cell for one row, else an array), several as a
+    DataFrame."""
     df = _to_dataframe(raw, cls_name)
     missing = [c for c in columns if c not in df.columns]
     if missing:
@@ -5571,7 +5574,7 @@ def _apply_per_combo_col_selection(raw: Any, columns: list, cls_name: str) -> An
             f"Columns {missing} not found in {cls_name}. Available: {list(df.columns)}"
         )
     if len(columns) == 1:
-        return df[columns[0]].values
+        return _column_value(df[columns[0]])
     return df[columns]
 
 
