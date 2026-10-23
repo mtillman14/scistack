@@ -8,6 +8,8 @@ Start with [New to Coding?](new-to-coding.md): it covers installing VS Code and 
 
 ### 1. Install the "[SciStack Pipeline GUI](https://marketplace.visualstudio.com/items?itemName=scistack.scistack-gui)" extension
 
+![SciStack Pipeline GUI on the VS Code Marketplace](../images/installation__install_scistack/VS%20Code%20Marketplace%20Page.png)
+
 ### 2. `Python: Select Interpreter` in the Command Palette
 
 <div class="step-body" markdown>

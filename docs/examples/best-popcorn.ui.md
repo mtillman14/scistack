@@ -353,7 +353,9 @@ Open the `best-popcorn` folder in VS Code (**File > Open Folder…**). SciStack 
 
 ## Step 2: Create the database and choose the schema
 
-Run **SciStack: Open Pipeline** from the Command Palette, choose to create a new database, and name it `best_popcorn`.
+Run **SciStack: Open Pipeline** from the Command Palette, choose to create a new database, and name it `best-popcorn`.
+
+![Select the database folder](../images/example_best-popcorn/select_db_folder.png)
 
 Next, SciStack asks for your **schema keys**. The [schema](../getting-started/whats-a-schema.md) describes how the dataset is organised: the things that identify each rating. Here, each rating is identified by **who** gave it and **which brand** it's for, so enter:
 
@@ -367,23 +369,23 @@ participant, brand
 When SciStack imports a table, it looks for columns named after your schema keys to work out where each row belongs. Name the keys `participant` and `brand`, matching the CSV's column headers exactly. If you used `person` instead of `participant`, SciStack wouldn't recognise the `participant` column, and the ratings would be filed in the wrong places.
 ///
 
-/// info | 📷 Screenshot
-**Show:** the schema keys prompt with `participant, brand` entered.
-///
+![Schema keys prompt](../images/example_best-popcorn/schema_keys_prompt.png)
 
-You now have a blank canvas. SciStack has also created a few files in the folder: the database (`best_popcorn.duckdb`), a settings file (`scistack.toml`), and a `src` folder for any code you add later. The database holds your data and the record of how every result was made.
+You now have a blank canvas. SciStack has also created a few files in the folder: the database (`best-popcorn.duckdb`), a settings file (`scistack.toml`), and a `src` folder for any code you add later. The database holds your data and the record of how every result was made.
 
 ## Step 3: Point SciStack at the CSV
 
 The first job is to get the ratings into the database. Start by telling SciStack where the file is.
 
-In the sidebar, open the **Path Inputs** tab (📁), click **+**, and name the new path input `popcorn_csv`. Click it, and in its settings set the **Path Template** to:
+In the sidebar, open the **Path Inputs** tab (📁), click **+**, and name the new path input `data`. Click it, and in its settings set the **Path Template** to:
 
 ```text
 data/popcorn_ratings.csv
 ```
 
-Drag `popcorn_csv` from the sidebar onto the canvas.
+Drag `data` from the sidebar onto the canvas.
+
+![Path input setup](../images/example_best-popcorn/pathinput_setup.png)
 
 A path input can contain schema keys in curly braces, such as `data/{participant}.csv`, when the data is split across one file per participant. This dataset is all in one file, so the template is just the path.
 
@@ -393,7 +395,9 @@ Reading a CSV is a solved problem, so there's no need to write a function for it
 
 Open the **Functions** tab (`f(x)`), click **+**, and enter `pandas.read_csv`. Drag it onto the canvas.
 
-Now connect them: drag from the handle on `popcorn_csv` to `read_csv`'s first input, `filepath_or_buffer`. The arrow says that this function reads this file.
+Now connect them: drag from the handle on `data` to `read_csv`'s first input, `filepath_or_buffer`. The arrow says that this function reads this file.
+
+![Path input connected to read_csv](../images/example_best-popcorn/connect_fn_to_pathinput.png)
 
 /// tip | Why not just open the file?
 Running the import through the canvas means SciStack records that the ratings came from `popcorn_ratings.csv`, read by `pandas.read_csv`. Every result you calculate later can be traced back to this file.
@@ -403,9 +407,7 @@ Running the import through the canvas means SciStack records that the ratings ca
 
 A **variable** is a named kind of data that the database stores, such as "a rating". Open the **Variables** tab (`x`), click **+**, and name it `Rating`. Drag it onto the canvas, then connect `read_csv`'s output to it.
 
-/// info | 📷 Screenshot
-**Show:** the three connected nodes, `popcorn_csv` → `pandas.read_csv` → `Rating`, with `read_csv` in red before its first run.
-///
+![Connected import nodes](../images/example_best-popcorn/connect_rating_output_from_fn.png)
 
 The `read_csv` node is **red**. That's expected: red means the step has no results yet. It turns green once it has run.
 
@@ -419,7 +421,13 @@ Here's what happens:
 2. SciStack sees that the table has `participant` and `brand` columns, which match your schema keys, so it treats **each row as its own record**. The row `P001, Butterburst, 5` is saved as a `Rating` of 5 at `participant = P001, brand = Butterburst`.
 3. The node turns **green**, and the Runs dock reports the run as finished.
 
+![After the first run](../images/example_best-popcorn/after_first_run.png)
+
 Check the result: right-click `Rating` and choose **🗂 View Schema Locations**. All 300 locations (100 participants × 3 brands) should be marked as having data.
+
+![Rating right-click menu](../images/example_best-popcorn/right_click_menu.png)
+
+![Schema locations for Rating](../images/example_best-popcorn/inventory_records.png)
 
 From here on, nothing reads the CSV again. Every later step reads `Rating` from the database.
 
@@ -431,25 +439,28 @@ Look at the **Structure** group in the left rail. Plot Studio has put `brand` in
 
 This is a good habit: look at individual data before averaging it. A participant who rated every brand 10, or a typo such as a rating of 55, is easy to spot here and hard to spot in an average.
 
-/// info | 📷 Screenshot
-**Show:** Plot Studio on participant P001, with three points (one per brand) and the ← → arrows visible.
-///
+![One participant](../images/example_best-popcorn/one_participant_scatter_plot.png)
 
 ## Step 8: Summarise each brand in a figure
 
-To compare the brands across everyone, average over the participants. In **Structure > Factors**, change `participant` from **Separate figures** to **Collapse**.
+To compare the brands across everyone, average over the participants. In **Structure > Factors**, change `participant` from **Separate figures** to **Collapse (average)**.
 
 There's now a single figure, with each brand summarising all 100 participants. Then:
 
 1. In **Chart**, choose **Bar + error**.
 2. In **Statistics > Summary**, set **Centre** to **Mean** and **Spread** to **SD**.
-3. In **Statistics > Show sample**, tick `participant` and set **Join points** to **Lines**.
 
-The lines are worth a moment. Each grey line is **one participant**, joining their three ratings. This shows the study's most important feature: every person rated every brand. Because of that, the fair comparison is *within* each person, as in "did this person prefer Butterburst to KettleKing?", rather than between the three bars as if they were separate groups of people. Keep that in mind for the statistics.
+    ![Mean rating per brand, without the sample](../images/example_best-popcorn/bar_graph_all_participants.png)
 
-/// info | 📷 Screenshot
-**Show:** the bar chart of mean rating per brand, SD error bars, and one grey line per participant joining their three ratings.
-///
+3. In **Statistics > Show sample**, tick `participant` and leave **Join points** on **Auto (lines)**.
+
+The lines are worth a moment. Each line is **one participant**, joining their three ratings. This shows the study's most important feature: every person rated every brand. Because of that, the fair comparison is *within* each person, as in "did this person prefer Butterburst to KettleKing?", rather than between the three bars as if they were separate groups of people. Keep that in mind for the statistics.
+
+![Mean rating per brand](../images/example_best-popcorn/bar_graph_mark_colored_lines.png)
+
+To tell the participants apart, set **Colour points by** to `participant`, which gives each person's line its own colour.
+
+![One colour per participant](../images/example_best-popcorn/bar_graph_subject_colored_lines.png)
 
 The means are about **7.3** for Butterburst, **6.4** for KettleKing and **5.5** for SeaSaltCo. Butterburst looks best, but is the difference more than chance?
 
@@ -462,34 +473,54 @@ Click **StatStudio** in Plot Studio's toolbar. Stat Studio opens in a new tab, a
 A new table opens in the **Step by step** view. Each screen asks one question, shows what Stat Studio found in your data, and recommends an answer. **What does this mean?** explains any idea a screen names. Press **Next →** to go on, or **← Back** to change an earlier answer. The first five screens describe the study:
 
 - **What did you measure?** `Rating`: 300 values from 100 participants.
+
+    ![What did you measure?](../images/example_best-popcorn/stats_step1.png)
+
 - **What is one independent thing you measured?** *Each participant counts once: 100 participants in total.* This is the most important question in statistics. Each person's three ratings belong together. A test that treated 300 ratings as 300 separate people would be far too sure of itself.
+
+    ![Independent unit](../images/example_best-popcorn/stats_step2.png)
+
 - **What are you comparing?** `brand` is set to **Compare**, and `participant` to **Average over**. These are the roles from Plot Studio, in Stat Studio's words.
-- **Was each participant measured at every level?** Stat Studio recommends **Same participants, measured repeatedly**, because each of the 100 participants rated every brand. This is what the grey lines in the figure showed.
+
+    ![What to compare](../images/example_best-popcorn/stats_step3.png)
+
+- **Was each participant measured at every level?** Stat Studio recommends **Same participants, measured repeatedly**, because each of the 100 participants rated every brand. This is what the lines in the figure showed.
+
+    ![Same or different people](../images/example_best-popcorn/stats_step4.png)
+
 - **Is anything missing?** *Every participant was measured at every level.* Nothing to decide.
 
-/// info | 📷 Screenshot
-**Show:** the "Was each participant measured at every level?" screen, with **Same participants, measured repeatedly** marked as recommended.
-///
+    ![Missing data](../images/example_best-popcorn/stats_step5.png)
 
 ## Step 10: Choose the test
 
 The next screens choose and run the tests.
 
 - **What is your main question?** Every pair of brands, which is 3 comparisons. Keep **Yes, an overall test and then the pairs**: first ask whether the brands differ at all, then which pairs differ.
-- **Which test?** Stat Studio checks the shape of the data and finds that *the values are roughly bell-shaped*, so it recommends a **paired t-test** for the pairs and an **ANOVA** overall. That's a reasonable default, but this study has a reason to choose differently. A 1–10 taste score is a ranking, not a physical measurement: a 6 is better than a 5, but the step from 5 to 6 isn't guaranteed to equal the step from 9 to 10. Tests based on **ranks** don't assume equal steps. Choose **Wilcoxon signed-rank test** under **Comparing pairs** and **Friedman test** under **Overall test**.
 
-Both are paired: Friedman ranks the three brands within each participant, and Wilcoxon compares each person's own two ratings. Tests for separate groups of people, such as the Mann–Whitney U test, are greyed out, and hovering over one says why: *brand is within*.
+    ![Main question](../images/example_best-popcorn/stats_step6.png)
 
-/// info | 📷 Screenshot
-**Show:** the "Which test?" screen with the recommendation, and Wilcoxon signed-rank and Friedman selected.
-///
+- **Which test?** Stat Studio checks the shape of the data and finds that *the values are roughly bell-shaped*, so it recommends a **paired t-test** for the pairs and an **ANOVA** overall, and selects them for you.
+
+    ![Which test, with the recommendation selected](../images/example_best-popcorn/stats_step7.png)
+
+    That's a reasonable default, but this study has a reason to choose differently. A 1–10 taste score is a ranking, not a physical measurement: a 6 is better than a 5, but the step from 5 to 6 isn't guaranteed to equal the step from 9 to 10. Tests based on **ranks** don't assume equal steps. Choose **Wilcoxon signed-rank test** under **Comparing pairs** and **Friedman test** under **Overall test**.
+
+Both are paired: Friedman ranks the three brands within each participant, and Wilcoxon compares each person's own two ratings. Tests for separate groups of people, such as the Mann–Whitney U test, are greyed out, and each one says why underneath: *brand is within*.
 
 - **How should false alarms be kept rare?** Three comparisons mean three chances of a fluke. Keep the recommended **Holm correction**, which adjusts the p values for that.
+
+    ![Many comparisons](../images/example_best-popcorn/stats_step8.png)
+
 - **How should the size of each difference be reported?** With Wilcoxon, the standard size is the **rank-biserial correlation**: from −1 to 1, how much more often one brand is rated higher than the other. Keep the **95% CI of the difference** for the uncertainty.
+
+    ![Size of the difference](../images/example_best-popcorn/stats_step9.png)
 
 ## Step 11: Read the results
 
 - **Your results.** *3 of 3 comparisons ran; 3 significant at α = 0.05 after the correction.*
+
+    ![Results](../images/example_best-popcorn/stats_step10.png)
 
 The overall Friedman test gives χ²(2) = 58.08, p < .001: the brands are not equally liked. The pairs:
 
@@ -515,9 +546,7 @@ Click **Advanced** at the top of Stat Studio. It shows every setting at once, in
 
 Switch back to the Plot Studio tab. `Ratings by brand` now has brackets between the brands that differ, drawn from the test results rather than typed by hand. If the data or the test settings change, the brackets follow.
 
-/// info | 📷 Screenshot
-**Show:** the final figure with significance brackets above the bars.
-///
+![Final figure with brackets](../images/example_best-popcorn/stats_step12.png)
 
 ## Step 13 (optional): Make it part of the pipeline
 
