@@ -318,8 +318,9 @@ def test_inspector_lists_no_zone_column(db):
 
 
 def test_zoneinfo_and_pytz_spellings_hash_alike(db):
-    """A value saved with one tz library loads with zoneinfo; the label (and
-    so the record) is the same."""
+    """A value saved with one tz library loads with whichever one the
+    installed pandas uses for that name; the label (and so the record) is the
+    same either way."""
     berlin = datetime.datetime(2026, 7, 1, 14, tzinfo=zoneinfo.ZoneInfo("Europe/Berlin"))
     When.save(berlin, subject="S01")
     loaded = _load_one(When, "S01")

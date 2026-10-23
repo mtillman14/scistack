@@ -216,6 +216,20 @@ def datetime_to_storage(value: Any) -> tuple[str | None, str | None]:
     return _ns_text(ns), zone_label(value)
 
 
+def _load_zone(label: str):
+    """What a load localizes a stored *label* into: a fixed zone (UTC, an
+    offset) as the ``datetime.timezone`` ``zone_from_label`` builds, but a
+    NAMED zone as its name, so pandas builds the zone object itself: the
+    same one ``tz_localize("Europe/Berlin")`` gives on the installed pandas
+    (``pytz`` on pandas 2, ``zoneinfo`` on pandas 3). Handing over a
+    ``ZoneInfo`` made the loaded dtype differ from the saved one on pandas 2
+    (``datetime64[ns, Europe/Berlin]`` != itself, Python 3.10 CI
+    2026-10-23). ``zone_from_label`` still runs first: an unknown zone fails
+    with its message."""
+    zone = zone_from_label(label)
+    return zone if isinstance(zone, datetime.timezone) else label
+
+
 def datetime_from_storage(instant: Any, label: Any) -> Any:
     """One stored ``(instant, zone label)`` back to its value: ``pd.NaT``,
     a naive ``pd.Timestamp``, or a ``pd.Timestamp`` in its own zone."""
@@ -226,7 +240,7 @@ def datetime_from_storage(instant: Any, label: Any) -> Any:
         ts = ts.tz_convert("UTC").tz_localize(None)
     if label is None or (isinstance(label, float) and label != label):
         return ts
-    return ts.tz_localize("UTC").tz_convert(zone_from_label(str(label)))
+    return ts.tz_localize("UTC").tz_convert(_load_zone(str(label)))
 
 
 def datetime_series_to_storage(values) -> tuple[list, list, dict]:
@@ -277,7 +291,7 @@ def restore_datetime_series(instants: pd.Series, labels, unit: str | None = None
     distinct = set(labels[has_label])
     if len(distinct) == 1 and bool((has_label | ~present).all()):
         (label,) = distinct
-        aware = instants.dt.tz_localize("UTC").dt.tz_convert(zone_from_label(label))
+        aware = instants.dt.tz_localize("UTC").dt.tz_convert(_load_zone(label))
         return _as_unit(aware, unit)
     return pd.Series(
         [datetime_from_storage(i, lab) for i, lab in zip(instants, labels, strict=False)],
