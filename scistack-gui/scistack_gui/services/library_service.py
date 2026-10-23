@@ -393,21 +393,24 @@ def unwired_step_values(db, pipeline_ids) -> list[dict]:
     """The STEP VALUES of the canvases *pipeline_ids*: every argument of a
     Python function node that has a default and that no edge feeds
     (``[{"label", "input", "default", "node_id", "pipeline_id"}]``, in
-    canvas order). Read from the stored canvas (rows + drawn edges): the
-    document is the canvas. One owner for E1's tunables and E8's report."""
+    canvas order). Read from what each canvas DRAWS (its rows, and its edges
+    through ``domain.edge_view.effective_edges``, the one owner): an edge the
+    user removed (hidden, kept) does not wire an input. One owner for E1's
+    tunables and E8's report."""
     import inspect as _inspect
 
     from scistack_gui import matlab_registry, registry
     from scistack_gui import pipeline_store as ps
+    from scistack_gui.domain.edge_view import effective_edges
     from scistack_gui.ids import handle_name, strip_placement
 
-    wired: dict[str, set[str]] = {}
-    for e in ps.get_manual_edges(db):
-        name = handle_name(e.get("targetHandle"))
-        if name:
-            wired.setdefault(str(strip_placement(e.get("target") or "")), set()).add(name)
     out = []
     for pid in pipeline_ids:
+        wired: dict[str, set[str]] = {}
+        for e in effective_edges(db, pid, caller="library_service.unwired_step_values").drawn:
+            name = handle_name(e.get("targetHandle"))
+            if name:
+                wired.setdefault(str(strip_placement(e.get("target") or "")), set()).add(name)
         for nid, meta in sorted(ps.get_manual_nodes(db, pid).items()):
             label = meta.get("label")
             if meta.get("type") != "functionNode" or matlab_registry.is_matlab_function(label):
