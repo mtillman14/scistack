@@ -353,9 +353,13 @@ Open the `best-popcorn` folder in VS Code (**File > Open Folder…**). SciStack 
 
 ## Step 2: Create the database and choose the schema
 
-Run **SciStack: Open Pipeline** from the Command Palette, choose to create a new database, and name it `best-popcorn`.
+Run **SciStack: Open Pipeline** from the Command Palette and choose to create a new database. SciStack asks where to put it: select the `best-popcorn` folder and click **Select Folder**.
 
 ![Select the database folder](../images/example_best-popcorn/select_db_folder.png)
+
+Then name the database `best-popcorn` and press Enter.
+
+![Database filename prompt](../images/example_best-popcorn/schema_keys_prompt.png)
 
 Next, SciStack asks for your **schema keys**. The [schema](../getting-started/whats-a-schema.md) describes how the dataset is organised: the things that identify each rating. Here, each rating is identified by **who** gave it and **which brand** it's for, so enter:
 
@@ -368,8 +372,6 @@ participant, brand
 /// warning | Use the CSV's column names exactly
 When SciStack imports a table, it looks for columns named after your schema keys to work out where each row belongs. Name the keys `participant` and `brand`, matching the CSV's column headers exactly. If you used `person` instead of `participant`, SciStack wouldn't recognise the `participant` column, and the ratings would be filed in the wrong places.
 ///
-
-![Schema keys prompt](../images/example_best-popcorn/schema_keys_prompt.png)
 
 You now have a blank canvas. SciStack has also created a few files in the folder: the database (`best-popcorn.duckdb`), a settings file (`scistack.toml`), and a `src` folder for any code you add later. The database holds your data and the record of how every result was made.
 
@@ -423,7 +425,7 @@ Here's what happens:
 
 ![After the first run](../images/example_best-popcorn/after_first_run.png)
 
-Check the result: right-click `Rating` and choose **🗂 View Schema Locations**. All 300 locations (100 participants × 3 brands) should be marked as having data.
+Check the result: right-click `Rating` and choose **View Schema Locations**. The dialog should say **300/300 locations green**: all 100 participants × 3 brands have a rating.
 
 ![Rating right-click menu](../images/example_best-popcorn/right_click_menu.png)
 
@@ -435,11 +437,11 @@ From here on, nothing reads the CSV again. Every later step reads `Rating` from 
 
 Click `Rating`, then **Open Plot Studio →** in the sidebar. Plot Studio opens in a new tab.
 
-Look at the **Structure** group in the left rail. Plot Studio has put `brand` in **Grouping**, so there's one mark per brand. `participant` is set to **Separate figures**, so there's one figure per participant. Use **←** and **→** above the figure to step through them: P001, P002, and so on.
+Look at the **Structure** group in the left rail. Plot Studio has put `brand` in **Grouping**, so there's one mark per brand. `participant` is set to **Separate figures**, so there's one figure per participant. Use **◀** and **▶** above the figure to step through them: P001, P002, and so on. The counter beside them shows which of the 100 you're on.
 
 This is a good habit: look at individual data before averaging it. A participant who rated every brand 10, or a typo such as a rating of 55, is easy to spot here and hard to spot in an average.
 
-![One participant](../images/example_best-popcorn/one_participant_scatter_plot.png)
+![Participant P026, 26 of 100](../images/example_best-popcorn/one_participant_scatter_plot.png)
 
 ## Step 8: Summarise each brand in a figure
 
@@ -462,7 +464,7 @@ To tell the participants apart, set **Colour points by** to `participant`, which
 
 ![One colour per participant](../images/example_best-popcorn/bar_graph_subject_colored_lines.png)
 
-The means are about **7.3** for Butterburst, **6.4** for KettleKing and **5.5** for SeaSaltCo. Butterburst looks best, but is the difference more than chance?
+The means are about **7.3** for Butterburst, **6.3** for KettleKing and **5.5** for SeaSaltCo. Butterburst looks best, but is the difference more than chance?
 
 Before moving on, save the figure. In the **Saved plots** rail on the right, name it `Ratings by brand` and save it. Saving it lets the statistics link to it in the next step. Use **Save image** in the toolbar if you want a file for a slide.
 
@@ -500,19 +502,21 @@ The next screens choose and run the tests.
 
     ![Main question](../images/example_best-popcorn/stats_step6.png)
 
-- **Which test?** Stat Studio checks the shape of the data and finds that *the values are roughly bell-shaped*, so it recommends a **paired t-test** for the pairs and an **ANOVA** overall, and selects them for you.
+- **Which test?** Stat Studio checks the shape of the data and finds that *the values are roughly bell-shaped*, so it recommends a **paired t-test** for the pairs and an **ANOVA** overall, and selects them for you. Keep them.
 
     ![Which test, with the recommendation selected](../images/example_best-popcorn/stats_step7.png)
 
-    That's a reasonable default, but this study has a reason to choose differently. A 1–10 taste score is a ranking, not a physical measurement: a 6 is better than a 5, but the step from 5 to 6 isn't guaranteed to equal the step from 9 to 10. Tests based on **ranks** don't assume equal steps. Choose **Wilcoxon signed-rank test** under **Comparing pairs** and **Friedman test** under **Overall test**.
+    Both are paired: the paired t-test compares each person's own two ratings, and the ANOVA treats `brand` as measured within each participant. Tests for separate groups of people, such as Welch's t-test and the Mann–Whitney U test, are greyed out, and each one says why underneath: *brand is within*.
 
-Both are paired: Friedman ranks the three brands within each participant, and Wilcoxon compares each person's own two ratings. Tests for separate groups of people, such as the Mann–Whitney U test, are greyed out, and each one says why underneath: *brand is within*.
+/// tip | Ratings are ranks
+A 1–10 taste score is a ranking, not a physical measurement: a 6 is better than a 5, but the step from 5 to 6 isn't guaranteed to equal the step from 9 to 10. Tests based on **ranks** don't assume equal steps. If you'd rather not assume them either, choose **Wilcoxon signed-rank test** under **Comparing pairs** and **Friedman test** under **Overall test**. For this data the conclusion is the same.
+///
 
 - **How should false alarms be kept rare?** Three comparisons mean three chances of a fluke. Keep the recommended **Holm correction**, which adjusts the p values for that.
 
     ![Many comparisons](../images/example_best-popcorn/stats_step8.png)
 
-- **How should the size of each difference be reported?** With Wilcoxon, the standard size is the **rank-biserial correlation**: from −1 to 1, how much more often one brand is rated higher than the other. Keep the **95% CI of the difference** for the uncertainty.
+- **How should the size of each difference be reported?** For a paired t-test, Stat Studio recommends **Cohen's d_z**: the average difference divided by how much the differences vary between people. Keep it, and keep the **95% CI of the difference** for the uncertainty.
 
     ![Size of the difference](../images/example_best-popcorn/stats_step9.png)
 
@@ -522,20 +526,22 @@ Both are paired: Friedman ranks the three brands within each participant, and Wi
 
     ![Results](../images/example_best-popcorn/stats_step10.png)
 
-The overall Friedman test gives χ²(2) = 58.08, p < .001: the brands are not equally liked. The pairs:
+The pairs come first, under **Comparisons**:
 
-| Comparison | Δ [95% CI] | Statistic | p (adj.) | Rank-biserial r |
+| Comparison | Δ [95% CI] | Statistic | p (adj.) | Cohen's d_z |
 |---|---|---|---|---|
-| Butterburst − KettleKing | 1.00 [0.50, 1.00] | W = 479.00 | < .001 | 0.64 |
-| Butterburst − SeaSaltCo | 2.00 [1.50, 2.00] | W = 178.50 | < .001 | 0.90 |
-| KettleKing − SeaSaltCo | 1.00 [0.50, 1.00] | W = 631.50 | < .001 | 0.60 |
+| Butterburst − KettleKing | 0.95 [0.59, 1.31] | t(99) = 5.28 | < .001 | 0.53 [0.32, 0.74] |
+| Butterburst − SeaSaltCo | 1.82 [1.44, 2.20] | t(99) = 9.53 | < .001 | 0.95 |
+| KettleKing − SeaSaltCo | 0.87 [0.54, 1.20] | t(99) = 5.22 | < .001 | 0.52 |
 
-Butterburst is rated higher than both other brands. Each row gives the difference with its direction (Butterburst − KettleKing), its confidence interval, and the effect size. The note under the table records everything a reader needs to know, such as the tests, the unit, n and the correction, and also anything the tests had to handle. For example, Wilcoxon sets aside the 28 participants who gave Butterburst and KettleKing the same score, and the note says so.
+Butterburst is rated higher than both other brands, by about one point over KettleKing and nearly two over SeaSaltCo. Each row gives the difference with its direction (Butterburst − KettleKing), its confidence interval, the test statistic, and the effect size. The note under the table records everything a reader needs to know, such as the tests, the unit, n and the correction, and also the checks the tests relied on, such as a Shapiro–Wilk normality check of each pair's differences.
 
-Under the table, **Results as sentences** writes the same findings in words. Click **Copy sentences** to start your results section. The descriptive table below it shows each brand's mean (SD). To put a table in a paper, choose **html** and click **Copy**. It pastes into Word as a formatted table, with its note.
+The overall test is under **Omnibus**: the ANOVA gives F(2.0, 193.4) = 51.44, p < .001, generalised η² = 0.16. The brands are not equally liked. The note under it says the degrees of freedom are Greenhouse–Geisser corrected (ε = 0.98), a small adjustment that repeated-measures ANOVA makes when the brands' differences vary unevenly.
+
+Under the tables, **Results as sentences** writes the same findings in words. Click **Copy sentences** to start your results section. The **Rating by brand** table below it shows each brand's mean (SD): 7.3 (1.8), 6.3 (1.7) and 5.5 (1.7). To put a table in a paper, choose **html** and click **Copy**. It pastes into Word as a formatted table, with its note.
 
 /// note | A small difference from the Code version
-The Code version compared the best brand with each of the other two, and used a Bonferroni correction. Stat Studio compares **every** pair (including KettleKing against SeaSaltCo) and uses Holm, which is slightly less strict but still guards against flukes across all three comparisons. The conclusion is the same. Choose **Bonferroni correction** on the false-alarms screen if you prefer it.
+The Code version used rank-based tests (Friedman overall, then Wilcoxon), compared the best brand with each of the other two, and used a Bonferroni correction. Here Stat Studio uses its recommended paired t-tests and ANOVA, compares **every** pair (including KettleKing against SeaSaltCo), and uses Holm, which is slightly less strict but still guards against flukes across all three comparisons. The conclusion is the same. To match the Code version, choose **Wilcoxon signed-rank test** and **Friedman test** on the "Which test?" screen and **Bonferroni correction** on the false-alarms screen.
 ///
 
 Name the table `Popcorn statistics` and save it.
@@ -563,15 +569,15 @@ Here's how the same analysis looks in code and in the GUI:
 | Setup | `configure_database("popcorn.duckdb", ["participant", "brand"])` | **SciStack: Open Pipeline**, schema keys `participant, brand` |
 | Import | A `load_ratings` function, run with `for_each` | A path input wired into `pandas.read_csv`, wired into `Rating` |
 | Summary per brand | A `summarize_ratings` function, run once per brand | Plot Studio: `brand` grouped, `participant` collapsed |
-| Overall test | A `friedman_test` function | Stat Studio Step by step: within-subject from the design; Friedman chosen because ratings are ranks |
-| Which is best | A `compare_to_best` function, Bonferroni | Stat Studio pairwise Wilcoxon, Holm |
+| Overall test | A `friedman_test` function | Stat Studio Step by step: within-subject from the design; the recommended repeated-measures ANOVA |
+| Which is best | A `compare_to_best` function, Wilcoxon, Bonferroni | Stat Studio pairwise paired t-tests, Holm |
 | Afterwards | `load(...)` any result; `get_provenance` | Saved plot and saved table; **Add to pipeline** for recorded steps |
 
 ## Conclusion
 
 The analysis supports a write-up like this:
 
-> Taste ratings differed across the three brands (Friedman χ²(2) = 58.1, p < 0.001). Butterburst (mean 7.3/10) was rated higher than both KettleKing (mean 6.4) and SeaSaltCo (mean 5.5; Wilcoxon signed-rank tests, Holm-adjusted p < 0.001 for both).
+> Taste ratings differed across the three brands (repeated-measures ANOVA, Greenhouse–Geisser corrected: F(2.0, 193.4) = 51.4, p < 0.001, generalised η² = 0.16). Butterburst (mean 7.3/10) was rated higher than both KettleKing (mean 6.3; Δ = 0.95, 95% CI [0.59, 1.31], d_z = 0.53) and SeaSaltCo (mean 5.5; Δ = 1.82, 95% CI [1.44, 2.20], d_z = 0.95; paired t-tests, Holm-adjusted p < 0.001 for both).
 
 **Butterburst is the best popcorn.**
 
