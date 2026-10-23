@@ -93,6 +93,9 @@ extra:
 extra_css:
   - stylesheets/extra.css
 
+extra_javascript:
+  - javascripts/beta-banner.js
+
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true

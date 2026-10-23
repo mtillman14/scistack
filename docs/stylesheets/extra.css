@@ -113,3 +113,62 @@
 .md-typeset .step-body {
   margin-left: 1.6rem;
 }
+
+/* Beta warning banner (overrides/main.html announce block): red on every page,
+   in both light and dark palettes, and pinned above the sticky header.
+
+   --beta-banner-height is set by docs/javascripts/beta-banner.js from the
+   banner's measured height (it wraps on narrow screens); the fallback covers
+   the one-line desktop banner if the script hasn't run. The header, the
+   sidebars and anchor-link targets are all pushed down by that height so the
+   banner never covers them. */
+
+:root {
+  --beta-banner-height: 2.32rem;
+}
+
+[data-md-component="announce"] {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.md-banner {
+  background-color: #c62828;
+  color: #fff;
+  font-weight: 600;
+  text-align: center;
+}
+
+.md-banner a,
+.md-banner a:hover,
+.md-banner a:focus {
+  color: #fff;
+  text-decoration: underline;
+}
+
+.md-header {
+  top: var(--beta-banner-height);
+}
+
+/* Only where the sidebars are sticky; below these widths they are fixed
+   slide-out drawers that must stay at top: 0. */
+@media screen and (min-width: 60em) {
+  .md-sidebar--secondary {
+    top: calc(2.4rem + var(--beta-banner-height));
+  }
+}
+
+@media screen and (min-width: 76.25em) {
+  .md-sidebar {
+    top: calc(2.4rem + var(--beta-banner-height));
+  }
+
+  .md-header--lifted ~ .md-container .md-sidebar {
+    top: calc(4.8rem + var(--beta-banner-height));
+  }
+}
+
+.md-typeset :target {
+  --md-scroll-offset: calc(0rem - var(--beta-banner-height));
+}

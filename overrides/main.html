@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{#- Beta warning on every page. Material renders the announce block above the
+    header on all pages; its red styling lives in docs/stylesheets/extra.css
+    (.md-banner). -#}
+{% block announce %}
+  SciStack is still in beta. Please report any bugs
+  <a href="https://github.com/mtillman14/scistack/issues">here</a>
+  and always double check results obtained from SciStack.
+{% endblock %}
