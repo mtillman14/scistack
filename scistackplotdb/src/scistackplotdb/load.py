@@ -21,7 +21,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sciduckdb import stored_tz_companions
+from sciduckdb import merge_tz_columns, stored_tz_companions, tz_column_name
 from scistacklog import Log
 from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX
 from scistackplot.framesize import format_extent, frame_extent
@@ -131,6 +131,41 @@ def data_columns_for(db, variable: str) -> list[str]:
     return list(data_column_types_for(db, variable))
 
 
+def _stored_column_types(db, variable: str) -> dict[str, str]:
+    """``{column: DuckDB type}`` of the variable's table as stored (zone
+    companions included), in ordinal order."""
+    table = table_name_for(db, variable)
+    rows = db._duck._fetchall(
+        "SELECT column_name, data_type FROM information_schema.columns "
+        "WHERE table_name = ? AND column_name != 'record_id' "
+        "ORDER BY ordinal_position",
+        [table],
+    )
+    return {row[0]: str(row[1] or "") for row in rows}
+
+
+def datetime_zone_meta(db, variable: str, columns) -> dict:
+    """The dtype metadata ``sciduckdb.merge_tz_columns`` needs to fold the
+    ``__tz`` zone column of each datetime column in ``columns`` back in:
+    ``{"columns": {col: {"python_type": "datetime", "unit": ...}}}``. The
+    unit comes from the variable's stored metadata; the companion is found
+    in the table schema (owner ``sciduckdb.stored_tz_companions``)."""
+    zone_cols = stored_tz_companions(_stored_column_types(db, variable))
+    sources = [src for src in zone_cols.values() if src in set(columns)]
+    if not sources:
+        return {"columns": {}}
+    stored = (db.get_dtype_meta(variable) or {}).get("columns", {})
+    return {
+        "columns": {
+            src: {
+                **{"python_type": "datetime"},
+                **{k: v for k, v in (stored.get(src) or {}).items() if k == "unit"},
+            }
+            for src in sources
+        }
+    }
+
+
 def data_column_types_for(db, variable: str) -> dict[str, str]:
     """``{column: declared DuckDB type}``, in ordinal order.
 
@@ -140,13 +175,7 @@ def data_column_types_for(db, variable: str) -> dict[str, str]:
     (:func:`is_container_type`). It never accepts one; see that function.
     """
     table = table_name_for(db, variable)
-    rows = db._duck._fetchall(
-        "SELECT column_name, data_type FROM information_schema.columns "
-        "WHERE table_name = ? AND column_name != 'record_id' "
-        "ORDER BY ordinal_position",
-        [table],
-    )
-    types = {row[0]: str(row[1] or "") for row in rows}
+    types = _stored_column_types(db, variable)
 
     # A data column named after a schema key is an address stored as payload:
     # a record saved before the spread/collision rules stripped such columns
@@ -174,8 +203,8 @@ def data_column_types_for(db, variable: str) -> dict[str, str]:
             del types[name]
 
     # A datetime column's __tz zone companion is storage, not a column to
-    # plot (owner sciduckdb.datetimes). Its datetime column loads as the
-    # stored UTC instant / naive wall clock: plots do not restore zones.
+    # plot (owner sciduckdb.datetimes). load_variable selects it anyway and
+    # folds it back into its datetime column (datetime_zone_meta).
     zone_cols = stored_tz_companions(types)
     if zone_cols:
         Log.debug(
@@ -455,7 +484,12 @@ def load_variable(
         schema_select = "".join(
             f', CAST(s."{key}" AS VARCHAR) AS "{key}"' for key in keys
         )
-        data_select = "".join(f', t."{column}"' for column in columns)
+        # Datetime columns bring their __tz zone column, folded back right
+        # after the fetch (sciduckdb.merge_tz_columns): without it every
+        # aware value reached a plot as a naive UTC instant.
+        zone_meta = datetime_zone_meta(db, variable, columns) if columns else {"columns": {}}
+        zone_select = [tz_column_name(c) for c in zone_meta["columns"]]
+        data_select = "".join(f', t."{column}"' for column in [*columns, *zone_select])
         query = (
             f"SELECT t.record_id{data_select}{schema_select} "
             f'FROM "{table}" t '
@@ -477,6 +511,9 @@ def load_variable(
         # regression to per-sample boxing is visible in the log, not inferred.
         with timer.phase("fetch"):
             frame = db._duck._fetchdf(query, [variable])
+        if zone_meta["columns"]:
+            with timer.phase("datetime_zones"):
+                merge_tz_columns(frame, zone_meta, where=f"load_variable({variable})")
 
         with timer.phase("dataframe"):
             frame = frame[["record_id", *columns, *keys]].copy()

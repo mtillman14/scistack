@@ -160,6 +160,11 @@ function num(value: number): string {
   return String(Number(value.toPrecision(4)))
 }
 
+function limitText(value: number | string | null): string {
+  if (value === null) return 'auto'
+  return typeof value === 'string' ? value : num(value)
+}
+
 export function appearanceSummary(args: {
   width: number
   height: number
@@ -167,15 +172,16 @@ export function appearanceSummary(args: {
   font: number | null
   /** `style.text.target`, said when the font is auto. */
   fontTarget?: string
-  yMin: number | null
-  yMax: number | null
+  /** A number, or the date text a datetime axis was given (shown as typed). */
+  yMin: number | string | null
+  yMax: number | string | null
   /** Non-empty per-panel overrides (panelOverrides.overrideCount). */
   panelOverrides?: number
 }): string {
   const y =
     args.yMin === null && args.yMax === null
       ? 'y auto'
-      : `y ${args.yMin === null ? 'auto' : num(args.yMin)}–${args.yMax === null ? 'auto' : num(args.yMax)}`
+      : `y ${limitText(args.yMin)}–${limitText(args.yMax)}`
   const font = args.font === null ? `auto text (${args.fontTarget ?? 'print'})` : `${num(args.font)} pt`
   const parts = [`${num(args.width)}×${num(args.height)} in`, font, y]
   const panels = args.panelOverrides ?? 0

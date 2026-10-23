@@ -1618,6 +1618,144 @@ def ndarray_to_buffer(arr):
     }
 
 
+# ---------------------------------------------------------------------------
+# Datetimes (docs/claude/datetime-roundtrip.md, "MATLAB")
+# ---------------------------------------------------------------------------
+#
+# A MATLAB datetime array crosses as int64 nanoseconds from 1970-01-01
+# (`convertTo(..., 'epochtime', 'TicksPerSecond', 1e9)`: exact, no double
+# rounding) plus a NaT mask and its ONE TimeZone text. Unzoned ('') = naive:
+# the ticks are the wall clock. Zoned: the ticks are the UTC instant. The
+# zone label is scicanonicalhash's, so a MATLAB value and its Python twin
+# hash alike and a MATLAB re-save of a loaded value is "0 new rows".
+
+_MATLAB_OFFSET_RE = None
+
+
+def matlab_zone_label(tz) -> "str | None":
+    """A MATLAB ``datetime.TimeZone`` text as a scistack zone label.
+
+    ``''`` -> ``None`` (unzoned = naive); ``'UTC'``/``'Z'``/
+    ``'UTCLeapSeconds'`` -> ``"UTC"`` (MATLAB has already converted a leap-
+    second value by then); ``'+0200'``/``'+02'``/``'+02:00'`` -> ``"+02:00"``;
+    an IANA name stays itself. Raises ``ValueError`` naming the text when no
+    time-zone database knows it.
+    """
+    import re
+
+    from scicanonicalhash import zone_from_label
+
+    global _MATLAB_OFFSET_RE
+    if _MATLAB_OFFSET_RE is None:
+        _MATLAB_OFFSET_RE = re.compile(r"^([+-])(\d{2}):?(\d{2})?$")
+    text = str(tz or "").strip()
+    if not text:
+        return None
+    if text in ("UTC", "Z", "UTCLeapSeconds"):
+        return "UTC"
+    m = _MATLAB_OFFSET_RE.match(text)
+    if m:
+        sign, hh, mm = m.groups()
+        label = f"{sign}{hh}:{mm or '00'}"
+        return "UTC" if label in ("+00:00", "-00:00") else label
+    zone_from_label(text)  # validates; raises ValueError naming it
+    return text
+
+
+def datetimes_from_matlab(ns, nat, tz, kind="scalar"):
+    """MATLAB datetimes -> pandas values.
+
+    ``ns``: int64 ticks (ns from 1970-01-01; wall clock when ``tz`` is '',
+    else the UTC instant), ``nat``: NaT mask, ``tz``: the array's TimeZone.
+    ``kind``: ``"scalar"`` -> one ``pd.Timestamp`` / ``pd.NaT``;
+    ``"column"`` -> a ``datetime64[ns(, zone)]`` Series (a table column);
+    ``"list"`` -> a list of Timestamps (one record per element,
+    ``save_from_table``'s data column).
+    """
+    import numpy as np
+    import pandas as pd
+    from scicanonicalhash import zone_from_label
+
+    label = matlab_zone_label(tz)
+    ticks = np.asarray(ns, dtype=np.int64).ravel()
+    mask = np.asarray(nat, dtype=bool).ravel()
+    values = ticks.view("datetime64[ns]").copy()
+    if mask.size:
+        values[mask] = np.datetime64("NaT")
+    series = pd.Series(values)
+    if label is not None:
+        series = series.dt.tz_localize("UTC").dt.tz_convert(zone_from_label(label))
+    from scidb.log import Log
+
+    Log.debug(
+        f"[bridge] datetimes_from_matlab: {len(series)} value(s), "
+        f"zone={label or 'naive'} (MATLAB TimeZone {str(tz or '')!r}), "
+        f"{int(mask.sum())} NaT, kind={kind}"
+    )
+    if kind == "scalar":
+        if len(series) != 1:
+            raise ValueError(f"datetimes_from_matlab: kind='scalar' got {len(series)} values")
+        return series.iloc[0]
+    if kind == "list":
+        return series.tolist()
+    return series
+
+
+def datetimes_to_matlab(obj) -> dict:
+    """pandas / Python datetimes -> what MATLAB rebuilds a datetime array from.
+
+    ``obj``: a datetime scalar (``datetime``, ``pd.Timestamp``, NaT,
+    ``np.datetime64``), a datetime64 Series (naive or tz-aware), or a
+    sequence of datetime scalars. Returns ``{"ok", "ns" (int64 ndarray),
+    "ns_bytes" (the same ticks as little-endian int64 bytes), "nat" (bool
+    ndarray), "tz" (MATLAB TimeZone text, '' = unzoned), "scalar" (bool),
+    "reason"}``. MATLAB reads ``ns_bytes`` (``typecast``): a numeric array
+    through ``from_python`` becomes double, which cannot hold ~1.8e18 ns
+    exactly. ``ok`` is False (with ``reason``) when the values hold more than
+    one zone, or naive and aware mixed: a MATLAB datetime array has one
+    TimeZone, so the caller converts those one at a time.
+    """
+    import numpy as np
+    import pandas as pd
+    from scicanonicalhash import is_datetime_value, is_missing_datetime, utc_ns, zone_label
+
+    def result(ns, nat, label, scalar, reason=""):
+        ns = np.asarray(ns, dtype=np.int64)
+        return {"ok": not reason, "ns": ns, "ns_bytes": ns.astype("<i8").tobytes(),
+                "nat": np.asarray(nat, dtype=bool), "tz": label or "",
+                "scalar": bool(scalar), "reason": reason}
+
+    scalar = is_datetime_value(obj)
+    if isinstance(obj, pd.Series) and pd.api.types.is_datetime64_any_dtype(obj.dtype):
+        tz = obj.dt.tz
+        nat = obj.isna().to_numpy()
+        inst = obj.dt.tz_convert("UTC").dt.tz_localize(None) if tz is not None else obj
+        ns = inst.astype("datetime64[ns]").to_numpy().view(np.int64).copy()
+        ns[nat] = 0
+        label = zone_label(pd.Timestamp(0, tz=tz)) if tz is not None else None
+        return result(ns, nat, label, False)
+
+    values = [obj] if scalar else list(obj)
+    labels, ns, nat = set(), [], []
+    for v in values:
+        if isinstance(v, np.datetime64):
+            v = pd.Timestamp(v)
+        if v is None or is_missing_datetime(v) or (isinstance(v, float) and v != v):
+            ns.append(0)
+            nat.append(True)
+            continue
+        if not is_datetime_value(v):
+            return result([], [], None, False, f"not a datetime: {type(v).__name__}")
+        labels.add(zone_label(v))
+        ns.append(utc_ns(v))
+        nat.append(False)
+    if len(labels) > 1:
+        return result([], [], None, False,
+                      f"values hold {len(labels)} zones ({sorted(map(str, labels))}); "
+                      f"a MATLAB datetime array has one")
+    return result(ns, nat, next(iter(labels), None), scalar)
+
+
 def flatten_sequences(py_list):
     """Flatten a list of numeric/boolean sequences into a single array with lengths.
 
@@ -2022,9 +2160,15 @@ def save_batch_bridge(
         data_list = np.atleast_1d(data_values).tolist()
         bulk_mode = "numpy_list"
     else:
-        # Plain Python list (Strategy B split_flat_to_lists, Strategy C, or
-        # string/cellstr paths).
-        data_list = [v.item() if hasattr(v, "item") else v for v in data_values]
+        # Plain Python list (Strategy B split_flat_to_lists, Strategy C,
+        # string/cellstr paths, or datetime_to_python's Timestamps — never
+        # .item()'d: a datetime64's item() is a bare int).
+        from scicanonicalhash import is_datetime_value as _is_dt
+
+        data_list = [
+            v.item() if hasattr(v, "item") and not _is_dt(v) else v
+            for v in data_values
+        ]
 
     meta_lists = []
     for j in range(len(keys)):
@@ -2105,9 +2249,22 @@ def numpy_scalar_to_python(obj):
     """
     import numpy as np
 
-    if isinstance(obj, np.generic):
+    # Never a datetime64: .item() of a ns value is a bare int (MATLAB would
+    # make it a double). from_python.m asks is_datetime_value first.
+    if isinstance(obj, np.generic) and not isinstance(obj, np.datetime64):
         return [True, obj.item()]
     return [False, None]
+
+
+def is_datetime_value(obj) -> bool:
+    """Whether *obj* is a datetime scalar (``datetime``, ``pd.Timestamp``,
+    ``pd.NaT``, ``np.datetime64``), for ``from_python.m``'s fallback when
+    MATLAB's ``isa`` misses a subclass (pandas' Timestamp / NaTType are
+    Cython subclasses of ``datetime.datetime``). Owner:
+    ``scicanonicalhash.is_datetime_value``."""
+    from scicanonicalhash import is_datetime_value as _is_datetime_value
+
+    return bool(_is_datetime_value(obj))
 
 
 def codec_storage_columns(type_name: str, db=None) -> list:

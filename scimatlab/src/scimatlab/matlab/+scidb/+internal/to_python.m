@@ -83,10 +83,19 @@ function [py_obj, col_stats] = to_python(data)
         end
 
     elseif isdatetime(data)
-        % datetime -> ISO 8601 string(s)
         if isscalar(data)
-            py_obj = char(string(data, 'yyyy-MM-dd''T''HH:mm:ss.SSS'));
+            % datetime -> pd.Timestamp / NaT, zone kept (datetime_to_python)
+            py_obj = scidb.internal.datetime_to_python(data, 'scalar');
         else
+            % An ARRAY of datetimes as one value is out of scope (a custom
+            % to_db/from_db class owns that); it keeps its old form, ISO
+            % strings, which carry no zone.
+            if ~isempty(data.TimeZone)
+                scidb.Log.warn(['to_python: a %s datetime array saved as ONE value ' ...
+                    'is stored as text without its TimeZone ''%s''; use a ' ...
+                    'table column or a to_db/from_db class to keep it'], ...
+                    num2str(size(data)), data.TimeZone);
+            end
             strs = string(data(:)', 'yyyy-MM-dd''T''HH:mm:ss.SSS');
             py_obj = py.list(cellstr(strs));
         end
@@ -103,9 +112,18 @@ function [py_obj, col_stats] = to_python(data)
             orig_size = size(col);
             scidb.Log.debug('to_python: processing table column %d/%d "%s" (class=%s, size=[%s])', ...
                 i, numel(col_names), col_names{i}, orig_class, num2str(orig_size));
+            if isdatetime(col) && iscolumn(col)
+                % A datetime column -> a datetime64[ns(, zone)] Series in one
+                % crossing (datetime_to_python); NaT and the zone survive.
+                py_dict{col_names{i}} = scidb.internal.datetime_to_python(col, 'column');
+                col_stats(end + 1) = struct('name', col_names{i}, ...
+                    'strategy', 'datetime', 'n', numel(col), 'seconds', toc(t_col)); %#ok<AGROW>
+                continue;
+            end
             if iscategorical(col)
                 col = string(col);
             elseif isdatetime(col)
+                % An N x M datetime variable: no pandas datetime column holds it.
                 col = string(col, 'yyyy-MM-dd''T''HH:mm:ss.SSS');
             elseif isnumeric(col) && ismatrix(col) && ~isvector(col) && ~isscalar(col)
                 % Multi-column numeric variable (e.g. Nx2 matrix) ->

@@ -49,6 +49,7 @@ from .shape import Shape
 from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic
 from .spread import QUANTILE_METHOD, SD_DDOF, ci95_spread, sem_spread
 from .table import LongTable
+from .temporal import parse_limit
 
 LAYER = "scistackplot"
 
@@ -369,10 +370,9 @@ def pinned_ends(
         minimum = panel.y_minimum
     if panel is not None and panel.y_maximum is not None:
         maximum = panel.y_maximum
-    return (
-        None if minimum is None else float(minimum),
-        None if maximum is None else float(maximum),
-    )
+    # A datetime axis's ends may be typed as dates (ISO text); they read as
+    # wall-clock ms in the axis's zone (temporal.parse_limit). Numbers pass.
+    return parse_limit(minimum), parse_limit(maximum)
 
 
 def describe(scope: list[str], y_axis) -> str:

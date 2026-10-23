@@ -28,6 +28,7 @@ from scistackplot.dedup import SingleFlight
 from scistackplot.framesize import format_extent, frame_extent
 from scistackplot.sources import BaseSource, UnknownMeasureError
 from scistackplot.variants import VARIABLE_COLUMN
+from scistackplot.temporal import is_temporal_column
 
 from .hierarchy import join_frames, joinable, joined_levels
 from .load import (
@@ -75,7 +76,16 @@ def _as_levels(column):
     synthetic-factors invariant 4 exists to prevent. The order matters:
     ``astype(str)`` first would turn every missing value into the string
     ``"nan"``.
+
+    A DATETIME column is the exception: its values stay datetimes (missing
+    ones named), and ``LongTable.from_frame`` gives each its identity label
+    in time order (``scistackplot.temporal.level_labels``) — text that says
+    when, not ``2026-07-01 14:00:00+02:00`` sorted as text. The generated code
+    emits the same labels (``temporal.factor_label_code``).
     """
+    if is_temporal_column(column):
+        out = column.astype(object).where(column.notna(), MISSING_LEVEL)
+        return out
     return column.fillna(MISSING_LEVEL).astype(str)
 
 
@@ -1380,6 +1390,20 @@ class ScidbSource(BaseSource):
                 usable.append(column)
             else:
                 skipped.append(column)
+        # Datetime fields melt into ONE value column with the rest, which is a
+        # time axis only if every field is a datetime (scistackplot.temporal).
+        # Beside numeric fields they would read as numbers (NaN), so they are
+        # left out and named — group by one (Variable.column) instead.
+        datetimes = [c for c in usable if is_temporal_column(frame[c])]
+        if datetimes and len(datetimes) < len(usable):
+            Log.warn(
+                "variable %r: datetime field(s) %s cannot share one axis with its "
+                "numeric field(s) and were left out — group by one instead",
+                variable_frame.name,
+                datetimes,
+                layer=LAYER,
+            )
+            usable = [c for c in usable if c not in datetimes]
         if skipped:
             Log.warn(
                 "variable %r: %d field(s) are not plottable and were dropped: %s",

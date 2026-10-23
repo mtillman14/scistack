@@ -690,8 +690,10 @@ class YAxis:
 
     #: Panel factors that separate limits. Empty means one range for everything.
     scope: list[str] = field(default_factory=list)
-    minimum: float | None = None
-    maximum: float | None = None
+    #: A number, or for a datetime axis ISO text (``"2026-07-01 12:00"``, a
+    #: wall clock in the axis's zone). ``ylimits.pinned_ends`` reads both.
+    minimum: float | str | None = None
+    maximum: float | str | None = None
 
     @property
     def is_manual(self) -> bool:
@@ -709,9 +711,24 @@ class YAxis:
     def from_dict(cls, raw: dict) -> "YAxis":
         return cls(
             scope=list(raw.get("scope") or []),
-            minimum=_as_float(raw.get("minimum")),
-            maximum=_as_float(raw.get("maximum")),
+            minimum=_as_limit(raw.get("minimum")),
+            maximum=_as_limit(raw.get("maximum")),
         )
+
+
+def _as_limit(value: Any) -> float | str | None:
+    """A y-limit bound: a number, ISO date text for a datetime axis (kept as
+    typed; ``ylimits.pinned_ends`` reads it), or None for "compute it"."""
+    number = _as_float(value)
+    if number is not None or not isinstance(value, str) or not value.strip():
+        return number
+    try:
+        import pandas as pd
+
+        pd.Timestamp(value.strip())
+    except (TypeError, ValueError):
+        return None
+    return value.strip()
 
 
 def _as_float(value: Any) -> float | None:
@@ -1165,6 +1182,11 @@ class PlotSpec:
     #: only the figure's own levels. ``reduce._x_axis_levels`` is the one
     #: reader; ``ResolvedPlot.missing_x`` lists the levels either way.
     show_missing_levels: bool = True
+    #: How datetimes holding several zones share the figure (user, 2026-10-22):
+    #: ``"local"`` puts each value at its own wall clock; a zone label
+    #: (``"UTC"``, ``"Europe/Berlin"``, ``"+02:00"``) converts every aware
+    #: value to it. Owner: ``scistackplot.temporal``. Inert without datetimes.
+    time_zone: str = "local"
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
@@ -1396,6 +1418,7 @@ class PlotSpec:
             sample_color=raw.get("sample_color"),
             sample_in_legend=bool(raw.get("sample_in_legend", True)),
             show_missing_levels=bool(raw.get("show_missing_levels", True)),
+            time_zone=str(raw.get("time_zone") or "local"),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions.from_dict(raw.get("style")),

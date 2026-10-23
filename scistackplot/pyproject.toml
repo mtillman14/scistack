@@ -12,7 +12,7 @@ raw-options = { search_parent_directories = true, local_scheme = "no-local-versi
 # dependencies must be named here: CI's build job fails a wheel whose internal
 # dependency is not "==<its own version>".
 [tool.hatch.metadata.hooks.dependency-coversion]
-override-versions-of = ["scistacklog"]
+override-versions-of = ["scistacklog", "scicanonicalhash"]
 
 [project]
 name = "scistackplot"
@@ -53,6 +53,9 @@ dependencies = [
     # (2 s of every first Plot Studio open; tests/test_import_cost.py).
     "csv-stats>=0.4.2",
     "scistacklog",
+    # Datetime zone labels (temporal.py): the same vocabulary the storage and
+    # the record hash use. Zero dependencies of its own.
+    "scicanonicalhash",
 ]
 
 [project.optional-dependencies]

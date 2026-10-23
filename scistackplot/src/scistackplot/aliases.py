@@ -38,12 +38,17 @@ from scistacklog import Log
 from .roles import RoleError
 from .spec import Alias, PlotSpec
 from .table import LongTable
+from .temporal import display_levels
 
 LAYER = "scistackplot"
 
 #: Where an alias came from — in logs and in the clash message.
 PLOT = "plot"
 PROJECT = "project"
+#: A datetime level read in the plot's "Convert to <zone>" time zone mode
+#: (temporal.display_levels): the lowest layer, under the project's and the
+#: plot's own aliases.
+TIME_ZONE = "time_zone"
 RAW = "raw"
 
 #: How dash ids are composed (``reduce.SERIES_SEPARATOR``). Restated rather
@@ -234,6 +239,17 @@ def display_text(spec: PlotSpec, table: LongTable) -> DisplayText:
     the project config reaches the next resolve with nothing rebuilt.
     """
     names, levels = merge(table.project_aliases(), spec.aliases)
+    for info in table.factors:
+        if not info.temporal:
+            continue
+        try:
+            shown = display_levels(info.temporal_values, info.temporal_format, spec.time_zone)
+        except ValueError:  # an unknown zone: `validate` says so; read as stored
+            shown = {}
+        if shown:
+            mine = levels.setdefault(info.name, {})
+            for level, text in shown.items():
+                mine.setdefault(level, (text, TIME_ZONE))
     return DisplayText(names=names, levels=levels, keys=lookup_keys(spec))
 
 

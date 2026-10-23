@@ -29,6 +29,7 @@ from .panels import y_titles_problem
 from .shape import Shape
 from .spec import MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
 from .table import LongTable
+from .temporal import BAR_REASON, normalize_mode
 from .variants import VARIABLE_COLUMN, VARIANT_FACTOR
 from .weights import weight_problem
 
@@ -1014,6 +1015,23 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
     problem = y_titles_problem(spec.style.y_titles)
     if problem is not None:
         raise RoleError(f"style.y_titles {problem}.")
+
+    # --- datetimes (scistackplot.temporal) ------------------------------
+    try:
+        normalize_mode(spec.time_zone)
+    except ValueError as exc:
+        raise RoleError(f"time_zone: {exc}") from exc
+    if table.measure(spec.y_measure).temporal:
+        # A log axis is inert, not refused (reduce turns it off with a note).
+        if spec.kind is PlotKind.BAR:
+            raise RoleError(f"{spec.y_measure!r} is a datetime. {BAR_REASON}")
+    if spec.x_measure is not None and table.measure(spec.x_measure).temporal:
+        # Deferred (plan-plot-datetimes): a datetime x axis lands with the
+        # continuous x-vs-y plots, on the same temporal owner.
+        raise RoleError(
+            f"{spec.x_measure!r} is a datetime; a datetime x axis is not "
+            f"available yet. Plot it on y, or group by it."
+        )
 
     # --- roles name real factors ----------------------------------------
     unknown =[name for name in spec.roles if not table.has_factor(name)]

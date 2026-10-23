@@ -37,6 +37,7 @@ from .roles import (
 from .shape import Shape
 from .spec import BUILTIN_KINDS, MAX_X_LAYERS, SCALAR_KINDS, PlotKind, PlotSpec, Role
 from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, LongTable
+from .temporal import BAR_REASON, time_zone_summary
 
 #: Kinds that summarize several rows per x position into one mark.
 DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.BAND)
@@ -202,6 +203,7 @@ def available_plots(
     has_x_measure: bool = False,
     collapsible: bool = False,
     n_groups: int = 0,
+    temporal: bool = False,
 ) -> list[PlotKind]:
     """Plot kinds that can be rendered for this shape and role assignment.
 
@@ -216,6 +218,10 @@ def available_plots(
 
     ``n_groups`` is how many grouping layers the spec has — spaghetti needs
     two (the lines, and the positions they join across).
+
+    ``temporal``: the measure is a datetime (``MeasureInfo.temporal``). It
+    follows the scalar rules, except that it offers no bar (a bar from zero is
+    a bar from 1970; user, 2026-10-22).
     """
     if shape is Shape.MATRIX_2D:
         return [PlotKind.HEATMAP]
@@ -237,6 +243,7 @@ def available_plots(
                 PlotKind.VIOLIN,
             )
             if kind_requirement(kind, Shape.SCALAR, roles, n_groups) is None
+            and not (temporal and kind is PlotKind.BAR)
         ]
 
     if shape is Shape.SERIES_1D:
@@ -291,6 +298,7 @@ def why_unavailable(
     *,
     collapsible: bool = False,
     n_groups: int = 0,
+    temporal: bool = False,
 ) -> str | None:
     """
     Explain a kind's absence, for GUI tooltips on disabled options.
@@ -300,8 +308,12 @@ def why_unavailable(
     the same way, or a kind the panel offers would come with a reason it is
     refused.
     """
-    if kind in available_plots(shape, roles, collapsible=collapsible, n_groups=n_groups):
+    if kind in available_plots(
+        shape, roles, collapsible=collapsible, n_groups=n_groups, temporal=temporal
+    ):
         return None
+    if temporal and kind is PlotKind.BAR:
+        return BAR_REASON
     if shape is Shape.MATRIX_2D:
         return "2-D measures render as a heatmap."
     # Shape mismatches first: a scalar band is refused for being a band on a
@@ -352,6 +364,9 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     collapsing = cell_collapses(spec, derived)
     collapsible = raw_shape is Shape.SERIES_1D and spec.x_measure is None
     has_x_measure = spec.x_measure is not None
+    temporal = (
+        spec.y_measure in derived.measure_names and derived.measure(spec.y_measure).temporal
+    )
 
     # Each kind is judged against THE ASSIGNMENT IT WOULD BE APPLIED WITH,
     # which is its own suggestion when it has one and the current one
@@ -374,6 +389,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
             has_x_measure=has_x_measure,
             collapsible=collapsible,
             n_groups=len(kind_groups),
+            temporal=temporal,
         )
         reason = why_unavailable(
             kind,
@@ -381,6 +397,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
             kind_roles,
             collapsible=collapsible,
             n_groups=len(kind_groups),
+            temporal=temporal,
         )
         if reason is None:
             # The layer cap, judged as THIS kind reads the grouping and at the
@@ -451,7 +468,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # Difference bars: whether this kind and shape can carry them at all,
         # and why not (`diffbars.unavailable`). Whether the FIGURE has two
         # ticks to join is in `layout.meta`, from the drawn figure.
-        "difference_bars": _difference_bars_summary(spec, shape),
+        "difference_bars": _difference_bars_summary(spec, shape, temporal),
         # Compare to reference: whether the figure can carry one and why not,
         # the layers + levels it may name, the default, and the current one's
         # state (`compare.comparison_summary`, the one owner).
@@ -472,13 +489,16 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         "factors": factor_summary(spec, collapsed),
         "grouping": grouping_summary(spec, collapsed),
         "variants": variant_summary(spec, table),
+        # The Time zone control: whether a datetime is in play, the mode, and
+        # the zones the data holds (temporal.time_zone_summary).
+        "time_zone": time_zone_summary(spec, derived),
     }
 
 
-def _difference_bars_summary(spec: PlotSpec, shape: Shape) -> dict:
+def _difference_bars_summary(spec: PlotSpec, shape: Shape, temporal: bool = False) -> dict:
     from .diffbars import unavailable
 
-    reason = unavailable(spec, shape)
+    reason = unavailable(spec, shape, temporal=temporal)
     return {"available": reason is None, "reason": reason}
 
 

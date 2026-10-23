@@ -106,9 +106,9 @@ unaware of it.
 - `datetime64` **arrays inside one cell** (`TIMESTAMP[]`) are unchanged and
   have no zones.
 - Custom `to_db()` frames keep their own column typing (datetime -> VARCHAR).
-- Plots (`scistackplotdb.load_variable`) drop the companion and show the
-  stored instant (UTC / naive wall clock).
-- MATLAB `datetime` with TimeZone through the bridge: not covered.
+- Plots: covered (docs/claude/plot-datetimes.md): the plot loader folds the
+  zone back, and `PlotSpec.time_zone` chooses local time or one zone.
+- MATLAB `datetime`: covered (section "MATLAB" below).
 - The column's datetime64 **unit** comes from its first save (`datetime_meta(unit)`).
   A later save in another unit loads in the first one, so those records hash
   differently on reload.
@@ -122,3 +122,37 @@ loaded as `[ns]` made re-saves new records. `_batch_column_type` now records
 (`Series.dt.as_unit`). The per-record DataFrame loaders (`SciDuck.load`,
 scidb `load`) keep the restored Series instead of rebuilding a list, which
 would re-infer the dtype. Scalars hash unit-free, so they need none of this.
+
+## MATLAB (built 2026-10-22, second pass)
+
+A MATLAB datetime array has ONE `TimeZone` (`''` = unzoned = naive). It
+crosses as **int64 ns from 1970-01-01** plus a NaT mask plus that TimeZone:
+
+| direction | MATLAB owner | Python owner |
+|---|---|---|
+| MATLAB -> Python | `+scidb/+internal/datetime_to_python.m` (`convertTo(..., 'epochtime', 'TicksPerSecond', 1e9)`: exact; `posixtime` is a double, ~0.2 us) | `scimatlab.bridge.datetimes_from_matlab(ns, nat, tz, kind)`: `scalar` -> Timestamp/NaT, `column` -> datetime64 Series, `list` -> one Timestamp per record |
+| Python -> MATLAB | `+scidb/+internal/datetime_from_python.m` (`datetime(ns, 'ConvertFrom', 'epochtime', ...)`, then `.TimeZone = tz`) | `scimatlab.bridge.datetimes_to_matlab(obj)`: ticks as **raw `<i8` bytes** (`ns_bytes`), because a numeric array through `from_python` becomes double and ~1.8e18 ns is not exact in a double |
+
+- Ticks are the wall clock when unzoned, else the UTC instant (the epoch is
+  `datetime(1970,1,1)` or `datetime(1970,1,1,'TimeZone','UTC')`).
+- `matlab_zone_label(tz)` maps MATLAB spellings onto the scistack label:
+  `''` -> naive, `UTC`/`Z`/`UTCLeapSeconds` -> `"UTC"` (leap-second values
+  are converted to UTC first, WARN), `+0200`/`+02` -> `"+02:00"`; an IANA name
+  stays itself, and an unknown name raises.
+- Sites: `to_python.m` scalars + Nx1 table columns; `BaseVariable.save_from_table`
+  datetime data column (`kind='list'`, one record per row); `from_python.m`
+  scalar branch, plus a fallback through `bridge.is_datetime_value` when
+  `isa` misses a Cython subclass, plus `convert_dataframe`'s datetime64
+  branch. `save_batch_bridge` never `.item()`s a datetime; `numpy_scalar_to_python`
+  never unwraps a `datetime64` (its `.item()` is a bare int).
+- Values holding several zones (an object column) cannot be one MATLAB
+  array: `datetimes_to_matlab` returns ok=false and `convert_dataframe`'s
+  object branch converts them one at a time (a cell column of datetimes).
+- Out of scope (user, 2026-10-22): a datetime ARRAY saved as ONE value keeps
+  the old ISO-text form, and WARNs when it is zoned. Use a `to_db`/`from_db`
+  class. N x M datetime table variables also stay text.
+- A loaded MATLAB datetime has `Format` `yyyy-MM-dd HH:mm:ss.SSSSSSSSS`;
+  the original `Format` is not stored.
+
+Tests: `scimatlab/tests/test_bridge_datetimes.py` (Python, no MATLAB) and
+`scimatlab/tests/matlab/scidb/TestDatetimeRoundTrip.m`.

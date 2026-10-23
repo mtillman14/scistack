@@ -19,6 +19,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .temporal import is_temporal_value
+
 
 class Shape(str, Enum):
     """What one cell of a measure column holds."""
@@ -49,6 +51,10 @@ def classify_value(value: Any) -> Shape:
     if isinstance(value, (bool, np.bool_)):
         return Shape.CATEGORICAL
     if _is_number(value):
+        return Shape.SCALAR
+    # A datetime is one value per row, by the same rules as a number (user,
+    # 2026-10-22): plotted on a time axis (scistackplot.temporal).
+    if is_temporal_value(value):
         return Shape.SCALAR
     if isinstance(value, str):
         return Shape.CATEGORICAL

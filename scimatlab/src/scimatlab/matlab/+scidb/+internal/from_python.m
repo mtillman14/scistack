@@ -131,8 +131,11 @@ function data = from_python(py_obj)
     elseif isa(py_obj, 'py.str')
         data = string(py_obj);
 
-    elseif isa(py_obj, 'py.datetime.datetime')
-        data = datetime(string(py_obj.isoformat()), 'InputFormat', 'yyyy-MM-dd''T''HH:mm:ss');
+    elseif isa(py_obj, 'py.datetime.datetime') || isa(py_obj, 'py.numpy.datetime64')
+        % datetime / pd.Timestamp / NaT / np.datetime64 -> MATLAB datetime,
+        % zone and nanoseconds kept (datetime_from_python). The old
+        % isoformat() parse failed on fractions, zones and NaT.
+        data = scidb.internal.datetime_from_python(py_obj);
 
     elseif isa(py_obj, 'py.list')
         % Fast path 1: try converting the entire list to a numpy array in one
@@ -325,6 +328,14 @@ function data = from_python(py_obj)
         % (TestSaveFromTable/test_integer_data, 2026-10-18). The check runs
         % in Python: in MATLAB, py.numpy.generic as an argument CALLS the
         % class rather than naming it, so a MATLAB-side isinstance fails.
+        % A datetime isa() missed (pd.Timestamp / NaTType subclass
+        % datetime.datetime in Cython; np.datetime64 is a numpy scalar whose
+        % .item() would be a bare int): asked in Python, before the numpy
+        % scalar step.
+        if logical(py.scimatlab.bridge.is_datetime_value(py_obj))
+            data = scidb.internal.datetime_from_python(py_obj);
+            return;
+        end
         np_item = cell(py.scimatlab.bridge.numpy_scalar_to_python(py_obj));
         if np_item{1}
             data = scidb.internal.from_python(np_item{2});
@@ -411,9 +422,10 @@ function data = convert_dataframe(py_obj)
         end
         if startsWith(dtype_str, "datetime")
             scidb.Log.debug('convert_dataframe: column %d - datetime branch', i);
-            % datetime64 column -> MATLAB datetime via ISO strings
-            iso_strs = cell(col.dt.strftime('%Y-%m-%dT%H:%M:%S.%f').tolist());
-            args{i} = datetime(iso_strs, 'InputFormat', 'yyyy-MM-dd''T''HH:mm:ss.SSSSSS');
+            % datetime64[ns(, zone)] column -> Nx1 MATLAB datetime in its
+            % zone, NaT kept (datetime_from_python). The old strftime path
+            % dropped the zone and failed on NaT.
+            args{i} = scidb.internal.datetime_from_python(col);
         elseif dtype_str == "object"
             scidb.Log.debug('convert_dataframe: column %d "%s" - object branch', i, string(col_key));
             % Object column (e.g. dicts/structs, array columns) -> cell array via from_python

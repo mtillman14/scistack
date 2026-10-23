@@ -77,6 +77,8 @@
     "src/components/PlotStudio/panelOverrides.test.ts",
     "src/components/PlotStudio/compare.ts",
     "src/components/PlotStudio/compare.test.ts",
+    "src/components/PlotStudio/timeZone.ts",
+    "src/components/PlotStudio/timeZone.test.ts",
     "src/components/PlotStudio/differenceBars.ts",
     "src/components/PlotStudio/differenceBars.test.ts",
     "src/components/PlotStudio/figureCursor.ts",

@@ -11,6 +11,52 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzf. Datetimes in Plot Studio: a time axis, datetime groupings, the Time zone control — added 2026-10-22
+
+What changed: a datetime variable (or a datetime column) now plots like a
+number: on a time axis as the measure, or as a grouping/colour/facet factor
+with labels such as `2026-07-01 14:00 CEST`, ordered by time. A new
+**Data > Time zone** section (only when a datetime is in play) chooses between
+**Local time** (each value at its own clock time, the default) and **Convert
+to <zone>**. Datetime measures offer no **Bar** (it would start at 1970). MATLAB
+datetimes keep their TimeZone and NaT through save/load. Plans:
+`.claude/plan-plot-datetimes.md`, `.claude/plan-datetime-roundtrip.md`.
+
+**Backend**
+1. Reload the VS Code window (backend + rebuilt webview bundle).
+2. Save a datetime per session with zones, e.g. in Python
+   `SessionStart.save(pd.Timestamp("2026-07-01 14:00", tz="Europe/Berlin"), subject="01", session="pre")`,
+   another subject in `America/New_York`, one with no zone and one `pd.NaT`.
+3. `scidb.log`: `temporal: SessionStart -> wall-clock ms in local time (... aware in [...], ... naive)`
+   on each resolve; `load_variable(SessionStart): datetime column ... restored` at DEBUG.
+
+**Frontend**
+1. Open Plot Studio on `SessionStart`. The y axis shows dates/times and its
+   title ends `(local time)`. Hover a point: the full date and time.
+2. Plot type: **Bar** is greyed with "A bar is drawn from zero, which for a
+   datetime is 1970…"; Box/Violin/Strip/Spaghetti work.
+3. Data > **Time zone** appears. Pick **Convert to UTC**: the Berlin 14:00 and
+   New York 08:00 points line up at 12:00, the title says `(UTC)`, and a note
+   says how many values had no zone.
+4. Pick **Other zone…**, type `Asia/Tokyo`, Enter: the axis converts. Type
+   `Mars/Olympus`: an error naming the zone, no figure.
+5. Appearance > Y axis: type `2026-07-01 00:00` into Min — the axis starts
+   there; the applied-limits note reads in dates.
+6. Turn on Log y: the figure stays linear and a note says why.
+7. Structure > Compare, Difference from `pre`: the y axis becomes hours
+   (`Δ SessionStart (h, from session pre)`); **% change** shows as not applied.
+8. Group a numeric variable by a datetime grouping (Group by… a subject-level
+   datetime variable): the ticks/legend read `2026-06-01 09:00 CEST`, in time
+   order, with `(missing)` last. **Convert to UTC** relabels them; two values at
+   the same instant read `… UTC (from Europe/Berlin)` / `(from America/New_York)`.
+   A filter on one level keeps working across the switch.
+9. Save data (CSV): the column is `SessionStart (local time)` holding ISO
+   times. Export code: the generated function draws the same date ticks.
+10. MATLAB: `ScalarVar().save(datetime(2026,7,1,14,0,0,'TimeZone','Europe/Berlin'), 'subject', 1)`
+    then `.load` — same value, `TimeZone` `Europe/Berlin`; `NaT` comes back NaT.
+
+---
+
 ## 0zzzzzzd. New functions from the GUI; step names; undo after restart — added 2026-10-22
 
 What changed: (1) the functions tab's **+** now offers **New function** (default),

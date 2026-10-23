@@ -27,6 +27,7 @@ from scistacklog import Log
 
 from .shape import Shape, classify_column
 from .spec import Alias
+from .temporal import has_temporal_values, is_temporal_column, level_labels
 
 _NUM_CHUNK = re.compile(r"(\d+)")
 
@@ -134,10 +135,20 @@ class FactorInfo:
     #: combined level (``roles.complete_assignment`` collapses it), but the
     #: panel lists it only through the combine's dropdown.
     combined_into: str | None = None
+    #: On a datetime factor: ``{identity label: the Timestamp it names}``
+    #: (``temporal.level_labels``). The column holds the labels; this keeps
+    #: what they stand for, so "Convert to <zone>" can say how each reads.
+    temporal_values: dict[str, Any] | None = None
+    #: The strftime the labels were written with (their precision).
+    temporal_format: str | None = None
 
     @property
     def display(self) -> str:
         return self.label or self.name
+
+    @property
+    def temporal(self) -> bool:
+        return self.temporal_values is not None
 
 
 @dataclass
@@ -147,6 +158,10 @@ class MeasureInfo:
     label: str | None = None
     #: For 1-D measures whose arrays have already been exploded into rows.
     exploded: bool = False
+    #: A datetime measure (shape SCALAR). ``temporal.apply_temporal`` turns
+    #: its values into wall-clock ms; the flag stays, so capability,
+    #: validation and the renderers know the axis is time.
+    temporal: bool = False
 
     @property
     def display(self) -> str:
@@ -353,7 +368,11 @@ class LongTable:
                 if column == index_column:
                     continue
                 shape = classify_column(frame[column])
-                if shape in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D):
+                # A datetime column is a measure like a number (user,
+                # 2026-10-22); it can still be named a factor explicitly.
+                if shape in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D) or (
+                    is_temporal_column(frame[column])
+                ):
                     inferred_measures.append(column)
                 else:
                     inferred_factors.append(column)
@@ -373,8 +392,43 @@ class LongTable:
         depths.update(factor_depths or {})
 
         factor_infos = []
+        copied = False
         for column in factors:
-            if column in level_order:
+            temporal = None
+            values = frame[column] if column in frame.columns else None
+            # A source names a missing grouping value MISSING_LEVEL (scidb's
+            # `_as_levels`); it is a level, never a datetime.
+            named_missing = (
+                values.map(lambda v: isinstance(v, str) and v == MISSING_LEVEL)
+                if values is not None and values.dtype == object
+                and has_temporal_values(values, skip=(MISSING_LEVEL,))
+                else None
+            )
+            if named_missing is not None and named_missing.any():
+                values = values.mask(named_missing)
+            if values is not None and is_temporal_column(values):
+                # A datetime factor: its values become their identity labels
+                # HERE, once, for every source (temporal.level_labels), so every
+                # later `astype(str)`, filter and alias sees text that says
+                # what it means — ordered by time, not as text.
+                temporal = level_labels(values)
+                if not copied:
+                    frame = frame.copy()
+                    copied = True
+                labels = list(temporal.labels)
+                has_named = named_missing is not None and bool(named_missing.any())
+                if has_named:
+                    labels = [
+                        MISSING_LEVEL if flag else label
+                        for label, flag in zip(labels, named_missing.tolist(), strict=True)
+                    ]
+                frame[column] = pd.Series(labels, index=frame.index, dtype=object)
+                levels = [*temporal.order, *([MISSING_LEVEL] if has_named else [])]
+                Log.debug(
+                    "from_frame: datetime factor %r -> %d level(s) in time order (%s)",
+                    column, len(levels), temporal.strftime, layer="scistackplot",
+                )
+            elif column in level_order:
                 levels = list(level_order[column])
             else:
                 levels = sorted(
@@ -388,20 +442,27 @@ class LongTable:
                     is_field=column in field_set,
                     origin=(factor_origins or {}).get(column),
                     depth=depths.get(column),
+                    temporal_values=temporal.values if temporal else None,
+                    temporal_format=temporal.strftime if temporal else None,
                 )
             )
 
-        measure_infos = [
-            MeasureInfo(
-                name=column,
-                shape=classify_column(frame[column]),
-                # A stacked table's value column is named after the primary
-                # variable but holds several; the label is how the axis says so
-                # without the column name lying about what is in it.
-                label=(measure_labels or {}).get(column),
+        measure_infos = []
+        for column in measures:
+            temporal_measure = column in frame.columns and is_temporal_column(frame[column])
+            measure_infos.append(
+                MeasureInfo(
+                    name=column,
+                    # A datetime is one value per row: scalar, by the same
+                    # rules as a number (temporal.apply_temporal makes it one).
+                    shape=Shape.SCALAR if temporal_measure else classify_column(frame[column]),
+                    # A stacked table's value column is named after the primary
+                    # variable but holds several; the label is how the axis says
+                    # so without the column name lying about what is in it.
+                    label=(measure_labels or {}).get(column),
+                    temporal=temporal_measure,
+                )
             )
-            for column in measures
-        ]
 
         return cls(
             frame=frame,
@@ -455,6 +516,9 @@ class LongTable:
                     # combine's dropdown.
                     "combined_from": f.combined_from,
                     "combined_into": f.combined_into,
+                    # A datetime factor (identity labels in time order); the
+                    # panel shows the Time zone control when one is in play.
+                    "temporal": f.temporal,
                 }
                 for f in self.factors
             ],
@@ -464,6 +528,7 @@ class LongTable:
                     "display": m.display,
                     "shape": str(m.shape),
                     "exploded": m.exploded,
+                    "temporal": m.temporal,
                     "plottable": m.shape
                     in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D),
                 }

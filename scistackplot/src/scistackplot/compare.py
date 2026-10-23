@@ -161,7 +161,32 @@ def figure_unavailable(spec: "PlotSpec", table: "LongTable", groups: list[str]) 
         )
     if not groups:
         return "Nothing is grouped, so there is no level to compare with. Add a grouping layer."
+    if (
+        spec.comparison is not None
+        and spec.comparison.mode is CompareMode.PERCENT
+        and _temporal_measure(spec, table)
+    ):
+        from .temporal import PERCENT_REASON
+
+        return PERCENT_REASON
     return None
+
+
+def _temporal_measure(spec: "PlotSpec", table: "LongTable") -> bool:
+    return spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal
+
+
+#: A datetime difference is drawn in hours (plan-plot-datetimes, "difference
+#: -> duration"): axis ms * this.
+_MS_TO_HOURS = 1.0 / 3_600_000.0
+
+
+def _duration_scale(spec: "PlotSpec", table: "LongTable") -> dict:
+    """``ComparisonPlan`` fields for a datetime measure's difference: the
+    duration unit and the ms -> unit factor; nothing for a number."""
+    if not _temporal_measure(spec, table):
+        return {}
+    return {"unit": "h", "scale": _MS_TO_HOURS}
 
 
 def comparison_summary(
@@ -242,6 +267,11 @@ class ComparisonPlan:
     factors: tuple[str, ...]
     sample: tuple[str, ...]
     statistic: str = "mean"
+    #: A datetime measure's difference is a DURATION: the axis-ms
+    #: differences times ``scale``, read in ``unit`` (hours; temporal.py).
+    #: ``None``/1.0 for a number.
+    unit: str | None = None
+    scale: float = 1.0
 
     def key_columns(self, frame: pd.DataFrame, index_column: str | None) -> list[str]:
         """What one baseline value is keyed by, among ``frame``'s columns:
@@ -309,6 +339,7 @@ def plan_comparison(
         factors=tuple(table.factor_names),
         sample=tuple(sample),
         statistic=str(spec.aggregate.statistic),
+        **_duration_scale(spec, table),
     )
 
 
@@ -484,7 +515,7 @@ def apply(
     if plan.mode is CompareMode.PERCENT:
         work[measure] = 100.0 * (values - ref) / ref
     else:
-        work[measure] = values - ref
+        work[measure] = (values - ref) * plan.scale
     work = work.drop(columns=[c for c in (_REF, _ALL) if c in work.columns])
     work = work.reset_index(drop=True)
     outcome.rows_out = len(work)
@@ -602,7 +633,8 @@ def y_title(
     level = level_text or plan.level
     if plan.mode is CompareMode.PERCENT:
         return f"{name}, % change from {layer} {level}"
-    return f"Δ {name} (from {layer} {level})"
+    unit = f"{plan.unit}, " if plan.unit else ""
+    return f"Δ {name} ({unit}from {layer} {level})"
 
 
 def comparison_title(plan: ComparisonPlan | None, name: str, text: Any, table: "LongTable") -> str:

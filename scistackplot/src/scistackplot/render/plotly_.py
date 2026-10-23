@@ -194,6 +194,11 @@ def render(
                 # What the Labels section offers (aliases.labelable): the
                 # measure and every factor this figure draws as text.
                 "labelable": list(resolved.labelable),
+                # A datetime y axis: its zone mode, tick format and notes
+                # (temporal.TemporalAxis); None for a numeric axis.
+                "temporal": (
+                    resolved.temporal.to_dict() if resolved.temporal is not None else None
+                ),
                 # What the Colours section offers (base.colorable): every
                 # painted level with the colour DRAWN and where it came from.
                 "colorable": colorable(resolved),
@@ -1064,6 +1069,10 @@ def _add_axes(
         },
         "tickfont": {"size": sizes.y_ticks},
         "type": "log" if resolved.spec.style.log_y else "-",
+        # A datetime measure: y values are wall-clock ms (temporal.py), which a
+        # plotly date axis reads as they are; the tick and hover formats come
+        # from the same owner as the export's.
+        **(resolved.temporal.plotly_axis() if resolved.temporal is not None else {}),
         # No automargin here, deliberately, even though the x axes use it: an
         # inner column's title is rotated text drawn into the column gap (which
         # `_frame` sizes for it), and plotly's automargin answers a crowded subplot axis by

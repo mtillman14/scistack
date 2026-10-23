@@ -59,6 +59,7 @@ from .resolved import Encoding, Labels, Panel, ResolvedPlot
 from .roles import (
     CollapseSteps,
     OverlaySteps,
+    RoleError,
     collapse_steps,
     complete_roles,
     fanout_keys,
@@ -97,6 +98,7 @@ from .panels import override_for, panel_key_text, unmatched
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
 from .cell import all_nan_warning, apply_cell_collapse, cell_collapse_note, cell_collapses
+from .temporal import LOG_REASON, apply_temporal
 from .variants import apply_variant_sets, strip_answered_roles
 
 LAYER = "scistackplot"
@@ -377,6 +379,7 @@ def resolve(
         for figure in figures:
             figure.fanout_notes = plan.notes
             figure.data_warnings = plan.data_warnings
+            _attach_temporal(figure, plan)
         for position, figure in enumerate(figures):
             figure.difference_siblings = [
                 figures[other] for other in _difference_sibling_indices(plan, position)
@@ -435,6 +438,8 @@ class _Plan:
     frame: "pd.DataFrame" = field(default_factory=pd.DataFrame)
     #: The y-limit scope, after ineligible factors were dropped.
     y_scope: list[str] = field(default_factory=list)
+    #: A datetime y measure's axis (``temporal.apply_temporal``), or None.
+    temporal: Any = None
     #: ``cell.all_nan_warning`` over ``frame``. On the plan, not computed per
     #: figure, so a plan-cache HIT still carries it to every figure.
     data_warnings: list[str] = field(default_factory=list)
@@ -541,6 +546,13 @@ def planned_y_limits(
     """
     plan = _plan(spec, table)
     return list(plan.y_scope), dict(plan.y_limits)
+
+
+def planned_temporal(spec: PlotSpec, table: LongTable):
+    """The datetime y axis the preview draws (``temporal.TemporalAxis``), or
+    None — read off the plan, as :func:`planned_y_limits` is, so the export's
+    tick format is the preview's. ``table`` is the BASE table."""
+    return _plan(spec, table).temporal
 
 
 def _with_presentation(plan: "_Plan", spec: PlotSpec) -> "_Plan":
@@ -650,6 +662,15 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         # identical and mean entirely different things.
         collapsed_note = cell_collapse_note(spec, table)
         table = apply_cell_collapse(spec, table)
+    # The fourth derived table: a datetime measure becomes wall-clock ms in
+    # the spec's time zone mode (scistackplot.temporal). Before `validate` and
+    # `apply_filters` for the same reasons as the collapse above, and before
+    # `y_limits`, which then run on ordinary numbers.
+    with timer.phase("temporal"):
+        try:
+            table, temporal_axis = apply_temporal(spec, table)
+        except ValueError as exc:  # an unknown zone: the spec's fault, said as one
+            raise RoleError(f"time_zone: {exc}") from exc
     with timer.phase("roles"):
         spec = strip_answered_roles(spec, base, table)
         validate(spec, table)
@@ -734,7 +755,11 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         index_column=index_column,
         explode=explode,
         iterate=iterate,
-        notes=[collapsed_note] if collapsed_note else [],
+        notes=[
+            *([collapsed_note] if collapsed_note else []),
+            *(temporal_axis.notes if temporal_axis else ()),
+        ],
+        temporal=temporal_axis,
         data_warnings=[warning] if (warning := all_nan_warning(frame, y_measure)) else [],
         groups=groups,
         frame=frame,
@@ -817,6 +842,7 @@ def resolve_one(
         )
         figure.fanout_notes = plan.notes
         figure.data_warnings = plan.data_warnings
+        _attach_temporal(figure, plan)
         siblings = _difference_sibling_indices(plan, position)
         if siblings:
             with timing.phase("difference_siblings", extra=f"{len(siblings)} figure(s)"):
@@ -1729,6 +1755,29 @@ def _build_figure(
         # that draws nowhere is explained in scidb.log (diffbars D3).
         log_difference_bars(resolved)
         return resolved
+
+
+def _attach_temporal(figure: ResolvedPlot, plan: "_Plan") -> None:
+    """A datetime y axis onto one figure (``plan.temporal``, decided by
+    ``temporal.apply_temporal``): the axis the renderers draw, the zone in the
+    y title (unless the user wrote the title), and a log axis made inert with
+    the reason — a datetime cannot be logarithmic, and refusing would lose a
+    style the user may want back for another variable."""
+    axis = plan.temporal
+    if axis is None:
+        return
+    if figure.comparison is not None:
+        # A difference of datetimes is a DURATION (hours, compare._duration_
+        # scale): a number axis, titled by the comparison. Not a date axis.
+        Log.info("temporal: compared to reference — y is a duration in hours", layer=LAYER)
+    else:
+        figure.temporal = axis
+        if figure.spec.style.y_label is None and figure.labels.y:
+            figure.labels = replace(figure.labels, y=figure.labels.y + axis.title_suffix)
+    if figure.spec.style.log_y:
+        figure.spec = replace(figure.spec, style=replace(figure.spec.style, log_y=False))
+        figure.layout_notes = [*figure.layout_notes, LOG_REASON]
+        Log.info("temporal: log y axis ignored — %s", LOG_REASON, layer=LAYER)
 
 
 def _dash_styles(panels: list[Panel]) -> dict[str, str]:

@@ -25,6 +25,7 @@ from ..spec import PlotKind
 from ..table import natural_sort_key
 from ..paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
 from ..textsize import ResolvedSizes, sizes_for
+from ..temporal import apply_mpl_date_axis
 from ..weights import SAMPLE_EDGE_WIDTH, describe_weights, sample_weight, spaghetti_weight
 from ..ticklabels import (
     BRACKET_POLICY,
@@ -730,6 +731,10 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
                 ax.set_xscale("log")
             if style.log_y:
                 ax.set_yscale("log")
+            if resolved.temporal is not None:
+                # y holds wall-clock ms (temporal.py): ticks at round dates,
+                # labelled in the axis's format. The same source codegen emits.
+                apply_mpl_date_axis(ax.yaxis, resolved.temporal)
             limits = panel_y_limits(resolved, panel) if panel else resolved.y_limits
             if limits and resolved.kind is not PlotKind.HEATMAP:
                 # Data units, but never a non-positive end on a log axis

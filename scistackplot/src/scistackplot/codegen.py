@@ -36,6 +36,7 @@ from .reduce import (
     axis_values,
     nested_layer_orders,
     plan_layout,
+    planned_temporal,
     planned_y_limits,
     x_axis_title,
 )
@@ -64,6 +65,13 @@ from .spec import (
 from .table import MISSING_LEVEL, LongTable
 from .paper import PAPER, figure_rc_params, paper_axes_code, seaborn_err_kws
 from .textsize import ResolvedSizes, resolve_sizes
+from .temporal import (
+    TemporalAxis,
+    conversion_code,
+    factor_label_code,
+    mpl_date_axis_code,
+    normalize_mode,
+)
 from .weights import SAMPLE_EDGE_WIDTH, sample_weight, spaghetti_weight
 from .ylimits import GLOBAL_KEY, pinned_ends
 from .variants import (
@@ -213,11 +221,24 @@ def _generate_plot_function(
     shape = effective_shape(spec, table)
     collapsing = cell_collapses(spec, table)
 
+    # A datetime measure: the preview's axis (read off its plan, as the y
+    # limits are), so the export labels the ticks in the same format
+    # (scistackplot.temporal). `_preamble` converts the values.
+    is_temporal = (
+        spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal
+    )
+    temporal = planned_temporal(spec, base) if is_temporal else None
+    compared = temporal is not None and plan_comparison(spec, roles, table) is not None
+
     body: list[str] = []
     body.extend(_variant_preamble(spec, table))
     body.extend(_preamble(spec, table, roles, shape))
     y_plan = _y_limit_plan(spec, base, table, roles)
     body.extend(_plot_call(spec, table, roles, shape, y_plan, base))
+    if temporal is not None and not compared and "return g.figure" in body:
+        # Before the return: every panel's y axis reads the ms as dates.
+        at = len(body) - 1 - body[::-1].index("return g.figure")
+        body[at:at] = mpl_date_axis_code("g.axes.flat", temporal)
 
     lines = [
         f"def {name}({', '.join(function_params(spec))}):",
@@ -507,6 +528,19 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict, y_plan: _YLimitPla
     )
 
 
+def _factor_level_lines(table, factor: str) -> list[str]:
+    """A grouping column's labelling, as the source labels it
+    (``scistackplotdb.source._as_levels`` + ``LongTable.from_frame``): missing
+    named ``MISSING_LEVEL``, the rest as text — or, for a datetime column, the
+    identity labels the preview drew (``temporal.factor_label_code``)."""
+    info = table.factor(factor) if table.has_factor(factor) else None
+    if info is not None and info.temporal:
+        return factor_label_code(
+            factor, info.temporal_values, info.temporal_format, MISSING_LEVEL
+        )
+    return [f"df[{factor!r}] = df[{factor!r}].fillna({MISSING_LEVEL!r}).astype(str)"]
+
+
 def _preamble(spec, table, roles, shape) -> list[str]:
     """Melt, filters, 1-D explosion, aggregation — the order resolve() uses."""
     lines: list[str] = []
@@ -529,7 +563,7 @@ def _preamble(spec, table, roles, shape) -> list[str]:
                 [
                     f"# {group.label}: a column of the plotted variable, "
                     f"already on every row",
-                    f"df[{factor!r}] = df[{factor!r}].fillna({MISSING_LEVEL!r}).astype(str)",
+                    *_factor_level_lines(table, factor),
                     "",
                 ]
             )
@@ -551,10 +585,19 @@ def _preamble(spec, table, roles, shape) -> list[str]:
                 # grouping says nothing about is labelled, not dropped, or the
                 # exported figure would hold fewer observations than the
                 # previewed one.
-                f"df[{factor!r}] = df[{factor!r}].fillna({MISSING_LEVEL!r}).astype(str)",
+                *_factor_level_lines(table, factor),
                 "",
             ]
         )
+
+    # Any other datetime factor (a CSV column, a variant-free table's own
+    # column): labelled as the preview labels it, before the filters read it.
+    grouped = {group.factor_name for group in spec.factor_variables}
+    for info in table.factors:
+        if info.temporal and info.name not in grouped:
+            lines.extend([*factor_label_code(
+                info.name, info.temporal_values, info.temporal_format, None
+            ), ""])
 
     # A dict/struct variable arrives at the endpoint as one column per field
     # (scidb's multi_column storage). The interactive path melts it in
@@ -576,6 +619,12 @@ def _preamble(spec, table, roles, shape) -> list[str]:
                 "",
             ]
         )
+
+    # A datetime measure becomes wall-clock ms in the plot's time zone mode,
+    # after the melt (which makes the column) and before anything filters or
+    # averages it — where `reduce` applies `temporal.apply_temporal`.
+    if spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal:
+        lines.extend([*conversion_code(spec.y_measure, spec.time_zone), ""])
 
     # A 1-D measure drawn by a scalar kind is collapsed to one value per record
     # BEFORE anything is filtered — the same order `reduce._build_plan_timed`
@@ -1041,7 +1090,13 @@ def _compare_lines(
                 f"{frame}[{y!r}] = 100 * ({frame}[{y!r}] - {frame}['_ref']) / {frame}['_ref']"
             )
         else:
-            out.append(f"{frame}[{y!r}] = {frame}[{y!r}] - {frame}['_ref']")
+            if comparison.scale != 1.0:
+                # A datetime difference is a duration, in the plan's unit (hours).
+                out.append(
+                    f"{frame}[{y!r}] = ({frame}[{y!r}] - {frame}['_ref']) * {comparison.scale!r}"
+                )
+            else:
+                out.append(f"{frame}[{y!r}] = {frame}[{y!r}] - {frame}['_ref']")
         out.append(f"{frame} = {frame}.drop(columns='_ref').reset_index(drop=True)")
         return out
 
@@ -1925,12 +1980,16 @@ def _plot_call(
     # The y title the preview draws (`reduce._labels_for`): the style's, else
     # the measure's name alias, else its name — said as what was computed
     # when compared (`compare.comparison_title`, the preview's call too).
+    compared = plan_comparison(spec, roles, table)
     y_label = style.y_label or comparison_title(
-        plan_comparison(spec, roles, table),
+        compared,
         aliases.text.name(spec.y_measure, spec.y_measure),
         aliases.text,
         table,
     )
+    if style.y_label is None and compared is None and table.measure(spec.y_measure).temporal:
+        # The zone the datetime axis is shown in (reduce._attach_temporal).
+        y_label += TemporalAxis(mode=normalize_mode(spec.time_zone)).title_suffix
     lines.append(f"g.set_axis_labels({x_label!r}, {y_label!r})")
     if facets:
         # Same rule as the preview (render.base.panel_y_title): the facet values
@@ -2602,7 +2661,7 @@ def _y_limit_plan(
             y_axis.maximum,
             layer=LAYER,
         )
-        return _YLimitPlan(True, (float(y_axis.minimum), float(y_axis.maximum)))
+        return _YLimitPlan(True, pinned_ends(y_axis))  # dates read as axis ms
 
     # Baked-in limits must be the limits the PREVIEW draws, so they are read off
     # the preview's own plan (`reduce.planned_y_limits`, the one owner) rather

@@ -119,6 +119,24 @@ longer groups) is inert: the raw values are drawn and the reason is
 reported. The exported code and "Save data" compare the same way, and the saved value column is named after what it holds (`M, % change from session 1`). See
 `docs/claude/compare-to-reference.md`.
 
+## Datetimes
+
+A datetime column is plotted by the same rules as a number. As the measure,
+it sits on a time axis; as a factor, its levels read `2026-07-01 14:00 CEST`
+and are ordered by time. `PlotSpec.time_zone` decides how values recorded
+in different zones share the figure:
+
+```python
+spec = PlotSpec(measures=["SessionStart"], ..., time_zone="local")  # each value's own clock (default)
+spec = PlotSpec(measures=["SessionStart"], ..., time_zone="UTC")    # every aware value converted
+```
+
+A datetime measure offers no bar, since a bar would start at 1970. A log axis
+is ignored with a note. A difference comparison is drawn in hours, and a %
+change does not apply. Save data writes ISO times and names the zone in the
+header, and the exported code draws the same date ticks. See
+`docs/claude/plot-datetimes.md`.
+
 ## Save the data behind a figure
 
 The rows a plot is drawn from are available as a long table, so the

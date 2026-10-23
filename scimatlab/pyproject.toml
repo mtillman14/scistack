@@ -12,7 +12,7 @@ raw-options = { search_parent_directories = true, local_scheme = "no-local-versi
 # dependencies must be named here: CI's build job fails a wheel whose internal
 # dependency is not "==<its own version>".
 [tool.hatch.metadata.hooks.dependency-coversion]
-override-versions-of = ["scistack-db", "scifor"]
+override-versions-of = ["scistack-db", "scifor", "scicanonicalhash"]
 
 [project]
 name = "scimatlab"
@@ -23,6 +23,7 @@ requires-python = ">=3.10"
 dependencies = [
     "scistack-db",
     "scifor",
+    "scicanonicalhash",
 ]
 
 [project.optional-dependencies]

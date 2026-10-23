@@ -90,6 +90,9 @@ DESIGN_FIELDS: dict[str, SyncClass] = {
     "difference_bars": _P,
     # Compare-to-reference changes the values themselves.
     "comparison": _D,
+    # A datetime's wall clock depends on the zone it is read in, so a
+    # converted time is a different value (scistackplot.temporal).
+    "time_zone": _D,
     "filters": _D,
     "location_filter": _D,
     "factor_variables": _D,
@@ -107,6 +110,7 @@ LABELS: dict[str, str] = {
     "cell_statistic": "Cell statistic",
     "index_column": "Index column",
     "comparison": "Compare to reference",
+    "time_zone": "Time zone",
     "filters": "Filters",
     "location_filter": "Schema locations",
     "factor_variables": "Joined factors",

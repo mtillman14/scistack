@@ -76,6 +76,7 @@ def full_spec() -> PlotSpec:
         sample_color="subject",
         sample_in_legend=False,
         show_missing_levels=False,
+        time_zone="UTC",
         facet=FacetOptions(
             n_rows=2,
             n_cols=3,

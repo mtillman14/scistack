@@ -314,6 +314,12 @@ class ResolvedPlot:
     #: and legend; the renderer calls the function instead of drawing that
     #: kind's marks. Not serialised.
     custom: Any = field(default=None, repr=False, compare=False)
+    #: A datetime y measure (``temporal.TemporalAxis``): the y values are
+    #: wall-clock ms since 1970 in its mode, and every renderer draws them as
+    #: dates (plotly ``type: "date"``; matplotlib
+    #: ``temporal.apply_mpl_date_axis``; codegen the same source). None for a
+    #: numeric axis. Set by ``reduce._attach_temporal``.
+    temporal: Any = None
 
     @property
     def figure_label(self) -> str:

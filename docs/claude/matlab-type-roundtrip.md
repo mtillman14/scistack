@@ -19,7 +19,8 @@ saving a MATLAB value and loading it back should produce the identical type and 
 | `logical` scalar | `py.bool` | native | Exact |
 | `logical` array | numpy bool ndarray | native | Exact |
 | `char` | `py.str` | native | Loads back as `string`, not `char` |
-| `datetime` | ISO 8601 string | VARCHAR | Exact (if format matches) |
+| `datetime` scalar | `pd.Timestamp` / `pd.NaT` (int64 ns + TimeZone, `datetime_to_python.m`) | TIMESTAMP_NS (UTC) + `__tz` | Exact: value, ns, TimeZone, NaT (datetime-roundtrip.md) |
+| `datetime` array as ONE value | ISO 8601 strings (no zone; WARN when zoned) | VARCHAR[] | Out of scope: use a `to_db`/`from_db` class |
 | `cell` array | `py.list` (recursive) | varies | Exact per element |
 | `table` | `pandas.DataFrame` | multi-column DuckDB or custom | See per-column rules below |
 | Scalar `struct` | `py.dict` (recursive) | one DuckDB column per field (`multi_column`), or JSON when `nested` | Exact — but see below |
@@ -68,7 +69,7 @@ with `data.(col_name)` and processed:
 | Numeric Nx1 vector | `to_python(col)` → 1-D ndarray | float64/int64 | Standard path |
 | Numeric NxM matrix (M>1) | Split into cell of 1xM row vectors → list of 1-D ndarrays | object | pandas rejects 2-D ndarrays as column values (see below) |
 | String array | `to_python(col)` → list of strings | object (pandas <3.0) or StringDtype (pandas 3.0+) | See pandas 3.0 section |
-| Datetime array | Format to ISO string first | object (string) | — |
+| Datetime Nx1 column | `datetime_to_python(col, 'column')`: one crossing | datetime64[ns(, zone)] | Zone + NaT kept |
 | Categorical | Convert to string first | object | — |
 | Struct array | `to_python(col)` → list of dicts | object | Each struct → dict recursively |
 | Cell array | `to_python(col)` → list (recursive) | object | — |
@@ -95,7 +96,7 @@ When loading a pandas DataFrame back to a MATLAB table:
 | pandas dtype | Conversion | MATLAB result |
 |---|---|---|
 | numeric (float64, int64, etc.) | `from_python(col.to_numpy())` → `double()` | Numeric column vector |
-| datetime64 | ISO string extraction → `datetime()` | Datetime column |
+| datetime64[ns(, zone)] | `datetime_from_python` (int64 ns bytes + TimeZone) | Datetime column in its zone, NaT kept |
 | object (dicts) | Element-by-element `from_python` → cell of structs | Cell column of structs |
 | object (uniform numeric lists) | Element-by-element `from_python` → cell of row vectors → `try_stack_numeric` → `vertcat` | NxM numeric matrix |
 | object (strings) | Element-by-element `from_python` → cell of strings → `try_stack_strings` → `vertcat` | String column vector |

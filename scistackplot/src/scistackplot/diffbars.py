@@ -169,7 +169,7 @@ DIFFERENCE_BAR_KINDS: tuple[str, ...] = (
 )
 
 
-def unavailable(spec: "PlotSpec", shape: "Shape") -> str | None:
+def unavailable(spec: "PlotSpec", shape: "Shape", *, temporal: bool = False) -> str | None:
     """Why this figure cannot carry difference bars, or None.
 
     The one statement, shipped in ``capabilities`` so the GUI greys the
@@ -188,6 +188,10 @@ def unavailable(spec: "PlotSpec", shape: "Shape") -> str | None:
         return "An x-y plot has no ticks to join."
     if shape is not Shape.SCALAR:
         return f"The drawn shape is {shape}; difference bars need one value per row."
+    if temporal:
+        # Their labels are a difference of the plotted values; for a datetime
+        # that is a duration, which they do not format yet (plan-plot-datetimes).
+        return "Difference bars are not available for a datetime measure yet."
     return None
 
 
@@ -195,7 +199,11 @@ def unavailable(spec: "PlotSpec", shape: "Shape") -> str | None:
 def carries_difference_bars(resolved: "ResolvedPlot") -> bool:
     """Whether this DRAWN figure can carry bars — the renderers' guard (the
     spec-level reason for the GUI is :func:`unavailable`)."""
-    return str(resolved.kind) in DIFFERENCE_BAR_KINDS and resolved.spec.x_measure is None
+    return (
+        str(resolved.kind) in DIFFERENCE_BAR_KINDS
+        and resolved.spec.x_measure is None
+        and resolved.temporal is None
+    )
 
 
 # ---------------------------------------------------------------------------

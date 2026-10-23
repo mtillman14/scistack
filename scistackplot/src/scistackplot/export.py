@@ -49,6 +49,7 @@ from .roles import chain_cut, collapse_order, collapse_steps
 from .shape import Shape
 from .spec import LocationFilter, PlotSpec
 from .table import LongTable
+from .temporal import TemporalAxis, from_axis_ms, normalize_mode, zone_title
 
 LAYER = "scistackplot"
 
@@ -201,6 +202,7 @@ def data_export_options(
     # Compare to reference: the value columns are NAMED after what they hold
     # (`compare.value_column`), so a saved file cannot pass for raw data.
     comparison = plan_comparison(spec, roles, table)
+    suffix = _temporal_suffix(spec, table, comparison)
 
     def depth(key: str | None, averaged: list[str], label: str) -> DataDepth:
         columns = _columns(present, averaged, spec, table)
@@ -215,9 +217,11 @@ def data_export_options(
             averaged=averaged,
             columns=columns,
             wide_columns=wide,
-            header=_written(columns, [spec.y_measure], comparison),
+            header=_written(columns, [spec.y_measure], comparison, suffix),
             wide_header=(
-                _written(wide, _wide_values(wide, columns, field_name, spec), comparison)
+                _written(
+                    wide, _wide_values(wide, columns, field_name, spec), comparison, suffix
+                )
                 if wide is not None
                 else None
             ),
@@ -386,6 +390,18 @@ def plot_data(
                     [c for c in frame.columns if c not in chosen.columns],
                     layer=LAYER,
                 )
+            # A datetime measure is written as the axis shows it: ISO wall-clock
+            # text in the plot's time zone mode, the zone said in the header
+            # (`_temporal_suffix`). Compared, it is hours and stays a number.
+            if plan.temporal is not None and comparison is None and y in frame.columns:
+                frame[y] = [
+                    "" if v != v else from_axis_ms(v).isoformat()
+                    for v in pd.to_numeric(frame[y], errors="coerce")
+                ]
+                Log.info(
+                    "[plot-data] %s written as wall-clock datetimes in %s",
+                    y, zone_title(plan.temporal.mode), layer=LAYER,
+                )
             # Last: every step above reads the frame's own names. A compared
             # value column is written under what it holds (`DataDepth.header`,
             # the header the picker showed).
@@ -475,10 +491,27 @@ def _wide_header(
     return [*index, *_wide_names(levels, measures, index)]
 
 
-def _written(columns: list[str], values: list[str], comparison) -> list[str]:
+def _written(
+    columns: list[str], values: list[str], comparison, suffix: str = ""
+) -> list[str]:
     """``columns`` as the file writes them: each of ``values`` (the columns
-    holding the compared measure) named by ``compare.value_column``."""
-    return [value_column(comparison, name) if name in values else name for name in columns]
+    holding the compared measure) named by ``compare.value_column``, plus
+    ``suffix`` (a datetime measure's zone: ``M (local time)``)."""
+    return [
+        value_column(comparison, name) + suffix if name in values else name
+        for name in columns
+    ]
+
+
+def _temporal_suffix(spec: PlotSpec, table: LongTable, comparison) -> str:
+    """The zone a datetime measure's values are written in, said in its
+    header, as the y title says it (``TemporalAxis.title_suffix``). Nothing
+    for a number, or when compared (the values are then hours)."""
+    if comparison is not None or spec.y_measure not in table.measure_names:
+        return ""
+    if not table.measure(spec.y_measure).temporal:
+        return ""
+    return TemporalAxis(mode=normalize_mode(spec.time_zone)).title_suffix
 
 
 def _wide_values(

@@ -328,9 +328,10 @@ classdef BaseVariable < dynamicprops
                 data_col = codec.encode(data_col(:));
             end
 
-            if isdatetime(data_col)
-                data_col = string(data_col, 'yyyy-MM-dd''T''HH:mm:ss.SSS');
-            end
+            % A datetime data column: one pd.Timestamp / NaT per record, in
+            % the column's zone (datetime_to_python; it was ISO text, so the
+            % zone and NaT were lost and the column stored as VARCHAR).
+            is_datetime_col = isdatetime(data_col) && isvector(data_col);
             if iscategorical(data_col)
                 if any(isnan(str2double(string(data_col))))
                     data_col = string(data_col);
@@ -339,7 +340,9 @@ classdef BaseVariable < dynamicprops
                 end
             end
             py_heights = py.None;  % overridden to a heights array by Strategy A
-            if isnumeric(data_col)
+            if is_datetime_col
+                py_data = scidb.internal.datetime_to_python(data_col, 'list');
+            elseif isnumeric(data_col)
                 py_data = py.numpy.array(data_col(:)');
             elseif isstring(data_col)
                 py_data = py.list(cellfun(@char, num2cell(data_col(:)'), ...

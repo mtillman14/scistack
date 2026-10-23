@@ -36,6 +36,7 @@ The design history is in `.claude/plot-studio-sidebar-redesign.md`.
 | **Data** | Variants | variant rows, + Add | `variant_sets` |
 | | Schema keys | location picker button | `location_filter` |
 | | Filters | level pickers, range | `filters` |
+| | Time zone (only when a datetime is in play; `capabilities.time_zone`) | Place at: Local time / Convert to <zone> / Other zone… (docs/claude/plot-datetimes.md) | `time_zone` |
 | **Chart** | Plot type | kind grid | `kind` |
 | | | (opened on a `plot_` node) the function as the only kind; its call level, one "as table" checkbox per input, reason, notes (`capabilities.custom`, docs/claude/custom-plot-kinds.md) | `custom.as_table` |
 | | | Per-record value (1-D only) | `cell_statistic` |

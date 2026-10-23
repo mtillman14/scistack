@@ -124,6 +124,13 @@ import ColorsSection, { type ProjectColorEdit } from './ColorsSection'
 import PanelsSection from './PanelsSection'
 import DifferenceBarsSection from './DifferenceBarsSection'
 import CompareSection from './CompareSection'
+import TimeZoneSection from './TimeZoneSection'
+import {
+  formatLimit,
+  parseLimitText,
+  type TemporalMeta,
+  type TimeZoneCapability,
+} from './timeZone'
 import { compareSummary, writtenHeader, type CompareCapability, type CompareMeta, type Comparison } from './compare'
 import {
   IDLE,
@@ -556,6 +563,9 @@ interface Capabilities {
   /** Compare to reference: the layers + levels it may name, the default,
    *  and the current comparison's state (`scistackplot.compare`). */
   comparison?: CompareCapability
+  /** Data > Time zone: whether a datetime is in play, the mode, the zones the
+   *  data holds (`scistackplot.temporal.time_zone_summary`). */
+  time_zone?: TimeZoneCapability
   /** Whether any factor is collapsed, i.e. whether there is a sample. */
   has_sample: boolean
   /** "Save data (CSV)": availability and the depth picker's choices. */
@@ -642,8 +652,9 @@ interface FacetOptions {
  */
 interface YAxis {
   scope?: string[]
-  minimum?: number | null
-  maximum?: number | null
+  /** A number, or ISO date text on a datetime axis (`temporal.parse_limit`). */
+  minimum?: number | string | null
+  maximum?: number | string | null
 }
 
 /**
@@ -733,6 +744,9 @@ interface Spec {
   /** Whether an x level the plot holds but this figure has no data for
    *  keeps an empty tick (PlotSpec.show_missing_levels); absent = true. */
   show_missing_levels?: boolean
+  /** How datetimes holding several zones share the figure: "local" (each
+   *  value's own clock) or a zone to convert to (`scistackplot.temporal`). */
+  time_zone?: string
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
@@ -1555,6 +1569,11 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, show_missing_levels: on } : prev))
   }, [])
 
+  /** Data > Time zone: "local" or a zone to convert every aware value to. */
+  const setTimeZone = useCallback((mode: string) => {
+    setSpec(prev => (prev ? { ...prev, time_zone: mode } : prev))
+  }, [])
+
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
     setSpec(prev => (prev ? { ...prev, facet: { ...(prev.facet ?? {}), ...patch } } : prev))
   }, [])
@@ -2269,6 +2288,11 @@ export default function PlotStudio({
   const compareMeta =
     (figures[0]?.figure?.layout?.meta as { comparison?: CompareMeta | null } | undefined)
       ?.comparison ?? null
+  // What Data > Time zone says about the drawn figure: its datetime axis and
+  // notes (scistackplot.temporal.TemporalAxis); null for a number axis.
+  const temporalMeta =
+    (figures[0]?.figure?.layout?.meta as { temporal?: TemporalMeta | null } | undefined)
+      ?.temporal ?? null
   const figureDiffMeta = (figure: FigurePayload) =>
     (figure.figure?.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
       ?.difference_bars ?? null
@@ -3145,7 +3169,9 @@ export default function PlotStudio({
                   onChange={levels => setLevelFilter(factor.name, levels)}
                 />
               ))}
-              {spec && capabilities?.shape === 'scalar' && (
+              {/* A range on a datetime measure would be typed as numbers of
+                  ms; not offered (plan-plot-datetimes). */}
+              {spec && capabilities?.shape === 'scalar' && !capabilities?.time_zone?.measure && (
                 <RangeFilter
                   measure={spec.measures[0]}
                   filter={(spec.filters ?? []).find(f => f.column === spec.measures[0])}
@@ -3155,6 +3181,22 @@ export default function PlotStudio({
                 />
               )}
             </Section>
+
+            {/* Only when a datetime is in play: where values holding several
+                zones sit (`PlotSpec.time_zone`, scistackplot.temporal). */}
+            {capabilities?.time_zone?.applies && (
+              <Section
+                title="Time zone"
+                hint="Datetimes recorded in different zones (a subject in Berlin, another in New York) can be placed at each one's own local clock time, so times of day compare, or converted to one zone, so instants line up. Values with no zone are placed as recorded."
+              >
+                <TimeZoneSection
+                  mode={spec?.time_zone}
+                  capability={capabilities.time_zone}
+                  meta={temporalMeta}
+                  onChange={setTimeZone}
+                />
+              </Section>
+            )}
           </Group>
 
           {/* Plot type is the first real decision: it decides what Grouping,
@@ -3757,11 +3799,15 @@ export default function PlotStudio({
                   label="Min"
                   value={spec?.y_axis?.minimum ?? null}
                   onChange={v => setYAxis({ minimum: v })}
+                  temporal={temporalMeta !== null}
+                  onDate={v => setYAxis({ minimum: v })}
                 />
                 <LimitInput
                   label="Max"
                   value={spec?.y_axis?.maximum ?? null}
                   onChange={v => setYAxis({ maximum: v })}
+                  temporal={temporalMeta !== null}
+                  onDate={v => setYAxis({ maximum: v })}
                 />
               </div>
               {/* The rule AND the numbers it produced: "why is this 0.61?" has to
@@ -3771,7 +3817,7 @@ export default function PlotStudio({
                   ? 'Same limits everywhere'
                   : `Separate limits per ${yScope.join(', ')}`}
                 {appliedYLimits
-                  ? ` — ${appliedYLimits[0].toPrecision(3)} to ${appliedYLimits[1].toPrecision(3)}`
+                  ? ` — ${formatLimit(appliedYLimits[0], temporalMeta !== null)} to ${formatLimit(appliedYLimits[1], temporalMeta !== null)}`
                   : ''}
                 {panelOverrideCount > 0
                   ? ` (${panelOverrideCount} panel${panelOverrideCount === 1 ? '' : 's'} set in Panels)`
@@ -4849,8 +4895,13 @@ function GridSizeInput({ label, value, effective, locked = false, onChange }: Gr
 
 interface LimitInputProps {
   label: string
-  value: number | null
+  /** A number, or the ISO date text a datetime axis was given. */
+  value: number | string | null
   onChange: (value: number | null) => void
+  /** A datetime axis (`layout.meta.temporal`): the box takes date text
+   *  (`timeZone.parseLimitText`), committed through `onDate`. */
+  temporal?: boolean
+  onDate?: (value: string) => void
   /** What an empty box shows; the value in effect when known (default "auto"). */
   placeholder?: string
 }
@@ -4863,7 +4914,14 @@ interface LimitInputProps {
  * at zero — the opposite of what clearing means. A half-typed "-" or "1e" is
  * held as-is too, rather than snapping the axis around while it is being typed.
  */
-function LimitInput({ label, value, onChange, placeholder = 'auto' }: LimitInputProps) {
+function LimitInput({
+  label,
+  value,
+  onChange,
+  temporal = false,
+  onDate,
+  placeholder = 'auto',
+}: LimitInputProps) {
   const [text, setText] = useState<string | null>(null)
   const shown = text ?? (value === null || value === undefined ? '' : String(value))
   return (
@@ -4871,20 +4929,26 @@ function LimitInput({ label, value, onChange, placeholder = 'auto' }: LimitInput
       <span style={styles.gridSizeLabel}>{label}</span>
       <input
         type="text"
-        inputMode="decimal"
+        inputMode={temporal ? 'text' : 'decimal'}
         value={shown}
         placeholder={placeholder}
         onChange={e => {
           const next = e.target.value
           setText(next)
-          if (next.trim() === '') onChange(null)
-          else if (Number.isFinite(Number(next))) onChange(Number(next))
+          const parsed = parseLimitText(next, temporal)
+          if (parsed === undefined) return // still typing
+          if (typeof parsed === 'string') onDate?.(parsed)
+          else onChange(parsed)
         }}
         onBlur={() => setText(null)}
-        title="Blank computes the limit from the data"
+        title={
+          temporal
+            ? 'A date and time (2026-07-01 12:00) on the time axis; blank computes it'
+            : 'Blank computes the limit from the data'
+        }
         style={{
           ...styles.select,
-          width: 72,
+          width: temporal ? 128 : 72,
           ...(value === null || value === undefined ? styles.gridSizeAuto : null),
         }}
       />
