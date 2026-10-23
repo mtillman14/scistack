@@ -137,6 +137,37 @@ change does not apply. Save data writes ISO times and names the zone in the
 header, and the exported code draws the same date ticks. See
 `docs/claude/plot-datetimes.md`.
 
+## Histograms and regressions
+
+Two kinds put a number line on x. A **histogram** bins the measure itself:
+
+```python
+from scistackplot import BinMode, HistogramOptions, HistStat
+
+spec = PlotSpec(
+    measures=["StepLength"],
+    roles={"session": Role.GROUP, "trial": Role.COLLAPSE},   # it counts the sample
+    groups=["session"],                                     # one layer, its colour
+    kind=PlotKind.HISTOGRAM,
+    histogram=HistogramOptions(bins=BinMode.WIDTH, bin_width=0.05, stat=HistStat.PERCENT),
+)
+```
+
+One bin mode is active at a time: `auto` (numpy's estimator), `count`, or
+`width` (bins start at a multiple of the width). A datetime measure bins
+along a date axis with a duration width (`"1h"`, `"7D"`). The edges are
+decided once per figure, so every panel compares bin for bin. Percent and
+density are per colour level, and colour levels overlay, stack or dodge.
+
+A **regression** plots `x_measure` against the measure and draws a
+least-squares line per colour level with `R² = …, p = …, n = …` on the
+panel (`RegressionOptions`: the line, the text, an optional 95% band, one
+line per colour or per panel, the corner). The fit is
+`csvstats.regression.linear_fit`, and the exported code calls it too. A
+datetime `x_measure` is drawn on a date axis. Log axes are ignored on both
+kinds. "Save data" adds the bars or the fits as a table. See
+`docs/claude/histogram-and-regression.md`.
+
 ## Save the data behind a figure
 
 The rows a plot is drawn from are available as a long table, so the

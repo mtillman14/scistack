@@ -115,6 +115,14 @@ from .shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
 from .spec import (
     Aggregation,
+    BinMode,
+    CONTINUOUS_X_KINDS,
+    FitBy,
+    HistMultiple,
+    HistStat,
+    HistogramOptions,
+    RegressionOptions,
+    StatsCorner,
     LegacySpecError,
     ErrorBand,
     FacetOptions,
@@ -141,6 +149,8 @@ from .spec import (
     YAxis,
     grid_shape_for,
 )
+from .bins import BinEdges, BinError, bin_edges
+from .fits import PanelFit, annotation_text
 from .textsize import (
     BANDS,
     DEFAULT_TEXT_RATIOS,
@@ -228,6 +238,19 @@ __all__ = [
     "FieldClass",
     "FacetOptions",
     "YAxis",
+    "BinMode",
+    "CONTINUOUS_X_KINDS",
+    "FitBy",
+    "HistMultiple",
+    "HistStat",
+    "HistogramOptions",
+    "RegressionOptions",
+    "StatsCorner",
+    "BinEdges",
+    "BinError",
+    "bin_edges",
+    "PanelFit",
+    "annotation_text",
     # per-panel overrides (docs/claude/per-panel-overrides.md)
     "PanelOverride",
     "override_for",

@@ -269,7 +269,8 @@ def tick_format(span_ms: float) -> tuple[str, str]:
 
 @dataclass(frozen=True)
 class TemporalAxis:
-    """A datetime y axis, carried on ``ResolvedPlot.temporal``."""
+    """A datetime axis: y on ``ResolvedPlot.temporal``, x on
+    ``ResolvedPlot.temporal_x``. The same object describes either side."""
 
     mode: str = LOCAL
     #: The tick format, chosen from the data's span (:func:`tick_format`).
@@ -347,14 +348,17 @@ def apply_mpl_date_axis(axis, temporal: TemporalAxis) -> None:
     _MPL_NAMESPACE["_scistack_date_axis"](axis, temporal.strftime)
 
 
-def mpl_date_axis_code(axes: str, temporal: TemporalAxis) -> list[str]:
-    """Generated-code lines: define the helper, then apply it to each axes'
-    y axis in ``axes`` (an expression: ``g.axes.flat``)."""
-    body = MPL_DATE_AXIS_SOURCE.strip("\n").splitlines()
+def mpl_date_axis_code(
+    axes: str, temporal: TemporalAxis, *, side: str = "y", define: bool = True
+) -> list[str]:
+    """Generated-code lines: define the helper (unless ``define`` is False —
+    it already was), then apply it to each axes' ``side`` axis (``"x"`` or
+    ``"y"``) in ``axes`` (an expression: ``g.axes.flat``)."""
+    body = MPL_DATE_AXIS_SOURCE.strip("\n").splitlines() if define else []
     return [
         *body,
         f"for _ax in {axes}:",
-        f"    _scistack_date_axis(_ax.yaxis, {temporal.strftime!r})",
+        f"    _scistack_date_axis(_ax.{side}axis, {temporal.strftime!r})",
     ]
 
 
@@ -542,9 +546,24 @@ def apply_temporal(spec, table):
     numbers), which is how capability, validation, compare and the renderers
     know the axis is time.
     """
+    return _convert(spec, table, spec.y_measure)
+
+
+def apply_temporal_x(spec, table):
+    """:func:`apply_temporal` for the X measure of an x-y plot: a datetime
+    ``x_measure`` rewritten to axis ms in the same mode, with its own
+    :class:`TemporalAxis` (its own span decides its tick format). Returns
+    ``(table, TemporalAxis | None)``, the table unchanged when there is no
+    datetime x. Runs right after :func:`apply_temporal`, on its table."""
+    if spec.x_measure is None or spec.x_measure == spec.y_measure:
+        return table, None
+    return _convert(spec, table, spec.x_measure)
+
+
+def _convert(spec, table, measure):
+    """One measure of ``table`` to axis ms (see :func:`apply_temporal`)."""
     from dataclasses import replace
 
-    measure = spec.y_measure
     if measure not in temporal_measures(table) or measure not in table.frame.columns:
         return table, None
     column = table.frame[measure]
@@ -577,11 +596,19 @@ def time_zone_summary(spec, table) -> dict:
     is in play (the plotted measure, or any factor), the current mode, and
     the zones the data holds (offered first in the zone picker)."""
     measure = spec.y_measure if spec.measures else None
-    temporal_measure = bool(measure) and measure in temporal_measures(table)
+    # The y measure and an x-y plot's x measure: both are drawn on the mode.
+    measured = [
+        name
+        for name in dict.fromkeys([measure, getattr(spec, "x_measure", None)])
+        if name and name in temporal_measures(table)
+    ]
+    temporal_measure = bool(measured)
     factors = [f.name for f in table.factors if getattr(f, "temporal", False)]
     zones: dict[str, None] = {}
-    if temporal_measure and measure in table.frame.columns:
-        column = table.frame[measure]
+    for name in measured:
+        if name not in table.frame.columns:
+            continue
+        column = table.frame[name]
         if pd.api.types.is_datetime64_any_dtype(column.dtype):
             if column.dt.tz is not None:
                 zones[zone_label(pd.Timestamp(0, tz=column.dt.tz)) or "UTC"] = None
@@ -603,7 +630,10 @@ def time_zone_summary(spec, table) -> dict:
         mode, problem = spec.time_zone, str(exc)
     return {
         "applies": temporal_measure or bool(factors),
-        "measure": temporal_measure,
+        # The y measure itself is a datetime (the range filter keys off this).
+        "measure": bool(measure) and measure in measured,
+        # An x-y plot's x measure is a datetime.
+        "x_measure": any(name != measure for name in measured),
         "factors": factors,
         "mode": mode,
         "zones": sorted(zones),

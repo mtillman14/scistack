@@ -30,6 +30,9 @@ from .roles import (
     overlay_steps,
     overlay_unavailable,
     kind_requirement,
+    REGRESSION_NEEDS_X,
+    SAMPLE_NEEDING_KINDS,
+    continuous_kind_problem,
     role_for_new_grouping,
     roles_for_kind,
     sample_key,
@@ -42,11 +45,11 @@ from .temporal import BAR_REASON, time_zone_summary
 #: Kinds that summarize several rows per x position into one mark.
 DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.BAND)
 
-#: Kinds that cannot be drawn without a sample — see ``roles.kind_requirement``,
-#: which is the one statement of what each kind needs. BAR is deliberately NOT
-#: here: a bar of single values (no error bar) is a legitimate figure, and the
-#: opening state of a scalar measure.
-SAMPLE_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAND)
+#: Kinds that cannot be drawn without a sample — ``roles.SAMPLE_NEEDING_KINDS``,
+#: read by ``roles.kind_requirement``, the one statement of what each kind
+#: needs. BAR is deliberately NOT here: a bar of single values (no error bar)
+#: is a legitimate figure, and the opening state of a scalar measure.
+SAMPLE_KINDS = SAMPLE_NEEDING_KINDS
 
 #: The order the Factors dropdown lists roles in: the same verb at decreasing
 #: granularity — figure, panel — then the one option that removes levels
@@ -102,6 +105,8 @@ _GROUPING_HINTS: dict[PlotKind, str] = {
     PlotKind.LINE: "One line per combination",
     PlotKind.BAND: "One band per combination",
     PlotKind.HEATMAP: "A heatmap cannot be grouped — separate panels or figures",
+    PlotKind.HISTOGRAM: "One histogram per level, in its own colour — one layer at most",
+    PlotKind.REGRESSION: "One point set per combination; one fitted line per colour",
 }
 
 
@@ -119,6 +124,8 @@ def grouping_hint(kind: PlotKind, shape: Shape, has_x_measure: bool = False) -> 
     """What the grouping list means for this kind, for the section header."""
     if shape is Shape.MATRIX_2D:
         return _GROUPING_HINTS[PlotKind.HEATMAP]
+    if kind in (PlotKind.HISTOGRAM, PlotKind.REGRESSION):
+        return _GROUPING_HINTS[kind]
     if has_x_measure and kind is not PlotKind.LINE:
         return "One point set per combination (x comes from the x measure)"
     if shape is Shape.SERIES_1D and kind in (PlotKind.LINE, PlotKind.BAND):
@@ -228,8 +235,8 @@ def available_plots(
 
     if has_x_measure:
         # x comes from a second measure: a relational scatter, optionally with
-        # a connecting line when the x measure is ordered.
-        return [PlotKind.SCATTER, PlotKind.LINE]
+        # a connecting line when the x measure is ordered, or a regression.
+        return [PlotKind.SCATTER, PlotKind.LINE, PlotKind.REGRESSION]
 
     def scalar_kinds() -> list[PlotKind]:
         return [
@@ -241,6 +248,7 @@ def available_plots(
                 PlotKind.SPAGHETTI,
                 PlotKind.BOX,
                 PlotKind.VIOLIN,
+                PlotKind.HISTOGRAM,
             )
             if kind_requirement(kind, Shape.SCALAR, roles, n_groups) is None
             and not (temporal and kind is PlotKind.BAR)
@@ -299,19 +307,33 @@ def why_unavailable(
     collapsible: bool = False,
     n_groups: int = 0,
     temporal: bool = False,
+    has_x_measure: bool = False,
 ) -> str | None:
     """
     Explain a kind's absence, for GUI tooltips on disabled options.
 
-    Returns None when the kind IS available. ``collapsible`` and ``n_groups``
-    carry the same meaning as in :func:`available_plots` and must be passed
-    the same way, or a kind the panel offers would come with a reason it is
-    refused.
+    Returns None when the kind IS available. ``collapsible``, ``n_groups``
+    and ``has_x_measure`` carry the same meaning as in
+    :func:`available_plots` and must be passed the same way, or a kind the
+    panel offers would come with a reason it is refused.
     """
     if kind in available_plots(
-        shape, roles, collapsible=collapsible, n_groups=n_groups, temporal=temporal
+        shape,
+        roles,
+        has_x_measure=has_x_measure,
+        collapsible=collapsible,
+        n_groups=n_groups,
+        temporal=temporal,
     ):
         return None
+    if kind is PlotKind.REGRESSION and not has_x_measure:
+        return REGRESSION_NEEDS_X
+    if has_x_measure:
+        from .roles import HISTOGRAM_NO_X
+
+        if kind is PlotKind.HISTOGRAM:
+            return HISTOGRAM_NO_X
+        return "With an X variable, the kinds are scatter, line and regression; clear it for the others."
     if temporal and kind is PlotKind.BAR:
         return BAR_REASON
     if shape is Shape.MATRIX_2D:
@@ -398,6 +420,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
             collapsible=collapsible,
             n_groups=len(kind_groups),
             temporal=temporal,
+            has_x_measure=has_x_measure,
         )
         if reason is None:
             # The layer cap, judged as THIS kind reads the grouping and at the
@@ -492,6 +515,55 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # The Time zone control: whether a datetime is in play, the mode, and
         # the zones the data holds (temporal.time_zone_summary).
         "time_zone": time_zone_summary(spec, derived),
+        # The Histogram / Regression sections: whether they apply to this
+        # kind, and the problem with the settings, if any (roles.
+        # continuous_kind_problem — the message validate refuses with).
+        "histogram": histogram_summary(spec, derived),
+        "regression": regression_summary(spec, derived),
+        # The X variable picker's current state. Which variables it may offer
+        # is the source's question (`DataSource.joinable_with`), answered by
+        # the GUI's variable list, not by this one loaded table.
+        "x_measure": {
+            "current": spec.x_measure,
+            "temporal": bool(
+                spec.x_measure is not None
+                and spec.x_measure in derived.measure_names
+                and derived.measure(spec.x_measure).temporal
+            ),
+        },
+    }
+
+
+def histogram_summary(spec: PlotSpec, table: LongTable) -> dict:
+    """The Histogram section's data model: whether it applies, whether the
+    binned measure is a datetime (the width then takes a duration), the
+    current settings and their problem (``bins.histogram_problem``)."""
+    from .bins import MAX_BINS
+
+    temporal = spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal
+    applies = spec.kind is PlotKind.HISTOGRAM
+    return {
+        "applies": applies,
+        "temporal": bool(temporal),
+        "settings": spec.histogram.to_dict(),
+        "problem": continuous_kind_problem(spec, table) if applies else None,
+        "max_bins": MAX_BINS,
+    }
+
+
+def regression_summary(spec: PlotSpec, table: LongTable) -> dict:
+    """The Regression section's data model."""
+    applies = spec.kind is PlotKind.REGRESSION
+    temporal_x = (
+        spec.x_measure is not None
+        and spec.x_measure in table.measure_names
+        and table.measure(spec.x_measure).temporal
+    )
+    return {
+        "applies": applies,
+        "temporal_x": bool(temporal_x),
+        "settings": spec.regression.to_dict(),
+        "problem": continuous_kind_problem(spec, table) if applies else None,
     }
 
 

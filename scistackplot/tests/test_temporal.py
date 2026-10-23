@@ -279,11 +279,26 @@ class TestResolve:
         )
         assert figure.y_limits == (wall("2026-07-01 00:00"), wall("2026-07-09 00:00"))
 
-    def test_temporal_x_measure_refused(self, frame):
+    def test_temporal_x_measure_is_a_date_axis(self, frame):
+        """Lifted 2026-10-22 with the continuous x-y kinds: a datetime x
+        measure is converted like a y one and drawn on a date x axis."""
         f = frame.assign(X=frame["When"], Y=1.0)
         t = LongTable.from_frame(f, factors=["subject", "session"], measures=["Y", "X", "When"])
-        with pytest.raises(RoleError, match="datetime x axis"):
-            resolve(PlotSpec(measures=["Y"], x_measure="X", kind=PlotKind.SCATTER), t)
+        (figure,) = resolve(
+            PlotSpec(
+                measures=["Y"],
+                x_measure="X",
+                kind=PlotKind.SCATTER,
+                roles={"subject": Role.GROUP, "session": Role.GROUP},
+                groups=["subject", "session"],
+            ),
+            t,
+        )
+        assert figure.temporal is None  # y is a number
+        assert figure.temporal_x is not None and figure.temporal_x.mode == LOCAL
+        assert figure.labels.x.endswith("(local time)")
+        xs = pd.concat([p.frame["__x"] for p in figure.panels]).dropna()
+        assert wall("2026-07-01 14:00") in set(xs)
 
 
 class TestCompare:

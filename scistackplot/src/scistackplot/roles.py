@@ -27,7 +27,7 @@ from scistacklog import Log
 
 from .panels import y_titles_problem
 from .shape import Shape
-from .spec import MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
+from .spec import CONTINUOUS_X_KINDS, MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
 from .table import LongTable
 from .temporal import BAR_REASON, normalize_mode
 from .variants import VARIABLE_COLUMN, VARIANT_FACTOR
@@ -349,6 +349,11 @@ def sample_key(roles: dict[str, Role], table: LongTable) -> str | None:
 #: none averages them further. The kinds that did — scatter, strip, line,
 #: spaghetti — were ``MEAN_DRAWING_KINDS``, deleted.)
 UNIT_KINDS = (PlotKind.LINE, PlotKind.SPAGHETTI)
+
+#: Kinds drawn OVER a sample — a distribution, an error band, a histogram's
+#: counts — and so refused until some factor is collapsed
+#: (``kind_requirement``; ``with_requirements_for`` supplies one).
+SAMPLE_NEEDING_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAND, PlotKind.HISTOGRAM)
 
 
 def line_recurrence(
@@ -846,7 +851,14 @@ def grouping_layers(
             spec, roles, table, sample
         )[0]:
             units = [name for name in sample if name not in groups]
-    if spec.x_measure is not None or shape is Shape.SERIES_1D:
+    if kind is PlotKind.HISTOGRAM:
+        # One histogram per level of the ONE grouping layer a histogram may
+        # have (`kind_requirement`), always painted: overlaid bars in one
+        # colour could not be told apart, so the layer is its colour.
+        if color is None and len(groups) == 1:
+            color = groups[0]
+        return GroupingLayers(ticks=[], series=list(groups), color=color, units=units)
+    if spec.x_measure is not None or shape is Shape.SERIES_1D or kind in CONTINUOUS_X_KINDS:
         return GroupingLayers(ticks=[], series=list(groups), color=color, units=units)
     # Every grouping layer is a tick, the coloured one included: colour
     # paints, it never moves a mark (see GroupingLayers).
@@ -916,11 +928,20 @@ def kind_requirement(
     (which greys the option out with this text) — so the kind list and the
     renderer can never disagree about a kind.
     """
-    if kind in (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAND) and not has_sample(roles):
-        what = "an error band" if kind is PlotKind.BAND else "a distribution"
+    if kind in SAMPLE_NEEDING_KINDS and not has_sample(roles):
+        what = {
+            PlotKind.BAND: "an error band",
+            PlotKind.HISTOGRAM: "a histogram",
+        }.get(kind, "a distribution")
         return (
             f"Needs a sample: set at least one factor to 'collapse' — its "
             f"levels (after any inner collapse) are what {what} is drawn over."
+        )
+    if kind is PlotKind.HISTOGRAM and n_groups > 1:
+        return (
+            "A histogram draws one histogram per level of ONE grouping layer "
+            "(its colour); move the other layers to 'Separate panels' or "
+            "'Separate figures'."
         )
     if kind is PlotKind.SPAGHETTI and n_groups < 2:
         return (
@@ -982,6 +1003,53 @@ def custom_kind_problem(spec: PlotSpec) -> str | None:
     return None
 
 
+#: Why a regression has nothing to draw without an x measure.
+REGRESSION_NEEDS_X = (
+    "A regression plots one measure against another: choose an X variable."
+)
+#: Why a histogram refuses an x measure.
+HISTOGRAM_NO_X = (
+    "A histogram bins its one measure along x; clear the X variable to draw it."
+)
+
+
+#: Why a log axis is ignored on a histogram or a regression (user,
+#: 2026-10-22): a fit of the raw values drawn on a log axis is not a straight
+#: line, and a histogram's bins are equal widths of the raw values.
+CONTINUOUS_LOG_REASON = (
+    "Log axes are ignored on a histogram or a regression: the bins and the "
+    "fit are on the raw values."
+)
+
+
+def continuous_log_inert(spec: PlotSpec) -> bool:
+    """Whether this spec asks for a log axis its kind ignores. One rule for
+    ``reduce`` (which drops it with :data:`CONTINUOUS_LOG_REASON`) and
+    ``codegen`` (which then emits no log scale)."""
+    return spec.kind in CONTINUOUS_X_KINDS and (spec.style.log_x or spec.style.log_y)
+
+
+def continuous_kind_problem(spec: PlotSpec, table: LongTable) -> str | None:
+    """Why a histogram or regression cannot be drawn as specified, or None.
+
+    The x measure each needs (a regression) or refuses (a histogram), and a
+    histogram's bin settings (``bins.histogram_problem``). Shared by
+    ``validate`` and the capability report.
+    """
+    if spec.kind is PlotKind.REGRESSION and spec.x_measure is None:
+        return REGRESSION_NEEDS_X
+    if spec.kind is PlotKind.HISTOGRAM:
+        if spec.x_measure is not None:
+            return HISTOGRAM_NO_X
+        from .bins import histogram_problem
+
+        temporal = spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal
+        problem = histogram_problem(spec.histogram, temporal=temporal)
+        if problem is not None:
+            return f"Histogram bins: {problem}"
+    return None
+
+
 def validate(spec: PlotSpec, table: LongTable) -> None:
     """Raise :class:`RoleError` if the spec cannot be resolved against the table."""
     # --- measures exist -------------------------------------------------
@@ -1025,13 +1093,13 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
         # A log axis is inert, not refused (reduce turns it off with a note).
         if spec.kind is PlotKind.BAR:
             raise RoleError(f"{spec.y_measure!r} is a datetime. {BAR_REASON}")
-    if spec.x_measure is not None and table.measure(spec.x_measure).temporal:
-        # Deferred (plan-plot-datetimes): a datetime x axis lands with the
-        # continuous x-vs-y plots, on the same temporal owner.
-        raise RoleError(
-            f"{spec.x_measure!r} is a datetime; a datetime x axis is not "
-            f"available yet. Plot it on y, or group by it."
-        )
+    # A datetime x measure is drawn on a time axis (temporal.apply_temporal
+    # converts it with the y measure; reduce._attach_temporal places it).
+
+    # --- the continuous-x kinds (histogram, regression) ------------------
+    problem = continuous_kind_problem(spec, table)
+    if problem is not None:
+        raise RoleError(problem)
 
     # --- roles name real factors ----------------------------------------
     unknown =[name for name in spec.roles if not table.has_factor(name)]
@@ -1199,10 +1267,22 @@ def roles_for_kind(
 
     current = effective_shape(spec, table)
     proposed = effective_shape(replace(spec, kind=kind), table)
+    measure = spec.y_measure
     if current is proposed:
+        # A histogram on a scalar measure's untouched opening state: one mark
+        # per trial, nothing collapsed — so nothing to count. Picking it
+        # collapses the grouped level, in the same click.
+        if (
+            kind is PlotKind.HISTOGRAM
+            and Assignment(spec.roles, spec.groups, spec.color)
+            == default_assignment(table, measure, shape=current)
+            and not has_sample(spec.roles)
+        ):
+            return with_requirements_for(
+                default_assignment(table, measure, shape=current), table, kind
+            )
         return None
 
-    measure = spec.y_measure
     if Assignment(spec.roles, spec.groups, spec.color) != default_assignment(
         table, measure, shape=current
     ):
@@ -1236,7 +1316,22 @@ def with_requirements_for(
     plain = [f.name for f in _plain(table)]
     candidates = [n for n in plain if roles.get(n) is Role.ITERATE]
 
-    if kind in (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAND) and not has_sample(roles):
+    if kind is PlotKind.HISTOGRAM and not has_sample(roles):
+        # A histogram counts the sample, so the opening state's own grouped
+        # level (one mark per trial) IS the sample it wants: every grouping
+        # layer becomes the collapse, and only a variant axis (never pooled,
+        # see below) stays grouped. Falls back to the distribution kinds' rule.
+        movable = [name for name in groups if name in plain]
+        if movable:
+            for name in movable:
+                roles[name] = Role.COLLAPSE
+            kept = [name for name in groups if name not in movable]
+            color = assignment.color if assignment.color in kept else None
+            return Assignment(roles=roles, groups=kept, color=color)
+        chosen = _deepest(candidates, table)
+        if chosen is not None:
+            roles[chosen] = Role.COLLAPSE
+    elif kind in SAMPLE_NEEDING_KINDS and not has_sample(roles):
         chosen = _deepest(candidates, table)
         if chosen is not None:
             roles[chosen] = Role.COLLAPSE

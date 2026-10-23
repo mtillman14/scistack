@@ -81,7 +81,7 @@ def test_a_relational_plot_is_unaffected():
     kinds = available_plots(
         Shape.SERIES_1D, SAMPLE, has_x_measure=True, collapsible=True
     )
-    assert kinds == [PlotKind.SCATTER, PlotKind.LINE]
+    assert kinds == [PlotKind.SCATTER, PlotKind.LINE, PlotKind.REGRESSION]
 
 
 # --- the capability report --------------------------------------------------

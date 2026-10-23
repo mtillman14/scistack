@@ -51,7 +51,8 @@ dependencies = [
     # Core only: numpy, pandas, scipy. Not a scistack sibling, so not coversioned.
     # 0.4.2: scipy imported lazily, keeping it out of `import scistackplot`
     # (2 s of every first Plot Studio open; tests/test_import_cost.py).
-    "csv-stats>=0.4.2",
+    # 0.5.0: csvstats.regression, the regression kind's fit (fits.py).
+    "csv-stats>=0.5.0",
     "scistacklog",
     # Datetime zone labels (temporal.py): the same vocabulary the storage and
     # the record hash use. Zero dependencies of its own.

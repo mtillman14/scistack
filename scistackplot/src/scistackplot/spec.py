@@ -84,6 +84,8 @@ class PlotKind(str, Enum):
     BAR = "bar"              # statistic per x position, with error bar
     BAND = "band"            # statistic line + shaded error region (1-D)
     HEATMAP = "heatmap"      # 2-D matrix
+    HISTOGRAM = "histogram"  # the measure's values binned on x; count (or %) on y
+    REGRESSION = "regression"  # x measure vs y measure + line of best fit, R², p
     #: The user's own ``plot_`` function draws the figure
     #: (:attr:`PlotSpec.custom` names it). Never offered in the kind grid of a
     #: variable — Plot Studio opens on it from the ``plot_`` node — so the grid
@@ -115,7 +117,16 @@ SCALAR_KINDS = (
     PlotKind.BOX,
     PlotKind.VIOLIN,
     PlotKind.BAR,
+    PlotKind.HISTOGRAM,
+    PlotKind.REGRESSION,
 )
+
+#: Kinds whose x axis is a NUMBER LINE built from a measure, never factor
+#: levels: a histogram bins the measure itself along x, a regression plots
+#: the x measure. Grouping layers are series for these (``roles.grouping_
+#: layers``), and the categorical machinery (ticks, brackets, Show sample,
+#: compare, difference bars) does not apply.
+CONTINUOUS_X_KINDS = (PlotKind.HISTOGRAM, PlotKind.REGRESSION)
 
 #: Kinds that can carry a "Show sample" overlay (:attr:`PlotSpec.show_sample`):
 #: the categorical kinds — a bar, box or violin summarises its sample, scatter
@@ -613,6 +624,146 @@ class Aggregation:
     pooled: bool = False
 
 
+class BinMode(str, Enum):
+    """How a histogram's bins are chosen (``scistackplot.bins`` owns the rule)."""
+
+    AUTO = "auto"    # numpy's "auto" estimator, seaborn's default too
+    COUNT = "count"  # HistogramOptions.bin_count equal bins over the range
+    WIDTH = "width"  # HistogramOptions.bin_width wide, anchored at a multiple of it
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class HistStat(str, Enum):
+    """What a histogram bar's height is. Percent and density are per colour
+    level within a panel (seaborn ``common_norm=False``; user, 2026-10-22)."""
+
+    COUNT = "count"
+    PERCENT = "percent"
+    DENSITY = "density"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class HistMultiple(str, Enum):
+    """How the histograms of several colour levels share one panel."""
+
+    LAYER = "layer"  # overlaid, translucent (the default; user, 2026-10-22)
+    STACK = "stack"
+    DODGE = "dodge"  # side by side within each bin
+
+    def __str__(self) -> str:
+        return self.value
+
+
+#: Default bin count for :attr:`BinMode.COUNT` when none is typed.
+DEFAULT_BIN_COUNT = 10
+
+
+@dataclass(frozen=True)
+class HistogramOptions:
+    """A histogram's bins and bar heights. Inert on every other kind.
+
+    One bin mode is active at a time (user, 2026-10-22). ``bin_width`` is a
+    number on a numeric axis or a duration text (``"1h"``, ``"7D"``,
+    ``"30min"``) on a datetime one; fixed durations only, no months.
+    ``range_min`` / ``range_max`` clip the binned range (a number, or ISO
+    date text on a datetime axis); None = the data's own extent.
+    ``scistackplot.bins`` is the one reader.
+    """
+
+    bins: BinMode = BinMode.AUTO
+    bin_count: int | None = None
+    bin_width: float | str | None = None
+    range_min: float | str | None = None
+    range_max: float | str | None = None
+    stat: HistStat = HistStat.COUNT
+    multiple: HistMultiple = HistMultiple.LAYER
+
+    def to_dict(self) -> dict:
+        return {
+            "bins": str(self.bins),
+            "bin_count": self.bin_count,
+            "bin_width": self.bin_width,
+            "range_min": self.range_min,
+            "range_max": self.range_max,
+            "stat": str(self.stat),
+            "multiple": str(self.multiple),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> "HistogramOptions":
+        raw = raw or {}
+        count = raw.get("bin_count")
+        return cls(
+            bins=BinMode(raw.get("bins", BinMode.AUTO)),
+            bin_count=None if count in (None, "") else int(count),
+            bin_width=_as_width(raw.get("bin_width")),
+            range_min=_as_limit(raw.get("range_min")),
+            range_max=_as_limit(raw.get("range_max")),
+            stat=HistStat(raw.get("stat", HistStat.COUNT)),
+            multiple=HistMultiple(raw.get("multiple", HistMultiple.LAYER)),
+        )
+
+
+class FitBy(str, Enum):
+    """Which points one regression line is fitted through."""
+
+    COLOR = "color"    # one fit per colour level (pooled when uncoloured)
+    POOLED = "pooled"  # one fit per panel through every point
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class StatsCorner(str, Enum):
+    """Where in a panel the R² / p text sits."""
+
+    UPPER_LEFT = "upper_left"
+    UPPER_RIGHT = "upper_right"
+    LOWER_LEFT = "lower_left"
+    LOWER_RIGHT = "lower_right"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class RegressionOptions:
+    """A regression plot's fitted line and its annotation. Inert on every
+    other kind. The fit is ``csvstats.regression.linear_fit``; the drawing
+    policy is ``scistackplot.fits``. The band is the t-based 95% CI of the
+    mean response, off by default (user, 2026-10-22)."""
+
+    fit_line: bool = True
+    show_stats: bool = True
+    ci_band: bool = False
+    fit_by: FitBy = FitBy.COLOR
+    stats_corner: StatsCorner = StatsCorner.UPPER_LEFT
+
+    def to_dict(self) -> dict:
+        return {
+            "fit_line": self.fit_line,
+            "show_stats": self.show_stats,
+            "ci_band": self.ci_band,
+            "fit_by": str(self.fit_by),
+            "stats_corner": str(self.stats_corner),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> "RegressionOptions":
+        raw = raw or {}
+        return cls(
+            fit_line=bool(raw.get("fit_line", True)),
+            show_stats=bool(raw.get("show_stats", True)),
+            ci_band=bool(raw.get("ci_band", False)),
+            fit_by=FitBy(raw.get("fit_by", FitBy.COLOR)),
+            stats_corner=StatsCorner(raw.get("stats_corner", StatsCorner.UPPER_LEFT)),
+        )
+
+
 @dataclass(frozen=True)
 class FacetOptions:
     """
@@ -728,6 +879,15 @@ def _as_limit(value: Any) -> float | str | None:
         pd.Timestamp(value.strip())
     except (TypeError, ValueError):
         return None
+    return value.strip()
+
+
+def _as_width(value: Any) -> float | str | None:
+    """A histogram bin width: a number, or duration text kept as typed
+    (``bins.parse_width`` reads and validates it), or None."""
+    number = _as_float(value)
+    if number is not None or not isinstance(value, str) or not value.strip():
+        return number
     return value.strip()
 
 
@@ -1187,6 +1347,12 @@ class PlotSpec:
     #: (``"UTC"``, ``"Europe/Berlin"``, ``"+02:00"``) converts every aware
     #: value to it. Owner: ``scistackplot.temporal``. Inert without datetimes.
     time_zone: str = "local"
+    #: A histogram's bins and heights (:class:`HistogramOptions`); inert on
+    #: every other kind. Plan-irrelevant: binning runs per figure.
+    histogram: HistogramOptions = field(default_factory=HistogramOptions)
+    #: A regression's fit line and annotation (:class:`RegressionOptions`);
+    #: inert on every other kind. Plan-irrelevant: fits run per figure.
+    regression: RegressionOptions = field(default_factory=RegressionOptions)
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
@@ -1374,6 +1540,8 @@ class PlotSpec:
             "cols": [_matcher_to_dict(m) for m in self.facet.cols],
         }
         raw["y_axis"] = self.y_axis.to_dict()
+        raw["histogram"] = self.histogram.to_dict()
+        raw["regression"] = self.regression.to_dict()
         raw["location_filter"] = self.location_filter.to_dict()
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
         raw["level_groups"] = [g.to_dict() for g in self.level_groups]
@@ -1419,6 +1587,8 @@ class PlotSpec:
             sample_in_legend=bool(raw.get("sample_in_legend", True)),
             show_missing_levels=bool(raw.get("show_missing_levels", True)),
             time_zone=str(raw.get("time_zone") or "local"),
+            histogram=HistogramOptions.from_dict(raw.get("histogram")),
+            regression=RegressionOptions.from_dict(raw.get("regression")),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions.from_dict(raw.get("style")),

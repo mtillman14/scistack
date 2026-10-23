@@ -125,6 +125,16 @@ import PanelsSection from './PanelsSection'
 import DifferenceBarsSection from './DifferenceBarsSection'
 import CompareSection from './CompareSection'
 import TimeZoneSection from './TimeZoneSection'
+import { HistogramSection, RegressionSection, XMeasureSection } from './ContinuousSections'
+import {
+  kindForXMeasure,
+  type BinsMeta,
+  type HistogramCapability,
+  type HistogramOptions,
+  type PanelFitsMeta,
+  type RegressionCapability,
+  type RegressionOptions,
+} from './continuousKinds'
 import {
   formatLimit,
   parseLimitText,
@@ -257,6 +267,8 @@ const KIND_LABELS: Record<string, string> = {
   bar: 'Bar + error',
   band: 'Mean + error band',
   heatmap: 'Heatmap',
+  histogram: 'Histogram',
+  regression: 'Regression (fit line)',
 }
 
 interface FactorInfo {
@@ -566,6 +578,11 @@ interface Capabilities {
   /** Data > Time zone: whether a datetime is in play, the mode, the zones the
    *  data holds (`scistackplot.temporal.time_zone_summary`). */
   time_zone?: TimeZoneCapability
+  /** Chart > Histogram / Regression (capability.histogram_summary / regression_summary). */
+  histogram?: HistogramCapability
+  regression?: RegressionCapability
+  /** Data > X variable: the current x measure and whether it is a datetime. */
+  x_measure?: { current: string | null; temporal: boolean }
   /** Whether any factor is collapsed, i.e. whether there is a sample. */
   has_sample: boolean
   /** "Save data (CSV)": availability and the depth picker's choices. */
@@ -747,6 +764,10 @@ interface Spec {
   /** How datetimes holding several zones share the figure: "local" (each
    *  value's own clock) or a zone to convert to (`scistackplot.temporal`). */
   time_zone?: string
+  /** A histogram's bins and heights (scistackplot.spec.HistogramOptions). */
+  histogram?: HistogramOptions
+  /** A regression's line and annotation (scistackplot.spec.RegressionOptions). */
+  regression?: RegressionOptions
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
@@ -1574,6 +1595,27 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, time_zone: mode } : prev))
   }, [])
 
+  /** Data > X variable. With one, only scatter / line / regression draw, so
+   *  the kind follows (continuousKinds.kindForXMeasure). */
+  const setXMeasure = useCallback((name: string | null) => {
+    console.info('[Plot Studio] x_measure_set', { x_measure: name })
+    setSpec(prev =>
+      prev ? { ...prev, x_measure: name, kind: kindForXMeasure(prev.kind, name) } : prev
+    )
+  }, [])
+
+  /** Chart > Histogram: merge into `spec.histogram`. */
+  const setHistogram = useCallback((patch: HistogramOptions) => {
+    console.info('[Plot Studio] histogram_set', patch)
+    setSpec(prev => (prev ? { ...prev, histogram: { ...(prev.histogram ?? {}), ...patch } } : prev))
+  }, [])
+
+  /** Chart > Regression: merge into `spec.regression`. */
+  const setRegression = useCallback((patch: RegressionOptions) => {
+    console.info('[Plot Studio] regression_set', patch)
+    setSpec(prev => (prev ? { ...prev, regression: { ...(prev.regression ?? {}), ...patch } } : prev))
+  }, [])
+
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
     setSpec(prev => (prev ? { ...prev, facet: { ...(prev.facet ?? {}), ...patch } } : prev))
   }, [])
@@ -2293,6 +2335,13 @@ export default function PlotStudio({
   const temporalMeta =
     (figures[0]?.figure?.layout?.meta as { temporal?: TemporalMeta | null } | undefined)
       ?.temporal ?? null
+  // What Chart > Histogram / Regression say about the drawn figure: its bins
+  // (bins.BinEdges) and fits (fits.PanelFit), never computed here.
+  const binsMeta =
+    (figures[0]?.figure?.layout?.meta as { bins?: BinsMeta | null } | undefined)?.bins ?? null
+  const fitsMeta =
+    (figures[0]?.figure?.layout?.meta as { fits?: PanelFitsMeta[] | null } | undefined)?.fits ??
+    null
   const figureDiffMeta = (figure: FigurePayload) =>
     (figure.figure?.layout?.meta as { difference_bars?: DifferenceMeta | null } | undefined)
       ?.difference_bars ?? null
@@ -3182,6 +3231,23 @@ export default function PlotStudio({
               )}
             </Section>
 
+            {/* An x-y plot: the variable on x (joined, one value per row).
+                Offered only from what the source can line up
+                (`DataSource.joinable_with`). */}
+            {spec && !capabilities?.custom && (
+              <Section
+                title="X variable"
+                hint="Plot this variable against another one, record for record: scatter, line or a regression with its line of best fit. Numbers and datetimes both work."
+              >
+                <XMeasureSection
+                  current={spec.x_measure}
+                  options={describe?.joinable_with ?? []}
+                  temporal={Boolean(capabilities?.x_measure?.temporal)}
+                  onChange={setXMeasure}
+                />
+              </Section>
+            )}
+
             {/* Only when a datetime is in play: where values holding several
                 zones sit (`PlotSpec.time_zone`, scistackplot.temporal). */}
             {capabilities?.time_zone?.applies && (
@@ -3286,11 +3352,37 @@ export default function PlotStudio({
                       ? `Each vector is reduced to its ${
                           spec?.cell_statistic ?? 'mean'
                         } — one value per record — and plotted like any scalar.`
-                      : 'Applies to scatter, strip, spaghetti, box, violin and bar: each vector becomes one value per record.'}
+                      : 'Applies to scatter, strip, spaghetti, box, violin, bar and histogram: each vector becomes one value per record.'}
                   </div>
                 </>
               )}
             </Section>
+            {spec?.kind === 'histogram' && (
+              <Section
+                title="Histogram"
+                hint="The measure's values binned along x. Bins are shared by every panel of the figure. Percent and density are within each colour, so groups of different sizes compare by shape."
+              >
+                <HistogramSection
+                  options={spec.histogram}
+                  capability={capabilities?.histogram}
+                  meta={binsMeta}
+                  onChange={setHistogram}
+                />
+              </Section>
+            )}
+            {spec?.kind === 'regression' && (
+              <Section
+                title="Regression"
+                hint="A least-squares line through each colour's points (or all of a panel's), with R², p (slope ≠ 0) and n on the plot."
+              >
+                <RegressionSection
+                  options={spec.regression}
+                  capability={capabilities?.regression}
+                  fits={fitsMeta}
+                  onChange={setRegression}
+                />
+              </Section>
+            )}
           </Group>
 
           {/* Every role in one group: what groups the marks, what separates

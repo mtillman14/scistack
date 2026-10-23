@@ -53,6 +53,12 @@ from .temporal import TemporalAxis, from_axis_ms, normalize_mode, zone_title
 
 LAYER = "scistackplot"
 
+#: The "Save data" choices that write what a histogram or a regression
+#: COMPUTED rather than the rows it was computed from. Not schema keys, so
+#: they can never collide with one.
+BARS_DEPTH = "__bars"
+FITS_DEPTH = "__fits"
+
 
 @dataclass(frozen=True)
 class DataDepth:
@@ -260,6 +266,32 @@ def data_export_options(
             )
             depths.append(depth(key, averaged, label))
 
+    # The derived tables of the continuous-x kinds: what the figure computed
+    # FROM the sample rows above, one row per bar or per fitted line.
+    if str(spec.kind) == "histogram":
+        stat = str(spec.histogram.stat)
+        bar_columns = ["bin_start", "bin_end", "count", *([stat] if stat != "count" else [])]
+        depths.append(
+            DataDepth(
+                key=BARS_DEPTH,
+                label="The bars — one row per bin (and colour level), as drawn",
+                averaged=[],
+                columns=bar_columns,
+                header=bar_columns,
+            )
+        )
+    elif str(spec.kind) == "regression":
+        fit_columns = ["n", "slope", "intercept", "r_squared", "p_value", "reason"]
+        depths.append(
+            DataDepth(
+                key=FITS_DEPTH,
+                label="The fitted lines — one row per fit (panel and colour level)",
+                averaged=[],
+                columns=fit_columns,
+                header=fit_columns,
+            )
+        )
+
     return DataExportOptions(
         available=True,
         depths=depths,
@@ -309,6 +341,8 @@ def plot_data(
                 raise ValueError(options.reason)
             chosen = options.depth(depth)
             steps = collapse_steps(plan.spec, plan.roles, plan.table)
+        if chosen.key in (BARS_DEPTH, FITS_DEPTH):
+            return _derived_table(spec, table, chosen.key)
 
         pieces: list[pd.DataFrame] = []
         with timing.phase("collapse", extra=f"{len(plan.groups)} figure(s)"):
@@ -402,6 +436,17 @@ def plot_data(
                     "[plot-data] %s written as wall-clock datetimes in %s",
                     y, zone_title(plan.temporal.mode), layer=LAYER,
                 )
+            # A datetime x measure, the same way.
+            x = plan.spec.x_measure
+            if plan.temporal_x is not None and x and x in frame.columns:
+                frame[x] = [
+                    "" if v != v else from_axis_ms(v).isoformat()
+                    for v in pd.to_numeric(frame[x], errors="coerce")
+                ]
+                Log.info(
+                    "[plot-data] %s written as wall-clock datetimes in %s",
+                    x, zone_title(plan.temporal_x.mode), layer=LAYER,
+                )
             # Last: every step above reads the frame's own names. A compared
             # value column is written under what it holds (`DataDepth.header`,
             # the header the picker showed).
@@ -424,6 +469,61 @@ def plot_data(
         list(frame.columns),
         layer=LAYER,
     )
+    return frame
+
+
+def _derived_table(spec: PlotSpec, table: LongTable, which: str) -> pd.DataFrame:
+    """The bars (:data:`BARS_DEPTH`) or the fits (:data:`FITS_DEPTH`) of
+    every figure, read off the RESOLVED figures — the numbers drawn, not a
+    recomputation. One row per bar / fit, keyed by the figure's ITERATE
+    values, the panel's facet values and the colour level."""
+    from .reduce import resolve
+    from .resolved import COLOR, COUNT, X_HIGH, X_LOW, Y, Y_BASE
+
+    figures = resolve(spec, table)
+    rows: list[dict] = []
+    for figure in figures:
+        color = figure.color_factor
+        temporal_x = figure.temporal_x
+        for panel in figure.panels:
+            keys = {**figure.figure_key, **panel.key}
+            if which == BARS_DEPTH:
+                stat = str(spec.histogram.stat)
+                for record in panel.frame.to_dict(orient="records"):
+                    row = dict(keys)
+                    if color:
+                        row[color] = record.get(COLOR)
+                    start, end = record[X_LOW], record[X_HIGH]
+                    if temporal_x is not None:
+                        start, end = from_axis_ms(start).isoformat(), from_axis_ms(end).isoformat()
+                    row.update(bin_start=start, bin_end=end, count=int(record[COUNT]))
+                    if stat != "count":
+                        row[stat] = float(record[Y]) - float(record[Y_BASE])
+                    rows.append(row)
+            else:
+                for fit in panel.fits:
+                    row = dict(keys)
+                    if color and spec.regression.fit_by.value == "color":
+                        row[color] = fit.level
+                    data = fit.to_dict()
+                    row.update({k: data[k] for k in ("n", "slope", "intercept", "r_squared", "p_value", "reason")})
+                    rows.append(row)
+    frame = pd.DataFrame(rows)
+    Log.info(
+        "[plot-data] %s of %r: %d figure(s) -> %d row(s) x %d column(s) %s",
+        "bars" if which == BARS_DEPTH else "fits",
+        spec.y_measure,
+        len(figures),
+        len(frame),
+        len(frame.columns),
+        list(frame.columns),
+        layer=LAYER,
+    )
+    if which == FITS_DEPTH and any(f.temporal_x is not None for f in figures):
+        Log.info(
+            "[plot-data] fits: x is a datetime — slope is per millisecond of wall clock",
+            layer=LAYER,
+        )
     return frame
 
 

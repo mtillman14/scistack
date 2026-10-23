@@ -152,6 +152,8 @@ def figure_unavailable(spec: "PlotSpec", table: "LongTable", groups: list[str]) 
 
     if spec.x_measure is not None:
         return "An x-y plot has no reference level to compare with."
+    if str(spec.kind) == "histogram":
+        return "A histogram counts raw values; it has no reference level to compare with."
     if effective_shape(spec, table) is Shape.MATRIX_2D:
         return "A 2-D measure has no grouping layer to compare along."
     if spec.style.log_y:

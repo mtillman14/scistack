@@ -81,6 +81,9 @@ DESIGN_FIELDS: dict[str, SyncClass] = {
     "sample_color": _P,
     "sample_in_legend": _P,
     "show_missing_levels": _P,
+    # How a histogram bins and a regression fits: drawing, like the kind.
+    "histogram": _P,
+    "regression": _P,
     "facet": _P,
     "y_axis": _P,
     "style": _P,

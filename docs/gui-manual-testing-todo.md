@@ -11,6 +11,54 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzg. Histogram and Regression plot types, and the X variable picker — added 2026-10-22
+
+What changed: two new kinds in **Chart > Plot type**. **Histogram** bins the
+variable's values along x (auto / number of bins / bin width; height count,
+percent or density; colours overlaid, stacked or side by side). It needs a
+collapsed factor, like Box. **Regression (fit line)** plots one variable
+against another and draws a least-squares line per colour level with
+`R² = …, p = …, n = …` on the plot, plus an optional 95% band. A new
+**Data > X variable** dropdown picks the x variable (numbers and datetimes).
+Doc: `docs/claude/histogram-and-regression.md`.
+
+**Backend**
+1. `pip install -e /workspace/csv-stats` (0.5.0 adds `csvstats.regression`;
+   scistackplot now requires `csv-stats>=0.5.0`). Reload the VS Code window.
+2. `scidb.log` on a histogram: `histogram bins: auto: N bin(s) over [...]` and
+   `histogram: 1 panel(s), one shared y range 0..X, stat=count, layer`.
+3. On a regression: one `regression fit (...): n=… slope=… R²=… p=…` line per
+   fit; a fit with < 3 points logs `regression fit skipped`.
+
+**Frontend: histogram**
+1. Open a scalar variable (the opening state groups its own level). Click
+   **Histogram**: it should draw at once, the grouped level moved to Collapse.
+2. **Chart > Histogram**: switch Bins to **Number of bins**, type 5, press
+   Enter — 5 bars, the readout says "5 bins of …". Try **Bin width**.
+3. Group by a factor with 2 levels: two translucent colours; try **Stacked**
+   and **Side by side**; **Percent** (each colour sums to 100).
+4. Separate panels by a factor: every panel uses the same bins and one count
+   axis.
+5. A datetime variable: the x axis shows dates; Bin width `1h` or `1D` (bins
+   start on the hour / at midnight); `1 fortnight` shows the problem text.
+6. **Save data**: the depth picker offers "The bars — one row per bin".
+7. **Export code** and run it: the same bars, x range and y range.
+
+**Frontend: regression**
+1. **Data > X variable**: pick another variable (only joinable ones are
+   listed). The kind becomes **Regression**; points + a line per colour, text
+   at the top left in each line's colour.
+2. **Chart > Regression**: untick the line / the text, tick the band, change
+   Fit to "One line per panel", move the text to another corner.
+3. A datetime X variable: date axis, the fit still drawn, the note says the
+   slope is not shown.
+4. Tick Log x / Log y: ignored, with the note under the figure.
+5. Clear X variable: the kind returns to Scatter.
+6. **Save data** → "The fitted lines"; **Export code** runs and draws the same
+   lines and text (the function now takes `df_x`).
+
+---
+
 ## 0zzzzzzf. Datetimes in Plot Studio: a time axis, datetime groupings, the Time zone control — added 2026-10-22
 
 What changed: a datetime variable (or a datetime column) now plots like a

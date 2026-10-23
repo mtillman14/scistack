@@ -54,6 +54,7 @@ from .base import (
     dash_levels,
     dash_style,
     grid_shape,
+    histogram_x_range,
     is_categorical_x,
     legend_entry_labels,
     legend_levels,
@@ -199,6 +200,21 @@ def render(
                 "temporal": (
                     resolved.temporal.to_dict() if resolved.temporal is not None else None
                 ),
+                # The same for a datetime X axis (an x measure, or a histogram
+                # of a datetime).
+                "temporal_x": (
+                    resolved.temporal_x.to_dict() if resolved.temporal_x is not None else None
+                ),
+                # A histogram's bins as drawn (bins.BinEdges): the Histogram
+                # section shows "12 bins of 0.5" from this, never computes it.
+                "bins": resolved.bins.to_dict() if resolved.bins is not None else None,
+                # A regression's fits per panel (fits.PanelFit), for the
+                # Regression section's readout.
+                "fits": [
+                    {"panel": panel.title, "fits": [fit.to_dict() for fit in panel.fits]}
+                    for panel in resolved.panels
+                    if panel.fits
+                ],
                 # What the Colours section offers (base.colorable): every
                 # painted level with the colour DRAWN and where it came from.
                 "colorable": colorable(resolved),
@@ -241,6 +257,12 @@ def render(
             layout["violinmode"] = "group"
             layout["violingap"] = 0.2
             layout["violingroupgap"] = 0.1
+        elif resolved.kind is PlotKind.HISTOGRAM:
+            # Every bar is placed by its own centre, width and base (the bar
+            # table, `bins.bin_table`, already dodged and stacked), so plotly
+            # must neither group nor stack them again: overlay, no gaps.
+            layout["barmode"] = "overlay"
+            layout["bargap"] = 0.0
 
         positions = [
             panel_position(resolved, index) for index in range(len(resolved.panels))
@@ -272,6 +294,8 @@ def render(
                 )
             )
             traces.extend(_sample_traces(panel, resolved, x_axis, y_axis, seen_legend, legend_on))
+            traces.extend(_fit_traces(panel, resolved, x_axis, y_axis))
+            _add_fit_annotations(layout, panel, resolved, x_axis, y_axis)
             _add_axes(
                 layout,
                 resolved,
@@ -543,7 +567,39 @@ def _panel_traces(
             x_values = _values(subset[encoding.x])
             hover = {}
 
-        if kind in (PlotKind.SCATTER, PlotKind.STRIP):
+        if kind is PlotKind.HISTOGRAM:
+            from ..bins import EDGE_COLOR, EDGE_WIDTH
+            from ..resolved import COUNT, X_HIGH, X_LOW, Y_BASE
+
+            lows = subset[X_LOW].to_numpy(dtype=float)
+            highs = subset[X_HIGH].to_numpy(dtype=float)
+            bases = subset[Y_BASE].to_numpy(dtype=float)
+            tops = subset[encoding.y].to_numpy(dtype=float)
+            traces.append(
+                {
+                    **base,
+                    "type": "bar",
+                    "orientation": "v",
+                    "x": ((lows + highs) / 2.0).tolist(),
+                    # Widths in axis units (ms on a date axis), stated per bar.
+                    "width": (highs - lows).tolist(),
+                    "base": bases.tolist(),
+                    "y": (tops - bases).tolist(),
+                    "marker": {
+                        "color": color,
+                        "opacity": fill_alpha(kind, resolved.spec.style),
+                        "line": {"color": EDGE_COLOR, "width": EDGE_WIDTH},
+                    },
+                    # The bin's centre (the axis formats it, dates included),
+                    # its height and its raw count.
+                    "customdata": subset[COUNT].to_numpy(dtype=float).tolist(),
+                    "hovertemplate": (
+                        f"%{{x}}<br>{resolved.labels.y}: %{{y}}<br>n = %{{customdata}}"
+                        "<extra>%{fullData.name}</extra>"
+                    ),
+                }
+            )
+        elif kind in (PlotKind.SCATTER, PlotKind.STRIP, PlotKind.REGRESSION):
             traces.append(
                 {
                     **base,
@@ -620,6 +676,89 @@ def _panel_traces(
             )
 
     return traces
+
+
+def _fit_colour(resolved: ResolvedPlot, fit) -> str:
+    order = [str(v) for v in (resolved.color_order or [])]
+    index = order.index(str(fit.level)) if fit.level is not None and str(fit.level) in order else 0
+    return palette_for(resolved, fit.level, index)
+
+
+def _fit_traces(panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> list[dict]:
+    """A regression panel's fitted lines and bands (``Panel.fits``), the
+    traces ``mpl._draw_fits`` draws as lines and ``fill_between``."""
+    from ..fits import BAND_ALPHA, FIT_LINE_WIDTH, drawn
+
+    if resolved.kind is not PlotKind.REGRESSION or not panel.fits:
+        return []
+    options = resolved.spec.regression
+    traces: list[dict] = []
+    for fit in drawn(panel.fits):
+        color = _fit_colour(resolved, fit)
+        common = {"xaxis": x_axis, "yaxis": y_axis, "showlegend": False, "hoverinfo": "skip"}
+        if options.ci_band and fit.low is not None:
+            traces.append(
+                {
+                    **common,
+                    "type": "scatter",
+                    "mode": "lines",
+                    "x": [*fit.xs, *reversed(fit.xs)],
+                    "y": [*fit.high, *reversed(fit.low)],
+                    "fill": "toself",
+                    "fillcolor": _rgba(color, BAND_ALPHA),
+                    "line": {"width": 0},
+                }
+            )
+        if options.fit_line:
+            traces.append(
+                {
+                    **common,
+                    "type": "scatter",
+                    "mode": "lines",
+                    "x": list(fit.xs),
+                    "y": list(fit.ys),
+                    "line": {"color": color, "width": FIT_LINE_WIDTH},
+                    "hoverinfo": "text",
+                    "text": [fit.text] * len(fit.xs),
+                }
+            )
+    return traces
+
+
+def _add_fit_annotations(layout: dict, panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> None:
+    """The R² / p text at the panel's corner, in points-as-px at the
+    export's size (1 pt = 1 px), the offsets ``mpl._draw_fits`` uses."""
+    from ..fits import annotation_offsets, corner, drawn
+
+    if resolved.kind is not PlotKind.REGRESSION or not resolved.spec.regression.show_stats:
+        return
+    visible = drawn(panel.fits)
+    if not visible:
+        return
+    where = corner(resolved.spec.regression)
+    font = sizes_for(resolved).legend
+    for index, fit in enumerate(visible):
+        dx, dy = annotation_offsets(index, len(visible), font, where)
+        layout["annotations"].append(
+            {
+                "text": _html(fit.text),
+                "xref": f"{x_axis} domain",
+                "yref": f"{y_axis} domain",
+                "x": where.x,
+                "y": where.y,
+                "xanchor": where.ha,
+                "yanchor": where.va,
+                "xshift": dx,
+                "yshift": dy,
+                "showarrow": False,
+                "font": {"size": font, "color": _fit_colour(resolved, fit)},
+                "name": FIT_TEXT_TAG,
+            }
+        )
+
+
+#: Names a regression annotation among the layout's annotations.
+FIT_TEXT_TAG = "fit-annotation"
 
 
 def _positional_x(resolved: ResolvedPlot) -> bool:
@@ -1054,6 +1193,15 @@ def _add_axes(
         # differently at two facet counts. Fixed at 0; automargin buys the room.
         "tickangle": 0,
         "automargin": True,
+        # A datetime x (an x measure, or a histogram of a datetime): ms on a
+        # date axis, formatted by the same owner as the export's.
+        **(resolved.temporal_x.plotly_axis() if resolved.temporal_x is not None else {}),
+        # A histogram spans exactly its bins (base.histogram_x_range).
+        **(
+            {"range": list(x_range)}
+            if (x_range := histogram_x_range(resolved)) is not None
+            else {}
+        ),
     }
     layout[y_key] = {
         **plotly_axis_style(),

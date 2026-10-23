@@ -60,6 +60,15 @@ SAMPLE_LINE = "__line"
 #: subject keeps its slot in every bracket. Empty when nothing splits the runs.
 RUN = "__run"
 Z = "__z"
+#: A histogram bar's left and right edges along x (``bins.bin_table``), after
+#: any dodge, and the stack base its height starts from (0 unless stacked).
+#: ``__x`` is the bar's centre and ``__y`` its TOP (base + height), so the y
+#: limits and hover read a histogram like any other frame.
+X_LOW = "__x_lo"
+X_HIGH = "__x_hi"
+Y_BASE = "__y_base"
+#: A histogram bar's raw count, whatever ``HistogramOptions.stat`` draws.
+COUNT = "__count"
 #: The one x level a categorical figure has when NO tick layer was chosen â
 #: a scalar measure grouped by its colour alone, or not grouped at all. The
 #: mark frame and the overlay frame both write it as their ``__x``
@@ -151,6 +160,10 @@ class Panel:
     #: identity when joined) and the shown key columns themselves, for hover.
     #: Built by ``reduce._overlay_frame``; drawn after the marks.
     sample: pd.DataFrame | None = None
+    #: REGRESSION only: one ``fits.PanelFit`` per fit group (colour level, or
+    #: the pooled panel), in colour order. Built by ``reduce`` from the
+    #: panel's own points; drawn as the line, band and annotation.
+    fits: list = field(default_factory=list)
 
     @property
     def title(self) -> str:
@@ -320,6 +333,14 @@ class ResolvedPlot:
     #: ``temporal.apply_mpl_date_axis``; codegen the same source). None for a
     #: numeric axis. Set by ``reduce._attach_temporal``.
     temporal: Any = None
+    #: The same for the X axis (``temporal.TemporalAxis``): a datetime x
+    #: measure, or a histogram of a datetime measure (its values are binned
+    #: along x). None for a numeric or categorical x.
+    temporal_x: Any = None
+    #: HISTOGRAM only: the figure's bin edges (``bins.BinEdges``), decided
+    #: once per figure from every panel's values so the panels compare, and
+    #: restated by the generated code (``bins.EDGES_SOURCE``).
+    bins: Any = None
 
     @property
     def figure_label(self) -> str:
@@ -394,6 +415,8 @@ class ResolvedPlot:
             "data_warnings": list(self.data_warnings),
             "series_offsets": dict(self.series_offsets),
             "dash_styles": dict(self.dash_styles),
+            "temporal_x": self.temporal_x.to_dict() if self.temporal_x is not None else None,
+            "bins": self.bins.to_dict() if self.bins is not None else None,
             "sample": {
                 "shown": list(self.sample_shown),
                 "join": self.sample_join,
@@ -429,6 +452,7 @@ class ResolvedPlot:
                     "sample": (
                         _frame_records(panel.sample) if panel.sample is not None else None
                     ),
+                    "fits": [fit.to_dict() for fit in panel.fits],
                 }
                 for panel in self.panels
             ],

@@ -37,6 +37,7 @@ from .reduce import (
     nested_layer_orders,
     plan_layout,
     planned_temporal,
+    planned_temporal_x,
     planned_y_limits,
     x_axis_title,
 )
@@ -44,6 +45,7 @@ from .resolved import DASH_CYCLE
 from .roles import (
     collapse_steps,
     complete_roles,
+    continuous_log_inert,
     fanout_keys,
     grouping_layers,
     overlay_color,
@@ -54,6 +56,7 @@ from .roles import (
 )
 from .shape import Shape
 from .spec import (
+    CONTINUOUS_X_KINDS,
     ErrorBand,
     FactorVariable,
     PlotKind,
@@ -227,18 +230,35 @@ def _generate_plot_function(
     is_temporal = (
         spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal
     )
-    temporal = planned_temporal(spec, base) if is_temporal else None
+    histogram = spec.kind is PlotKind.HISTOGRAM
+    # A histogram bins its datetime measure ALONG X; every other kind draws
+    # it on y.
+    temporal = planned_temporal(spec, base) if is_temporal and not histogram else None
     compared = temporal is not None and plan_comparison(spec, roles, table) is not None
+    x_is_temporal = (is_temporal and histogram) or (
+        spec.x_measure is not None
+        and spec.x_measure in table.measure_names
+        and table.measure(spec.x_measure).temporal
+    )
+    temporal_x = planned_temporal_x(spec, base) if x_is_temporal else None
 
     body: list[str] = []
     body.extend(_variant_preamble(spec, table))
     body.extend(_preamble(spec, table, roles, shape))
     y_plan = _y_limit_plan(spec, base, table, roles)
     body.extend(_plot_call(spec, table, roles, shape, y_plan, base))
-    if temporal is not None and not compared and "return g.figure" in body:
-        # Before the return: every panel's y axis reads the ms as dates.
+    y_dates = temporal is not None and not compared
+    if (y_dates or temporal_x is not None) and "return g.figure" in body:
+        # Before the return: each panel's datetime axes read the ms as dates.
         at = len(body) - 1 - body[::-1].index("return g.figure")
-        body[at:at] = mpl_date_axis_code("g.axes.flat", temporal)
+        dates: list[str] = []
+        if y_dates:
+            dates.extend(mpl_date_axis_code("g.axes.flat", temporal))
+        if temporal_x is not None:
+            dates.extend(
+                mpl_date_axis_code("g.axes.flat", temporal_x, side="x", define=not y_dates)
+            )
+        body[at:at] = dates
 
     lines = [
         f"def {name}({', '.join(function_params(spec))}):",
@@ -249,8 +269,14 @@ def _generate_plot_function(
             if _sample_color_of(spec, table, roles, shape)
             else []
         ),
-        *(["    import numpy as np"] if collapsing else []),
+        *(["    import numpy as np"] if collapsing or spec.kind in CONTINUOUS_X_KINDS else []),
         *(["    from csvstats.descriptive import ci_interval"] if _uses_ci95(spec, shape) else []),
+        # The regression's fit: the preview's own function (scistackplot.fits).
+        *(
+            ["    from csvstats.regression import linear_fit"]
+            if spec.kind is PlotKind.REGRESSION
+            else []
+        ),
         *(
             ["    import re"]
             if spec.kind is PlotKind.SPAGHETTI
@@ -375,8 +401,11 @@ def function_params(spec: PlotSpec) -> list[str]:
     """The generated function's signature, in for_each input order."""
     variants = variant_params(spec)
     data = [variant.param for variant in variants] if variants else ["df"]
+    # An x-y plot's x variable arrives as its own input (`df_x`, the order
+    # scistackplotdb's for_each call lists it in) and is joined in `_preamble`.
+    x_input = ["df_x"] if spec.x_measure else []
     groups = [group_param(group) for group in spec.joined_factor_variables]
-    return [*data, *groups, "filename"]
+    return [*data, *x_input, *groups, "filename"]
 
 
 def _variant_preamble(spec: PlotSpec, table: LongTable) -> list[str]:
@@ -545,6 +574,23 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     """Melt, filters, 1-D explosion, aggregation — the order resolve() uses."""
     lines: list[str] = []
 
+    # An x-y plot: the x variable joined onto every y row on the schema keys
+    # both carry — an inner join, which broadcasts a shallower x to each of
+    # its deeper y rows, exactly as the preview's source joins them
+    # (`scistackplotdb.hierarchy.join_frames`).
+    if spec.x_measure:
+        x, y = spec.x_measure, spec.y_measure
+        # A flat table (the standalone script) already holds both columns.
+        lines.extend(
+            [
+                f"# {x}: the x axis, one value per {y} row (joined on shared schema keys)",
+                f"if {x!r} not in df.columns:",
+                f"    _on = [c for c in df_x.columns if c in df.columns and c not in {[x, y]!r}]",
+                f"    df = df.merge(df_x[[*_on, {x!r}]], on=_on, how=\"inner\")",
+                "",
+            ]
+        )
+
     # Grouping variables arrive as their own inputs (a subject-level Condition
     # cannot ride along on a trial-level measure's frame) and are merged back on
     # whatever schema keys they share. The join keys are computed from the
@@ -625,6 +671,15 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     # averages it — where `reduce` applies `temporal.apply_temporal`.
     if spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal:
         lines.extend([*conversion_code(spec.y_measure, spec.time_zone), ""])
+    # An x-y plot's datetime x measure, the same way (`temporal.apply_temporal_x`).
+    x_measure = spec.x_measure
+    if (
+        x_measure
+        and x_measure != spec.y_measure
+        and x_measure in table.measure_names
+        and table.measure(x_measure).temporal
+    ):
+        lines.extend([*conversion_code(x_measure, spec.time_zone), ""])
 
     # A 1-D measure drawn by a scalar kind is collapsed to one value per record
     # BEFORE anything is filtered — the same order `reduce._build_plan_timed`
@@ -853,6 +908,9 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             ]
         )
 
+    if spec.kind is PlotKind.HISTOGRAM:
+        lines.extend(_histogram_edge_lines(spec, table))
+
     if spec.kind is PlotKind.SPAGHETTI:
         brackets = _nested_x_layers(spec, table, roles, shape)[:-1]
         if brackets:
@@ -866,6 +924,135 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             )
         lines.extend(_spaghetti_position_lines(spec, table, roles, shape))
 
+    return lines
+
+
+def _histogram_edge_lines(spec, table: LongTable) -> list[str]:
+    """``_edges``: the preview's bin rule (``bins.EDGES_SOURCE``, verbatim)
+    over THIS figure's values, with the spec's settings — so under a fan-out
+    each exported figure bins its own values exactly as its preview did."""
+    from .bins import EDGES_SOURCE, edge_arguments
+
+    temporal = table.measure(spec.y_measure).temporal
+    mode, count, width, lo, hi, max_bins = edge_arguments(spec.histogram, temporal=temporal)
+    return [
+        f"# histogram bins ({mode}): the interactive preview's rule, over this figure's values",
+        *EDGES_SOURCE.strip("\n").splitlines(),
+        f"_edges = _scistack_bin_edges(df[{spec.y_measure!r}].to_numpy(dtype=float), "
+        f"{mode!r}, {count!r}, {width!r}, {lo!r}, {hi!r}, {max_bins!r})",
+        "",
+    ]
+
+
+def _histogram_limit_lines(spec, y_plan: _YLimitPlan) -> list[str]:
+    """A histogram's ranges as the preview draws them: x exactly the outer
+    edges (``render.base.histogram_x_range``), y from zero to 5% above the
+    tallest bar (``bins.histogram_limits``) — shared, or per panel when the
+    scope names a facet — with a pinned end (``y_axis``) winning."""
+    low, high = pinned_ends(spec.y_axis)
+    top = "max(_tops.values())" if y_plan.share_y else "_tops[id(_ax)]"
+    return [
+        "g.set(xlim=(float(_edges[0]), float(_edges[-1])))",
+        "# y: zero to 5% above the tallest bar (the bars' own tops, stacked or not)",
+        "_tops = {",
+        "    id(_ax): max([_p.get_y() + _p.get_height() for _p in _ax.patches] or [0.0])",
+        "    for _ax in g.axes.flat",
+        "}",
+        "for _ax in g.axes.flat:",
+        f"    _top = {top}",
+        "    _auto = (0.0, _top * 1.05 if _top > 0 else 1.0)",
+        f"    _ax.set_ylim({low!r} if {low!r} is not None else _auto[0], "
+        f"{high!r} if {high!r} is not None else _auto[1])",
+    ]
+
+
+def _fit_lines(spec, table: LongTable, color: str | None, facets: list[str], aliases) -> list[str]:
+    """A regression's lines, bands and R² / p text, drawn per panel by
+    ``csvstats.regression.linear_fit`` — the preview's own fit — with the
+    preview's policy (``scistackplot.fits``): one fit per colour level (or
+    pooled), over its own x range, annotation text from
+    ``fits.STATS_TEXT_SOURCE`` (verbatim), stacked from the chosen corner."""
+    from .fits import (
+        ANNOTATION_INSET_PT,
+        ANNOTATION_LINE_SPACING,
+        BAND_ALPHA,
+        FIT_LINE_WIDTH,
+        FIT_POINTS,
+        STATS_TEXT_SOURCE,
+        corner,
+    )
+    from .spec import FitBy
+
+    options = spec.regression
+    if not (options.fit_line or options.ci_band or options.show_stats):
+        return []
+    x, y = spec.x_measure, spec.y_measure
+    by_colour = color if color and options.fit_by is FitBy.COLOR else None
+    where = corner(options)
+    font = _export_sizes(spec.style).legend
+    step = font * ANNOTATION_LINE_SPACING
+    label = (
+        f"_alias({by_colour!r}, _level)" if by_colour and aliases.aliased(by_colour) else "str(_level)"
+    )
+    colour = "_hue_palette.get(_level)" if color else _mark_color(spec, table)
+    if color and not by_colour:
+        # Pooled over coloured points: the line is drawn in the mark colour.
+        colour = _mark_color(spec, table)
+    lines = [
+        "# lines of best fit: csvstats.regression.linear_fit, the preview's own fit",
+        *STATS_TEXT_SOURCE.strip("\n").splitlines(),
+        "_panels = list(g.axes_dict.items()) or [((), g.ax)]",
+        "for _key, _ax in _panels:",
+        "    _values = _key if isinstance(_key, tuple) else (_key,)",
+        "    _rows = df",
+        f"    for _f, _v in zip({facets!r}, reversed(_values)):",
+        "        _rows = _rows[_rows[_f] == _v]",
+    ]
+    if by_colour:
+        lines += [
+            f"    _present = set(_rows[{by_colour!r}].dropna().astype(str))",
+            f"    _groups = [(_level, _rows[_rows[{by_colour!r}].astype(str) == str(_level)])"
+            " for _level in _hue_order if str(_level) in _present]",
+        ]
+    else:
+        lines.append("    _groups = [(None, _rows)]")
+    lines += [
+        "    _drawn = []",
+        "    for _level, _g in _groups:",
+        f"        _fit = linear_fit(_g[{x!r}], _g[{y!r}])",
+        "        if not _fit.ok:",
+        "            continue",
+        f"        _colour = {colour}",
+        f"        _xs = np.linspace(_fit.x_min, _fit.x_max, {FIT_POINTS})",
+    ]
+    if options.ci_band:
+        lines += [
+            "        _low, _high = _fit.band(_xs)",
+            f"        _ax.fill_between(_xs, _low, _high, color=_colour, alpha={BAND_ALPHA}, linewidth=0)",
+        ]
+    if options.fit_line:
+        lines.append(
+            f"        _ax.plot(_xs, _fit.predict(_xs), color=_colour, linewidth={FIT_LINE_WIDTH})"
+        )
+    lines.append("        _drawn.append((_level, _fit, _colour))")
+    if options.show_stats:
+        row = "_i" if where.dy < 0 else "(len(_drawn) - 1 - _i)"
+        lines += [
+            "    for _i, (_level, _fit, _colour) in enumerate(_drawn):",
+            f"        _label = {label} if len(_groups) > 1 and _level is not None else None",
+            "        _ax.annotate(",
+            "            _scistack_fit_text(_fit.r_squared, _fit.p_value, _fit.n, _label),",
+            f"            xy=({where.x}, {where.y}),",
+            '            xycoords="axes fraction",',
+            f"            xytext=({where.dx * ANNOTATION_INSET_PT}, "
+            f"{where.dy} * ({ANNOTATION_INSET_PT} + {row} * {step})),",
+            '            textcoords="offset points",',
+            f"            ha={where.ha!r},",
+            f"            va={where.va!r},",
+            f"            fontsize={font},",
+            "            color=_colour,",
+            "        )",
+        ]
     return lines
 
 
@@ -1796,7 +1983,13 @@ def _plot_call(
     # built (level index + per-series offset); `x` stays the factor, which is
     # what the axis is labelled with and what the ticks are named from.
     x_column = _X_POSITION if kind is PlotKind.SPAGHETTI else x
-    args = [f"data=df", f"x={x_column!r}", f"y={spec.y_measure!r}"]
+    # A histogram is univariate: `x` is the binned measure and there is no
+    # `y` (displot with both would draw a 2-D histogram).
+    args = (
+        [f"data=df", f"x={x_column!r}"]
+        if kind is PlotKind.HISTOGRAM
+        else [f"data=df", f"x={x_column!r}", f"y={spec.y_measure!r}"]
+    )
     if color:
         args.append(f"hue={color!r}")
         if _color_level_count(spec, table, color) < 2:
@@ -1859,7 +2052,28 @@ def _plot_call(
             ]
         )
         call = "sns.relplot"
-    elif kind is PlotKind.SCATTER:
+    elif kind is PlotKind.HISTOGRAM:
+        from .bins import EDGE_COLOR, EDGE_WIDTH, FILL_ALPHA
+
+        # The preview's bars, stated: its edges (`_edges`, the preamble), its
+        # per-level normalisation, how levels share a bin, its fill and
+        # outline. seaborn's own defaults differ on every one of them.
+        args.extend(
+            [
+                'kind="hist"',
+                "bins=_edges",
+                f"stat={str(spec.histogram.stat)!r}",
+                f"multiple={str(spec.histogram.multiple)!r}",
+                "common_norm=False",
+                'element="bars"',
+                "shrink=1",
+                f"alpha={FILL_ALPHA}",
+                f"edgecolor={EDGE_COLOR!r}",
+                f"linewidth={EDGE_WIDTH}",
+            ]
+        )
+        call = "sns.displot"
+    elif kind in (PlotKind.SCATTER, PlotKind.REGRESSION):
         if _x_is_categorical(spec, table, roles, shape):
             args.extend(['kind="strip"', "jitter=False"])
             call = "sns.catplot"
@@ -1921,7 +2135,9 @@ def _plot_call(
     # `fill_between` otherwise.
     from .render.base import fill_alpha
 
-    alpha = fill_alpha(kind, style)
+    # A histogram states its own fill above (`alpha=`; histplot takes no
+    # `saturation`).
+    alpha = fill_alpha(kind, style) if kind is not PlotKind.HISTOGRAM else None
     if alpha is not None:
         args.append("saturation=1")
         args.append(
@@ -1964,6 +2180,10 @@ def _plot_call(
             "g.set(xticks=list(range(len(_order))), xticklabels=_order, "
             "xlim=(-0.5, len(_order) - 0.5))"
         )
+    if kind is PlotKind.HISTOGRAM:
+        lines.extend(_histogram_limit_lines(spec, y_plan))
+    if kind is PlotKind.REGRESSION:
+        lines.extend(_fit_lines(spec, table, color, facets, aliases))
     if ylim is not None:
         lines.append(f"g.set(ylim={(float(ylim[0]), float(ylim[1]))!r})")
     if y_plan.by_panel is not None:
@@ -1987,9 +2207,26 @@ def _plot_call(
         aliases.text,
         table,
     )
-    if style.y_label is None and compared is None and table.measure(spec.y_measure).temporal:
+    zone_suffix = TemporalAxis(mode=normalize_mode(spec.time_zone)).title_suffix
+    if kind is PlotKind.HISTOGRAM:
+        # What a bar's height is (bins.y_title); a datetime measure is on x,
+        # so x says the zone (reduce._attach_temporal).
+        from .bins import y_title as histogram_y_title
+
+        y_label = style.y_label or histogram_y_title(spec.histogram.stat)
+        if style.x_label is None and x_label and table.measure(spec.y_measure).temporal:
+            x_label += zone_suffix
+    elif style.y_label is None and compared is None and table.measure(spec.y_measure).temporal:
         # The zone the datetime axis is shown in (reduce._attach_temporal).
-        y_label += TemporalAxis(mode=normalize_mode(spec.time_zone)).title_suffix
+        y_label += zone_suffix
+    if (
+        style.x_label is None
+        and x_label
+        and spec.x_measure
+        and spec.x_measure in table.measure_names
+        and table.measure(spec.x_measure).temporal
+    ):
+        x_label += zone_suffix
     lines.append(f"g.set_axis_labels({x_label!r}, {y_label!r})")
     if facets:
         # Same rule as the preview (render.base.panel_y_title): the facet values
@@ -2028,9 +2265,17 @@ def _plot_call(
             ]
         )
     lines.extend(_sample_draw_lines(spec, table, roles, shape, aliases.text))
-    if style.log_x:
+    # A log axis the preview ignores is not drawn here either: on a histogram
+    # or a regression (roles.continuous_log_inert), and on a datetime x.
+    log_inert = continuous_log_inert(spec)
+    temporal_x_measure = bool(
+        spec.x_measure
+        and spec.x_measure in table.measure_names
+        and table.measure(spec.x_measure).temporal
+    )
+    if style.log_x and not log_inert and not temporal_x_measure:
         lines.append('g.set(xscale="log")')
-    if style.log_y:
+    if style.log_y and not log_inert:
         lines.append('g.set(yscale="log")')
     if y_plan.autoscaled and kind is PlotKind.BAR and not style.log_y:
         lines.extend(_bar_autoscale_lines())
@@ -2654,6 +2899,18 @@ def _y_limit_plan(
     than a reproducible one.
     """
     y_axis = spec.y_axis
+    if spec.kind is PlotKind.HISTOGRAM:
+        # The y axis counts bars, not the measure: its range comes from the
+        # drawn bars (`_histogram_limit_lines`, the preview's
+        # `bins.histogram_limits`), per panel when the scope names a facet.
+        facets = [name for name, role in roles.items() if role is Role.FACET]
+        per_panel = any(name in y_axis.scope for name in facets)
+        Log.info(
+            "export y limits: histogram — from the drawn bars%s",
+            ", per panel" if per_panel else ", shared",
+            layer=LAYER,
+        )
+        return _YLimitPlan(not per_panel, None)
     if y_axis.is_manual:
         Log.info(
             "export y limits: manual %s to %s, baked in",
@@ -2833,7 +3090,7 @@ def _tick_layers(spec, table, roles, shape) -> list[str]:
     list as this kind reads it (``roles.grouping_layers``), the coloured
     layer included: it is composed into ``_x`` like any other and seaborn
     paints by ``hue`` without dodging (``dodge=False`` on the call)."""
-    if spec.x_measure or shape is not Shape.SCALAR:
+    if spec.x_measure or shape is not Shape.SCALAR or spec.kind in CONTINUOUS_X_KINDS:
         return []
     layers = grouping_layers(spec, table, roles, spec.kind, shape=shape)
     return [name for name in layers.ticks if table.has_factor(name)]
@@ -2867,6 +3124,9 @@ def _line_layers(spec, table, roles, shape) -> list[str]:
 
 
 def _x_expression(spec, table, roles, shape) -> str:
+    if spec.kind is PlotKind.HISTOGRAM:
+        # The measure itself is binned along x.
+        return spec.y_measure
     if spec.x_measure:
         return spec.x_measure
     if shape is Shape.SERIES_1D:
@@ -2878,7 +3138,7 @@ def _x_expression(spec, table, roles, shape) -> str:
 
 
 def _x_is_categorical(spec, table, roles, shape) -> bool:
-    if spec.x_measure or shape is Shape.SERIES_1D:
+    if spec.x_measure or shape is Shape.SERIES_1D or spec.kind in CONTINUOUS_X_KINDS:
         return False
     # The constant fallback is a single categorical position, so it is
     # categorical too — the interactive renderers draw it that way.
@@ -2928,8 +3188,10 @@ def _script_inputs(spec: PlotSpec) -> tuple[str, list[str]]:
     provenance. Rather than silently pinning nothing, the generated line says so.
     """
     variants = variant_params(spec)
+    # The x variable is a column of the same flat table (`df_x` = `df`).
+    x_arg = "df, " if spec.x_measure else ""
     if not variants:
-        return "df, ", []
+        return "df, " + x_arg, []
 
     lines: list[str] = [""]
     for generated, variant in zip(
@@ -2973,7 +3235,7 @@ def _script_inputs(spec: PlotSpec) -> tuple[str, list[str]]:
                 test = f"{param}[{column!r}].astype(str) == {str(value)!r}"
             lines.append(f"{param} = {param}[{test}]")
     lines.append("")
-    return "".join(f"{generated.param}, " for generated in variants), lines
+    return "".join(f"{generated.param}, " for generated in variants) + x_arg, lines
 
 
 def spec_json_block(spec: PlotSpec) -> str:

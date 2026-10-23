@@ -44,6 +44,7 @@ from .base import (
     dash_levels,
     dash_style,
     grid_shape,
+    histogram_x_range,
     is_categorical_x,
     legend_entry_labels,
     legend_levels,
@@ -226,6 +227,7 @@ def _render(resolved: ResolvedPlot):
                     resolved.custom.draw_panel(ax, panel, resolved)
                 else:
                     _draw_panel(ax, panel.frame, resolved)
+                    _draw_fits(ax, panel, resolved)
                 t1 = time.perf_counter()
                 runs, drawn = _draw_sample(ax, panel, resolved)
                 sample_runs_drawn += runs
@@ -346,6 +348,82 @@ def _draw_panel(ax, frame: pd.DataFrame, resolved: ResolvedPlot) -> None:
         _draw_bars(ax, frame, resolved)
     elif kind in (PlotKind.BOX, PlotKind.VIOLIN):
         _draw_distribution(ax, frame, resolved, violin=kind is PlotKind.VIOLIN)
+    elif kind is PlotKind.HISTOGRAM:
+        _draw_histogram(ax, frame, resolved)
+    elif kind is PlotKind.REGRESSION:
+        _draw_points(ax, frame, resolved, jitter=False)
+
+
+def _draw_histogram(ax, frame, resolved) -> None:
+    """One bar per (colour level, bin) from the bar table ``reduce`` built
+    (``bins.bin_table``): left edge, width, base and top already decided —
+    dodge and stack included — so this only draws them."""
+    from ..bins import EDGE_COLOR, EDGE_WIDTH
+    from ..resolved import X_HIGH, X_LOW, Y_BASE
+
+    alpha = fill_alpha(PlotKind.HISTOGRAM, resolved.spec.style)
+    for index, (level, subset) in enumerate(color_groups(frame, resolved)):
+        lows = subset[X_LOW].to_numpy(dtype=float)
+        highs = subset[X_HIGH].to_numpy(dtype=float)
+        bases = subset[Y_BASE].to_numpy(dtype=float)
+        tops = subset[resolved.encoding.y].to_numpy(dtype=float)
+        ax.bar(
+            lows,
+            tops - bases,
+            width=highs - lows,
+            bottom=bases,
+            align="edge",
+            color=palette_for(resolved, level, index),
+            alpha=alpha,
+            edgecolor=EDGE_COLOR,
+            linewidth=EDGE_WIDTH,
+            label=resolved.text.color_level(level) if level is not None else None,
+        )
+
+
+def _draw_fits(ax, panel, resolved: ResolvedPlot) -> None:
+    """A regression panel's fitted lines, bands and R² / p annotation
+    (``Panel.fits``, decided in ``reduce`` by ``fits.panel_fits``). Each
+    fit in its colour level's colour; text stacked from the chosen corner."""
+    from ..fits import BAND_ALPHA, FIT_LINE_WIDTH, annotation_offsets, corner, drawn
+
+    if resolved.kind is not PlotKind.REGRESSION or not panel.fits:
+        return
+    options = resolved.spec.regression
+    order = [str(v) for v in (resolved.color_order or [])]
+    visible = drawn(panel.fits)
+
+    def colour(fit) -> str:
+        index = order.index(str(fit.level)) if fit.level is not None and str(fit.level) in order else 0
+        return palette_for(resolved, fit.level, index)
+
+    for fit in visible:
+        if options.ci_band and fit.low is not None:
+            ax.fill_between(fit.xs, fit.low, fit.high, color=colour(fit), alpha=BAND_ALPHA, linewidth=0)
+        if options.fit_line:
+            ax.plot(fit.xs, fit.ys, color=colour(fit), linewidth=FIT_LINE_WIDTH)
+    if options.show_stats and visible:
+        where = corner(options)
+        font_pt = sizes_for(resolved).legend
+        for index, fit in enumerate(visible):
+            dx, dy = annotation_offsets(index, len(visible), font_pt, where)
+            ax.annotate(
+                fit.text,
+                xy=(where.x, where.y),
+                xycoords="axes fraction",
+                xytext=(dx, dy),
+                textcoords="offset points",
+                ha=where.ha,
+                va=where.va,
+                fontsize=font_pt,
+                color=colour(fit),
+                gid=FIT_TEXT_GID,
+            )
+
+
+#: The gid every regression annotation carries, so the layout rules
+#: (`autosize`) can find them among the figure's text.
+FIT_TEXT_GID = "fit-annotation"
 
 
 def _draw_points(ax, frame, resolved, *, jitter: bool) -> None:
@@ -735,6 +813,13 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
                 # y holds wall-clock ms (temporal.py): ticks at round dates,
                 # labelled in the axis's format. The same source codegen emits.
                 apply_mpl_date_axis(ax.yaxis, resolved.temporal)
+            if resolved.temporal_x is not None:
+                # A datetime x measure, or a histogram of a datetime: the same
+                # locator and format along x.
+                apply_mpl_date_axis(ax.xaxis, resolved.temporal_x)
+            x_range = histogram_x_range(resolved)
+            if x_range is not None:
+                ax.set_xlim(*x_range)
             limits = panel_y_limits(resolved, panel) if panel else resolved.y_limits
             if limits and resolved.kind is not PlotKind.HEATMAP:
                 # Data units, but never a non-positive end on a log axis
@@ -2173,6 +2258,10 @@ def _element_artists(fig) -> dict[str, list]:
                 out["groups"].append(text)
             elif gid == DIFF_LABEL_GID:
                 out["differences"].append(text)
+            elif gid == FIT_TEXT_GID:
+                # Drawn at the legend's size (`_draw_fits`), so it steps down
+                # with the legend when it runs off the canvas.
+                out["legend"].append(text)
     proposed = sum(
         len(ax.get_xticklabels()) + len(ax.get_yticklabels())
         for ax in fig.axes

@@ -136,6 +136,11 @@ def test_variable_text_paths_are_the_ones_the_user_chose():
         "panel_overrides[].y_minimum",
         "panel_overrides[].y_maximum",
         "panel_overrides[].y_label",
+        # A histogram's bin width and range are in the variable's own units,
+        # like its y limits (2026-10-22).
+        "histogram.bin_width",
+        "histogram.range_min",
+        "histogram.range_max",
     }
 
 
@@ -374,8 +379,13 @@ def test_a_fixed_preset_fixes_an_auto_target():
 def test_a_preset_never_stores_chosen_auto_sizes():
     """The sizes auto chose are a property of one figure's labels at one
     size, not a setting: a template holds `target` and nothing chosen."""
-    template = json.dumps(make_template(_box()))
-    assert "auto" not in template and "sizes" not in template
+    template = make_template(_box())
+    # The text settings, not the whole template: a histogram's bin mode is
+    # legitimately "auto" (HistogramOptions.bins) and says nothing about sizes.
+    text = json.dumps(template.get("style", {}).get("text", {}))
+    assert "auto" not in text
+    whole = json.dumps(template)
+    assert "sizes" not in whole and "auto_text" not in whole
 
 
 def test_an_applied_auto_preset_is_sized_for_the_new_variable(width_table):

@@ -699,7 +699,21 @@ def fill_alpha(kind: PlotKind, style) -> float | None:
         return BOX_FILL_ALPHA
     if kind is PlotKind.VIOLIN:
         return VIOLIN_FILL_ALPHA
+    if kind is PlotKind.HISTOGRAM:
+        from ..bins import FILL_ALPHA as HISTOGRAM_FILL_ALPHA
+
+        return HISTOGRAM_FILL_ALPHA
     return None
+
+
+def histogram_x_range(resolved: ResolvedPlot) -> tuple[float, float] | None:
+    """A histogram's x range: exactly its outer bin edges, as seaborn's
+    histplot draws it (sticky edges, no margin). ONE rule for matplotlib,
+    plotly and the generated code; None for any other kind."""
+    bins = resolved.bins
+    if resolved.kind is not PlotKind.HISTOGRAM or bins is None or not bins.edges:
+        return None
+    return (float(bins.edges[0]), float(bins.edges[-1]))
 
 
 #: How the overlay's points draw against the marks they sit on: the mark's

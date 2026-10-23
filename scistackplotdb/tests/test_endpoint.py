@@ -118,6 +118,28 @@ def test_second_measure_is_passed_as_a_second_input(seeded):
     )
     assert '"df_x": Mass,' in code.foreach_source
     assert "as_table=['df', 'df_x']" in code.foreach_source
+    # The function TAKES the input it is passed, and joins it (until
+    # 2026-10-22 the signature was `(df, filename)` and for_each failed).
+    assert "(df, df_x, filename)" in code.source
+    assert "df_x[[*_on, 'Mass']]" in code.source
+    compile(code.source, "<generated>", "exec")
+
+
+def test_regression_endpoint_fits_with_csvstats(seeded):
+    source = ScidbSource(seeded)
+    table = source.get_table(["StepLength"], x_measure="Mass")
+    spec = PlotSpec(
+        measures=["StepLength"],
+        x_measure="Mass",
+        roles={"subject": Role.GROUP, "session": Role.GROUP, "trial": Role.GROUP},
+        groups=["trial", "session", "subject"],
+        color="subject",
+        kind=PlotKind.REGRESSION,
+    )
+    code = generate_endpoint(spec, table, input_variable="StepLength", x_variable="Mass")
+    assert "from csvstats.regression import linear_fit" in code.source
+    assert "(df, df_x, filename)" in code.source
+    compile(code.source, "<generated>", "exec")
 
 
 # --- variants ---------------------------------------------------------------

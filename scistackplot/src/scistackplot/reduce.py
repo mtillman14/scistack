@@ -60,8 +60,10 @@ from .roles import (
     CollapseSteps,
     OverlaySteps,
     RoleError,
+    CONTINUOUS_LOG_REASON,
     collapse_steps,
     complete_roles,
+    continuous_log_inert,
     fanout_keys,
     grouping_layers,
     overlay_color,
@@ -98,7 +100,7 @@ from .panels import override_for, panel_key_text, unmatched
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
 from .cell import all_nan_warning, apply_cell_collapse, cell_collapse_note, cell_collapses
-from .temporal import LOG_REASON, apply_temporal
+from .temporal import LOG_REASON, apply_temporal, apply_temporal_x
 from .variants import apply_variant_sets, strip_answered_roles
 
 LAYER = "scistackplot"
@@ -158,6 +160,9 @@ _PLAN_IRRELEVANT_FIELDS = (
     "panel_overrides",
     "difference_bars",
     "comparison",
+    # Binned and fitted per figure, over rows the plan already holds.
+    "histogram",
+    "regression",
 )
 
 #: How many plans are kept. Two: the pattern being served is narrow — the panel
@@ -440,6 +445,8 @@ class _Plan:
     y_scope: list[str] = field(default_factory=list)
     #: A datetime y measure's axis (``temporal.apply_temporal``), or None.
     temporal: Any = None
+    #: A datetime x measure's axis (``temporal.apply_temporal_x``), or None.
+    temporal_x: Any = None
     #: ``cell.all_nan_warning`` over ``frame``. On the plan, not computed per
     #: figure, so a plan-cache HIT still carries it to every figure.
     data_warnings: list[str] = field(default_factory=list)
@@ -553,6 +560,16 @@ def planned_temporal(spec: PlotSpec, table: LongTable):
     None — read off the plan, as :func:`planned_y_limits` is, so the export's
     tick format is the preview's. ``table`` is the BASE table."""
     return _plan(spec, table).temporal
+
+
+def planned_temporal_x(spec: PlotSpec, table: LongTable):
+    """The datetime X axis the preview draws, or None — a datetime x
+    measure, or a histogram of a datetime measure (binned along x). Read off
+    the plan like :func:`planned_temporal`. ``table`` is the BASE table."""
+    plan = _plan(spec, table)
+    if spec.kind is PlotKind.HISTOGRAM:
+        return plan.temporal
+    return plan.temporal_x
 
 
 def _with_presentation(plan: "_Plan", spec: PlotSpec) -> "_Plan":
@@ -669,6 +686,8 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
     with timer.phase("temporal"):
         try:
             table, temporal_axis = apply_temporal(spec, table)
+            # An x-y plot's datetime x measure, the same way (its own axis).
+            table, temporal_x = apply_temporal_x(spec, table)
         except ValueError as exc:  # an unknown zone: the spec's fault, said as one
             raise RoleError(f"time_zone: {exc}") from exc
     with timer.phase("roles"):
@@ -758,8 +777,10 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         notes=[
             *([collapsed_note] if collapsed_note else []),
             *(temporal_axis.notes if temporal_axis else ()),
+            *(temporal_x.notes if temporal_x else ()),
         ],
         temporal=temporal_axis,
+        temporal_x=temporal_x,
         data_warnings=[warning] if (warning := all_nan_warning(frame, y_measure)) else [],
         groups=groups,
         frame=frame,
@@ -1302,6 +1323,14 @@ def _build_figure(
         #   factor combinations x positions).
         # * otherwise: `reducer.explode_series`, which may apply the transport
         #   stride itself so only the kept rows' labels are ever gathered.
+        # A histogram or regression ignores a log axis (roles.continuous_log_
+        # inert): dropped HERE, so every renderer and the layout see a linear
+        # figure, and said in the figure's notes.
+        continuous_notes: list[str] = []
+        if continuous_log_inert(spec):
+            spec = replace(spec, style=replace(spec.style, log_x=False, log_y=False))
+            continuous_notes.append(CONTINUOUS_LOG_REASON)
+            Log.info("%s: log axis ignored — %s", spec.kind, CONTINUOUS_LOG_REASON, layer=LAYER)
         reducer = reducer_for(table)
         steps = collapse_steps(spec, roles, table)
         # Compare to reference (`compare`, plan D1): applied to the SAMPLE rows
@@ -1447,10 +1476,23 @@ def _build_figure(
         ]
 
         original_rows = pre_strided_from or len(frame)
+        # A histogram counts every row and a regression fits every row: a
+        # transport stride would change the counts and the line. Their
+        # payload is the bars / the points anyway, so neither is strided.
+        counts_every_row = spec.kind in (PlotKind.HISTOGRAM, PlotKind.REGRESSION)
+        if counts_every_row and max_points is not None and original_rows > max_points:
+            Log.info(
+                "%s: %d row(s) kept for transport (no stride: it would change the %s)",
+                spec.kind,
+                original_rows,
+                "counts" if spec.kind is PlotKind.HISTOGRAM else "fit",
+                layer=LAYER,
+            )
         if (
             max_points is not None
             and pre_strided_from is None
             and not summarize_nested
+            and not counts_every_row
             and original_rows > max_points
         ):
             with timing.phase("downsample"):
@@ -1535,6 +1577,16 @@ def _build_figure(
                     ),
                 )
 
+        # A histogram's panels become bar tables, over ONE set of edges for
+        # the whole figure (`bins`); their y range is the bars'.
+        figure_bins = None
+        if spec.kind is PlotKind.HISTOGRAM and shape is not Shape.MATRIX_2D:
+            with timing.phase("histogram", extra=f"{len(panels)} panel(s)"):
+                figure_bins, bin_notes = _bin_panels(
+                    panels, spec, table, color, y_scope or [], facet_names
+                )
+                continuous_notes.extend(bin_notes)
+
         if summarize_nested:
             # The transport stride, over the SUMMARY rows of the whole figure —
             # the same figure-level stride `_downsample` applies, now after the
@@ -1611,6 +1663,16 @@ def _build_figure(
                     _describe_missing(x_axis.missing),
                     layer=LAYER,
                 )
+
+        # A regression's lines: one fit per colour level (or pooled) per
+        # panel, through the panel's own points (`fits`). After the figure's
+        # text exists, which names the levels in the annotation.
+        if spec.kind is PlotKind.REGRESSION:
+            with timing.phase("regression", extra=f"{len(panels)} panel(s)"):
+                continuous_notes.extend(
+                    _fit_panels(panels, spec, table, color, figure_text)
+                )
+        layout_notes = [*layout_notes, *continuous_notes]
 
         # The FIGURE's limits: the panels' own, when they all agree. Not a
         # second computation — every consumer that reads one number per figure
@@ -1750,6 +1812,7 @@ def _build_figure(
                 if comparison is not None
                 else None
             ),
+            bins=figure_bins,
         )
         # Which difference bars land on which panel, once per figure, so a bar
         # that draws nowhere is explained in scidb.log (diffbars D3).
@@ -1763,8 +1826,29 @@ def _attach_temporal(figure: ResolvedPlot, plan: "_Plan") -> None:
     y title (unless the user wrote the title), and a log axis made inert with
     the reason — a datetime cannot be logarithmic, and refusing would lose a
     style the user may want back for another variable."""
+    # A datetime x measure (an x-y plot): its own axis along x, the zone in
+    # the x title. A log x is already inert on a regression; on a scatter /
+    # line it is turned off here, as a datetime y's is.
+    x_axis = plan.temporal_x
+    if x_axis is not None and figure.spec.x_measure is not None:
+        figure.temporal_x = x_axis
+        if figure.spec.style.x_label is None and figure.labels.x:
+            figure.labels = replace(figure.labels, x=figure.labels.x + x_axis.title_suffix)
+        if figure.spec.style.log_x:
+            figure.spec = replace(figure.spec, style=replace(figure.spec.style, log_x=False))
+            figure.layout_notes = [*figure.layout_notes, LOG_REASON]
+            Log.info("temporal: log x axis ignored — %s", LOG_REASON, layer=LAYER)
+        Log.info("temporal: x measure %r on a date axis", figure.spec.x_measure, layer=LAYER)
+
     axis = plan.temporal
     if axis is None:
+        return
+    if figure.kind is PlotKind.HISTOGRAM:
+        # The datetime measure is binned ALONG X; y counts bars.
+        figure.temporal_x = axis
+        if figure.spec.style.x_label is None and figure.labels.x:
+            figure.labels = replace(figure.labels, x=figure.labels.x + axis.title_suffix)
+        Log.info("temporal: histogram of a datetime — bins along a date x axis", layer=LAYER)
         return
     if figure.comparison is not None:
         # A difference of datetimes is a DURATION (hours, compare._duration_
@@ -1778,6 +1862,100 @@ def _attach_temporal(figure: ResolvedPlot, plan: "_Plan") -> None:
         figure.spec = replace(figure.spec, style=replace(figure.spec.style, log_y=False))
         figure.layout_notes = [*figure.layout_notes, LOG_REASON]
         Log.info("temporal: log y axis ignored — %s", LOG_REASON, layer=LAYER)
+
+
+def _bin_panels(
+    panels: list[Panel],
+    spec: PlotSpec,
+    table: LongTable,
+    color: str | None,
+    y_scope: list[str],
+    facet_names: list[str],
+) -> tuple[Any, list[str]]:
+    """Replace each panel's frame with its bars (``bins.bin_table``).
+
+    The edges are decided ONCE over every panel's values (``bins.bin_edges``,
+    the figure's ``ResolvedPlot.bins``). The y range is the bars': figure-wide
+    — every panel on one count axis — unless the y-limit scope names a facet,
+    when each panel gets its own; a pinned end (``y_axis``, a per-panel
+    override) wins as everywhere else. Returns ``(BinEdges, notes)``.
+    """
+    from .bins import bin_edges, bin_table, histogram_limits
+
+    temporal = table.measure(spec.y_measure).temporal
+    values = [
+        panel.frame[Y].to_numpy(dtype=float)
+        for panel in panels
+        if Y in panel.frame.columns and not panel.frame.empty
+    ]
+    edges = bin_edges(
+        np.concatenate(values) if values else np.array([], dtype=float),
+        spec.histogram,
+        temporal=temporal,
+    )
+    color_order = (
+        _level_order(table, color, [p.frame for p in panels], COLOR) if color else []
+    ) or []
+    for panel in panels:
+        panel.frame = bin_table(
+            panel.frame,
+            edges,
+            spec.histogram,
+            value=Y,
+            color=COLOR if color else None,
+            color_order=list(color_order),
+        )
+
+    per_panel = any(name in facet_names for name in y_scope)
+    tops = [float(panel.frame[Y].max()) if not panel.frame.empty else 0.0 for panel in panels]
+    shared = histogram_limits(tops)
+    for panel, top in zip(panels, tops, strict=True):
+        computed = histogram_limits([top]) if per_panel else shared
+        panel.y_limits = limits_for(
+            {(): computed}, {}, [], spec.y_axis, override_for(spec, panel.key)
+        )
+    Log.info(
+        "histogram: %d panel(s), %s y range%s, stat=%s, %s",
+        len(panels),
+        "per-panel" if per_panel else "one shared",
+        "" if per_panel else f" {shared[0]:g}..{shared[1]:g}",
+        spec.histogram.stat,
+        spec.histogram.multiple,
+        layer=LAYER,
+    )
+    return edges, list(edges.notes)
+
+
+def _fit_panels(
+    panels: list[Panel],
+    spec: PlotSpec,
+    table: LongTable,
+    color: str | None,
+    text: DisplayText,
+) -> list[str]:
+    """One or more fitted lines per panel (``fits.panel_fits``) onto
+    ``Panel.fits``; returns the notes for fits that could not be made."""
+    from .fits import panel_fits
+
+    color_order = (
+        _level_order(table, color, [p.frame for p in panels], COLOR) if color else []
+    ) or []
+    notes: list[str] = []
+    for panel in panels:
+        if panel.frame.empty:
+            continue
+        panel.fits, panel_notes = panel_fits(
+            panel.frame,
+            spec.regression,
+            x=X,
+            y=Y,
+            color=COLOR if color else None,
+            color_order=list(color_order),
+            label_of=text.color_level,
+            panel=text.panel_title(panel.key) if panel.key else "",
+        )
+        notes.extend(panel_notes)
+    return notes
 
 
 def _dash_styles(panels: list[Panel]) -> dict[str, str]:
@@ -2798,6 +2976,9 @@ def x_axis_title(
         return ""
     if text is None:
         text = display_text(spec, table)
+    if spec.kind is PlotKind.HISTOGRAM:
+        # The measure itself is binned along x; y counts it.
+        return text.name(spec.y_measure, table.measure(spec.y_measure).display)
     if spec.x_measure:
         return text.name(spec.x_measure, table.measure(spec.x_measure).display)
     if x_layers:
@@ -2828,6 +3009,11 @@ def _labels_for(
     y_label = style.y_label or comparison_title(
         comparison, text.name(spec.y_measure, table.measure(spec.y_measure).display), text, table
     )
+    if spec.kind is PlotKind.HISTOGRAM and not style.y_label:
+        # What a bar's height IS (bins.y_title); the measure names x.
+        from .bins import y_title as histogram_y_title
+
+        y_label = histogram_y_title(spec.histogram.stat)
 
     title = style.title
     if title is None and figure_key:

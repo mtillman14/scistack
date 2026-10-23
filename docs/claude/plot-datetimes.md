@@ -45,7 +45,8 @@ makes a log y axis **inert** with `LOG_REASON` in `layout_notes`.
 
 - `capability.available_plots(..., temporal=)` drops BAR; `why_unavailable`
   gives `BAR_REASON`; `roles.validate` refuses a temporal BAR, an unknown zone,
-  and a temporal **x_measure** ("not available yet": deferred).
+  and (until 2026-10-22) a temporal **x_measure**; it is now a date x axis
+  (`apply_temporal_x`, docs/claude/histogram-and-regression.md).
 - Compare: **difference -> hours** (`compare._duration_scale`: `ComparisonPlan.unit="h"`,
   `scale=1/3.6e6`; y title `Δ M (h, from session s1)`; then `figure.temporal`
   is None, a number axis). **% change** is inert (`PERCENT_REASON`).
@@ -90,7 +91,7 @@ by the backend: `capabilities.time_zone.problem`). Notes come from
 
 ## Known limits / follow-ups
 
-- A datetime **x** axis (with continuous x-vs-y plots).
+- ~~A datetime **x** axis~~: done 2026-10-22 (`temporal_x`; histogram-and-regression.md).
 - Range filter and difference bars on a datetime measure.
 - Converted mode across a DST fall-back hour: two instants share a wall clock
   (UTC has no such hour).
