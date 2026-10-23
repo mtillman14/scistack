@@ -176,8 +176,12 @@ Removing a node or edge from the canvas never deletes data. A step you remove is
 ## Sharing and reporting
 
 - **📄 Report** collects every finalized figure and statistical result into one web page, each labelled with where it came from.
-- **Export project** packs the project into a single bundle file. A colleague opens it with **SciStack: Import Project Bundle…** from the Command Palette.
-- **Verify reproduction** re-runs an imported project and compares the results with the ones the original author got.
+- **⇩ export project** packs the project into a single bundle file. A colleague opens it with **SciStack: Import Project Bundle…** from the Command Palette.
+- **⇩** on a hypothesis tab or submodule node saves just that piece; **⇧ import** adds one to your project.
+- **⇪ Share as library** packages a submodule so other projects can install it and get your updates.
+- **✓ verify** compares your re-run of an imported project with the results the original author got. It runs nothing itself.
+
+[What Can I Share?](../sharing/overview.md) explains which to use, and which copies stay linked to where they came from.
 
 ## Next steps
 
