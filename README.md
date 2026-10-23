@@ -190,6 +190,8 @@ You don't need Python or MATLAB to look at your results, and you're not tied to 
 
 The SciStack GUI runs inside VS Code, next to your code:
 
+![A SciStack pipeline on the canvas: a CSV path input, read by pandas.read_csv, saved as 300 Rating records](docs/images/example_best-popcorn/after_first_run.png)
+
 - **See the whole pipeline.** Functions and variables are drawn as a diagram, connected by what feeds into what.
 - **Know what's up to date.** Each step is coloured by whether its results are current, so you can see what needs re-running after you edit a function.
 - **Run from the canvas.** Run one step or the whole pipeline, and watch the progress.
@@ -197,6 +199,10 @@ The SciStack GUI runs inside VS Code, next to your code:
 - **Compare versions.** When a change in settings or code produces several versions of a result, the Variants view lists them side by side.
 - **Find missing data.** The Inventory shows which combinations of your schema keys have no data.
 - **Share a project.** Export the project as a bundle that a colleague can import and re-run.
+
+![Plot Studio: mean rating per brand with SD error bars and significance brackets from Stat Studio](docs/images/example_best-popcorn/stats_step12.png)
+
+The [Best Popcorn GUI walkthrough](https://scistack.readthedocs.io/en/latest/ui/examples/best-popcorn/) goes from a CSV to this figure without writing any code.
 
 ## Learn more
 
