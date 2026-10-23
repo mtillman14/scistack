@@ -18,6 +18,7 @@ override-versions-of = ["scistack-db", "scifor", "scimatlab", "scistackplot", "s
 name = "scistack-gui"
 dynamic = ["version", "dependency-coversioning"]
 description = "GUI for SciStack pipelines"
+readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [
