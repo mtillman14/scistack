@@ -394,10 +394,13 @@ def get_parameters() -> list[dict]:
         if registry._config is not None and registry._config.entities_file is not None
         else None
     )
+    users = _parameter_users()
     return [
         {
             "name": name,
             "values": list(p.values),
+            # E6: the libraries whose placed pipelines use it.
+            "used_by_libraries": users.get(name, []),
             "description": p.description,
             "source_file": getattr(p, "source_file", None),
             "source_line": getattr(p, "source_line", None),
@@ -409,6 +412,18 @@ def get_parameters() -> list[dict]:
             registry.get_parameters_registry().items(), name=lambda kv: kv[0]
         )
     ]
+
+
+def _parameter_users() -> dict:
+    """``library_service.parameter_users`` for the open project (``{}``
+    with none open)."""
+    from scistack_gui import db as gui_db
+
+    if not gui_db.is_loaded():
+        return {}
+    from scistack_gui.services.library_service import parameter_users
+
+    return parameter_users(gui_db.get_db())
 
 
 def create_parameter(name: str, values: "list | None" = None) -> dict:

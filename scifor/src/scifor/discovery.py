@@ -107,6 +107,52 @@ def own_package_dir(project_root: Path) -> "tuple[str, Path] | None":
     return (name, pkg_dir) if pkg_dir.is_dir() else None
 
 
+AUTHORED_LIBRARIES_DIR = "libs"
+"""Where a project keeps the libraries it AUTHORS (``<root>/libs/<name>/``):
+the ones it made with Share as library or Make my own copy
+(``.claude/plan-library-fork-chain.md`` R1). Each has the one library layout
+``scidb.library`` writes (``pyproject.toml``, ``src/<name>/``)."""
+
+
+def authored_library_dirs(project_root: Path) -> "list[tuple[str, Path]]":
+    """``[(name, <root>/libs/<name>)]`` for every library this project
+    authors, sorted by name: a folder of ``libs/`` holding ``src/<name>/``.
+
+    THE answer to "where are this project's own libraries?" -- naming
+    (``scidb.names.authored_libraries``), making them importable
+    (:func:`ensure_authored_libraries_importable`) and the authoring service
+    all ask here. Reads the folder layout only, never config."""
+    libs = Path(project_root) / AUTHORED_LIBRARIES_DIR
+    if not libs.is_dir():
+        return []
+    out = []
+    for folder in sorted(libs.iterdir(), key=lambda p: p.name):
+        if folder.is_dir() and (folder / "src" / folder.name).is_dir():
+            out.append((folder.name, folder))
+    return out
+
+
+def ensure_authored_libraries_importable(project_root: Path) -> list[str]:
+    """Put each authored library's ``src/`` on ``sys.path`` for the rest of
+    the session (what ``pip install -e`` would do), so a project can use the
+    libraries it made without installing them. Idempotent; returns the
+    directories added by THIS call.
+
+    Deliberately not a :class:`PathInsert` block: a library's code is
+    imported lazily long after discovery (``importlib.resources`` reads, the
+    MATLAB path lookup, a run), exactly as an installed package is."""
+    added = []
+    for name, folder in authored_library_dirs(project_root):
+        src = str((folder / "src").resolve())
+        if src not in sys.path:
+            sys.path.insert(0, src)
+            added.append(src)
+            logger.info("authored library %s importable from %s", name, src)
+    if added:
+        importlib.invalidate_caches()
+    return added
+
+
 CONFIG_FILENAME = "scistack.toml"
 """THE project config file, and the only one (user decision 2026-10-08).
 

@@ -120,6 +120,18 @@ def test_invocation_id_binding_value_matters():
     assert a != b
 
 
+def test_invocation_id_function_name_matters():
+    """2026-10-23 (plan-library-fork-chain R2): the same code recorded under
+    two names (``filter_emg`` / ``emg_alice.filter_emg``) is two activities;
+    no name (glue, ``__save__``) keeps the pre-2026-10-23 id."""
+    a = prov.compute_invocation_id("h", [], False, [("x", "r1")], function_name="filter_emg")
+    b = prov.compute_invocation_id(
+        "h", [], False, [("x", "r1")], function_name="emg_alice.filter_emg"
+    )
+    assert a != b
+    assert prov.compute_invocation_id("h", [], False, [("x", "r1")]) not in (a, b)
+
+
 def test_invocation_id_as_table_matters():
     a = prov.compute_invocation_id("fn", [], False, [("x", "r1")])
     b = prov.compute_invocation_id("fn", ["x"], False, [("x", "r1")])
@@ -177,6 +189,7 @@ def _inline_invocation_id(meta, edges):
         distribute,
         bindings,
         iteration_level=None if level is None else list(level),
+        function_name=meta.get("__fn"),
     )
 
 
@@ -202,6 +215,8 @@ def test_inline_invocation_id_matches_helper():
         # the iteration level (2026-10-01): one call, and a per-subject call
         ({"__fn_hash": "h6", "__level": []}, [("x", "r1")]),
         ({"__fn_hash": "h6", "__level": ["subject"]}, [("x", "r1")]),
+        # the recorded name (2026-10-23)
+        ({"__fn_hash": "h7", "__fn": "lib.f"}, [("x", "r1")]),
     ]
     for meta, edges in cases:
         assert _inline_invocation_id(meta, edges) == invocation_identity(meta, edges)

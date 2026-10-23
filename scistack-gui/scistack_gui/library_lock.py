@@ -8,6 +8,11 @@ the project would be silently overwritten on the next upgrade. Instead, an
 edit is refused with :class:`LibraryPipelineReadOnly`, whose message says
 which library owns it and that "Make my own copy" makes it editable.
 
+A library the project AUTHORS (``scidb.names.authored_libraries``: made here
+by Share as library or Make my own copy, ``libs/<name>/``) is not locked:
+its canvas is the working copy, never re-synced, and ⇪ Share publishes it
+(plan-library-fork-chain B5/B6).
+
 **When the rule applies.** Only during a USER EDIT:
 ``api/handlers.Handler.invoke`` runs every undoable handler (the set of user
 edits, by the undo system's own definition) inside :func:`user_edit`.
@@ -48,7 +53,7 @@ class LibraryPipelineReadOnly(ValueError):
         super().__init__(
             f"'{pipeline}' comes from the library '{library}' and is read-only "
             f"({what} refused). To edit it in this project, use Make my own copy "
-            f"(Submodules → Libraries → ✎, or `scistack library copy {library}`)."
+            f"(Submodules → Libraries → ✎, or `scistack library copy {library} --as NEW_NAME`)."
         )
 
 
@@ -108,6 +113,13 @@ def check_scope(db, pipeline_id: "str | None", what: str) -> None:
 
     owner = ps.library_owner(db, pipeline_id)
     if owner is None:
+        return
+    # B5: a library this project AUTHORS is edited here -- its canvas is the
+    # working copy and ⇪ Share publishes it (scidb.names.authored_libraries,
+    # the one answer; nothing stored).
+    from scidb.names import authored_libraries
+
+    if owner["library"] in authored_libraries():
         return
     logger.warning(
         "[library_lock] refused %s in %s (library %s, pipeline %s) during %s",

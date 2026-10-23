@@ -82,6 +82,7 @@ HISTORY_TABLES = (
     "_run",
     "_run_invocation",
     "_run_step",
+    "_function_rename",
     "_variant_pin",
     "_variant_tombstone",
     "__scidb_schema_overrides",

@@ -1,14 +1,17 @@
 /**
  * Libraries, inside the Submodules category (.claude/plan-portability.md
- * Stage 10a).
+ * Stage 10a; .claude/plan-library-fork-chain.md).
  *
  * A library is a package listed under `packages` in scistack.toml. Its
- * shared pipelines are seeded by the backend as LIBRARY-OWNED, read-only
- * pipelines (services/library_service.py); here each one is a row you drag
- * onto the canvas to place it (PipelineDAG's drop handler asks
- * `suggest_library_key_map` first when the payload says `library`), or
- * click to look inside. Editing inside one is refused by the backend
- * (library_lock), with the message shown wherever the edit was made.
+ * shared pipelines are seeded by the backend as LIBRARY-OWNED pipelines
+ * (services/library_service.py); here each one is a row you drag onto the
+ * canvas to place it (placing declares the Parameters / PathInputs the
+ * project lacks), or click to look inside.
+ *
+ * Two kinds, one list: a library you INSTALLED is read-only (🔒, refused by
+ * library_lock); a library this project AUTHORS (✏, `authored`: made by ⇪
+ * Share or ✎ Make my own copy, in libs/<name>/) is edited here and ⇪
+ * publishes it. ✎ on an installed one copies it under a new name.
  *
  * Adding a library only LISTS it: SciStack never installs anything. A name
  * that is not importable comes back with the backend's hint.
@@ -17,6 +20,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { callBackend } from '../../api'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
+import ProjectTunables from '../Tunables/ProjectTunables'
+import ShareLibraryButton from './ShareLibraryButton'
+import { isLibraryName, reportLines, suggestCopyName, type AuthoringReport } from './libraryReport'
 
 export interface LibraryPipelineRow {
   name: string
@@ -28,6 +34,9 @@ export interface LibraryRow {
   library: string
   schema_keys: string[] | null
   matlab: boolean
+  /** Made here (⇪ Share / ✎ copy): editable, ⇪ publishes (B4). */
+  authored: boolean
+  derived_from?: string[]
   pipelines: LibraryPipelineRow[]
   errors: string[]
 }
@@ -86,20 +95,26 @@ export default function LibrariesSection({ currentScope, onLibraryPipelineIds, o
   }
 
   const makeCopy = (name: string) => {
-    if (!window.confirm(
-      `Make your own copy of '${name}'? Its code is copied into this project, every `
-      + `placement of it switches to the copy (names stay ${name}.fn, so history stays `
-      + `current), its pipelines become editable, and it is no longer a library here.`
-    )) return
-    callBackend('make_library_copy', { name })
+    const newName = window.prompt(
+      `Make your own copy of '${name}', under a new name. It becomes a library this project `
+      + `authors (libs/<new name>/): every placement of ${name} switches to it, its functions `
+      + `are named <new name>.fn (results whose code is unchanged carry over), and its `
+      + `pipelines become editable. New name:`,
+      suggestCopyName(name),
+    )
+    if (newName === null) return
+    if (!isLibraryName(newName)) {
+      setError(`'${newName}' is not a valid library (import) name`)
+      return
+    }
+    callBackend('make_library_copy', { name, new_name: newName.trim() })
       .then(d => {
-        const r = d as { libraries: LibraryRow[]; report: { files: string[]; warnings: string[]; released_pipelines: string[] } }
+        const r = d as { libraries: LibraryRow[]; report: AuthoringReport }
         apply(r.libraries)
         setError('')
         setHint(
-          `Copied ${name}: ${r.report.files.length} file(s); editable now: `
-          + `${r.report.released_pipelines.join(', ') || 'no pipelines'}.`
-          + (r.report.warnings.length ? ` Warnings: ${r.report.warnings.join('; ')}` : '')
+          reportLines(r.report).join(' · ')
+          + (r.report.warnings.length ? ` · Warnings: ${r.report.warnings.join('; ')}` : '')
         )
       })
       .catch(err => setError((err as Error).message))
@@ -142,11 +157,13 @@ export default function LibrariesSection({ currentScope, onLibraryPipelineIds, o
         <div key={lib.library} style={styles.library}>
           <div style={styles.libRow}>
             <span style={{ flex: 1 }} title={lib.schema_keys ? `schema: ${lib.schema_keys.join(', ')}` : 'declares no schema keys'}>
-              📦 {lib.library}{lib.matlab ? ' (MATLAB)' : ''}
+              📦 {lib.library}{lib.matlab ? ' (MATLAB)' : ''}{lib.authored ? ' · yours' : ''}
             </span>
-            <button style={styles.rowBtn} onClick={() => makeCopy(lib.library)} title="Make my own copy (edit it in this project)">
-              ✎
-            </button>
+            {!lib.authored && (
+              <button style={styles.rowBtn} onClick={() => makeCopy(lib.library)} title="Make my own copy, under a new name (edit it in this project)">
+                ✎
+              </button>
+            )}
             <button style={styles.rowBtn} onClick={() => remove(lib.library)} title="Stop using this library">
               ×
             </button>
@@ -163,11 +180,14 @@ export default function LibrariesSection({ currentScope, onLibraryPipelineIds, o
                 ...(p.pipeline_id === currentScope ? styles.current : {}),
                 opacity: p.seeded ? 1 : 0.5,
               }}
-              title={p.seeded
-                ? 'Read-only (from the library). Drag onto the canvas to place; click to look inside.'
-                : 'Not loaded yet: Refresh'}
+              title={!p.seeded
+                ? 'Not loaded yet: Refresh'
+                : lib.authored
+                  ? 'Your library: edit it here, ⇪ publishes. Drag onto the canvas to place.'
+                  : 'Read-only (from the library). Drag onto the canvas to place; click to look inside.'}
             >
-              🔒 ⧉ {p.name}
+              {lib.authored ? '✏' : '🔒'} ⧉ {p.name}
+              {lib.authored && p.seeded && <ShareLibraryButton pipelineId={p.pipeline_id} />}
             </div>
           ))}
           {lib.errors.map((e, i) => (
@@ -177,6 +197,7 @@ export default function LibrariesSection({ currentScope, onLibraryPipelineIds, o
       ))}
       {hint && <div style={styles.hint}>{hint}</div>}
       {error && <div style={styles.errorText}>{error}</div>}
+      {libraries.length > 0 && <ProjectTunables />}
     </div>
   )
 }

@@ -2174,17 +2174,8 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
 
     for use in pipeline_store.get_pipeline_uses(db, pipeline_id):
         child = build_backend_pipeline(db, use["child_pipeline_id"], _built)
-        binding = use.get("binding") or {}
-        if binding:
-            pipe.use(
-                child.bind(
-                    key_map=binding.get("key_map"),
-                    params=binding.get("params"),
-                    iterate=binding.get("iterate"),
-                )
-            )
-        else:
-            pipe.use(child)
+        bound = _bound(child, use.get("binding") or {})
+        pipe.use(bound if bound is not None else child)
 
     logger.info(
         "[execution] compiled scope %s -> pipeline '%s' (%d own step(s), %d use(s))",
@@ -2194,6 +2185,54 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         len(pipe.uses),
     )
     return pipe
+
+
+def _bound(child, binding: dict):
+    """``child.bind(...)`` for a placement's *binding*, or ``None`` when it
+    is the identity. Step values that follow a Parameter (E5) are resolved
+    to the project's Parameter here (``library_service.resolved_binding_params``)."""
+    from scistack_gui.services.library_service import resolved_binding_params
+
+    if not binding or not any(binding.get(k) for k in ("key_map", "params", "iterate")):
+        return None
+    return child.bind(
+        key_map=binding.get("key_map"),
+        params=resolved_binding_params(binding.get("params")) or None,
+        iterate=binding.get("iterate"),
+    )
+
+
+def _as_placed(db, pipeline_id: str, pipe, built: dict):
+    """Running a PLACED pipeline (its node's ▶ Run) runs it as placed: with
+    each placement's step values (E3/E5). One placement, or several sharing
+    a binding, is one run; several different ones are several variants, as
+    a run of their parent would make. A pipeline whose placements set no
+    step values runs as it is (unchanged behaviour)."""
+    from scidb.pipeline import Pipeline
+
+    from scistack_gui import pipeline_store
+
+    placements = [
+        u for u in pipeline_store.get_pipeline_uses(db)
+        if u["child_pipeline_id"] == pipeline_id
+    ]
+    if not any((u.get("binding") or {}).get("params") for u in placements):
+        return pipe
+    runner = Pipeline(f"{pipe.name} (as placed)", db=db)
+    built[f"{pipeline_id}::placed"] = runner
+    seen: set[str] = set()
+    for u in placements:
+        bound = _bound(pipe, u.get("binding") or {})
+        key = bound.signature() if bound is not None else "identity"
+        if key in seen:
+            continue
+        seen.add(key)
+        runner.use(bound if bound is not None else pipe)
+    logger.info(
+        "[execution] %s runs as placed: %d placement(s), %d distinct binding(s)",
+        pipeline_id, len(placements), len(seen),
+    )
+    return runner
 
 
 def _discard_compiled(built: dict) -> None:
@@ -2265,15 +2304,29 @@ def run_pipeline(
     """
     from scidb.intent import ORIGIN_GUI, run_origin
 
+    from scistack_gui.services.library_service import missing_roots
+
+    # D2: a library's PathInputs carry templates, never a root folder; say
+    # which one needs the recipient's root instead of reading nothing.
+    roots = missing_roots(db, pipeline_id)
+    if roots:
+        raise ValueError(
+            f"PathInput(s) {', '.join(roots)} have no root folder in this project: set "
+            "where the files are (sidebar → PathInputs → root folder) before running"
+        )
     built: dict = {}
     rendered: list = []
     try:
-        pipe = build_backend_pipeline(db, pipeline_id, built)
+        pipe = _as_placed(db, pipeline_id, build_backend_pipeline(db, pipeline_id, built), built)
         # Compiled from the canvas, so it read the intent store: label every
         # run it starts (rule 3, docs/claude/intent-and-fact.md).
         with run_origin(ORIGIN_GUI):
             if mode == "all":
-                pipe.run_all(skip_computed=skip_computed)
+                if pipe is built.get(f"{pipeline_id}::placed"):
+                    # The as-placed runner has no own steps: run what it uses.
+                    pipe.run_composed(skip_computed=skip_computed)
+                else:
+                    pipe.run_all(skip_computed=skip_computed)
             elif mode == "until":
                 pipe.run_until(target, finalized=finalized, skip_computed=skip_computed)
             elif mode == "endpoints":

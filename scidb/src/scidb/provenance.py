@@ -17,7 +17,7 @@ Identity (see §5 of the design doc)::
 
     constant record_id = hash("__constant__" | content_hash(value))
     invocation_id      = hash(function_hash | as_table | distribute
-                              | sorted(input bindings))
+                              | sorted(input bindings) | function name)
     output record_id   = hash(type | schema_version | content_hash(data)
                               | invocation_id | output_num)
     run_id             = fresh unique id per for_each execution (NOT addressed)
@@ -178,6 +178,7 @@ def compute_invocation_id(
     input_bindings: Iterable[tuple],
     across_variants: Iterable[str] | None = None,
     iteration_level: Iterable[str] | None = None,
+    function_name: str | None = None,
 ) -> str:
     """Content-addressed id for a unique function call (an *activity*).
 
@@ -199,6 +200,17 @@ def compute_invocation_id(
             apart (docs/claude/iteration-level-identity.md). Folded in whenever
             it is not None. ``None`` is only for activities that have no level
             (glue hops, the synthetic ``__save__``).
+        function_name: The RECORDED name (``scidb.names.function_name``, the
+            ``__fn`` version key). Identity-bearing (2026-10-23,
+            plan-library-fork-chain R2): the same code recorded under two
+            names -- ``filter_emg`` and, after Share as library,
+            ``emg_alice.filter_emg`` -- is two activities, as its records
+            already were (``__fn`` is in every record id). Without it a
+            renamed function's runs landed on the OLD name's ``_invocation``
+            row (``ON CONFLICT DO NOTHING``), so the new name never had
+            history and its node could never go green. Folded in whenever it
+            is not None; ``None`` only for activities with no function of their
+            own (glue hops, the synthetic ``__save__``).
         input_bindings: Iterable of input edges, one per realized input (variable
             *and* constant): ``bindings.Binding`` objects, or the legacy
             ``(param_name, input_record_id)`` / ``(param_name, input_record_id,
@@ -233,9 +245,13 @@ def compute_invocation_id(
     level = None if iteration_level is None else [str(k) for k in iteration_level]
     if level is not None:
         parts.append(f"level:{canonical_hash(level)}")
+    if function_name is not None:
+        parts.append(f"fn:{function_name}")
     inv_id = _sha16(*parts)
     logger.debug(
-        "compute_invocation_id(fn_hash=%s, as_table=%s, distribute=%s, level=%s, %d bindings) = %s",
+        "compute_invocation_id(fn=%s, fn_hash=%s, as_table=%s, distribute=%s, level=%s, "
+        "%d bindings) = %s",
+        function_name,
         function_hash,
         sorted(as_table or []),
         bool(distribute),
@@ -648,6 +664,21 @@ def ensure_provenance_tables(duck) -> None:
             run_id        VARCHAR NOT NULL,
             invocation_id VARCHAR NOT NULL,
             PRIMARY KEY (run_id, invocation_id)
+        )
+    """)
+
+    # A function RENAMED (Share as library / Make my own copy:
+    # ``scidb.rename.rename_functions``, plan-library-fork-chain R2). The
+    # recorded name is identity, so after a rename the old name's records are
+    # a different variant from the new name's; this fact is what makes the
+    # old name's records saved before ``renamed_at`` stale for "current"
+    # (``provenance_query.renamed_superseded_records``) -- kept, never latest.
+    duck._execute("""
+        CREATE TABLE IF NOT EXISTS _function_rename (
+            old_name   VARCHAR NOT NULL,
+            new_name   VARCHAR NOT NULL,
+            renamed_at VARCHAR NOT NULL,
+            PRIMARY KEY (old_name, new_name, renamed_at)
         )
     """)
 

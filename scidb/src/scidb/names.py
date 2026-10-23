@@ -24,10 +24,11 @@ installed" would be wrong: stubs and wrappers built inside SciStack's own
 packages (a MATLAB proxy, ``state.py``'s stub) carry the user function's
 name and SciStack's module.
 
-**A library the project copied keeps its names** (``copied_libraries`` in
-``scistack.toml``, portability Stage 10c, D-2026-10-08-11): its source now
-lives in the project's own package at ``<pkg>/<lib>/``, and a function there
-is still recorded as ``<lib>.fn``, so its history stays current.
+**A library the project AUTHORS is a library like any other**
+(``.claude/plan-library-fork-chain.md`` R1): Share as library and Make my own
+copy write it to ``<root>/libs/<name>/`` and list it under ``packages``, so
+its functions are ``<name>.fn``. Whether a listed library is authored here is
+DERIVED (:func:`authored_libraries`), never stored.
 
 A name that already contains a dot is already qualified (the GUI's
 library-function wrapper, ``library_functions.with_qualified_name``) and is
@@ -40,7 +41,7 @@ import importlib.metadata
 import inspect
 import time
 
-from scifor.discovery import own_package_dir, read_scistack_section
+from scifor.discovery import authored_library_dirs, own_package_dir, read_scistack_section
 from scifor.pathinput import project_root
 from scistacklog import Log
 
@@ -53,16 +54,13 @@ ENTRY_POINT_GROUP = "scistack.plugins"
 LIBRARY_TTL = 5.0
 
 _cache: dict[str, tuple[float, frozenset[str]]] = {}
-_copied_cache: dict[str, tuple[float, "tuple[str | None, frozenset[str]]"]] = {}
-
-#: The scistack.toml key listing libraries copied into the project's package.
-COPIED_LIBRARIES_KEY = "copied_libraries"
+_authored_cache: dict[str, frozenset[str]] = {}
 
 
 def clear_cache() -> None:
     """Forget the cached library set (tests, a project switch)."""
     _cache.clear()
-    _copied_cache.clear()
+    _authored_cache.clear()
 
 
 def _entry_point_packages() -> set[str]:
@@ -102,24 +100,19 @@ def library_packages() -> frozenset[str]:
     return result
 
 
-def copied_libraries() -> "tuple[str | None, frozenset[str]]":
-    """``(own package, libraries copied into it)`` for THIS project."""
+def authored_libraries() -> frozenset[str]:
+    """The libraries of THIS project (:func:`library_packages`) that it
+    AUTHORS: those whose folder is ``<root>/libs/<name>/``
+    (``scifor.discovery.authored_library_dirs``). Derived from the two
+    owners every time -- no stored flag, no second list. Their pipelines are
+    editable here (``scistack_gui.library_lock``) and never re-synced over
+    the canvas (``library_service.sync_libraries``)."""
     root = project_root()
+    result = frozenset(library_packages() & {n for n, _ in authored_library_dirs(root)})
     key = str(root)
-    now = time.monotonic()
-    hit = _copied_cache.get(key)
-    if hit is not None and now - hit[0] < LIBRARY_TTL:
-        return hit[1]
-    copied: set[str] = set()
-    config = locate_config()
-    if config is not None:
-        listed = (read_scistack_section(config) or {}).get(COPIED_LIBRARIES_KEY) or []
-        copied |= {str(p) for p in listed if isinstance(p, str) and p}
-    own = own_package_dir(root)
-    result = (own[0] if own else None, frozenset(copied))
-    if copied and (hit is None or hit[1] != result):
-        Log.info(f"[names] copied libraries in {result[0]}: {sorted(copied)}")
-    _copied_cache[key] = (now, result)
+    if _authored_cache.get(key) != result:
+        Log.info(f"[names] authored libraries of {root}: {sorted(result) or 'none'}")
+        _authored_cache[key] = result
     return result
 
 
@@ -131,14 +124,9 @@ def library_of(fn) -> "str | None":
     except ValueError:  # pragma: no cover - a cyclic __wrapped__
         inner = fn
     module = getattr(inner, "__module__", None) or ""
-    parts = module.split(".")
-    top = parts[0]
+    top = module.split(".")[0]
     if top and top in library_packages():
         return top
-    if len(parts) > 1:
-        own, copied = copied_libraries()
-        if own is not None and top == own and parts[1] in copied:
-            return parts[1]
     return None
 
 

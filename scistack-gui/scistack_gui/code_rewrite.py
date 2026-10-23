@@ -2,10 +2,10 @@
 Rewriting the absolute imports of Python source when code moves between
 packages -- the one owner (portability Stage 10).
 
-Used when a submodule's code is shared as a library (``services/
-library_share``: the project's package -> the library's) and when a library
-is copied into a project (``services/library_copy``: the library -> a
-subpackage of the project). The caller says where each module goes
+Used by the authoring plan (``services/library_authoring``, O8) when a
+submodule's code is shared as a library (the project's package -> the
+library's) and when a library is copied under a new name (the old library
+-> the new one). The caller says where each module goes
 (*resolve*: old module name -> new one, or ``None`` to leave it); this module
 finds every ``import`` / ``from ... import`` that names one (by AST, so
 strings and comments are never touched) and rewrites that statement in

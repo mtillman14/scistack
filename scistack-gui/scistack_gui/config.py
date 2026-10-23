@@ -18,7 +18,9 @@ from pathlib import Path
 
 from scifor.discovery import (
     CONFIG_FILENAME,
+    authored_library_dirs,
     config_path_at,
+    ensure_authored_libraries_importable,
     is_test_path,
     own_package_dir,
 )
@@ -405,6 +407,10 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
         return _folder_scan_config(root)
     project_root = toml_path.parent
     logger.info("[config] Found config at %s", toml_path)
+    # The libraries this project authors (libs/<name>/) are importable for
+    # the whole session before anything asks for them: the MATLAB sources
+    # below locate a library by find_spec (plan-library-fork-chain O1).
+    ensure_authored_libraries_importable(project_root)
 
     logger.info("[config] Loading TOML file")
     with open(toml_path, "rb") as f:
@@ -1041,17 +1047,24 @@ def _without_own_package_files(project_root: Path, files: list, what: str) -> li
     loose files: importing ``src/<name>/x.py`` as a top-level module breaks
     its relative imports and loads it twice. Applies to a folder scan and to
     a ``modules`` entry that covers it (``"."``, which ``scidb.project`` seeds).
+
+    The libraries the project AUTHORS (``libs/<name>/``,
+    ``scifor.discovery.authored_library_dirs``) are packages too, loaded by
+    name when listed: never as loose files.
     """
+    packaged = [(name, folder) for name, folder in authored_library_dirs(project_root)]
     own = _own_package_dir(project_root)
-    if own is None:
+    if own is not None:
+        packaged.append(own)
+    if not packaged:
         return files
-    kept = [p for p in files if not _is_under(p, own[1])]
+    kept = [p for p in files if not any(_is_under(p, d) for _, d in packaged)]
     if len(kept) != len(files):
         logger.info(
-            "[config] %s: %d file(s) of package %s left to the package loader",
+            "[config] %s: %d file(s) of package(s) %s left to the package loader",
             what,
             len(files) - len(kept),
-            own[0],
+            [n for n, _ in packaged],
         )
     return kept
 
@@ -1372,25 +1385,6 @@ def add_package(db_path: "Path | None", name: str, *, project: "Path | None" = N
         raise ValueError(f"{name} is this project's own package, not a library")
     _write_config(toml_path, {**section, "packages": [*packages, name]})
     logger.info("[config] add_package: listed %s in %s", name, toml_path)
-    return toml_path
-
-
-def mark_library_copied(db_path: "Path | None", name: str, *, project: "Path | None" = None) -> Path:
-    """*name* was copied into the project's own package (Make my own copy,
-    portability Stage 10c): unlist it from ``packages`` and list it under
-    ``copied_libraries`` (``scidb.names.COPIED_LIBRARIES_KEY``), which keeps
-    its functions named ``<name>.fn``. One write."""
-    from scidb.names import COPIED_LIBRARIES_KEY
-
-    project_root = resolve_project_root(project, db_path)
-    toml_path = locate_config_at(project_root) or project_root / "scistack.toml"
-    section = _load_raw_scistack_section(toml_path) if toml_path.is_file() else {}
-    packages = [p for p in section.get("packages", []) if p != name]
-    copied = list(section.get(COPIED_LIBRARIES_KEY, []))
-    if name not in copied:
-        copied.append(name)
-    _write_config(toml_path, {**section, "packages": packages, COPIED_LIBRARIES_KEY: copied})
-    logger.info("[config] mark_library_copied: %s copied into %s", name, toml_path)
     return toml_path
 
 

@@ -14,8 +14,8 @@ Both are created for you by `scistack init` or when the GUI creates a database (
      the ONE writer scidb/config_file.py (TOP_LEVEL_ORDER, MATLAB_ORDER, TABLE_ORDER);
      GUI reader scistack_gui/config.py load_config; db -> scidb/inspect/cli.py
      _config_db; packages -> scidb/discover.py _configured_packages + scidb/names.py
-     library_packages; copied_libraries -> scidb.names.COPIED_LIBRARIES_KEY, written by
-     config.mark_library_copied; glue_dir default src/scistack_glue (config.set_glue_dir);
+     library_packages; authored libraries libs/<name>/ -> scifor.discovery.authored_library_dirs
+     + scidb.names.authored_libraries; glue_dir default src/scistack_glue (config.set_glue_dir);
      [schema_keys] scidb.schema_order; [aliases] scidb.aliases; [colors] scidb.colors;
      [matlab] variable_dir also scimatlab/stubs.py (default scistack_matlab_variables
      beside the entities file). Entities: scidb/entities.py (grammar, [library] table,
@@ -52,7 +52,6 @@ modules = ["."]
 entities_file = "src/my_study/scistack_entities.toml"
 glue_dir = "src/scistack_glue"
 packages = ["lab_emg_tools"]
-copied_libraries = []
 auto_discover = true
 db = "data/my_study.duckdb"
 
@@ -159,11 +158,7 @@ Installed packages to scan, by their import name (`"lab_emg_tools"`, not a path)
 
 The package must be installed in the project's virtual environment (`pip install ...`). **Used by:** GUI discovery, `scidb.scan_project`, and function naming in history. **Written by:** the GUI's library panel.
 
-#### `copied_libraries`
-
-*Array of import names. Default: not set.*
-
-Libraries whose source you've copied into your own project's package (the GUI's **Make my own copy**). Their functions keep their library names in history, so results computed before the copy stay current. **Written by:** the GUI, which also removes the library from `packages` at the same time.
+A library listed here can also be one of **your own**: one you made with the GUI's **⇪ Share as library** or **✎ Make my own copy**. It lives in the project's `libs/<name>/` folder, which SciStack makes importable for the project by itself (no install needed in the GUI; run `pip install -e libs/<name>` to use it from your own scripts). Its pipelines are editable in the project.
 
 #### `auto_discover`
 

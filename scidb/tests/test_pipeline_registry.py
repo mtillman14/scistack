@@ -945,6 +945,25 @@ class TestBinding:
 
         assert scale_by.calls == [3, 3, 3, 3]  # bound value, not source's 2
 
+    def test_a_step_value_sets_an_unwired_default_argument(self, db):
+        """plan-library-fork-chain O22: ``"fn.param"`` may name an argument
+        no input feeds but that has a default; the binding sets it. A bare
+        name still means a wired constant only."""
+
+        def scale_with_gain(signal, factor, gain=1.0):
+            scale_by.calls.append(gain)
+            return np.asarray(signal, dtype=float).ravel() * float(factor) * float(gain)
+
+        _seed(db)
+        p = Pipeline("gained", db=db)
+        for_each(scale_with_gain, {"signal": RawSignal, "factor": 2}, [Filtered],
+                 subject=SUBJECTS, trial=TRIALS, pipeline=p)
+        with pytest.raises(ValueError, match="no constant input matching"):
+            p.bind(params={"gain": 3.0})
+        top = Pipeline("top_gain", db=db, uses=[p.bind(params={"scale_with_gain.gain": 3.0})])
+        top.run_composed()  # run_all runs own steps only; top has none
+        assert scale_by.calls == [3.0, 3.0, 3.0, 3.0]
+
     def test_original_pipeline_unaffected_by_binding(self, db):
         _seed(db)
         scaling = self._scaling(db=db)

@@ -113,9 +113,10 @@ def _shape(db, pid: str) -> tuple:
 
 
 def _root(doc) -> str:
-    from scistack_gui.services.library_service import local_pipeline_ids
+    """The DERIVED id a first seed gives the document's root pipeline."""
+    from scistack_gui.ids import library_pipeline_id
 
-    return local_pipeline_ids(LIB, doc)[doc["root"]]
+    return library_pipeline_id(LIB, doc["name"], doc["root"])
 
 
 # ---------------------------------------------------------------------------

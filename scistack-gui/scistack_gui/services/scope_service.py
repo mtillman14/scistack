@@ -125,16 +125,22 @@ def add_pipeline_use(
     x: float = 0.0,
     y: float = 0.0,
 ) -> dict:
-    """Place a pipeline node on a parent canvas (use row + node + position)."""
+    """Place a pipeline node on a parent canvas (use row + node + position).
+
+    Placing a LIBRARY pipeline also declares the Parameters / PathInputs the
+    project lacks, by itself (E7, ``library_service.on_placed``, the one
+    path: there is no second "declare" click to forget)."""
     from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store as ps
     from scistack_gui.db import get_db
+    from scistack_gui.services.library_service import on_placed
 
     use_id = ps.add_pipeline_use(
         get_db(), parent_pipeline_id, child_pipeline_id, binding
     )
     layout_store.write_node_position(use_id, x, y, pipeline_id=parent_pipeline_id)
-    return {"ok": True, "use_id": use_id}
+    declared = on_placed(get_db(), child_pipeline_id)
+    return {"ok": True, "use_id": use_id, "declared": declared}
 
 
 def remove_pipeline_use(use_id: str) -> dict:

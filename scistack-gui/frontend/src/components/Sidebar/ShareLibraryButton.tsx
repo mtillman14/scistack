@@ -1,41 +1,35 @@
 /**
  * ⇪ on a submodule row: "Share as library…" (.claude/plan-portability.md
- * Stage 10b).
+ * Stage 10b; .claude/plan-library-fork-chain.md R1/R2).
  *
- * The backend writes a new library package (services/library_share.py:
- * the submodule as a pipeline document, the Python and MATLAB code it runs,
- * its Variables, and its Parameters / PathInputs as defaults). Nothing is
- * installed: the report ends with the pip command to run, after which the
- * library can be listed (Libraries → +) in this or any project.
+ * No folder is asked: the backend (services/library_authoring.py) writes the
+ * library to <project>/libs/<name>/ and switches the project to it — the
+ * pipeline is now the library's (same id, still editable here), its
+ * functions are named <name>.fn, and results whose code did not change are
+ * carried over under the new names. On a pipeline of a library this project
+ * AUTHORS the same button PUBLISHES: it writes the canvas (and any project
+ * code it now uses) into that library. The terminal user is shown the
+ * `pip install -e` command for their own scripts.
  */
 
 import { useState } from 'react'
 import { callBackend } from '../../api'
+import { isLibraryName, reportLines, type AuthoringReport } from './libraryReport'
 
-interface ShareReport {
-  library: string
-  dest: string
+interface Defaults {
+  name: string
+  folder: string
   pipeline: string
-  files: string[]
-  functions: Record<string, string>
-  kept_labels: string[]
-  variables: string[]
-  parameters: string[]
-  path_inputs: string[]
-  dependencies: string[]
-  rewritten_imports: string[]
-  qualified_calls: string[]
-  warnings: string[]
-  install: string
+  publish: boolean
 }
 
 export default function ShareLibraryButton({ pipelineId }: { pipelineId: string }) {
   const [open, setOpen] = useState<null | { top: number; left: number }>(null)
+  const [defaults, setDefaults] = useState<Defaults | null>(null)
   const [name, setName] = useState('')
-  const [dest, setDest] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [report, setReport] = useState<ShareReport | null>(null)
+  const [report, setReport] = useState<AuthoringReport | null>(null)
 
   const show = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
@@ -44,9 +38,9 @@ export default function ShareLibraryButton({ pipelineId }: { pipelineId: string 
     setReport(null)
     callBackend('share_library_defaults', { pipeline_id: pipelineId })
       .then(d => {
-        const s = d as { name: string; dest: string }
+        const s = d as Defaults
+        setDefaults(s)
         setName(s.name)
-        setDest(s.dest)
         setOpen({ top: r.bottom + 4, left: Math.max(8, r.left - 200) })
       })
       .catch(err => window.alert((err as Error).message))
@@ -55,43 +49,45 @@ export default function ShareLibraryButton({ pipelineId }: { pipelineId: string 
   const share = () => {
     setBusy(true)
     setError('')
-    callBackend('share_as_library', { pipeline_id: pipelineId, name: name.trim(), dest: dest.trim() })
-      .then(d => setReport(d as ShareReport))
+    callBackend('share_as_library', { pipeline_id: pipelineId, name: name.trim() })
+      .then(d => setReport((d as { report: AuthoringReport }).report))
       .catch(err => setError((err as Error).message))
       .finally(() => setBusy(false))
   }
 
+  const publish = defaults?.publish ?? false
+  const folder = defaults ? defaults.folder.replace(/[^/\\]+$/, name.trim() || defaults.name) : ''
+
   return (
     <>
-      <button style={styles.rowBtn} title="Share as library…" onClick={show} type="button">
+      <button style={styles.rowBtn} title={publish ? 'Publish to its library…' : 'Share as library…'} onClick={show} type="button">
         ⇪
       </button>
       {open && (
         <div style={{ ...styles.popover, top: open.top, left: open.left }} onClick={e => e.stopPropagation()}>
-          <div style={styles.title}>Share as library</div>
-          {!report && (
+          <div style={styles.title}>{publish ? `Publish to ${defaults?.name}` : 'Share as library'}</div>
+          {!report && !publish && (
             <>
               <label style={styles.label}>Library name (its import name)</label>
               <input style={styles.input} value={name} onChange={e => setName(e.target.value)} disabled={busy} />
-              <label style={styles.label}>New folder (absolute path; must be empty or new)</label>
-              <input style={styles.input} value={dest} onChange={e => setDest(e.target.value)} disabled={busy} />
               <div style={styles.note}>
-                Writes the submodule, the code it runs (Python and MATLAB), its Variables, and its
-                Parameters / PathInputs as defaults. Nothing is installed.
+                Written to <code>{folder}</code>. This project then uses it: the pipeline, the code it
+                runs (Python and MATLAB), its Variables and its Parameters / PathInputs as defaults.
+                Results whose code is unchanged carry over under the new names.
               </div>
             </>
           )}
+          {!report && publish && (
+            <div style={styles.note}>
+              Writes this canvas into <code>{defaults?.folder}</code>, with any project code it now
+              uses (renamed into the library). Code already in the library is never overwritten.
+            </div>
+          )}
           {report && (
             <div style={styles.report}>
-              <div>Wrote <b>{report.library}</b> ({report.files.length} files) to {report.dest}</div>
-              <div>Functions: {Object.values(report.functions).join(', ') || '—'}</div>
-              {report.kept_labels.length > 0 && <div>From other libraries: {report.kept_labels.join(', ')}</div>}
-              {(report.parameters.length + report.path_inputs.length) > 0 && (
-                <div>Defaults for: {[...report.parameters, ...report.path_inputs].join(', ')}</div>
-              )}
-              {report.dependencies.length > 0 && <div>Depends on: {report.dependencies.join(', ')}</div>}
-              {report.warnings.map((w, i) => <div key={i} style={styles.warn}>{w}</div>)}
-              <div style={{ marginTop: 6 }}>Install it, then list it under Libraries:</div>
+              {reportLines(report).map((line, i) => <div key={i}>{line}</div>)}
+              {report.warnings.map((w, i) => <div key={`w${i}`} style={styles.warn}>{w}</div>)}
+              <div style={{ marginTop: 6 }}>To use it from your own scripts:</div>
               <code style={styles.code}>{report.install}</code>
             </div>
           )}
@@ -99,8 +95,13 @@ export default function ShareLibraryButton({ pipelineId }: { pipelineId: string 
           <div style={styles.actions}>
             <button style={styles.btn} onClick={() => setOpen(null)} type="button">Close</button>
             {!report && (
-              <button style={styles.primary} onClick={share} disabled={busy || !name.trim() || !dest.trim()} type="button">
-                {busy ? 'Sharing…' : 'Share'}
+              <button
+                style={styles.primary}
+                onClick={share}
+                disabled={busy || (!publish && !isLibraryName(name))}
+                type="button"
+              >
+                {busy ? (publish ? 'Publishing…' : 'Sharing…') : (publish ? 'Publish' : 'Share')}
               </button>
             )}
           </div>

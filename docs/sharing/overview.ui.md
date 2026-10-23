@@ -5,7 +5,7 @@
      Sidebar/EditTab.tsx + ShareLibraryButton.tsx (⇪ Share as library),
      Sidebar/LibrariesSection.tsx (+, ✎ Make my own copy, ×),
      services/portability_service.py (reuse/fork by pipeline_id),
-     services/library_service.py (seed / lock / re-sync), library_copy.py,
+     services/library_service.py (seed / lock / re-sync), library_authoring.py,
      scope_service.duplicate_pipeline (child placements stay shared),
      design docs/claude/portability.md. -->
 
@@ -58,6 +58,7 @@ Some ways of reusing a pipeline keep it **linked** to where it came from: change
 | Imported `.json` file | nothing | at once. The file is a snapshot: importing a newer version of it later makes a second copy named "… (imported)" instead of updating yours. |
 | Imported `.scistack` project | nothing | at once: it's a new project, a copy. |
 | A library's pipeline (🔒 under **Libraries**) | the installed library | when you click **✎ Make my own copy** (or **×** stop using the library). Until then it's read-only and follows every new version you install. |
+| Your own library's pipeline (✏ under **Libraries**) | nothing: your canvas is the working copy | never automatically. The library's files change only when you click **⇪** to publish. |
 
 /// info | 📷 Screenshot
 **Show:** one submodule placed in two hypothesis tabs, side by side, with an edit inside it showing in both; caption "one submodule, used twice".

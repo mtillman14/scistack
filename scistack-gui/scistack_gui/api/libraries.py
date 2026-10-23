@@ -5,12 +5,18 @@ Libraries: list, add, remove, sync, and placing their pipelines
     GET    /api/libraries                 list_libraries
     GET    /api/libraries/placement-check library_placement_check -- key map + missing Parameters/PathInputs
     POST   /api/libraries/declare         declare_library_requirements -- from the library's defaults
-    GET    /api/libraries/share-defaults  share_library_defaults
-    POST   /api/libraries/share           share_as_library -- a submodule -> a new library package
-    POST   /api/libraries/copy            make_library_copy -- the library becomes project code (10c)
+    GET    /api/libraries/share-defaults  share_library_defaults -- name, folder, publish?
+    POST   /api/libraries/share           share_as_library -- a submodule -> libs/<name>/, or
+                                          publish a pipeline of a library the project authors
+    POST   /api/libraries/copy            make_library_copy -- an installed library -> libs/<new_name>/
     POST   /api/libraries                 add_library     -- lists it in scistack.toml packages
     DELETE /api/libraries                 remove_library  -- unlists it (seeded pipelines stay)
     POST   /api/libraries/sync            sync_libraries  -- seed / re-sync now
+
+    GET    /api/pipeline-uses/{use_id}/tunables          placement_tunables (E1)
+    PUT    /api/pipeline-uses/{use_id}/tunables          set_step_value {key, value} (E3)
+    POST   /api/pipeline-uses/{use_id}/tunables/promote  promote_step_value {key, parameter} (E5)
+    GET    /api/tunables                                 project_tunables -- every placement (E2)
 
 A library's pipeline is placed with the ordinary ``add_pipeline_use``
 (``api/scopes.py``), its binding's ``key_map`` taken from
@@ -21,6 +27,7 @@ that is not importable is reported with what to do.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -54,8 +61,15 @@ class DeclareRequirements(BaseModel):
 
 class ShareRequest(BaseModel):
     pipeline_id: str
-    dest: str
+    #: The new library's name; for a publish, the library's own (or empty).
+    name: str = ""
+
+
+class CopyRequest(BaseModel):
+    #: The installed library to copy.
     name: str
+    #: The library the project will author (``libs/<new_name>/``).
+    new_name: str
 
 
 def _placement_check(db, req: LibraryPipelineRef) -> dict:
@@ -71,20 +85,17 @@ def _declare_requirements(db, req: DeclareRequirements) -> dict:
 
 
 def _share_defaults(db, req: LibraryPipelineRef) -> dict:
-    from scistack_gui.services.library_share import share_defaults
+    from scistack_gui.services.library_authoring import share_defaults
 
     return share_defaults(db, req.pipeline_id)
 
 
 def _share_as_library(db, req: ShareRequest) -> dict:
-    from pathlib import Path
+    from scistack_gui.services.library_authoring import share
+    from scistack_gui.services.library_service import list_libraries
 
-    from scistack_gui.services.library_share import share_as_library
-
-    dest = Path(req.dest).expanduser()
-    if not dest.is_absolute():
-        raise ValueError(f"the library folder must be an absolute path, got {req.dest!r}")
-    return share_as_library(db, req.pipeline_id, dest, req.name.strip()).to_dict()
+    report = share(db, req.pipeline_id, req.name.strip()).to_dict()
+    return {"ok": True, "report": report, "libraries": list_libraries(db)}
 
 
 def _reload_and_sync(db) -> dict:
@@ -137,11 +148,11 @@ def _remove_library(db, req: LibraryName) -> dict:
     return {"ok": True, "sync": sync, "libraries": list_libraries(db)}
 
 
-def _make_copy(db, req: LibraryName) -> dict:
-    from scistack_gui.services.library_copy import make_own_copy
+def _make_copy(db, req: CopyRequest) -> dict:
+    from scistack_gui.services.library_authoring import copy
     from scistack_gui.services.library_service import list_libraries
 
-    report = make_own_copy(db, req.name).to_dict()
+    report = copy(db, req.name.strip(), req.new_name.strip()).to_dict()
     return {"ok": True, "report": report, "libraries": list_libraries(db)}
 
 
@@ -151,6 +162,48 @@ def _sync_libraries(db) -> dict:
     return sync_libraries(db)
 
 
+class UseRef(BaseModel):
+    use_id: str
+
+
+class StepValueSet(BaseModel):
+    use_id: str
+    #: ``"<fn label>.<input>"`` (scidb PipelineBinding key, O22).
+    key: str
+    value: Any = None
+
+
+class StepValuePromote(BaseModel):
+    use_id: str
+    key: str
+    #: The project Parameter to create (or reuse) and point the step at.
+    parameter: str
+
+
+def _placement_tunables(db, req: UseRef) -> dict:
+    from scistack_gui.services.library_service import tunables
+
+    return tunables(db, req.use_id)
+
+
+def _set_step_value(db, req: StepValueSet) -> dict:
+    from scistack_gui.services.library_service import set_step_value
+
+    return set_step_value(db, req.use_id, req.key, req.value)
+
+
+def _promote_step_value(db, req: StepValuePromote) -> dict:
+    from scistack_gui.services.library_service import promote_step_value
+
+    return promote_step_value(db, req.use_id, req.key, req.parameter.strip())
+
+
+def _project_tunables(db) -> list:
+    from scistack_gui.services.library_service import project_tunables
+
+    return project_tunables(db)
+
+
 _BAD_REQUEST = {ValueError: 400, FileNotFoundError: 400}
 
 LIBRARY_HANDLERS: tuple[Handler, ...] = (
@@ -158,12 +211,16 @@ LIBRARY_HANDLERS: tuple[Handler, ...] = (
     Handler("library_placement_check", "/libraries/placement-check", LibraryPipelineRef, _placement_check, http_method="GET", http_errors=_BAD_REQUEST),
     Handler("declare_library_requirements", "/libraries/declare", DeclareRequirements, _declare_requirements, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="declare library defaults"),
     Handler("share_library_defaults", "/libraries/share-defaults", LibraryPipelineRef, _share_defaults, http_method="GET", http_errors=_BAD_REQUEST),
-    Handler("share_as_library", "/libraries/share", ShareRequest, _share_as_library, http_errors=_BAD_REQUEST, undoable=False),
+    # Not undoable: they write a library's source tree and re-record history; the report lists every file.
+    Handler("share_as_library", "/libraries/share", ShareRequest, _share_as_library, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=False),
     Handler("add_library", "/libraries", LibraryName, _add_library, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="add library"),
     Handler("remove_library", "/libraries", LibraryName, _remove_library, http_method="DELETE", body=False, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="remove library"),
-    # Not undoable: it writes a whole source tree; the report lists every file.
-    Handler("make_library_copy", "/libraries/copy", LibraryName, _make_copy, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=False),
+    Handler("make_library_copy", "/libraries/copy", CopyRequest, _make_copy, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=False),
     Handler("sync_libraries", "/libraries/sync", None, _sync_libraries, notify_dag_updated=True, undoable=False),
+    Handler("placement_tunables", "/pipeline-uses/{use_id}/tunables", UseRef, _placement_tunables, http_method="GET", http_errors=_BAD_REQUEST),
+    Handler("set_step_value", "/pipeline-uses/{use_id}/tunables", StepValueSet, _set_step_value, http_method="PUT", http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="edit step value"),
+    Handler("promote_step_value", "/pipeline-uses/{use_id}/tunables/promote", StepValuePromote, _promote_step_value, http_errors=_BAD_REQUEST, notify_dag_updated=True, undoable=True, undo_label="make a Parameter"),
+    Handler("project_tunables", "/tunables", None, _project_tunables, http_method="GET"),
 )
 
 install_routes(router, LIBRARY_HANDLERS)

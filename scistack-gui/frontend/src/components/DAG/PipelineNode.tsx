@@ -11,6 +11,9 @@
  * a compact badge. Double-click (handled at canvas level) descends into the
  * child scope; the ▶ Run button plan-previews mode=all on the CHILD
  * pipeline (per-step run_until of a child is not available descend-less).
+ * ⚙ opens this placement's tunables (TunablesPanel; a library pipeline's
+ * Parameters, PathInputs and step values — the step values are THIS
+ * placement's binding, so two placements keep their own).
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
@@ -18,6 +21,7 @@ import { Handle, Position, useUpdateNodeInternals } from '@xyflow/react'
 import { callBackend, isVSCodeMode } from '../../api'
 import { usePlanRun } from '../../context/PlanRunContext'
 import { useScope, bindingSummary, type BindingSpec } from '../../context/ScopeContext'
+import TunablesPanel from '../Tunables/TunablesPanel'
 
 export interface PipelineNodeData {
   label: string
@@ -37,6 +41,8 @@ export default function PipelineNode({ id, data }: Props) {
   const { bumpGraph } = useScope()
   const updateNodeInternals = useUpdateNodeInternals()
   const [duplicating, setDuplicating] = useState(false)
+  // The placement's tunables (library pipelines; plan-library-fork-chain E1).
+  const [tuning, setTuning] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [error, setError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -186,7 +192,16 @@ export default function PipelineNode({ id, data }: Props) {
         >
           {'</>'}
         </button>
+        <button
+          style={styles.button}
+          onClick={e => { e.stopPropagation(); setTuning(t => !t) }}
+          type="button"
+          title="Tunables of this placement: its Parameters, PathInputs and step values"
+        >
+          ⚙
+        </button>
       </div>
+      {tuning && <TunablesPanel useId={id} onChanged={bumpGraph} />}
       {duplicating && (
         <div style={styles.duplicateForm} onClick={e => e.stopPropagation()}>
           <input

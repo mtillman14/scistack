@@ -345,6 +345,11 @@ def scan_project(project_root: Path) -> DiscoveryResult:
             project_result = scan_package(project_name)
 
     # --- Libraries: scistack.toml `packages` ---
+    # The ones the project authors (libs/<name>/) are importable without an
+    # install, as in the GUI (scifor.discovery, O1 of plan-library-fork-chain).
+    from scifor.discovery import ensure_authored_libraries_importable
+
+    ensure_authored_libraries_importable(project_root)
     libraries: dict[str, PackageResult] = {}
     for name in _configured_packages(project_root):
         if name == project_name:

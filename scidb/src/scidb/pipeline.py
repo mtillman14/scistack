@@ -43,6 +43,7 @@ Usage::
 from __future__ import annotations
 
 import atexit
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -309,6 +310,23 @@ def _constant_input_names(spec: StepSpec) -> set[str]:
     }
 
 
+def _default_input_names(spec: StepSpec) -> set[str]:
+    """Arguments of this spec's function that have a DEFAULT and that no
+    input feeds -- a STEP VALUE (plan-library-fork-chain O22): a binding may
+    set one, by its qualified ``"fn.param"`` key only, which adds it to the
+    step's constants (a different computation, as any ``params`` override)."""
+    try:
+        sig = inspect.signature(spec.fn)
+    except (TypeError, ValueError):  # a builtin / a proxy with no signature
+        return set()
+    kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    return {
+        name
+        for name, p in sig.parameters.items()
+        if p.kind in kinds and p.default is not inspect.Parameter.empty and name not in spec.inputs
+    }
+
+
 class PipelineBinding:
     """A non-mutating adaptation of a pipeline for one use edge.
 
@@ -324,7 +342,9 @@ class PipelineBinding:
     - ``params``: constant-input overrides → a different computation
       identity by construction (constants are version keys), i.e. distinct
       variants per binding. Bare names must match exactly one function's
-      constant input across the subtree; ``"fn.param"`` disambiguates.
+      constant input across the subtree; ``"fn.param"`` disambiguates, and
+      may also name an argument no input feeds but that has a default (a
+      step value, ``_default_input_names``), which it then sets.
     - ``iterate``: iteration-value overrides, keyed by POST-key_map names.
 
     Bindings apply transitively to the bound pipeline's own ``uses``
@@ -385,17 +405,20 @@ class PipelineBinding:
         from .exceptions import AmbiguousParamError
 
         available: list[tuple[str, str]] = []  # (fn_name, input_name)
+        defaults: list[tuple[str, str]] = []  # un-wired, with a default (step values)
         for p in [self.pipeline] + self.pipeline._uses_pipelines_closure():
             for spec in p.steps:
                 for cname in _constant_input_names(spec):
                     available.append((spec.name, cname))
+                for cname in _default_input_names(spec):
+                    defaults.append((spec.name, cname))
 
         resolved: dict[tuple[str, str], Any] = {}
         for target, value in self.params.items():
             if "." in target:
                 fn_name, input_name = target.rsplit(".", 1)
                 matches = [
-                    (f, c) for f, c in available if f == fn_name and c == input_name
+                    (f, c) for f, c in available + defaults if f == fn_name and c == input_name
                 ]
             else:
                 matches = [(f, c) for f, c in available if c == target]
@@ -473,6 +496,10 @@ class PipelineBinding:
                 new_inputs[name] = overrides[(spec.name, name)]
             else:
                 new_inputs[name] = _rewrite_input(val, km)
+        # Step values: an un-wired argument the binding sets joins the inputs.
+        for (fn_name, name), value in overrides.items():
+            if fn_name == spec.name and name not in spec.inputs and name in _default_input_names(spec):
+                new_inputs[name] = value
 
         new_options = dict(spec.options)
         if km:
@@ -1073,6 +1100,20 @@ class Pipeline:
                     f"run the used pipeline directly)"
                 )
             return []
+        return self._run(pairs, order, skip_computed=skip_computed)
+
+    def run_composed(self, skip_computed: bool = True) -> list:
+        """Run EVERY step of the composed graph -- this pipeline's own and
+        those of the pipelines it uses, each as its use edge binds it -- in
+        dependency order. What ``run_all`` deliberately is not: for a
+        pipeline that exists to run another one as bound (a placed library
+        pipeline run with its placement's step values; plan-library-fork-chain
+        E3), every used step IS the point."""
+        pairs = self._composed_steps()
+        if not pairs:
+            self.deactivate()
+            return []
+        order = self._topo_order(pairs, set(range(len(pairs))))
         return self._run(pairs, order, skip_computed=skip_computed)
 
     def run_until(

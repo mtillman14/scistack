@@ -1591,6 +1591,8 @@ def _build_skip_hook(
     # params are unknown and compare as plain constants (which then never
     # match: safe, recompute).
     constant_glue_ref: dict = {"rids": {}, "set": False}
+    #: invocation id -> whether today's recipe reproduces it (asked once each).
+    _recipe_checked: dict[str, bool] = {}
 
     def _should_skip(combo: dict) -> bool:
         schema_combo = {k: v for k, v in combo.items() if k in schema_keys}
@@ -1655,6 +1657,20 @@ def _build_skip_hook(
             return _recompute(combo_str, "no provenance record")
         if sig["function_hash"] != fn_hash:
             return _recompute(combo_str, "function hash changed")
+        # An invocation recorded under an older id recipe is the same
+        # computation, but node state can never find it: compute it once more
+        # so it is written under today's id (provenance_query.invocation_id_is_current).
+        _producer = provenance_query.producing_invocation(db._duck, output_record_id)
+        if _producer is not None:
+            _inv = _producer[0]
+            if _inv not in _recipe_checked:
+                _recipe_checked[_inv] = provenance_query.invocation_id_is_current(
+                    db._duck, _inv
+                )
+            if not _recipe_checked[_inv]:
+                return _recompute(
+                    combo_str, f"invocation {_inv} was recorded under an older id recipe"
+                )
         run_options_now = _run_options_now()
         if sig.get("run_options", run_options_now) != run_options_now:
             return _recompute(

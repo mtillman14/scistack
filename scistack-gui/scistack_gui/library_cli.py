@@ -1,6 +1,8 @@
 """
-``scistack library list | add NAME | remove NAME | create``: the project's libraries
-from the terminal (portability Stage 10a).
+``scistack library list | add NAME | remove NAME | create | copy | build``: the
+project's libraries from the terminal (portability Stage 10a;
+plan-library-fork-chain: ``create`` and ``copy`` write ``libs/<name>/`` and
+switch the project to it, through the same service the GUI calls).
 
 The same owners as the GUI's Libraries list: ``config.add_package`` /
 ``remove_package`` (the ``packages`` list in scistack.toml) and
@@ -34,11 +36,11 @@ def add_library_subparsers(sub: argparse._SubParsersAction) -> None:
     rm.add_argument("name")
     create = cmds.add_parser(
         "create",
-        help="Share a submodule as a new library package (code, pipeline, declarations).",
+        help="Share a submodule as a new library in libs/<name>/ (or publish a pipeline of a "
+             "library this project authors); the project switches to it.",
     )
     create.add_argument("--from-submodule", required=True, metavar="NAME_OR_ID",
                         help="The submodule's name (or pipeline id when names repeat).")
-    create.add_argument("--into", required=True, type=Path, help="New, empty folder for the library.")
     create.add_argument("--name", default=None, help="Library (import) name; default from the submodule's name.")
     create.add_argument("--db", default=None, help="Project database (default: as scistack export finds it).")
     build = cmds.add_parser("build", help="Build a library folder into a wheel (pip wheel, no deps).")
@@ -46,9 +48,12 @@ def add_library_subparsers(sub: argparse._SubParsersAction) -> None:
     build.add_argument("--out", type=Path, default=None, help="Where the wheel goes (default: FOLDER/dist).")
     copy = cmds.add_parser(
         "copy",
-        help="Make my own copy: copy a library into this project; its pipelines become editable.",
+        help="Make my own copy: copy an installed library as a library this project authors "
+             "(libs/NEW/); its pipelines become editable and every placement switches to it.",
     )
-    copy.add_argument("name")
+    copy.add_argument("name", help="The installed library to copy.")
+    copy.add_argument("--as", dest="new_name", required=True, metavar="NEW_NAME",
+                      help="The new library's (import) name.")
     copy.add_argument("--db", default=None, help="Project database (default: as scistack export finds it).")
     lib.set_defaults(_library_cmd=dispatch)
 
@@ -62,19 +67,28 @@ def _listed(project: Path) -> list[str]:
 
 
 def _describe(project: Path) -> list[dict]:
+    """The list rows. ``authored`` is derived the way ``scidb.names.
+    authored_libraries`` derives it (listed, and its folder is
+    ``libs/<name>/``); this command does not open the project."""
     from scidb.library import read_library
+    from scifor.discovery import authored_library_dirs, ensure_authored_libraries_importable
 
+    ensure_authored_libraries_importable(project)
+    authored = {n for n, _ in authored_library_dirs(project)}
     out = []
     for name in _listed(project):
         top = name.split(".")[0]
         if importlib.util.find_spec(top) is None:
             out.append({"library": name, "installed": False, "pipelines": [], "schema_keys": None,
-                        "matlab": False, "errors": [f"{top} is not importable from {sys.executable}"]})
+                        "matlab": False, "authored": top in authored,
+                        "errors": [f"{top} is not importable from {sys.executable}"]})
             continue
         info = read_library(top)
         out.append({
             "library": name,
             "installed": True,
+            "authored": top in authored,
+            "derived_from": info.derived_from,
             "schema_keys": info.schema_keys,
             "pipelines": [p.name for p in info.pipelines],
             "matlab": info.matlab_dir is not None,
@@ -90,7 +104,7 @@ def _create(args: argparse.Namespace) -> dict:
 
     from scistack_gui import pipeline_store as ps
     from scistack_gui.headless import open_for_export
-    from scistack_gui.services.library_share import share_as_library, share_defaults
+    from scistack_gui.services.library_authoring import share, share_defaults
 
     try:
         db_path, _ = resolve_db_path(args.db)
@@ -108,7 +122,29 @@ def _create(args: argparse.Namespace) -> dict:
         )
     pid = matches[0]["pipeline_id"]
     name = args.name or share_defaults(db, pid)["name"]
-    return share_as_library(db, pid, args.into, name).to_dict()
+    return share(db, pid, name).to_dict()
+
+
+def _print_report(report: dict) -> None:
+    """The human-readable form of an ``AuthoringReport``."""
+    verb = {"share": "shared", "publish": "published", "copy": "copied"}.get(report["action"], "wrote")
+    what = f"'{report['pipeline']}'" if report.get("pipeline") else report.get("source")
+    print(f"{verb} {what} as library {report['library']} at {report['folder']}")
+    for old, new in report["functions"].items():
+        print(f"  {old} -> {new}")
+    for label in report["kept_labels"]:
+        print(f"  from another library: {label}")
+    for new, n in report["carried"].items():
+        print(f"  results carried: {new} ({n} record(s), nothing re-run)")
+    for x in report["not_carried"]:
+        print(f"  not carried: {x['function']}: {x['reason']}")
+    for key in report["step_values"]:
+        print(f"  step value (no Parameter feeds it): {key}")
+    if report["dependencies"]:
+        print(f"  depends on: {', '.join(report['dependencies'])}")
+    for w in report["warnings"]:
+        print(f"  warning: {w}", file=sys.stderr)
+    print(f"to import it from your own scripts: {report['install']}")
 
 
 def dispatch(args: argparse.Namespace) -> int:
@@ -136,12 +172,12 @@ def dispatch(args: argparse.Namespace) -> int:
         from scidb.inspect.cli import CLIError, resolve_db_path
 
         from scistack_gui.headless import open_for_export
-        from scistack_gui.services.library_copy import make_own_copy
+        from scistack_gui.services.library_authoring import copy
 
         try:
             db_path, _ = resolve_db_path(args.db)
             db = open_for_export(db_path, project=args.project)
-            report = make_own_copy(db, args.name).to_dict()
+            report = copy(db, args.name, args.new_name).to_dict()
         except (CLIError, ValueError, OSError) as e:
             if args.json:
                 print(json.dumps({"ok": False, "error": str(e)}))
@@ -151,15 +187,7 @@ def dispatch(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps({"ok": True, "report": report}))
             return 0
-        print(f"copied {args.name} into {report['python_dir']}")
-        if report["matlab_dir"]:
-            print(f"  MATLAB: {report['matlab_dir']}")
-        print(f"  {len(report['files'])} file(s); editable now: "
-              f"{', '.join(report['released_pipelines']) or 'no pipelines'}")
-        for v in report["declared_variables"]:
-            print(f"  declared Variable {v}")
-        for w in report["warnings"]:
-            print(f"  warning: {w}", file=sys.stderr)
+        _print_report(report)
         return 0
     if cmd == "create":
         try:
@@ -173,17 +201,7 @@ def dispatch(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps({"ok": True, "report": report}))
             return 0
-        print(f"shared '{report['pipeline']}' as library {report['library']} at {report['dest']}")
-        print(f"  functions: {', '.join(report['functions'].values()) or '-'}")
-        for label in report["kept_labels"]:
-            print(f"  from another library: {label}")
-        for n in report["parameters"] + report["path_inputs"]:
-            print(f"  default for: {n}")
-        if report["dependencies"]:
-            print(f"  depends on: {', '.join(report['dependencies'])}")
-        for w in report["warnings"]:
-            print(f"  warning: {w}", file=sys.stderr)
-        print(f"install: {report['install']}")
+        _print_report(report)
         return 0
     try:
         if cmd == "add":
@@ -208,7 +226,8 @@ def dispatch(args: argparse.Namespace) -> int:
         print("no libraries listed")
     for lib in libraries:
         status = "" if lib["installed"] else "  (NOT INSTALLED)"
-        print(f"{lib['library']}{status}")
+        mine = "  (authored here: libs/)" if lib.get("authored") else ""
+        print(f"{lib['library']}{status}{mine}")
         if lib["schema_keys"]:
             print(f"  schema: {', '.join(lib['schema_keys'])}")
         for p in lib["pipelines"]:

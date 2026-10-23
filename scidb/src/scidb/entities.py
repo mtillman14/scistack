@@ -373,6 +373,24 @@ def _make_variable_class(name: str) -> type:
     )
 
 
+#: The keys a ``[library]`` table accepts. ``derived_from`` (A8,
+#: plan-library-fork-chain): the libraries this one was copied from, newest
+#: first -- where it came from, never who.
+LIBRARY_KEYS = ("schema_keys", "derived_from")
+
+
+def parse_derived_from(data: dict) -> "tuple[list[str], list[str]]":
+    """``[library] derived_from = [...]`` from parsed TOML *data*:
+    ``(names, [error, ...])``; ``[]`` when absent."""
+    section = data.get(LIBRARY)
+    if not isinstance(section, dict) or section.get("derived_from") is None:
+        return [], []
+    raw = section["derived_from"]
+    if not isinstance(raw, list) or not all(isinstance(n, str) and n.strip() for n in raw):
+        return [], [f"[{LIBRARY}] derived_from must be a list of library names"]
+    return [n.strip() for n in raw], []
+
+
 def parse_library_table(data: dict) -> "tuple[list[str] | None, list[str]]":
     """``[library] schema_keys = [...]`` from parsed TOML *data*:
     ``(schema_keys or None, [error, ...])``. A list of distinct, non-empty
@@ -385,11 +403,13 @@ def parse_library_table(data: dict) -> "tuple[list[str] | None, list[str]]":
     if not isinstance(section, dict):
         return None, [f"[{LIBRARY}] must be a table"]
     errors = []
-    unknown = sorted(set(section) - {"schema_keys"})
+    unknown = sorted(set(section) - set(LIBRARY_KEYS))
     if unknown:
         errors.append(
-            f"[{LIBRARY}] unknown key(s) {', '.join(unknown)}; it accepts schema_keys"
+            f"[{LIBRARY}] unknown key(s) {', '.join(unknown)}; it accepts "
+            f"{', '.join(LIBRARY_KEYS)}"
         )
+    errors += parse_derived_from(data)[1]
     keys = section.get("schema_keys")
     if keys is None:
         return None, errors

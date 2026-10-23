@@ -129,7 +129,7 @@ def _recompute_invocation_ids(db, type_name: str) -> list[tuple[str, str]]:
         inv = pq.producing_invocation(duck, rid)
         if inv is None:
             continue
-        inv_id, _fn, fn_hash = inv
+        inv_id, fn_name, fn_hash = inv
         sig = pq.stored_invocation_signature(duck, rid)
         as_table, distribute, across_variants, iteration_level = duck._fetchone(
             "SELECT as_table, distribute, across_variants, iteration_level "
@@ -151,6 +151,8 @@ def _recompute_invocation_ids(db, type_name: str) -> list[tuple[str, str]]:
                     across_variants=across_variants,
                     # Recorded since 2026-10-01: the level the call iterated.
                     iteration_level=iteration_level,
+                    # The recorded name is identity since 2026-10-23.
+                    function_name=fn_name,
                 ),
             )
         )

@@ -798,6 +798,52 @@ def current_run_options(duck, fn_names) -> dict:
     return {key: label for key, (_ts, label) in newest.items()}
 
 
+def renamed_superseded_records(duck, record_ids, *, inv_map: dict | None = None) -> set:
+    """Which of ``record_ids`` were produced under a function name that has
+    since been RENAMED (``_function_rename``, written by
+    ``scidb.rename.rename_functions``) and were saved before the rename --
+    ``{record_id, ...}``. The one owner of that rule; the load path's latest
+    collapse and node state's current records both ask it.
+
+    The recorded name is identity, so ``filter_emg``'s records and
+    ``emg_alice.filter_emg``'s are two variants at one location: without this
+    a load after Share as library was ambiguous, and a downstream step ran
+    once per name. A record the OLD name writes after the rename (the
+    project still runs its own ``filter_emg`` elsewhere) is current again.
+    """
+    rids = list(dict.fromkeys(record_ids))
+    if not rids:
+        return set()
+    renamed = dict(
+        duck._fetchall("SELECT old_name, MAX(renamed_at) FROM _function_rename GROUP BY old_name")
+    )
+    if not renamed:
+        return set()
+    if inv_map is None:
+        inv_map = producing_invocation_batch(duck, rids)
+    candidates = [rid for rid in rids if rid in inv_map and inv_map[rid][1] in renamed]
+    if not candidates:
+        return set()
+    saved = dict(
+        _chunked_in(
+            duck,
+            "SELECT record_id, MAX(timestamp) FROM _record_save "
+            "WHERE record_id IN ({ph}) GROUP BY record_id",
+            candidates,
+        )
+    )
+    stale = {
+        rid for rid in candidates
+        if (saved.get(rid) or "") <= renamed[inv_map[rid][1]]
+    }
+    if stale:
+        logger.debug(
+            "renamed_supersession: %d of %d record(s) were produced under a name "
+            "since renamed (%s) — not current", len(stale), len(rids), sorted(renamed),
+        )
+    return stale
+
+
 def run_option_superseded_records(
     duck, record_ids, *, inv_map: dict | None = None, run_map: dict | None = None
 ) -> set:
@@ -1821,6 +1867,49 @@ def invocation_outputs_batch(duck, invocation_ids) -> dict:
     ):
         out.setdefault(inv_id, []).append((output_num, out_rid, out_type))
     return out
+
+
+def invocation_id_is_current(duck, invocation_id: str) -> bool:
+    """Whether a stored invocation's id is what TODAY's recipe
+    (``provenance.compute_invocation_id``) computes from that invocation's own
+    stored facts -- its function name and hash, run options, level and input
+    edges. ``False`` means it was recorded under an older recipe (before
+    2026-10-23 the function name was not part of the id): its results are the
+    same computation, but node state predicts ids with today's recipe and
+    can never find it, so the skip gate must not call it current. A re-run
+    then writes it once under the current id and the node goes green.
+
+    ``True`` for an id that is not found (nothing to judge)."""
+    from .provenance import compute_invocation_id
+
+    row = duck._fetchone(
+        "SELECT function_name, function_hash, as_table, distribute, across_variants, "
+        "iteration_level FROM _invocation WHERE invocation_id = ?",
+        [invocation_id],
+    )
+    if row is None:
+        return True
+    fn_name, fn_hash, as_table, distribute, across, level = row
+    edges = duck._fetchall(
+        "SELECT param_name, input_record_id, selector FROM _invocation_input "
+        "WHERE invocation_id = ?",
+        [invocation_id],
+    )
+    recomputed = compute_invocation_id(
+        fn_hash,
+        list(as_table or []),
+        bool(distribute),
+        [(p, r, s) for p, r, s in edges],
+        across_variants=list(across or []),
+        iteration_level=None if level is None else list(level),
+        function_name=fn_name,
+    )
+    if recomputed != invocation_id:
+        logger.debug(
+            "invocation %s of %s was recorded under an older id recipe (today's: %s)",
+            invocation_id, fn_name, recomputed,
+        )
+    return recomputed == invocation_id
 
 
 def stored_invocation_signature(duck, record_id: str):
@@ -3084,7 +3173,11 @@ def current_records_by_schema_batch(duck, variable_name: str) -> dict:
         return {}
     all_rids = [rid for rid, _sid, _ts in rows]
     vkeys = variant_keys_batch(duck, all_rids)
-    superseded = run_option_superseded_records(duck, all_rids)
+    # A record of a since-renamed name is not current either (the load path
+    # drops it too: database._find_record).
+    superseded = run_option_superseded_records(duck, all_rids) | renamed_superseded_records(
+        duck, all_rids
+    )
 
     best: dict = {}  # (schema_id, variant_key) -> (timestamp, record_id)
     for rid, sid, ts in rows:
@@ -3422,7 +3515,13 @@ def iterated_keys_for_invocations(duck, invocation_ids, schema_keys) -> "list[st
 
 
 def _predict_config_invocations(
-    duck, fn_hash: str, cfg: dict, into: set, defaults: dict | None = None
+    duck,
+    fn_hash: str,
+    cfg: dict,
+    into: set,
+    defaults: dict | None = None,
+    *,
+    fn_name: str | None = None,
 ) -> None:
     """Add expected ``(invocation_id, schema_id)`` pairs for one config × current
     input data into ``into``.
@@ -3532,6 +3631,8 @@ def _predict_config_invocations(
                 # invocations its run wrote. A never-run fallback config has
                 # none (config_from_inputs): every pair is missing anyway.
                 iteration_level=cfg.get("iteration_level"),
+                # The recorded name is identity too (compute_invocation_id).
+                function_name=fn_name,
             )
             into.add((inv_id, sid))
 
@@ -3951,7 +4052,7 @@ def expected_invocations_for_function(
     # (b) live prediction per known variant config × current input data
     _t = _time.perf_counter()
     for cfg in configs:
-        _predict_config_invocations(duck, fn_hash, cfg, expected, defaults)
+        _predict_config_invocations(duck, fn_hash, cfg, expected, defaults, fn_name=fn_name)
     _add("expected.predict", _t)
 
     # (c) live prediction from the declared inputs — the NEVER-RUN fallback,
@@ -3976,7 +4077,7 @@ def expected_invocations_for_function(
         if (call_id is None or fallback_cid == call_id) and not already_run:
             _t = _time.perf_counter()
             _predict_config_invocations(
-                duck, fn_hash, fallback_cfg, expected, defaults
+                duck, fn_hash, fallback_cfg, expected, defaults, fn_name=fn_name
             )
             _add("expected.predict", _t)
         elif already_run:

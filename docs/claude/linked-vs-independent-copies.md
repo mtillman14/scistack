@@ -29,9 +29,11 @@ decides tab vs Submodules list. Sharing one moves the same document shape.
 | Import, id known locally, content differs | FORK: fresh id, "(imported)" name suffix; local untouched | no | `_resolve_pipeline` |
 | Import, globals (Parameter/PathInput/Sweep) by name | local REUSED; missing PathInput/Sweep materialised into source | n/a | `portability_service` |
 | Import `.scistack` | always a NEW project, code copied into `src/<pkg>/` | no | `scidb.bundle.import_project` |
-| Library pipeline (🔒) | seeded with DERIVED ids; re-synced when the document's `definition_hash` changes; project placements + bindings untouched | yes, follows installed version | `library_service.sync_libraries` |
+| Library pipeline (🔒, installed) | seeded with ids from existing `_library_pipelines` rows, else DERIVED (`local_pipeline_ids`, O11); re-synced when the document's `definition_hash` changes; project placements + bindings untouched | yes, follows installed version | `library_service.sync_libraries` |
+| Library pipeline (✏, AUTHORED: `libs/<name>/`, `scidb.names.authored_libraries`) | the canvas is the working copy; NEVER re-synced from its files (O12); editable (`library_lock` skips it) | no: the files are output, written by ⇪ publish | `library_authoring.share` (publish) |
 | Edit inside a library pipeline | refused (`LibraryPipelineReadOnly`) during a user edit only | — | `library_lock` |
-| ✎ Make my own copy | code copied to `src/<pkg>/<lib>/` (MATLAB `matlab/+<lib>/`), ALL placements switch, pipelines released (same ids), names stay `lib.fn` via `copied_libraries` | unlinked, all-or-nothing per library | `library_copy.make_own_copy` |
+| ⇪ Share a submodule | library written to `libs/<name>/`; project lists it; its pipelines OWNED by it with the SAME ids; canvas relabelled `fn` -> `name.fn`; results carried (`scidb.rename_functions`) where the code hash is unchanged | the project now uses its own library | `library_authoring.share` |
+| ✎ Make my own copy | NEW name: library written to `libs/<new>/` (same layout, `derived_from`), old unlisted, ALL placements re-owned (same ids), labels `old.fn` -> `new.fn`, results carried | unlinked, all-or-nothing per library | `library_authoring.copy` |
 | × remove library | unlisted from `packages`; pipelines stay as they are; stays installed | unlinked | `config.remove_package` |
 | Library drops a pipeline in a new version | reported as orphaned, left in place | no longer updates | `sync_libraries` |
 
@@ -43,19 +45,31 @@ functions/variables come back as `unresolved_labels`. So a `.json` share is
 only useful when the recipient already has the code (same project lineage or
 same installed library).
 
+## Fixed by the fork chain (2026-10-23, `.claude/plan-library-fork-chain.md`)
+
+- A library's wiring is editable in the project that AUTHORS it (B5/B6): the
+  canvas is the working copy, ⇪ publishes (`write_library(existing="update")`:
+  adds code, never overwrites a changed file, merges declarations).
+- The source project switches to its own library automatically (B1), and a
+  rename carries results whose code hash is unchanged (R2,
+  `scidb.rename_functions`); `invocation_id` folds in the recorded function
+  name since then, so the same code under two names is two activities.
+- `copied_libraries` is gone: a copy is a library under a new name (B2).
+
 ## Known gaps (2026-10-23)
 
-- **A library's wiring can't be edited anywhere**, author's project included
-  (the lock applies wherever it is listed). Workaround documented to users:
-  re-share to a new folder and copy `src/<lib>/pipelines/*.json` over.
-  `create_library` refuses a non-empty folder, so there is no re-share-in-place.
 - **Re-importing an updated `.json`** forks instead of updating, by design
   (the local copy and the new file differ). No "update from file" action.
-- **Switching the source project to its own library** is manual (place the
-  library pipeline, hide the original); functions get `lib.fn` names, so they
-  run again under new identities (inferred, not tested).
-- Re-adding a library after Make my own copy is untested (`copied_libraries`
-  may conflict); the user docs deliberately don't describe it.
+- **Unpublished changes** of an authored pipeline are not flagged in the UI
+  (the owner row's `definition_hash` vs a fresh capture would say so).
+- **MATLAB steps** are never carried across a rename when their calls were
+  requalified (the `.m` text, hence its hash, changed): reported `not_carried`.
+- **Schema-key vocabulary across hops** (a pipeline adapted with `key_map`,
+  then copied) is untested.
+- A carried record's id is content-addressed but not the id a fresh run would
+  write (version keys are not stored, so the save-time recipe cannot be
+  replayed); the skip gate and node state never compare record ids, only
+  invocations.
 
 ## Related
 

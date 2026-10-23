@@ -49,7 +49,12 @@ export function bindingSummary(binding: BindingSpec | null | undefined): string 
   if (!binding) return ''
   const parts: string[] = []
   for (const [k, v] of Object.entries(binding.key_map ?? {})) parts.push(`${k}→${v}`)
-  for (const [k, v] of Object.entries(binding.params ?? {})) parts.push(`${k}=${JSON.stringify(v)}`)
+  for (const [k, v] of Object.entries(binding.params ?? {})) {
+    // A step value that follows a project Parameter (E5) names it.
+    const ref = v && typeof v === 'object' && 'parameter' in (v as object)
+      ? (v as { parameter: string }).parameter : null
+    parts.push(ref ? `${k}=⟨${ref}⟩` : `${k}=${JSON.stringify(v)}`)
+  }
   for (const [k, v] of Object.entries(binding.iterate ?? {})) parts.push(`${k}=${JSON.stringify(v)}`)
   return parts.join(', ')
 }

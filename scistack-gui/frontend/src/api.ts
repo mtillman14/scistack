@@ -327,6 +327,11 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     remove_library:          { path: (p) => `/api/libraries?name=${encodeURIComponent(p.name as string)}`, method: 'DELETE' },
     sync_libraries:          { path: '/api/libraries/sync', method: 'POST' },
     make_library_copy:       { path: '/api/libraries/copy', method: 'POST', body: true },
+    // Tunables of a placed library pipeline (.claude/plan-library-fork-chain.md E1-E5).
+    placement_tunables:      { path: (p) => `/api/pipeline-uses/${encodeURIComponent(p.use_id as string)}/tunables` },
+    set_step_value:          { path: (p) => `/api/pipeline-uses/${encodeURIComponent(p.use_id as string)}/tunables`, method: 'PUT', body: true },
+    promote_step_value:      { path: (p) => `/api/pipeline-uses/${encodeURIComponent(p.use_id as string)}/tunables/promote`, method: 'POST', body: true },
+    project_tunables:        { path: '/api/tunables' },
     // Whole-project bundles (.claude/plan-portability.md Stage 8).
     get_export_options:     { path: '/api/bundles/export-options' },
     export_project_bundle:  { path: '/api/bundles/export', method: 'POST', body: true },

@@ -226,3 +226,65 @@ def test_create_library_refuses(tmp_path):
         create_library(tmp_path / "b", "okname", files={"../evil.py": b""}, documents=[])
     with pytest.raises(LibraryError, match="share a name"):
         create_library(tmp_path / "c", "okname", files={}, documents=[_doc("x"), _doc("x")])
+
+
+# --- authored libraries: update mode, A8, A9 (plan-library-fork-chain O5) -----
+
+
+def test_update_mode_adds_code_merges_declarations_and_keeps_edits(tmp_path):
+    from scidb.library import write_library
+
+    dest = tmp_path / "lib"
+    write_library(
+        dest, "scidb_upd_lib", files={"steps.py": b"def f(x):\n    return x\n"},
+        documents=[_doc("pre")], variables=["A"], parameters={"P": [1]},
+        dependencies=["numpy"], derived_from=["older_lib"], reexports={"f": "steps"},
+    )
+    pkg = dest / "src" / "scidb_upd_lib"
+    (pkg / "steps.py").write_text("def f(x):\n    return 2 * x\n")  # an edit in the library
+    report = write_library(
+        dest, "scidb_upd_lib", files={"extra.py": b"def g(x):\n    return x\n"},
+        documents=[_doc("pre", {"nodes": [{"label": "new"}]})], variables=["B"],
+        dependencies=["scipy"], reexports={"g": "extra"}, existing="update",
+    )
+    assert "2 * x" in (pkg / "steps.py").read_text(), "an update overwrote a code edit"
+    assert (pkg / "extra.py").is_file() and pkg / "extra.py" in report.created
+    init = (pkg / "__init__.py").read_text()
+    assert "from .steps import f" in init and "from .extra import g" in init
+    assert "older_lib" not in init
+    text = (pkg / "scistack_entities.toml").read_text()
+    assert 'derived_from = ["older_lib"]' in text and '"A"' in text and '"B"' in text
+    pyproject = (dest / "pyproject.toml").read_text()
+    assert '"numpy"' in pyproject and '"scipy"' in pyproject
+
+
+def test_update_mode_refuses_replacing_a_file(tmp_path):
+    from scidb.library import write_library
+
+    dest = tmp_path / "lib"
+    write_library(dest, "scidb_upd_lib2", files={"steps.py": b"a = 1\n"}, documents=[])
+    with pytest.raises(LibraryError, match="steps.py"):
+        write_library(dest, "scidb_upd_lib2", files={"steps.py": b"a = 2\n"}, documents=[],
+                      existing="update")
+    with pytest.raises(LibraryError, match="no library"):
+        write_library(tmp_path / "none", "scidb_upd_lib3", files={}, documents=[],
+                      existing="update")
+
+
+def test_derived_from_parses_and_reads_back(tmp_path, monkeypatch):
+    from scidb.library import write_library
+
+    dest = tmp_path / "lib"
+    write_library(dest, "scidb_derived_lib", files={}, documents=[],
+                  derived_from=["b_lib", "a_lib"], dependencies=["numpy>=1"])
+    loaded = entities.load(dest / "src" / "scidb_derived_lib" / "scistack_entities.toml")
+    assert loaded.errors == []
+    monkeypatch.syspath_prepend(str(dest / "src"))
+    importlib.invalidate_caches()
+    try:
+        info = read_library("scidb_derived_lib")
+        assert info.derived_from == ["b_lib", "a_lib"]
+        assert info.dependencies == ["numpy>=1"]
+        assert info.errors == []
+    finally:
+        sys.modules.pop("scidb_derived_lib", None)

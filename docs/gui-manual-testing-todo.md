@@ -11,6 +11,50 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzh. Libraries you author: share into libs/, publish, copy under a new name, tunables — added 2026-10-23
+
+What changed (`.claude/plan-library-fork-chain.md`): ⇪ Share no longer asks
+for a folder — the library is written to `<project>/libs/<name>/` and the
+project switches to it (same pipeline, steps renamed `<name>.fn`, results
+carried over when the code is unchanged). Libraries you made are marked
+**yours** with ✏ rows and a ⇪ (publish) button; ✎ Make my own copy asks for a
+new name. A placed library pipeline has a **⚙** tunables panel; the Libraries
+group ends with **Tunables of placed libraries**. Supersedes §0zzzi/§0zzzj.
+Both frontend bundles are rebuilt; reload the VS Code window.
+
+**Backend**
+1. Placing / ⇪ / ✎ log `[library_authoring] plan ...`, one
+   `[library_authoring] share|publish|copy <lib>: old -> new` line per
+   renamed function, `[rename_functions] ...: carried ..., not carried ...`,
+   `[library_authoring] node <old id> ... -> <new id>` and
+   `[library_authoring] switched to <lib>: {...}`.
+2. `scistack.toml` `packages` gains the new library (and, for a copy, loses
+   the original). No `copied_libraries` key any more.
+3. Terminal: `scistack library create --from-submodule NAME --name LIB` and
+   `scistack library copy LIB --as NEW` print the same report.
+
+**Frontend**
+1. **Share:** ⇪ on a submodule that has run. The popover shows the name and
+   the `libs/<name>` folder. Press Share: the report lists `fn → lib.fn —
+   results carried (N record(s), nothing re-run)` and the step values you
+   left unwired. The submodule leaves **Submodules** and appears under
+   **Libraries** as `📦 lib · yours` with a ✏ row; its node is still green.
+2. **Edit + publish:** open the ✏ pipeline, add a node (allowed), close and
+   reopen the project: the node is still there (not overwritten). Press ⇪ on
+   the ✏ row: the popover says Publish; the report names any project code it
+   carried. Publishing a project function whose name the library already has
+   is refused and names both.
+3. **Copy:** in another project, install the library and add it (🔒 row),
+   place it and run it, then press ✎: type a new name. The original leaves
+   the list, the copy is `· yours`, the node still green (`old.fn → new.fn —
+   results carried`).
+4. **Tunables:** ⚙ on a placed library pipeline: Parameters with
+   `library default` / `project`, a PathInput marked *needs a root folder*,
+   step values you can edit (Enter) and **P** (make a Parameter). Running
+   with a PathInput lacking a root says which one.
+
+---
+
 ## 0zzzzzzg. Histogram and Regression plot types, and the X variable picker — added 2026-10-22
 
 What changed: two new kinds in **Chart > Plot type**. **Histogram** bins the

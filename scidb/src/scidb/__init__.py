@@ -93,6 +93,7 @@ from .lineage_save import save
 from .log import Log
 from .merge import Merge
 from .pipeline import Pipeline, PipelineBinding, Step, active_pipeline, scistack
+from .rename import RenameReport, rename_functions
 from .state import (
     check_combo_state,
     check_multiple_nodes_state,
@@ -123,6 +124,8 @@ except _metadata.PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [
+    "RenameReport",
+    "rename_functions",
     # Core classes
     "BaseVariable",
     "Parameter",

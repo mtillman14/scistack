@@ -3050,6 +3050,18 @@ class DatabaseManager:
             stale_rids = provenance_query.run_option_superseded_records(
                 self._duck, all_rids, inv_map=inv_map, run_map=run_map
             )
+            # Same treatment for a step since RENAMED (Share as library / Make
+            # my own copy): its old-name records are history once the new name
+            # exists (provenance_query.renamed_superseded_records, one owner).
+            renamed_rids = provenance_query.renamed_superseded_records(
+                self._duck, all_rids, inv_map=inv_map
+            )
+            if renamed_rids:
+                Log.info(
+                    f"_find_record({type_name}, latest): {len(renamed_rids)} record(s) "
+                    f"produced under a since-renamed function name dropped"
+                )
+            stale_rids = stale_rids | renamed_rids
             if stale_rids:
                 # record_id → row indices: `df` is the save LOG, so one record
                 # can hold several rows and every one of them is superseded.
@@ -3063,7 +3075,7 @@ class DatabaseManager:
                 if stale_global:
                     Log.info(
                         f"_find_record({type_name}, latest): {stale_global} row(s) "
-                        f"built under a superseded run-option set dropped"
+                        f"superseded (run-option set or renamed function) dropped"
                     )
             if superseded_idx:
                 Log.info(

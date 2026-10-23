@@ -471,6 +471,7 @@ def invocation_identity(meta: dict, bindings) -> str:
         edges,
         across_variants=_across_variants(meta),
         iteration_level=_iteration_level(meta),
+        function_name=meta.get("__fn"),
     )
 
 
@@ -719,6 +720,7 @@ def record_run(
                 bindings,
                 across_variants=across_variants,
                 iteration_level=iteration_level,
+                function_name=meta.get("__fn"),
             )
             stamped = g.invocation_id or meta.get("__invocation_id")
             if stamped and stamped != inv_id:
