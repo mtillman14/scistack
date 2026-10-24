@@ -4,10 +4,12 @@ Unit tests for scistack_gui.domain.graph_builder.
 All functions are pure — no DB or fixtures required.
 """
 
+import inspect
 import json
 from scidb import Parameter
 
 from scifor import PathInput
+from scifor.signature import Argument
 
 from scistack_gui.domain.graph_builder import (
     AggregatedData,
@@ -15,6 +17,7 @@ from scistack_gui.domain.graph_builder import (
     build_parameter_nodes,
     build_edges,
     assign_input_ports,
+    port_visibility,
     build_function_nodes,
     input_port_order,
     build_manual_node,
@@ -1333,6 +1336,7 @@ class TestInputPorts:
     """
 
     SIG = ["xsens_file_path", "col_names", "sheet_name"]
+    ARGS = [Argument(n, inspect.Parameter.POSITIONAL_OR_KEYWORD) for n in SIG]
 
     def _node(self, input_params, constant_params, label="load_xsens_one_file"):
         return {
@@ -1350,7 +1354,7 @@ class TestInputPorts:
 
     def test_parameter_fed_port_stays_in_the_middle(self):
         node = self._node({"xsens_file_path": "", "sheet_name": ""}, ["col_names"])
-        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assign_input_ports([node], {"load_xsens_one_file": self.ARGS})
         assert node["data"]["input_ports"] == self.SIG
         assert node["data"]["constant_params"] == ["col_names"]
         # Parameter-fed ports never become variable inputs.
@@ -1361,20 +1365,20 @@ class TestInputPorts:
         # build_function_nodes sorted it.
         node = self._node({"sheet_name": "", "xsens_file_path": ""}, [])
         node["data"]["input_params"]["col_names"] = "ColNames"
-        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assign_input_ports([node], {"load_xsens_one_file": self.ARGS})
         assert node["data"]["input_ports"] == self.SIG
         assert list(node["data"]["input_params"]) == self.SIG
         assert node["data"]["input_params"]["col_names"] == "ColNames"
 
     def test_missing_signature_param_gets_an_unwired_port(self):
         node = self._node({"xsens_file_path": ""}, ["col_names"])
-        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assign_input_ports([node], {"load_xsens_one_file": self.ARGS})
         assert node["data"]["input_ports"] == self.SIG
         assert node["data"]["input_params"]["sheet_name"] == ""
 
     def test_param_outside_signature_goes_last(self):
         node = self._node({"stale": "S", "xsens_file_path": ""}, ["col_names"])
-        assign_input_ports([node], {"load_xsens_one_file": self.SIG})
+        assign_input_ports([node], {"load_xsens_one_file": self.ARGS})
         assert node["data"]["input_ports"] == self.SIG + ["stale"]
 
     def test_glue_nodes_get_ports_other_nodes_do_not(self):
@@ -1384,9 +1388,111 @@ class TestInputPorts:
             "data": {"label": "glue_x", "input_params": {"b": "", "a": ""}},
         }
         var = {"id": "var__X", "type": "variableNode", "data": {"label": "X"}}
-        assert assign_input_ports([glue, var], {"glue_x": ["a", "b"]}) == 1
+        assert assign_input_ports([glue, var], {"glue_x": _required("a", "b")}) == 1
         assert glue["data"]["input_ports"] == ["a", "b"]
         assert "input_ports" not in var["data"]
+
+
+def _required(*names):
+    return [Argument(n, inspect.Parameter.POSITIONAL_OR_KEYWORD) for n in names]
+
+
+def _read_csv_like():
+    """A many-argument loader: one required argument, the rest defaulted."""
+    P = inspect.Parameter
+    return [
+        Argument("filepath_or_buffer", P.POSITIONAL_OR_KEYWORD),
+        Argument("sep", P.KEYWORD_ONLY, ","),
+        Argument("header", P.KEYWORD_ONLY, "infer"),
+        Argument("usecols", P.KEYWORD_ONLY, None),
+        Argument("kwargs", P.VAR_KEYWORD),
+        Argument("_internal", P.KEYWORD_ONLY, 0),
+    ]
+
+
+class TestOptionalPorts:
+    """plan-optional-argument-ports: a node draws required and fed arguments;
+    every other defaulted one waits behind "+ argument" (port_visibility)."""
+
+    def _node(self, input_params=None, constant_params=None, node_id="fn__read_csv__1", **data):
+        return {
+            "id": node_id,
+            "type": "functionNode",
+            "data": {
+                "label": "pandas.read_csv",
+                "input_params": dict(input_params or {}),
+                "constant_params": list(constant_params or []),
+                **data,
+            },
+        }
+
+    def _assign(self, node, fed=None):
+        assign_input_ports([node], {"pandas.read_csv": _read_csv_like()}, fed)
+        return node["data"]
+
+    def test_fresh_node_shows_only_the_required_argument(self):
+        data = self._assign(self._node({"filepath_or_buffer": "", "sep": "", "header": ""}))
+        assert data["input_ports"] == ["filepath_or_buffer"]
+        assert [o["name"] for o in data["optional_ports"]] == ["sep", "header", "usecols", "kwargs"]
+        assert data["optional_ports"][0] == {"name": "sep", "default": "','"}
+        # The Inputs panel lists exactly the drawn ports.
+        assert list(data["input_params"]) == ["filepath_or_buffer"]
+
+    def test_private_arguments_are_never_offered(self):
+        data = self._assign(self._node())
+        assert "_internal" not in data["input_ports"]
+        assert "_internal" not in [o["name"] for o in data["optional_ports"]]
+
+    def test_parameter_fed_argument_is_shown(self):
+        data = self._assign(self._node(constant_params=["sep"]))
+        assert data["input_ports"] == ["filepath_or_buffer", "sep"]
+        assert "sep" not in [o["name"] for o in data["optional_ports"]]
+
+    def test_drawn_edge_shows_the_argument(self):
+        node = self._node()
+        data = self._assign(node, fed={node["id"]: {"header"}})
+        assert data["input_ports"] == ["filepath_or_buffer", "header"]
+
+    def test_edge_onto_another_node_does_not_count(self):
+        data = self._assign(self._node(), fed={"fn__other__2": {"header"}})
+        assert data["input_ports"] == ["filepath_or_buffer"]
+
+    def test_variable_fed_argument_is_shown(self):
+        data = self._assign(self._node({"usecols": "Cols"}))
+        assert data["input_ports"] == ["filepath_or_buffer", "usecols"]
+        assert data["input_params"]["usecols"] == "Cols"
+
+    def test_column_selection_shows_the_argument(self):
+        node = self._node(columnSelections={"usecols": {"columns": ["a"], "iterate": False}})
+        assert self._assign(node)["input_ports"] == ["filepath_or_buffer", "usecols"]
+
+    def test_revealed_argument_is_shown_in_signature_order(self):
+        data = self._assign(self._node(shownArguments=["usecols", "sep"]))
+        assert data["input_ports"] == ["filepath_or_buffer", "sep", "usecols"]
+        assert [o["name"] for o in data["optional_ports"]] == ["header", "kwargs"]
+
+    def test_unknown_signature_shows_everything_it_has(self):
+        node = self._node({"a": "", "b": "B"}, ["c"], label="mystery")
+        assign_input_ports([node], {"mystery": None})
+        assert node["data"]["input_ports"] == ["a", "b", "c"]
+        assert node["data"]["optional_ports"] == []
+
+    def test_required_only_signature_hides_nothing(self):
+        node = self._node(label="matlab_fn")
+        assign_input_ports([node], {"matlab_fn": _required("x", "y")})
+        assert node["data"]["input_ports"] == ["x", "y"]
+        assert node["data"]["optional_ports"] == []
+
+    def test_stale_name_outside_signature_stays_shown(self):
+        data = self._assign(self._node({"stale": "S"}))
+        assert data["input_ports"] == ["filepath_or_buffer", "stale"]
+
+    def test_port_visibility_matches_assign_for_a_dropped_node(self):
+        """The drop path (get_function_full_info) and the canvas use one rule."""
+        ports, optional = port_visibility(_read_csv_like(), {}, [], set())
+        data = self._assign(self._node())
+        assert ports == data["input_ports"]
+        assert optional == data["optional_ports"]
 
 
 # ---------------------------------------------------------------------------

@@ -749,6 +749,27 @@ def put_node_config(db, node_id: str, config: dict) -> dict:
     return {"ok": True}
 
 
+def set_shown_argument(db, node_id: str, argument: str, shown: bool) -> dict:
+    """Reveal (``shown=True``) or re-hide an optional argument's port on one
+    function node: ``shownArguments`` in its saved config, merged into the
+    rest of the config (``update_node_config`` replaces the whole blob).
+    ``graph_builder.port_visibility`` reads it; re-hiding a port something
+    feeds changes nothing visible (a fed port is always drawn)."""
+    from scistack_gui import pipeline_store
+
+    config = pipeline_store.get_node_config(db, node_id)
+    names = [n for n in config.get("shownArguments") or [] if n != argument]
+    if shown:
+        names.append(argument)
+    logger.info(
+        "[layout_service] set_shown_argument (node_id=%r, argument=%r, shown=%s) -> %s",
+        node_id, argument, shown, names,
+    )
+    pipeline_store.update_node_config(db, node_id, {**config, "shownArguments": names})
+    _notify_dag_updated("set_shown_argument")  # the node's ports change
+    return {"ok": True, "shownArguments": names}
+
+
 def hide_variant_combo(
     db, function_name: str, node_id: str | None, variant_key: dict
 ) -> dict:

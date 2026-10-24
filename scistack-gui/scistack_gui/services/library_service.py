@@ -397,9 +397,7 @@ def unwired_step_values(db, pipeline_ids) -> list[dict]:
     through ``domain.edge_view.effective_edges``, the one owner): an edge the
     user removed (hidden, kept) does not wire an input. One owner for E1's
     tunables and E8's report."""
-    import inspect as _inspect
-
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui import registry
     from scistack_gui import pipeline_store as ps
     from scistack_gui.domain.edge_view import effective_edges
     from scistack_gui.ids import handle_name, strip_placement
@@ -413,22 +411,15 @@ def unwired_step_values(db, pipeline_ids) -> list[dict]:
                 wired.setdefault(str(strip_placement(e.get("target") or "")), set()).add(name)
         for nid, meta in sorted(ps.get_manual_nodes(db, pid).items()):
             label = meta.get("label")
-            if meta.get("type") != "functionNode" or matlab_registry.is_matlab_function(label):
+            if meta.get("type") != "functionNode":
                 continue
-            fn = registry.lookup_function(label)
-            if fn is None:
-                continue
-            try:
-                sig = _inspect.signature(getattr(fn, "fcn", fn))
-            except (TypeError, ValueError):
-                continue
+            # registry.function_arguments: the reader the canvas's ports use
+            # too, so "has a default" means the same in both (MATLAB: none).
             fed = wired.get(str(strip_placement(nid)), set())
-            for arg, p in sig.parameters.items():
-                if p.default is _inspect.Parameter.empty or arg in fed:
+            for a in registry.function_arguments(label) or []:
+                if not a.named or not a.has_default or a.name in fed:
                     continue
-                if p.kind not in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY):
-                    continue
-                out.append({"label": label, "input": arg, "default": p.default,
+                out.append({"label": label, "input": a.name, "default": a.default,
                             "node_id": nid, "pipeline_id": pid})
     return out
 

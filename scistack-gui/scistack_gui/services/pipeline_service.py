@@ -45,13 +45,10 @@ def get_pipeline_graph(
 
 
 def get_function_params(fn_name: str) -> list[str]:
-    """Return non-private parameter names from the function's signature."""
-    from scistack_gui import matlab_registry
+    """Return non-private parameter names from the function's signature
+    (``registry.function_arguments``: Python or MATLAB)."""
     from scistack_gui.api.pipeline import _fn_params_from_registry
 
-    if matlab_registry.is_matlab_function(fn_name):
-        info = matlab_registry.get_matlab_function(fn_name)
-        return list(info.params)
     return _fn_params_from_registry(fn_name)
 
 
@@ -63,21 +60,30 @@ def get_function_full_info(fn_name: str) -> dict:
     created with the correct number of output handles — and with its
     endpoint classification (plot_/stat_, scidb.roles.endpoint_kind), so a
     freshly dragged endpoint shows its badge/Show button BEFORE any run
-    exists (the graph post-pass only tags nodes on a refetch).
+    exists (the graph post-pass only tags nodes on a refetch). Its ports
+    come from ``graph_builder.port_visibility`` with nothing fed yet, the
+    rule the canvas build applies, so the node doesn't redraw on refetch.
     """
-    from scistack_gui import matlab_registry
-    from scistack_gui.api.pipeline import _fn_params_from_registry
+    from scistack_gui import matlab_registry, registry
+    from scistack_gui.domain.graph_builder import port_visibility
 
+    arguments = registry.function_arguments(fn_name)
+    params = [a.name for a in arguments or [] if not a.private]
+    input_ports, optional_ports = port_visibility(arguments, {}, [], set())
     if matlab_registry.is_matlab_function(fn_name):
         info = matlab_registry.get_matlab_function(fn_name)
         return {
-            "params": list(info.params),
+            "params": params,
+            "input_ports": input_ports,
+            "optional_ports": optional_ports,
             "output_names": list(info.output_names),
             "language": "matlab",
             "endpoint_kind": endpoint_kind(fn_name),
         }
     return {
-        "params": _fn_params_from_registry(fn_name),
+        "params": params,
+        "input_ports": input_ports,
+        "optional_ports": optional_ports,
         "output_names": [],
         "language": "python",
         "endpoint_kind": endpoint_kind(fn_name),

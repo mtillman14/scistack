@@ -43,7 +43,6 @@ Usage::
 from __future__ import annotations
 
 import atexit
-import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -315,15 +314,13 @@ def _default_input_names(spec: StepSpec) -> set[str]:
     input feeds -- a STEP VALUE (plan-library-fork-chain O22): a binding may
     set one, by its qualified ``"fn.param"`` key only, which adds it to the
     step's constants (a different computation, as any ``params`` override)."""
-    try:
-        sig = inspect.signature(spec.fn)
-    except (TypeError, ValueError):  # a builtin / a proxy with no signature
-        return set()
-    kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    from scifor.signature import function_arguments
+
+    # A builtin / a proxy with no signature has no step values.
     return {
-        name
-        for name, p in sig.parameters.items()
-        if p.kind in kinds and p.default is not inspect.Parameter.empty and name not in spec.inputs
+        a.name
+        for a in function_arguments(spec.fn) or []
+        if a.named and a.has_default and a.name not in spec.inputs
     }
 
 

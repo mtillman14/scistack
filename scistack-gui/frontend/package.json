@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "tsc -p tsconfig.test.json && node --test dist/test"
+    "test": "tsc -p tsconfig.test.json && node scripts/node-test.mjs dist/test"
   },
   "dependencies": {
     "@dagrejs/dagre": "^1.1.4",

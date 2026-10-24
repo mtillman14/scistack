@@ -27,6 +27,7 @@ import {
   type Edge,
   type EdgeChange,
   type Connection,
+  type FinalConnectionState,
   type OnSelectionChangeParams,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -42,6 +43,8 @@ import PlotStudio from '../PlotStudio/PlotStudio'
 import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
 import VariantsPopup from '../Variants/VariantsPopup'
 import ClearDataDialog from './ClearDataDialog'
+import { OptionalArgumentPicker } from './OptionalArgumentPicker'
+import { optionalPorts, OPTIONAL_ARGS_ATTR, type OptionalPort } from './inputPorts'
 import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from '../Sidebar/sourceLocation'
@@ -728,19 +731,24 @@ export default function PipelineDAG() {
       try {
         const info = await callBackend('get_function_params', { name: label }) as {
           params: string[]
+          // graph_builder.port_visibility with nothing fed: the ports the
+          // refetched node will draw, so the drop doesn't redraw them.
+          input_ports?: string[]
+          optional_ports?: OptionalPort[]
           output_names?: string[]
           language?: string
           endpoint_kind?: 'plot' | 'stat' | null
         }
+        const input_ports = info.input_ports ?? info.params
         const input_params: Record<string, string> = {}
-        for (const p of info.params) input_params[p] = ''
+        for (const p of input_ports) input_params[p] = ''
         const output_types = info.output_names ?? []
         const extra: Record<string, unknown> = {}
         if (info.language === 'matlab') extra.language = 'matlab'
         // Endpoint badge/Show button must appear on the freshly dropped
         // node, before any run creates DB history.
         if (info.endpoint_kind) extra.endpoint_kind = info.endpoint_kind
-        return { input_params, input_ports: [...info.params], output_types, constant_params: [] as string[], run_state: 'red' as const, ...extra }
+        return { input_params, input_ports: [...input_ports], optional_ports: info.optional_ports ?? [], output_types, constant_params: [] as string[], run_state: 'red' as const, ...extra }
       } catch {
         return { run_state: 'red' as const }
       }
@@ -883,6 +891,56 @@ export default function PipelineDAG() {
     })
   }, [setEdges])
 
+  // A connection dropped on a function node's "+ argument" control (not on a
+  // handle): ask which argument it feeds, then connect to that one. The
+  // chosen argument has no port yet, so no optimistic edge — put_edge
+  // broadcasts dag_updated and the refetch draws the port and the edge.
+  const [argDrop, setArgDrop] = useState<
+    { target: string; source: string; sourceHandle: string | null; x: number; y: number; ports: OptionalPort[] } | null
+  >(null)
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+    if (state.isValid || !state.fromNode || state.fromHandle?.type !== 'source') return
+    const point = 'changedTouches' in event ? event.changedTouches[0] : event
+    const el = document.elementFromPoint(point.clientX, point.clientY)
+    const target = el?.closest(`[${OPTIONAL_ARGS_ATTR}]`)?.getAttribute(OPTIONAL_ARGS_ATTR)
+    if (!target || target === state.fromNode.id) return
+    const node = getNodes().find(n => n.id === target)
+    const ports = node ? optionalPorts(node.data as { optional_ports?: OptionalPort[] }) : []
+    console.debug('[PipelineDAG] connection dropped on + argument', {
+      source: state.fromNode.id, sourceHandle: state.fromHandle?.id, target, optional: ports.length,
+    })
+    if (ports.length === 0) return
+    if (wouldCreateCycle(state.fromNode.id, target)) {
+      console.warn('[PipelineDAG] rejected + argument connection that would create a cycle', { source: state.fromNode.id, target })
+      return
+    }
+    // Picker coordinates are relative to the canvas wrapper, like the context menu.
+    const bounds = wrapperRef.current?.getBoundingClientRect()
+    setArgDrop({
+      target,
+      source: state.fromNode.id,
+      sourceHandle: state.fromHandle?.id ?? null,
+      x: point.clientX - (bounds?.left ?? 0),
+      y: point.clientY - (bounds?.top ?? 0),
+      ports,
+    })
+  }, [getNodes, wouldCreateCycle])
+
+  const connectToArgument = useCallback((argument: string) => {
+    if (!argDrop) return
+    const edgeId = `manual__${Math.random().toString(36).slice(2, 8)}`
+    const targetHandle = `in__${argument}`
+    setArgDrop(null)
+    console.debug('[PipelineDAG] + argument connect', { ...argDrop, ports: undefined, targetHandle })
+    callBackend('put_edge', {
+      edge_id: edgeId,
+      source: argDrop.source,
+      target: argDrop.target,
+      source_handle: argDrop.sourceHandle,
+      target_handle: targetHandle,
+    }).catch(err => window.alert(`Could not create connection: ${(err as Error).message}`))
+  }, [argDrop])
+
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     for (const change of changes) {
       if (change.type !== 'remove') continue
@@ -941,6 +999,7 @@ export default function PipelineDAG() {
         onNodeDragStop={onNodeDragStop}
         onNodesDelete={onNodesDelete}
         onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
         onNodeClick={onNodeClick}
         onNodeDoubleClick={onNodeDoubleClick}
@@ -1070,6 +1129,15 @@ export default function PipelineDAG() {
           </div>
         </Panel>
       </ReactFlow>
+      {argDrop && (
+        <OptionalArgumentPicker
+          ports={argDrop.ports}
+          title="Connect to which argument?"
+          onChoose={connectToArgument}
+          onClose={() => setArgDrop(null)}
+          style={{ position: 'absolute', left: argDrop.x, top: argDrop.y, zIndex: 1000 }}
+        />
+      )}
       {contextMenu && contextMenu.nodeType === 'functionNode' && (
         <div style={{ ...styles.contextMenu, left: contextMenu.x, top: contextMenu.y }}>
           <button style={styles.contextMenuItem} onClick={handleRunUntilHere} type="button">

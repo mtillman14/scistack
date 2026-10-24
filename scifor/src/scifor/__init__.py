@@ -66,6 +66,7 @@ from .pathinput import (
 )
 from .pathoutput import PathOutput
 from .schema import expand_schema_keys, get_schema, set_schema
+from .signature import Argument, function_arguments
 from .schema_types import (
     VALID_SCHEMA_KEY_TYPES,
     SchemaKeyTypeError,
@@ -102,6 +103,8 @@ __all__ = [
     # Input wrappers
     "Fixed",
     "Merge",
+    "Argument",
+    "function_arguments",
     "ColumnSelection",
     "column_value",
     "ColName",

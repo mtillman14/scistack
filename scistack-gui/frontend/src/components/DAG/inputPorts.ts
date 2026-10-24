@@ -35,3 +35,40 @@ export function inputPorts(data: InputPortData): InputPort[] {
   ]
   return names.map(name => ({ name, type: params[name] ?? '' }))
 }
+
+/**
+ * An argument the node does not draw yet (backend graph_builder.port_visibility:
+ * defaulted, nothing feeds it), offered behind "+ argument".
+ * `default` is a short repr ('' when there is none, `**kwargs` for a catch-all).
+ */
+export interface OptionalPort {
+  name: string
+  default: string
+}
+
+export function optionalPorts(data: { optional_ports?: OptionalPort[] }): OptionalPort[] {
+  return data.optional_ports ?? []
+}
+
+/**
+ * The picker's list for what the user typed: case-insensitive substring on
+ * the name, names that START with it first, otherwise signature order (the
+ * order the backend sent). An empty query lists everything.
+ */
+export function filterOptionalPorts(ports: OptionalPort[], query: string): OptionalPort[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return ports
+  const hits = ports.filter(p => p.name.toLowerCase().includes(q))
+  return [
+    ...hits.filter(p => p.name.toLowerCase().startsWith(q)),
+    ...hits.filter(p => !p.name.toLowerCase().startsWith(q)),
+  ]
+}
+
+/** One picker row: `sep = ','`, or the bare name when there is no default. */
+export function optionalPortLabel(p: OptionalPort): string {
+  return p.default ? `${p.name} = ${p.default}` : p.name
+}
+
+/** The DOM attribute marking a node's "+ argument" control as a drop target. */
+export const OPTIONAL_ARGS_ATTR = 'data-optional-args-node'

@@ -20,7 +20,9 @@ import { useVariantSelection } from '../../context/VariantSelectionContext'
 import type { VariantSelectionValue } from '../../context/VariantSelectionContext'
 import type { Variant } from './VariableNode'
 import { movePinsAfterRun, usePinGate } from '../Variants/RunPinGate'
-import { inputPorts } from './inputPorts'
+import { inputPorts, optionalPorts, OPTIONAL_ARGS_ATTR } from './inputPorts'
+import type { OptionalPort } from './inputPorts'
+import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 
 interface FnVariantRow {
   constants: Record<string, unknown>
@@ -36,6 +38,10 @@ interface FunctionNodeData {
   input_params?: Record<string, string>  // param_name → type_name
   // Every input port, in draw order — owned by the backend (inputPorts.ts).
   input_ports?: string[]
+  // Defaulted arguments nothing feeds yet (graph_builder.port_visibility),
+  // offered behind "+ argument"; shownArguments are the ones revealed here.
+  optional_ports?: OptionalPort[]
+  shownArguments?: string[]
   output_types?: string[]
   constant_params?: string[]
   variants?: FnVariantRow[]
@@ -124,6 +130,16 @@ function PipelineFunctionNode({ id, data }: Props) {
   const { getNodes, getEdges } = useReactFlow()
   const updateNodeInternals = useUpdateNodeInternals()
   const { currentScope } = useScope()
+  // "+ argument": reveal a defaulted argument's port (OptionalArgumentPicker).
+  const [argPickerOpen, setArgPickerOpen] = useState(false)
+  const hiddenArgs = optionalPorts(data)
+  const revealArgument = useCallback((argument: string) => {
+    setArgPickerOpen(false)
+    // eslint-disable-next-line no-console
+    console.debug(`[FunctionNode ${id}] reveal argument ${argument}`)
+    callBackend('set_shown_argument', { node_id: id, argument, shown: true })
+      .catch(err => window.alert(`Could not show '${argument}': ${(err as Error).message}`))
+  }, [id])
   const [running, setRunning] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   // Non-null while the "defined at" dialog is open (standalone mode only —
@@ -454,6 +470,30 @@ function PipelineFunctionNode({ id, data }: Props) {
       >
         {data.label}
       </div>
+
+      {hiddenArgs.length > 0 && (
+        // Also a drop target: a connection dropped here opens the same list
+        // and connects straight to the chosen argument (PipelineDAG.onConnectEnd).
+        <div style={styles.argControl} {...{ [OPTIONAL_ARGS_ATTR]: id }}>
+          <button
+            type="button"
+            className="nodrag"
+            style={styles.argButton}
+            title="Show another of this function's arguments as an input. Or drop a connection here to choose which argument it feeds."
+            onClick={e => { e.stopPropagation(); setArgPickerOpen(o => !o) }}
+          >
+            ＋ argument
+          </button>
+          {argPickerOpen && (
+            <OptionalArgumentPicker
+              ports={hiddenArgs}
+              onChoose={revealArgument}
+              onClose={() => setArgPickerOpen(false)}
+              style={styles.argPicker}
+            />
+          )}
+        </div>
+      )}
 
       {columnChips.length > 0 && (
         <div style={styles.columnChipList}>
@@ -804,6 +844,27 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 6,
     maxHeight: 96,
     overflowY: 'auto',
+  },
+  // "+ argument" (OptionalArgumentPicker): left-aligned, under the inputs.
+  argControl: {
+    position: 'relative',
+    marginBottom: 6,
+  },
+  argButton: {
+    fontSize: 10,
+    fontFamily: 'monospace',
+    color: '#6b6b8f',
+    background: 'none',
+    border: '1px dashed #b8b0e8',
+    borderRadius: 4,
+    padding: '1px 6px',
+    cursor: 'pointer',
+  },
+  argPicker: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    marginTop: 2,
   },
   // Column-selection chips. Left-aligned and in input-handle order so they
   // read as annotations on the inputs down the node's left edge.

@@ -8,7 +8,7 @@
 
 import { test } from 'node:test'
 import * as assert from 'node:assert'
-import { inputPorts } from './inputPorts.js'
+import { filterOptionalPorts, inputPorts, optionalPortLabel, optionalPorts } from './inputPorts.js'
 
 test('draws input_ports in the order sent, Parameter-fed port in the middle', () => {
   const ports = inputPorts({
@@ -37,4 +37,40 @@ test('without input_ports, falls back to the names carried, no duplicates', () =
     constant_params: ['b', 'c'],
   })
   assert.deepStrictEqual(ports.map(p => p.name), ['a', 'b', 'c'])
+})
+
+// ---------------------------------------------------------------------------
+// Optional-argument picker (plan-optional-argument-ports)
+// ---------------------------------------------------------------------------
+
+const READ_CSV_OPTIONAL = [
+  { name: 'sep', default: "','" },
+  { name: 'delimiter', default: 'None' },
+  { name: 'header', default: "'infer'" },
+  { name: 'usecols', default: 'None' },
+  { name: 'kwargs', default: '**kwargs' },
+]
+
+test('optionalPorts is the list the backend sent, empty when absent', () => {
+  assert.deepStrictEqual(optionalPorts({}), [])
+  assert.deepStrictEqual(optionalPorts({ optional_ports: READ_CSV_OPTIONAL }), READ_CSV_OPTIONAL)
+})
+
+test('empty query lists every optional argument in signature order', () => {
+  assert.deepStrictEqual(filterOptionalPorts(READ_CSV_OPTIONAL, '  '), READ_CSV_OPTIONAL)
+})
+
+test('prefix matches come before substring matches', () => {
+  // "se" starts sep and is inside usecols.
+  const names = filterOptionalPorts(READ_CSV_OPTIONAL, 'SE').map(p => p.name)
+  assert.deepStrictEqual(names, ['sep', 'usecols'])
+})
+
+test('no match is an empty list', () => {
+  assert.deepStrictEqual(filterOptionalPorts(READ_CSV_OPTIONAL, 'zzz'), [])
+})
+
+test('row label shows the default when there is one', () => {
+  assert.strictEqual(optionalPortLabel({ name: 'sep', default: "','" }), "sep = ','")
+  assert.strictEqual(optionalPortLabel({ name: 'x', default: '' }), 'x')
 })

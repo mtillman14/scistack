@@ -1376,6 +1376,40 @@ def lookup_function(name: str):
     return fn
 
 
+def function_arguments(name: str):
+    """The arguments of the function the canvas calls *name*
+    (``list[scifor.signature.Argument]``), or ``None`` when unknown.
+
+    The GUI's one reader: input ports (``api/pipeline``) and step values
+    (``library_service.unwired_step_values``) both ask here, so they agree on
+    which arguments have a default. A wrapper's ``.fcn`` (the user function
+    inside a lineage / MATLAB proxy) is read in its place; a MATLAB function
+    gives its declared params, none with a known default.
+    """
+    import inspect
+
+    from scifor.signature import Argument, function_arguments as _arguments
+
+    from scistack_gui import matlab_registry
+
+    # MATLAB first: a library's MATLAB function (``emg_tools.bandpass``) is
+    # dotted like a Python library reference.
+    if matlab_registry.is_matlab_function(name):
+        return [
+            Argument(p, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            for p in matlab_registry.get_matlab_function(name).params
+        ]
+    fn = lookup_function(name)
+    if fn is None:
+        return None
+    inner = getattr(fn, "fcn", None)
+    if callable(inner):
+        args = _arguments(inner)
+        if args is not None:
+            return args
+    return _arguments(fn)
+
+
 def get_function(name: str):
     fn = lookup_function(name)
     if fn is None:

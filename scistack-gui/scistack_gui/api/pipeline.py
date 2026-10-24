@@ -11,7 +11,6 @@ Positions are set to (0, 0) here; the layout endpoint overwrites them with
 saved positions, and the frontend assigns dagre positions for new nodes.
 """
 
-import inspect
 import logging
 import time
 
@@ -27,6 +26,7 @@ from scistack_gui.ids import (
     FN_ID_PREFIX,
     ROOT_SCOPE,
     fn_node_id,
+    handle_name,
     legacy_fn_node_id,
     var_node_id,
 )
@@ -46,29 +46,16 @@ def _parse_path_input(value: str) -> dict | None:
 
 
 def _fn_params_from_registry(fn_name: str) -> list[str]:
-    """Return non-private parameter names from the registered function's signature.
+    """Return non-private parameter names from the registered function's
+    signature, read through ``registry.function_arguments`` (the GUI's one
+    reader: user code, library references such as ``pandas.read_csv``, and
+    MATLAB functions)."""
+    return [a.name for a in _fn_arguments(fn_name) if not a.private]
 
-    ``lookup_function`` covers both discovered user code and library
-    references (``pandas.read_csv``), which are imported on demand rather
-    than stored in the registry. Falls back to the MATLAB registry if the
-    function isn't a Python function.
-    """
-    fn = registry.lookup_function(fn_name)
-    if fn is not None:
-        try:
-            return [
-                name
-                for name in inspect.signature(fn).parameters
-                if not name.startswith("_")
-            ]
-        except (ValueError, TypeError):
-            return []
-    # Check MATLAB registry.
-    from scistack_gui import matlab_registry
 
-    if matlab_registry.is_matlab_function(fn_name):
-        return list(matlab_registry.get_matlab_function(fn_name).params)
-    return []
+def _fn_arguments(fn_name: str) -> list:
+    """``registry.function_arguments``, ``[]`` when unknown."""
+    return registry.function_arguments(fn_name) or []
 
 
 def _build_matlab_fn_proxy(fn_name: str):
@@ -883,12 +870,9 @@ def _build_graph(
     logger.debug(
         "[pipeline] building parameter maps for %d unique function(s)", len(fn_names)
     )
-    fn_params_map: dict[str, list[str]] = {}
-    for fn in fn_names:
-        if _mr.is_matlab_function(fn):
-            fn_params_map[fn] = list(_mr.get_matlab_function(fn).params)
-        else:
-            fn_params_map[fn] = _fn_params_from_registry(fn)
+    fn_params_map: dict[str, list[str]] = {
+        fn: _fn_params_from_registry(fn) for fn in fn_names
+    }
 
     # Config keyed by node_id -- the authoritative store, and the only one that
     # can hold a setting for a node that has already run (a DB-derived node has
@@ -1476,13 +1460,19 @@ def _build_graph(
     # --- Input port order ---
     # Last, so every overlay that can add an input (manual edges onto history
     # nodes, manual and glue nodes) is already in. gb.input_port_order owns
-    # the order; the frontend draws data.input_ports as is.
-    signatures = dict(fn_params_map)
+    # the order and gb.port_visibility which ports are drawn (fed = the edges
+    # this canvas draws); the frontend draws data.input_ports as is.
+    arguments: dict[str, list] = {}
     for n in nodes:
         label = n["data"].get("label")
-        if n["type"] in ("functionNode", "glueNode") and label not in signatures:
-            signatures[label] = _fn_params_from_registry(label)
-    ported = gb.assign_input_ports(nodes, signatures)
+        if n["type"] in ("functionNode", "glueNode") and label not in arguments:
+            arguments[label] = _fn_arguments(label)
+    fed_ports: dict[str, set[str]] = {}
+    for e in edges:
+        arg = handle_name(e.get("targetHandle"))
+        if arg:
+            fed_ports.setdefault(e.get("target"), set()).add(arg)
+    ported = gb.assign_input_ports(nodes, arguments, fed_ports)
     logger.info("[pipeline] assigned input port order on %d node(s)", ported)
 
     # --- Endpoint classification (plot_/stat_ prefixes) ---

@@ -111,7 +111,7 @@
     "watch": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
     "build:webview": "cd ../frontend && VITE_BUILD_TARGET=webview npx vite build",
     "build:all": "npm run build && npm run build:webview",
-    "test": "tsc -p tsconfig.test.json && node --test dist/test scripts",
+    "test": "tsc -p tsconfig.test.json && node ../frontend/scripts/node-test.mjs dist/test scripts",
     "package": "npm run build:all && vsce package",
     "stamp-version": "node scripts/stamp-version.js"
   },

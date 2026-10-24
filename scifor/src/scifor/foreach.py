@@ -1535,26 +1535,20 @@ def _accepted_param_names(fn) -> "set[str] | None":
     """Return the set of keyword names ``fn`` accepts, or None if it takes **kwargs.
 
     None means "inject anything" (the function has a ``**kwargs`` catch-all).
-    Falls back to ``__scidb_params__`` (set by scidb/scilineage wrappers) when
-    the signature can't be introspected.
+    Read through :func:`scifor.signature.function_arguments` (the one owner),
+    which falls back to ``__scidb_params__`` when the signature can't be
+    introspected.
     """
     import inspect
 
-    try:
-        sig = inspect.signature(fn)
-    except (ValueError, TypeError):
-        params = getattr(fn, "__scidb_params__", None)
-        return set(params) if params is not None else set()
-    names = set()
-    for p in sig.parameters.values():
-        if p.kind == inspect.Parameter.VAR_KEYWORD:
-            return None  # **kwargs — accepts any keyword
-        if p.kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        ):
-            names.add(p.name)
-    return names
+    from .signature import function_arguments
+
+    args = function_arguments(fn)
+    if args is None:
+        return set()
+    if any(a.kind == inspect.Parameter.VAR_KEYWORD for a in args):
+        return None  # **kwargs — accepts any keyword
+    return {a.name for a in args if a.named}
 
 
 def _numeric_extent(df: "pd.DataFrame") -> "tuple[float, float] | tuple[None, None]":

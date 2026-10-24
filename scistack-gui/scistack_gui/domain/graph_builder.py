@@ -1634,44 +1634,101 @@ def input_port_order(signature: list[str], names) -> list[str]:
     return sorted(set(names), key=lambda n: (rank.get(n, len(signature)), n))
 
 
+def port_visibility(
+    arguments: "list | None",
+    params: dict[str, str],
+    constants: "list[str]",
+    fed: "set[str]",
+) -> "tuple[list[str], list[dict]]":
+    """THE rule for which of a function node's input ports are drawn.
+
+    *arguments* is the function's signature (``scifor.signature.Argument``,
+    from ``registry.function_arguments``), ``None`` when unknown. A port is
+    SHOWN when its argument has no default, or is fed (a variable type in
+    *params*, a Parameter in *constants*, or a name in *fed*: drawn edges,
+    column selections, arguments the user revealed). A name outside the
+    signature is always shown. Unknown defaults (MATLAB, no signature) show
+    every argument. Every other signature argument is OPTIONAL: offered
+    behind "+ argument" (``[{"name", "default"}]``, signature order).
+
+    Returns ``(input_ports, optional_ports)``, ports in
+    :func:`input_port_order`. Used by :func:`assign_input_ports` (the canvas)
+    and ``pipeline_service.get_function_full_info`` (a freshly dropped node),
+    so the two can never disagree.
+    """
+    signature = [a for a in (arguments or []) if not a.private]
+    sig_names = [a.name for a in signature]
+    fed_names = {p for p, t in params.items() if t} | set(constants) | set(fed)
+    optional = [a for a in signature if a.optional and a.name not in fed_names]
+    hidden = {a.name for a in optional}
+    names = (set(sig_names) | set(params) | set(constants)) - hidden
+    return (
+        input_port_order(sig_names, names),
+        [{"name": a.name, "default": a.default_repr()} for a in optional],
+    )
+
+
 def assign_input_ports(
-    nodes: list[dict], signatures: dict[str, list[str]]
+    nodes: list[dict],
+    arguments: "dict[str, list | None]",
+    fed: "dict[str, set[str]] | None" = None,
 ) -> int:
-    """Write ``data.input_ports`` on every function and glue node.
+    """Write ``data.input_ports`` and ``data.optional_ports`` on every
+    function and glue node.
 
     The one final pass, after every overlay that can add an input (manual
     edges onto history nodes, manual nodes), so nothing appended later can
-    land out of order. ``input_ports`` is every argument the node has a port
-    for -- signature, ``input_params`` and ``constant_params`` -- in
-    :func:`input_port_order`; the frontend draws it as is and never
-    re-orders. ``input_params`` is re-ordered with the same rule so the
-    Inputs panel lists arguments the way the node draws them.
+    land out of order. Which ports are drawn is :func:`port_visibility`
+    (*arguments*: ``{label: signature}``; *fed*: ``{node_id: argument names
+    the canvas's drawn edges feed}``, plus each node's own
+    ``columnSelections`` and ``shownArguments``). The frontend draws
+    ``input_ports`` as is and never re-orders. ``input_params`` keeps exactly
+    the drawn ports, re-ordered with the same rule, so the Inputs panel lists
+    arguments the way the node draws them (its ``""`` fill-in is display-only:
+    docs/claude/function-node-input-params.md §2).
 
-    Logs INFO for a node whose ports the old variable-first rendering would
-    have drawn in a different order (the symptom, findable in scidb.log),
-    DEBUG for every node. Returns the number of nodes written.
+    Logs INFO for a node that hides optional arguments and for one whose
+    ports the old variable-first rendering would have drawn in a different
+    order, DEBUG for every node. Returns the number of nodes written.
     """
+    fed = fed or {}
     written = 0
     for node in nodes:
         if node.get("type") not in ("functionNode", "glueNode"):
             continue
         data = node["data"]
-        signature = signatures.get(data.get("label"), [])
         params = dict(data.get("input_params") or {})
         constants = data.get("constant_params") or []
-        variable_first = list(params) + [c for c in constants if c not in params]
-        ports = input_port_order(
-            signature, set(signature) | set(params) | set(constants)
+        node_fed = (
+            set(fed.get(node.get("id"), ()))
+            | set(data.get("columnSelections") or {})
+            | set(data.get("shownArguments") or [])
         )
+        variable_first = list(params) + [c for c in constants if c not in params]
+        ports, optional = port_visibility(
+            arguments.get(data.get("label")), params, constants, node_fed
+        )
+        hidden = {o["name"] for o in optional}
+        params = {p: t for p, t in params.items() if p not in hidden}
         for p in ports:
             if p not in params and p not in constants:
                 params[p] = ""
+        signature = [a.name for a in arguments.get(data.get("label")) or [] if not a.private]
         data["input_params"] = {
             p: params[p] for p in input_port_order(signature, params)
         }
         data["input_ports"] = ports
+        data["optional_ports"] = optional
         written += 1
-        if variable_first != ports:
+        if optional:
+            logger.info(
+                "[graph_builder] %s (%s): %d port(s) shown, %d optional hidden",
+                node.get("id"),
+                data.get("label"),
+                len(ports),
+                len(optional),
+            )
+        if variable_first != ports and not optional:
             logger.info(
                 "[graph_builder] %s (%s): input ports in signature order %s "
                 "(variable-fed first would have drawn %s; Parameter-fed %s)",
@@ -1683,10 +1740,11 @@ def assign_input_ports(
             )
         else:
             logger.debug(
-                "[graph_builder] %s (%s): input ports %s",
+                "[graph_builder] %s (%s): input ports %s, optional %s",
                 node.get("id"),
                 data.get("label"),
                 ports,
+                [o["name"] for o in optional],
             )
     return written
 
@@ -3443,6 +3501,9 @@ _SAVED_CONFIG_KEYS = (
     # fine, is never read back, and the control visibly reverts on the next
     # dag_updated refetch.
     "columnSelections",
+    # Optional arguments the user revealed with "+ argument" (a list of
+    # names); port_visibility draws them even while nothing feeds them.
+    "shownArguments",
 )
 
 
