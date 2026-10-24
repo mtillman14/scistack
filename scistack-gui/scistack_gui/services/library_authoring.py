@@ -417,21 +417,42 @@ class _MatlabCode:
 
 
 def _distributions(top_level_modules: set[str]) -> set[str]:
-    """Distribution names for top-level import names (stdlib excluded); a
-    name no installed distribution provides is left out."""
-    import importlib.metadata
+    """Distribution names for top-level import names (stdlib excluded).
+
+    ``packages_distributions()`` walks EVERY installed distribution, so one
+    with unreadable metadata made it raise and every share silently shipped
+    no dependencies (CI, 2026-10-23: a copy of a numpy library without
+    numpy). Its failure is logged now, and a name it does not map is looked
+    up as a distribution of the same name (``numpy`` -> numpy). A name
+    nothing provides is left out, with a warning."""
+    import importlib.metadata as md
 
     try:
-        mapping = importlib.metadata.packages_distributions()
-    except Exception:  # pragma: no cover - very old importlib.metadata
+        mapping = md.packages_distributions()
+    except Exception as e:
+        logger.warning(
+            "[library_authoring] packages_distributions() failed (%s: %s); "
+            "dependencies are looked up by name instead", type(e).__name__, e,
+        )
         mapping = {}
     out: set[str] = set()
-    for top in top_level_modules:
+    for top in sorted(top_level_modules):
         if top in sys.stdlib_module_names:
             continue
-        dists = mapping.get(top) or []
+        dists = list(mapping.get(top) or [])
+        if not dists:
+            try:
+                dists = [md.distribution(top).metadata["Name"] or top]
+            except md.PackageNotFoundError:
+                dists = []
         if dists:
             out.add(dists[0])
+        else:
+            logger.warning(
+                "[library_authoring] no installed distribution provides %r; it is not "
+                "listed as a dependency", top,
+            )
+    logger.info("[library_authoring] dependencies for %s: %s", sorted(top_level_modules), sorted(out))
     return out
 
 

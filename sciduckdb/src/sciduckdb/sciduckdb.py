@@ -1475,9 +1475,17 @@ class SciDuck:
                 thread, waited, self._tx_owner, foreign_tx, _truncate_sql(sql),
             )
             try:
-                if params:
-                    return self.con.execute(sql, params).fetchone()
-                return self.con.execute(sql).fetchone()
+                result = self.con.execute(sql, params) if params else self.con.execute(sql)
+                row = result.fetchone()
+                if row is not None:
+                    # Drain the rest: a half-read result stays OPEN on the
+                    # shared connection, and newer DuckDB refuses the next
+                    # register() (``_bulk_insert``) with "connection has an
+                    # unfinished result from execute()" (CI, Python
+                    # 3.12/3.13, 2026-10-23). Callers ask single-row
+                    # questions, so this is at most a few rows.
+                    result.fetchall()
+                return row
             except Exception:
                 logger.exception(
                     "_fetchone FAILED thread=%d tx_owner=%s foreign_tx=%s sql=%s",

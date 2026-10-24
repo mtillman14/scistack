@@ -319,3 +319,19 @@ def test_copy_refusals(project):
         copy(db, "json", COPY)
     with pytest.raises(AuthoringRefused, match="already"):
         copy(db, LIB, LIB)
+
+
+def test_dependencies_survive_a_broken_distribution_scan(monkeypatch):
+    """One distribution with unreadable metadata made packages_distributions()
+    raise, and every share then shipped NO dependencies (CI 2026-10-23)."""
+    import importlib.metadata
+
+    from scistack_gui.services.library_authoring import _distributions
+
+    assert _distributions({"numpy", "json"}) == {"numpy"}  # stdlib left out
+
+    def broken():
+        raise KeyError("Name")
+
+    monkeypatch.setattr(importlib.metadata, "packages_distributions", broken)
+    assert _distributions({"numpy"}) == {"numpy"}
