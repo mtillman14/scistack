@@ -87,6 +87,19 @@ A function only receives what you connect to it. SciStack never guesses based on
 **Show:** dragging an edge from a variable's handle to a function's input handle, with the input names visible on the function node.
 ///
 
+#### Inputs that have a default
+
+A function node shows a handle for each input it needs, and for each input something is connected to. Inputs that already have a default value, like `pandas.read_csv`'s `sep=','` and its other 40-odd settings, stay out of the way until you want one. To connect one of them:
+
+- Drag a connection onto **＋ argument** under the function's name, and choose the input from the list, or
+- Click **＋ argument**, choose the input, then drag onto its new handle.
+
+Type in the box to filter the list. Each input is listed with its default, so you can see what the function uses when you leave it alone. **Ctrl+Z** hides an input you showed by mistake.
+
+/// info | 📷 Screenshot
+**Show:** a `pandas.read_csv` node with only `filepath_or_buffer` showing, and its **＋ argument** list open with `se` typed, `sep = ','` at the top.
+///
+
 ## Running
 
 There are three ways to run:
@@ -170,7 +183,7 @@ Removing a node or edge from the canvas never deletes data. A step you remove is
 
 ## Larger projects
 
-- **Submodules** pack a group of steps into one node. Double-click it to go inside. The breadcrumb above the canvas shows where you are.
+- **Submodules** pack a group of steps into one node. Double-click it to go inside. The breadcrumb above the canvas shows where you are. To make one from steps already on the canvas, select them and click **⧉ Extract N nodes to submodule**, then name it. Changed your mind? **Ctrl+Z** puts the steps back exactly as they were. Extracting and undoing only rearrange the canvas: no results are lost and nothing needs to run again.
 - **Hypothesis tabs** keep separate research questions on separate canvases while they share the same data and functions.
 
 ## Sharing and reporting
@@ -178,7 +191,9 @@ Removing a node or edge from the canvas never deletes data. A step you remove is
 - **📄 Report** collects every finalized figure and statistical result into one web page, each labelled with where it came from.
 - **⇩ export project** packs the project into a single bundle file. A colleague opens it with **SciStack: Import Project Bundle…** from the Command Palette.
 - **⇩** on a hypothesis tab or submodule node saves just that piece; **⇧ import** adds one to your project.
-- **⇪ Share as library** packages a submodule so other projects can install it and get your updates.
+- **⇪ Share as library** packages a submodule so other projects can install it and get your updates. The library lives in your project's `libs/` folder and stays editable; **⇪** on its row under **Libraries** publishes your later changes into it.
+- **Libraries** in the sidebar lists the libraries the project uses: yours (✏) and installed ones (🔒, read-only). **✎ Make my own copy** turns an installed library into one of yours under a new name. Steps renamed by any of these keep their results when their code didn't change.
+- **⚙** on a placed library pipeline shows its **tunables**: the Parameters and path inputs it needs (your project's values win) and step values you can set for that placement only.
 - **✓ verify** compares your re-run of an imported project with the results the original author got. It runs nothing itself.
 
 [What Can I Share?](../sharing/overview.md) explains which to use, and which copies stay linked to where they came from.

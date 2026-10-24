@@ -3,13 +3,14 @@
 <!-- Ground truth: scistack-gui ProjectExportButton.tsx (⇩ export project;
      choices from bundle_cli.export_choices / EXPORT_FLAGS, defaults from
      scidb.bundle.ExportOptions), extension command scistack.importProjectBundle
-     (runs bundle_cli import in its own process; "Trust and Open"),
+     (extension/src/bundleImport.ts: folder, schema, key map, PathInput roots,
+     history, "Trust, Install and Open" / "Trust and Open"; scidb/schema_map.py),
      VerifyButton.tsx (✓ verify, compares only), scidb/bundle.py,
      scidb/environment.py, design docs/claude/portability.md. -->
 
 A whole project (its code, settings, every hypothesis, saved plots and run history) can be exported as one `.scistack` file and imported on another computer. Use it to hand a project to a labmate, move to a new machine, or publish an analysis so others can reproduce it.
 
-To share less than a whole project, see [Share a Hypothesis or Submodule](pipelines.md).
+To share less than a whole project, see [Share a Hypothesis or Submodule](pipelines.md). For a worked example, including importing into a schema with a renamed key, see [Best Popcorn, Step 14](../examples/best-popcorn.md#step-14-optional-share-the-project-with-a-colleague).
 
 ## What travels, and what doesn't
 
@@ -84,9 +85,11 @@ An import always makes a **new** project folder. It runs none of the bundle's co
 3. Pick the `.scistack` file and answer the questions:
     - **The new project's folder.**
     - **Your schema.** Keep the exporter's schema, or enter your own keys. With your own schema the exporter's history isn't loaded (it describes a dataset of a different shape), and every node starts as not run.
-    - **Where your copy of each raw data folder is**, one question per path input.
-4. A report opens when it's done: what was imported, anything that needs a look (a filter or plot setting that named a schema key you dropped, a path input you left pointing at the exporter's folder).
-5. Click **Trust and Open**. SciStack installs the packages the project lists that you don't have yet, at the exporter's versions, and opens the project.
+    - **Which of your keys each of the exporter's keys is**, for every exporter key that isn't in your schema: pick one of yours, or **drop it** if there's no counterpart. Path input templates, saved plots, saved tables and iteration settings that mention the key are renamed to yours; anything mentioning a dropped key loses that mention and is listed in the report.
+    - **Where your copy of each raw data folder is**, one question per path input: **Choose my folder…**, **Keep the exporter's folder**, or **Decide later** (set it in the sidebar).
+    - **History** (when the bundle has it): **Import history** or **Skip history**. It's loaded into your database only when the bundle carries the data too and you kept the schema; otherwise it's archived, read-only, for **✓ verify**.
+4. A report opens when it's done: what was imported, any keys renamed, anything that needs a look (a plot or table that mentioned a renamed or dropped key, a path input you left pointing at the exporter's folder).
+5. Click **Trust, Install and Open**: SciStack installs the packages the project lists that you don't have yet, at the exporter's versions, and opens the project. **Trust and Open** opens it without installing anything.
 
 /// info | 📷 Screenshot
 **Show:** the Command Palette with **SciStack: Import Project Bundle…** highlighted.

@@ -199,6 +199,22 @@ State was green. Modify the function body (changes its hash).
 → Node state = red.
 ```
 
+### Function renamed by a library action → stays Green
+
+```
+State was green. ⇪ Share as library, ⇪ publish, or ✎ Make my own copy renames
+filter_emg → emg_tools.filter_emg (scidb.rename_functions).
+→ Code unchanged: each result is re-recorded under the new name without running.
+→ The new-name node is green; the old name's earlier records become history
+  (_function_rename), so they no longer count as current.
+→ The retired old-name node is hidden, and leaves the run-state cascade.
+→ Code changed, or the step never ran: nothing is carried; the node is red
+  until it runs.
+```
+
+The library action's report lists, per renamed step, how many results were
+carried or why none were.
+
 ---
 
 ## Why Grey Is Not Red

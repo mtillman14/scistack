@@ -19,6 +19,7 @@ A whole project (its code, settings, pipelines and run history) can be exported 
 | The exact version of every installed package, your Python version and platform | always |
 | Run history: what was run, on which inputs, with which code | on by default |
 | Saved results (the data itself) | off by default; can be large |
+| Wheelhouse: an installable copy of each [library](libraries.md) the project uses | off by default; add it when a library isn't published anywhere the recipient can install it from |
 | Raw data files read through `PathInput` | **never** |
 | `.venv` | never; the recipient makes their own |
 
@@ -69,6 +70,7 @@ From the project root, with the project's `.venv` active:
 scistack export                          # writes <database name>.scistack here
 scistack export my_study.scistack --data # also include every saved result
 scistack export --no-history             # code, settings and pipelines only
+scistack export --wheelhouse             # also a wheel of each library the project uses
 ```
 
 `--db path/to/study.duckdb` picks the database when it isn't the one in `scistack.toml` or the only `.duckdb` in the folder.
@@ -85,7 +87,7 @@ Before importing, create and activate a virtual environment for the new project,
 
 /// tab | GUI (VS Code)
 
-Run **SciStack: Import Project Bundle…** from the Command Palette (**View → Command Palette…**). Pick the `.scistack` file and answer the questions: the new project's folder, your schema, and where your copy of each raw data folder is. A report opens when it's done. **Trust and Open** installs the missing packages and opens the project.
+Run **SciStack: Import Project Bundle…** from the Command Palette (**View → Command Palette…**). Pick the `.scistack` file and answer the questions: the new project's folder, your schema (and, for each of the exporter's keys that isn't in it, which of yours it is, or drop it), where your copy of each raw data folder is, and whether to import the history. A report opens when it's done. **Trust, Install and Open** installs the missing packages and opens the project; **Trust and Open** opens it without installing anything.
 
 ///
 

@@ -8,6 +8,7 @@ This walkthrough answers that question entirely in the SciStack GUI. In the Code
 
 - How to choose a **schema** for a real dataset, and why its names matter.
 - How to **import a CSV** on the canvas with a library function, so each row becomes its own record.
+- How to turn one of a function's **default settings** into a Parameter that anyone can change.
 - How **roles** in Plot Studio turn the same data into different figures.
 - How Stat Studio picks the right **statistical test** from your study's design, and when to choose differently.
 - How a figure and its statistics stay **linked**.
@@ -405,6 +406,19 @@ Now connect them: drag from the handle on `data` to `read_csv`'s first input, `f
 Running the import through the canvas means SciStack records that the ratings came from `popcorn_ratings.csv`, read by `pandas.read_csv`. Every result you calculate later can be traced back to this file.
 ///
 
+`read_csv` has dozens of other settings, all with defaults, so the node only shows the one it needs. One of them is worth making visible: the **separator** between columns. Your file uses commas, which is `read_csv`'s default, but a spreadsheet saved in many European languages uses semicolons. Making it a **Parameter** records which one was used, and lets anyone who gets this project change it without touching code (you'll see that in [Step 14](#step-14-optional-share-the-project-with-a-colleague)).
+
+1. Open the **Parameters** tab (`P`), click **+**, and name the new parameter `SEP`.
+2. Under **Add value**, type a single comma, `,`, and click **Add**.
+3. Drag `SEP` onto the canvas.
+4. Drag from `SEP`'s handle onto **＋ argument** under `read_csv`'s name. A list of `read_csv`'s other settings opens, each with its default. Type `sep` and choose `sep = ','`.
+
+`read_csv` now has a second input, `sep`, connected to `SEP`. It still reads the file exactly as before, because `,` is what it used anyway.
+
+/// info | 📷 Screenshot
+**Show:** `data` → `read_csv` (`filepath_or_buffer`) and `SEP` → `read_csv` (`sep`), with the **＋ argument** list closed and the Parameters tab showing `SEP` with the value `,`. Save as `docs/images/example_best-popcorn/connect_sep_parameter.png`.
+///
+
 ## Step 5: Create the Rating variable
 
 A **variable** is a named kind of data that the database stores, such as "a rating". Open the **Variables** tab (`x`), click **+**, and name it `Rating`. Drag it onto the canvas, then connect `read_csv`'s output to it.
@@ -560,6 +574,92 @@ So far, the figure and the table are saved views of the data. To make them **ste
 
 The difference is that pipeline steps are recorded like any other result. If the ratings change, they turn red until you re-run them, and **📄 Report** collects them into a single web page with a note of where each came from.
 
+## Step 14 (optional): Share the project with a colleague
+
+Suppose a colleague at another store ran the same taste test and wants to analyse it the same way. You send them the whole project as one file. They import it, point it at their own CSV, and re-run it. They write no code either.
+
+Their data differs from yours in three ways, all common in practice:
+
+- Their CSV calls the people `shopper`, not `participant`: the columns are `shopper, brand, rating`.
+- The file is called `store2_ratings.csv`, and it sits in a folder of their own, `popcorn-store2/`.
+- Their spreadsheet program saved it with semicolons between the columns (`shopper;brand;rating`), as Excel does in many European languages.
+
+### What you do: export
+
+1. **Check the dependencies.** The project's only code is `pandas.read_csv`, and pandas comes with SciStack, so `pyproject.toml` needs nothing more. In your own projects, add every package your code imports (see [Before you export](../sharing/export-import.md#before-you-export-list-your-dependencies)).
+2. Click **⇩ export project** at the right end of the hypothesis tab strip.
+3. Choose what goes in besides the code, settings and canvas:
+    - **History**: tick it. It costs little and lets anyone check the results later.
+    - **Data**: leave it off. Your colleague will run the pipeline on their own ratings, so they don't need your results.
+    - **Wheelhouse**: leave it off. It's only for [libraries](../sharing/libraries.md), and this project uses none.
+4. Click **Export…** and save `best-popcorn.scistack`. Send it to your colleague.
+
+The file holds the canvas, the `data` path input, the `SEP` Parameter with its value, the `Rating` variable, the saved figure `Ratings by brand` and the saved table `Popcorn statistics`. It does **not** hold `popcorn_ratings.csv`: raw data files never travel. Send the CSV separately if your colleague should reproduce your results too (see [Reproducing your results](#reproducing-your-results) below).
+
+### What your colleague does: import
+
+They need VS Code, the SciStack extension and a virtual environment with SciStack installed ([New to Coding?](../getting-started/new-to-coding.md) steps 4 and 7). Then:
+
+1. Open the Command Palette (**View → Command Palette…**), run **SciStack: Import Project Bundle…** and pick `best-popcorn.scistack`.
+2. **Where should the new project go?** Pick a parent folder, then accept the folder name `best_popcorn` or type another, such as `best-popcorn-store2`. An import always creates a new folder.
+3. **Your schema keys.** The box suggests yours, `participant, brand`. Their CSV says `shopper`, so they change it to:
+
+    ```text
+    shopper, brand
+    ```
+
+    The keys must match the CSV's column headers, for the same reason as in [Step 2](#step-2-create-the-database-and-choose-the-schema).
+
+4. **The exporter's key "participant" is not in your schema. Which of your keys is "participant"?** They pick `shopper`. SciStack now renames `participant` to `shopper` everywhere the project mentions it: in the saved figure's roles (*collapse* `participant`, *show sample* `participant`, *colour points by* `participant`) and in the saved table's design (*average over* `participant`). If a key has no counterpart at all, choose **(drop it — no counterpart in my schema)**, and anything that mentions it is removed and listed in the report.
+5. **PathInput "data": data/popcorn_ratings.csv.** Raw files aren't in the bundle, so SciStack asks where theirs are:
+    - **Choose my folder…**: pick the folder the template is read from. They choose `popcorn-store2/`.
+    - **Keep the exporter's folder**: only useful on the same computer.
+    - **Decide later (edit the entities file)**: set it in the sidebar after opening.
+6. **History.** Choose **Skip history**. With a changed schema, your history couldn't be loaded into their database anyway (it describes `participant`s, not `shopper`s), and their results will come from their own data.
+7. **The import report** opens as a document. Under **Schema keys** it shows `participant` → `shopper`. Under **Review** it lists the saved figure and the saved table, because both mentioned `participant`: worth a look once the data is in.
+8. Click **Trust, Install and Open**. SciStack installs any packages the project needs that are missing, at your versions, and opens the project. (**Trust and Open** opens it without installing anything.) Both buttons mean "I trust this file": opening a project runs its code, so only do this with files from people you trust.
+
+/// info | 📷 Screenshot
+**Show:** the **Which of your keys is "participant"?** picker with `shopper` highlighted, and the import report beside it showing `participant` → `shopper` and two items under **Review**.
+///
+
+### What your colleague changes after opening
+
+The canvas looks like yours: `data` and `SEP` → `read_csv` → `Rating`, all red, because nothing has run in this project yet. The schema above the canvas reads `schema: [shopper, brand]`.
+
+**The path input.** The file name is still yours. In the **Path Inputs** tab (📁), click `data` and change its **Path Template** to:
+
+```text
+store2_ratings.csv
+```
+
+The root folder, `popcorn-store2/`, was set during the import, so the template is the path within it. If they chose **Decide later**, set the root folder here too.
+
+**The separator.** Their spreadsheet program saved the file with semicolons between the columns, not commas. With `SEP` still `,`, `read_csv` would read each whole line as a single column, so there would be no `shopper` or `brand` column to file the ratings by. Open the **Parameters** tab (`P`) and click `SEP`. It arrived with your value, `,`. Click **×** next to `,` to remove it, then type `;` under **Add value** and click **Add**.
+
+Remove the old value rather than keeping both: a Parameter with two values runs its step once for each, and the `,` run would read this file wrongly. Their values are theirs alone: nothing they change reaches your project, and nothing you change later reaches theirs.
+
+
+**Run it.** Click **▶ Run** on `read_csv`. Right-click `Rating` and choose **View Schema Locations** to check that every shopper has a rating for every brand.
+
+**Check the figure and the table.** Click `Rating`, then **Open Plot Studio →**. Pick `Ratings by brand` from the **Saved plots** rail: it's drawn from their ratings, with `shopper` collapsed where you had `participant`. Open **StatStudio** from the toolbar and click `Popcorn statistics` under the saved tables. Step through the screens once: the answers came from your study, so confirm they still hold for theirs (each shopper rated every brand, nothing is missing) before reading the results.
+
+/// info | 📷 Screenshot
+**Show:** the colleague's canvas after the run, all green, with `schema: [shopper, brand]` above it, and the **Path Inputs** tab open on `data` with the template `store2_ratings.csv`, or the **Parameters** tab open on `SEP` with the value `;`.
+///
+
+### Reproducing your results
+
+To check your analysis rather than extend it, your colleague needs your CSV too. They import the same way, with three differences:
+
+- At **Your schema keys**, they keep `participant, brand`. No key question follows.
+- At **PathInput "data"**, they choose the folder that holds `data/popcorn_ratings.csv`. The template stays as it is.
+- At **History**, they choose **Import history**.
+
+After **Run all**, they click **✓ verify** in the hypothesis tab strip. It runs nothing: it compares their results with the history you exported, step by step, and should report every step as reproduced. Any difference is listed at the step where it first appears.
+
+See [Export & Import Projects](../sharing/export-import.md) for every option.
+
 ## Summary
 
 Here's how the same analysis looks in code and in the GUI:
@@ -567,11 +667,12 @@ Here's how the same analysis looks in code and in the GUI:
 | | Code (`scidb`) | GUI |
 |---|---|---|
 | Setup | `configure_database("popcorn.duckdb", ["participant", "brand"])` | **SciStack: Open Pipeline**, schema keys `participant, brand` |
-| Import | A `load_ratings` function, run with `for_each` | A path input wired into `pandas.read_csv`, wired into `Rating` |
+| Import | A `load_ratings` function, run with `for_each` | A path input and a `SEP` Parameter wired into `pandas.read_csv`, wired into `Rating` |
 | Summary per brand | A `summarize_ratings` function, run once per brand | Plot Studio: `brand` grouped, `participant` collapsed |
 | Overall test | A `friedman_test` function | Stat Studio Step by step: within-subject from the design; the recommended repeated-measures ANOVA |
 | Which is best | A `compare_to_best` function, Wilcoxon, Bonferroni | Stat Studio pairwise paired t-tests, Holm |
 | Afterwards | `load(...)` any result; `get_provenance` | Saved plot and saved table; **Add to pipeline** for recorded steps |
+| Sharing | `scistack export` / `scistack import` / `scistack verify` | **⇩ export project**; **SciStack: Import Project Bundle…**; **✓ verify** |
 
 ## Conclusion
 

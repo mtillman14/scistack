@@ -382,6 +382,10 @@ head(ratings)
 
 ///
 
+/// tip | A file with semicolons
+A spreadsheet saved in many European languages separates the columns with `;`, not `,`. Read it with `pd.read_csv("ratings.csv", sep=";")` in Python, or `readtable("ratings.csv", Delimiter=";", TextType="string")` in MATLAB. Everything after this step is the same.
+///
+
 Next, tell `scifor` how the data is organized. The [schema](../getting-started/whats-a-schema.md) lists the columns that identify each row, which here are **who** gave the rating and **which brand** they rated. Every `(participant, brand)` pair identifies exactly one rating. `rating` is not part of the schema because it is the measured value (a _variable_), not part of how the data is organized.
 
 /// tab | Python
@@ -860,4 +864,4 @@ end
 
 ## Where to go next
 
-The results in this walkthrough exist only in memory: close Python or MATLAB and they're gone, and nothing records which function and settings produced each number. That's fine for a quick analysis. For a project that grows (more studies, more brands, a re-run after fixing a bug), the next layer, `scidb`, uses the same `for_each` but saves each result to a database and records how it was produced. [Best Popcorn - scidb](best-popcorn-scidb.md) repeats this analysis with it.
+The results in this walkthrough exist only in memory: close Python or MATLAB and they're gone, and nothing records which function and settings produced each number. That's fine for a quick analysis. For a project that grows (more studies, more brands, a re-run after fixing a bug), the next layer, `scidb`, uses the same `for_each` but saves each result to a database and records how it was produced. [Best Popcorn - scidb](best-popcorn-scidb.md) repeats this analysis with it. It also shows how to send the whole project, with that record, to a colleague who analyses their own ratings the same way, and how they check that your results reproduce.

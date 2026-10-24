@@ -7,6 +7,8 @@
      scilineage/src/scilineage/{core,hashing,inputs,backend}.py;
      scidb/src/scidb/database.py (configure_database, content_hash/record_id, call_id);
      scihist/src/scihist/{foreach,state,database}.py (skip_computed, node state, configure_backend);
+     scidb/src/scidb/library.py + scistack_gui/services/library_authoring.py and
+     library_service.py (Library, Step value, Tunables);
      and the tests cited in the sibling Concepts pages. Keep definitions consistent
      with those pages; do not introduce claims not backed by them. -->
 
@@ -78,6 +80,16 @@ reflects the functions it calls. Stored full-width (64 chars) in lineage and
 truncated to 16 chars as `__fn_hash` in scidb's version keys.
 → [Versioning & Content Hashing](hashing.md)
 
+**Library** — A submodule packaged as an ordinary Python package
+(`pyproject.toml` + `src/<name>/` holding its code, pipelines and entities file),
+so many projects can install it. Its functions are named after it
+(`emg_tools.bandpass`). *Installed* libraries (🔒, from `pip`) are read-only
+in a project; *authored* libraries (✏) live in the project's `libs/<name>/`, made
+by **⇪ Share as library** or **✎ Make my own copy**, and are edited on the canvas
+and published with **⇪**. A copy records its ancestors in `[library] derived_from`
+and depends on none of them. From a terminal: `scistack library create`, `scistack
+library copy <name> --as <new>`, `scistack library build`. → [Libraries](../sharing/libraries.md)
+
 **Lineage** — The recorded provenance of a value: the function, its inputs, and
 its function hash. → [Lineage & Provenance](lineage.md)
 
@@ -126,6 +138,17 @@ the data layout changes so old and new records don't collide.
 **skip_computed** — `for_each`'s default behavior of skipping combinations whose
 output already exists and is current, so the function isn't re-run for finished
 work. → [Computation Caching](caching.md)
+
+**Step value** — An argument of a step inside a placed library pipeline that
+no Parameter or edge feeds (e.g. a function's `gain=1.0` default), addressed as
+`emg_tools.filter_emg.gain`. It belongs to that one placement: set it in the
+placement's **⚙ Tunables** in the GUI, or in code with
+`pipeline.bind(params={"emg_tools.filter_emg.gain": 2.0})` (`scidb.PipelineBinding`). → [Libraries › Tunable values](../sharing/libraries.md#tunable-values)
+
+**Tunables** — What a project can change about a placed library pipeline without
+editing it: project Parameters (the project's value always wins over the
+library's default), path-input root folders, and step values.
+→ [Libraries › Tunable values](../sharing/libraries.md#tunable-values)
 
 **Variant** — One of several parallel results of the
 same function, distinguished by its constants / `branch_params` (or by `EachOf` /

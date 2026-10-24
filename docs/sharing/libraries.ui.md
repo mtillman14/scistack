@@ -40,9 +40,11 @@ A library looks the same on every computer, however many times it was copied: `p
 2. Enter the **library name**: the name people will install and that its functions are called by (`emg_tools` → `emg_tools.bandpass`). Letters, digits and underscores, starting with a letter.
 3. Click **Share**.
 
+Sharing can't be undone with **Ctrl+Z**: it writes files and renames steps, not just the canvas.
+
 The library is written to `<your project>/libs/emg_tools/`, and your project switches to it straight away: the submodule is now the library's pipeline (the same one, wherever you placed it), its steps are called `emg_tools.…`, and it stays editable here. Nothing to install for the GUI; the report shows the `pip install -e` command for your own scripts.
 
-**Your results stay current.** Renaming a step would normally mean running it again under its new name. When the step's code didn't change, SciStack copies its results over to the new name instead, without running anything: the canvas stays green. The report lists, for every renamed step, how many results were carried, or why not (its code changed, or it never ran), in which case it needs a run.
+**Your results stay current.** Renaming a step would normally mean running it again under its new name. When the step's code didn't change, SciStack copies its results over to the new name instead, without running anything: the canvas stays green. The report lists, for every renamed step, how many results were carried, or why not (its code changed, or it never ran), in which case it needs a run. The old name's results are kept as history, and the old step is hidden from the canvas, not deleted.
 
 /// info | 📷 Screenshot
 **Show:** the Submodules list in the Edit tab with the **⇪** button on one row highlighted, and the **Share as library** popover open with the name filled in and the `libs/` folder shown.
@@ -179,6 +181,18 @@ Two ways to stop an installed library's updates from reaching your project, unde
 Both are **unlinking**: from then on, new versions of the original don't reach this project. Make my own copy is all or nothing: every pipeline of that library switches to your copy.
 
 Your copy is a library like any other: share it onwards and the next person installs only yours. It records where it came from (`derived_from = ["emg_tools"]`), never who made it, and doesn't depend on the original.
+
+### Copies of copies
+
+A copy can itself be copied, as many times as you like. Each copy adds its parent to the front of the list, so the newest is first:
+
+| Library | Made by | `derived_from` | Depends on |
+| --- | --- | --- | --- |
+| `emg_tools` | your lab, ⇪ Share | (none) | its own packages |
+| `my_emg` | a colleague, ✎ Make my own copy of `emg_tools` | `["emg_tools"]` | its own packages, not `emg_tools` |
+| `site_emg` | a student, ✎ Make my own copy of `my_emg` | `["my_emg", "emg_tools"]` | its own packages, not `my_emg` or `emg_tools` |
+
+Every copy has everything it needs inside it: whoever installs `site_emg` needs neither `my_emg` nor `emg_tools`. Each copy is renamed all the way through (`site_emg.filter_emg`), and the results already in that project are carried over to the new names as usual. The new name can't be a folder already in `libs/`, or the name of any module the project can already import, the library you're copying included.
 
 /// info | 📷 Screenshot
 **Show:** the **Make my own copy** prompt for a library with the new name filled in, and afterwards the copy in **Libraries** marked *yours* with ✏ rows.

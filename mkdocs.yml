@@ -62,6 +62,7 @@ nav:
     - Best Player - scidb: examples/best-player-scidb.md
   - Sharing:
     - Export & Import Projects: sharing/export-import.md
+    - Libraries: sharing/libraries.md
   # Only the user-facing APIs. The other api/ and internals/ pages stay in the
   # repo, covered by not_in_nav below, but nothing in the nav links to them.
   - API:

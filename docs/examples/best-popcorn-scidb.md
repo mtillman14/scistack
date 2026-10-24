@@ -465,18 +465,18 @@ The function just reads the file:
 
 /// tab | Python
 ```python
-def load_ratings(csv_path):
+def load_ratings(csv_path, sep):
     """Read the whole ratings file: one row per (participant, brand)."""
-    return pd.read_csv(csv_path)
+    return pd.read_csv(csv_path, sep=sep)
 ```
 ///
 
 /// tab | MATLAB
 ```matlab
 % load_ratings.m
-function ratings = load_ratings(csv_path)
+function ratings = load_ratings(csv_path, sep)
     % Read the whole ratings file: one row per (participant, brand).
-    ratings = readtable(csv_path, TextType="string");
+    ratings = readtable(csv_path, Delimiter=sep, TextType="string");
 end
 ```
 ///
@@ -487,7 +487,8 @@ Run it **without naming any schema keys**, so it runs exactly once and reads the
 ```python
 scidb.for_each(
     load_ratings,
-    inputs={"csv_path": "popcorn_ratings.csv"},  # a constant input
+    inputs={"csv_path": "popcorn_ratings.csv",   # constant inputs
+            "sep": ","},                         # the column separator
     outputs=[Rating],                            # save the return value as Rating
 )
 ```
@@ -496,7 +497,8 @@ scidb.for_each(
 /// tab | MATLAB
 ```matlab
 scidb.for_each(@load_ratings, ...
-    struct("csv_path", "popcorn_ratings.csv"), ...  % a constant input
+    struct("csv_path", "popcorn_ratings.csv", ...   % constant inputs
+           "sep", ","), ...                         % the column separator
     {Rating()});                                     % save the return value as Rating
 ```
 ///
@@ -505,6 +507,8 @@ There are two new things here compared with scifor:
 
 - **`outputs`** names the variable the return value is saved as. scifor only handed results back. scidb also saves them.
 - **The 300-row table becomes 300 records, not one.** The returned table has `participant` and `brand` columns, and this run didn't fix either key, so scidb treats each row as addressing its own location. Row `P001, Butterburst, 5` is saved as a `Rating` of 5 at `participant="P001", brand="Butterburst"`. A log line confirms it: `spreading rows into separate records`.
+
+`sep` could have been left at `read_csv`'s default. Passing it as an input instead means the database records which separator each `Rating` was read with, and anyone who gets this project can change it in one place: a spreadsheet saved in many European languages uses `;` (see [Step 10](#step-10-optional-share-the-project-with-a-colleague)). Constant inputs like these are saved with each result, so reading with a different `sep` would make a separate set of results rather than overwriting these.
 
 From here on, no step reads the CSV. Every input comes from the database.
 
@@ -800,6 +804,79 @@ The `Rating` records it points to have their own history, which leads back to `l
 Running the whole analysis a second time doesn't create duplicates: when identical data is saved at the same location, scidb keeps the existing record. You can re-run after any change without cleaning up first.
 ///
 
+## Step 10 (optional): Share the project with a colleague
+
+Suppose a colleague at another store ran the same taste test and wants to analyse it the same way. Their file differs from yours in two ways:
+
+- It's called `store2_ratings.csv`.
+- Their spreadsheet program saved it with semicolons between the columns (`participant;brand;rating`), as Excel does in many European languages.
+
+### What you do: export
+
+In the `best-popcorn` folder, with your environment active:
+
+```bash
+scistack export
+```
+
+This writes `popcorn.scistack` next to the database. It holds your scripts (`best_popcorn.py`, `popcorn_variables.py`, or the `.m` files), the run history, and the exact version of every package you have installed. It does **not** hold `popcorn_ratings.csv`, or your results unless you add `--data`. Send the file to your colleague.
+
+### What your colleague does: import
+
+They create and activate a new environment, install SciStack and SciPy into it (`pip install scipy`), then:
+
+```bash
+scistack bundle-info popcorn.scistack                 # what's inside: schema, files, environment
+scistack import popcorn.scistack --into ~/best-popcorn-store2 --trust
+```
+
+`--into` names a new folder; an import never writes into an existing project. `--trust` says they trust your code. It also installs, at your versions, whatever a project's `pyproject.toml` lists; this folder has none, which is why they install SciPy themselves. Your history comes along, kept read-only for `scistack verify` (below).
+
+Then, in the new folder:
+
+1. Copy `store2_ratings.csv` into it.
+2. In `best_popcorn.py` (or `best_popcorn.m`), change the two constants in the import step:
+
+    /// tab | Python
+    ```python
+    scidb.for_each(
+        load_ratings,
+        inputs={"csv_path": "store2_ratings.csv",
+                "sep": ";"},
+        outputs=[Rating],
+    )
+    ```
+    ///
+
+    /// tab | MATLAB
+    ```matlab
+    scidb.for_each(@load_ratings, ...
+        struct("csv_path", "store2_ratings.csv", ...
+               "sep", ";"), ...
+        {Rating()});
+    ```
+    ///
+
+3. Run the script: `python best_popcorn.py`, or `best_popcorn` in MATLAB.
+
+Their results go into their own `popcorn.duckdb`. Nothing they change reaches your project, and nothing you change later reaches theirs.
+
+/// note | Different column names
+`--schema` and `--map` on `scistack import` rename schema keys in everything SciStack stores: path templates, saved plots, saved tables. They can't rename them in your **code**, and this script names `participant` in several places (`pivot(index="participant")`, the `merge` in `compare_to_best`, the `load` calls). If their file calls the column `shopper`, the simplest fix is to rename that column header to `participant`. In the GUI version of this example, where no code names the keys, `--map participant=shopper` (or the import dialog's question) is enough.
+///
+
+### Reproducing your results
+
+To check your analysis rather than extend it, your colleague imports the same way, copies **your** `popcorn_ratings.csv` into the new folder, changes nothing, and runs the script. Then:
+
+```bash
+scistack verify
+```
+
+It runs nothing: it compares their results with the history in the bundle, step by step, and reports which reproduced, which differ (and where the difference starts), and which haven't run.
+
+See [Export & Import Projects](../sharing/export-import.md) for every option.
+
 ## Summary
 
 Here is what changed between the scifor and scidb versions:
@@ -814,6 +891,7 @@ Here is what changed between the scifor and scidb versions:
 | Settings (e.g. `n_comparisons`) | Not recorded | Saved with the result; different values make separate variants |
 | scistackstats input | A `LongTable` built from the table in memory | `load_stats_tables(db, spec)` reads the variable's records |
 | Afterwards | Gone when the session ends | `load(...)` any result; `get_provenance` / `provenance` shows how it was made |
+| Sharing | Send the script and the CSV | `scistack export`, `scistack import`, then `scistack verify` to check the results reproduce |
 
 ## The complete code
 
@@ -857,9 +935,9 @@ from scistackstatsdb import load_stats_tables
 from popcorn_variables import Rating, BrandSummary, FriedmanTest, BestVsChallenger
 
 
-def load_ratings(csv_path):
+def load_ratings(csv_path, sep):
     """Read the whole ratings file: one row per (participant, brand)."""
-    return pd.read_csv(csv_path)
+    return pd.read_csv(csv_path, sep=sep)
 
 
 def summarize_ratings(ratings):
@@ -901,7 +979,7 @@ def compare_to_best(best, challenger, n_comparisons):
 db = scidb.configure_database("popcorn.duckdb", ["participant", "brand"])
 
 # Import: one Rating record per (participant, brand) row
-scidb.for_each(load_ratings, inputs={"csv_path": "popcorn_ratings.csv"}, outputs=[Rating])
+scidb.for_each(load_ratings, inputs={"csv_path": "popcorn_ratings.csv", "sep": ","}, outputs=[Rating])
 
 # Summary per brand (pooled over participants)
 summary = scidb.for_each(summarize_ratings, inputs={"ratings": Rating["rating"]},
@@ -973,9 +1051,9 @@ end
 
 ```matlab
 % load_ratings.m
-function ratings = load_ratings(csv_path)
+function ratings = load_ratings(csv_path, sep)
     % Read the whole ratings file: one row per (participant, brand).
-    ratings = readtable(csv_path, TextType="string");
+    ratings = readtable(csv_path, Delimiter=sep, TextType="string");
 end
 ```
 
@@ -1019,7 +1097,7 @@ end
 scidb.configure_database("popcorn.duckdb", ["participant", "brand"]);
 
 % Import: one Rating record per (participant, brand) row
-scidb.for_each(@load_ratings, struct("csv_path", "popcorn_ratings.csv"), {Rating()});
+scidb.for_each(@load_ratings, struct("csv_path", "popcorn_ratings.csv", "sep", ","), {Rating()});
 
 % Summary per brand (pooled over participants)
 summary = scidb.for_each(@summarize_ratings, struct("ratings", Rating("rating")), ...

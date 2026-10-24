@@ -11,6 +11,46 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzi. "＋ argument": inputs with a default stay hidden until wanted — added 2026-10-24
+
+What changed (`.claude/plan-optional-argument-ports.md`): a function node now
+draws only the inputs it needs and the ones something feeds. Inputs with a
+default (most of `pandas.read_csv`'s ~50) are listed behind a **＋ argument**
+control under the function's name. Both frontend bundles are rebuilt; reload
+the VS Code window and restart the backend.
+
+**Backend**
+1. After step 1 below, `scidb.log` should have a line like
+   `[graph_builder] fn__pandas.read_csv__… (pandas.read_csv): 1 port(s) shown, N optional hidden`.
+2. After step 4: `[layout_service] set_shown_argument (… argument='header', shown=True)`.
+
+**Frontend**
+1. Add `pandas.read_csv` from the Functions tab and drop it on the canvas. It
+   should show **one** input handle (`filepath_or_buffer`, on hover), not a
+   striped strip of ~50, and a dashed **＋ argument** button under its name.
+   The node shouldn't redraw its handles a moment after the drop.
+2. Click **＋ argument**. A list opens with each input and its default
+   (`sep = ','` …). Type `se`: `sep` comes first. **Esc** closes it. Typing
+   and scrolling in the list mustn't move the node or the canvas.
+3. Create a Parameter `SEP` with the value `,`, drag it onto the canvas, and
+   drag from its handle onto **＋ argument** (not onto a handle). A list titled
+   *Connect to which argument?* opens where you dropped. Choose `sep`. The
+   edge appears, `sep` gets its own handle, and nothing else changes.
+4. Click **＋ argument** → `header`. A `header` handle appears, unconnected.
+   Close and reopen the project: it's still there. **Ctrl+Z** hides it again;
+   **Ctrl+Shift+Z** brings it back.
+5. Delete the `SEP → sep` edge. The `sep` handle goes back behind
+   **＋ argument** (nothing feeds it any more).
+6. A function of your own with no defaults, and any MATLAB function, should
+   look exactly as before (every input shown, no **＋ argument**).
+7. Select the node: the sidebar's **Inputs** section lists only the shown
+   inputs.
+8. Place a library pipeline and open its **⚙** panel: the step values listed
+   should be exactly the defaulted inputs nothing feeds (same rule as the
+   canvas).
+
+---
+
 ## 0zzzzzzh. Libraries you author: share into libs/, publish, copy under a new name, tunables — added 2026-10-23
 
 What changed (`.claude/plan-library-fork-chain.md`): ⇪ Share no longer asks

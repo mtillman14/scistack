@@ -369,3 +369,13 @@ schema_keys = ["subject", "session"]
 ```
 
 When you add the library's pipeline to a project with different keys (say `participant` and `visit`), the GUI uses this to suggest which key maps to which. Project entities files don't need it.
+
+A library made by copying another one (**✎ Make my own copy** in the GUI, or `scistack library copy`) also records which libraries it came from, newest first:
+
+```toml
+[library]
+schema_keys = ["subject", "session"]
+derived_from = ["my_emg", "emg_tools"]   # copied from my_emg, which was copied from emg_tools
+```
+
+`derived_from` is written for you and is only a record: the library doesn't depend on anything it lists. See [Libraries › Copies of copies](../sharing/libraries.md#copies-of-copies).
