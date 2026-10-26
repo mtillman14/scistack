@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 import scifor as _scifor
 from scifor import ColName, ColumnSelection, EachOf, Fixed, Merge, require_alternatives
 from scifor import for_each as _scifor_for_each
+from scifor import stopped_run_of, validate_on_error
 from scifor import output_column_name as _output_column_name
 
 from . import glue as _glue
@@ -260,6 +261,7 @@ def for_each(
     schema_filter: "dict[str, list] | None" = None,
     schema_keys: "list[str] | None" = None,
     schema_key_types: "dict[str, str] | None" = None,
+    on_error: str = "continue",
     locations: "Any" = None,
     share_limits: "dict[str, list[str]] | None" = None,
     finalized: bool = False,
@@ -335,6 +337,11 @@ def for_each(
                     ``SchemaKeyTypeConflictError``. Accepted so a call
                     written for ``scifor.for_each`` runs here unchanged.
                     ``dry_run=True`` checks without writing.
+        on_error: ``"continue"`` (default) or ``"stop"``; scifor owns it
+                    (``scifor.for_each``). On ``"stop"`` the combos that
+                    completed before the failure are SAVED, then the original
+                    exception is re-raised (``scifor.stopped_run_of(exc)``
+                    carries the record). See docs/claude/error-surfacing.md.
         locations: Optional ``scifor.LocationFilter`` (or its mapping form)
                     naming which schema locations to run: ragged ``include``
                     prefixes plus a standing ``exclude_levels`` rule. Passed
@@ -397,6 +404,8 @@ def for_each(
         A pandas DataFrame of results, None when dry_run=True, or a Step
         handle when the call was registered into a Pipeline instead of run.
     """
+    validate_on_error(on_error)
+
     # --- Deferred pipeline registration. Must run before ANY other work —
     #     a registered call must have zero side effects, and the spec must
     #     capture the arguments exactly as passed (pristine, un-normalized)
@@ -429,6 +438,7 @@ def for_each(
                 "schema_filter": schema_filter,
                 "schema_keys": schema_keys,
                 "schema_key_types": schema_key_types,
+                "on_error": on_error,
                 "share_limits": share_limits,
                 # Dropped from this list until 2026-09-23 (cleanup-audit F18):
                 # a step registered with a location selection replayed over
@@ -468,6 +478,7 @@ def for_each(
                     schema_filter=schema_filter,
                     schema_keys=schema_keys,
                     schema_key_types=schema_key_types,
+                    on_error=on_error,
                     locations=locations,
                     share_limits=share_limits,
                     finalized=finalized,
@@ -650,6 +661,10 @@ def for_each(
                 introspect=introspect,
                 skip_computed=skip_computed,
                 share_limits=share_limits,
+                # on_error="stop" in one alternative raises out of this loop;
+                # that alternative saved its completed combos, and every
+                # earlier alternative was saved by its own call.
+                on_error=on_error,
                 finalized=finalized,
                 _inject_combo_metadata=_inject_combo_metadata,
                 _pre_combo_hook=_pre_combo_hook,
@@ -774,8 +789,13 @@ def for_each(
 
     # --- Execute: wrap fn for per-combo needs, delegate the loop to scifor,
     #     log the authoritative run summary. ---
-    result_tbl = _for_each_execute(
-        state,
+    # on_error="stop": scifor re-raises the ORIGINAL exception carrying the
+    # completed combos' results; save those first (never drop data), then
+    # re-raise below so the caller's traceback still ends in the user's code.
+    stop_exc: "BaseException | None" = None
+    try:
+        result_tbl = _for_each_execute(
+            state,
         fn=fn,
         fn_name=fn_name,
         inputs=inputs,
@@ -786,8 +806,19 @@ def for_each(
         locations=locations,
         cancel_check=_cancel_check,
         progress_fn=_progress_fn,
-        inject_combo_metadata=_inject_combo_metadata,
-    )
+            inject_combo_metadata=_inject_combo_metadata,
+            on_error=on_error,
+        )
+    except Exception as e:
+        stopped = stopped_run_of(e)
+        if stopped is None:
+            raise
+        stop_exc = e
+        result_tbl = stopped.partial_result
+        Log.info(
+            f"for_each({fn_name}): on_error=stop — saving {stopped.completed} "
+            f"completed combo(s) before re-raising {type(e).__name__}"
+        )
 
     # --- Schema restore + save (+ endpoint artifact stamping) ---
     with Log.step(f"for_each_save({fn_name})"):
@@ -802,6 +833,9 @@ def for_each(
             save=save,
             db=db,
         )
+
+    if stop_exc is not None:
+        raise stop_exc
 
     if introspect and result_tbl is not None and not result_tbl.empty:
         result_tbl = _apply_introspect(result_tbl, state, where)
@@ -829,6 +863,7 @@ def _for_each_execute(
     cancel_check,
     progress_fn,
     inject_combo_metadata: bool,
+    on_error: str = "continue",
 ):
     """Run scidb.for_each's Steps 16-17: wrap ``fn`` for whatever per-combo
     work the inputs need (PerComboLoader resolution, variable-input
@@ -990,6 +1025,7 @@ def _for_each_execute(
         "skipped": 0,
         "no_data": 0,
         "cancelled": False,
+        "stopped": False,
     }
 
     def _tracking_progress_fn(info: dict):
@@ -999,6 +1035,7 @@ def _for_each_execute(
         if info.get("event") == "summary":
             _run_summary["no_data"] = info.get("no_data", 0)
             _run_summary["cancelled"] = bool(info.get("cancelled"))
+            _run_summary["stopped"] = bool(info.get("stopped"))
         if _progress_fn is not None:
             _progress_fn(info)
 
@@ -1020,41 +1057,45 @@ def _for_each_execute(
         return frame.drop(columns=[RECORD_ID_COLUMN])
 
     # Delegate the core loop to scifor
-    with Log.step(f"delegate_to_scifor({fn_name}, {len(state.full_combos)} combos)"):
-        result_tbl = _scifor_for_each(
-            fn,
-            state.loaded_inputs,
-            dry_run=False,
-            as_table=as_table,
-            distribute=distribute,
-            outputs=state.output_names,
-            share_limits=share_limits,
-            locations=locations,
-            _all_combos=state.full_combos,
-            _progress_fn=_tracking_progress_fn,
-            _cancel_check=_cancel_check,
-            _path_input_resolver=_path_input_resolver,
-            _mapping_inputs=state.mapping_inputs,
-            _select_rows=_select_rows,
-            **state.extended_metadata_iterables,
-        )
-
-    # Authoritative run summary: scifor's counts plus the combos skip_computed
-    # removed before the loop (already up to date). This is the one line that
-    # documents what ran, what failed, and what was skipped for the whole call.
-    _summary_parts = [
-        f"completed={_run_summary['completed']}",
-        f"failed={_run_summary['skipped'] - _run_summary['no_data']}",
-        f"no_data={_run_summary['no_data']}",
-    ]
-    if state.skip_computed_count:
-        _summary_parts.append(
-            f"skipped={state.skip_computed_count} (skip_computed, up to date)"
-        )
-    _summary_parts.append(f"total={_run_summary['total'] + state.skip_computed_count}")
-    if _run_summary["cancelled"]:
-        _summary_parts.append("cancelled")
-    Log.info(f"for_each({fn_name}) run summary: {', '.join(_summary_parts)}")
+    try:
+        with Log.step(f"delegate_to_scifor({fn_name}, {len(state.full_combos)} combos)"):
+            result_tbl = _scifor_for_each(
+                fn,
+                state.loaded_inputs,
+                dry_run=False,
+                as_table=as_table,
+                distribute=distribute,
+                outputs=state.output_names,
+                share_limits=share_limits,
+                locations=locations,
+                on_error=on_error,
+                _all_combos=state.full_combos,
+                _progress_fn=_tracking_progress_fn,
+                _cancel_check=_cancel_check,
+                _path_input_resolver=_path_input_resolver,
+                _mapping_inputs=state.mapping_inputs,
+                _select_rows=_select_rows,
+                **state.extended_metadata_iterables,
+            )
+    finally:
+        # Authoritative run summary: scifor's counts plus the combos skip_computed
+        # removed before the loop (already up to date). This is the one line that
+        # documents what ran, what failed, and what was skipped for the whole call.
+        _summary_parts = [
+            f"completed={_run_summary['completed']}",
+            f"failed={_run_summary['skipped'] - _run_summary['no_data']}",
+            f"no_data={_run_summary['no_data']}",
+        ]
+        if state.skip_computed_count:
+            _summary_parts.append(
+                f"skipped={state.skip_computed_count} (skip_computed, up to date)"
+            )
+        _summary_parts.append(f"total={_run_summary['total'] + state.skip_computed_count}")
+        if _run_summary["cancelled"]:
+            _summary_parts.append("cancelled")
+        if _run_summary["stopped"]:
+            _summary_parts.append("stopped (on_error=stop)")
+        Log.info(f"for_each({fn_name}) run summary: {', '.join(_summary_parts)}")
 
     return result_tbl
 

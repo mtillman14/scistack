@@ -1311,6 +1311,9 @@ class Pipeline:
                 "no_data": 0,
                 "total": 0,
                 "cancelled": False,
+                "stopped": False,
+                # Grouped failure records (scifor.failures wire shape).
+                "failures": [],
             }
             report.append(entry)
             _caller_progress_fn = opts.get("_progress_fn")
@@ -1327,6 +1330,8 @@ class Pipeline:
                     _entry["no_data"] = no_data
                     _entry["total"] = info.get("total", 0)
                     _entry["cancelled"] = bool(info.get("cancelled"))
+                    _entry["stopped"] = bool(info.get("stopped"))
+                    _entry["failures"] = list(info.get("failures", []))
                 if _next is not None:
                     _next(info)
 

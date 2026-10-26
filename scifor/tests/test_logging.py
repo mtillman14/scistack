@@ -146,7 +146,7 @@ def test_summary_caps_listed_combos(caplog):
     assert "(+3 more)" in failed[0]  # 8 combos, 5 listed
 
 
-def test_summary_progress_event_carries_failure_reasons():
+def test_summary_progress_event_carries_failure_groups():
     set_schema(["subject"])
     df = pd.DataFrame({"subject": [1, 2], "value": [1.0, 2.0]})
     events = []
@@ -163,8 +163,10 @@ def test_summary_progress_event_carries_failure_reasons():
     s = summaries[0]
     assert s["total"] == 2 and s["completed"] == 1 and s["failed"] == 1
     assert s["no_data"] == 0
-    assert list(s["failure_reasons"]) == ["ValueError: boom"]
-    assert s["failure_reasons"]["ValueError: boom"] == ["subject=1"]
+    assert [g["reason"] for g in s["failures"]] == ["ValueError: boom"]
+    assert s["failures"][0]["combos"] == ["subject=1"]
+    assert s["failures"][0]["count"] == 1
+    assert s["stopped"] is False
 
 
 # ---------------------------------------------------------------------------

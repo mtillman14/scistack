@@ -23,6 +23,18 @@ if TYPE_CHECKING:
 from .colname import ColName
 from .column_selection import ColumnSelection, column_value
 from .each_of import EachOf, require_alternatives
+from .failures import (
+    ComboFailure,
+    FailureGroup,
+    StoppedRun,
+    attach_stopped_run,
+    exception_reason,
+    failure_from_exception,
+    format_user_frame,
+    groups_to_wire,
+    stopped_run_of,
+    validate_on_error,
+)
 from .fixed import Fixed
 from .locations import LocationFilter, filter_combos
 from .merge import Merge
@@ -61,34 +73,60 @@ def _format_value_list(values) -> str:
 
 
 def _record_iteration_failure(
-    failure_reasons: dict,
-    warned_reasons: set,
+    groups: "dict[str, FailureGroup]",
     exc: Exception,
+    *,
+    fn_name: str,
+    metadata: dict,
     metadata_str: str,
+    stage: str,
     context: str,
-) -> None:
+) -> ComboFailure:
     """Track a per-iteration failure for the end-of-run summary.
 
-    Every failure logs a [skip] line at DEBUG; the first occurrence of each
-    distinct reason also logs at WARN with a traceback, so the default
-    (INFO) log still answers "what failed and why" — except NoDataError,
-    which is an expected outcome (this combo has no backing data) rather
-    than a bug, so it never escalates to WARN and carries no traceback.
+    The first occurrence of each distinct reason builds the full
+    ``ComboFailure`` (traceback + user frame — ``scifor.failures`` owns that)
+    and logs it at WARN with the traceback, so the default (INFO) log still
+    answers "what failed and why". Later occurrences only add their combo to
+    the group and return the group's example (no traceback extraction per
+    combo). NoDataError is an expected outcome (this combo has no backing
+    data), so it never escalates to WARN and carries no traceback.
     """
-    reason = f"{type(exc).__name__}: {exc}"
-    failure_reasons.setdefault(reason, []).append(metadata_str)
-    if isinstance(exc, NoDataError):
-        Log.debug(f"[skip] {metadata_str}: {context}: {exc}", layer="scifor")
-        return
-    if reason not in warned_reasons:
-        warned_reasons.add(reason)
-        Log.warn(
-            f"iteration failed: {metadata_str} — {context}: {exc} "
-            f"(first occurrence; traceback follows)",
-            layer="scifor",
-            exc_info=True,
-        )
-    Log.debug(f"[skip] {metadata_str}: {context}: {exc}", layer="scifor", exc_info=True)
+    reason = exception_reason(exc)
+    Log.debug(f"[skip] {metadata_str}: {context}: {exc}", layer="scifor")
+    group = groups.get(reason)
+    if group is not None:
+        group.combos.append(metadata_str)
+        return group.example
+    no_data = isinstance(exc, NoDataError)
+    failure = failure_from_exception(
+        exc, fn_name=fn_name, metadata=metadata, stage=stage, no_data=no_data
+    )
+    groups[reason] = FailureGroup(example=failure, combos=[metadata_str])
+    if no_data:
+        return failure
+    Log.warn(
+        f"iteration failed: {metadata_str} — {context}: {exc} "
+        f"[{format_user_frame(failure.user_frame)}] "
+        f"(first occurrence; traceback follows)",
+        layer="scifor",
+        exc_info=True,
+    )
+    return failure
+
+
+def _no_data_count(groups: "dict[str, FailureGroup]") -> int:
+    return sum(g.count for g in groups.values() if g.no_data)
+
+
+def _skip_failure_payload(failure: ComboFailure) -> dict:
+    """The small per-combo form a ``combo_skip`` event carries (no traceback;
+    the summary's groups carry one example traceback per reason)."""
+    return {
+        "reason": failure.reason,
+        "no_data": failure.no_data,
+        "user_frame": failure.user_frame.to_dict() if failure.user_frame else None,
+    }
 
 
 def for_each(
@@ -103,6 +141,7 @@ def for_each(
     share_limits: "dict[str, list[str]] | None" = None,
     schema_keys: "list[str] | None" = None,
     schema_key_types: "dict[str, str] | None" = None,
+    on_error: str = "continue",
     _all_combos: list[dict] | None = None,
     _log_fn: "Callable[[str], None] | None" = None,
     _progress_fn: "Callable[[dict], None] | None" = None,
@@ -169,6 +208,15 @@ def for_each(
                     behaviour: digit-only DISCOVERED values become numbers.
                     In scidb.for_each the database owns this instead; there
                     the argument records the type in the database.
+        on_error: ``"continue"`` (default) skips a combo whose function or
+                    input preparation raises, and reports it in the
+                    end-of-run summary. ``"stop"`` stops the loop at the
+                    first such failure and re-raises the ORIGINAL exception
+                    (so the traceback ends in the user's code), carrying a
+                    ``scifor.StoppedRun`` with the completed combos' results
+                    (``scifor.stopped_run_of(exc)``). ``NoDataError`` (a combo
+                    with no data) never stops a run. See
+                    docs/claude/error-surfacing.md.
         _all_combos: Pre-built list of metadata dicts; skips itertools.product().
                      Used by DB wrappers that pre-filter schema combinations.
         _log_fn: Deprecated — ignored. scifor now logs through the
@@ -214,6 +262,7 @@ def for_each(
     # iteration axes, so a call written for scidb.for_each runs unchanged.
     metadata_iterables = discard_db_only_kwargs(metadata_iterables)
     key_types = validate_key_types(schema_key_types)
+    validate_on_error(on_error)
 
     # Step -1: EachOf expansion — must be first, before any other logic.
     # Each alternative becomes an independent recursive for_each() call;
@@ -244,29 +293,50 @@ def for_each(
                     concrete_inputs[param] = value
                 elif kind == "where":
                     concrete_where = value
-            result = for_each(
-                fn,
-                concrete_inputs,
-                outputs=outputs,
-                dry_run=dry_run,
-                as_table=as_table,
-                distribute=distribute,
-                where=concrete_where,
-                # Every alternative runs over the same locations: a selection
-                # is about which data exists, not which variant produced it.
-                # (Dropping a kwarg here is a silent, well-worn failure —
-                # `glue=` went missing from this same recursion in 2026-09-10.)
-                locations=locations,
-                share_limits=share_limits,
-                schema_keys=schema_keys,
-                schema_key_types=schema_key_types,
-                _progress_fn=_progress_fn,
-                _cancel_check=_cancel_check,
-                _path_input_resolver=_path_input_resolver,
-                _mapping_inputs=_mapping_inputs,
-                _select_rows=_select_rows,
-                **metadata_iterables,
-            )
+            try:
+                result = for_each(
+                    fn,
+                    concrete_inputs,
+                    outputs=outputs,
+                    dry_run=dry_run,
+                    as_table=as_table,
+                    distribute=distribute,
+                    where=concrete_where,
+                    # Every alternative runs over the same locations: a selection
+                    # is about which data exists, not which variant produced it.
+                    # (Dropping a kwarg here is a silent, well-worn failure —
+                    # `glue=` went missing from this same recursion in 2026-09-10.)
+                    locations=locations,
+                    share_limits=share_limits,
+                    schema_keys=schema_keys,
+                    schema_key_types=schema_key_types,
+                    on_error=on_error,
+                    _progress_fn=_progress_fn,
+                    _cancel_check=_cancel_check,
+                    _path_input_resolver=_path_input_resolver,
+                    _mapping_inputs=_mapping_inputs,
+                    _select_rows=_select_rows,
+                    **metadata_iterables,
+                )
+            except Exception as e:
+                stopped = stopped_run_of(e)
+                if stopped is None or not results:
+                    raise
+                # on_error="stop" in a later alternative: the earlier
+                # alternatives' results are part of the partial result too.
+                parts = [*results]
+                if stopped.partial_result is not None:
+                    parts.append(stopped.partial_result)
+                attach_stopped_run(
+                    e,
+                    StoppedRun(
+                        failure=stopped.failure,
+                        partial_result=pd.concat(parts, ignore_index=True),
+                        completed=stopped.completed + sum(len(r) for r in results),
+                    ),
+                    note=False,
+                )
+                raise
             if result is not None:
                 results.append(result)
             # Cooperative cancel: stop iterating across EachOf alternatives
@@ -778,9 +848,11 @@ def for_each(
     # ordinal-vs-column choice changes every saved address, so it must be
     # visible in scidb.log without flooding it.
     distribute_column_reported = False
-    # Failure aggregation for the end-of-run summary: reason -> combo strings.
-    failure_reasons: dict[str, list[str]] = {}
-    warned_reasons: set[str] = set()
+    # Failure aggregation for the end-of-run summary: reason -> FailureGroup
+    # (scifor.failures owns the record). `stop` holds the (exception, failure)
+    # that ended an on_error="stop" run.
+    failure_groups: dict[str, FailureGroup] = {}
+    stop: "tuple[Exception, ComboFailure] | None" = None
 
     # Periodic progress state: a line per outermost-key transition (guarded).
     progress_key = display_keys[0] if display_keys else None
@@ -801,11 +873,7 @@ def for_each(
         # Cooperative cancel: check between combos (before any work for this combo).
         if _cancel_check is not None and _cancel_check():
             was_cancelled = True
-            _nd = sum(
-                len(c)
-                for r, c in failure_reasons.items()
-                if r.startswith("NoDataError:")
-            )
+            _nd = _no_data_count(failure_groups)
             Log.info(
                 f"for_each({fn_name}) cancelled at combo {combo_idx + 1}/{total} "
                 f"(completed={completed}, failed={skipped - _nd}, no_data={_nd})",
@@ -840,11 +908,7 @@ def for_each(
                     and elapsed_now - progress_last_emit >= _PROGRESS_MIN_INTERVAL_S
                 ):
                     progress_last_emit = elapsed_now
-                    _nd = sum(
-                        len(c)
-                        for r, c in failure_reasons.items()
-                        if r.startswith("NoDataError:")
-                    )
+                    _nd = _no_data_count(failure_groups)
                     Log.info(
                         f"progress: {progress_key}={progress_value} "
                         f"({progress_seen}/{progress_total}) — "
@@ -875,6 +939,7 @@ def for_each(
         # Filter/prepare inputs for this combo
         filtered_inputs = {}
         iterate_dfs: dict[str, Any] = {}
+        filter_failure: "ComboFailure | None" = None
         filter_failed = False
 
         for param_name, var_spec in data_inputs.items():
@@ -902,13 +967,17 @@ def for_each(
                     param_name=param_name,
                 )
             except Exception as e:
-                _record_iteration_failure(
-                    failure_reasons,
-                    warned_reasons,
+                filter_failure = _record_iteration_failure(
+                    failure_groups,
                     e,
-                    metadata_str,
-                    f"failed to filter {param_name}",
+                    fn_name=fn_name,
+                    metadata=metadata,
+                    metadata_str=metadata_str,
+                    stage="prepare_inputs",
+                    context=f"failed to filter {param_name}",
                 )
+                if on_error == "stop" and not filter_failure.no_data:
+                    stop = (e, filter_failure)
                 filter_failed = True
                 break
 
@@ -923,9 +992,11 @@ def for_each(
                         "completed": completed,
                         "skipped": skipped,
                         "metadata": metadata,
-                        "error": "filter failed",
+                        "failure": _skip_failure_payload(filter_failure),
                     }
                 )
+            if stop is not None:
+                break
             continue
 
         # Column drift is a hard error (not a per-combo skip): the iterate
@@ -1031,13 +1102,17 @@ def for_each(
                 # skipping through N copies of the same failure.
                 Log.error(f"[fatal] {metadata_str}: {e}", layer="scifor", exc_info=True)
                 raise
-            _record_iteration_failure(
-                failure_reasons,
-                warned_reasons,
+            call_failure = _record_iteration_failure(
+                failure_groups,
                 e,
-                metadata_str,
-                f"{fn_name} raised",
+                fn_name=fn_name,
+                metadata=metadata,
+                metadata_str=metadata_str,
+                stage="call",
+                context=f"{fn_name} raised",
             )
+            if on_error == "stop" and not call_failure.no_data:
+                stop = (e, call_failure)
             skipped += 1
             if _progress_fn is not None:
                 _progress_fn(
@@ -1048,9 +1123,11 @@ def for_each(
                         "completed": completed,
                         "skipped": skipped,
                         "metadata": metadata,
-                        "error": str(e),
+                        "failure": _skip_failure_payload(call_failure),
                     }
                 )
+            if stop is not None:
+                break
             continue
 
         # Normalize single output to tuple
@@ -1106,15 +1183,12 @@ def for_each(
 
     elapsed = time.perf_counter() - loop_t0
     cancelled_suffix = ", cancelled" if was_cancelled else ""
+    if stop is not None:
+        cancelled_suffix += ", stopped (on_error=stop)"
     # NoDataError means the combo simply has no backing data (expected in a
     # sparse schema-key cross-product) — split it out from genuine `fn`
     # failures so the summary doesn't cry "failed" over missing data.
-    no_data_reasons = {
-        reason: combos
-        for reason, combos in failure_reasons.items()
-        if reason.startswith("NoDataError:")
-    }
-    no_data_count = sum(len(combos) for combos in no_data_reasons.values())
+    no_data_count = _no_data_count(failure_groups)
     failed_count = skipped - no_data_count
     Log.info(
         f"for_each({fn_name}) done in {elapsed:.1f}s: completed={completed}, "
@@ -1127,7 +1201,7 @@ def for_each(
     # have opposite causes and the same symptom, so this one is a WARNING —
     # found twice in one afternoon (2026-09-14), both times read as a discovery
     # or filter bug when in fact every call had raised the same TypeError.
-    if total and completed == 0 and failed_count:
+    if total and completed == 0 and failed_count and stop is None:
         Log.warn(
             f"for_each({fn_name}): every one of the {total} iteration(s) "
             f"failed, so the result is EMPTY — this is not an empty schema. "
@@ -1136,16 +1210,22 @@ def for_each(
         )
     # One line per distinct failure reason, so the default (INFO) log always
     # answers "what failed and why" without per-iteration lines.
-    for reason, combos in failure_reasons.items():
-        shown = combos[:_SUMMARY_COMBOS_MAX]
+    for group in failure_groups.values():
+        shown = group.combos[:_SUMMARY_COMBOS_MAX]
         more = (
-            f" (+{len(combos) - len(shown)} more)" if len(combos) > len(shown) else ""
+            f" (+{group.count - len(shown)} more)" if group.count > len(shown) else ""
         )
-        label = "no data" if reason in no_data_reasons else "failed"
-        Log.info(
-            f'{label}: {len(combos)} × "{reason}" — {"; ".join(shown)}{more}',
-            layer="scifor",
-        )
+        if group.no_data:
+            Log.info(
+                f'no data: {group.count} × "{group.reason}" — {"; ".join(shown)}{more}',
+                layer="scifor",
+            )
+        else:
+            Log.info(
+                f'failed: {group.count} × "{group.reason}" — {"; ".join(shown)}{more} '
+                f"[{format_user_frame(group.example.user_frame)}]",
+                layer="scifor",
+            )
     if _progress_fn is not None:
         _progress_fn(
             {
@@ -1157,7 +1237,8 @@ def for_each(
                 "no_data": no_data_count,
                 "skipped": skipped,  # legacy key: consumers that tally every event
                 "cancelled": was_cancelled,
-                "failure_reasons": failure_reasons,
+                "stopped": stop is not None,
+                "failures": groups_to_wire(failure_groups),
             }
         )
 
@@ -1166,9 +1247,23 @@ def for_each(
         len(collected_rows),
         layer="scifor",
     )
-    return _results_to_output_dataframe(
+    result_df = _results_to_output_dataframe(
         collected_rows, resolved_output_names, schema_col_dtypes, full_schema_keys
     )
+    if stop is not None:
+        stop_exc, stop_failure = stop
+        Log.info(
+            f"for_each({fn_name}): on_error=stop — stopped at "
+            f"{stop_exc.__class__.__name__} {format_user_frame(stop_failure.user_frame)}; "
+            f"{completed} combo(s) completed before it, re-raising the original exception",
+            layer="scifor",
+        )
+        attach_stopped_run(
+            stop_exc,
+            StoppedRun(failure=stop_failure, partial_result=result_df, completed=completed),
+        )
+        raise stop_exc
+    return result_df
 
 
 def _call_fn(fn, kwargs, n_outputs):
@@ -1292,6 +1387,7 @@ def _run_column_iteration(
     # Per-column failures, collected across the whole loop so we can report
     # every offending column at once instead of dying on the first one.
     failures: list[tuple[str, str]] = []
+    first_error: "Exception | None" = None
     # Constant inputs that are deferred ColName() markers resolve to the name of
     # the column currently being iterated (recomputed each pass below).
     deferred_colname_params = [
@@ -1327,6 +1423,10 @@ def _run_column_iteration(
         except Exception as e:
             # Record and keep going so the raised error names every bad column.
             failures.append((col, f"{type(e).__name__}: {e}"))
+            if first_error is None:
+                # Chained as __cause__ so the failure record finds the
+                # user line (scifor.failures.failure_from_exception).
+                first_error = e
             continue
         if isinstance(res, tuple):
             # for_columns is a single (reassembled) output; a tuple return is
@@ -1348,7 +1448,7 @@ def _run_column_iteration(
             f"narrow the selection (ColumnSelection(df, columns=[...]) or "
             f"excl_columns=[...])."
         )
-        raise ColumnFunctionError(message, failures)
+        raise ColumnFunctionError(message, failures) from first_error
 
     # Assemble a one-row DataFrame, preserving encounter order and rejecting
     # collisions (two produced names mapping to the same output column).

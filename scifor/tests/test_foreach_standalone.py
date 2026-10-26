@@ -927,12 +927,13 @@ def test_iterate_function_failure_lists_all_bad_columns(capsys):
     assert result is None or result.empty
     s = _summary_event(events)
     assert s["completed"] == 0 and s["failed"] == 1
-    (reason,) = s["failure_reasons"]
+    (group,) = s["failures"]
+    reason = group["reason"]
     assert reason.startswith("ColumnFunctionError:")
     # Both bad columns are reported; neither good column is.
     assert "label1" in reason and "label2" in reason
     assert "good1" not in reason and "good2" not in reason
-    assert s["failure_reasons"][reason] == ["subject=1"]
+    assert group["combos"] == ["subject=1"]
     # The full error is echoed to stderr for visibility.
     assert "label1" in capsys.readouterr().err
 
@@ -955,9 +956,10 @@ def test_iterate_function_failure_fails_the_combo_not_the_run():
 
     s = _summary_event(events)
     assert s["completed"] == 1 and s["failed"] == 1
-    (reason,) = s["failure_reasons"]
+    (group,) = s["failures"]
+    reason = group["reason"]
     assert reason.startswith("ColumnFunctionError:") and "a:" in reason
-    assert s["failure_reasons"][reason] == ["subject=1"]
+    assert group["combos"] == ["subject=1"]
     assert list(result["subject"]) == [2]
     assert list(result["a"]) == [2.0]
 
@@ -980,9 +982,10 @@ def test_iterate_column_failure_on_every_combo_is_one_summary_reason():
 
     s = _summary_event(events)
     assert s["failed"] == 3
-    (reason,) = s["failure_reasons"]
+    (group,) = s["failures"]
+    reason = group["reason"]
     assert "label" in reason
-    assert s["failure_reasons"][reason] == ["subject=1", "subject=2", "subject=3"]
+    assert group["combos"] == ["subject=1", "subject=2", "subject=3"]
 
 
 # ---------------------------------------------------------------------------
@@ -1133,7 +1136,7 @@ def test_iterate_excl_columns_lets_run_succeed_after_failure():
     assert failed is None or failed.empty
     s = _summary_event(events)
     assert s["failed"] == 2
-    for reason in s["failure_reasons"]:
+    for reason in (g["reason"] for g in s["failures"]):
         assert "label1" in reason and "label2" in reason and "good" not in reason
 
     # Excluding them: the run completes over the remaining numeric column.

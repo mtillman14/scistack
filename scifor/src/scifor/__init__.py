@@ -41,6 +41,15 @@ from .discovery import (
     walk_package,
 )
 from .each_of import EachOf, require_alternatives
+from .failures import (
+    ON_ERROR_VALUES,
+    ComboFailure,
+    FailureFrame,
+    FailureGroup,
+    StoppedRun,
+    stopped_run_of,
+    validate_on_error,
+)
 from .filters import Col, ColFilter, CompoundFilter, NotFilter
 from .fixed import Fixed
 from .foreach import (
@@ -96,6 +105,14 @@ __all__ = [
     "ColumnFunctionError",
     "ForColumnsError",
     "NoDataError",
+    # Failure records + on_error (docs/claude/error-surfacing.md)
+    "ComboFailure",
+    "FailureFrame",
+    "FailureGroup",
+    "StoppedRun",
+    "stopped_run_of",
+    "ON_ERROR_VALUES",
+    "validate_on_error",
     "spread_nested_results",
     "DB_ONLY_KWARGS",
     "output_column_name",
