@@ -79,6 +79,7 @@ from .spec import (
     PlotKind,
     PlotSpec,
     Role,
+    SUMMARY_KINDS,
     Statistic,
     grid_shape_for,
     value_spellings,
@@ -1354,14 +1355,14 @@ def _build_figure(
         overlay_frame: pd.DataFrame | None = None
         summarize_nested = (
             explode
-            and spec.kind in (PlotKind.BAND, PlotKind.BAR)
+            and spec.kind in SUMMARY_KINDS
             # A compared 1-D band/bar takes the exploded route: the baseline
             # is `compare`'s, over long rows, never restated over cells. The
             # transport stride then runs after the summary is built from the
             # compared rows (`downsample`), not inside the explode.
             and comparison is None
         )
-        if comparison is not None and explode and spec.kind in (PlotKind.BAND, PlotKind.BAR):
+        if comparison is not None and explode and spec.kind in SUMMARY_KINDS:
             Log.info(
                 "compare: 1-D %s summarised from exploded rows (the nested-cell "
                 "summary does not compare)",
@@ -2231,7 +2232,7 @@ def _panel_frame(
     out = out.dropna(subset=[Y])
 
     # --- summarize the sample into centre + error ------------------------
-    if spec.kind in (PlotKind.BAR, PlotKind.BAND):
+    if spec.kind in SUMMARY_KINDS:
         # Carry the nested axis's LAYER columns through the summary. They are a
         # function of the composed key, so grouping by them as well changes no
         # group — but without them `_summarize`'s `reset_index` returns three
@@ -2944,8 +2945,8 @@ def _encoding_for(
         x=X,
         y=Y,
         color=COLOR if color else None,
-        y_low=Y_LOW if kind in (PlotKind.BAR, PlotKind.BAND) else None,
-        y_high=Y_HIGH if kind in (PlotKind.BAR, PlotKind.BAND) else None,
+        y_low=Y_LOW if kind in SUMMARY_KINDS else None,
+        y_high=Y_HIGH if kind in SUMMARY_KINDS else None,
         series=SERIES if series else None,
         dash=DASH if has_dash else None,
     )

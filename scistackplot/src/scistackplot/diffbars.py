@@ -168,6 +168,14 @@ DIFFERENCE_BAR_KINDS: tuple[str, ...] = (
     "spaghetti",
 )
 
+#: Why a horizontal kind (``spec.HORIZONTAL_KINDS``) carries no difference
+#: bars: they are stacked ABOVE the marks in points, a geometry with no
+#: horizontal counterpart yet (user, 2026-10-26: omit them for HBAR).
+HORIZONTAL_REASON = (
+    "Difference bars are drawn above vertical marks; use the vertical bar "
+    "plot for them."
+)
+
 
 def unavailable(spec: "PlotSpec", shape: "Shape", *, temporal: bool = False) -> str | None:
     """Why this figure cannot carry difference bars, or None.
@@ -178,7 +186,10 @@ def unavailable(spec: "PlotSpec", shape: "Shape", *, temporal: bool = False) -> 
     answers it.
     """
     from .shape import Shape
+    from .spec import is_horizontal
 
+    if is_horizontal(spec.kind):
+        return HORIZONTAL_REASON
     if str(spec.kind) not in DIFFERENCE_BAR_KINDS:
         return (
             f"A {spec.kind} plot has no tick-by-tick marks to join; difference "

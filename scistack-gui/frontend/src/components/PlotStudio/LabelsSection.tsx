@@ -55,6 +55,9 @@ interface Props {
   onProject: (edit: ProjectAliasEdit) => Promise<string | null>
   /** False for a CSV plot: no project to write to, so no project buttons. */
   projectEnabled?: boolean
+  /** Where the figure draws its x / y titles (`layout.meta.axis_sides`): said
+   *  beside the labels when they are not the usual bottom / left. */
+  axisSides?: { x: string; y: string }
 }
 
 export default function LabelsSection({
@@ -65,7 +68,12 @@ export default function LabelsSection({
   onAliases,
   onProject,
   projectEnabled = true,
+  axisSides,
 }: Props) {
+  // "X label (left)" on a horizontal bar: the x title names the categories,
+  // which it draws down the left.
+  const side = (axis: 'x' | 'y', usual: string) =>
+    axisSides && axisSides[axis] !== usual ? ` (${axisSides[axis]})` : ''
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -89,7 +97,13 @@ export default function LabelsSection({
       {(['title', 'x_label', 'y_label'] as const).map(key => (
         <TextRow
           key={key}
-          label={{ title: 'Title', x_label: 'X label', y_label: 'Y label' }[key]}
+          label={
+            {
+              title: 'Title',
+              x_label: `X label${side('x', 'bottom')}`,
+              y_label: `Y label${side('y', 'left')}`,
+            }[key]
+          }
           value={titles[key] ?? null}
           placeholder="automatic"
           onChange={value => onTitle(key, value)}

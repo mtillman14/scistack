@@ -82,6 +82,7 @@ class PlotKind(str, Enum):
     BOX = "box"              # distribution per x position
     VIOLIN = "violin"        # distribution per x position, density
     BAR = "bar"              # statistic per x position, with error bar
+    HBAR = "hbar"            # BAR transposed: categories up the left, values along x
     BAND = "band"            # statistic line + shaded error region (1-D)
     HEATMAP = "heatmap"      # 2-D matrix
     HISTOGRAM = "histogram"  # the measure's values binned on x; count (or %) on y
@@ -117,6 +118,7 @@ SCALAR_KINDS = (
     PlotKind.BOX,
     PlotKind.VIOLIN,
     PlotKind.BAR,
+    PlotKind.HBAR,
     PlotKind.HISTOGRAM,
     PlotKind.REGRESSION,
 )
@@ -137,12 +139,40 @@ CONTINUOUS_X_KINDS = (PlotKind.HISTOGRAM, PlotKind.REGRESSION)
 #: (no slot to place a point in) and HEATMAP has no marks.
 OVERLAY_KINDS = (
     PlotKind.BAR,
+    PlotKind.HBAR,
     PlotKind.BOX,
     PlotKind.VIOLIN,
     PlotKind.SCATTER,
     PlotKind.STRIP,
     PlotKind.SPAGHETTI,
 )
+
+#: Kinds that draw a STATISTIC per category as a bar from zero, with an error
+#: bar: the one statement of "a bar", whichever way it points. Every
+#: data-level rule (the summary, its error columns, the from-zero y range,
+#: the datetime refusal, the fill opacity) reads this, so a horizontal bar
+#: can never summarise differently from a vertical one.
+BAR_KINDS = (PlotKind.BAR, PlotKind.HBAR)
+
+#: Kinds that draw the sample's CENTRE ± ERROR rather than its rows: the
+#: bars and the band. Membership is what makes ``reduce`` summarise a panel
+#: into ``__y`` / ``__y_low`` / ``__y_high``.
+SUMMARY_KINDS = (*BAR_KINDS, PlotKind.BAND)
+
+#: Kinds drawn with the categories running UP THE SCREEN and the values
+#: along it. Orientation is a DRAWING concern only: logically "x" stays the
+#: category axis and "y" the value axis everywhere upstream of the renderers
+#: (encoding, ``x_plan``, ``y_limits``, compare, Show sample, Save data), and
+#: the renderers and the exported code map them onto the screen through
+#: :func:`is_horizontal`. Difference bars are not drawn for these kinds
+#: (``diffbars.HORIZONTAL_REASON``; user, 2026-10-26).
+HORIZONTAL_KINDS = (PlotKind.HBAR,)
+
+
+def is_horizontal(kind: "PlotKind | None") -> bool:
+    """Whether ``kind`` puts its categories on the vertical screen axis — the
+    one owner of orientation (:data:`HORIZONTAL_KINDS`)."""
+    return kind in HORIZONTAL_KINDS
 
 
 class Statistic(str, Enum):

@@ -32,7 +32,7 @@ from ..paper import (
 )
 from ..resolved import ResolvedPlot
 from ..roles import overlay_in_legend
-from ..spec import PlotKind
+from ..spec import BAR_KINDS, PlotKind, is_horizontal
 from ..diffbars import (
     LINE_PT,
     PanelFrame,
@@ -47,6 +47,7 @@ from ..weights import SAMPLE_EDGE_WIDTH, mark_weights_meta, sample_weight, spagh
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
     MARK_OFFSET_GROUP,
+    axis_sides,
     SAMPLE_ALPHA,
     SAMPLE_EDGE_COLOR,
     series_groups,
@@ -71,8 +72,10 @@ from .base import (
     BracketGeometry,
     GridReach,
     ruled_bracket_depths,
+    shows_category_labels,
     shows_x_labels,
     shows_y_labels,
+    shows_value_labels,
     sample_hover,
     sample_legend_levels,
     sample_dropped_reason,
@@ -222,12 +225,15 @@ def render(
                 # its matched override (base.panel_override_meta): the Panels
                 # section lists these and never computes them.
                 "panel_overrides": panel_override_meta(resolved),
+                # Where the logical x / y axes are drawn (base.axis_sides): a
+                # horizontal kind's categories are at the left.
+                "axis_sides": axis_sides(resolved),
             },
         }
         if resolved.labels.title:
             layout["title"] = {"text": resolved.labels.title, "font": {"size": sizes.title}}
 
-        if resolved.kind is PlotKind.BAR:
+        if resolved.kind in BAR_KINDS:
             # Stated, never inferred — the same rule as `orientation: "v"` on
             # the trace. plotly's defaults happen to agree today, but a figure
             # whose bar layout depends on which defaults the bundled plotly.js
@@ -296,6 +302,17 @@ def render(
             traces.extend(_sample_traces(panel, resolved, x_axis, y_axis, seen_legend, legend_on))
             traces.extend(_fit_traces(panel, resolved, x_axis, y_axis))
             _add_fit_annotations(layout, panel, resolved, x_axis, y_axis)
+            if is_horizontal(resolved.kind):
+                # Difference bars are never drawn on a horizontal kind
+                # (diffbars.HORIZONTAL_REASON), so the panel's own limits.
+                _add_horizontal_axes(
+                    layout, resolved, slot, row, col, n_rows, n_cols, panel, frame.gaps
+                )
+                _add_y_groups(
+                    layout, resolved, row, col, n_rows, n_cols, slot, geometry, frame.gaps
+                )
+                panel_axes[index] = (x_axis, y_axis)
+                continue
             _add_axes(
                 layout,
                 resolved,
@@ -386,6 +403,17 @@ def _bracket_geometry(resolved: ResolvedPlot, decisions: dict | None) -> Bracket
         Log.debug("preview x brackets from the export: %s", measured.describe(), layer=LAYER)
         return measured
     sizes = sizes_for(resolved)
+    if is_horizontal(resolved.kind):
+        # Columns left of the y tick labels: as deep as the widest label.
+        estimated = BracketGeometry(
+            tick_depth_pt=PAPER.tick_length + 3.0
+            + _estimated_width_px(plan.tick_labels, sizes.y_ticks),
+            row_height_pt=_estimated_width_px([g.label for g in plan.groups], sizes.groups),
+        )
+        Log.debug(
+            "preview y brackets estimated (undecided): %s", estimated.describe(), layer=LAYER
+        )
+        return estimated
     estimated = BracketGeometry(
         tick_depth_pt=PAPER.tick_length + 3.0 + UPRIGHT_LINE_HEIGHT * sizes.x_ticks,
         row_height_pt=UPRIGHT_LINE_HEIGHT * sizes.groups,
@@ -394,9 +422,36 @@ def _bracket_geometry(resolved: ResolvedPlot, decisions: dict | None) -> Bracket
     return estimated
 
 
+#: Width of one character, in multiples of its font size, for the undecided
+#: preview's estimate of a label column (the export measures its own).
+CHAR_WIDTH_EM = 0.6
+
+
+def _estimated_width_px(labels, font_px: float) -> float:
+    """The widest of ``labels`` at ``font_px``, estimated (undecided preview)."""
+    return CHAR_WIDTH_EM * font_px * max((len(str(t)) for t in labels), default=0)
+
+
+def _left_margin(resolved: ResolvedPlot, geometry: BracketGeometry | None) -> int:
+    """The left margin. A horizontal kind's category labels, bracket
+    columns and y title sit there (undecided: estimated)."""
+    if not is_horizontal(resolved.kind):
+        return BASE_LEFT_MARGIN
+    sizes = sizes_for(resolved)
+    if geometry is not None:
+        labels = geometry.bottom_pt(resolved.x_plan.depth)
+    else:
+        labels = PAPER.tick_length + 3.0 + _estimated_width_px(
+            [resolved.text.x_tick(v) for v in resolved.x_order or []], sizes.y_ticks
+        )
+    title = UPRIGHT_LINE_HEIGHT * sizes.y_label + BRACKET_MARGIN_PAD if resolved.labels.x else 0
+    return max(BASE_LEFT_MARGIN, math.ceil(labels + title + BRACKET_MARGIN_PAD))
+
+
 def _bottom_margin(resolved: ResolvedPlot, geometry: BracketGeometry | None) -> int:
-    """The bottom margin, deep enough for every bracket row under the ticks."""
-    if geometry is None:
+    """The bottom margin, deep enough for every bracket row under the ticks
+    (a horizontal kind's brackets are at the left: ``_left_margin``)."""
+    if geometry is None or is_horizontal(resolved.kind):
         return BASE_BOTTOM_MARGIN
     needed = geometry.bottom_pt(resolved.x_plan.depth) + BRACKET_MARGIN_PAD
     return max(BASE_BOTTOM_MARGIN, math.ceil(needed))
@@ -617,7 +672,7 @@ def _panel_traces(
             traces.extend(_line_traces(subset, resolved, base, color))
         elif kind is PlotKind.BAND:
             traces.extend(_band_traces(subset, resolved, base, color))
-        elif kind is PlotKind.BAR:
+        elif kind in BAR_KINDS:
             error = None
             if encoding.has_error:
                 centre = np.asarray(_values(subset[encoding.y]), dtype=float)
@@ -633,6 +688,10 @@ def _panel_traces(
                     # The export's error-bar ink and caps (paper.py).
                     **plotly_error_style(),
                 }
+            # A horizontal bar is the same trace turned: positions on y,
+            # values on x, the error bar along x (spec.is_horizontal).
+            horizontal = is_horizontal(kind)
+            positions_key, values_key = ("y", "x") if horizontal else ("x", "y")
             traces.append(
                 {
                     **base,
@@ -640,16 +699,16 @@ def _panel_traces(
                     # Stated, never inferred: plotly picks an orientation from
                     # which of x/y it recognises, so a panel whose x came out
                     # numeric could silently draw sideways.
-                    "orientation": "v",
+                    "orientation": "h" if horizontal else "v",
                     # One slot for every colour trace: colour is paint, each
                     # level has its own x, nothing dodges (see `render`).
                     "offsetgroup": MARK_OFFSET_GROUP,
-                    "x": x_values,
-                    "y": _values(subset[encoding.y]),
+                    positions_key: x_values,
+                    values_key: _values(subset[encoding.y]),
                     # The fill opacity every side shares (base.fill_alpha); on
                     # the marker, so the error bars stay opaque as in matplotlib.
                     "marker": {"color": color, "opacity": fill_alpha(kind, resolved.spec.style)},
-                    **({"error_y": error} if error else {}),
+                    **({f"error_{values_key}": error} if error else {}),
                     **hover,
                 }
             )
@@ -775,9 +834,16 @@ def _positional_x(resolved: ResolvedPlot) -> bool:
     default, which is also the geometry :func:`_add_x_groups` assumes when it
     places brackets at ``i / n``. The marks (bars, boxes) are placed by index
     too, one per position, exactly as on a category axis.
+
+    A horizontal kind (``spec.is_horizontal``) is always positional: its
+    category axis is the screen's y, drawn reversed (first level at the
+    top), and the export's fitted labels and drawn ticks then carry over as
+    ``tickvals`` / ``ticktext`` at the very positions matplotlib used.
     """
     return (
-        resolved.kind is PlotKind.SPAGHETTI or bool(resolved.sample_shown)
+        resolved.kind is PlotKind.SPAGHETTI
+        or bool(resolved.sample_shown)
+        or is_horizontal(resolved.kind)
     ) and is_categorical_x(resolved)
 
 
@@ -796,8 +862,15 @@ def _level_hover(subset, resolved: ResolvedPlot, base: dict) -> dict:
     ]
     return {
         "customdata": labels,
-        "hovertemplate": "%{customdata}<br>%{y}<extra>" + str(base["name"]) + "</extra>",
+        "hovertemplate": "%{customdata}<br>" + _value_hover(resolved)
+        + "<extra>" + str(base["name"]) + "</extra>",
     }
+
+
+def _value_hover(resolved: ResolvedPlot) -> str:
+    """The hover placeholder of the VALUE: ``%{y}``, or ``%{x}`` on a
+    horizontal kind, whose values run along x (``spec.is_horizontal``)."""
+    return "%{x}" if is_horizontal(resolved.kind) else "%{y}"
 
 
 def _legend_title(resolved: ResolvedPlot) -> str:
@@ -867,6 +940,9 @@ def _sample_traces(
         ]
         xs = [None if np.isnan(v) else float(v) for v in positions[order]]
         ys = _values(rows[resolved.encoding.y].iloc[order])
+        if is_horizontal(resolved.kind):
+            # Positions down the y axis, values along x (spec.is_horizontal).
+            xs, ys = ys, xs
         custom = [f"{levels[i]}<br>{hover[i]}" if hover[i] else levels[i] for i in order]
         name = label if own_color else (str(identity) if identity is not None else label)
         joined_run = resolved.sample_join and len(rows) > 1
@@ -908,7 +984,9 @@ def _sample_traces(
                 "opacity": SAMPLE_ALPHA,
                 # Hover-only (see `_level_hover` on why not `text`).
                 "customdata": custom,
-                "hovertemplate": "%{customdata}<br>%{y}<extra>" + label + "</extra>",
+                "hovertemplate": (
+                    "%{customdata}<br>" + _value_hover(resolved) + "<extra>" + label + "</extra>"
+                ),
             }
         )
         if not joined_run and run.uniform:
@@ -1243,6 +1321,150 @@ def _add_axes(
             layout[y_key]["range"] = list(span)
 
 
+def _add_horizontal_axes(
+    layout, resolved: ResolvedPlot, slot, row, col, n_rows, n_cols, panel, gaps
+) -> None:
+    """``_add_axes`` for a horizontal kind (``spec.is_horizontal``): the same
+    two axes, each on the other screen side — ``mpl._apply_horizontal_
+    cosmetics`` is the export's side of it.
+
+    The CATEGORY axis is y: positional (``_positional_x``: level indices as
+    ``tickvals``), its range reversed so the first level is at the top, its
+    title the x title. The VALUE axis is x: the limits, log scale and the
+    panel's y title (a faceted panel's name) under it.
+    """
+    x_key = "xaxis" if slot == 1 else f"xaxis{slot}"
+    y_key = "yaxis" if slot == 1 else f"yaxis{slot}"
+    x0, y0, cell_width, cell_height = _cell(row, col, n_rows, n_cols, gaps)
+    sizes = sizes_for(resolved)
+    style = resolved.spec.style
+    categories = shows_category_labels(resolved, row, col)
+    values = shows_value_labels(resolved, row, col)
+
+    ticks = _x_ticks(resolved)
+    category_range = ticks.pop("range", None)
+    layout[y_key] = {
+        **plotly_axis_style(),
+        "domain": [y0, y0 + cell_height],
+        "anchor": "x" if slot == 1 else f"x{slot}",
+        "showticklabels": categories,
+        "title": {
+            "text": resolved.labels.x if categories else "",
+            "font": {"size": sizes.y_label},
+        },
+        "tickfont": {"size": sizes.y_ticks},
+        **ticks,
+        # First level at the top (user, 2026-10-26); a numeric factor's
+        # levels are a number line, reversed the same way.
+        **(
+            {"range": [category_range[1], category_range[0]]}
+            if category_range
+            else {"autorange": "reversed"}
+        ),
+        "type": "-",
+    }
+    layout[x_key] = {
+        **plotly_axis_style(),
+        "domain": [x0, x0 + cell_width],
+        "anchor": "y" if slot == 1 else f"y{slot}",
+        "showticklabels": values,
+        "title": {
+            "text": panel_y_title(resolved, panel, leftmost=shows_x_labels(resolved, row, col)),
+            "font": {"size": sizes.x_label},
+        },
+        "tickfont": {"size": sizes.x_ticks},
+        "type": "log" if style.log_y else "-",
+        "tickangle": 0,
+        "automargin": True,
+    }
+    if slot != 1:
+        if resolved.spec.facet.share_x:
+            layout[y_key]["matches"] = "y"
+        # Derived, as on a vertical figure: linked only on one shared range.
+        if shares_y_axis(resolved):
+            layout[x_key]["matches"] = "x"
+    limits = panel_y_limits(resolved, panel)
+    if limits:
+        span = axis_range(limits, log=style.log_y)
+        if span is not None:
+            layout[x_key]["range"] = list(span)
+
+
+def _add_y_groups(
+    layout,
+    resolved: ResolvedPlot,
+    row,
+    col,
+    n_rows,
+    n_cols,
+    slot,
+    geometry: BracketGeometry | None,
+    gaps: tuple[float, float] | None = None,
+) -> None:
+    """``_add_x_groups`` turned 90 degrees for a horizontal kind: each higher
+    category layer is a vertical rule and a label LEFT of the tick labels,
+    one column per layer (``mpl._draw_y_groups`` draws the export's).
+
+    Vertically in the panel's own y-axis coordinates (level indices), so a
+    bracket moves with its leaves on zoom; horizontally in PIXELS left of the
+    cell's domain, from the export's measured geometry (1 pt = 1 px).
+    """
+    plan = resolved.x_plan
+    if (
+        not plan
+        or not plan.groups
+        or geometry is None
+        or not shows_category_labels(resolved, row, col)
+    ):
+        return
+    x0, _y0, _cell_width, _cell_height = _cell(row, col, n_rows, n_cols, gaps)
+    y_ref = "y" if slot == 1 else f"y{slot}"
+    Log.debug(
+        "y groups: %d bracket(s) on %s in axis coordinates over %d slot(s)",
+        len(plan.groups), y_ref, len(plan.order), layer=LAYER,
+    )
+    y_axis = layout.get("yaxis" if slot == 1 else f"yaxis{slot}")
+    if isinstance(y_axis, dict) and isinstance(y_axis.get("title"), dict):
+        y_axis["title"]["standoff"] = geometry.title_pad_pt(plan.depth)
+    for group in plan.groups:
+        top = group.start - 0.5
+        bottom = group.end + 0.5
+        name = f"{X_GROUP_TAG}:{group.depth}:{group.start}"
+        layout["annotations"].append(
+            {
+                "name": name,
+                "text": group.label,
+                "x": x0,
+                "xshift": -geometry.label_pt(group.depth, plan.depth),
+                "y": (top + bottom) / 2.0,
+                "xref": "paper",
+                "yref": y_ref,
+                "showarrow": False,
+                "font": {"size": sizes_for(resolved).groups},
+                "xanchor": "right",
+                "yanchor": "middle",
+                "align": "right",
+            }
+        )
+        if not group.label:
+            continue
+        layout.setdefault("shapes", []).append(
+            {
+                "name": name,
+                "type": "line",
+                "xref": "paper",
+                "yref": y_ref,
+                "xsizemode": "pixel",
+                "xanchor": x0,
+                "x0": -geometry.rule_pt(group.depth, plan.depth),
+                "x1": -geometry.rule_pt(group.depth, plan.depth),
+                "y0": top + X_GROUP_INSET,
+                "y1": bottom - X_GROUP_INSET,
+                "line": {"color": "#888888", "width": 1},
+            }
+        )
+
+
 #: Approximate width of one legend character at the webview's font size, in px.
 #: The renderer emits JSON and never measures text, so the strip is sized from
 #: the label lengths — generously, because too wide only costs plot area while
@@ -1277,7 +1499,10 @@ Y_GAP = 0.09
 
 
 def _x_depth(resolved: ResolvedPlot) -> int:
-    """Rows of nested x-group labels that hang below a cell (0 when flat)."""
+    """Rows of nested x-group labels that hang below a cell (0 when flat, or
+    when a horizontal kind hangs them at the left instead)."""
+    if is_horizontal(resolved.kind):
+        return 0
     return resolved.x_plan.depth if resolved.x_plan else 0
 
 
@@ -1346,7 +1571,9 @@ def _frame(
         float(decisions.get("height_in") or style.height) * PX_PER_IN,
     )
 
-    left = BASE_LEFT_MARGIN
+    # Measured, the export's reach below decides the left side alone: an
+    # estimate floor there would make the preview's margin wider than the file's.
+    left = _left_margin(resolved, geometry) if reach is None else BASE_LEFT_MARGIN
     bottom = _bottom_margin(resolved, geometry)
     if reach is not None:
         left = max(left, math.ceil(reach.left_outer_pt + REACH_PAD_PX))
@@ -1657,8 +1884,10 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
     if ticks is not None and ticks.rows:
         texts = [_html(t) for t in ticks.rows[0]]
         applied = 0
+        # The CATEGORY axes: y on a horizontal kind (spec.is_horizontal).
+        prefix = "yaxis" if is_horizontal(resolved.kind) else "xaxis"
         for key, axis in layout.items():
-            if not (key.startswith("xaxis") and isinstance(axis, dict)):
+            if not (key.startswith(prefix) and isinstance(axis, dict)):
                 continue
             if len(axis.get("ticktext") or []) == len(texts):
                 axis["ticktext"] = texts
@@ -1677,7 +1906,9 @@ def _apply_decisions(layout: dict, resolved: ResolvedPlot, decisions: dict) -> N
             axis["tickangle"] = -int(ticks.rotation)
             axis["tickfont"] = {"size": ticks.font_pt}
             applied += 1
-        Log.debug("preview: tick decision applied to %d x axis/axes", applied, layer=LAYER)
+        Log.debug(
+            "preview: tick decision applied to %d %s(es)", applied, prefix, layer=LAYER
+        )
 
     _apply_axis_text(layout, resolved, decisions.get("y_axes"), "y")
     _apply_axis_text(layout, resolved, decisions.get("x_axes"), "x")

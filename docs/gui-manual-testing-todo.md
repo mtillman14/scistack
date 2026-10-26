@@ -11,6 +11,40 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzj. Horizontal bar plot kind — added 2026-10-26
+
+What changed (`.claude/plan-horizontal-bar.md`, `docs/claude/horizontal-bar.md`):
+a new built-in kind, **Horizontal bar + error** (`PlotKind.HBAR`). Same data
+as the bar plot, drawn turned: categories down the left (first level at the
+top), values along the bottom, nested layers as brackets at the left, faceted
+panel names under each panel. Difference bars are not offered for it. Both
+frontend bundles are rebuilt; reload the VS Code window and restart the backend.
+
+**Backend**
+1. After step 1 below, `scidb.log` should have
+   `hbar: categories down the left (first level at the top), values along x`
+   and an INFO line `y category labels: … -> font …`.
+
+**Frontend** (Plot Studio on a scalar variable, e.g. aim2 StepLength)
+1. Chart: pick **Horizontal bar + error**. One bar per level, growing to the
+   right from 0, first level at the TOP, error bars horizontal. It should be
+   offered exactly when **Bar + error** is.
+2. Grouping: two layers (e.g. limb inside session). The innermost labels sit
+   left of the bars; the outer layer is a grey vertical rule plus a label in a
+   column further left. Click **Save**: the PNG matches the preview.
+3. Factors: put a factor on **Separate panels**. Each panel's name is under
+   it (the x title); the category labels are only on the left column.
+4. Labels: the boxes read **X label (left)** and **Y label (bottom)**; the
+   Y-axis section reads **Y axis (values, along the bottom)**. Typing a Y label
+   changes the bottom title.
+5. **Show sample** → subject: one point per subject inside its bar, joined
+   vertically across sessions when it's a repeated measure.
+6. Statistics > **Difference bars**: greyed, saying they're drawn on vertical marks.
+7. **Export code** / Add to pipeline: the code has `orient="h"` and runs to the
+   same figure.
+
+---
+
 ## 0zzzzzzi. "＋ argument": inputs with a default stay hidden until wanted — added 2026-10-24
 
 What changed (`.claude/plan-optional-argument-ports.md`): a function node now

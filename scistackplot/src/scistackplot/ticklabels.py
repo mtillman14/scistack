@@ -148,6 +148,19 @@ TICK_POLICY = LabelPolicy()
 #: and never strip: a bracket is read on its own.
 BRACKET_POLICY = LabelPolicy(rotations=(), allow_thinning=False, strip_prefix=False)
 
+#: Labels STACKED down a vertical axis (a horizontal bar's categories,
+#: ``spec.is_horizontal``). Fitted with a measure that returns
+#: ``(height, width)``, so the extent along the axis is a label's height:
+#: rotating cannot help and wrapping only adds height, so the ladder is
+#: strip, shrink and (numbered labels) thin. A long name widens the left
+#: margin instead, which the layout gives it.
+STACKED_TICK_POLICY = LabelPolicy(rotations=(), max_lines=1)
+
+#: Bracket labels beside a vertical axis: shrink only (see above).
+STACKED_BRACKET_POLICY = LabelPolicy(
+    rotations=(), allow_thinning=False, strip_prefix=False, max_lines=1
+)
+
 
 @dataclass(frozen=True)
 class LabelFit:

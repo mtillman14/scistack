@@ -38,12 +38,12 @@ from .roles import (
     sample_key,
 )
 from .shape import Shape
-from .spec import BUILTIN_KINDS, MAX_X_LAYERS, SCALAR_KINDS, PlotKind, PlotSpec, Role
+from .spec import BAR_KINDS, BUILTIN_KINDS, MAX_X_LAYERS, SCALAR_KINDS, PlotKind, PlotSpec, Role
 from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, LongTable
 from .temporal import BAR_REASON, time_zone_summary
 
 #: Kinds that summarize several rows per x position into one mark.
-DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.BAND)
+DISTRIBUTION_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, *BAR_KINDS, PlotKind.BAND)
 
 #: Kinds that cannot be drawn without a sample — ``roles.SAMPLE_NEEDING_KINDS``,
 #: read by ``roles.kind_requirement``, the one statement of what each kind
@@ -96,6 +96,7 @@ _ROLE_HINTS_BY_SHAPE: dict[Shape, dict[Role, str]] = {
 #: kind's (``roles.grouping_layers``); this is the reading, said out loud.
 _GROUPING_HINTS: dict[PlotKind, str] = {
     PlotKind.BAR: "One bar per combination — first entry innermost",
+    PlotKind.HBAR: "One bar per combination, top to bottom — first entry innermost",
     PlotKind.BOX: "One box per combination — first entry innermost",
     PlotKind.VIOLIN: "One violin per combination — first entry innermost",
     PlotKind.STRIP: "One point per combination — first entry innermost",
@@ -245,13 +246,14 @@ def available_plots(
                 PlotKind.SCATTER,
                 PlotKind.STRIP,
                 PlotKind.BAR,
+                PlotKind.HBAR,
                 PlotKind.SPAGHETTI,
                 PlotKind.BOX,
                 PlotKind.VIOLIN,
                 PlotKind.HISTOGRAM,
             )
             if kind_requirement(kind, Shape.SCALAR, roles, n_groups) is None
-            and not (temporal and kind is PlotKind.BAR)
+            and not (temporal and kind in BAR_KINDS)
         ]
 
     if shape is Shape.SERIES_1D:
@@ -334,7 +336,7 @@ def why_unavailable(
         if kind is PlotKind.HISTOGRAM:
             return HISTOGRAM_NO_X
         return "With an X variable, the kinds are scatter, line and regression; clear it for the others."
-    if temporal and kind is PlotKind.BAR:
+    if temporal and kind in BAR_KINDS:
         return BAR_REASON
     if shape is Shape.MATRIX_2D:
         return "2-D measures render as a heatmap."

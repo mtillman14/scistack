@@ -60,7 +60,7 @@ shape, through one pure function:
 ```python
 from scistackplot import available_plots, default_plot, Shape
 
-available_plots(Shape.SCALAR, {"session": Role.GROUP})                          # scatter, strip, bar
+available_plots(Shape.SCALAR, {"session": Role.GROUP})                          # scatter, strip, bar, hbar
 available_plots(Shape.SCALAR, {"session": Role.GROUP, "trial": Role.COLLAPSE})  # + box, violin
 ```
 
@@ -167,6 +167,23 @@ line per colour or per panel, the corner). The fit is
 datetime `x_measure` is drawn on a date axis. Log axes are ignored on both
 kinds. "Save data" adds the bars or the fits as a table. See
 `docs/claude/histogram-and-regression.md`.
+
+## Horizontal bars
+
+`PlotKind.HBAR` is the bar plot turned: the same bars, error bars, colours,
+grouping, Show sample, comparison and limits, with the categories down the
+left (first level at the top) and the values along the bottom.
+
+```python
+spec = PlotSpec(measures=["StepLength"], roles=..., groups=["limb", "session"],
+                kind=PlotKind.HBAR)
+```
+
+Nothing upstream of drawing changes — "x" is still the category axis and
+"y" the value axis, so `y_axis`, `style.y_label` and `style.log_y` apply to
+the bottom axis. Outer grouping layers become brackets at the left, and a
+faceted panel's name is the title under it. Difference bars are not drawn on
+it. See `docs/claude/horizontal-bar.md`.
 
 ## Save the data behind a figure
 

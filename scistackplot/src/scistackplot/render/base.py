@@ -27,7 +27,7 @@ from ..panels import (
 )
 from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, RUN, SERIES, ResolvedPlot
 from ..roles import overlay_in_legend
-from ..spec import PlotKind
+from ..spec import BAR_KINDS, PlotKind, is_horizontal
 
 LAYER = "scistackplot"
 
@@ -227,6 +227,38 @@ def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
     return is_leftmost(resolved, row, col)
 
 
+def shows_category_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
+    """Whether this cell labels the CATEGORY axis (logical x: its ticks, its
+    brackets, its title) — the one rule both renderers read, whichever way
+    the kind points. Vertical, that is the axis at the bottom
+    (:func:`shows_x_labels`); horizontal (``spec.is_horizontal``) it runs
+    down the left, labelled where nothing sits to the left
+    (:func:`is_leftmost`)."""
+    if is_horizontal(resolved.kind):
+        return is_leftmost(resolved, row, col)
+    return shows_x_labels(resolved, row, col)
+
+
+def axis_sides(resolved: ResolvedPlot) -> dict[str, str]:
+    """Which side of each panel the logical axes are drawn on —
+    ``{"x": "bottom", "y": "left"}``, or swapped for a horizontal kind. The
+    GUI says where its "X label" / "Y axis" controls land from this
+    (``layout.meta.axis_sides``), never from the kind."""
+    if is_horizontal(resolved.kind):
+        return {"x": "left", "y": "bottom"}
+    return {"x": "bottom", "y": "left"}
+
+
+def shows_value_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
+    """Whether this cell numbers the VALUE axis (logical y). Vertical:
+    :func:`shows_y_labels`. Horizontal: the same rule turned — nothing
+    directly below, unless the panels are on different scales, when every
+    panel keeps its numbers."""
+    if is_horizontal(resolved.kind):
+        return not shares_y_axis(resolved) or shows_x_labels(resolved, row, col)
+    return shows_y_labels(resolved, row, col)
+
+
 def is_leftmost(resolved: ResolvedPlot, row: int, col: int) -> bool:
     """Whether nothing sits directly to the left of this cell: the first
     column, including a panel in a partial wrapped row whose left cell is
@@ -295,7 +327,7 @@ def panel_override_meta(resolved: ResolvedPlot) -> dict:
     ``unmatched`` lists overrides for panels not in this figure (inert).
     """
     at_left = {
-        id(panel): shows_y_labels(resolved, panel.grid_row, panel.grid_col)
+        id(panel): shows_value_labels(resolved, panel.grid_row, panel.grid_col)
         for panel in resolved.panels
     }
     panels = []
@@ -693,7 +725,7 @@ def fill_alpha(kind: PlotKind, style) -> float | None:
     and its own half-transparent box fill, and the export drew every fill
     opaque.
     """
-    if kind is PlotKind.BAR:
+    if kind in BAR_KINDS:
         return style.alpha
     if kind is PlotKind.BOX:
         return BOX_FILL_ALPHA

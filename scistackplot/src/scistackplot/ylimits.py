@@ -46,7 +46,7 @@ from scistacklog import Log
 from .numeric import coerce_numeric
 from .panels import PanelOverride
 from .shape import Shape
-from .spec import ErrorBand, PlotKind, PlotSpec, Role, Statistic
+from .spec import BAR_KINDS, SUMMARY_KINDS, ErrorBand, PlotSpec, Role, Statistic
 from .spread import QUANTILE_METHOD, SD_DDOF, ci95_spread, sem_spread
 from .table import LongTable
 from .temporal import parse_limit
@@ -114,9 +114,9 @@ class ExtentMode:
             # spanned the per-sample means, looser than the bars at both ends,
             # and the exported figure (fitted to the bars) disagreed.
             # `spread_bounds` / `position_stats` return centre..centre for NONE.
-            summary=spec.kind in (PlotKind.BAND, PlotKind.BAR),
+            summary=spec.kind in SUMMARY_KINDS,
             collapse=sample,
-            from_zero=spec.kind is PlotKind.BAR and not spec.style.log_y,
+            from_zero=spec.kind in BAR_KINDS and not spec.style.log_y,
             log=bool(spec.style.log_y),
             # The shape is not known here; `_reduced_extents` skips a 1-D
             # measure itself. A key that only misses the memo is cheap — a

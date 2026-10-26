@@ -137,6 +137,8 @@ from .spec import (
     PlotKind,
     PlotSpec,
     Role,
+    BAR_KINDS,
+    HORIZONTAL_KINDS,
     OVERLAY_KINDS,
     SCALAR_KINDS,
     Statistic,
@@ -148,6 +150,7 @@ from .spec import (
     VariantSet,
     YAxis,
     grid_shape_for,
+    is_horizontal,
 )
 from .bins import BinEdges, BinError, bin_edges
 from .fits import PanelFit, annotation_text
@@ -315,6 +318,9 @@ __all__ = [
     "VariantSet",
     "SCALAR_KINDS",
     "OVERLAY_KINDS",
+    "BAR_KINDS",
+    "HORIZONTAL_KINDS",
+    "is_horizontal",
     # 1-D -> scalar collapse
     "cell_collapses",
     "effective_shape",

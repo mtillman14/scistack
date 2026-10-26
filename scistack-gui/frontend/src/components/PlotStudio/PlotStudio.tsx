@@ -265,6 +265,7 @@ const KIND_LABELS: Record<string, string> = {
   box: 'Box',
   violin: 'Violin',
   bar: 'Bar + error',
+  hbar: 'Horizontal bar + error',
   band: 'Mean + error band',
   heatmap: 'Heatmap',
   histogram: 'Histogram',
@@ -697,7 +698,13 @@ interface GridMeta {
    *  (ResolvedPlot.missing_x); the "Show missing levels" box appears only
    *  when this is non-empty. */
   missing_x?: string[]
+  /** Which side of each panel the logical x / y axes are drawn on
+   *  (scistackplot render.base.axis_sides): a horizontal bar puts x (the
+   *  categories) at the left and y (the values) along the bottom. */
+  axis_sides?: { x: AxisSide; y: AxisSide }
 }
+
+type AxisSide = 'bottom' | 'left'
 
 interface VariantSet {
   name: string | null
@@ -2297,7 +2304,7 @@ export default function PlotStudio({
       variantRows.length > 0 ||
       stackable.length > 0
   )
-  const summarizing = spec?.kind === 'bar' || spec?.kind === 'band'
+  const summarizing = spec?.kind === 'bar' || spec?.kind === 'hbar' || spec?.kind === 'band'
   const faceted = Object.values(spec?.roles ?? {}).includes('facet')
 
   // The grid the backend actually built. Read back rather than recomputed: the
@@ -3352,7 +3359,7 @@ export default function PlotStudio({
                       ? `Each vector is reduced to its ${
                           spec?.cell_statistic ?? 'mean'
                         } — one value per record — and plotted like any scalar.`
-                      : 'Applies to scatter, strip, spaghetti, box, violin, bar and histogram: each vector becomes one value per record.'}
+                      : 'Applies to scatter, strip, spaghetti, box, violin, bar, horizontal bar and histogram: each vector becomes one value per record.'}
                   </div>
                 </>
               )}
@@ -3865,7 +3872,7 @@ export default function PlotStudio({
             </Section>
 
             <Section
-              title="Y axis"
+              title={gridMeta.axis_sides?.y === 'bottom' ? 'Y axis (values, along the bottom)' : 'Y axis'}
               hint="Which plots share one y scale. Nothing ticked means every plot in the dataset gets the same limits; ticking everything autoscales each subplot to its own data."
             >
               {yScopeFactors.length === 0 ? (
@@ -4224,6 +4231,7 @@ export default function PlotStudio({
                 onAliases={setAliases}
                 onProject={writeProjectAlias}
                 projectEnabled={!csvPath}
+                axisSides={gridMeta.axis_sides}
               />
             </Section>
 

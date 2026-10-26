@@ -413,10 +413,11 @@ def test_a_spaghetti_line_spans_the_innermost_tick_only(gait):
 
 def test_overlay_kinds_are_the_categorical_kinds():
     """Every kind with a categorical mark to place points beside — the
-    spaghetti included since 2026-09-21 (`test_show_sample_spaghetti.py`)."""
+    spaghetti included since 2026-09-21 (`test_show_sample_spaghetti.py`),
+    the horizontal bar since 2026-10-26 (`test_horizontal_bar.py`)."""
     assert set(OVERLAY_KINDS) == {
-        PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.SCATTER, PlotKind.STRIP,
-        PlotKind.SPAGHETTI,
+        PlotKind.BAR, PlotKind.HBAR, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.SCATTER,
+        PlotKind.STRIP, PlotKind.SPAGHETTI,
     }
 
 

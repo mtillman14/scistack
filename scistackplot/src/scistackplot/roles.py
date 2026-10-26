@@ -27,7 +27,7 @@ from scistacklog import Log
 
 from .panels import y_titles_problem
 from .shape import Shape
-from .spec import CONTINUOUS_X_KINDS, MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
+from .spec import BAR_KINDS, CONTINUOUS_X_KINDS, MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
 from .table import LongTable
 from .temporal import BAR_REASON, normalize_mode
 from .variants import VARIABLE_COLUMN, VARIANT_FACTOR
@@ -1091,7 +1091,7 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
         raise RoleError(f"time_zone: {exc}") from exc
     if table.measure(spec.y_measure).temporal:
         # A log axis is inert, not refused (reduce turns it off with a note).
-        if spec.kind is PlotKind.BAR:
+        if spec.kind in BAR_KINDS:
             raise RoleError(f"{spec.y_measure!r} is a datetime. {BAR_REASON}")
     # A datetime x measure is drawn on a time axis (temporal.apply_temporal
     # converts it with the y measure; reduce._attach_temporal places it).

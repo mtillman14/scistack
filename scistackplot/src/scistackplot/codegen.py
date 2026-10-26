@@ -56,13 +56,16 @@ from .roles import (
 )
 from .shape import Shape
 from .spec import (
+    BAR_KINDS,
     CONTINUOUS_X_KINDS,
+    SUMMARY_KINDS,
     ErrorBand,
     FactorVariable,
     PlotKind,
     PlotSpec,
     Role,
     Statistic,
+    is_horizontal,
     value_spellings,
 )
 from .table import MISSING_LEVEL, LongTable
@@ -535,7 +538,7 @@ def _docstring(spec: PlotSpec, table: LongTable, roles: dict, y_plan: _YLimitPla
     steps = collapse_steps(spec, roles, table)
     if steps.all:
         chain = " -> ".join([*steps.pre, " x ".join(steps.sample)])
-        if spec.kind in (PlotKind.BAR, PlotKind.BAND):
+        if spec.kind in SUMMARY_KINDS:
             what = (
                 f"error bars: {spec.aggregate.error}"
                 f"{' (t-based)' if spec.aggregate.error is ErrorBand.CI95 else ''} across "
@@ -851,7 +854,7 @@ def _preamble(spec, table, roles, shape) -> list[str]:
         )
     if comparison is not None and not compared:
         lines.extend(_compare_lines(comparison, spec, kept, shape, index_column, overlay_drawn))
-    if steps.sample and spec.kind in (PlotKind.BAR, PlotKind.BAND):
+    if steps.sample and spec.kind in SUMMARY_KINDS:
         lines.append(
             f"# the sample: {' x '.join(steps.sample)} — seaborn's estimator and "
             f"errorbar run over its levels{' (pooled)' if len(steps.sample) > 1 else ''}"
@@ -1425,6 +1428,13 @@ def _sample_draw_lines(
     nested = _nested_x_order(spec, table, roles, shape)
     weight = sample_weight(spec.style)
     linestyle = "-" if join.join else "none"
+    # The screen (x, y) of a sample point: (position, value), or (value,
+    # position) on a horizontal kind (spec.is_horizontal).
+    xy = (
+        f"_part[{y!r}], _part[{_X_POSITION!r}]"
+        if is_horizontal(spec.kind)
+        else f"_part[{_X_POSITION!r}], _part[{y!r}]"
+    )
 
     spaghetti = spec.kind is PlotKind.SPAGHETTI
     line_layers = _line_layers(spec, table, roles, shape) if spaghetti else []
@@ -1546,14 +1556,14 @@ def _sample_draw_lines(
                     *(
                         [
                             "            if len(_part) > 1:",
-                            f"                _ax.plot(_part[{_X_POSITION!r}], _part[{y!r}], "
+                            f"                _ax.plot({xy}, "
                             f"color=_line_color, alpha={SAMPLE_ALPHA}, "
                             f"linewidth={weight.line_pt:.3f}, zorder=3)",
                         ]
                         if join.join
                         else []
                     ),
-                    f"            _ax.scatter(_part[{_X_POSITION!r}], _part[{y!r}], "
+                    f"            _ax.scatter({xy}, "
                     f"s={weight.marker_area:.3f}, color=_point_colors, alpha={SAMPLE_ALPHA}, "
                     f"edgecolors={SAMPLE_EDGE_COLOR!r}, linewidths={SAMPLE_EDGE_WIDTH:g}, "
                     + (
@@ -1569,7 +1579,7 @@ def _sample_draw_lines(
                 else []
             ),
             "        _ax.plot(",
-            f"            _part[{_X_POSITION!r}], _part[{y!r}],",
+            f"            {xy},",
             f"            linestyle={linestyle!r}, marker='o', markersize={weight.marker_pt:.3f},",
             f"            markeredgecolor={SAMPLE_EDGE_COLOR!r}, "
             f"markeredgewidth={SAMPLE_EDGE_WIDTH:g},",
@@ -1868,8 +1878,11 @@ def _alias_definition_lines(aliases: _ExportAliases) -> list[str]:
     ]
 
 
-def _alias_relabel_lines(aliases: _ExportAliases, x_categorical: bool) -> list[str]:
-    """Relabel the drawn x ticks and legend entries through ``_alias``.
+def _alias_relabel_lines(
+    aliases: _ExportAliases, x_categorical: bool, cat: str = "x"
+) -> list[str]:
+    """Relabel the drawn category ticks (on ``cat``, the screen axis they are
+    drawn on: y for a horizontal kind) and legend entries through ``_alias``.
 
     Runs after everything that draws or rebuilds text (the overlay rebuilds
     the legend) and before the fitted-tick replay, which then works on the
@@ -1891,8 +1904,8 @@ def _alias_relabel_lines(aliases: _ExportAliases, x_categorical: bool) -> list[s
                 f"_x_text = {text}",
                 "g.figure.canvas.draw()  # categorical tick labels exist once drawn",
                 "for _ax in g.axes.flat:",
-                "    _ax.set_xticks(_ax.get_xticks())",
-                "    _ax.set_xticklabels([_x_text(t.get_text()) for t in _ax.get_xticklabels()])",
+                f"    _ax.set_{cat}ticks(_ax.get_{cat}ticks())",
+                f"    _ax.set_{cat}ticklabels([_x_text(t.get_text()) for t in _ax.get_{cat}ticklabels()])",
             ]
         )
     dashes = aliases.aliased(*aliases.dash_layers)
@@ -1945,7 +1958,7 @@ def _uses_ci95(spec, shape) -> bool:
     """True when the plot call passes `errorbar=_ci95` (bar and band only)."""
     return (
         shape is not Shape.MATRIX_2D
-        and spec.kind in (PlotKind.BAR, PlotKind.BAND)
+        and spec.kind in SUMMARY_KINDS
         and spec.aggregate.error is ErrorBand.CI95
     )
 
@@ -1990,6 +2003,13 @@ def _plot_call(
         if kind is PlotKind.HISTOGRAM
         else [f"data=df", f"x={x_column!r}", f"y={spec.y_measure!r}"]
     )
+    if is_horizontal(kind):
+        # The same bars turned (spec.is_horizontal): the categories on y,
+        # the measure along x, and the orientation stated, not inferred.
+        args = [f"data=df", f"x={spec.y_measure!r}", f"y={x_column!r}", 'orient="h"']
+    # The screen axis each logical axis is drawn on: the CATEGORY axis and
+    # the VALUE axis (y limits, y scale, the y title) — swapped when horizontal.
+    cat, val = _screen_axes(spec)
     if color:
         args.append(f"hue={color!r}")
         if _color_level_count(spec, table, color) < 2:
@@ -2011,11 +2031,12 @@ def _plot_call(
     )
     errorbar = _SEABORN_ERRORBAR[spec.aggregate.error]
 
-    if kind in (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.STRIP):
+    if kind in (PlotKind.BOX, PlotKind.VIOLIN, *BAR_KINDS, PlotKind.STRIP):
         seaborn_kind = {
             PlotKind.BOX: "box",
             PlotKind.VIOLIN: "violin",
             PlotKind.BAR: "bar",
+            PlotKind.HBAR: "bar",
             PlotKind.STRIP: "strip",
         }[kind]
         args.append(f'kind="{seaborn_kind}"')
@@ -2027,7 +2048,7 @@ def _plot_call(
             # mark there narrow and off-centre — the preview draws it on its
             # tick, full width (`render.mpl._draw_bars`).
             args.append("dodge=False")
-        if kind is PlotKind.BAR:
+        if kind in BAR_KINDS:
             args.append(f"estimator={estimator}")
             args.append(f"errorbar={errorbar}")
             # The export's error-bar ink and caps (paper.seaborn_err_kws);
@@ -2160,7 +2181,7 @@ def _plot_call(
         # argument" (found 2026-09-24 — every faceted per-panel catplot export
         # raised). relplot has no `sharey` and takes it through facet_kws.
         args.append(
-            "sharey=False" if call == "sns.catplot" else 'facet_kws={"sharey": False}'
+            f"share{val}=False" if call == "sns.catplot" else 'facet_kws={"sharey": False}'
         )
 
     aliases = _export_aliases(spec, table, roles, shape)
@@ -2185,9 +2206,9 @@ def _plot_call(
     if kind is PlotKind.REGRESSION:
         lines.extend(_fit_lines(spec, table, color, facets, aliases))
     if ylim is not None:
-        lines.append(f"g.set(ylim={(float(ylim[0]), float(ylim[1]))!r})")
+        lines.append(f"g.set({val}lim={(float(ylim[0]), float(ylim[1]))!r})")
     if y_plan.by_panel is not None:
-        lines.extend(_panel_ylim_lines(y_plan, facets))
+        lines.extend(_panel_ylim_lines(y_plan, facets, val))
     # The one owner (reduce.x_axis_title): no title on a nested axis, none
     # for the constant-x scaffolding column, the factor's display name
     # otherwise — exactly what the preview labels the axis.
@@ -2227,7 +2248,10 @@ def _plot_call(
         and table.measure(spec.x_measure).temporal
     ):
         x_label += zone_suffix
-    lines.append(f"g.set_axis_labels({x_label!r}, {y_label!r})")
+    # Positional (x title, y title) on the SCREEN: a horizontal kind's value
+    # title is the one along x.
+    titles = (y_label, x_label) if val == "x" else (x_label, y_label)
+    lines.append(f"g.set_axis_labels({titles[0]!r}, {titles[1]!r})")
     if facets:
         # Same rule as the preview (render.base.panel_y_title): the facet values
         # ARE the panel's y-axis title, and no caption sits above it. seaborn
@@ -2243,14 +2267,14 @@ def _plot_call(
             else "str(v) for v in reversed(_values)"
         )
         if overrides.titles or overrides.first_column:
-            lines.extend(['g.set_titles("")', *_panel_title_lines(overrides, shown)])
+            lines.extend(['g.set_titles("")', *_panel_title_lines(overrides, shown, val)])
         else:
             lines.extend(
                 [
                     'g.set_titles("")',
                     "for _key, _ax in g.axes_dict.items():",
                     "    _values = _key if isinstance(_key, tuple) else (_key,)",
-                    f'    _ax.set_ylabel(" · ".join({shown}))',
+                    f'    _ax.set_{val}label(" · ".join({shown}))',
                 ]
             )
     sizes = _export_sizes(style)
@@ -2273,14 +2297,16 @@ def _plot_call(
         and spec.x_measure in table.measure_names
         and table.measure(spec.x_measure).temporal
     )
-    if style.log_x and not log_inert and not temporal_x_measure:
+    # A horizontal kind's category axis is y and takes no log scale (as the
+    # preview, mpl._apply_horizontal_cosmetics); its value axis is x.
+    if style.log_x and not log_inert and not temporal_x_measure and cat == "x":
         lines.append('g.set(xscale="log")')
     if style.log_y and not log_inert:
-        lines.append('g.set(yscale="log")')
-    if y_plan.autoscaled and kind is PlotKind.BAR and not style.log_y:
-        lines.extend(_bar_autoscale_lines())
+        lines.append(f'g.set({val}scale="log")')
+    if y_plan.autoscaled and kind in BAR_KINDS and not style.log_y:
+        lines.extend(_bar_autoscale_lines(val))
     # Last of the y-range lines, so nothing after it rescales a pinned panel.
-    lines.extend(_panel_override_ylim_lines(overrides, facets))
+    lines.extend(_panel_override_ylim_lines(overrides, facets, val))
     # Difference bars set the final range of every panel they sit in (and
     # of every panel sharing that range), so they come after the pins.
     lines.extend(
@@ -2290,7 +2316,9 @@ def _plot_call(
     )
     if style.title:
         lines.append(f"g.figure.suptitle({style.title!r})")
-    lines.extend(_alias_relabel_lines(aliases, _x_is_categorical(spec, table, roles, shape)))
+    lines.extend(
+        _alias_relabel_lines(aliases, _x_is_categorical(spec, table, roles, shape), cat)
+    )
     # The frame, ticks and background the preview and render_matplotlib draw
     # (paper.py). Also undoes seaborn's default despine, which would export
     # an open frame beside a boxed preview.
@@ -2341,13 +2369,16 @@ def _fitted_tick_lines(spec, table: LongTable, roles, shape) -> list[str]:
                 wrapped[original[len(fit.prefix):]] = text
     rotated = fit.rotation != 0
     style = spec.style
+    # The category axis: y on a horizontal kind, whose labels are stacked
+    # and never rotated (ticklabels.STACKED_TICK_POLICY).
+    cat, _val = _screen_axes(spec)
     lines = [
-        f"# x tick labels as scistackplot fitted them at {style.width} x {style.height} in:"
+        f"# {cat} tick labels as scistackplot fitted them at {style.width} x {style.height} in:"
         f" {fit.describe()}"
         + (" (nested axis: rotation, font and every-k only)" if nested else ""),
         "g.figure.canvas.draw()  # categorical tick labels exist once drawn",
         "for _ax in g.axes.flat:",
-        "    _labels = [t.get_text() for t in _ax.get_xticklabels()]",
+        f"    _labels = [t.get_text() for t in _ax.get_{cat}ticklabels()]",
     ]
     if fit.prefix and not nested:
         lines.append(
@@ -2361,6 +2392,14 @@ def _fitted_tick_lines(spec, table: LongTable, roles, shape) -> list[str]:
             f"    _labels = [s if i % {fit.every} == 0 or i == len(_labels) - 1 else '' "
             "for i, s in enumerate(_labels)]"
         )
+    if cat == "y":
+        lines.extend(
+            [
+                "    _ax.set_yticks(_ax.get_yticks())",
+                f"    _ax.set_yticklabels(_labels, fontsize={fit.font_pt})",
+            ]
+        )
+        return lines
     lines.extend(
         [
             "    _ax.set_xticks(_ax.get_xticks())",
@@ -2429,7 +2468,7 @@ def _declared_levels(table: LongTable, name: str) -> list[str]:
 
 def _seaborn_call(spec, table, roles, shape) -> str:
     """Which seaborn function ``_plot_call`` draws with (heatmaps aside)."""
-    if spec.kind in (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAR, PlotKind.STRIP):
+    if spec.kind in (PlotKind.BOX, PlotKind.VIOLIN, *BAR_KINDS, PlotKind.STRIP):
         return "sns.catplot"
     if spec.kind is PlotKind.SCATTER and _x_is_categorical(spec, table, roles, shape):
         return "sns.catplot"
@@ -2504,7 +2543,7 @@ def _heatmap_call(spec, table: LongTable) -> list[str]:
     ]
 
 
-def _bar_autoscale_lines() -> list[str]:
+def _bar_autoscale_lines(val: str = "y") -> list[str]:
     """Let an autoscaled bar axis pad below zero, as the preview's does.
 
     The preview's bar limits are ``min(low, 0)`` .. ``max(high, 0)`` padded by
@@ -2523,7 +2562,7 @@ def _bar_autoscale_lines() -> list[str]:
         "# otherwise pins an autoscaled bar axis to exactly 0).",
         "for _ax in g.axes.flat:",
         "    _ax.use_sticky_edges = False",
-        "    _ax.autoscale_view(scalex=False)",
+        f"    _ax.autoscale_view(scale{'y' if val == 'x' else 'x'}=False)",
     ]
 
 
@@ -2608,7 +2647,7 @@ def _panel_override_export(
 
 
 def _panel_override_ylim_lines(
-    overrides: _PanelOverrideExport, facets: list[str]
+    overrides: _PanelOverrideExport, facets: list[str], val: str = "y"
 ) -> list[str]:
     """Each overridden panel's own range, after every other y-range line.
 
@@ -2623,11 +2662,17 @@ def _panel_override_ylim_lines(
         "    _values = _key if isinstance(_key, tuple) else (_key,)",
         "    _pin = _panel_ylims.get(tuple(str(_v) for _v in reversed(_values)))",
         "    if _pin is not None:",
-        "        _ax.set_ylim(bottom=_pin[0], top=_pin[1])",
+        (
+            "        _ax.set_ylim(bottom=_pin[0], top=_pin[1])"
+            if val == "y"
+            else "        _ax.set_xlim(left=_pin[0], right=_pin[1])"
+        ),
     ]
 
 
-def _panel_title_lines(overrides: _PanelOverrideExport, shown: str) -> list[str]:
+def _panel_title_lines(
+    overrides: _PanelOverrideExport, shown: str, val: str = "y"
+) -> list[str]:
     """Each panel's y title with its override and the ``y_titles`` toggle.
 
     The text and the hide flag belong to the panel's facet values, so they are
@@ -2650,7 +2695,7 @@ def _panel_title_lines(overrides: _PanelOverrideExport, shown: str) -> list[str]
         f"        _hidden = {unset_hidden}",
         "    if _text is None:",
         f'        _text = " · ".join({shown})',
-        '    _ax.set_ylabel("" if _hidden else _text)',
+        f'    _ax.set_{val}label("" if _hidden else _text)',
     ]
 
 
@@ -2689,7 +2734,8 @@ def _difference_bar_export(
     would move every bar anyway: the code says the positions are fitted to
     this data.
     """
-    if not spec.difference_bars or shape is not Shape.SCALAR:
+    if not spec.difference_bars or shape is not Shape.SCALAR or is_horizontal(spec.kind):
+        # A horizontal kind draws none (diffbars.HORIZONTAL_REASON), as the preview.
         return None
     import matplotlib.pyplot as plt
 
@@ -2827,8 +2873,9 @@ def _difference_bar_lines(export: _DifferenceExport | None, style) -> list[str]:
     ]
 
 
-def _panel_ylim_lines(y_plan: _YLimitPlan, facets: list[str]) -> list[str]:
-    """Set each panel's y limits from the preview's per-facet table.
+def _panel_ylim_lines(y_plan: _YLimitPlan, facets: list[str], val: str = "y") -> list[str]:
+    """Set each panel's y limits from the preview's per-facet table (on
+    ``val``, the screen axis the values run along: x for a horizontal kind).
 
     ``axes_dict`` is keyed by the ``col`` value, or by ``(row, col)`` for two
     facets — the reverse of ``facets``' order, hence the ``reversed()`` (the
@@ -2848,7 +2895,7 @@ def _panel_ylim_lines(y_plan: _YLimitPlan, facets: list[str]) -> list[str]:
         "    _values = dict(",
         f"        zip({facets!r}, reversed(_key if isinstance(_key, tuple) else (_key,)))",
         "    )",
-        "    _ax.set_ylim(",
+        f"    _ax.set_{val}lim(",
         f"        _ylims.get(tuple(str(_values[_f]) for _f in {list(y_plan.panel_scope)!r}), "
         f"{fallback!r})",
         "    )",
@@ -3135,6 +3182,13 @@ def _x_expression(spec, table, roles, shape) -> str:
     if len(ticks) > 1:
         return _X_NESTED
     return ticks[0] if ticks else _X_CONSTANT
+
+
+def _screen_axes(spec) -> tuple[str, str]:
+    """``(category axis, value axis)`` as the screen letters the generated
+    code addresses: ``("x", "y")``, or ``("y", "x")`` for a horizontal kind
+    (``spec.is_horizontal``, the one owner of orientation)."""
+    return ("y", "x") if is_horizontal(spec.kind) else ("x", "y")
 
 
 def _x_is_categorical(spec, table, roles, shape) -> bool:

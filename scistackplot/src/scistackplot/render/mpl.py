@@ -21,7 +21,7 @@ from scistacklog import Log
 
 from ..figsize import aspect_name
 from ..resolved import MPL_DASHES, ResolvedPlot
-from ..spec import PlotKind
+from ..spec import BAR_KINDS, PlotKind, is_horizontal
 from ..table import natural_sort_key
 from ..paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
 from ..textsize import ResolvedSizes, sizes_for
@@ -29,6 +29,8 @@ from ..temporal import apply_mpl_date_axis
 from ..weights import SAMPLE_EDGE_WIDTH, describe_weights, sample_weight, spaghetti_weight
 from ..ticklabels import (
     BRACKET_POLICY,
+    STACKED_BRACKET_POLICY,
+    STACKED_TICK_POLICY,
     TICK_POLICY,
     LabelFit,
     LabelRow,
@@ -62,8 +64,10 @@ from .base import (
     AxisText,
     X_GROUP_GAP_PT,
     ruled_bracket_depths,
+    shows_category_labels,
     shows_x_labels,
     shows_y_labels,
+    shows_value_labels,
     sample_dropped_reason,
     SAMPLE_LINE_POINTS_GID,
     sample_hover,
@@ -171,18 +175,30 @@ def _render(resolved: ResolvedPlot):
                 describe_paper(),
                 layer=LAYER,
             )
+            # The category axis shares by the facet option, the value axis by
+            # the y-limit scope — on the screen axis each one is drawn on
+            # (a horizontal kind swaps them, spec.is_horizontal).
+            share_categories = resolved.spec.facet.share_x
+            # DERIVED, not configured. matplotlib's sharey ties the axes
+            # together, so one panel's autoscale drags every other panel with
+            # it — exactly wrong once `y_axis.scope` asks for per-panel ranges,
+            # and the set_ylim below would be silently overruled by whichever
+            # panel was drawn last.
+            share_values = shares_y_axis(resolved)
+            horizontal = is_horizontal(resolved.kind)
+            if horizontal:
+                Log.info(
+                    "%s: categories down the left (first level at the top), values along x",
+                    resolved.kind,
+                    layer=LAYER,
+                )
             fig, axes = plt.subplots(
                 n_rows,
                 n_cols,
                 figsize=(style.width, style.height),
                 squeeze=False,
-                sharex=resolved.spec.facet.share_x,
-                # DERIVED, not configured. matplotlib's sharey ties the axes
-                # together, so one panel's autoscale drags every other panel with
-                # it — exactly wrong once `y_axis.scope` asks for per-panel ranges,
-                # and the set_ylim below would be silently overruled by whichever
-                # panel was drawn last.
-                sharey=shares_y_axis(resolved),
+                sharex=share_values if horizontal else share_categories,
+                sharey=share_categories if horizontal else share_values,
             )
             lap("subplots")
 
@@ -293,6 +309,8 @@ def _render(resolved: ResolvedPlot):
             # After a layout pass: the room each label has is the laid-out
             # panel width (spec/images/graph1.png, graph2.png).
             _fit_x_labels(fig, [ax for _, _, ax in labelled], resolved, rect)
+            # A horizontal kind's categories are on the y axis instead.
+            _fit_category_labels(fig, axes, n_rows, n_cols, resolved, rect)
             lap("x_labels")
             # Difference bars need the laid-out panel heights (their sizes are
             # points), so they come after every other layout pass, and before
@@ -344,7 +362,7 @@ def _draw_panel(ax, frame: pd.DataFrame, resolved: ResolvedPlot) -> None:
         _draw_lines(ax, frame, resolved)
     elif kind is PlotKind.BAND:
         _draw_band(ax, frame, resolved)
-    elif kind is PlotKind.BAR:
+    elif kind in BAR_KINDS:
         _draw_bars(ax, frame, resolved)
     elif kind in (PlotKind.BOX, PlotKind.VIOLIN):
         _draw_distribution(ax, frame, resolved, violin=kind is PlotKind.VIOLIN)
@@ -566,9 +584,15 @@ def _draw_bars(ax, frame, resolved) -> None:
     sets of x positions — each bar sits ON its tick, ``mark_width`` wide,
     whichever level paints it. ``test_colour_is_paint.py`` holds the
     geometry to that.
+
+    A horizontal bar (``spec.is_horizontal``) is the same bars through
+    ``barh``: the positions run down the y axis, the values along x, the
+    error bar is ``xerr``. Its category ticks are set by the cosmetics pass
+    (``_apply_horizontal_cosmetics``), which owns that axis.
     """
     encoding = resolved.encoding
     width = mark_width()
+    horizontal = is_horizontal(resolved.kind)
 
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         positions, ticks = x_positions(subset[encoding.x], resolved)
@@ -578,18 +602,18 @@ def _draw_bars(ax, frame, resolved) -> None:
             low = subset[encoding.y_low].to_numpy(dtype=float)
             high = subset[encoding.y_high].to_numpy(dtype=float)
             error = np.vstack([centre - low, high - centre])
-        ax.bar(
-            positions,
-            centre,
-            width=width,
-            yerr=error,
+        style = dict(
             capsize=PAPER.error_cap,
             ecolor=PAPER.error_bar_color,
             error_kw={"elinewidth": PAPER.error_bar_width, "capthick": PAPER.error_cap_width},
             color=palette_for(resolved, level, index),
-            alpha=fill_alpha(PlotKind.BAR, resolved.spec.style),
+            alpha=fill_alpha(resolved.kind, resolved.spec.style),
             label=resolved.text.color_level(level) if level is not None else None,
         )
+        if horizontal:
+            ax.barh(positions, centre, height=width, xerr=error, **style)
+            continue
+        ax.bar(positions, centre, width=width, yerr=error, **style)
         if ticks is not None:
             ax.set_xticks(range(len(ticks)))
             ax.set_xticklabels([resolved.text.x_tick(t) for t in ticks])
@@ -687,6 +711,13 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
     # size's trials (scidb.log 2026-10-15 12:21). Same points, same paint.
     lone: dict[str, tuple[list[float], list[float]]] = {}
     artists = 0
+    # (position, value) -> screen (x, y): a horizontal kind draws its
+    # positions down the y axis (spec.is_horizontal); placement is unchanged.
+    horizontal = is_horizontal(resolved.kind)
+
+    def screen(positions, values):
+        return (values, positions) if horizontal else (positions, values)
+
     for run in runs:
         positions = sample_positions(run.rows, resolved, run.identity)
         order = np.argsort(positions, kind="stable")
@@ -701,8 +732,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
         artists += 2 if not run.uniform else 1
         if run.uniform:
             ax.plot(
-                positions[order],
-                values,
+                *screen(positions[order], values),
                 color=run.line_color,
                 alpha=SAMPLE_ALPHA,
                 linewidth=weight.line_pt,
@@ -717,16 +747,14 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
         # run, zorder 3) in the neutral colour, the points on top of it
         # each in its own mark's colour (gid: part of the line's run).
         ax.plot(
-            positions[order],
-            values,
+            *screen(positions[order], values),
             color=run.line_color,
             alpha=SAMPLE_ALPHA,
             linewidth=weight.line_pt,
             zorder=3,
         )
         ax.scatter(
-            positions[order],
-            values,
+            *screen(positions[order], values),
             s=weight.marker_area,
             color=[run.point_colors[i] for i in order],
             alpha=SAMPLE_ALPHA,
@@ -737,8 +765,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
         )
     for color, (xs, ys) in lone.items():
         ax.scatter(
-            xs,
-            ys,
+            *screen(xs, ys),
             s=weight.marker_area,
             color=color,
             alpha=SAMPLE_ALPHA,
@@ -792,6 +819,9 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
             # save outside the rc_context would build them from whatever rc is
             # in force then (paper.apply_paper_axes).
             apply_paper_axes(ax)
+            if is_horizontal(resolved.kind):
+                _apply_horizontal_cosmetics(ax, resolved, at_cell.get((row, col)), row, col)
+                continue
             # ONE rule decides both the axis title and the tick labels (see
             # base.shows_x_labels). They used to drift: the title followed
             # "nothing below" while the categorical block further down
@@ -857,6 +887,45 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
             # reads the same way.
             ax.tick_params(labelbottom=bottom, labelleft=leftmost)
             ax.tick_params(axis="x", rotation=0)
+
+
+def _apply_horizontal_cosmetics(ax, resolved: ResolvedPlot, panel, row: int, col: int) -> None:
+    """``_apply_axes_cosmetics`` for a horizontal kind (``spec.is_horizontal``):
+    the same decisions, each drawn on the other screen axis.
+
+    The CATEGORY axis (logical x: ``x_plan`` / ``x_order``, the x title) runs
+    down the left, first level at the top (user, 2026-10-26); its labels
+    are fitted after layout (``_fit_category_labels``). The VALUE axis
+    (logical y: the limits, log scale, and the panel's y title — a faceted
+    panel's name, ``base.panel_y_title``) runs along the bottom. Which cells
+    label which axis is ``base.shows_category_labels`` /
+    ``shows_value_labels``.
+    """
+    style = resolved.spec.style
+    categories = shows_category_labels(resolved, row, col)
+    values = shows_value_labels(resolved, row, col)
+    ax.set_ylabel(resolved.labels.x if categories else "", fontsize=sizes_for(resolved).y_label)
+    ax.set_xlabel(panel_y_title(resolved, panel, leftmost=shows_x_labels(resolved, row, col)))
+    if style.log_y:
+        ax.set_xscale("log")
+    limits = panel_y_limits(resolved, panel) if panel else resolved.y_limits
+    if limits:
+        limits = drawable_limits(limits, log=style.log_y)
+        if limits:
+            ax.set_xlim(*limits)
+    if resolved.x_plan:
+        plan = resolved.x_plan
+        ax.set_yticks(range(len(plan.order)))
+        ax.set_yticklabels(plan.tick_labels)
+    elif is_categorical_x(resolved):
+        order = list(resolved.x_order or [])
+        ax.set_yticks(range(len(order)))
+        ax.set_yticklabels([resolved.text.x_tick(v) for v in order])
+    # set_inverted, not invert_yaxis(): the latter TOGGLES, and on panels
+    # sharing y each call would flip every one of them back.
+    ax.yaxis.set_inverted(True)
+    ax.tick_params(labelbottom=values, labelleft=categories)
+    ax.tick_params(axis="x", rotation=0)
 
 
 # ---------------------------------------------------------------------------
@@ -941,8 +1010,10 @@ def _collect_x_ticks(
     labelled: list[Any], resolved: ResolvedPlot, *, quiet: bool = False
 ) -> list[_XTicks]:
     """The categorical tick labels of each labelled axes. A numeric x axis is
-    left to matplotlib's locator, which already spaces its ticks."""
-    if resolved.kind is PlotKind.HEATMAP or not (
+    left to matplotlib's locator, which already spaces its ticks — as is
+    the value axis a horizontal kind draws along x (its categories are
+    ``_fit_category_labels``')."""
+    if resolved.kind is PlotKind.HEATMAP or is_horizontal(resolved.kind) or not (
         resolved.x_plan or is_categorical_x(resolved)
     ):
         return []
@@ -1224,9 +1295,13 @@ def _shared_x_title(
     column keeps the ordinary per-axes title. ``y`` is where it sits (a
     figure fraction): above a legend that is below the panels. Safe to call
     again with a new ``y`` — matplotlib keeps one supxlabel per figure.
+
+    Not for a horizontal kind: its bottom title is the VALUE axis's, which
+    names each faceted panel (``_apply_horizontal_cosmetics``), so the
+    columns do not repeat one text.
     """
     title = resolved.labels.x
-    if not title or len({col for _, col, _ in labelled}) < 2:
+    if is_horizontal(resolved.kind) or not title or len({col for _, col, _ in labelled}) < 2:
         return 0.0
     for _, _, ax in labelled:
         ax.set_xlabel("")
@@ -1275,6 +1350,240 @@ def _fit_x_labels(fig, labelled: list[Any], resolved: ResolvedPlot, rect) -> Non
     )
     if fit.fits:
         _verify_x_ticks(fig, ticks, fit)
+
+
+# ---------------------------------------------------------------------------
+# A horizontal kind's category labels (spec.is_horizontal): the same fit and
+# the same brackets as the x axis above, stacked down the left instead.
+
+
+def _stacked_measure(fig) -> Measure:
+    """``_text_measure`` returning ``(height, width)``: labels stacked down a
+    vertical axis compete by their HEIGHTS (``ticklabels.STACKED_TICK_POLICY``)."""
+    measure = _text_measure(fig)
+
+    def stacked(text: str, font_pt: float) -> tuple[float, float]:
+        width, height = measure(text, font_pt)
+        return height, width
+
+    return stacked
+
+
+def _y_positions_pt(fig, ax, ys) -> list[float]:
+    """Data y positions on ``ax`` as points DOWN from the figure's bottom
+    edge, negated — so on the inverted category axis the first level (at the
+    top) comes first and positions ascend with the index, as ``fit_labels``
+    expects."""
+    if not len(ys):
+        return []
+    ax.get_ylim()  # bring a deferred autoscale up to date (see _positions_pt)
+    pixels = ax.transData.transform([(0.0, float(y)) for y in ys])[:, 1]
+    return [-_pt(fig, value) for value in pixels]
+
+
+def _fit_y_ticks(fig, ticks: list[_XTicks], resolved: ResolvedPlot):
+    """``_fit_x_ticks`` for categories stacked on the y axis: one
+    :class:`LabelFit` for every labelled panel, at the y tick size."""
+    plan = resolved.x_plan
+    spans = (
+        [(g.start, g.end) for g in plan.groups if g.depth == plan.depth - 1]
+        if plan and plan.groups
+        else []
+    )
+    rows = [
+        LabelRow(
+            item.labels,
+            _y_positions_pt(fig, item.ax, item.locs),
+            groups=spans if plan and len(item.locs) == len(plan.order) else [],
+        )
+        for item in ticks
+    ]
+    sizes = sizes_for(resolved)
+    policy = replace(
+        STACKED_TICK_POLICY,
+        pin_font_pt=sizes.y_ticks if sizes.is_pinned("y_ticks") else None,
+        pin_every=resolved.spec.style.tick_every,
+    )
+    return fit_labels(rows, sizes.y_ticks, _stacked_measure(fig), policy), rows
+
+
+def _apply_y_fit(ticks: list[_XTicks], fit: LabelFit) -> None:
+    for item, texts in zip(ticks, fit.rows):
+        item.ax.set_yticks(item.locs)
+        item.ax.set_yticklabels(list(texts), fontsize=fit.font_pt)
+
+
+def _fit_category_labels(fig, axes, n_rows: int, n_cols: int, resolved: ResolvedPlot, rect) -> None:
+    """A horizontal kind's ``_fit_x_labels``: fit the category labels down
+    the left, lay out again, confirm, then hang the brackets to their left.
+
+    The decision is recorded as the figure's ``"ticks"`` — they ARE its
+    category ticks — so the auto text size, the preview and the exported
+    code read it exactly as they read a vertical axis's.
+    """
+    if not is_horizontal(resolved.kind) or not (resolved.x_plan or is_categorical_x(resolved)):
+        return
+    labelled = [
+        axes[row][col]
+        for row in range(n_rows)
+        for col in range(n_cols)
+        if axes[row][col].get_visible() and shows_category_labels(resolved, row, col)
+    ]
+    if not labelled:
+        return
+    hide = (len(resolved.x_layers) - 1) in _legend_duplicate_depths(resolved)
+    if hide:
+        Log.info(
+            "y category labels hidden: %r is the colour layer and the legend lists it",
+            resolved.color_factor,
+            layer=LAYER,
+        )
+    ticks = []
+    for ax in labelled:
+        locs = [float(v) for v in ax.get_yticks()]
+        labels = [str(text) for text in ax.yaxis.get_major_formatter().format_ticks(locs)]
+        ticks.append(_XTicks(ax, locs, [""] * len(labels) if hide else labels))
+    fit, rows = _fit_y_ticks(fig, ticks, resolved)
+    _apply_y_fit(ticks, fit)
+    fig.tight_layout(rect=rect)
+    refit, rows = _fit_y_ticks(fig, ticks, resolved)
+    if not _same_decision(fit, refit):
+        Log.debug("y category labels refitted after layout: %s", refit.describe(), layer=LAYER)
+        _apply_y_fit(ticks, refit)
+        fig.tight_layout(rect=rect)
+        fit = refit
+    _log_fit("y category labels", fit, rows, _stacked_measure(fig))
+    drawn = _draw_y_groups(fig, ticks, resolved)
+    brackets, geometry = drawn if drawn is not None else (None, None)
+    if drawn is not None:
+        fig.tight_layout(rect=rect)
+    setattr(
+        fig,
+        LABEL_FIT_ATTR,
+        {"ticks": fit, "brackets": brackets, "bracket_geometry": geometry},
+    )
+
+
+def _tick_label_reach_left_pt(fig, ax, renderer) -> float:
+    """How far left of the axes' left edge its y tick labels reach, in points
+    (``_tick_label_depth_pt`` turned): where the first bracket column starts."""
+    lefts = [
+        text.get_window_extent(renderer).x0
+        for _value, text in drawn_ticks(ax.yaxis)
+        if text.get_text()
+    ]
+    if not lefts:
+        return 0.0
+    return max(0.0, _pt(fig, ax.get_window_extent(renderer).x0 - min(lefts)))
+
+
+def _draw_y_groups(
+    fig, ticks: list[_XTicks], resolved: ResolvedPlot
+) -> tuple[LabelFit, BracketGeometry] | None:
+    """``_draw_x_groups`` turned 90 degrees: each higher category layer is a
+    vertical rule beside the leaves it spans and a label to its left, one
+    column per layer, outermost furthest left (user, 2026-10-26).
+
+    y in DATA space, x a fixed number of POINTS left of the measured tick
+    labels (``base.BracketGeometry``, read along x: its ``row_height_pt`` is
+    the widest fitted bracket label, so every column clears it). The labels
+    are fitted by their heights (``ticklabels.STACKED_BRACKET_POLICY``:
+    shrink only). The y title is pushed left of the last column.
+    """
+    from matplotlib.lines import Line2D
+    from matplotlib.transforms import blended_transform_factory, offset_copy
+
+    plan = resolved.x_plan
+    if not plan or not plan.groups or not ticks:
+        return None
+    hidden = _legend_duplicate_depths(resolved)
+    fig.draw_without_rendering()
+    renderer = fig.canvas.get_renderer()
+    measure = _text_measure(fig)
+    stacked = _stacked_measure(fig)
+    depths = sorted({group.depth for group in plan.groups})
+    by_depth = {d: [g for g in plan.groups if g.depth == d] for d in depths}
+
+    rows = [
+        LabelRow(
+            ["" if depth in hidden else g.label for g in by_depth[depth]],
+            _y_positions_pt(fig, item.ax, [g.centre for g in by_depth[depth]]),
+        )
+        for item in ticks
+        for depth in depths
+    ]
+    sizes = sizes_for(resolved)
+    policy = replace(
+        STACKED_BRACKET_POLICY,
+        pin_font_pt=sizes.groups if sizes.is_pinned("groups") else None,
+    )
+    fit = fit_labels(rows, sizes.groups, stacked, policy)
+    _log_fit("y bracket labels", fit, rows, stacked)
+    column_width = max(
+        (
+            label_block(text, fit.font_pt, measure)[0]
+            for row in fit.rows
+            for text in row
+            if text
+        ),
+        default=0.0,
+    )
+    fitted = iter(fit.rows)
+    deepest: BracketGeometry | None = None
+    for item in ticks:
+        ax = item.ax
+        geometry = BracketGeometry(_tick_label_reach_left_pt(fig, ax, renderer), column_width)
+        if deepest is None or geometry.tick_depth_pt > deepest.tick_depth_pt:
+            deepest = geometry
+        # x in axes fractions (0 = the left edge), y in data.
+        blended = blended_transform_factory(ax.transAxes, ax.transData)
+        texts_by_depth = {depth: next(fitted) for depth in depths}
+        shown = {depth for depth, texts in texts_by_depth.items() if any(texts)}
+        if any(item.labels):
+            shown.add(plan.depth)
+        ruled = ruled_bracket_depths(plan.depth, shown)
+        for depth in depths:
+            texts = texts_by_depth[depth]
+            rule = offset_copy(
+                blended, fig=fig, x=-geometry.rule_pt(depth, plan.depth), units="points"
+            )
+            beside = offset_copy(
+                blended, fig=fig, x=-geometry.label_pt(depth, plan.depth), units="points"
+            )
+            for group, text in zip(by_depth[depth], texts):
+                if not text:
+                    continue
+                if depth in ruled:
+                    ax.add_artist(
+                        Line2D(
+                            [0.0, 0.0],
+                            [group.start - X_GROUP_OVERHANG, group.end + X_GROUP_OVERHANG],
+                            transform=rule,
+                            color="#888888",
+                            linewidth=0.8,
+                            clip_on=False,
+                        )
+                    )
+                ax.text(
+                    0.0,
+                    group.centre,
+                    text,
+                    transform=beside,
+                    ha="right",
+                    va="center",
+                    multialignment="right",
+                    fontsize=fit.font_pt,
+                    clip_on=False,
+                    gid=X_GROUP_LABEL_GID,
+                )
+        ax.yaxis.labelpad = geometry.title_pad_pt(plan.depth)
+    Log.debug(
+        "y bracket columns: tick labels reach %.1fpt left of the axes, columns %.1fpt apart",
+        deepest.tick_depth_pt,
+        deepest.step_pt,
+        layer=LAYER,
+    )
+    return fit, deepest
 
 
 #: Attribute on a rendered Figure holding its measured ``base.GridReach``.
