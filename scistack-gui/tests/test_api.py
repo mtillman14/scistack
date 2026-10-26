@@ -1301,6 +1301,43 @@ class TestRunEndpoint:
             with run_api._active_runs_lock:
                 run_api._active_runs.pop(run_id, None)
 
+    def test_a_run_is_registered_before_its_thread_starts(self, client):
+        """Regression (2026-10-26, CI py3.10): only the worker registered
+        itself, so a caller polling ``_active_runs`` right after
+        ``POST /api/run`` could see it empty and conclude the run was over
+        before it began (test_export_round_trip: "assert 4 > 4")."""
+        from scistack_gui.api import run as run_api
+
+        run_id = "registered_early"
+        entered, release = threading.Event(), threading.Event()
+        seen: dict = {}
+
+        def worker():
+            # The worker's own registration keeps the dispatcher's event.
+            seen["event"] = run_api._register_run(run_id, threading.current_thread())
+            entered.set()
+            release.wait(timeout=2.0)
+
+        run_api._start_run_thread(run_id, worker)
+        with run_api._active_runs_lock:
+            assert run_id in run_api._active_runs, "visible the moment dispatch returns"
+            early_event = run_api._active_runs[run_id]["event"]
+        assert run_api.cancel_run(run_id)["ok"] is True
+        assert entered.wait(timeout=2.0)
+        assert seen["event"] is early_event, "a cancel before the worker registered is kept"
+        assert seen["event"].is_set()
+        release.set()
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            with run_api._active_runs_lock:
+                if run_id not in run_api._active_runs:
+                    break
+            time.sleep(0.02)
+        with run_api._active_runs_lock:
+            assert run_id not in run_api._active_runs, (
+                "a thread that exits still registered is popped (WARNING logged)")
+
     def test_crash_before_the_target_loop_reports_a_failed_run(
         self, client, monkeypatch
     ):
@@ -1582,6 +1619,38 @@ class TestNeverRunProducerColoursDownstream:
         finally:
             _registry._functions.pop("reload_raw", None)
 
+    def test_a_never_run_node_on_another_canvas_colours_nothing_here(
+        self, client, bp_node_id
+    ):
+        # 2026-10-26, test_library_fork_chain: a never-run load_emg on the
+        # `load` submodule, drawn into EmgRaw, reddened filter_emg on the
+        # `emg` canvas. The cascade takes producers on the canvas being built.
+        pid = client.post("/api/pipelines", json={"name": "loading"}).json()["pipeline_id"]
+        _registry._functions["reload_raw"] = reload_raw
+        try:
+            client.put(
+                f"/api/layout/{self.NODE}",
+                json={"x": 0.0, "y": 0.0, "node_type": "functionNode",
+                      "label": "reload_raw", "pipeline_id": pid},
+            )
+            r = client.put(
+                "/api/edges/manual__reload_out",
+                json={
+                    "source": self.NODE,
+                    "target": "var__RawSignal",
+                    "source_handle": "out__0",
+                    "target_handle": "in",
+                },
+            )
+            assert r.status_code == 200, r.text
+            states = self._states(client)
+            assert self.NODE not in states, "the node is on the sub canvas"
+            assert states["var__RawSignal"] == "green"
+            assert states[bp_node_id] == "green"
+            assert states["var__FilteredSignal"] == "green"
+        finally:
+            _registry._functions.pop("reload_raw", None)
+
 
 # ---------------------------------------------------------------------------
 # Pending constant lifecycle: green → staged value → pending → run → green
@@ -1853,9 +1922,15 @@ class TestManualInputEdgesOnHistoryNodes:
         )
         assert r.status_code == 200
 
-    def test_unbound_param_shows_n_a_shape_before_the_edge(self, wide, bp_node_id):
+    def test_unbound_param_is_behind_plus_argument_before_the_edge(self, wide, bp_node_id):
+        # `side=None` has a default and nothing feeds it yet, so since
+        # 2026-10-24 it is not drawn: it is offered behind "+ argument"
+        # (graph_builder.port_visibility). It used to be drawn with the ""
+        # ('n/a') type.
         node = self._node(wide, bp_node_id)
-        assert node["data"]["input_params"]["side"] == ""
+        assert "side" not in node["data"]["input_params"]
+        assert "side" not in node["data"]["input_ports"]
+        assert [o["name"] for o in node["data"]["optional_ports"]] == ["side"]
         assert "manual_inputs" not in node["data"]
 
     def test_manual_edge_fills_the_history_nodes_input_params(

@@ -1344,6 +1344,28 @@ def _build_graph(
     # A drawn edge from a never-run node into a variable makes that node a
     # producer of it, so its red carries to the variable and everything
     # downstream, like any history producer's would. Only lowers states.
+    # Only producers on THIS canvas (scope_filter.node_scope, the membership
+    # owner): until 2026-10-26 a never-run load_emg on the `load` submodule
+    # reddened EmgRaw, and so filter_emg, on the `emg` canvas
+    # (test_library_fork_chain: carried results drawn red after ⇪ Share).
+    if with_run_states and unrun_producers:
+        from scistack_gui.domain.scope_filter import node_scope
+
+        elsewhere = {
+            nid: node_scope(nid, manual_nodes, positions_by_scope)
+            for nid in unrun_producers
+        }
+        elsewhere = {nid: s for nid, s in elsewhere.items() if s != pipeline_id}
+        if elsewhere:
+            logger.info(
+                "[pipeline] never-run producer(s) on other canvases left out of "
+                "scope %s's cascade: %s",
+                pipeline_id,
+                elsewhere,
+            )
+            unrun_producers = {
+                nid: v for nid, v in unrun_producers.items() if nid not in elsewhere
+            }
     if with_run_states and unrun_producers:
         from scistack_gui.domain.run_state import _STATE_ORDER, cascade_unrun_producers
 

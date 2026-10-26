@@ -67,6 +67,57 @@ _active_runs: dict[str, dict] = {}
 _active_runs_lock = threading.Lock()
 
 
+def _register_run(run_id: str, thread: threading.Thread, **extra) -> threading.Event:
+    """THE registration of a run in ``_active_runs``; returns its cancel event.
+
+    Idempotent: :func:`_start_run_thread` registers a run BEFORE its thread
+    starts (so a run is visible -- to cancel_run and to a test waiting on it
+    -- the moment the dispatch call returns), and the worker registers again
+    on entry, keeping the same event. Until 2026-10-26 only the worker
+    registered, so a caller polling right after ``POST /api/run`` could see
+    an empty registry and conclude the run had finished before it began
+    (test_export_round_trip, on a slow CI runner).
+    """
+    with _active_runs_lock:
+        entry = _active_runs.get(run_id)
+        if entry is None:
+            entry = _active_runs[run_id] = {
+                "event": threading.Event(),
+                "cancelled": False,
+                "force_cancelled": False,
+            }
+        entry["thread"] = thread
+        entry.update(extra)
+        return entry["event"]
+
+
+def _start_run_thread(run_id: str, target, args: tuple = (), **extra) -> None:
+    """Register *run_id*, then start *target(*args)* on a daemon thread.
+
+    The thread's exit is the last word: a run still registered when its
+    target returns never popped itself (so never sent ``run_done``); it is
+    popped here with a WARNING, so ``_active_runs`` cannot keep a dead run.
+    """
+
+    def _body():
+        try:
+            target(*args)
+        finally:
+            with _active_runs_lock:
+                leaked = _active_runs.pop(run_id, None)
+            if leaked is not None:
+                logger.warning(
+                    "[api/run] run thread exited still registered (run_id=%s): "
+                    "no path popped it, so no run_done was sent",
+                    run_id,
+                )
+
+    thread = threading.Thread(target=_body, daemon=True)
+    _register_run(run_id, thread, **extra)
+    thread.start()
+    logger.info("[api/run] run thread started (run_id=%s)", run_id)
+
+
 class WhereFilterSpec(BaseModel):
     variable: str  # variable type name, e.g. "Side"
     op: str  # "==", "!=", "<", "<=", ">", ">=", "IN"
@@ -169,14 +220,7 @@ def _run_in_thread(
     logger.info(
         "[run_thread] Registering run in active runs registry (run_id=%s)", run_id
     )
-    cancel_event = threading.Event()
-    with _active_runs_lock:
-        _active_runs[run_id] = {
-            "event": cancel_event,
-            "thread": threading.current_thread(),
-            "cancelled": False,
-            "force_cancelled": False,
-        }
+    cancel_event = _register_run(run_id, threading.current_thread())
     logger.debug("[run_thread] Run registered successfully (run_id=%s)", run_id)
 
     def _is_cancelled() -> bool:
@@ -1016,12 +1060,12 @@ def route_matlab_single_run(
         function_name,
         run_id,
     )
-    thread = threading.Thread(
-        target=_run_matlab_function_in_thread,
-        args=(run_id, function_name, params, db),
-        daemon=True,
+    _start_run_thread(
+        run_id,
+        _run_matlab_function_in_thread,
+        (run_id, function_name, params, db),
+        matlab_sidecar=True,
     )
-    thread.start()
     return {"run_id": run_id, "language": "matlab"}
 
 
@@ -1149,9 +1193,7 @@ def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict
                 release_db_connection()
 
     logger.info("[api/run] Spawning background thread for run_id=%s", run_id)
-    thread = threading.Thread(target=_run_wrapper, daemon=True)
-    thread.start()
-    logger.info("[api/run] Background thread started for run_id=%s", run_id)
+    _start_run_thread(run_id, _run_wrapper)
     return {"run_id": run_id}
 
 
@@ -1198,14 +1240,7 @@ def _run_pipeline_in_thread(
                 logging.getLogger(name).removeHandler(self)
             return False
 
-    cancel_event = threading.Event()
-    with _active_runs_lock:
-        _active_runs[run_id] = {
-            "event": cancel_event,
-            "thread": threading.current_thread(),
-            "cancelled": False,
-            "force_cancelled": False,
-        }
+    cancel_event = _register_run(run_id, threading.current_thread())
     db.set_current_db()
     enter_project_root()  # see _run_in_thread
     logger.info(
@@ -1346,18 +1381,12 @@ def _run_matlab_pipeline_in_thread(
     def emit(text: str):
         push_message({"type": "run_output", "run_id": run_id, "text": text})
 
-    cancel_event = threading.Event()
-    with _active_runs_lock:
-        _active_runs[run_id] = {
-            "event": cancel_event,
-            "thread": threading.current_thread(),
-            "cancelled": False,
-            "force_cancelled": False,
-            # force_cancel_run checks this to kill the MATLAB process
-            # itself instead of (uselessly) ctypes-injecting into a thread
-            # that's just waiting on a queue — see force_cancel_run.
-            "matlab_sidecar": True,
-        }
+    # matlab_sidecar: force_cancel_run kills the MATLAB process itself
+    # instead of (uselessly) ctypes-injecting into a thread that's just
+    # waiting on a queue — see force_cancel_run.
+    cancel_event = _register_run(
+        run_id, threading.current_thread(), matlab_sidecar=True
+    )
     db.set_current_db()
     run_started_at = time.time()
     logger.info(
@@ -1515,15 +1544,9 @@ def _drive_matlab_in_thread(
     def emit(text: str):
         push_message({"type": "run_output", "run_id": run_id, "text": text})
 
-    cancel_event = threading.Event()
-    with _active_runs_lock:
-        _active_runs[run_id] = {
-            "event": cancel_event,
-            "thread": threading.current_thread(),
-            "cancelled": False,
-            "force_cancelled": False,
-            "matlab_sidecar": True,
-        }
+    cancel_event = _register_run(
+        run_id, threading.current_thread(), matlab_sidecar=True
+    )
     run_started_at = time.time()
 
     success = False
@@ -1620,13 +1643,12 @@ def start_matlab_sidecar_run(
         )
         return {"run_id": run_id, "sidecar_available": False}
 
-    thread = threading.Thread(
-        target=_run_matlab_command_in_thread,
-        args=(run_id, command, warnings or []),
-        daemon=True,
+    _start_run_thread(
+        run_id,
+        _run_matlab_command_in_thread,
+        (run_id, command, warnings or []),
+        matlab_sidecar=True,
     )
-    thread.start()
-    logger.info("[api/run] MATLAB sidecar run thread started (run_id=%s)", run_id)
     return {"run_id": run_id, "sidecar_available": True}
 
 
@@ -1700,21 +1722,19 @@ def start_pipeline_run(
             pipeline_id,
             rid,
         )
-        thread = threading.Thread(
-            target=_run_matlab_pipeline_in_thread,
-            args=(rid, pipeline_id, mode, target, finalized, skip_computed, db),
-            daemon=True,
+        _start_run_thread(
+            rid,
+            _run_matlab_pipeline_in_thread,
+            (rid, pipeline_id, mode, target, finalized, skip_computed, db),
+            matlab_sidecar=True,
         )
-        thread.start()
         return {"run_id": rid}
 
-    thread = threading.Thread(
-        target=_run_pipeline_in_thread,
-        args=(rid, pipeline_id, mode, target, finalized, skip_computed, db),
-        daemon=True,
+    _start_run_thread(
+        rid,
+        _run_pipeline_in_thread,
+        (rid, pipeline_id, mode, target, finalized, skip_computed, db),
     )
-    thread.start()
-    logger.info("[api/run] pipeline run thread started (run_id=%s)", rid)
     return {"run_id": rid}
 
 

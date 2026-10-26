@@ -246,6 +246,7 @@ class Chain:
         self.base = base
         self.gui = front_end == "gui"
         self._done: dict[str, object] = {}
+        self.last_log: "Path | None" = None
 
     # -- plumbing ----------------------------------------------------------
 
@@ -287,6 +288,11 @@ class Chain:
         proc = subprocess.run([sys.executable, str(ACTOR), str(spec_path)],
                               cwd=self.root(person), capture_output=True, text=True,
                               timeout=900, env=env)
+        # Kept for every session, passed or not: a failing assertion on its
+        # results (a red node, a re-run) is diagnosed from this log.
+        log_path = self.base / f"session_{person}_{stage}.log"
+        log_path.write_text(proc.stderr)
+        self.last_log = log_path
         line = next((ln for ln in reversed(proc.stdout.splitlines()) if ln.startswith("RESULT ")), None)
         if line is None:
             raise StageFailed(f"[{self.front_end}] {person}/{stage}: no result\n"
@@ -393,7 +399,7 @@ class Chain:
         if not self.gui:
             return {"invocations": out[0], "latest": out[1]}
         return {"states": out[0]["states"], "invocations": out[1], "latest": out[2],
-                "rerun_invocations": out[4]}
+                "rerun_invocations": out[4], "log": str(self.last_log)}
 
     # -- Alice ---------------------------------------------------------------
 

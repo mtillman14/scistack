@@ -259,9 +259,12 @@ def _assert_carried(after: dict, old: str, new: str, calls_before: int, calls_af
     assert calls_after == calls_before, (
         f"carrying results computed again ({calls_after - calls_before} call(s))")
     if gui:
-        assert set(after["states"].values()) == {"green"}, after["states"]
+        # The session log has the "[pipeline] ... -> red" reason lines.
+        assert set(after["states"].values()) == {"green"}, (
+            f"{after['states']}; session log: {after['log']}")
         assert after["rerun_invocations"]["count"] == after["invocations"]["count"], (
-            "▶ Run after the rename recorded new invocations: the results were not current")
+            "▶ Run after the rename recorded new invocations: the results were not "
+            f"current; session log: {after['log']}")
 
 
 class TestResultsCarryOver:
