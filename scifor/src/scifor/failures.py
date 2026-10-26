@@ -368,3 +368,57 @@ def stopped_run_of(exc: BaseException) -> StoppedRun | None:
 def groups_to_wire(groups: "dict[str, FailureGroup]") -> list[dict]:
     """Failure groups in first-seen order, as the wire shape."""
     return [g.to_dict() for g in groups.values()]
+
+
+# ---------------------------------------------------------------------------
+# Wire groups from MATLAB
+# ---------------------------------------------------------------------------
+
+
+def _as_list(value) -> list:
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]  # MATLAB jsonencode writes a 1-element array as an object
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _frame_or_none(value) -> "dict | None":
+    if isinstance(value, list):  # jsonencode([]) for "no frame"
+        value = value[0] if value else None
+    return value if isinstance(value, dict) and value.get("file") is not None else None
+
+
+def groups_from_wire(raw) -> list[dict]:
+    """Failure groups read back from JSON — the MATLAB writer's
+    (``+scifor/failure_from_mexception.m`` via ``+scidb/run_marker.m``) or
+    Python's own — normalised to :meth:`FailureGroup.to_dict`'s shape.
+
+    MATLAB's ``jsonencode`` writes a one-element array as a bare object and
+    "no value" as ``[]``; both are undone here, so a consumer never knows
+    which language failed. Malformed entries are dropped (logged), never
+    raised: this reads diagnostics about a run, not the run itself.
+    """
+    out: list[dict] = []
+    for g in _as_list(raw):
+        if not isinstance(g, dict) or "reason" not in g:
+            Log.debug(f"groups_from_wire: dropping malformed group {str(g)[:200]}", layer="scifor")
+            continue
+        example = g.get("example") if isinstance(g.get("example"), dict) else {}
+        frames = [f for f in _as_list(example.get("frames")) if isinstance(f, dict)]
+        combos = g.get("combos")
+        out.append(
+            {
+                **g,
+                "no_data": bool(g.get("no_data")),
+                "count": int(g.get("count") or 0),
+                "combos": [combos] if isinstance(combos, str) else [str(c) for c in _as_list(combos)],
+                "user_frame": _frame_or_none(g.get("user_frame")),
+                "example": {
+                    **example,
+                    "frames": frames,
+                    "user_frame": _frame_or_none(example.get("user_frame")),
+                },
+            }
+        )
+    return out

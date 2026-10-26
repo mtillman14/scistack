@@ -657,6 +657,16 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % script learns of them (+scidb/+internal/iteration_tally.m).
     scifor_opts{end+1} = '_summary_fn';
     scifor_opts{end+1} = @(s) scidb.internal.iteration_tally('add', s);
+    % on_error='stop': scifor returns the completed combos instead of
+    % rethrowing (_defer_stop); they are saved below, THEN the original error
+    % is rethrown from the tally. A stale stop from an earlier call is dropped.
+    scidb.internal.iteration_tally('take_stop');
+    if strcmp(opts.on_error, 'stop')
+        scifor_opts{end+1} = 'on_error';
+        scifor_opts{end+1} = 'stop';
+        scifor_opts{end+1} = '_defer_stop';
+        scifor_opts{end+1} = true;
+    end
     if ~isempty(find_pathinput(inputs))
         scifor_opts{end+1} = '_resolve_pathinput';
         scifor_opts{end+1} = true;
@@ -810,6 +820,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         handle, py_result_dfs, pyargs('save', logical(do_save), ...
                                       'introspect', logical(opts.introspect)));
     scidb.Log.info('for_each_save returned in %.3fs', toc(save_t0));
+    stop_err = scidb.internal.iteration_tally('take_stop');
+    if ~isempty(stop_err)
+        scidb.Log.info(['for_each(%s): on_error=stop — completed combos saved; ' ...
+            'rethrowing %s'], fn_name, stop_err.identifier);
+        rethrow(stop_err);
+    end
 
     % --- Post-save result marshalling ---
     %
@@ -1937,6 +1953,7 @@ function [meta_args, opts] = split_options(varargin)
     opts.distribute = false;
     opts.where = [];
     opts.introspect = false;
+    opts.on_error = 'continue';  % scifor owns it; validated there (Python)
     opts.skip_computed = false;
     opts.finalized = false;
     opts.categorical = false;   % scifor option; applied to the returned table
@@ -2012,6 +2029,10 @@ function [meta_args, opts] = split_options(varargin)
                     i = i + 2; continue;
                 case "distribute"
                     opts.distribute = logical(varargin{i+1});
+                    i = i + 2; continue;
+                case "on_error"
+                    opts.on_error = char(string(varargin{i+1}));
+                    py.scifor.validate_on_error(opts.on_error);
                     i = i + 2; continue;
                 case "where"
                     opts.where = varargin{i+1};

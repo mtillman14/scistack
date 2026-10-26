@@ -2027,6 +2027,8 @@ class MatlabTerminalRunRequest(BaseModel):
     run_id: str
     #: What to call it in the log. Optional; the run_id is a usable fallback.
     label: str | None = None
+    #: The node a single-node run was started from (failures land on it).
+    node_id: str | None = None
 
 
 def _watch_matlab_terminal_run(db, req: MatlabTerminalRunRequest) -> dict:
@@ -2040,7 +2042,7 @@ def _watch_matlab_terminal_run(db, req: MatlabTerminalRunRequest) -> dict:
     from scistack_gui.db import get_db_path
     from scistack_gui.matlab_run_watch import track
 
-    return track(req.run_id, str(get_db_path()), req.label or req.run_id)
+    return track(req.run_id, str(get_db_path()), req.label or req.run_id, req.node_id)
 
 
 def _stop_watching_matlab_run(req: RunRef) -> dict:

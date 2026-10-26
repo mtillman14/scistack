@@ -41,6 +41,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from scifor.failures import groups_from_wire
+
 logger = logging.getLogger(__name__)
 
 #: Schema version written into every marker. Bump only for a change the
@@ -127,6 +129,10 @@ class DoneMarker:
     #: — a Ctrl-C or a `return` out of the script. Reported as cancelled
     #: rather than as a failure, because the user asked for it.
     interrupted: bool = False
+    #: The run's failure groups (scifor.failures wire shape, normalised by
+    #: ``scifor.failures.groups_from_wire``) — MATLAB's failed combos and the
+    #: line that raised, for the GUI. Empty on success or from an older writer.
+    failures: tuple = ()
 
 
 def _load(path: Path) -> dict | None:
@@ -187,6 +193,7 @@ def read_done(dir_: Path | str, run_id: str) -> DoneMarker | None:
         message=str(data.get("message") or ""),
         at=_as_float(data.get("at")),
         interrupted=data.get("interrupted") is True,
+        failures=tuple(groups_from_wire(data.get("failures"))),
     )
 
 

@@ -503,11 +503,13 @@ export class DagPanel {
    * back to the old behaviour rather than leave the node spinning for ever —
    * a node that never resolves is worse than one that resolves optimistically.
    */
-  private async watchMatlabRun(runId: string, label: string): Promise<boolean> {
+  private async watchMatlabRun(runId: string, label: string, nodeId?: string): Promise<boolean> {
     try {
       await this.session.python.request('watch_matlab_terminal_run', {
         run_id: runId,
         label,
+        // So the run's failures (from its .done marker) land on this node.
+        node_id: nodeId ?? null,
       });
       this.outputChannel.appendLine(
         `watchMatlabRun: ${runId} handed to the run watcher — ` +
@@ -650,7 +652,9 @@ export class DagPanel {
       // resolve-on-dispatch, because a node that never resolves is worse
       // than one that resolves optimistically.
       if (tier !== 'sidecar') {
-        const watched = await this.watchMatlabRun(runId, functionName ?? runId);
+        const watched = await this.watchMatlabRun(
+          runId, functionName ?? runId, params.node_id as string | undefined,
+        );
         if (!watched) finish(true);
       }
     } catch (err) {

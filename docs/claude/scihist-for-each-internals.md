@@ -568,6 +568,7 @@ scihist inherits scidb's (and scifor's) skip-and-continue philosophy:
 - **Save failures** (lines 457–464): If saving a single result row fails, the error is logged but does not prevent other rows from being saved.
 - **Skip hook failures**: Any exception during `_should_skip()` is not explicitly caught — if the hook fails, the combo is NOT skipped (scidb's `_pre_combo_hook` integration treats hook exceptions as "do not skip").
 - **Lineage save failures** (lines 566–570): `_save_lineage_fcn_result()` logs the exception and re-raises, which is caught by the per-row error handler in `_save_with_lineage()`.
+- **Per-combo failures and `on_error`** (since 2026-10-26): scihist forwards every kwarg to `scidb.for_each`, so failure records and `on_error="stop"` (save the completed combos, then re-raise the original) behave as in scidb. See `docs/claude/error-surfacing.md`.
 
 ---
 

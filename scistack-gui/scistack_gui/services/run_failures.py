@@ -42,9 +42,10 @@ def on_error_from_config(run_options: "dict | None") -> str:
         return "continue"
 
 
-def _console_block(target: str, groups: "list[dict]", completed: int) -> str:
+def _console_block(target: str, groups: "list[dict]", completed: "int | None") -> str:
     total = sum(g.get("count", 0) for g in groups)
-    lines = [f"⚠ {target}: {total} combo(s) failed ({completed} completed)"]
+    done = f" ({completed} completed)" if completed is not None else ""
+    lines = [f"⚠ {target}: {total} combo(s) failed{done}"]
     for g in groups:
         lines.append(f"  ✗ {g['reason']} — {g.get('count', 1)} combo(s)")
         lines.append(f"    {format_user_frame_dict(g.get('user_frame'))}")
@@ -82,10 +83,11 @@ class RunFailures:
         node_id: "str | None",
         fn_name: str,
         target: str,
-        completed: int,
+        completed: "int | None",
     ) -> str:
         """Record a target/step's summary groups; returns console text ("" if
-        nothing failed)."""
+        nothing failed). *completed* is None when the caller cannot know it
+        (a MATLAB run, read from its .done marker)."""
         failed = [g for g in groups or [] if not g.get("no_data")]
         for g in failed:
             self._groups.append({**g, "node_id": node_id, "fn_name": fn_name, "target": target})

@@ -3,6 +3,11 @@ function cleanup = run_marker(action, marker_dir, run_id, varargin)
 %
 %   CLEANUP = scidb.run_marker('begin', MARKER_DIR, RUN_ID)
 %   scidb.run_marker('finish', MARKER_DIR, RUN_ID, OK, IDENTIFIER, MESSAGE)
+%   scidb.run_marker('finish', MARKER_DIR, RUN_ID, OK, IDENTIFIER, MESSAGE, FAILURES)
+%
+%   FAILURES (optional): the run's failure groups from
+%   scidb.internal.iteration_tally('failures') — written as the "failures"
+%   array so the GUI shows which combos failed and the line that raised.
 %
 %   A script dispatched to the MathWorks MATLAB terminal is invisible to
 %   whatever dispatched it: the text is handed over and nothing comes back.
@@ -67,7 +72,9 @@ function cleanup = run_marker(action, marker_dir, run_id, varargin)
             if numel(varargin) >= 1, ok = logical(varargin{1}); end
             if numel(varargin) >= 2, identifier = char(varargin{2}); end
             if numel(varargin) >= 3, message = char(varargin{3}); end
-            write_done(marker_dir, run_id, ok, identifier, message, false);
+            failures = {};
+            if numel(varargin) >= 4, failures = varargin{4}; end
+            write_done(marker_dir, run_id, ok, identifier, message, false, failures);
         otherwise
             scidb.Log.warn('run_marker: unknown action ''%s'' (ignored)', action);
     end
@@ -90,7 +97,10 @@ function write_started(marker_dir, run_id)
 end
 
 
-function write_done(marker_dir, run_id, ok, identifier, message, interrupted)
+function write_done(marker_dir, run_id, ok, identifier, message, interrupted, failures)
+    if nargin < 7
+        failures = {};
+    end
     try
         ensure_dir(marker_dir);
         if ok
@@ -108,10 +118,33 @@ function write_done(marker_dir, run_id, ok, identifier, message, interrupted)
              '"identifier":"%s","message":"%s","at":%.3f}'], ...
             escape_json(run_id), ok_text, interrupted_text, ...
             escape_json(identifier), escape_json(message), posix_time());
+        failures_json = encode_failures(failures, run_id);
+        if ~isempty(failures_json)
+            % Spliced in before the closing brace: one line of JSON still.
+            payload = [payload(1:end-1) ',"failures":' failures_json '}'];
+        end
         write_atomic(fullfile(marker_dir, [run_id '.done']), payload);
     catch marker_err__
         scidb.Log.warn('run_marker: could not write .done for %s: %s', ...
             run_id, marker_err__.message);
+    end
+end
+
+
+function text = encode_failures(failures, run_id)
+%ENCODE_FAILURES  The failure groups as a JSON array, or '' (never throws: a
+%   group that will not encode must not cost the run its marker).
+    text = '';
+    if isempty(failures)
+        return;
+    end
+    try
+        text = jsonencode(failures);
+        text = strrep(strrep(text, newline, ' '), char(13), ' ');
+    catch enc_err__
+        scidb.Log.warn('run_marker: could not encode failures for %s: %s', ...
+            run_id, enc_err__.message);
+        text = '';
     end
 end
 

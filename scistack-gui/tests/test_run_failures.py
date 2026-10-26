@@ -205,3 +205,66 @@ def test_compiled_pipeline_tags_steps_with_their_node(client, bp_node_id):
 
     assert specs and all(s.tag == bp_node_id for s in specs)
     assert all(s.options["on_error"] == "stop" for s in specs)
+
+
+# ---------------------------------------------------------------------------
+# MATLAB: generator, .done marker, watcher (Stage 5)
+# ---------------------------------------------------------------------------
+
+
+def test_matlab_run_option_pairs_emit_on_error_only_when_stop(caplog):
+    from scistack_gui.api.matlab_command import _format_run_option_pairs
+
+    assert "'on_error', 'stop'" in _format_run_option_pairs({"on_error": "stop"}, "f")
+    assert _format_run_option_pairs({"on_error": "continue"}, "f") == ""
+    with caplog.at_level(logging.WARNING):
+        _format_run_option_pairs({"on_error": "stop"}, "f")
+    assert "not recognised" not in caplog.text  # on_error is not an unknown key
+
+
+def test_matlab_failure_marker_carries_the_tally_failures():
+    from scistack_gui.api.matlab_command import _run_marker_finish_lines
+
+    lines = "\n".join(_run_marker_finish_lines("/tmp/x/study.duckdb", "r1", ok=False))
+    assert "scidb.internal.iteration_tally('failures')" in lines
+
+
+def test_done_marker_failures_reach_run_done_on_the_node(tmp_path, monkeypatch):
+    """The exact JSON +scidb/run_marker.m writes (a spliced "failures" array,
+    jsonencode's 1-element-array-as-object quirk included)."""
+    import time as _time
+
+    import scistack_gui.notify as notify_mod
+    from scidb import run_markers
+    from scistack_gui.matlab_run_watch import TrackedRun, _finish
+
+    seen: list = []
+    monkeypatch.setattr(notify_mod, "push_message", seen.append)
+    monkeypatch.setattr("scistack_gui.api.run._notify_records_changed", lambda: None)
+
+    markers = run_markers.marker_dir(tmp_path / "study.duckdb")
+    markers.mkdir()
+    (markers / "r1.done").write_text(
+        '{"version":1,"run_id":"r1","ok":false,"interrupted":false,'
+        '"identifier":"SciStack:iterationsFailed","message":"f: 1 of 2 failed","at":1.0,'
+        '"failures":{"reason":"MATLAB:badsubscript: Index exceeds","fn_name":"f",'
+        '"exc_type":"MATLAB:badsubscript","message":"Index exceeds","no_data":false,'
+        '"count":1,"combos":"subject=2","user_frame":{"file":"/p/f.m","line":7,'
+        '"function":"f","code":"","origin":"user"},"example":{"frames":'
+        '{"file":"/p/f.m","line":7,"function":"f","code":"","origin":"user"}}}}\n',
+        encoding="utf-8",
+    )
+    done = run_markers.read_done(markers, "r1")
+    assert done is not None and len(done.failures) == 1
+
+    run = TrackedRun(
+        run_id="r1", db_path=str(tmp_path / "study.duckdb"), markers=str(markers),
+        label="f", dispatched_at=_time.time(), node_id="fn__f",
+    )
+    _finish(run, success=False, error=done.message, unknown=False, failures=done.failures)
+
+    (msg,) = [m for m in seen if m.get("type") == "run_done"]
+    (g,) = msg["failures"]["by_node"]["fn__f"]
+    assert g["user_frame"]["line"] == 7 and g["combos"] == ["subject=2"]
+    text = "".join(m.get("text", "") for m in seen if m.get("type") == "run_output")
+    assert "at /p/f.m:7 in f" in text

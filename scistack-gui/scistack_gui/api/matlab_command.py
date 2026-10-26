@@ -1001,9 +1001,12 @@ def _run_marker_finish_lines(
             # base workspace, since run() evaluates there.
             f"{indent}clear scistack_run_marker__;",
         ]
+    # The tally's failure groups ride along, so the GUI shows a MATLAB run's
+    # failed combos and the line that raised (docs/claude/error-surfacing.md).
     return [
         f"{indent}scidb.run_marker('finish', '{dir_}', '{rid}', false, ...",
-        f"{indent}    scistack_err__.identifier, scistack_err__.message);",
+        f"{indent}    scistack_err__.identifier, scistack_err__.message, ...",
+        f"{indent}    scidb.internal.iteration_tally('failures'));",
     ]
 
 
@@ -2295,6 +2298,14 @@ def _format_run_option_pairs(
         parts.append(f"'{name}', {'true' if value else 'false'}")
         emitted[name] = value
 
+    # Not identity, and not a bool: read through its one reader.
+    from scistack_gui.services.run_failures import ON_ERROR_KEY, on_error_from_config
+
+    on_error = on_error_from_config(run_options)
+    if on_error != "continue":
+        parts.append(f"'on_error', '{on_error}'")
+        emitted[ON_ERROR_KEY] = on_error
+
     if emitted:
         logger.info(
             "generate_matlab_command: %s: emitting non-default run option(s) %s "
@@ -2306,7 +2317,7 @@ def _format_run_option_pairs(
     # A key the caller asked about that produced no pair is either a default
     # (fine, and the common case) or a value this renderer does not understand
     # (not fine -- it would be dropped exactly the way distribute was).
-    unknown = sorted(set(run_options) - set(_RUN_OPTION_DEFAULTS))
+    unknown = sorted(set(run_options) - set(_RUN_OPTION_DEFAULTS) - {"on_error"})
     if unknown:
         logger.warning(
             "generate_matlab_command: %s: run option(s) %s are not recognised "

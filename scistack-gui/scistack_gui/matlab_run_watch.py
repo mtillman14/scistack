@@ -156,6 +156,9 @@ class TrackedRun:
     markers: str
     label: str
     dispatched_at: float
+    #: The canvas node a single-node run belongs to, so the failures in its
+    #: .done marker land on that node. None for a pipeline run.
+    node_id: str | None = None
     #: MATLAB's own process id, once ``.started`` has been read.
     matlab_pid: int | None = None
     started_at: float | None = None
@@ -212,7 +215,9 @@ def any_run_in_flight() -> bool:
         return any(run.verdict == "running" for run in _tracked.values())
 
 
-def track(run_id: str, db_path: str, label: str = "") -> dict:
+def track(
+    run_id: str, db_path: str, label: str = "", node_id: "str | None" = None
+) -> dict:
     """Start watching *run_id*. Idempotent for a run already tracked.
 
     Called right after the host dispatches a script to the MATLAB terminal
@@ -231,6 +236,7 @@ def track(run_id: str, db_path: str, label: str = "") -> dict:
             markers=str(marker_dir(db_path)),
             label=label or run_id,
             dispatched_at=time.time(),
+            node_id=node_id,
         )
         _tracked[run_id] = run
 
@@ -274,9 +280,31 @@ def stop_all() -> None:
         run._stop.set()
 
 
-def _finish(run: TrackedRun, *, success: bool, error: str, unknown: bool) -> None:
-    """Emit the real verdict and stop tracking."""
+def _finish(
+    run: TrackedRun,
+    *,
+    success: bool,
+    error: str,
+    unknown: bool,
+    failures: "tuple | list" = (),
+) -> None:
+    """Emit the real verdict and stop tracking.
+
+    *failures*: the groups from the run's .done marker (written by the
+    generated script's catch from scidb.internal.iteration_tally), shown and
+    sent exactly as a Python run's are (services.run_failures).
+    """
     from scistack_gui.notify import push_message
+    from scistack_gui.services.run_failures import RunFailures
+
+    run_failures = RunFailures(run.run_id)
+    failures_text = run_failures.add_summary(
+        list(failures),
+        node_id=run.node_id,
+        fn_name=run.label,
+        target=run.label,
+        completed=None,
+    )
 
     run.verdict = "unknown" if unknown else ("done" if success else "error")
     with _lock:
@@ -292,6 +320,8 @@ def _finish(run: TrackedRun, *, success: bool, error: str, unknown: bool) -> Non
         push_message(
             {"type": "run_output", "run_id": run.run_id, "text": f"{error}\n"}
         )
+    if failures_text:
+        push_message({"type": "run_output", "run_id": run.run_id, "text": failures_text})
     push_message(
         {
             "type": "run_done",
@@ -305,6 +335,7 @@ def _finish(run: TrackedRun, *, success: bool, error: str, unknown: bool) -> Non
             # is fine.
             "unknown": unknown,
             "duration_ms": int((time.time() - run.dispatched_at) * 1000),
+            "failures": run_failures.to_wire([run.node_id] if run.node_id else []),
         }
     )
 
@@ -373,8 +404,9 @@ def _watch(run: TrackedRun) -> None:
         elif idle_since is None:
             idle_since = now
 
+        done = read_done(run.markers, run.run_id)
         verdict = classify(
-            done=read_done(run.markers, run.run_id),
+            done=done,
             started=run.started_at is not None,
             busy=busy,
             idle_for=0.0 if idle_since is None else now - idle_since,
@@ -389,6 +421,7 @@ def _watch(run: TrackedRun) -> None:
                 success=verdict.kind == "done",
                 error=verdict.message,
                 unknown=verdict.kind == "unknown",
+                failures=done.failures if done is not None else (),
             )
             _cleanup_markers(run)
             return

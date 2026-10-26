@@ -407,6 +407,8 @@ Every skip logs a `[skip] subject=1, session=pre: reason` line at DEBUG. What ha
 
 The final summary line (`completed=X, failed=Y, no_data=W, total=Z`) and the progress events passed to `_progress_fn` both carry this same split, so a UI consuming scifor's progress no longer has to treat "no data" as an error state.
 
+Since 2026-10-26 every failure is also a **record** (`scifor/failures.py`: `ComboFailure` grouped into `FailureGroup`s, with the user's raising line), carried as `failures` on the `summary` event (replacing `failure_reasons`) and as a small `failure` on `combo_skip`. `on_error="stop"` stops at the first genuine failure and re-raises the original exception with the completed combos attached (`scifor.stopped_run_of`). See `docs/claude/error-surfacing.md`.
+
 ---
 
 ## A concrete end-to-end example

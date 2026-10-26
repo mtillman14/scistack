@@ -14,6 +14,7 @@ consequences in `scimatlab` and `scifor`.*
 | `save` | Write the results to the database | no |
 | `distribute` | Split each returned value across the next-deeper schema key | **yes** |
 | `as_table` | Pass named inputs as whole tables rather than per-combo values | **yes** |
+| `on_error` | `continue` (skip a failing combo) or `stop` (raise at the first one; completed combos saved) — read only through `run_failures.on_error_from_config`, see `error-surfacing.md` | no (deliberately NOT in `RunOptions`) |
 | `across_variants` | Pool every variant group of an input into one call | **yes** (rides on the input as `AcrossVariants(X)`, not a kwarg) |
 
 "Identity-bearing" is the part that makes these more than presentation. All

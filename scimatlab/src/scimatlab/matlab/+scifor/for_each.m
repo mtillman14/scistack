@@ -771,6 +771,12 @@ function varargout = for_each(fn, inputs, varargin)
     % reason logs at WARN so the default (INFO) log answers "what failed".
     failure_reasons = containers.Map('KeyType', 'char', 'ValueType', 'any');
     failure_order = {};
+    % reason -> the first failure record of that reason
+    % (scifor.failure_from_mexception; the summary's 'failures' groups).
+    failure_examples = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    % on_error='stop': the error that ended the loop (rethrown after the
+    % summary, or handed to the caller when it saves first — _defer_stop).
+    stop_err = [];
 
     % Periodic progress: one line per outermost-key transition, but never at
     % the very first combo, never inside the start delay (fast runs stay
@@ -955,9 +961,10 @@ function varargout = for_each(fn, inputs, varargin)
                         var_spec, metadata, effective_keys, where_filter, ...
                         sel_rids, opts.record_id_column);
                 catch err
-                    [failure_reasons, failure_order] = record_iteration_failure( ...
-                        failure_reasons, failure_order, err, metadata_str, ...
-                        sprintf('failed to filter %s', input_names{p}));
+                    [failure_reasons, failure_order, failure_examples] = record_iteration_failure( ...
+                        failure_reasons, failure_order, failure_examples, err, metadata_str, ...
+                        sprintf('failed to filter %s', input_names{p}), fn_name, 'prepare_inputs');
+                    stop_err = stop_error_after(opts.on_error, stop_err, err);
                     filter_failed = true;
                     break;
                 end
@@ -976,9 +983,10 @@ function varargout = for_each(fn, inputs, varargin)
                 loaded{p} = prepare_input(var_spec, metadata, effective_keys, wants_table, where_filter, mapping_cols, ...
                     sel_rids, opts.record_id_column);
             catch err
-                [failure_reasons, failure_order] = record_iteration_failure( ...
-                    failure_reasons, failure_order, err, metadata_str, ...
-                    sprintf('failed to filter %s', input_names{p}));
+                [failure_reasons, failure_order, failure_examples] = record_iteration_failure( ...
+                    failure_reasons, failure_order, failure_examples, err, metadata_str, ...
+                    sprintf('failed to filter %s', input_names{p}), fn_name, 'prepare_inputs');
+                stop_err = stop_error_after(opts.on_error, stop_err, err);
                 filter_failed = true;
                 break;
             end
@@ -986,6 +994,9 @@ function varargout = for_each(fn, inputs, varargin)
 
         if filter_failed
             skipped = skipped + 1;
+            if ~isempty(stop_err)
+                break;
+            end
             continue;
         end
 
@@ -1067,10 +1078,14 @@ function varargout = for_each(fn, inputs, varargin)
                strcmp(err.identifier, 'scifor:for_each:forColumnsBadReturn')
                 rethrow(err);
             end
-            [failure_reasons, failure_order] = record_iteration_failure( ...
-                failure_reasons, failure_order, err, metadata_str, ...
-                sprintf('%s raised', fn_name));
+            [failure_reasons, failure_order, failure_examples] = record_iteration_failure( ...
+                failure_reasons, failure_order, failure_examples, err, metadata_str, ...
+                sprintf('%s raised', fn_name), fn_name, 'call');
             skipped = skipped + 1;
+            stop_err = stop_error_after(opts.on_error, stop_err, err);
+            if ~isempty(stop_err)
+                break;
+            end
             continue;
         end
 
@@ -1155,6 +1170,10 @@ function varargout = for_each(fn, inputs, varargin)
             'for_each(%s) done in %.1fs: completed=%d, failed=%d, no_data=%d, total=%d', ...
             fn_name, toc(loop_t0), completed, skipped - no_data_count, ...
             no_data_count, total);
+        if ~isempty(stop_err)
+            scifor.Log.info(['for_each(%s): on_error=stop — stopped at %s; %d combo(s) ' ...
+                'completed before it'], fn_name, stop_err.identifier, completed);
+        end
         % One line per distinct failure reason (combos capped at 5), so the
         % default (INFO) log answers "what failed and why".
         SUMMARY_COMBOS_MAX = 5;
@@ -1186,12 +1205,18 @@ function varargout = for_each(fn, inputs, varargin)
                     break;
                 end
             end
+            % 'failures': one group per reason in the wire shape of Python's
+            % scifor.failures.FailureGroup.to_dict. Wrapped in a cell so
+            % struct() does not expand it into a struct array.
             opts.summary_fn(struct('fn_name', fn_name, ...
                 'completed', completed, ...
                 'failed', skipped - no_data_count, ...
                 'no_data', no_data_count, ...
                 'total', total, ...
-                'first_reason', first_reason));
+                'first_reason', first_reason, ...
+                'failures', {failure_groups(failure_order, failure_reasons, failure_examples)}, ...
+                'stopped', ~isempty(stop_err), ...
+                'stop_error', {stop_err}));
         end
         if n_outputs == 0
             % Zero-output function: nothing to collect
@@ -1216,6 +1241,12 @@ function varargout = for_each(fn, inputs, varargin)
                 end
             end
         end
+    end
+    % on_error='stop': the ORIGINAL error, after the summary and outputs. A
+    % caller that saves the completed combos first (scidb.for_each) passes
+    % _defer_stop and rethrows it itself, from the run tally.
+    if ~isempty(stop_err) && ~opts.defer_stop
+        rethrow(stop_err);
     end
 end
 
@@ -2482,6 +2513,8 @@ function [meta_args, opts] = split_options(varargin)
     opts.log_fn = [];  % deprecated, ignored (kept so parsing stays stable)
     opts.summary_fn = [];  % optional summary_fn(struct) called once with the
                            % end-of-loop counts; scidb injects its run tally
+    opts.on_error = 'continue';  % 'continue' | 'stop' (Python owns the values)
+    opts.defer_stop = false;     % scidb: return, don't rethrow; it saves first
     opts.resolved_path_outputs = struct();
     opts.share_limits = struct();
     opts.schema_keys = string.empty;
@@ -2587,6 +2620,16 @@ function [meta_args, opts] = split_options(varargin)
                     continue;
                 case "_pathinput_loader"
                     opts.pathinput_loader = varargin{i+1};
+                    i = i + 2;
+                    continue;
+                case "on_error"
+                    opts.on_error = char(string(varargin{i+1}));
+                    % The one validation: Python's scifor.validate_on_error.
+                    py.scifor.validate_on_error(opts.on_error);
+                    i = i + 2;
+                    continue;
+                case "_defer_stop"
+                    opts.defer_stop = logical(varargin{i+1});
                     i = i + 2;
                     continue;
                 case "_summary_fn"
@@ -2956,8 +2999,8 @@ function n = count_distinct_combo_values(combos, meta_keys, progress_key)
 end
 
 
-function [failure_reasons, failure_order] = record_iteration_failure( ...
-        failure_reasons, failure_order, err, metadata_str, context)
+function [failure_reasons, failure_order, failure_examples] = record_iteration_failure( ...
+        failure_reasons, failure_order, failure_examples, err, metadata_str, context, fn_name, stage)
 %RECORD_ITERATION_FAILURE  Track a per-iteration failure for the summary.
 %   Every failure logs a [skip] line at DEBUG; each distinct reason also logs
 %   one WARN line, so the default (INFO) log still answers "what failed and
@@ -2976,6 +3019,11 @@ function [failure_reasons, failure_order] = record_iteration_failure( ...
 %   rather than kept in new state, so this stays a pure function of the
 %   accumulators and a second for_each in the same MATLAB session still gets
 %   its own first report.
+%
+%   The first occurrence of each reason also keeps its failure RECORD
+%   (scifor.failure_from_mexception) in failure_examples, which the summary
+%   turns into the 'failures' groups the GUI reads; its user frame is named
+%   on the WARN line.
     reason = sprintf('%s: %s', err.identifier, err.message);
     is_no_data = strcmp(err.identifier, 'scifor:NoData');
     if isKey(failure_reasons, reason)
@@ -2983,6 +3031,10 @@ function [failure_reasons, failure_order] = record_iteration_failure( ...
     else
         failure_reasons(reason) = {metadata_str};
         failure_order{end+1} = reason;
+        failure_examples(reason) = scifor.failure_from_mexception( ...
+            err, fn_name, metadata_str, stage, is_no_data);
+        example = failure_examples(reason);
+        where = describe_user_frame(example.user_frame);
         if ~is_no_data
             % Has this identifier already carried a report? Scan everything
             % except the reason just appended. Exits on the first hit, which
@@ -2996,17 +3048,61 @@ function [failure_reasons, failure_order] = record_iteration_failure( ...
                 end
             end
             if id_already_reported
-                scifor.Log.warn('iteration failed: %s — %s: %s', ...
-                    metadata_str, context, err.message);
+                scifor.Log.warn('iteration failed: %s — %s: %s [%s]', ...
+                    metadata_str, context, err.message, where);
             else
-                scifor.Log.warn(['iteration failed: %s — %s: %s ' ...
+                scifor.Log.warn(['iteration failed: %s — %s: %s [%s] ' ...
                     '(first %s; report follows)\n%s'], ...
-                    metadata_str, context, err.message, err.identifier, ...
+                    metadata_str, context, err.message, where, err.identifier, ...
                     getReport(err, 'extended', 'hyperlinks', 'off'));
             end
         end
     end
     scifor.Log.debug('[skip] %s: %s: %s', metadata_str, context, err.message);
+end
+
+
+function stop_err = stop_error_after(on_error, stop_err, err)
+%STOP_ERROR_AFTER  on_error='stop': the first genuine failure ends the loop.
+%   scifor:NoData (a combo with no data) never stops a run.
+    if isempty(stop_err) && strcmp(on_error, 'stop') ...
+            && ~strcmp(err.identifier, 'scifor:NoData')
+        stop_err = err;
+    end
+end
+
+
+function groups = failure_groups(failure_order, failure_reasons, failure_examples)
+%FAILURE_GROUPS  One group per reason, first-seen order, in the wire shape of
+%   Python's scifor.failures.FailureGroup.to_dict (combos capped at 20).
+    WIRE_COMBOS_MAX = 20;
+    groups = cell(1, numel(failure_order));
+    for k = 1:numel(failure_order)
+        reason = failure_order{k};
+        example = failure_examples(reason);
+        combos = failure_reasons(reason);
+        groups{k} = struct( ...
+            'reason', example.reason, ...
+            'fn_name', example.fn_name, ...
+            'exc_type', example.exc_type, ...
+            'message', example.message, ...
+            'no_data', example.no_data, ...
+            'count', numel(combos), ...
+            'combos', {combos(1:min(numel(combos), WIRE_COMBOS_MAX))}, ...
+            'user_frame', example.user_frame, ...
+            'example', example);
+    end
+end
+
+
+function text = describe_user_frame(frame)
+%DESCRIBE_USER_FRAME  'at FILE:LINE in FN' — the rendering Python's
+%   scifor.failures.format_user_frame gives the same frame.
+    if isempty(frame)
+        text = 'no user frame (failed inside SciStack — see report)';
+    else
+        text = sprintf('at %s:%d in %s', frame.file, frame.line, frame.function);
+    end
 end
 
 
