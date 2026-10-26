@@ -4,6 +4,11 @@ build:
   os: ubuntu-22.04
   tools:
     python: "3.11"
+  jobs:
+    # RTD clones shallowly without tags; docs/hooks/doc_version.py needs them
+    # for `git describe` (the header version label).
+    post_checkout:
+      - git fetch --unshallow --tags || git fetch --tags
 
 mkdocs:
   configuration: mkdocs.yml

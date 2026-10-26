@@ -24,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags, for the header version label (docs/hooks/doc_version.py)
 
       - uses: actions/setup-python@v5
         with:
@@ -53,6 +55,22 @@ jobs:
             echo "::error::Variant toggle links point at the domain root, not $base_path: $bad"
             exit 1
           fi
+
+      # Regression guard: every page carries the header version label
+      # (overrides/partials/source.html, from docs/hooks/doc_version.py) AND
+      # still carries the beta banner (overrides/main.html announce block).
+      - name: Check version label and beta banner
+        run: |
+          pages=$(find site -name index.html | wc -l)
+          labelled=$(grep -rl 'class="md-doc-version"' site --include=index.html | wc -l)
+          bannered=$(grep -rl 'SciStack is still in beta' site --include=index.html | wc -l)
+          label=$(grep -rh -A1 'class="md-doc-version"' site/index.html | tail -1 | xargs)
+          echo "Pages: $pages, with version label: $labelled ('$label'), with beta banner: $bannered"
+          if [ "$labelled" -ne "$pages" ] || [ "$bannered" -ne "$pages" ]; then
+            echo "::error::Version label or beta banner missing from some pages"
+            exit 1
+          fi
+          case "$label" in v[0-9]*) ;; *) echo "::error::Label '$label' is not tag-derived (tags not fetched?)"; exit 1;; esac
 
       # Publish: ask Read the Docs to rebuild `latest` from this commit, so the
       # site updates even when RTD's own GitHub webhook is missing or silent.

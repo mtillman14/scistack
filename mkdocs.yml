@@ -91,6 +91,10 @@ not_in_nav: |
 extra:
   scope: /
 
+# Sets extra.doc_version (the header version label) from git tags.
+hooks:
+  - docs/hooks/doc_version.py
+
 extra_css:
   - stylesheets/extra.css
 
@@ -201,7 +205,8 @@ plugins:
             # No API tab: the API reference is Code-only (see the toggle in
             # overrides/partials/alternate.html for how API pages link here).
 
-# Internal engineering notes: kept in the repo but excluded from the published
-# site (they were never in nav).
+# Internal engineering notes (never in nav) and the build hooks (docs/hooks/,
+# loaded by `hooks:` above): kept in the repo but excluded from the published site.
 exclude_docs: |
   claude/
+  hooks/

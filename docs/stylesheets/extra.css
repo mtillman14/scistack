@@ -172,3 +172,14 @@
 .md-typeset :target {
   --md-scroll-offset: calc(0rem - var(--beta-banner-height));
 }
+
+/* Docs version label under the repo name in the header
+   (overrides/partials/source.html; value from docs/hooks/doc_version.py). */
+.md-doc-version {
+  margin-left: 0.3rem;
+  padding: 0 0.3rem;
+  border-radius: 0.2rem;
+  background-color: var(--md-accent-fg-color--transparent);
+  font-size: 0.6rem;
+  opacity: 0.85;
+}

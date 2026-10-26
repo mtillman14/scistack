@@ -1,0 +1,23 @@
+{#-
+  Override of mkdocs-material's partials/source.html (the repo link at the
+  right of the header), copied from Material 9.7 with one addition: the docs
+  version label under the repo name. config.extra.doc_version is computed
+  from git by docs/hooks/doc_version.py (the git tag owns the version; never
+  hard-code it here). Material's JS appends the GitHub facts after it.
+  Styling lives in docs/stylesheets/extra.css (.md-doc-version). The beta
+  banner (overrides/main.html announce block) is separate and unaffected.
+-#}
+<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    {% set icon = config.theme.icon.repo or "fontawesome/brands/git-alt" %}
+    {% include ".icons/" ~ icon ~ ".svg" %}
+  </div>
+  <div class="md-source__repository">
+    {{ config.repo_name }}
+    {% if config.extra.doc_version %}
+      <span class="md-doc-version" title="{{ config.extra.doc_version.tooltip | e }}">
+        {{ config.extra.doc_version.label }}
+      </span>
+    {% endif %}
+  </div>
+</a>
