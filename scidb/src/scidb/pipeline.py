@@ -132,6 +132,10 @@ class StepSpec:
     outputs: list
     metadata_iterables: dict[str, Any] = field(default_factory=dict)
     options: dict[str, Any] = field(default_factory=dict)
+    # The caller's opaque label for this step, echoed in its run-report entry
+    # (the GUI stores the canvas node id, so a failure lands on its node).
+    # Never replayed into for_each, never identity.
+    tag: Any = None
 
     @property
     def name(self) -> str:
@@ -532,6 +536,7 @@ class PipelineBinding:
             outputs=list(spec.outputs),
             metadata_iterables=new_iterables,
             options=new_options,
+            tag=spec.tag,
         )
         new_spec.origin = spec  # Step-handle targeting follows rewrites
         self._rewritten[id(spec)] = new_spec
@@ -1258,6 +1263,10 @@ class Pipeline:
         )
         results = []
         report: list[dict] = []
+        # Published BEFORE the loop (and filled as steps finish) so a step that
+        # raises — on_error="stop" — still leaves the steps that ran, its own
+        # entry included, readable by the caller.
+        self.last_run_report = report
         for i in order:
             apply_finalized = (
                 finalized
@@ -1269,7 +1278,6 @@ class Pipeline:
                     pairs, i, skip_computed, apply_finalized, report=report
                 )
             )
-        self.last_run_report = report
         failed_total = sum(e["failed"] for e in report)
         no_data_total = sum(e.get("no_data", 0) for e in report)
         Log.info(
@@ -1304,6 +1312,7 @@ class Pipeline:
         if report is not None:
             entry = {
                 "step": spec.name,
+                "tag": spec.tag,
                 "label": self._step_label(owner, spec, self),
                 "pipeline": owner.name,
                 "completed": 0,

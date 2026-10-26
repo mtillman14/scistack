@@ -379,13 +379,17 @@ def _run_in_thread(
     opt_dry_run = opts.get("dry_run", False)
     opt_save = opts.get("save", True)
     opt_distribute = opts.get("distribute", False)
+    from scistack_gui.services.run_failures import RunFailures, on_error_from_config
+
     opt_as_table = opts.get("as_table", False)
+    opt_on_error = on_error_from_config(opts)
     logger.debug(
-        "[run_thread] Run options: dry_run=%s, save=%s, distribute=%s, as_table=%s (run_id=%s)",
+        "[run_thread] Run options: dry_run=%s, save=%s, distribute=%s, as_table=%s, on_error=%s (run_id=%s)",
         opt_dry_run,
         opt_save,
         opt_distribute,
         opt_as_table,
+        opt_on_error,
         run_id,
     )
 
@@ -459,6 +463,10 @@ def _run_in_thread(
     # NOT from "the for_each call returned". skip_computed skips are
     # removed before the loop and never inflate 'failed'.
     combo_totals = {"completed": 0, "failed": 0, "no_data": 0}
+    # Failure records of this run (scifor.failures via services.run_failures):
+    # the console text, run_done.failures, and from there the node badge,
+    # failures panel and Problems panel all read this one collector.
+    run_failures = RunFailures(run_id)
     # Build where= argument from where_filters.
     logger.info("[run_thread] Building where filters (run_id=%s)", run_id)
     where_arg = _build_where(where_filters)
@@ -611,6 +619,7 @@ def _run_in_thread(
             def _progress_fn(info: dict):
                 # The end-of-run summary carries this target's final counts.
                 if info.get("event") == "summary":
+                    target_summary["failures"] = info.get("failures") or []
                     combo_totals["completed"] += info.get("completed", 0)
                     no_data = info.get("no_data", 0)
                     combo_totals["failed"] += info.get(
@@ -637,7 +646,9 @@ def _run_in_thread(
                         "skipped": info["skipped"],
                         "no_data": info.get("no_data"),
                         "metadata": meta,
-                        "error": info.get("error"),
+                        # combo_skip: the small failure form (reason, no_data,
+                        # user_frame); tracebacks travel once, in run_done.
+                        "failure": info.get("failure"),
                     }
                 )
 
@@ -648,6 +659,7 @@ def _run_in_thread(
             )
             buf = StringIO()
             target_snapshot = dict(combo_totals)
+            target_summary: dict = {"failures": []}
             try:
                 # This run reads the intent store (rule 3): label it so the
                 # `_run` row says so, and a later script run of the same
@@ -665,6 +677,7 @@ def _run_in_thread(
                         as_table=opt_as_table,
                         where=where_arg,
                         skip_computed=False,
+                        on_error=opt_on_error,
                         glue=glue_arg,
                         parameter_names=parameter_names_arg,
                         step=step_arg,
@@ -721,8 +734,15 @@ def _run_in_thread(
                         run_id,
                     )
                     emit(
-                        f"⚠ {label}: {target_failed} combo(s) failed "
-                        f"({target_completed} completed) — see log above\n"
+                        run_failures.add_summary(
+                            target_summary["failures"],
+                            node_id=node_id,
+                            fn_name=function_name,
+                            target=label,
+                            completed=target_completed,
+                        )
+                        # The summary groups are the detail; never silent.
+                        or f"⚠ {label}: {target_failed} combo(s) failed\n"
                     )
                 else:
                     logger.info(
@@ -762,7 +782,21 @@ def _run_in_thread(
                     label,
                     run_id,
                 )
-                emit(f"Error: {exc}\n")
+                # A stopped run's summary was emitted before the raise.
+                summary_text = run_failures.add_summary(
+                    target_summary["failures"],
+                    node_id=node_id,
+                    fn_name=function_name,
+                    target=label,
+                    completed=combo_totals["completed"] - target_snapshot["completed"],
+                )
+                if summary_text:
+                    emit(summary_text)
+                emit(
+                    run_failures.add_exception(
+                        exc, node_id=node_id, fn_name=function_name, target=label
+                    )
+                )
                 success = False
     except KeyboardInterrupt:
         # Defence in depth: if KeyboardInterrupt slips past the per-target
@@ -832,6 +866,8 @@ def _run_in_thread(
                 "completed_combos": combo_totals["completed"],
                 "failed_combos": combo_totals["failed"],
                 "no_data_combos": combo_totals["no_data"],
+                "stopped": run_failures.stopped,
+                "failures": run_failures.to_wire(),
             }
         )
         logger.debug("[run_thread] Emitting dag_updated message (run_id=%s)", run_id)
@@ -1260,6 +1296,12 @@ def _run_pipeline_in_thread(
     run_started_at = time.time()
     buf = StringIO()
     report: list = []
+    # Filled by run_pipeline even when a step raises (on_error="stop").
+    report_sink: list = []
+    pending_exc_text = ""
+    from scistack_gui.services.run_failures import RunFailures
+
+    run_failures = RunFailures(run_id)
     try:
         with _RunLogRelay(), redirect_stdout(buf):
             result = run_pipeline(
@@ -1269,6 +1311,7 @@ def _run_pipeline_in_thread(
                 target=target,
                 finalized=finalized,
                 skip_computed=skip_computed,
+                report_sink=report_sink,
             )
         report = (result or {}).get("report") or []
         # Draft outputs of a show run exist ONLY in this return value (no
@@ -1293,7 +1336,16 @@ def _run_pipeline_in_thread(
         emit("⛔ Force-cancelled\n")
     except Exception as exc:
         logger.exception("[pipeline_run] failed (run_id=%s)", run_id)
-        emit(f"Error: {exc}\n")
+        report = report or report_sink
+        # The step that raised is the last report entry (its summary was
+        # emitted before the raise); attribute the exception to its node.
+        last = report[-1] if report else {}
+        pending_exc_text = run_failures.add_exception(
+            exc,
+            node_id=last.get("tag"),
+            fn_name=last.get("step", ""),
+            target=last.get("label", last.get("step", pipeline_id)),
+        )
         success = False
     finally:
         output = buf.getvalue()
@@ -1308,16 +1360,23 @@ def _run_pipeline_in_thread(
         for e in report:
             if e.get("failed"):
                 emit(
-                    f"⚠ {e.get('label', e.get('step'))}: "
-                    f"{e['failed']} combo(s) failed "
-                    f"({e.get('completed', 0)} completed)\n"
+                    run_failures.add_summary(
+                        e.get("failures") or [],
+                        node_id=e.get("tag"),
+                        fn_name=e.get("step", ""),
+                        target=e.get("label", e.get("step")),
+                        completed=e.get("completed", 0),
+                    )
+                    or f"⚠ {e.get('label', e.get('step'))}: {e['failed']} combo(s) failed\n"
                 )
+        if pending_exc_text:
+            emit(pending_exc_text)
         if failed_combos > 0:
             success = False
             emit(
                 f"✗ Pipeline run finished with {failed_combos} failed "
                 f"combo(s) across {sum(1 for e in report if e.get('failed'))}"
-                f" step(s) — see log above\n"
+                f" step(s)\n"
             )
         duration_ms = int((time.time() - run_started_at) * 1000)
         with _active_runs_lock:
@@ -1348,6 +1407,8 @@ def _run_pipeline_in_thread(
                 "completed_combos": completed_combos,
                 "failed_combos": failed_combos,
                 "no_data_combos": no_data_combos,
+                "stopped": run_failures.stopped,
+                "failures": run_failures.to_wire(),
             }
         )
         _notify_records_changed()

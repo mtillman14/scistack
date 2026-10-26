@@ -35,6 +35,7 @@ from scistack_gui.ids import (
     fn_nodes_prefix,
     handle_name,
 )
+from scistack_gui.services.run_failures import on_error_from_config
 
 logger = logging.getLogger(__name__)
 
@@ -2173,6 +2174,9 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         # step non-distributed regardless of what the node said. The
         # single-node Run path and the MATLAB path had both been fixed; this
         # one had not.
+        step_on_error = on_error_from_config(
+            (pipeline_store.get_node_config(db, node_id) or {}).get("runOptions")
+        )
         step_options = RunOptions.from_config(
             (pipeline_store.get_node_config(db, node_id) or {}).get("runOptions")
         )
@@ -2226,7 +2230,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
             # Glue rides on the step's INPUT BINDING (glue=), never as a step
             # of its own — a glue node feeding nothing is simply never
             # executed, and a glue node on the canvas adds no StepSpec here.
-            for_each(
+            step_handle = for_each(
                 fn,
                 inputs,
                 [output_cls],
@@ -2245,8 +2249,13 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 # The node's step name (Q6), so a compiled run and its code
                 # export are named like the node.
                 step=step_names.step_name_of(db, node_id),
+                # Not identity (scistack_gui.services.run_failures).
+                on_error=step_on_error,
                 **schema_iterables,
             )
+            # The run report echoes the tag, so a step's failures land on
+            # THIS node (two nodes may share a function and a step name).
+            step_handle.spec.tag = node_id
 
     for use in pipeline_store.get_pipeline_uses(db, pipeline_id):
         child = build_backend_pipeline(db, use["child_pipeline_id"], _built)
@@ -2368,9 +2377,13 @@ def run_pipeline(
     target: str = "",
     finalized: bool | None = None,
     skip_computed: bool = True,
+    report_sink: "list | None" = None,
 ) -> dict:
     """Compile + execute through the backend verbs (synchronous — the run
     API wraps this in its background-thread/relay machinery).
+
+    report_sink: filled with the per-step run report even when a step
+    raises (on_error="stop"), when this function returns nothing.
 
     mode: "all" -> run_all; "until" -> run_until(target);
     "endpoints" -> run_endpoints(finalized=...); "show" -> show(target)
@@ -2392,6 +2405,7 @@ def run_pipeline(
         )
     built: dict = {}
     rendered: list = []
+    pipe = None
     try:
         pipe = _as_placed(db, pipeline_id, build_backend_pipeline(db, pipeline_id, built), built)
         # Compiled from the canvas, so it read the intent store: label every
@@ -2417,6 +2431,8 @@ def run_pipeline(
                 raise ValueError(f"unknown run mode {mode!r}")
     finally:
         _discard_compiled(built)
+        if report_sink is not None and pipe is not None:
+            report_sink.extend(pipe.last_run_report)
     # for_each never raises on iteration failures (continue-and-report),
     # so the caller decides success from the per-step report. Functions
     # excluded from compilation because a required input is disconnected

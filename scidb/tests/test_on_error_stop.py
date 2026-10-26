@@ -85,7 +85,7 @@ def test_stop_halts_a_pipeline(db):
     _reset_pipeline_state()
     try:
         pipe = db.pipeline("stop_pipe")
-        for_each(
+        handle = for_each(
             third_fails,
             {"x": StopIn},
             [StopOut],
@@ -93,8 +93,17 @@ def test_stop_halts_a_pipeline(db):
             on_error="stop",
             db=db,
         )
+        handle.spec.tag = "node-7"
         with pytest.raises(ZeroDivisionError):
             pipe.run_all()
         assert _saved_subjects(db) == ["1", "2"]
+        # The report survives the raise: the stopping step, its node tag and
+        # its grouped failures (scifor wire shape).
+        (entry,) = pipe.last_run_report
+        assert entry["tag"] == "node-7" and entry["stopped"] is True
+        assert entry["completed"] == 2 and entry["failed"] == 1
+        (group,) = entry["failures"]
+        assert group["exc_type"] == "ZeroDivisionError"
+        assert group["user_frame"]["function"] == "third_fails"
     finally:
         _reset_pipeline_state()

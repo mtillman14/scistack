@@ -39,7 +39,9 @@ if TYPE_CHECKING:
     import pandas as pd
 
 FrameOrigin = Literal["user", "framework", "library"]
-FailureStage = Literal["prepare_inputs", "call"]
+# "run": an exception outside the per-combo loop (a save failure, a setup
+# error), recorded by a caller that catches what escaped for_each.
+FailureStage = Literal["prepare_inputs", "call", "run"]
 
 # Wire-size caps: a failure travels in progress events and run_done messages.
 MESSAGE_MAX_CHARS = 2000
