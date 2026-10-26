@@ -650,6 +650,9 @@ def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool, bool]":
       bool}`` — the same binding with a GUI column selection and/or
       AcrossVariants pooling on it.
 
+    (A third entry shape, ``{"colname": true}``, is not a variable at all —
+    see :func:`_is_colname_entry`; it names no types, so this returns empty.)
+
     Both :func:`_variable_input_items` (which renders expressions) and
     :func:`_variable_input_type_names` (which the unresolvable-classdef
     preflight needs) go through here, so the map stays SINGLE. A parallel
@@ -734,6 +737,44 @@ def _format_variable_input(
     return f"scifor.EachOf({items})"
 
 
+#: The MATLAB expression for a deferred ColName (the current for_columns
+#: column). ``+scidb/ColName.m`` zero-arg; the bridge ships it as
+#: ``kind='colname'``.
+MATLAB_COLNAME_EXPR = "scidb.ColName()"
+
+
+def _is_colname_entry(ref) -> bool:
+    """Is this ``variable_inputs`` entry ``{"colname": true}`` — a parameter
+    that receives the current column name (``execution_service.
+    variable_inputs_view`` renders a ``colname`` binding so)?
+
+    It rides in the SAME map as the variable bindings on purpose: every emit
+    site already reads that map, and a parallel ``colname_inputs`` argument
+    would have to be threaded through each of them (the trap
+    :func:`_variable_binding_parts` documents).
+    """
+    return isinstance(ref, dict) and bool(ref.get("colname"))
+
+
+def _overlay_colname_inputs(inputs: dict, variable_inputs: "dict | None") -> dict:
+    """Re-assert every ColName entry LAST, over whatever a history variant's
+    constants, a PathInput or a Parameter put under the same name — the
+    rule ``colname_inputs.apply_to_target`` applies to the Python run. Each
+    emit site calls this right before ordering by signature."""
+    for param, ref in (variable_inputs or {}).items():
+        if not _is_colname_entry(ref):
+            continue
+        previous = inputs.get(param)
+        if previous is not None and previous != MATLAB_COLNAME_EXPR:
+            logger.warning(
+                "generate_matlab_command: parameter %r: ColName replaces %s",
+                param,
+                previous,
+            )
+        inputs[param] = MATLAB_COLNAME_EXPR
+    return inputs
+
+
 def _variable_input_items(variable_inputs: "dict | None"):
     """``(param_name, matlab_expression)`` pairs for a ``variable_inputs`` map.
 
@@ -746,6 +787,14 @@ def _variable_input_items(variable_inputs: "dict | None"):
     one, which would be a failure at run time rather than here.)
     """
     for param, ref in (variable_inputs or {}).items():
+        if _is_colname_entry(ref):
+            logger.info(
+                "generate_matlab_command: parameter %r receives the current "
+                "column name (ColName)",
+                param,
+            )
+            yield param, MATLAB_COLNAME_EXPR
+            continue
         names, columns, iterate, pool_variants = _variable_binding_parts(ref)
         if not names:
             logger.warning(
@@ -1112,7 +1161,9 @@ def generate_matlab_command(
         if sweeps:
             for p, values in sweeps.items():
                 template_inputs[p] = _format_sweep(values, p)
-        template_inputs = _order_inputs_by_signature(function_name, template_inputs)
+        template_inputs = _order_inputs_by_signature(
+            function_name, _overlay_colname_inputs(template_inputs, variable_inputs)
+        )
         inputs_str = (
             _format_matlab_struct(template_inputs) if template_inputs else "struct()"
         )
@@ -1451,7 +1502,9 @@ def _for_each_call_lines(
         for k, val in constants.items():
             inputs_dict[k] = _format_matlab_value(val)
 
-        inputs_dict = _order_inputs_by_signature(function_name, inputs_dict)
+        inputs_dict = _order_inputs_by_signature(
+            function_name, _overlay_colname_inputs(inputs_dict, variable_inputs)
+        )
         inputs_str = _format_matlab_struct(inputs_dict)
         outputs_str = (
             _format_matlab_cell([f"{t}()" for t in output_types_list])

@@ -45,6 +45,7 @@ import logging
 from datetime import datetime
 
 from scidb.intent import (
+    ASPECT_COLNAME,
     ASPECT_COLUMNS,
     ASPECT_CONSTANTS,
     ASPECT_HIDDEN,
@@ -59,6 +60,7 @@ from scidb.intent import (
     SUBJECT_VARIABLE_TYPE,
     Statement,
     normalize,
+    normalize_colname_inputs,
 )
 
 from scistack_gui.ids import PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX, VAR_ID_PREFIX
@@ -69,6 +71,10 @@ logger = logging.getLogger(__name__)
 NODE_CONFIG_KEYS = {
     ASPECT_COLUMNS: "columnSelections",
     ASPECT_RUN_OPTIONS: "runOptions",
+    # The parameters that receive the current for_columns column name
+    # (deferred ColName()) — a list of names in the blob, one statement per
+    # name in the store.
+    ASPECT_COLNAME: "colNameInputs",
 }
 
 def _duck(db):
@@ -559,6 +565,45 @@ def set_column_selections(
     put_statements(db, statements)
 
 
+def set_colname_inputs(
+    db, node_id: str, names, *, scope: str | None = None
+) -> None:
+    """Replace a call site's ColName parameters — one statement per
+    parameter (value ``True``), the per-key shape ``set_column_selections``
+    uses, so one parameter can be overridden or dropped without the others.
+
+    *names* is anything :func:`scidb.intent.normalize_colname_inputs` takes
+    (the panel sends a list). ``scope`` defaults to :func:`scope_of_node`.
+    """
+    from scistack_gui.ids import strip_placement
+
+    bare = strip_placement(node_id)
+    scope = scope or scope_of_node(db, node_id)
+    clear_aspect(db, bare, ASPECT_COLNAME, scope)
+    params = normalize_colname_inputs(names)
+    put_statements(
+        db,
+        [
+            Statement(
+                subject_kind=SUBJECT_CALL_SITE,
+                subject_ref=bare,
+                aspect=ASPECT_COLNAME,
+                value=True,
+                key=param,
+                scope=scope,
+            )
+            for param in params
+        ],
+    )
+    if params:
+        logger.info(
+            "[intent_store] %s@%s: ColName parameter(s) stated: %s",
+            bare,
+            scope,
+            params,
+        )
+
+
 def set_run_options(
     db, node_id: str, options: dict | None, *, scope: str | None = None
 ) -> None:
@@ -633,6 +678,7 @@ SETTERS = {
     ASPECT_COLUMNS: set_column_selections,
     ASPECT_RUN_OPTIONS: set_run_options,
     ASPECT_SCHEMA_LOCATION: _set_schema_location_from_blob,
+    ASPECT_COLNAME: set_colname_inputs,
 }
 
 
@@ -651,6 +697,8 @@ def split_node_config(db, node_id: str, config: dict, *, scope: str | None = Non
         set_column_selections(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_COLUMNS]), scope=scope)
     if NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS] in rest:
         set_run_options(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS]), scope=scope)
+    if NODE_CONFIG_KEYS[ASPECT_COLNAME] in rest:
+        set_colname_inputs(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_COLNAME]), scope=scope)
     if any(k in rest for k in SCHEMA_LOCATION_KEYS):
         set_schema_location(
             db, node_id, {k: rest.pop(k) for k in SCHEMA_LOCATION_KEYS if k in rest}, scope=scope
@@ -690,6 +738,16 @@ def node_config_overlay(db, scope: str = GLOBAL_SCOPE) -> dict[str, dict]:
     ):
         if st.value:
             out.setdefault(st.subject_ref, {})[NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS]] = st.value
+    colnames: dict[str, dict[str, bool]] = {}
+    for st in _in_scope_order(
+        load_statements(db, aspect=ASPECT_COLNAME, subject_kind=SUBJECT_CALL_SITE, scopes=wanted)
+    ):
+        if st.key:
+            colnames.setdefault(st.subject_ref, {})[st.key] = bool(st.value)
+    for ref, by_param in colnames.items():
+        params = normalize_colname_inputs(by_param)
+        if params:
+            out.setdefault(ref, {})[NODE_CONFIG_KEYS[ASPECT_COLNAME]] = params
     for st in _in_scope_order(
         load_statements(
             db, aspect=ASPECT_SCHEMA_LOCATION, subject_kind=SUBJECT_CALL_SITE, scopes=wanted

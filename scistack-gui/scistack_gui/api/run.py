@@ -525,6 +525,8 @@ def _run_in_thread(
                 param: (
                     b["ref"]
                     if b["kind"] == "variable"
+                    else "ColName()"
+                    if b["kind"] == "colname"
                     else f"{b['kind']}:{b['ref']}"
                 )
                 for param, b in (v.get("bindings") or {}).items()

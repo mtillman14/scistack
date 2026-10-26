@@ -95,6 +95,11 @@ ASPECT_CONSTANTS = "constants"
 #: which rows a figure reads, keyed by the set's name. It has no FACT side (a
 #: pin is not something a run records), so it resolves with history absent.
 ASPECT_VARIANT_SELECTION = "variant_selection"
+#: A call-site parameter that receives the name of the column a
+#: ``for_columns`` iteration is on (deferred ``ColName()``), keyed by the
+#: parameter. Value ``True``; absent means "not ColName". A different concept
+#: from ``columns`` (which restricts a VARIABLE input), so a different aspect.
+ASPECT_COLNAME = "colname"
 ASPECTS = (
     ASPECT_COLUMNS,
     ASPECT_RUN_OPTIONS,
@@ -103,6 +108,7 @@ ASPECTS = (
     ASPECT_HIDDEN,
     ASPECT_CONSTANTS,
     ASPECT_VARIANT_SELECTION,
+    ASPECT_COLNAME,
 )
 
 #: Aspects whose value is a mapping KEYED BY PART (parameter, constant name,
@@ -116,6 +122,7 @@ PER_KEY_ASPECTS = (
     ASPECT_CONSTANTS,
     ASPECT_HIDDEN,
     ASPECT_VARIANT_SELECTION,
+    ASPECT_COLNAME,
 )
 
 #: Origins, and the surfaces each reads IN ORDER (rule 3).
@@ -444,6 +451,39 @@ def same_columns(a: Any, b: Any) -> bool:
     if na and nb and na["iterate"] and nb["iterate"]:
         return is_every_column(na) or is_every_column(nb)
     return False
+
+
+def normalize_colname_inputs(raw: Any) -> list[str]:
+    """The parameters stated to receive the current ``for_columns`` column
+    name (deferred ``ColName()``), as a sorted, de-duplicated list.
+
+    THE owner of this shape. Tolerates what crosses the JSON boundary:
+
+    * ``["col_name", ...]`` — the canonical list (the panel's spelling);
+    * ``{"col_name": true, ...}`` — the per-key statement view (falsy dropped);
+    * ``"col_name"`` — one bare name;
+    * ``None`` — none.
+
+    An empty list means "no ColName parameters". Per-parameter statements
+    carry the value ``True``; this normalizes the WHOLE set, which is the unit
+    the panel writes and every consumer reads.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        names: list = [raw]
+    elif isinstance(raw, Mapping):
+        names = [k for k, v in raw.items() if v]
+    elif isinstance(raw, (list, tuple, set, frozenset)):
+        names = list(raw)
+    else:
+        logger.warning(
+            "[intent] ignoring ColName inputs of unexpected type %s: %r",
+            type(raw).__name__,
+            raw,
+        )
+        return []
+    return sorted({str(n) for n in names if n})
 
 
 #: ``{aspect: normalizer}`` — a value entering resolution is normalized by

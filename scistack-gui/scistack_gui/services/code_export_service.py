@@ -163,6 +163,20 @@ def _column_selection_parts(value):
     return value.data, list(value.columns or []), bool(value.iterate)
 
 
+def _is_deferred_colname(value) -> bool:
+    """Is *value* a deferred ``ColName()`` (the current for_columns column)?
+
+    ``build_run_inputs`` renders a ``colname`` binding as exactly this. It has
+    no ``__repr__``, so without a branch the export would print an object
+    address. A STATIC ``ColName(df)`` never comes out of the GUI.
+    """
+    try:
+        from scifor import ColName
+    except ImportError:  # pragma: no cover - scifor is a hard dependency
+        return False
+    return isinstance(value, ColName) and value.is_deferred
+
+
 def _pooled_inner(value):
     """The spec a ``scidb.AcrossVariants`` wraps, or ``None`` for anything
     else — both renderers spell the wrapper around the inner literal."""
@@ -184,6 +198,8 @@ def _py_literal(value) -> str:
     without this the exported script renders an object address where a
     subscript belongs — a file that looks fine until it is run.
     """
+    if _is_deferred_colname(value):
+        return "ColName()"
     pooled = _pooled_inner(value)
     if pooled is not None:
         return f"AcrossVariants({_py_literal(pooled)})"
@@ -283,6 +299,7 @@ def _py_header(db) -> str:
         "",
         "from scidb import (",
         "    AcrossVariants,",
+        "    ColName,",
         "    EachOf,",
         "    Parameter,",
         "    PathInput,",
@@ -396,6 +413,8 @@ def _matlab_literal(value) -> str:
     ``api.matlab_command._format_variable_class`` exactly — two renderers, one
     syntax, and a test in each pins it.
     """
+    if _is_deferred_colname(value):
+        return "scidb.ColName()"
     pooled = _pooled_inner(value)
     if pooled is not None:
         return f"scidb.AcrossVariants({_matlab_literal(pooled)})"

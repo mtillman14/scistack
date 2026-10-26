@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 BINDING_VARIABLE = "variable"  # ref: [variable type names] (>1 ⇒ EachOf)
 BINDING_PATHINPUT = "pathinput"  # ref: declared name; [names] (>1 ⇒ EachOf)
 BINDING_PARAMETER = "parameter"  # ref: declared Parameter name
+# ref: None. The parameter receives the name of the column the for_columns
+# iteration is on (deferred ``ColName()``). Stated on the node, never drawn as
+# an edge — see ``domain/colname_inputs.py``.
+BINDING_COLNAME = "colname"
 
 # Manual-node type for a glue node. A glue node is a *variant of a function
 # node*, not a new kind of thing: same ``in__{param}`` / ``out__`` handles, so
@@ -107,6 +111,10 @@ def path_input_arm_bindings(path_inputs: dict) -> list[dict[str, str]]:
 
 def parameter_binding(declared_name: str) -> dict:
     return {"kind": BINDING_PARAMETER, "ref": declared_name}
+
+
+def colname_binding() -> dict:
+    return {"kind": BINDING_COLNAME, "ref": None}
 
 
 def bindings_of_kind(bindings: dict[str, dict], kind: str) -> dict:

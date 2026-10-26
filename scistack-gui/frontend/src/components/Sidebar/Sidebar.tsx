@@ -43,6 +43,7 @@ interface FnNodeData {
   // only a VARIABLE-bound parameter can have columns picked for it.
   input_params?: Record<string, string>
   columnSelections?: ColumnSelectionMap
+  colNameInputs?: string[]
   unusedIntent?: UnusedIntentMap
 }
 
@@ -195,6 +196,7 @@ export default function Sidebar() {
             runOptions={(selectedNode.data as FnNodeData).runOptions ?? { dry_run: false, save: true, distribute: false, as_table: false }}
             inputParams={(selectedNode.data as FnNodeData).input_params ?? {}}
             columnSelections={(selectedNode.data as FnNodeData).columnSelections ?? {}}
+            colNameInputs={(selectedNode.data as FnNodeData).colNameInputs ?? []}
             unusedIntent={(selectedNode.data as FnNodeData).unusedIntent}
           />
         )}

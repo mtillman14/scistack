@@ -503,6 +503,51 @@ def _attach_column_selections(
     return targets
 
 
+def _attach_colname_inputs(
+    db, node_id: str, targets: list[dict], function_name: str = ""
+) -> list[dict]:
+    """Bind the node's stated ColName parameters on every target.
+
+    Runs AFTER :func:`_attach_column_selections`, because the iterate input
+    a ColName needs may come from the node's own column selection. Reads the
+    ``colNameInputs`` the node's canvas resolves (``get_node_config``: the
+    node's scope over ``global``) — node-scoped, so two call sites of one
+    function name keep their own. History never records ColName (scidb keeps
+    it out of version keys), so this statement is the only source and is
+    re-applied on every run. Rules: ``domain/colname_inputs.apply_to_target``.
+    """
+    if not targets:
+        return targets
+    from scistack_gui import pipeline_store
+    from scistack_gui.domain import colname_inputs as _cn
+    from scistack_gui.domain.edge_resolver import BINDING_COLNAME
+
+    params = _cn.normalize(
+        (pipeline_store.get_node_config(db, node_id) or {}).get("colNameInputs")
+    )
+    if not params:
+        return targets
+    context = f"'{function_name or '?'}' (node {node_id})"
+    out = [_cn.apply_to_target(t, params, context=context) for t in targets]
+    # One line per derivation: its ABSENCE is the diagnostic when the panel
+    # shows ColName and the function receives nothing for that argument.
+    logger.info(
+        "[execution] %s: ColName stated for %s; bound on %d of %d target(s)",
+        context,
+        params,
+        sum(
+            1
+            for t in out
+            if any(
+                (t.get("bindings") or {}).get(p, {}).get("kind") == BINDING_COLNAME
+                for p in params
+            )
+        ),
+        len(out),
+    )
+    return out
+
+
 def _hidden_constant_values(db, pipeline_id: "str | None" = None) -> dict[str, set[str]]:
     """{const_name: {hidden values}} from the ``ConstantNode.tsx`` checkbox
     state — grouped once per derivation call so ``filter_hidden_
@@ -818,10 +863,15 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         for t in matching:
             if resolved.glue_chains and not t.get("glue_chains"):
                 t["glue_chains"] = dict(resolved.glue_chains)
-        return _attach_column_selections(
+        return _attach_colname_inputs(
             db,
-            {node_id},
-            filter_hidden_constant_value_targets(matching, hidden_values),
+            node_id,
+            _attach_column_selections(
+                db,
+                {node_id},
+                filter_hidden_constant_value_targets(matching, hidden_values),
+                function_name,
+            ),
             function_name,
         )
 
@@ -846,10 +896,15 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         ).across_variants,
         f"node {node_id} ('{function_name}')",
     )
-    return _attach_column_selections(
+    return _attach_colname_inputs(
         db,
-        {node_id},
-        filter_hidden_constant_value_targets(inferred, hidden_values),
+        node_id,
+        _attach_column_selections(
+            db,
+            {node_id},
+            filter_hidden_constant_value_targets(inferred, hidden_values),
+            function_name,
+        ),
         function_name,
     )
 
@@ -1422,11 +1477,12 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     Without filtering here, unchecking one value of a multi-value Parameter
     looked right in the UI and still ran.
     """
-    from scidb import EachOf
+    from scidb import ColName, EachOf
     from scistack_gui import registry
     from scistack_gui.api.pipeline import _fn_params_from_registry
     from scistack_gui.domain import column_selection as _column_selection
     from scistack_gui.domain.edge_resolver import (
+        BINDING_COLNAME,
         BINDING_PARAMETER,
         BINDING_PATHINPUT,
         BINDING_VARIABLE,
@@ -1546,6 +1602,19 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
                 p, ref, function_name, hidden_values
             )
 
+        elif kind == BINDING_COLNAME:
+            # Deferred: scifor substitutes the current for_columns column on
+            # each per-column call. `_attach_colname_inputs` already removed
+            # any recorded constant for this argument, and refused to bind it
+            # without an iterate input.
+            inputs[param] = ColName()
+            logger.info(
+                "[execution] '%s': input '%s' receives the current column name "
+                "(ColName)",
+                function_name,
+                param,
+            )
+
         else:
             logger.warning(
                 "[execution] '%s': parameter '%s' has unknown binding kind %r "
@@ -1656,13 +1725,20 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
     Targets of one call site agree on their bindings; if two disagree (a
     name-scoped derivation over two call sites of one name) the first wins
     and the loser is WARNed, matching ``column_selections_for_nodes``.
+
+    A ``colname`` binding renders as ``{"colname": True}`` in the same map
+    (``api.matlab_command._is_colname_entry``), so every MATLAB emit site
+    that reads variable inputs emits ``scidb.ColName()`` with no new argument.
     """
     from scistack_gui.domain import column_selection as _cs
-    from scistack_gui.domain.edge_resolver import BINDING_VARIABLE
+    from scistack_gui.domain.edge_resolver import BINDING_COLNAME, BINDING_VARIABLE
 
     out: dict = {}
     for t in targets or []:
         for param, binding in (t.get("bindings") or {}).items():
+            if binding.get("kind") == BINDING_COLNAME:
+                out[param] = {"colname": True}
+                continue
             if binding.get("kind") != BINDING_VARIABLE:
                 continue
             ref = binding.get("ref")

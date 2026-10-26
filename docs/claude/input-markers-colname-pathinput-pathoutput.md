@@ -36,6 +36,10 @@ anymore (removed during the scifor/scidb modifier-class unification, see
 
 It is a *resolution marker*, not a real constant — see "Version keys" below.
 
+From the GUI, the deferred form is the **ColName** choice on a function node's
+Inputs section (a `colname` binding) — see `docs/claude/column-selection.md`
+§ColName from the GUI.
+
 ## PathInput — locate an existing input file
 
 Defined in `scifor/src/scifor/pathinput.py`. Substitutes `{key}` from combo

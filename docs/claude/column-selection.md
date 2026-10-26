@@ -173,6 +173,57 @@ tables is the **absence** of this INFO line in `scidb.log`:
 [execution] 'summarise': 'table_in' restricted to "filename" (['filename']) on 1 target(s)
 ```
 
+### ColName from the GUI
+
+With an input set to **Run once per column**, every other `n/a` row on the
+Inputs section becomes a dropdown `n/a | ColName`. `ColName` makes that
+argument receive the current column's name on each per-column call, the GUI
+spelling of `inputs={"df": MyVar.for_columns(), "col": ColName()}`.
+
+**A separate concept, so a separate owner.** A column selection restricts a
+VARIABLE input; ColName is a different *source* for an argument. It is the
+`colname` intent aspect (`scidb.intent.ASPECT_COLNAME`, shape owned by
+`normalize_colname_inputs`), one statement per parameter on the call site,
+blob key `colNameInputs: [param, ...]`:
+
+```
+Inputs dropdown ──put_node_config──▶ intent_store.set_colname_inputs  (colname aspect)
+                                            │
+          execution_service._attach_colname_inputs   (after _attach_column_selections,
+                                            │          both derivation returns)
+              domain/colname_inputs.apply_to_target
+                                            │
+                     target["bindings"][param] = {"kind": "colname", "ref": None}
+               ┌────────────────────────────┼─────────────────────────────┐
+               ▼                            ▼                             ▼
+     build_run_inputs → ColName()   variable_inputs_view →        code_export _py_literal /
+                                    {"colname": true} →           _matlab_literal
+                                    scidb.ColName() (both MATLAB
+                                    emit sites, via the ONE map)
+```
+
+Rules (`apply_to_target`, each with a WARN, never a raise):
+
+* ColName **replaces** a PathInput / Parameter binding or a recorded constant
+  on that argument (all show `n/a` on the panel).
+* A **variable**-bound argument keeps its variable (a stale statement).
+* **No iterate input** on the target → every ColName is dropped, so a stale
+  statement never hits scifor's "deferred ColName requires an iterate input".
+  The panel also clears `colNameInputs` when the last "Run once per column"
+  is unticked (`frontend/.../Sidebar/colNameInputs.ts`).
+
+Identity: scidb keeps ColName out of version keys, and `compute_call_id` reads
+only variable/PathInput bindings, so stating ColName never moves a node id
+(`tests/test_colname_inputs.py::TestDerivation::test_the_call_id_does_not_change`).
+History does not record ColName, so the statement is re-applied on every GUI
+run and there is no "not reflected" note for it. `port_visibility` counts a
+ColName argument as fed, so an optional one stays drawn.
+
+Diagnostic when the panel shows ColName and the function gets nothing: the
+absence of `[execution] '<fn>' (node …): ColName stated for [...]` in
+`scidb.log` (the statement never matched the node), or a `[colname]` WARN
+saying why it was dropped.
+
 ### The call_id asymmetry (non-obvious, load-bearing)
 
 scidb's **forward** `to_call_id` *does* include `ColumnSelection.to_key()`
@@ -224,6 +275,8 @@ column-selected node. `tests/test_column_selection_binding.py` pins both.
 | `scistack-gui/scistack_gui/services/execution_service.py` | GUI: `_attach_column_selections`, `build_run_inputs` |
 | `scistack-gui/scistack_gui/services/variable_service.py` | GUI: `input_columns` — the live column list the picker shows |
 | `scistack-gui/frontend/src/components/Sidebar/FunctionSettingsPanel.tsx` | GUI: the Inputs section |
+| `scistack-gui/scistack_gui/domain/colname_inputs.py` | GUI: ColName statement → `colname` binding |
+| `scistack-gui/frontend/src/components/Sidebar/colNameInputs.ts` | GUI: dropdown rules (offered / cleared) |
 
 ## See Also
 

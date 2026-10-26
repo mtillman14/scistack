@@ -63,6 +63,10 @@ interface FunctionNodeData {
   // Display only here: editing lives in FunctionSettingsPanel's Inputs
   // section, which is also the only writer of the stored node config.
   columnSelections?: Record<string, { columns: string[]; iterate: boolean }>
+  // Parameters that receive the current for_columns column name (deferred
+  // ColName()). Display only here, like columnSelections; written by the
+  // Inputs section's n/a | ColName dropdown.
+  colNameInputs?: string[]
   // Per-parameter "stated here, not used by the last run" — see
   // FunctionSettingsPanel.UnusedIntent and docs/claude/intent-and-fact.md §7.
   unusedIntent?: Record<string, { reason: string; origin: string | null }>
@@ -368,8 +372,13 @@ function PipelineFunctionNode({ id, data }: Props) {
   // whether the node had run with the Parameter yet, and an edge drawn onto
   // the one survived deleting the other.
   const columnSelections = data.columnSelections ?? {}
+  const colNameInputs = new Set(data.colNameInputs ?? [])
+  // What a port carries besides "the whole variable": its column pick, or
+  // `ColName` for a parameter fed the current column's name.
+  const describePort = (param: string): string | null =>
+    colNameInputs.has(param) ? 'ColName' : describeColumns(columnSelections[param])
   const leftHandles = inputPorts(data).map(({ name: param, type }) => {
-    const cols = describeColumns(columnSelections[param])
+    const cols = describePort(param)
     const base = type ? `${param}: ${type}` : param
     return {
       id: `in__${param}`,
@@ -383,7 +392,7 @@ function PipelineFunctionNode({ id, data }: Props) {
   // is the default and saying so on every node would bury the ones that are
   // restricted.
   const columnChips = Object.entries(inputParams)
-    .map(([param]) => [param, describeColumns(columnSelections[param])] as const)
+    .map(([param]) => [param, describePort(param)] as const)
     .filter(([, text]) => text !== null) as [string, string][]
 
   // React Flow caches each handle's measured bounds at mount. A node

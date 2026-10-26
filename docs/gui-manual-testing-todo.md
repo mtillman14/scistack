@@ -11,6 +11,43 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzk. ColName on a function's input — added 2026-10-26
+
+What changed (`.claude/plan-colname-input-gui.md`, `docs/claude/column-selection.md`
+§ColName from the GUI): with an input set to **Run once per column**, every
+other `n/a` row on the node's **Inputs** section is a dropdown **n/a / ColName**.
+**ColName** makes that argument receive the name of the column each per-column
+call is on, as `ColName()` does in code. Both frontend bundles are rebuilt;
+reload the VS Code window and restart the backend.
+
+**Backend**
+1. After choosing ColName (frontend step 2), `scidb.log` has
+   `[intent_store] fn__…@main: ColName parameter(s) stated: ['<arg>']`.
+2. On Run: `[execution] '<fn>' (node …): ColName stated for ['<arg>']; bound on N of N target(s)`
+   and `[execution] '<fn>': input '<arg>' receives the current column name (ColName)`.
+   The `[run_thread] Target …` line shows `'<arg>': 'ColName()'`.
+3. Untick Run once per column but leave ColName in place (only possible from
+   an older bundle): the run logs a WARN `no input runs once per column — ignored`
+   and still runs.
+
+**Frontend** (a function with a table input and a second argument that takes a string)
+1. Inputs: open the table input's column picker, tick some columns and
+   **Run once per column**. Every row that showed `n/a` is now a dropdown
+   reading `n/a`.
+2. Pick **ColName** on one of them. The dropdown turns blue; the node shows a
+   `⟨ColName⟩` chip for that argument, and hovering its port shows `⟨ColName⟩`.
+3. Click away and back (or trigger a refetch): the choice stays.
+4. Run. The output table has one column per source column, and the values
+   show the function received each column's name (e.g. return `len(label)`).
+5. Untick **Run once per column**: the dropdowns go back to plain `n/a` and the
+   chip disappears (the choice is cleared in the same save).
+6. An argument with a default (behind **＋ argument**): reveal it, set it to
+   ColName — its port stays drawn after a refetch.
+7. **Export code**: the step has `"<arg>": ColName()` (Python) /
+   `'<arg>', scidb.ColName()` (MATLAB). **Generate MATLAB command** shows the same.
+
+---
+
 ## 0zzzzzzj. Horizontal bar plot kind — added 2026-10-26
 
 What changed (`.claude/plan-horizontal-bar.md`, `docs/claude/horizontal-bar.md`):

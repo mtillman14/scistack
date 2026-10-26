@@ -25,6 +25,7 @@ import {
   describeSelection,
   isInert,
 } from '../PlotStudio/locationSelection'
+import { colNamesAfterSelectionChange, hasIterateInput, withColName } from './colNameInputs'
 
 /** `get_schema_level`: the level a Run of this node would iterate, and why. */
 interface ResolvedSchemaLevel {
@@ -140,6 +141,9 @@ interface Props {
   runOptions: RunOptions
   inputParams: Record<string, string>
   columnSelections: ColumnSelectionMap
+  // Parameters that receive the current for_columns column name (deferred
+  // ColName()) — the `colname` intent aspect, blob key `colNameInputs`.
+  colNameInputs: string[]
   unusedIntent?: UnusedIntentMap
 }
 
@@ -218,6 +222,10 @@ interface ColumnSelectRowProps {
   columns: VariableColumns | undefined
   selection: ColumnSelection | undefined
   onChange: (param: string, next: ColumnSelection | null) => void
+  // ColName offered on this (unbound) row: some other input iterates.
+  colNameAvailable: boolean
+  isColName: boolean
+  onColNameChange: (param: string, on: boolean) => void
 }
 
 /**
@@ -230,7 +238,7 @@ interface ColumnSelectRowProps {
  * the note saying why, which is why an "empty" picker still shows one row
  * instead of looking broken.
  */
-function ColumnSelectRow({ param, variableType, columns, selection, onChange }: ColumnSelectRowProps) {
+function ColumnSelectRow({ param, variableType, columns, selection, onChange, colNameAvailable, isColName, onColNameChange }: ColumnSelectRowProps) {
   const [open, setOpen] = useState(false)
   const available = columns?.data_columns ?? []
   const loaded = columns !== undefined
@@ -264,6 +272,28 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange }: 
           {param}
         </span>
         <span style={styles.inputTypeName}>{variableType || '—'}</span>
+        {unbound && (colNameAvailable || isColName) ? (
+          // No variable feeds this row, and another input runs once per
+          // column: it may instead receive that column's NAME, as
+          // `ColName()` does in code. Still shown when the iterate input has
+          // gone (isColName without colNameAvailable) so a stale choice can
+          // be set back — the backend ignores it with a WARN meanwhile.
+          <select
+            style={{ ...styles.columnPickBtn, ...(isColName ? styles.colNameSelected : {}) }}
+            value={isColName ? 'colname' : 'na'}
+            onChange={e => onColNameChange(param, e.target.value === 'colname')}
+            title={
+              colNameAvailable
+                ? 'ColName: on each per-column call this parameter receives the '
+                  + 'name of the column being processed, as a string.'
+                : 'No input runs once per column any more, so ColName has '
+                  + 'nothing to resolve to and is ignored. Set this back to n/a.'
+            }
+          >
+            <option value="na">n/a</option>
+            <option value="colname">ColName</option>
+          </select>
+        ) : (
         <button
           type="button"
           style={{ ...styles.columnPickBtn, ...(unbound ? styles.columnPickBtnInert : {}) }}
@@ -283,6 +313,7 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange }: 
           {unbound ? 'n/a' : describeColumnSelection(selection)}
           {unbound ? '' : ` ${open ? '▴' : '▾'}`}
         </button>
+        )}
       </div>
 
       {open && !unbound && (
@@ -393,7 +424,7 @@ const unusedIntentBadgeStyle: React.CSSProperties = {
   marginRight: 4,
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, unusedIntent }: Props) {
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, colNameInputs, unusedIntent }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
@@ -518,6 +549,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
         config.whereFilters = d.whereFilters ?? []
         if (d.runOptions) config.runOptions = d.runOptions
         if (d.columnSelections) config.columnSelections = d.columnSelections
+        if (d.colNameInputs) config.colNameInputs = d.colNameInputs
         callBackend('put_node_config', { node_id: id, config })
           .then(() => clearNodeDirty(id))
           .catch(err => console.error('[FunctionSettings] save error:', err))
@@ -579,8 +611,24 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
     const updated: ColumnSelectionMap = { ...columnSelections }
     if (next === null) delete updated[param]
     else updated[param] = next
+    // Unticking the last "Run once per column" leaves every ColName
+    // parameter with nothing to resolve against: clear them in the SAME
+    // save, so no statement survives that the next run would only ignore.
+    const colNames = colNamesAfterSelectionChange(colNameInputs, updated)
+    if (colNames !== null) {
+      console.info('[FunctionSettings] no input iterates any more; clearing ColName on', colNameInputs)
+      updateNodeData({ columnSelections: updated, colNameInputs: colNames })
+      return
+    }
     updateNodeData({ columnSelections: updated })
-  }, [columnSelections, updateNodeData])
+  }, [columnSelections, colNameInputs, updateNodeData])
+
+  // Set (or clear) one parameter's ColName choice. Same save route as the
+  // column selections; the backend stores one statement per name.
+  const setColName = useCallback((param: string, on: boolean) => {
+    updateNodeData({ colNameInputs: withColName(colNameInputs, param, on) })
+  }, [colNameInputs, updateNodeData])
+  const colNameAvailable = hasIterateInput(columnSelections)
 
   // Toggle a run option.
   const toggleRunOption = useCallback((opt: keyof RunOptions) => {
@@ -718,6 +766,9 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
                   columns={type ? columnsByType[type] : undefined}
                   selection={columnSelections[param]}
                   onChange={setColumnSelection}
+                  colNameAvailable={colNameAvailable}
+                  isColName={colNameInputs.includes(param)}
+                  onColNameChange={setColName}
                 />
                 {unusedIntent?.[param] && (
                   <UnusedIntentNote param={param} note={unusedIntent[param]} />
@@ -1186,6 +1237,11 @@ const styles: Record<string, React.CSSProperties> = {
     opacity: 0.45,
     cursor: 'default',
     color: '#777',
+  },
+  // A row set to ColName: the same blue the canvas uses for an input's type.
+  colNameSelected: {
+    color: '#6bb5f0',
+    borderColor: '#6bb5f0',
   },
   columnPanel: {
     margin: '4px 0 0 8px',

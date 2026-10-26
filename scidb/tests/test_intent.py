@@ -16,6 +16,7 @@ import json
 import pytest
 
 from scidb.intent import (
+    ASPECT_COLNAME,
     ASPECT_COLUMNS,
     ASPECT_RUN_OPTIONS,
     ASPECT_WIRING,
@@ -32,6 +33,7 @@ from scidb.intent import (
     describe_columns,
     describe_plan,
     is_every_column,
+    normalize_colname_inputs,
     normalize_columns,
     parse_selector,
     resolve,
@@ -380,3 +382,41 @@ def test_a_locked_or_broken_store_raises_instead_of_reading_empty():
     other_catalog = duckdb.CatalogException("Catalog Error: Scalar Function foo not found")
     with pytest.raises(duckdb.CatalogException):
         fetch_intent_rows(_Duck(other_catalog), "SELECT foo()")
+
+
+# ---------------------------------------------------------------------------
+# `colname`: parameters that receive the current for_columns column name
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, []),
+        ([], []),
+        ("col_name", ["col_name"]),
+        (["b", "a", "b", ""], ["a", "b"]),
+        ({"label": True, "other": False}, ["label"]),
+        (("x",), ["x"]),
+    ],
+)
+def test_normalize_colname_inputs_tolerates_every_shape(raw, expected):
+    assert normalize_colname_inputs(raw) == expected
+
+
+def test_colname_inputs_of_an_unexpected_type_are_ignored_not_raised(caplog):
+    assert normalize_colname_inputs(42) == []
+    assert "unexpected type" in caplog.text
+
+
+def test_colname_is_a_per_parameter_aspect():
+    """A statement per parameter, like `columns` — so it needs a key."""
+    st = Statement(
+        subject_kind=SUBJECT_CALL_SITE,
+        subject_ref=CALL[1],
+        aspect=ASPECT_COLNAME,
+        value=True,
+        key="col_name",
+    )
+    assert st.aspect == "colname"
+    assert st.key == "col_name"
