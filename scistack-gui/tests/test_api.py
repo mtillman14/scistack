@@ -1532,6 +1532,57 @@ class TestRunStatePropagation:
         assert var_node["data"].get("run_state") == "red"
 
 
+def reload_raw():
+    return np.zeros(10)
+
+
+class TestNeverRunProducerColoursDownstream:
+    """2026-10-26: a drawn edge from a red never-run function into a green
+    variable left the variable green (``LoadedData``, 34 records). Never-run
+    nodes are coloured after the cascade, so their red reached nothing; now
+    run_state.cascade_unrun_producers carries it downstream."""
+
+    NODE = "manual__reload_raw"
+
+    def _place_and_wire(self, client):
+        _registry._functions["reload_raw"] = reload_raw
+        client.put(
+            f"/api/layout/{self.NODE}",
+            json={"x": 0.0, "y": 0.0, "node_type": "functionNode", "label": "reload_raw"},
+        )
+        r = client.put(
+            "/api/edges/manual__reload_out",
+            json={
+                "source": self.NODE,
+                "target": "var__RawSignal",
+                "source_handle": "out__0",
+                "target_handle": "in",
+            },
+        )
+        assert r.status_code == 200, r.text
+
+    def _states(self, client) -> dict:
+        nodes = client.get("/api/pipeline").json()["nodes"]
+        return {n["id"]: n["data"].get("run_state") for n in nodes}
+
+    def test_control_everything_green_before_the_edge(self, client, bp_node_id):
+        states = self._states(client)
+        assert states["var__RawSignal"] == "green"
+        assert states[bp_node_id] == "green"
+        assert states["var__FilteredSignal"] == "green"
+
+    def test_drawn_output_reddens_variable_and_downstream(self, client, bp_node_id):
+        try:
+            self._place_and_wire(client)
+            states = self._states(client)
+            assert states[self.NODE] == "red"
+            assert states["var__RawSignal"] == "red"
+            assert states[bp_node_id] == "red"
+            assert states["var__FilteredSignal"] == "red"
+        finally:
+            _registry._functions.pop("reload_raw", None)
+
+
 # ---------------------------------------------------------------------------
 # Pending constant lifecycle: green → staged value → pending → run → green
 # ---------------------------------------------------------------------------

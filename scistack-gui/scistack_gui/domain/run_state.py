@@ -229,3 +229,76 @@ def propagate_run_states(
     )
 
     return result
+
+
+def cascade_unrun_producers(
+    node_states: dict[str, str],
+    fn_input_params: dict[FnKey, dict],
+    fn_outputs: dict[FnKey, set],
+    unrun: dict[str, tuple[str, str, dict, set]],
+) -> dict[str, str]:
+    """Carry the colour of never-run function nodes downstream.
+
+    A never-run (manual) node's colour is decided after the grouped cascade
+    (``api/pipeline._build_graph``: "which history has never run" -> red), so
+    until 2026-10-26 its red reached no variable: a drawn edge from a red
+    ``parse_loaded_data_per_subject`` into ``LoadedData`` (34 records) left
+    the variable, and everything reading it, green.
+
+    Re-runs :func:`propagate_run_states` on the grouped graph with the
+    never-run nodes added as producers. Each grouped node's own state is its
+    EFFECTIVE state from ``node_states``: the cascade takes the worst of its
+    inputs, so this is idempotent and can only lower a state, never raise it.
+
+    Args:
+        node_states: grouped ``var__``/``fn__`` states (the grouped cascade's
+            output).
+        fn_input_params / fn_outputs: the grouped wiring with drawn edges
+            folded in (``graph_builder.input_params_with_manual_edges`` /
+            ``outputs_with_manual_edges``).
+        unrun: ``{node_id: (fn_label, own_state, input_params, outputs)}``.
+
+    Returns:
+        ``{node_id: state}`` for every node whose state got WORSE, plus each
+        unrun node whose inputs lowered its own state. Unchanged nodes are
+        left out.
+    """
+    if not unrun:
+        return {}
+    own: dict[FnKey, str] = {
+        fkey: node_states.get(fn_node_id(*fkey), "green") for fkey in fn_input_params
+    }
+    inputs = dict(fn_input_params)
+    outputs = {k: set(v) for k, v in fn_outputs.items()}
+    unrun_ids: dict[str, str] = {}
+    for node_id, (label, state, params, outs) in unrun.items():
+        fkey = (label, node_id)
+        own[fkey] = state
+        inputs[fkey] = params
+        outputs[fkey] = set(outs)
+        unrun_ids[fn_node_id(*fkey)] = node_id
+    logger.info(
+        "[run_state] cascading %d never-run producer(s): %s",
+        len(unrun),
+        {nid: (s, sorted(o)) for nid, (_, s, _, o) in unrun.items()},
+    )
+
+    result = propagate_run_states(own, inputs, outputs)
+
+    changed: dict[str, str] = {}
+    for rid, state in result.items():
+        if rid in unrun_ids:
+            node_id = unrun_ids[rid]
+            before = unrun[node_id][1]
+        else:
+            node_id = rid
+            before = node_states.get(rid, "green")
+        if _STATE_ORDER[state] < _STATE_ORDER.get(before, 2):
+            changed[node_id] = state
+    if changed:
+        logger.info(
+            "[run_state] never-run producer(s) lowered %d node(s): %s",
+            len(changed),
+            changed,
+        )
+    return changed

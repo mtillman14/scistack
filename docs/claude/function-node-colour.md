@@ -52,6 +52,20 @@ node's own state is its WORST member (including synthesized pending rows),
 and the cascade runs again on the grouped wiring with the same manual-edge
 overlay.
 
+Finally, never-run (manual) nodes are coloured, AFTER both cascades (the
+manual-node branch above). Those with no owner wiring are red, and
+`run_state.cascade_unrun_producers` re-runs `propagate_run_states` on the
+grouped graph with them added as producers of their drawn outputs. Grouped
+nodes enter with their EFFECTIVE state, so the pass can only lower a state.
+
+## Colour flows downstream only
+
+A function never colours its INPUTS. Drawing `LoadedData -> stale_fn`
+reddens `stale_fn` and what it writes; `LoadedData` stays green, its records
+are still current. Drawing an edge does not run a dedicated check either:
+`put_edge` triggers a full graph rebuild, which re-runs
+`check_multiple_nodes_state` (the function-hash comparison) like any build.
+
 ## The symmetry, and why each half exists
 
 | Edge the user changed | Without the rule | Owner |
@@ -60,6 +74,7 @@ overlay.
 | hid a required input edge | node stayed green with no input | `wiring_disconnected_fkeys` |
 | drew an output edge to a never-written variable | node kept the colour of the output it used to write (2026-10-17) | `unproduced_output_fkeys` |
 | hid a function node | its producer state still coloured its outputs | `hidden_fn_fkeys` |
+| drew an output edge from a NEVER-RUN node into an existing variable | the variable (and everything reading it) kept its history colour (2026-10-26) | `run_state.cascade_unrun_producers` |
 
 `unproduced_output_fkeys` works per NODE: the drawn output counts as produced
 when ANY call site grouped into the node recorded it, because a run of the
@@ -92,4 +107,6 @@ the node (the placement-id lookup trap).
   output override fired.
 - `[pipeline] N wiring(s) disconnected: ...` — the input override fired.
 - `run-state propagation follows N manual edge binding(s)` — the drawn-input overlay.
+- `cascading N never-run producer(s)` and `<node>: green -> red — downstream of a
+  never-run node` — the never-run producer pass fired.
 - `propagate_run_states complete: N total nodes (g green, p pending, r red)` — the cascade.

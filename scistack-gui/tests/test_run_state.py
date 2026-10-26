@@ -14,7 +14,7 @@ All inputs are plain dicts — no DB or fixtures required.
 # matching "fn__f__<16-hex>" node ID.
 import hashlib
 
-from scistack_gui.domain.run_state import propagate_run_states
+from scistack_gui.domain.run_state import cascade_unrun_producers, propagate_run_states
 
 
 def _cid(name: str) -> str:
@@ -444,3 +444,54 @@ def test_hidden_fn_fkeys_maps_a_hidden_node_id_to_its_call_sites():
     for hidden in (f"fn__loader__{wid}", f"fn__loader__{wid}::main"):
         assert hidden_fn_fkeys(params, outputs, {}, {hidden}, token_for) == {K("loader")}
     assert hidden_fn_fkeys(params, outputs, {}, set(), token_for) == set()
+
+
+# ---------------------------------------------------------------------------
+# Never-run producers (cascade_unrun_producers)
+# ---------------------------------------------------------------------------
+#
+# 2026-10-26: a drawn edge from a red never-run `parse_loaded_data_per_subject`
+# into a green `LoadedData` left the variable green — never-run nodes are
+# coloured after the grouped cascade, so their red reached nothing.
+
+
+class TestCascadeUnrunProducers:
+    def _history(self):
+        """LoadedData (root, green) -> consume -> Out (green)."""
+        node_states = {fn("consume"): "green", var("Out"): "green"}
+        return node_states, {K("consume"): {"x": "LoadedData"}}, {K("consume"): {"Out"}}
+
+    def test_red_unrun_producer_reddens_variable_and_downstream(self):
+        states, params, outputs = self._history()
+        changed = cascade_unrun_producers(
+            states, params, outputs, {"fn__parse__abc123": ("parse", "red", {}, {"LoadedData"})}
+        )
+        assert changed[var("LoadedData")] == "red"
+        assert changed[fn("consume")] == "red"
+        assert changed[var("Out")] == "red"
+
+    def test_no_unrun_producers_changes_nothing(self):
+        states, params, outputs = self._history()
+        assert cascade_unrun_producers(states, params, outputs, {}) == {}
+
+    def test_never_raises_a_state(self):
+        """A green unrun producer cannot turn a red variable green."""
+        states, params, outputs = self._history()
+        states[fn("consume")] = "red"
+        states[var("Out")] = "red"
+        changed = cascade_unrun_producers(
+            states, params, outputs, {"fn__parse__abc123": ("parse", "green", {}, {"Out"})}
+        )
+        assert changed == {}
+
+    def test_unrun_node_takes_its_red_input(self):
+        """An unrun node reading a red variable is reported red too."""
+        states = {fn("up"): "red", var("Mid"): "red"}
+        changed = cascade_unrun_producers(
+            states,
+            {K("up"): {}},
+            {K("up"): {"Mid"}},
+            {"fn__down__abc123": ("down", "green", {"x": ["Mid"]}, {"Leaf"})},
+        )
+        assert changed["fn__down__abc123"] == "red"
+        assert changed[var("Leaf")] == "red"

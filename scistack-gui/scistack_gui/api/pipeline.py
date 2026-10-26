@@ -1196,6 +1196,10 @@ def _build_graph(
 
     # Build and append manual nodes that should be added.
     logger.info("[pipeline] Building %d manual node(s) to add", len(to_add))
+    # Never-run function nodes with a drawn output: their colour is decided
+    # here, after the grouped cascade, so it is carried downstream below
+    # (run_state.cascade_unrun_producers).
+    unrun_producers: dict[str, tuple[str, str, dict, set]] = {}
     for node_id in to_add:
         meta = manual_nodes[node_id]
         # For function nodes, resolve edges and compute state.
@@ -1293,6 +1297,16 @@ def _build_graph(
                     if owner is not None
                     else "which history has never run",
                 )
+                # A node with an owner states a wiring the grouped cascade
+                # already holds, outputs included; only a never-run one is
+                # missing from it.
+                if owner is None:
+                    unrun_producers[node_id] = (
+                        fn_label,
+                        manual_fn_state,
+                        {p: ts for p, ts in resolved.input_type_candidates.items() if ts},
+                        set(state_output_types),
+                    )
             else:
                 manual_fn_state = "red"
                 logger.info(
@@ -1325,6 +1339,45 @@ def _build_graph(
             meta["type"],
             meta["label"],
         )
+
+    # --- Never-run producers colour what they feed ---
+    # A drawn edge from a never-run node into a variable makes that node a
+    # producer of it, so its red carries to the variable and everything
+    # downstream, like any history producer's would. Only lowers states.
+    if with_run_states and unrun_producers:
+        from scistack_gui.domain.run_state import _STATE_ORDER, cascade_unrun_producers
+
+        lowered = cascade_unrun_producers(
+            run_states,
+            gb.input_params_with_manual_edges(
+                agg.fn_input_params,
+                agg.fn_outputs,
+                agg.fn_constants,
+                agg.path_inputs,
+                manual_edges_for_fn_lookup,
+                token_for,
+                manual_nodes=manual_nodes,
+                hidden_edge_ids=hidden_edge_ids,
+            ),
+            gb.outputs_with_manual_edges(
+                agg.fn_outputs, manual_edges_for_fn_lookup, manual_nodes
+            ),
+            unrun_producers,
+        )
+        for n in nodes:
+            state = lowered.get(n["id"])
+            if state is None or "run_state" not in n["data"]:
+                continue
+            old = n["data"]["run_state"]
+            if _STATE_ORDER[state] < _STATE_ORDER.get(old, 2):
+                logger.info(
+                    "[pipeline] %s: %s -> %s — downstream of a never-run node",
+                    n["id"],
+                    old,
+                    state,
+                )
+                n["data"]["run_state"] = state
+                run_states[n["id"]] = state
 
     # --- Scope filtering (nested pipelines) ---
     # Graduations above MOVE positions (the scope-membership record for
