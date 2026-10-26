@@ -11,6 +11,51 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzl. Run failures made visible + Stop at first error — added 2026-10-26
+
+What changed (`.claude/plan-error-surfacing-26-10-26.md`, `docs/claude/error-surfacing.md`):
+a combo that raises is still skipped by default, but its failure is now a record
+with the line that raised. The node gets a red badge, the badge opens a failures
+panel, each reason appears in VS Code's **Problems** panel, and a failed run pops
+an error notification. A new **Stop at first error** run option stops the run at the
+first failure and raises that error (completed combos are saved). All three bundles
+are rebuilt; reload the VS Code window and restart the backend.
+
+**Setup:** a Python function that raises for some combos, e.g. add
+`if subject == 2: raise KeyError("missing_channel")` to a function's body.
+
+**Backend**
+1. Run it. `scidb.log` has `iteration failed: subject=2 — <fn> raised: 'missing_channel' [at <your file>:<line> in <fn>]`
+   and the summary line `failed: N × "KeyError: 'missing_channel'" — ... [at <file>:<line> in <fn>]`.
+2. `[run_failures] <fn>: 1 failure group(s) (N combo(s)) on node fn__… (run_id=…)`.
+3. With **Stop at first error** ticked: `for_each(<fn>): on_error=stop — stopped at KeyError at <file>:<line> in <fn>; K combo(s) completed before it, re-raising the original exception`,
+   then `for_each(<fn>): on_error=stop — saving K completed combo(s) before re-raising KeyError`,
+   and the `[run_thread] Run options: ... on_error=stop` debug line.
+4. Extension output channel: `[failures] run_done <id>: 1 node(s) covered, 1 Problems entry now shown`.
+
+**Frontend**
+1. Run the node. When it finishes, the node shows a red **✗ N combos failed** badge under its name.
+2. The Runs-tab console shows `⚠ <fn>: N combo(s) failed (M completed)`, then
+   `✗ KeyError: 'missing_channel' — N combo(s)`, `at <file>:<line> in <fn>`, and `e.g. subject=2`
+   (no more "see log above").
+3. Click the badge: a dialog titled `<fn>: N failed combo(s)` lists the reason, the
+   combos, and the traceback with your frame underlined in blue and SciStack/library
+   frames collapsed as `… K framework frames (show)`. Click your frame: the file opens
+   at that line.
+4. VS Code **Problems** panel: one error `<fn>: KeyError: 'missing_channel' — N combo(s) failed, e.g. subject=2`
+   on the raising line (red squiggle in the editor).
+5. A notification `SciStack: N combo(s) failed in <fn>: KeyError: ... (<file>.py:<line>)` with
+   **Show failures** (opens the dialog) and **Open log** (opens `scidb.log` at its end).
+6. Fix the function and run again: the badge, the Problems entry, and nothing pops up.
+7. Sidebar → **Run Options** → tick **Stop at first error**, break the function again,
+   Run: the badge says `(stopped)`, the console says `■ Stopped at the first failure (on_error=stop)`,
+   and the combos before the failure are saved (their variable nodes turn green for those locations).
+8. Pipeline run (Run until here / Run endpoints) of a canvas with the failing node:
+   the badge lands on that node, not on another node of the same function.
+9. Close the SciStack panel: its Problems entries disappear.
+
+---
+
 ## 0zzzzzzk. ColName on a function's input — added 2026-10-26
 
 What changed (`.claude/plan-colname-input-gui.md`, `docs/claude/column-selection.md`

@@ -22,6 +22,7 @@
     "src/bundleImportCore.ts",
     "src/startupStatus.ts",
     "src/debuggerStatus.ts",
+    "src/runFailures.ts",
     "src/*.test.ts"
   ]
 }

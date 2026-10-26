@@ -8,7 +8,7 @@ One owner for the GUI's side of "what failed in this run":
   identity-bearing, and stopping early never changes what a run computes.
 - :class:`RunFailures` — collects the failed groups of one run (no-data
   groups are dropped HERE, nowhere else), tags each with the canvas node it
-  belongs to, and renders the console text. ``to_wire()`` is what
+  belongs to, and renders the console text. ``to_wire(node_ids)`` is what
   ``run_done.failures`` carries to the extension (badge, failures panel,
   Problems panel, notification).
 
@@ -153,5 +153,18 @@ class RunFailures:
     def failed_combos(self) -> int:
         return sum(g.get("count", 0) for g in self._groups)
 
-    def to_wire(self) -> list[dict]:
-        return list(self._groups)
+    def to_wire(self, node_ids: "list[str]") -> dict:
+        """``run_done.failures``: ``by_node`` maps EVERY node this run covered
+        to its failed groups — an empty list means it ran clean — so a
+        consumer just assigns ``state[node] = by_node[node]`` and never
+        re-derives which entries a rerun replaces. ``other``: groups with no
+        node (a run started without one)."""
+        by_node: dict[str, list[dict]] = {nid: [] for nid in node_ids}
+        other: list[dict] = []
+        for g in self._groups:
+            nid = g.get("node_id")
+            if nid:
+                by_node.setdefault(nid, []).append(g)
+            else:
+                other.append(g)
+        return {"by_node": by_node, "other": other}

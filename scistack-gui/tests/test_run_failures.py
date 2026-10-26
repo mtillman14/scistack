@@ -94,7 +94,10 @@ def test_run_done_carries_failed_groups_tagged_with_the_node(client, bp_node_id,
     done, text, emitted = _run(client, bp_node_id, monkeypatch, _fake_for_each(groups))
 
     assert done["success"] is False and done["stopped"] is False
-    (g,) = done["failures"]  # the no-data group is not a failure
+    # Every covered node is listed; the no-data group is not a failure.
+    assert list(done["failures"]["by_node"]) == [bp_node_id]
+    (g,) = done["failures"]["by_node"][bp_node_id]
+    assert done["failures"]["other"] == []
     assert g["node_id"] == bp_node_id
     assert g["reason"] == "KeyError: 'chan'" and g["count"] == 2
     assert "at /proj/filters.py:12 in bandpass_filter" in text
@@ -118,13 +121,16 @@ def test_on_error_reaches_for_each_and_stop_marks_run_done(client, bp_node_id, m
 
     assert seen and all(k["on_error"] == "stop" for k in seen)
     assert done["stopped"] is True and done["success"] is False
-    assert len(done["failures"]) == 1  # the stop is the summary's group, not a second one
+    # The stop is the summary's group, not a second one.
+    assert len(done["failures"]["by_node"][bp_node_id]) == 1
     assert "Stopped at the first failure" in text
 
 
 def test_default_on_error_is_continue(client, bp_node_id, monkeypatch):
     seen: list[dict] = []
-    _run(client, bp_node_id, monkeypatch, _fake_for_each([], seen=seen))
+    done, _, _ = _run(client, bp_node_id, monkeypatch, _fake_for_each([], seen=seen))
+    # A clean run still names its node, so stale badges clear.
+    assert done["failures"] == {"by_node": {bp_node_id: []}, "other": []}
     assert seen and all(k["on_error"] == "continue" for k in seen)
 
 
@@ -133,7 +139,7 @@ def test_run_level_exception_becomes_a_run_stage_group(client, bp_node_id, monke
         client, bp_node_id, monkeypatch,
         _fake_for_each([], raise_exc=RuntimeError("save exploded")),
     )
-    (g,) = done["failures"]
+    (g,) = done["failures"]["by_node"][bp_node_id]
     assert g["exc_type"] == "RuntimeError" and g["example"]["stage"] == "run"
     assert g["node_id"] == bp_node_id
     assert "save exploded" in text
@@ -155,7 +161,9 @@ def test_collector_drops_no_data_and_renders_console():
         node_id="fn__x", fn_name="x", target="x", completed=3,
     )
     assert rf.failed_combos == 7
-    assert [g["node_id"] for g in rf.to_wire()] == ["fn__x"]
+    wire = rf.to_wire(["fn__x", "fn__clean"])
+    assert [g["node_id"] for g in wire["by_node"]["fn__x"]] == ["fn__x"]
+    assert wire["by_node"]["fn__clean"] == []  # covered, ran clean
     assert "7 combo(s) failed (3 completed)" in text
     assert "(+4 more)" in text
     assert rf.add_summary([_group("NoDataError: none", no_data=True)],

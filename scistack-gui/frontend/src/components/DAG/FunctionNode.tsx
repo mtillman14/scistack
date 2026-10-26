@@ -15,6 +15,9 @@ import { SourceLocationDialog } from '../SourceLocationDialog'
 import type { SourceLocation } from '../SourceLocationDialog'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import { useRunLog } from '../../context/RunLogContext'
+import { useNodeFailures } from '../../context/NodeFailuresContext'
+import { failedCount } from './runFailures'
+import type { SkipFailure } from './runFailures'
 import { useScope } from '../../context/ScopeContext'
 import { useVariantSelection } from '../../context/VariantSelectionContext'
 import type { VariantSelectionValue } from '../../context/VariantSelectionContext'
@@ -58,7 +61,9 @@ interface FunctionNodeData {
   // The picker's pair (include prefixes + exclude_levels rule); null = all.
   schemaSelection?: { include: [string, string][][]; exclude_levels: Record<string, string[]> } | null
   schemaLevel?: string[] | null
-  runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean }
+  // on_error: 'stop' halts at the first failing combo (not identity —
+  // scistack_gui/services/run_failures.on_error_from_config reads it).
+  runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean; on_error?: 'continue' | 'stop' }
   // param_name → which columns of its wired variable the function receives.
   // Display only here: editing lives in FunctionSettingsPanel's Inputs
   // section, which is also the only writer of the stored node config.
@@ -150,6 +155,9 @@ function PipelineFunctionNode({ id, data }: Props) {
   // in VS Code the source is revealed in the editor instead).
   const [sourceLoc, setSourceLoc] = useState<SourceLocation | null>(null)
   const { startRun, appendLine, finishRun, markCancelling, setRunMeta, updateProgress } = useRunLog()
+  // This node's failures from its last run (badge + FailuresPanel).
+  const { failures, runStarted, comboFailed, runDone, openPanel } = useNodeFailures()
+  const nodeFailed = failedCount(failures[id])
   // Ref (not state) so the WebSocket handler always sees the current value
   // without waiting for a React re-render — critical when the pipeline
   // finishes before the first render cycle completes.
@@ -176,6 +184,8 @@ function PipelineFunctionNode({ id, data }: Props) {
         started_at: (params.started_at ?? Date.now() / 1000) as number,
       })
     } else if (msgType === 'run_progress') {
+      const failure = params.failure as SkipFailure | null | undefined
+      if (params.event === 'combo_skip') comboFailed(id, failure)
       updateProgress(runId!, {
         event: params.event as string,
         current: params.current as number,
@@ -183,7 +193,7 @@ function PipelineFunctionNode({ id, data }: Props) {
         completed: params.completed as number,
         skipped: params.skipped as number,
         metadata: (params.metadata ?? {}) as Record<string, string>,
-        error: params.error as string | undefined,
+        error: failure && !failure.no_data ? failure.reason : undefined,
       })
     } else if (msgType === 'run_done') {
       const success = (params.success ?? true) as boolean
@@ -194,13 +204,14 @@ function PipelineFunctionNode({ id, data }: Props) {
       // failure — see RunLogContext.RunEntry.status.
       const unknown = (params.unknown ?? false) as boolean
       finishRun(runId!, success, durationMs, cancelled, error, unknown)
+      runDone(params)
       setRunning(false)
       setCancelling(false)
       const moves = pendingPinMoves.current
       pendingPinMoves.current = []
       if (success && !cancelled && moves.length > 0) void movePinsAfterRun(moves, runId!)
     }
-  }, [appendLine, finishRun, setRunMeta, updateProgress]))
+  }, [id, appendLine, finishRun, setRunMeta, updateProgress, comboFailed, runDone]))
 
   const handleRun = useCallback(async () => {
     // A run that writes to a pinned variable asks first (keep / move / cancel).
@@ -213,6 +224,7 @@ function PipelineFunctionNode({ id, data }: Props) {
     runIdRef.current = newRunId   // synchronous — handler sees it immediately
     setRunning(true)
     startRun(newRunId, data.label)
+    runStarted(id)
 
     // Find input variable nodes connected to this function node.
     const edges = getEdges().filter(e => e.target === id)
@@ -261,7 +273,7 @@ function PipelineFunctionNode({ id, data }: Props) {
       finishRun(newRunId, false, 0, false, message)
       setRunning(false)
     }
-  }, [id, data, getNodes, getEdges, startRun, appendLine, finishRun, pinGate])
+  }, [id, data, getNodes, getEdges, startRun, appendLine, finishRun, pinGate, runStarted])
 
   // Show (endpoint nodes only): draft-run this endpoint + ancestors via
   // the pipeline compiler — zero DB writes; rendered outputs arrive on the
@@ -479,6 +491,18 @@ function PipelineFunctionNode({ id, data }: Props) {
       >
         {data.label}
       </div>
+
+      {nodeFailed > 0 && (
+        <button
+          type="button"
+          className="nodrag"
+          style={styles.failedBadge}
+          onClick={e => { e.stopPropagation(); openPanel(id) }}
+          title="Show what failed in the last run, with the line that raised"
+        >
+          ✗ {nodeFailed} combo{nodeFailed === 1 ? '' : 's'} failed{failures[id]?.stopped ? ' (stopped)' : ''}
+        </button>
+      )}
 
       {hiddenArgs.length > 0 && (
         // Also a drop target: a connection dropped here opens the same list
@@ -967,6 +991,18 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
+  },
+  failedBadge: {
+    display: 'block',
+    margin: '0 auto 6px',
+    padding: '1px 8px',
+    borderRadius: 10,
+    fontSize: 10,
+    fontWeight: 700,
+    background: '#dc2626',
+    color: '#fff',
+    border: 'none',
+    cursor: 'pointer',
   },
   disconnectedBadge: {
     display: 'block',

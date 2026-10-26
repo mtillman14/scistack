@@ -17,6 +17,7 @@ import { callBackend } from '../api'
 import { useBackendMessage } from '../hooks/useBackendMessage'
 import { usePlanRun, type PlanRequest } from '../context/PlanRunContext'
 import { useRunLog } from '../context/RunLogContext'
+import { useNodeFailures } from '../context/NodeFailuresContext'
 import { movePinsAfterRun, usePinGate } from './Variants/RunPinGate'
 
 interface PlanEntry {
@@ -30,6 +31,7 @@ interface PlanEntry {
 export default function PipelineRunController() {
   const { planRequest, clearPlan } = usePlanRun()
   const { startRun, appendLine, finishRun } = useRunLog()
+  const { runDone } = useNodeFailures()
   // Pipeline run_ids this controller is responsible for. A ref (not state)
   // so the message handler sees additions immediately — a run can finish
   // before the first re-render completes.
@@ -54,12 +56,14 @@ export default function PipelineRunController() {
       const error = params.error as string | undefined
       const unknown = (params.unknown ?? false) as boolean
       finishRun(runId, success, durationMs, cancelled, error, unknown)
+      // Every node the pipeline covered is assigned its failures (badges).
+      runDone(params)
       activeRuns.current.delete(runId)
       const moves = pinMoves.current.get(runId) ?? []
       pinMoves.current.delete(runId)
       if (success && !cancelled && moves.length > 0) void movePinsAfterRun(moves, runId)
     }
-  }, [appendLine, finishRun]))
+  }, [appendLine, finishRun, runDone]))
 
   const handleRun = useCallback(async (req: PlanRequest, steps: string[]) => {
     // The plan names its steps by function: ask about pinned outputs first.

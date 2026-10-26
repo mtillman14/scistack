@@ -41,6 +41,8 @@ import Sidebar from "./components/Sidebar/Sidebar";
 import ResizeHandle, { useResizablePanel } from "./components/ResizeHandle";
 import PipelineRunController from "./components/PipelineRunController";
 import { RunLogProvider } from "./context/RunLogContext";
+import { NodeFailuresProvider } from "./context/NodeFailuresContext";
+import FailuresPanel from "./components/FailuresPanel";
 import { SelectedNodeProvider } from "./context/SelectedNodeContext";
 import { SidebarSelectionProvider } from "./context/SidebarSelectionContext";
 import { ScopeProvider } from "./context/ScopeContext";
@@ -337,6 +339,7 @@ export default function App() {
 
   return (
     <RunLogProvider>
+      <NodeFailuresProvider>
       <SelectedNodeProvider>
         <SidebarSelectionProvider>
         <ScopeProvider>
@@ -411,6 +414,7 @@ export default function App() {
                 </div>
               </ReactFlowProvider>
               <PipelineRunController />
+              <FailuresPanel />
               {pathsOpen && <PathsPopup onClose={() => setPathsOpen(false)} />}
               {inventoryOpen && (
                 <InventoryPopup schemaKeys={schema.keys} onClose={() => setInventoryOpen(false)} />
@@ -424,6 +428,7 @@ export default function App() {
         </ScopeProvider>
         </SidebarSelectionProvider>
       </SelectedNodeProvider>
+      </NodeFailuresProvider>
     </RunLogProvider>
   );
 }

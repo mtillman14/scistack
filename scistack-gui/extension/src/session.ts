@@ -25,6 +25,7 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DagPanel } from './dagPanel';
+import { FailureReporter, logPathFor } from './failureReporter';
 import { PanelRegistry } from './panelRegistry';
 import { PlotPanel } from './plotPanel';
 import { PythonProcess } from './pythonProcess';
@@ -67,6 +68,10 @@ export class Session {
    * up — a registry with nothing to scope it to.
    */
   readonly plots = new PanelRegistry();
+
+  /** Problems-panel entries + error notification for this session's runs;
+   *  created on the first run_done, disposed (entries cleared) on close. */
+  private failureReporter: FailureReporter | undefined;
 
   private watcher: vscode.FileSystemWatcher | undefined;
   private watchDebounce: ReturnType<typeof setTimeout> | undefined;
@@ -151,10 +156,26 @@ export class Session {
     }
     if (method === 'run_done') {
       this.dagPanel.stopDebugSession();
+      this.failures().onRunDone(params);
       // Sidecar-driven MATLAB runs end here; the tracker fires the
       // all-finished callback once the last one clears.
       this.dagPanel.matlabRuns.end(params.run_id as string | undefined);
     }
+  }
+
+  private failures(): FailureReporter {
+    if (!this.failureReporter) {
+      this.failureReporter = new FailureReporter(
+        this.id,
+        this.log,
+        logPathFor(this.dbPath),
+        nodeId => this.dagPanel?.postMessage({
+          method: 'show_failures',
+          params: { node_id: nodeId ?? null },
+        }),
+      );
+    }
+    return this.failureReporter;
   }
 
   /**
@@ -272,6 +293,7 @@ export class Session {
     this.disposed = true;
     this.log.appendLine('session closing');
     this.stopDbWatcher();
+    this.failureReporter?.dispose();
     // Plot tabs cannot outlive the server they issue plot_* RPCs to.
     this.closePlots();
     // `disposed` is already set, so the canvas's own dispose callback

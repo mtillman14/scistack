@@ -867,7 +867,9 @@ def _run_in_thread(
                 "failed_combos": combo_totals["failed"],
                 "no_data_combos": combo_totals["no_data"],
                 "stopped": run_failures.stopped,
-                "failures": run_failures.to_wire(),
+                # Every node this run covered, mapped to its failed groups
+                # (empty = ran clean: its badge and Problems entries clear).
+                "failures": run_failures.to_wire([node_id] if node_id else []),
             }
         )
         logger.debug("[run_thread] Emitting dag_updated message (run_id=%s)", run_id)
@@ -1408,7 +1410,9 @@ def _run_pipeline_in_thread(
                 "failed_combos": failed_combos,
                 "no_data_combos": no_data_combos,
                 "stopped": run_failures.stopped,
-                "failures": run_failures.to_wire(),
+                "failures": run_failures.to_wire(
+                    sorted({e["tag"] for e in report if e.get("tag")})
+                ),
             }
         )
         _notify_records_changed()

@@ -55,11 +55,16 @@ interface HiddenCombo {
  */
 export type SchemaSelection = LocationSelection
 
+type BooleanRunOption = 'dry_run' | 'save' | 'distribute' | 'as_table'
+
 export interface RunOptions {
   dry_run: boolean
   save: boolean
   distribute: boolean
   as_table: boolean
+  // Not identity: stops the run at the first failing combo. Read by the
+  // backend's run_failures.on_error_from_config (one reader).
+  on_error?: 'continue' | 'stop'
 }
 
 export interface WhereFilter {
@@ -631,9 +636,13 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
   const colNameAvailable = hasIterateInput(columnSelections)
 
   // Toggle a run option.
-  const toggleRunOption = useCallback((opt: keyof RunOptions) => {
+  const toggleRunOption = useCallback((opt: BooleanRunOption) => {
     const updated = { ...runOptions, [opt]: !runOptions[opt] }
     updateNodeData({ runOptions: updated })
+  }, [runOptions, updateNodeData])
+
+  const setStopOnError = useCallback((stop: boolean) => {
+    updateNodeData({ runOptions: { ...runOptions, on_error: stop ? 'stop' : 'continue' } })
   }, [runOptions, updateNodeData])
 
   // --- Where filter management ---
@@ -933,6 +942,19 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
           />
           <span style={styles.optionText}>As table</span>
           <span style={styles.optionHint}>Keep schema columns in DataFrames</span>
+        </label>
+
+        <label style={styles.optionLabel}>
+          <input
+            type="checkbox"
+            checked={runOptions.on_error === 'stop'}
+            onChange={e => setStopOnError(e.target.checked)}
+            style={styles.checkbox}
+          />
+          <span style={styles.optionText}>Stop at first error</span>
+          <span style={styles.optionHint}>
+            Raise the first failing combo's error instead of skipping it (combos already done are saved)
+          </span>
         </label>
 
         {/* `for_columns` is an execution MODE, exactly like its two siblings
