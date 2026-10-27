@@ -530,7 +530,8 @@ def test_glue_dir_is_registered_on_first_create(client, glue_project):
 
 class TestRenamedGluePort:
     """An edge into a glue port the glue's function no longer has is not
-    drawn and binds nothing (edge_view._on_missing_glue_port).
+    drawn and binds nothing (edge_view.missing_port; function nodes:
+    tests/test_removed_argument_edges.py).
 
     Regression (2026-10-21): the new-glue body takes ``value``; the user wired
     ``in__value``, renamed the argument to ``filepath`` and wired
@@ -540,10 +541,17 @@ class TestRenamedGluePort:
     """
 
     def _stale(self, monkeypatch, params):
-        from scistack_gui.api import pipeline as pipeline_api
-        from scistack_gui.domain.edge_view import _on_missing_glue_port
+        import inspect
 
-        monkeypatch.setattr(pipeline_api, "_fn_params_from_registry", lambda n: params)
+        from scifor.signature import Argument
+
+        from scistack_gui.api import pipeline as pipeline_api
+        from scistack_gui.domain.edge_view import _on_missing_port
+
+        arguments = [
+            Argument(p, inspect.Parameter.POSITIONAL_OR_KEYWORD) for p in params
+        ]
+        monkeypatch.setattr(pipeline_api, "_fn_arguments", lambda n: arguments)
         manual_nodes = {"g1": _glue_node("glue_cfg")}
         edges = [
             _edge("e_old", "param__config", "g1", "in__value"),
@@ -551,7 +559,7 @@ class TestRenamedGluePort:
             _edge("e_out", "g1", "fn__analyze", "in__cfg"),
         ]
         memo: dict = {}
-        return [e["id"] for e in edges if _on_missing_glue_port(e, manual_nodes, memo)]
+        return [e["id"] for e in edges if _on_missing_port(e, manual_nodes, memo)]
 
     def test_edge_into_a_renamed_port_is_not_drawn(self, monkeypatch):
         assert self._stale(monkeypatch, ["filepath"]) == ["e_old"]

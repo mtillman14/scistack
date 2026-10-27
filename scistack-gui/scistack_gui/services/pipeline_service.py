@@ -314,4 +314,16 @@ def refresh_module() -> dict:
     except Exception:
         logger.exception("Failed to replay persisted builtin functions after refresh")
 
-    return {"ok": True, **result}
+    # After the builtins are back, so every signature is readable: an edge on
+    # an argument the function no longer takes is disconnected (renamed or
+    # removed argument; the user redraws it).
+    disconnected: list[dict] = []
+    try:
+        from scistack_gui.db import get_db
+        from scistack_gui.services.layout_service import disconnect_removed_arguments
+
+        disconnected = disconnect_removed_arguments(get_db())
+    except Exception:
+        logger.exception("Failed to disconnect edges on removed arguments after refresh")
+
+    return {"ok": True, **result, "disconnected_edges": disconnected}

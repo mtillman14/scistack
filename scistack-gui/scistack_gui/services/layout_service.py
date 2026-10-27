@@ -300,10 +300,7 @@ def delete_edge(
     source_handle: str | None = None,
     target_handle: str | None = None,
 ) -> dict:
-    from scistack_gui import layout as layout_store
     from scistack_gui import pipeline_store
-    from scistack_gui.domain.scope_filter import node_scope
-    from scistack_gui.ids import ROOT_SCOPE
 
     logger.info("[layout_service] delete_edge called (edge_id=%r)", edge_id)
     # Every removal is a HIDE, drawn edge or not (user decision D2,
@@ -322,9 +319,39 @@ def delete_edge(
         target = target or stored.get("target", "")
         source_handle = source_handle or stored.get("sourceHandle")
         target_handle = target_handle or stored.get("targetHandle")
-    # Scoped to the edge's own scope (derived from its endpoints): the same
-    # connection on another pipeline's independent placement stays visible
-    # there (plan-scope-hidden-nodes-edges.md).
+    _hide_edge_in_its_scope(
+        db,
+        edge_id,
+        source,
+        target,
+        source_handle,
+        target_handle,
+        "stored row kept" if stored is not None else "no stored row",
+    )
+    _notify_dag_updated()
+    return {"ok": True}
+
+
+def _hide_edge_in_its_scope(
+    db,
+    edge_id: str,
+    source: str,
+    target: str,
+    source_handle: "str | None",
+    target_handle: "str | None",
+    why: str,
+) -> None:
+    """Remove an edge from the canvas: THE edge removal (delete_edge and
+    disconnect_removed_arguments). A hide, never a row delete (user decision
+    D2, 2026-10-22).
+
+    Scoped to the edge's own scope (derived from its endpoints): the same
+    connection on another pipeline's independent placement stays visible
+    there (plan-scope-hidden-nodes-edges.md)."""
+    from scistack_gui import layout as layout_store
+    from scistack_gui import pipeline_store
+    from scistack_gui.domain.scope_filter import node_scope
+
     manual_nodes = pipeline_store.get_manual_nodes(db)
     positions_by_scope = layout_store.read_positions_by_scope()
     scope_id = (
@@ -344,10 +371,70 @@ def delete_edge(
         target,
         target_handle,
         scope_id,
-        "stored row kept" if stored is not None else "no stored row",
+        why,
     )
-    _notify_dag_updated()
-    return {"ok": True}
+
+
+def disconnect_removed_arguments(db) -> list[dict]:
+    """Refresh Code: disconnect every edge into a port whose argument the
+    function no longer takes (user decision 2026-10-27: renaming or removing
+    an argument disconnects its edge; the user redraws it onto the new port).
+
+    The edges are the ones :func:`edge_view.effective_edges` already sets
+    aside (``stale_port``, :func:`edge_view.missing_port`), so the rule has
+    one owner. Each is hidden like a user delete, so renaming the argument
+    back does NOT bring it back, and redrawing the connection unhides it
+    (put_edge). An audit event names what was disconnected. Returns
+    ``[{edge_id, source, target, port}]``.
+    """
+    from scistack_gui import history
+    from scistack_gui.domain.edge_view import effective_edges
+    from scistack_gui.ids import IN_HANDLE_PREFIX
+
+    view = effective_edges(db, None, caller="disconnect_removed_arguments")
+    disconnected: list[dict] = []
+    for e in view.stale_port:
+        handle = e.get("targetHandle") or ""
+        _hide_edge_in_its_scope(
+            db,
+            e.get("id", ""),
+            e.get("source", ""),
+            e.get("target", ""),
+            e.get("sourceHandle"),
+            handle,
+            "argument no longer in the function's signature",
+        )
+        disconnected.append(
+            {
+                "edge_id": e.get("id"),
+                "source": e.get("source"),
+                "target": e.get("target"),
+                "port": handle[len(IN_HANDLE_PREFIX):],
+            }
+        )
+    if disconnected:
+        summary = ", ".join(
+            f"{d['port']} on {d['target']} (from {d['source']})" for d in disconnected
+        )
+        logger.warning(
+            "[layout_service] Refresh Code disconnected %d edge(s) whose "
+            "argument the function no longer takes: %s — redraw them onto the "
+            "current ports",
+            len(disconnected),
+            summary,
+        )
+        history.log_event(
+            db,
+            "disconnect removed arguments",
+            "disconnect_removed_arguments",
+            summary,
+        )
+    else:
+        logger.info(
+            "[layout_service] disconnect_removed_arguments: no edge on a removed "
+            "argument"
+        )
+    return disconnected
 
 
 def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> dict:

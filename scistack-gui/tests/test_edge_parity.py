@@ -73,16 +73,37 @@ def _history_edge(graph, node, source_prefix) -> dict:
     return edges[0]
 
 
+def _drawn_ports(graph, node) -> "set[str] | None":
+    """The input ports *node* is sent with (``data.input_ports``), ``None``
+    when the node carries none."""
+    for n in graph["nodes"]:
+        if strip_placement(n["id"]) == strip_placement(node):
+            ports = n["data"].get("input_ports")
+            if ports is None:
+                return None
+            return {p["name"] if isinstance(p, dict) else p for p in ports}
+    return None
+
+
 def _canvas_inputs(graph, node) -> tuple[dict[str, set], set]:
     """({argument: {variable labels}}, {Parameter-fed arguments}) drawn into
-    *node*, whichever port spelling the edge uses."""
+    *node*, whichever port spelling the edge uses.
+
+    What the user SEES, as React Flow renders it: an edge whose target port is
+    not among the node's ``input_ports`` is dropped without a word, so it is
+    not counted. Reading the raw edge list instead is how an invisible edge
+    on a renamed argument passed this suite while it broke the run
+    (2026-10-27, ``df_in``)."""
     variables: dict[str, set] = {}
     parameters: set = set()
+    ports = _drawn_ports(graph, node)
     for e in graph["edges"]:
         if strip_placement(e["target"]) != strip_placement(node):
             continue
         handle = e.get("targetHandle") or ""
         arg = handle.split("__", 1)[1] if "__" in handle else handle
+        if ports is not None and arg not in ports:
+            continue
         source = strip_placement(e["source"])
         if source.startswith("var__"):
             variables.setdefault(arg, set()).add(source[len("var__"):])
@@ -244,3 +265,96 @@ def test_a_duplicate_carries_the_source_tabs_hides(setup):
     assert "low_hz" not in _canvas_inputs(other_graph, other_node)[1]
     # The source tab is unchanged.
     assert "low_hz" not in _canvas_inputs(_graph(client), node)[1]
+
+
+# ---------------------------------------------------------------------------
+# A renamed argument (2026-10-27: df_in -> data_path)
+# ---------------------------------------------------------------------------
+
+
+def _rename_argument(monkeypatch, old, new):
+    """Make FN's signature read *new* where it read *old*, through the one
+    signature reader the canvas and edge_view share."""
+    import inspect
+
+    from scifor.signature import Argument
+
+    from scistack_gui.api import pipeline as pipeline_api
+
+    real = pipeline_api._fn_arguments
+
+    def renamed(fn_name):
+        arguments = real(fn_name)
+        if fn_name != FN:
+            return arguments
+        return [
+            Argument(new, a.kind, a.default) if a.name == old else a
+            for a in arguments
+        ]
+
+    monkeypatch.setattr(pipeline_api, "_fn_arguments", renamed)
+    return lambda: monkeypatch.setattr(pipeline_api, "_fn_arguments", real)
+
+
+def _run_arguments(node) -> set:
+    targets = derive_target_for_node(get_db(), strip_placement(node))
+    names: set = set()
+    for t in targets:
+        names |= set((t.get("input_types") or {}).keys())
+        names |= set((t.get("constants") or {}).keys())
+        names |= set((t.get("path_inputs") or {}).keys())
+    return names
+
+
+def test_an_edge_on_a_renamed_argument_binds_nothing(setup, monkeypatch):
+    """Before Refresh Code disconnects it: the edge on the old port is not
+    drawn (no such port), so it must not bind either. It did, and the run
+    passed ``df_in=`` to a function that takes ``data_path``."""
+    from scistack_gui.domain.edge_view import effective_edges
+
+    client, node, _ = setup
+    _rename_argument(monkeypatch, "signal", "waveform")
+    view = effective_edges(get_db(), "main", caller="test")
+    assert [e["targetHandle"] for e in view.stale_port] == ["in__signal"]
+    assert "signal" not in _run_arguments(node)
+    _assert_parity(client, node)
+
+
+def test_refresh_disconnects_a_renamed_argument_for_good(setup, monkeypatch):
+    """Refresh Code hides the edge (user decision 2026-10-27): renaming the
+    argument back does NOT bring it back; the user redraws it."""
+    from scistack_gui.services.layout_service import disconnect_removed_arguments
+
+    client, node, _ = setup
+    restore = _rename_argument(monkeypatch, "signal", "waveform")
+    disconnected = disconnect_removed_arguments(get_db())
+    assert [d["port"] for d in disconnected] == ["signal"]
+    assert disconnect_removed_arguments(get_db()) == []  # nothing left to do
+
+    restore()
+    assert "signal" not in _canvas_inputs(_graph(client), node)[0]
+    targets, reason = _assert_parity(client, node)
+    assert targets == []
+    assert "signal" in reason
+
+
+def test_redrawing_after_a_disconnect_reconnects(setup, monkeypatch):
+    from scistack_gui.services.layout_service import disconnect_removed_arguments
+
+    client, node, _ = setup
+    restore = _rename_argument(monkeypatch, "signal", "waveform")
+    disconnect_removed_arguments(get_db())
+    restore()
+    _draw(client, "manual__par_redraw", "var__RawSignal", node, "in__signal")
+    targets, _ = _assert_parity(client, node)
+    assert targets
+    assert all(t["input_types"]["signal"] == "RawSignal" for t in targets)
+
+
+def test_refresh_leaves_live_arguments_alone(setup):
+    from scistack_gui.services.layout_service import disconnect_removed_arguments
+
+    client, node, _ = setup
+    assert disconnect_removed_arguments(get_db()) == []
+    targets, _ = _assert_parity(client, node)
+    assert targets

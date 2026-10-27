@@ -14,7 +14,9 @@ hypothesis tab disconnected the node in another.
   (``graph_builder.visible_manual_edges``: own id not hidden, history twin not
   hidden);
 - ``hidden_edge_ids``: the history edges hidden in *scope*;
-- ``manual_nodes``.
+- ``manual_nodes``;
+- ``stale_port``: edges left out of ``drawn`` because their target port is
+  no longer an argument of the node's function (:func:`missing_port`).
 
 Only this module and the edge MUTATORS (layout_service, scope_service,
 layout.py, pipeline_store) may call ``pipeline_store.get_manual_edges`` or
@@ -41,6 +43,10 @@ class EdgeView:
     drawn: tuple
     hidden_edge_ids: frozenset
     manual_nodes: dict = field(default_factory=dict)
+    #: Stored, not-hidden edges set aside because their target port is no
+    #: longer an argument of the node's function (:func:`missing_port`).
+    #: Refresh Code hides them (layout_service.disconnect_removed_arguments).
+    stale_port: tuple = ()
 
     @property
     def drawn_list(self) -> list[dict]:
@@ -69,11 +75,15 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     # uses. Otherwise hiding a PathInput and drawing another onto the same
     # port ran an EachOf of both.
     hidden_nodes = pipeline_store.get_hidden_node_ids(db, scope)
-    glue_ports: dict[str, "list[str]"] = {}
+    signatures: dict = {}
     on_hidden_node: list[str] = []
+    stale_port: list[dict] = []
     drawn_list = []
     for e in visible_manual_edges(stored, hidden, manual_nodes):
-        if _on_retired_port(e) or _on_missing_glue_port(e, manual_nodes, glue_ports):
+        if _on_retired_port(e):
+            continue
+        if _on_missing_port(e, manual_nodes, signatures):
+            stale_port.append(e)
             continue
         ends = {e.get("source") or "", e.get("target") or ""}
         if hidden_nodes and any(
@@ -85,19 +95,22 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     drawn = tuple(drawn_list)
     logger.info(
         "[edge_view] %s: scope=%s, %d drawn of %d stored manual edge(s), "
-        "%d hidden edge id(s), %d edge(s) on a hidden node",
+        "%d hidden edge id(s), %d edge(s) on a hidden node, %d on a port that "
+        "is no longer an argument",
         caller,
         scope if scope is not None else "(all scopes)",
         len(drawn),
         len(stored),
         len(hidden),
         len(on_hidden_node),
+        len(stale_port),
     )
     return EdgeView(
         scope=scope,
         drawn=drawn,
         hidden_edge_ids=hidden,
         manual_nodes=manual_nodes,
+        stale_port=tuple(stale_port),
     )
 
 
@@ -132,58 +145,79 @@ def _on_retired_port(edge: dict) -> bool:
     return True
 
 
-#: Stored edge ids already reported by _on_missing_glue_port (once per process).
-_REPORTED_MISSING_GLUE_PORT: set[str] = set()
+#: Stored edge ids already reported by _on_missing_port (once per process).
+_REPORTED_MISSING_PORT: set[str] = set()
+
+#: The node types whose ``in__X`` ports are their function's arguments.
+_SIGNATURE_NODE_TYPES = ("functionNode", "glueNode")
 
 
-def _on_missing_glue_port(
-    edge: dict, manual_nodes: dict, glue_ports: dict
-) -> bool:
-    """A stored edge into a glue node's ``in__X`` where the glue's function no
-    longer has a parameter ``X``.
+def missing_port(
+    edge: dict, manual_nodes: dict, signatures: dict
+) -> "tuple[str, list[str]] | None":
+    """THE rule for "this edge's target port is no longer an argument".
 
-    Renaming the glue's argument (the new-glue body starts as ``value``)
-    removes the port, so the canvas cannot draw the edge and the user cannot
-    select it to delete it. It stayed in storage, though, and the glue chain
-    followed the first incoming edge, which was this invisible one
-    (2026-10-21: ``in__value`` beside the live ``in__filepath``). Not drawn
-    and binds nothing, like a retired port. The stored row is left alone:
-    renaming the argument back brings the edge back.
+    A stored edge into a function or glue node's ``in__X`` where the node's
+    function no longer takes ``X`` returns ``(function label, its current
+    argument names)``; any other edge returns ``None``.
 
-    *glue_ports* memoizes ``{glue label: params}`` for one view. A glue whose
-    signature cannot be read (no params) keeps all its edges, since the
-    canvas then renders a single unnamed handle and nothing is known to be
-    stale.
+    Renaming an argument removes its port, so the canvas cannot draw the edge
+    and the user cannot select it to delete it, yet a stored row used to keep
+    binding it: glue 2026-10-21 (``in__value`` beside the live
+    ``in__filepath``), function 2026-10-27 (``in__df_in`` after renaming to
+    ``data_path`` -> "unexpected keyword argument 'df_in'"). Two readers use
+    this: :func:`effective_edges` (not drawn, binds nothing) and Refresh Code's
+    ``layout_service.disconnect_removed_arguments`` (hides the edge, so the
+    user redraws it).
+
+    *signatures* memoizes ``{label: arguments}`` for one pass. An edge is kept
+    when nothing is known to be stale: the signature cannot be read (no
+    arguments: MATLAB not scanned, an import error) or the function takes
+    ``**kwargs``, which accepts any name.
     """
-    from scistack_gui.domain.edge_resolver import GLUE_NODE_TYPE
+    import inspect
+
     from scistack_gui.ids import IN_HANDLE_PREFIX, strip_placement
 
     target = edge.get("target") or ""
     meta = manual_nodes.get(target) or manual_nodes.get(strip_placement(target))
-    if not meta or meta.get("type") != GLUE_NODE_TYPE:
-        return False
+    if not meta or meta.get("type") not in _SIGNATURE_NODE_TYPES:
+        return None
     handle = edge.get("targetHandle") or edge.get("target_handle") or ""
     if not handle.startswith(IN_HANDLE_PREFIX):
-        return False
+        return None
     label = meta.get("label") or strip_placement(target)
-    if label not in glue_ports:
-        from scistack_gui.api.pipeline import _fn_params_from_registry
+    if label not in signatures:
+        from scistack_gui.api.pipeline import _fn_arguments
 
-        glue_ports[label] = _fn_params_from_registry(label)
-    params = glue_ports[label]
-    port = handle[len(IN_HANDLE_PREFIX):]
-    if not params or port in params:
+        signatures[label] = _fn_arguments(label)
+    arguments = signatures[label]
+    if not arguments or any(
+        a.kind == inspect.Parameter.VAR_KEYWORD for a in arguments
+    ):
+        return None
+    params = [a.name for a in arguments if not a.private]
+    if handle[len(IN_HANDLE_PREFIX):] in params:
+        return None
+    return label, params
+
+
+def _on_missing_port(edge: dict, manual_nodes: dict, signatures: dict) -> bool:
+    """:func:`missing_port`, warned once per edge: not drawn, binds nothing."""
+    stale = missing_port(edge, manual_nodes, signatures)
+    if stale is None:
         return False
-    if edge.get("id") not in _REPORTED_MISSING_GLUE_PORT:
-        _REPORTED_MISSING_GLUE_PORT.add(edge.get("id"))
+    if edge.get("id") not in _REPORTED_MISSING_PORT:
+        _REPORTED_MISSING_PORT.add(edge.get("id"))
+        label, params = stale
         logger.warning(
-            "[edge_view] stored edge %s (%s -> %s) targets glue port %r, but "
-            "glue %r now takes %s; not drawn and binds nothing (the glue's "
-            "argument was renamed). Wire the source to the current port.",
+            "[edge_view] stored edge %s (%s -> %s) targets port %r, but %r now "
+            "takes %s; not drawn and binds nothing (the argument was renamed "
+            "or removed). Wire the source to the current port.",
             edge.get("id"),
             edge.get("source"),
-            target,
-            handle,
+            edge.get("target"),
+            edge.get("targetHandle") or edge.get("target_handle"),
             label,
             params,
         )
