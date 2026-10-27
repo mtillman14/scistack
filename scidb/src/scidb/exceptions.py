@@ -151,6 +151,18 @@ class OutputSaveError(SciStackError):
         valued = [c for c in self.causes if getattr(c, "blame", None) == "user_value"]
         return bool(valued) and all(getattr(c, "probable", False) for c in valued)
 
+    @property
+    def remedy(self) -> "dict | None":  # type: ignore[override]
+        """The first cause's remedy (e.g. ``DuplicateLocationError``), so the
+        GUI popup for a failed output save needs no unwrapping of its own."""
+        from scifor.failures import remedy_of
+
+        for cause in self.causes:
+            remedy = remedy_of(cause)
+            if remedy:
+                return remedy
+        return None
+
 
 class ColumnSetChangedError(SciStackError):
     """Raised by save_batch when a save's data columns differ from the ones
@@ -229,6 +241,121 @@ class ColumnTypeChangedError(SciStackError):
             f"delete {variable}'s existing records (in the GUI: Variants popup "
             f"-> Delete) and run again."
         )
+
+
+class DuplicateLocationError(SciStackError):
+    """Raised by save_batch when one save would put two DIFFERENT records of
+    the same variant at one schema location (docs/claude/duplicate-location-vs-stale.md).
+
+    The usual cause: a table loaded once and saved per row, with two rows for
+    one subject (scistack.log 2026-10-27, subject 2455369). Saved together,
+    both records would stay "latest" and readers would see two values where
+    one is expected. Which row is right, or whether the rows need a finer
+    schema key, is the user's call, so nothing is written for the save.
+
+    ``collisions``: one dict per location, ``{location: {key: value}, count,
+    differing_columns}``. ``remedy`` is the popup the GUI shows; this class is
+    the only owner of its wording.
+    """
+
+    #: Locations shown in the message; the remedy lists up to REMEDY_ITEMS_MAX.
+    MESSAGE_ITEMS_MAX = 5
+    REMEDY_ITEMS_MAX = 20
+
+    def __init__(
+        self,
+        variable: str,
+        collisions: "list[dict]",
+        schema_keys: "list[str]",
+    ) -> None:
+        self.variable = variable
+        self.collisions = list(collisions)
+        self.schema_keys = list(schema_keys)
+        level = self._level()
+        shown = [
+            f"  {_location_text(c['location'])} x{c['count']}"
+            + (
+                f" (differ in {_preview(c['differing_columns'])})"
+                if c.get("differing_columns")
+                else ""
+            )
+            for c in self.collisions[: self.MESSAGE_ITEMS_MAX]
+        ]
+        more = len(self.collisions) - len(shown)
+        if more > 0:
+            shown.append(f"  ... +{more} more location(s)")
+        super().__init__(
+            f"{variable}: {len(self.collisions)} {level} location(s) would get "
+            f"more than one different record from this save, so nothing was "
+            f"saved:\n" + "\n".join(shown) + "\n"
+            f"The schema keys ({', '.join(self.schema_keys)}) give these rows "
+            f"the same location, so SciStack can't tell which one is the value. "
+            f"To fix it, change the dataset schema (a schema key, such as a visit "
+            f"or session column, that tells the rows apart; schema keys are set "
+            f"when a database is created, so this means a new project database) "
+            f"or change the data (remove the extra row in the "
+            f"source file, or combine the rows in your function)."
+        )
+
+    def _level(self) -> str:
+        """The deepest schema key the colliding locations name."""
+        named = {k for c in self.collisions for k in c["location"]}
+        deepest = [k for k in self.schema_keys if k in named]
+        return deepest[-1] if deepest else "schema"
+
+    @property
+    def remedy(self) -> dict:  # type: ignore[override]
+        level = self._level()
+        items = [
+            {
+                "location": _location_text(c["location"]),
+                "count": int(c["count"]),
+                "differing_columns": list(c.get("differing_columns") or []),
+            }
+            for c in self.collisions[: self.REMEDY_ITEMS_MAX]
+        ]
+        return {
+            "kind": "duplicate_location",
+            "title": f"More than one row for the same {level} in {self.variable}",
+            "explanation": (
+                f"This save has more than one different row at the same "
+                f"location. The dataset's schema keys "
+                f"({', '.join(self.schema_keys)}) are what tell records apart, "
+                f"and these rows have the same values in all of them, so "
+                f"SciStack can't tell which row is the value. Nothing was saved "
+                f"for {self.variable}."
+            ),
+            "items": items,
+            "n_more": max(0, len(self.collisions) - len(items)),
+            "steps": [
+                {
+                    "title": "Change the dataset schema",
+                    "text": (
+                        f"If the rows are separate observations (for example "
+                        f"two visits or sessions), the dataset needs a schema "
+                        f"key that tells them apart, and the data needs that "
+                        f"column. A database's schema keys "
+                        f"({', '.join(self.schema_keys)}) are set when it is "
+                        f"created, so this means creating a new project "
+                        f"database with the extra key and running again."
+                    ),
+                    "action": None,
+                },
+                {
+                    "title": "Change the data",
+                    "text": (
+                        "If only one row is right, remove the other one in the "
+                        "source file. If the rows belong together, combine them "
+                        "in your function before returning."
+                    ),
+                    "action": "reveal_function",
+                },
+            ],
+        }
+
+
+def _location_text(location: dict) -> str:
+    return ", ".join(f"{k}={v}" for k, v in location.items()) or "(no schema keys)"
 
 
 def _preview(names: "list[str]", limit: int = 4) -> str:

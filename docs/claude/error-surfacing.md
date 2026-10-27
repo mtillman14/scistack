@@ -180,3 +180,41 @@ rules in order:
 
 Diagnostics: `failure_from_exception: <Type> in <fn> -> blame=<b> via <rule>`
 (scifor DEBUG, MATLAB `failure_from_mexception: … via …`); `[seam_fallback]` (WARN).
+
+## 8. Remedy: a popup the error carries (added 2026-10-27)
+
+Concept doc: `duplicate-location-vs-stale.md`. An `ActionableError` may carry
+`remedy` (default `None`): `{kind, title, explanation, items:[{location, count,
+differing_columns}], n_more, steps:[{title, text, action}]}`. **The exception
+owns the wording**; nothing downstream rewords it. First user:
+`scidb.DuplicateLocationError`.
+
+```
+ActionableError.remedy ─ scifor.failures.remedy_of (walks __cause__/__context__;
+                         OutputSaveError.remedy = first cause's)
+  → ComboFailure.remedy → FailureGroup.to_dict()["remedy"] → run_done.failures
+  → frontend firstRemedy (DAG/runFailures.ts) → NodeFailuresContext.remedy
+  → RemedyDialog (auto-opens on run_done; FailuresPanel "How to fix…" reopens)
+```
+
+- `action`: `"reveal_function"` → **Open <fn>** (`get_function_source` +
+  `reveal_in_editor`); `null` → the step only explains. MATLAB's `[]` is
+  normalised to `None` by `_remedy_from_wire` (with `items`/`steps`/
+  `differing_columns` 1-element quirks).
+- The extension toast is unchanged (blame label + Show failures / Open log):
+  one copy of the wording, in the dialog.
+- MATLAB: a Python error escaping `for_each_save` is caught in
+  `+scidb/for_each.m` (`note_run_failure`) → `scimatlab.bridge.run_failure_group_json`
+  (the twin of `RunFailures.add_exception`) → `iteration_tally('add_group')`
+  → `.done` marker `failures` → same `run_done`. Then the original error is
+  rethrown. Before this, MATLAB run-level errors reached the GUI only as
+  `run_done.error` text, with no group.
+- Diagnostics: `failure_from_exception: … remedy=<kind>` (scifor DEBUG),
+  `[run_failures] … remedy=<kind>`, `run_failure_group_json: … remedy=<kind>`,
+  `note_run_failure: …` (MATLAB), browser console `[remedy] open kind=… node=…`
+  and `[remedy] action=reveal_function fn=…`.
+- Tests: `scifor/tests/test_failures.py` (remedy tests),
+  `scidb/tests/test_duplicate_location_in_batch.py`,
+  `scistack-gui/tests/test_run_failures.py`,
+  `scimatlab/tests/test_matlab_failure_record_shape.py`,
+  `frontend/src/components/DAG/runFailures.test.ts` (`firstRemedy`).

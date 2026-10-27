@@ -43,6 +43,7 @@ import PipelineRunController from "./components/PipelineRunController";
 import { RunLogProvider } from "./context/RunLogContext";
 import { NodeFailuresProvider } from "./context/NodeFailuresContext";
 import FailuresPanel from "./components/FailuresPanel";
+import RemedyDialog from "./components/RemedyDialog";
 import { SelectedNodeProvider } from "./context/SelectedNodeContext";
 import { SidebarSelectionProvider } from "./context/SidebarSelectionContext";
 import { ScopeProvider } from "./context/ScopeContext";
@@ -415,6 +416,7 @@ export default function App() {
               </ReactFlowProvider>
               <PipelineRunController />
               <FailuresPanel />
+              <RemedyDialog />
               {pathsOpen && <PathsPopup onClose={() => setPathsOpen(false)} />}
               {inventoryOpen && (
                 <InventoryPopup schemaKeys={schema.keys} onClose={() => setInventoryOpen(false)} />

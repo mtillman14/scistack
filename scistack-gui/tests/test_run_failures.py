@@ -268,3 +268,22 @@ def test_done_marker_failures_reach_run_done_on_the_node(tmp_path, monkeypatch):
     assert g["user_frame"]["line"] == 7 and g["combos"] == ["subject=2"]
     text = "".join(m.get("text", "") for m in seen if m.get("type") == "run_output")
     assert "at /p/f.m:7 in f" in text
+
+
+def test_a_save_refused_for_duplicate_locations_carries_its_remedy():
+    """DuplicateLocationError inside OutputSaveError: run_done's group has
+    the remedy the canvas opens as a popup (docs/claude/duplicate-location-vs-stale.md)."""
+    from scidb import DuplicateLocationError, OutputSaveError
+
+    cause = DuplicateLocationError(
+        "Demo",
+        [{"location": {"subject": "2455369"}, "count": 2, "differing_columns": ["age"]}],
+        ["subject"],
+    )
+    exc = OutputSaveError("read_table", ["Demo: 2 record(s) not saved"], 0, causes=[cause])
+    rf = RunFailures("r1")
+    rf.add_exception(exc, node_id="fn__read", fn_name="read_table", target="read_table")
+    (group,) = rf.to_wire(["fn__read"])["by_node"]["fn__read"]
+    assert group["remedy"]["kind"] == "duplicate_location"
+    assert group["remedy"]["items"][0]["location"] == "subject=2455369"
+    assert group["blame"] == "setup"

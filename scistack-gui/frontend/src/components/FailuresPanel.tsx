@@ -1,5 +1,5 @@
 /**
- * FailuresPanel — what failed on one function node in its last run, grouped
+ * FailuresPanel â what failed on one function node in its last run, grouped
  * by reason: the exception, how many combos, which ones, and the traceback
  * with the user's frames shown and SciStack/library frames collapsed.
  * Clicking a frame opens the file at that line (VS Code) or shows the path.
@@ -36,7 +36,7 @@ function FrameLine({ frame }: { frame: FailureFrame }) {
         type="button"
         style={{ ...styles.frameLink, ...(user ? styles.frameUser : null) }}
         onClick={open}
-        title={user ? 'Open this line' : `${frame.origin} code — open this line`}
+        title={user ? 'Open this line' : `${frame.origin} code â open this line`}
       >
         {shortPath(frame.file)}:{frame.line} in {frame.function}
       </button>
@@ -63,7 +63,7 @@ function Traceback({ frames }: { frames: FailureFrame[] }) {
             style={styles.collapsed}
             onClick={() => setExpanded(prev => new Set(prev).add(i))}
           >
-            … {seg.frames.length} {origins} frame{seg.frames.length === 1 ? '' : 's'} (show)
+            â¦ {seg.frames.length} {origins} frame{seg.frames.length === 1 ? '' : 's'} (show)
           </button>
         )
       })}
@@ -71,7 +71,8 @@ function Traceback({ frames }: { frames: FailureFrame[] }) {
   )
 }
 
-function GroupCard({ group }: { group: FailureGroup }) {
+function GroupCard({ group, nodeId }: { group: FailureGroup; nodeId: string }) {
+  const { openRemedy } = useNodeFailures()
   const frames = group.example?.frames ?? []
   const stage = group.example?.stage
   return (
@@ -82,6 +83,11 @@ function GroupCard({ group }: { group: FailureGroup }) {
         <span style={styles.count}>{group.count} combo{group.count === 1 ? '' : 's'}</span>
       </div>
       <pre style={styles.message}>{group.message}</pre>
+      {group.remedy && (
+        <button type="button" style={styles.howTo} onClick={() => openRemedy(group.node_id ?? nodeId, group)}>
+          How to fix…
+        </button>
+      )}
       {group.target && group.target !== group.fn_name && (
         <div style={styles.meta}>in {group.target}</div>
       )}
@@ -116,11 +122,11 @@ export default function FailuresPanel() {
       <div style={{ ...dialog, ...styles.panel }} onClick={e => e.stopPropagation()}>
         <div style={dialogTitle}>
           {title}: {groups.reduce((n, g) => n + g.count, 0)} failed combo(s)
-          {stopped ? ' — stopped at the first failure' : ''}
+          {stopped ? ' â stopped at the first failure' : ''}
         </div>
         {groups.length === 0
           ? <div style={styles.meta}>No failures recorded for this node's last run.</div>
-          : groups.map((g, i) => <GroupCard key={i} group={g} />)}
+          : groups.map((g, i) => <GroupCard key={i} group={g} nodeId={openNodeId} />)}
         <div style={styles.footer}>
           <button type="button" style={styles.close} onClick={closePanel}>Close</button>
         </div>
@@ -131,7 +137,7 @@ export default function FailuresPanel() {
 
 function shortPath(file: string): string {
   const parts = file.split(/[\\/]/)
-  return parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : file
+  return parts.length > 2 ? `â¦/${parts.slice(-2).join('/')}` : file
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -144,7 +150,7 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 10,
     background: '#221722',
   },
-  // Who can fix it — the backend sends the wording (scistacklog.journal).
+  // Who can fix it â the backend sends the wording (scistacklog.journal).
   blame: { fontSize: 12, fontWeight: 600, color: '#fde68a', marginBottom: 2 },
   reasonRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' },
   excType: { fontFamily: 'monospace', fontWeight: 700, color: '#fca5a5' },
@@ -184,6 +190,17 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     display: 'block',
     margin: '3px 0',
+  },
+  // Opens RemedyDialog for a failure that carries a remedy.
+  howTo: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    color: '#fbbf24',
+    fontSize: 12,
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    margin: '2px 0',
   },
   footer: { display: 'flex', justifyContent: 'flex-end', marginTop: 8 },
   close: {

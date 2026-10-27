@@ -108,3 +108,41 @@ def test_scidb_defers_the_stop_and_rethrows_after_saving():
     save = text.index("py_result_df = py.scimatlab.bridge.for_each_save(")
     rethrow = text.index("rethrow(stop_err)")
     assert defer < save < rethrow
+
+
+def test_a_python_save_error_becomes_a_run_level_group_with_its_remedy():
+    """scimatlab.bridge.run_failure_group_json — what +scidb/for_each.m's
+    note_run_failure adds to iteration_tally when for_each_save raises — has
+    the remedy, and survives MATLAB's jsondecode -> jsonencode round trip
+    (1-element arrays as bare objects, null as [])."""
+    import json
+
+    from scidb import DuplicateLocationError, OutputSaveError
+    from scimatlab.bridge import run_failure_group_json
+
+    cause = DuplicateLocationError(
+        "Demo",
+        [{"location": {"subject": "S1"}, "count": 2, "differing_columns": ["age"]}],
+        ["subject"],
+    )
+    exc = OutputSaveError("load_csv", ["Demo: 2 record(s) not saved"], 0, causes=[cause])
+    group = json.loads(run_failure_group_json(exc, "load_csv"))
+    assert group["count"] == 1
+    assert group["blame"] == "setup"
+    assert group["remedy"]["kind"] == "duplicate_location"
+
+    # What MATLAB's jsonencode writes back for a 1-element list / null.
+    remedy = dict(group["remedy"])
+    remedy["items"] = {**remedy["items"][0], "differing_columns": "age"}
+    remedy["steps"] = [{**s, "action": [] if s["action"] is None else s["action"]} for s in remedy["steps"]]
+    (back,) = groups_from_wire([{**group, "remedy": remedy, "user_frame": []}])
+    assert back["remedy"]["items"] == [
+        {"location": "subject=S1", "count": 2, "differing_columns": ["age"]}
+    ]
+    assert [s["action"] for s in back["remedy"]["steps"]] == [None, "reveal_function"]
+
+
+def test_run_failure_group_json_ignores_non_exceptions():
+    from scimatlab.bridge import run_failure_group_json
+
+    assert run_failure_group_json("not an exception", "f") == ""

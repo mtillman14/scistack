@@ -134,11 +134,12 @@ class RunFailures:
         group = {**FailureGroup(example=failure).to_dict(), "count": 1}
         self._groups.append({**group, "node_id": node_id, "target": target})
         logger.info(
-            "[run_failures] %s: run-level %s on node %s %s (run_id=%s)",
+            "[run_failures] %s: run-level %s on node %s %s remedy=%s (run_id=%s)",
             target,
             failure.exc_type,
             node_id,
             format_user_frame(failure.user_frame),
+            failure.remedy.get("kind") if failure.remedy else None,
             self.run_id,
         )
         return f"✗ {target}: {failure.reason[:500]}\n    {format_user_frame(failure.user_frame)}\n"

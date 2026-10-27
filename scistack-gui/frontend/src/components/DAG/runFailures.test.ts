@@ -12,6 +12,7 @@ import {
   applyRunDone,
   clearNode,
   failedCount,
+  firstRemedy,
   noteSkip,
   readRunFailures,
   segmentFrames,
@@ -74,4 +75,30 @@ test('framework and library frames collapse between user frames', () => {
   ])
   assert.deepStrictEqual(segs.map(s => s.kind), ['frame', 'collapsed', 'frame', 'collapsed'])
   assert.strictEqual(segs[1].kind === 'collapsed' && segs[1].frames.length, 2)
+})
+
+const REMEDY = {
+  kind: 'duplicate_location',
+  title: 'More than one row for the same subject in Demo',
+  explanation: 'e',
+  items: [{ location: 'subject=2455369', count: 2, differing_columns: ['age'] }],
+  n_more: 0,
+  steps: [{ title: 'Change the data', text: 't', action: 'reveal_function' as const }],
+}
+
+test('firstRemedy picks the first group with a remedy, nodes before node-less', () => {
+  const wire = readRunFailures({
+    by_node: { fn__clean: [], fn__a: [group(), group({ reason: 'OutputSaveError: x', remedy: REMEDY })] },
+    other: [group({ remedy: { ...REMEDY, kind: 'other' } })],
+  })
+  const target = firstRemedy(wire)
+  assert.strictEqual(target?.nodeId, 'fn__a')
+  assert.strictEqual(target?.group.remedy?.kind, 'duplicate_location')
+})
+
+test('firstRemedy falls back to node-less groups, and is null without remedies', () => {
+  const other = readRunFailures({ by_node: { fn__a: [group()] }, other: [group({ remedy: REMEDY })] })
+  assert.strictEqual(firstRemedy(other)?.nodeId, '')
+  const none = readRunFailures({ by_node: { fn__a: [group({ remedy: null })] }, other: [] })
+  assert.strictEqual(firstRemedy(none), null)
 })

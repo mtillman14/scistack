@@ -816,9 +816,17 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 
     % --- Call #2: Python save ---
     save_t0 = tic;
-    py_result_df = py.scimatlab.bridge.for_each_save( ...
-        handle, py_result_dfs, pyargs('save', logical(do_save), ...
-                                      'introspect', logical(opts.introspect)));
+    try
+        py_result_df = py.scimatlab.bridge.for_each_save( ...
+            handle, py_result_dfs, pyargs('save', logical(do_save), ...
+                                          'introspect', logical(opts.introspect)));
+    catch save_err
+        % A save refused on purpose (e.g. OutputSaveError around a
+        % DuplicateLocationError) becomes a run-level failure group with its
+        % blame and remedy, so the GUI shows it as for a Python run.
+        note_run_failure(save_err, fn_name);
+        rethrow(save_err);
+    end
     scidb.Log.info('for_each_save returned in %.3fs', toc(save_t0));
     stop_err = scidb.internal.iteration_tally('take_stop');
     if ~isempty(stop_err)
@@ -1003,12 +1011,33 @@ end
 % =========================================================================
 % Helpers (kept):
 %   - describe_slowest_columns: the for_each_result_transfer timing detail
+%   - note_run_failure: a save error's run-level failure group for the GUI
 %   - find_pathinput: used by the bridge spec builder and the
 %     _resolve_pathinput option
 %   - is_loadable / is_metadata_compatible: classification for spec building
 %   - describe_input_for_python: kind-tagged spec serializer for Python
 %   - split_options: name-value vs option splitter
 % =========================================================================
+
+function note_run_failure(err, fn_name)
+%NOTE_RUN_FAILURE  Add the run-level failure group of an error that escaped
+%   for_each_save to iteration_tally (scimatlab.bridge.run_failure_group_json).
+%   Never throws: describing an error must not replace it.
+    try
+        if ~isa(err, 'matlab.exception.PyException') || ~isprop(err, 'ExceptionObject')
+            scidb.Log.debug('note_run_failure: %s is not a Python error; no group', class(err));
+            return;
+        end
+        txt = char(py.scimatlab.bridge.run_failure_group_json(err.ExceptionObject, fn_name));
+        if isempty(txt), return; end
+        scidb.internal.iteration_tally('add_group', jsondecode(txt));
+        scidb.Log.debug('note_run_failure: run-level group recorded for %s', fn_name);
+    catch note_err
+        scidb.Log.warn('note_run_failure: could not describe the save error of %s: %s', ...
+            fn_name, note_err.message);
+    end
+end
+
 
 function txt = describe_slowest_columns(col_stats, k)
 %DESCRIBE_SLOWEST_COLUMNS  ", slowest: col=1.20s (element_by_element, 450)"

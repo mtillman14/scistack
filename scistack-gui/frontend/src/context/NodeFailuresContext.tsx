@@ -5,7 +5,10 @@
  * PipelineRunController for pipeline runs) through the pure rules in
  * DAG/runFailures.ts; read by the node badge and the FailuresPanel. The
  * extension's "Show failures" notification button opens the panel through
- * a `show_failures` message. See docs/claude/error-surfacing.md.
+ * a `show_failures` message. A failure that carries a remedy (a structured
+ * explanation, e.g. a save refused for duplicate locations) also opens
+ * RemedyDialog when its run ends; this context is the one place that decides.
+ * See docs/claude/error-surfacing.md.
  */
 
 import { createContext, useCallback, useContext, useState } from 'react'
@@ -13,10 +16,11 @@ import { useBackendMessage } from '../hooks/useBackendMessage'
 import {
   applyRunDone,
   clearNode,
+  firstRemedy,
   noteSkip,
   readRunFailures,
 } from '../components/DAG/runFailures'
-import type { FailureState, SkipFailure } from '../components/DAG/runFailures'
+import type { FailureGroup, FailureState, RemedyTarget, SkipFailure } from '../components/DAG/runFailures'
 
 interface NodeFailuresValue {
   failures: FailureState
@@ -27,6 +31,10 @@ interface NodeFailuresValue {
   openNodeId: string | null
   openPanel: (nodeId: string) => void
   closePanel: () => void
+  /** The remedy popup on screen, or null. */
+  remedy: RemedyTarget | null
+  openRemedy: (nodeId: string, group: FailureGroup) => void
+  closeRemedy: () => void
 }
 
 const NodeFailuresContext = createContext<NodeFailuresValue | null>(null)
@@ -34,6 +42,7 @@ const NodeFailuresContext = createContext<NodeFailuresValue | null>(null)
 export function NodeFailuresProvider({ children }: { children: React.ReactNode }) {
   const [failures, setFailures] = useState<FailureState>({})
   const [openNodeId, setOpenNodeId] = useState<string | null>(null)
+  const [remedy, setRemedy] = useState<RemedyTarget | null>(null)
 
   const runStarted = useCallback((nodeId: string) => {
     setFailures(prev => clearNode(prev, nodeId))
@@ -51,6 +60,12 @@ export function NodeFailuresProvider({ children }: { children: React.ReactNode }
       + `${Object.values(wire.by_node).flat().length + wire.other.length} group(s)`,
     )
     setFailures(prev => applyRunDone(prev, wire, Boolean(params.stopped)))
+    const target = firstRemedy(wire)
+    if (target) {
+      // eslint-disable-next-line no-console
+      console.debug(`[remedy] open kind=${target.group.remedy?.kind} node=${target.nodeId || '(none)'} run=${String(params.run_id)}`)
+      setRemedy(target)
+    }
   }, [])
 
   // The extension's notification button ("Show failures").
@@ -63,10 +78,15 @@ export function NodeFailuresProvider({ children }: { children: React.ReactNode }
 
   const openPanel = useCallback((nodeId: string) => setOpenNodeId(nodeId), [])
   const closePanel = useCallback(() => setOpenNodeId(null), [])
+  const openRemedy = useCallback((nodeId: string, group: FailureGroup) => setRemedy({ nodeId, group }), [])
+  const closeRemedy = useCallback(() => setRemedy(null), [])
 
   return (
     <NodeFailuresContext.Provider
-      value={{ failures, runStarted, comboFailed, runDone, openNodeId, openPanel, closePanel }}
+      value={{
+        failures, runStarted, comboFailed, runDone, openNodeId, openPanel, closePanel,
+        remedy, openRemedy, closeRemedy,
+      }}
     >
       {children}
     </NodeFailuresContext.Provider>

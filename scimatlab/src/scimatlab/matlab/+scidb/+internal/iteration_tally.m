@@ -27,6 +27,10 @@ function out = iteration_tally(action, summary)
 %     the wire shape of Python's scifor.failures.FailureGroup.to_dict). The
 %     generated script's catch hands it to scidb.run_marker, so the GUI shows
 %     a MATLAB run's failures like a Python run's.
+%   scidb.internal.iteration_tally('add_group', GROUP)
+%     One run-level failure group (wire shape), e.g. a Python save error
+%     that escaped for_each_save (scimatlab.bridge.run_failure_group_json):
+%     the MATLAB twin of the GUI's RunFailures.add_exception.
 %   E = scidb.internal.iteration_tally('take_stop')
 %     The error an on_error='stop' loop ended on (or []), cleared on read.
 %     scidb.for_each saves the completed combos, then rethrows it.
@@ -65,6 +69,10 @@ function out = iteration_tally(action, summary)
             if isfield(summary, 'stop_error') && ~isempty(summary.stop_error)
                 tally.stop_error = summary.stop_error;
             end
+        case 'add_group'
+            if numel(tally.failures) < 200
+                tally.failures{end+1} = summary;
+            end
         case 'get'
             out = rmfield(tally, {'parts', 'failures', 'stop_error'});
             out.message = strjoin(tally.parts, '; ');
@@ -75,6 +83,6 @@ function out = iteration_tally(action, summary)
             tally.stop_error = [];
         otherwise
             error('scidb:iteration_tally:badAction', ...
-                'Unknown action ''%s'' (reset, add, get, failures, take_stop)', action);
+                'Unknown action ''%s'' (reset, add, add_group, get, failures, take_stop)', action);
     end
 end

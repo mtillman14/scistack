@@ -450,6 +450,116 @@ def _sample_values(frames: list, col, limit: int = 3) -> list:
     return seen
 
 
+def _value_fingerprint(value) -> str:
+    """Comparable stand-in for one column's value in _differing_columns."""
+    if isinstance(value, pd.Series):
+        return repr(value.tolist())
+    try:
+        return canonical_hash(value)
+    except Exception:  # noqa: BLE001 — only used to name differing columns
+        return repr(value)
+
+
+def _differing_columns(values: list) -> list[str]:
+    """Data columns whose values differ across ``values`` (the records that
+    collide at one location). DataFrames compare per column, dicts per key;
+    any other kind has no columns to name, so the list is empty."""
+    if all(isinstance(v, pd.DataFrame) for v in values):
+        columns = list(dict.fromkeys(c for v in values for c in v.columns))
+        cells = lambda v, c: v[c].reset_index(drop=True) if c in v.columns else None  # noqa: E731
+    elif all(isinstance(v, dict) for v in values):
+        columns = list(dict.fromkeys(k for v in values for k in v))
+        cells = lambda v, c: v.get(c)  # noqa: E731
+    else:
+        return []
+    return [
+        str(c)
+        for c in columns
+        if len({_value_fingerprint(cells(v, c)) for v in values}) > 1
+    ]
+
+
+def _data_column_names(value) -> set[str]:
+    """The column names a saved value carries (DataFrame columns, dict keys);
+    empty for any other kind."""
+    if isinstance(value, pd.DataFrame):
+        return {str(c) for c in value.columns}
+    if isinstance(value, dict):
+        return {str(k) for k in value}
+    return set()
+
+
+def _colliding_locations(
+    data_items: "list[tuple[Any, dict]]", schema_keys: "list[str]"
+) -> "tuple[list[dict], dict]":
+    """THE rule for "two records at one location" within one save batch
+    (docs/claude/duplicate-location-vs-stale.md).
+
+    Items collide when they share the schema location AND every other
+    metadata key (version keys, ``__invocation_id``, ``__branch_params``) but
+    their data differ. Different ``__branch_params`` are separate variants and
+    byte-identical data merge into one record, so neither collides. Items
+    with no schema key are not checked. Only items that share a group are
+    hashed, so a batch without collisions costs one pass over its metadata.
+
+    A ``__branch_params`` entry that names one of the item's OWN data columns
+    is ignored: for_each's flatten mode copies every scalar data column of a
+    spread row into its branch params (foreach.py, "dynamic discriminators"),
+    so two differing CSV rows for one subject would otherwise always look like
+    two variants and never collide. A variant is told apart by its inputs and
+    constants, never by the value it stores.
+
+    Returns ``(collisions, stats)``: ``collisions`` as DuplicateLocationError
+    takes them, ``stats`` the counts for the save_batch DEBUG line.
+    """
+    groups: dict[tuple, list[int]] = {}
+    no_location = 0
+    for i, (data, meta) in enumerate(data_items):
+        location = tuple(
+            (k, schema_str(meta[k])) for k in schema_keys if k in meta
+        )
+        if not location:
+            no_location += 1
+            continue
+        rest_meta = {k: v for k, v in meta.items() if k not in schema_keys}
+        bp = rest_meta.get("__branch_params")
+        own = _data_column_names(data)
+        if isinstance(bp, dict) and own:
+            rest_meta["__branch_params"] = {
+                k: v for k, v in bp.items() if str(k) not in own
+            }
+        rest = json.dumps(
+            rest_meta,
+            sort_keys=True,
+            default=str,
+        )
+        groups.setdefault((location, rest), []).append(i)
+
+    collisions: list[dict] = []
+    for (location, _rest), idx in groups.items():
+        if len(idx) < 2:
+            continue
+        distinct: dict[str, Any] = {}
+        for i in idx:
+            distinct.setdefault(canonical_hash(data_items[i][0]), data_items[i][0])
+        if len(distinct) < 2:
+            continue
+        collisions.append(
+            {
+                "location": dict(location),
+                "count": len(distinct),
+                "differing_columns": _differing_columns(list(distinct.values())),
+            }
+        )
+    stats = {
+        "items": len(data_items),
+        "locations": len({loc for loc, _ in groups}),
+        "variant_groups": len(groups),
+        "no_location": no_location,
+    }
+    return collisions, stats
+
+
 def _flatten_struct_columns(df):
     """Flatten DataFrame columns that contain nested dicts into dot-separated columns.
 
@@ -1369,6 +1479,33 @@ class DatabaseManager:
 
         ensure_provenance_tables(self._duck)
 
+    def _check_duplicate_locations(
+        self, type_name: str, data_items: "list[tuple[Any, dict]]"
+    ) -> None:
+        """Raise DuplicateLocationError when the batch puts two different
+        records of one variant at one location (rule: _colliding_locations)."""
+        schema_keys = list(self.dataset_schema_keys)
+        collisions, stats = _colliding_locations(data_items, schema_keys)
+        Log.debug(
+            f"save_batch({type_name}): {stats['items']} item(s) -> "
+            f"{stats['locations']} location(s), {stats['variant_groups']} "
+            f"variant group(s), {stats['no_location']} without schema keys, "
+            f"{len(collisions)} duplicate location(s)"
+        )
+        if not collisions:
+            return
+        from .exceptions import DuplicateLocationError
+
+        Log.warn(
+            f"[batch_save] {type_name}: {len(collisions)} location(s) with more "
+            f"than one different record in one save; refusing the save: "
+            + "; ".join(
+                f"{c['location']} x{c['count']} differ in {c['differing_columns']}"
+                for c in collisions
+            )
+        )
+        raise DuplicateLocationError(type_name, collisions, schema_keys)
+
     def _check_column_set(
         self,
         table_name: str,
@@ -2169,6 +2306,10 @@ class DatabaseManager:
             data_items = valid_items
         else:
             valid_orig_idx = list(range(n_original))
+
+        # Two different records of one variant at one location: refuse the
+        # save before anything (table, schema ids, rows) is written.
+        self._check_duplicate_locations(type_name, data_items)
 
         # A variable keeps the columns of its first save (_check_column_set).
         if is_custom:

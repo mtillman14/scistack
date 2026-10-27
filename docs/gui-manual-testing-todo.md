@@ -11,6 +11,42 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzp. Duplicate rows at one location: save refused + "How to fix" popup — added 2026-10-27
+
+What changed: a save that would put two DIFFERENT records at one schema
+location in the same batch (e.g. a CSV with two rows for subject 2455369,
+saved per subject) is now refused before anything is written
+(`DuplicateLocationError`, wrapped in `OutputSaveError` by for_each). The run
+fails, and the canvas opens a popup explaining it, with two steps.
+Doc: `docs/claude/duplicate-location-vs-stale.md`.
+
+Backend steps:
+1. Restart the GUI so the Python change loads (the bundles are rebuilt).
+2. Make a CSV with a duplicated subject, e.g. `subject,age\nS1,30\nS1,31\nS2,40`,
+   and wire a read function (e.g. `pandas.read_csv` via a PathInput) into an
+   output variable, with no schema-key iteration.
+3. After the run, `scistack-debug.log` should contain
+   `[batch_save] <Var>: 1 location(s) with more than one different record in
+   one save; refusing the save: {'subject': 'S1'} x2 differ in ['age']` and
+   `[run_failures] ... remedy=duplicate_location`.
+
+Frontend steps and what you should see:
+1. Click **▶ Run** on the function node. The node turns red as for any failure.
+2. A popup opens: **More than one row for the same subject in <Var>**, an
+   explanation, a table (Location `subject=S1`, Rows `2`, Columns that differ
+   `age`), and **How to fix it** with two cards:
+   **Change the dataset schema** (text only: schema keys are set when the
+   database is created) and **Change the data** with an **Open <fn>** button.
+3. **Open <fn>** opens the function's source (for a library function like
+   `pandas.read_csv` it may say it could not locate the source — that is
+   expected; check it with a project function too).
+4. **Show failures** closes the popup and opens the failures panel; the
+   card there has a **How to fix…** link that reopens the popup.
+5. MATLAB: the same with a MATLAB loader; the popup should appear too
+   (`note_run_failure: run-level group recorded for <fn>` in the debug log).
+6. Re-running after editing the CSV to one row per subject (no duplicates)
+   should succeed, with no popup.
+
 ## 0zzzzzzo. Hidden node no longer "wired the same" as its replacement — added 2026-10-27
 
 What changed: a hidden function node used to out-claim a visible node wired

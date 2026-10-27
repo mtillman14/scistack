@@ -339,3 +339,64 @@ def test_stop_inside_each_of_keeps_earlier_alternatives():
     stopped = stopped_run_of(info.value)
     assert stopped is not None
     assert len(stopped.partial_result) == 2  # the first alternative's rows
+
+
+# --- remedy: a structured popup an ActionableError may carry ----------------
+
+
+class _RemedyError(scifor.ActionableError):
+    remedy = {
+        "kind": "demo",
+        "title": "t",
+        "explanation": "e",
+        "items": [{"location": "subject=S1", "count": 2, "differing_columns": ["age"]}],
+        "n_more": 0,
+        "steps": [{"title": "s", "text": "x", "action": "open_schema_keys"}],
+    }
+
+
+def test_remedy_rides_the_record_and_the_cause_chain():
+    from scifor.failures import FailureGroup, run_failure
+
+    try:
+        try:
+            raise _RemedyError("refused")
+        except _RemedyError as inner:
+            raise RuntimeError("wrapped") from inner
+    except RuntimeError as outer:
+        failure = run_failure(outer, fn_name="f")
+    assert failure.remedy == _RemedyError.remedy
+    wire = FailureGroup(example=failure).to_dict()
+    assert wire["remedy"] == _RemedyError.remedy
+    json.dumps(wire)
+
+
+def test_no_remedy_is_none_on_the_wire():
+    from scifor.failures import FailureGroup, run_failure
+
+    failure = run_failure(ValueError("x"), fn_name="f")
+    assert FailureGroup(example=failure).to_dict()["remedy"] is None
+
+
+def test_remedy_from_matlab_wire_undoes_jsonencode_quirks():
+    """jsonencode writes a 1-element array as a bare object/string, and
+    "no value" as []."""
+    from scifor.failures import groups_from_wire
+
+    raw = {
+        "reason": "r",
+        "remedy": {
+            "kind": "demo",
+            "title": "t",
+            "items": {"location": "subject=S1", "count": 2, "differing_columns": "age"},
+            "steps": {"title": "s", "text": "x", "action": "reveal_function"},
+        },
+    }
+    (g,) = groups_from_wire([raw])
+    assert g["remedy"]["items"] == [
+        {"location": "subject=S1", "count": 2, "differing_columns": ["age"]}
+    ]
+    assert g["remedy"]["steps"][0]["action"] == "reveal_function"
+    assert g["remedy"]["n_more"] == 0
+    (none,) = groups_from_wire([{"reason": "r", "remedy": []}])
+    assert none["remedy"] is None

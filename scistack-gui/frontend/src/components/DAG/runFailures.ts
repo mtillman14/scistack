@@ -33,9 +33,35 @@ export interface FailureGroup {
   blame?: string
   probable?: boolean
   blame_label?: string
+  /** A popup the error carries (scifor ActionableError.remedy); its wording
+   *  is the exception's, rendered as is by RemedyDialog. */
+  remedy?: Remedy | null
   node_id?: string | null
   target?: string
   example?: { stage?: string; frames?: FailureFrame[]; metadata?: Record<string, string> }
+}
+
+/** One way out in a remedy. `action` names a button the dialog offers; null =
+ *  the step only explains. */
+export interface RemedyStep {
+  title: string
+  text: string
+  action?: 'reveal_function' | null
+}
+
+export interface Remedy {
+  kind: string
+  title: string
+  explanation: string
+  items: { location: string; count: number; differing_columns: string[] }[]
+  n_more: number
+  steps: RemedyStep[]
+}
+
+/** The popup a run asks for: its node ('' = node-less) and failure group. */
+export interface RemedyTarget {
+  nodeId: string
+  group: FailureGroup
 }
 
 export interface RunFailuresWire {
@@ -126,4 +152,18 @@ export function segmentFrames(frames: FailureFrame[]): FrameSegment[] {
     else out.push({ kind: 'collapsed', frames: [frame] })
   }
   return out
+}
+
+/**
+ * run_done: the first failure group that carries a remedy, in node order
+ * then node-less — the popup NodeFailuresContext opens. null = no popup.
+ */
+export function firstRemedy(failures: RunFailuresWire): RemedyTarget | null {
+  const has = (g: FailureGroup) => Boolean(g.remedy && g.remedy.kind)
+  for (const [nodeId, groups] of Object.entries(failures.by_node)) {
+    const group = groups.find(has)
+    if (group) return { nodeId, group }
+  }
+  const group = failures.other.find(has)
+  return group ? { nodeId: OTHER_KEY, group } : null
 }

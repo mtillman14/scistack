@@ -1224,6 +1224,33 @@ def for_each_save(
     return result_tbl
 
 
+def run_failure_group_json(exc, fn_name: str) -> str:
+    """The run-level failure group (JSON) of a Python exception that escaped
+    ``for_each_save`` into MATLAB, e.g. an ``OutputSaveError``.
+
+    The MATLAB twin of the GUI's ``RunFailures.add_exception``: the same
+    ``FailureGroup.to_dict`` shape with ``count=1``, so ``blame`` and any
+    ``remedy`` (the GUI popup) reach a MATLAB run's ``.done`` marker exactly
+    as they reach a Python run's ``run_done``. ``+scidb/for_each.m`` adds it
+    to ``iteration_tally`` and rethrows the original error. Returns ``""``
+    when *exc* is not a Python exception (nothing to describe).
+    """
+    import json
+
+    from scidb.log import Log
+    from scifor.failures import FailureGroup, run_failure
+
+    if not isinstance(exc, BaseException):
+        Log.debug(f"run_failure_group_json: {type(exc).__name__} is not an exception")
+        return ""
+    group = {**FailureGroup(example=run_failure(exc, fn_name=str(fn_name))).to_dict(), "count": 1}
+    Log.debug(
+        f"run_failure_group_json: {type(exc).__name__} in {fn_name} -> "
+        f"blame={group['blame']} remedy={(group.get('remedy') or {}).get('kind')}"
+    )
+    return json.dumps(group, default=str)
+
+
 def normalize_stat_result(
     json_str: str,
     report_path: str = "",

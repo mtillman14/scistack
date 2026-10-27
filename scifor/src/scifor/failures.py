@@ -103,10 +103,16 @@ class ActionableError(Exception):
     ``blame`` and ``probable`` are read by :func:`classify_blame`; a subclass
     whose blame depends on its contents (``scidb.OutputSaveError``) overrides
     them as properties.
+
+    ``remedy`` is an optional structured explanation a GUI can show as a
+    popup: ``{kind, title, explanation, items, n_more, steps}`` (see
+    :func:`remedy_of`). The exception owns the wording; every consumer
+    renders it as is. ``None`` (the default) means the message is enough.
     """
 
     blame: str = "setup"
     probable: bool = False
+    remedy: "dict | None" = None
 
 
 class UserValueError(ActionableError):
@@ -243,6 +249,7 @@ class ComboFailure:
     no_data: bool
     blame: str = "internal"
     probable: bool = False
+    remedy: "dict | None" = None
 
     @property
     def reason(self) -> str:
@@ -262,6 +269,7 @@ class ComboFailure:
             "no_data": self.no_data,
             "blame": self.blame,
             "probable": self.probable,
+            "remedy": self.remedy,
         }
 
 
@@ -302,6 +310,8 @@ class FailureGroup:
             "blame_label": blame_headline(
                 self.example.blame, self.example.probable, self.example.fn_name
             ),
+            # A popup the GUI shows as is (ActionableError.remedy), or None.
+            "remedy": self.example.remedy,
             "example": self.example.to_dict(),
         }
 
@@ -447,13 +457,15 @@ def failure_from_exception(
     if not _reaches_user(blame_frames):
         blame_frames = _frames_of(exc)
     blame, probable, rule = classify_blame(exc, blame_frames, no_data=no_data)
+    remedy = remedy_of(exc)
     Log.debug(
-        "failure_from_exception: %s in %s -> blame=%s%s via %s",
+        "failure_from_exception: %s in %s -> blame=%s%s via %s remedy=%s",
         type(exc).__name__,
         fn_name,
         blame,
         " (probable)" if probable else "",
         rule,
+        remedy.get("kind") if remedy else None,
         layer="scifor",
     )
     frames = _trim(frames)
@@ -478,7 +490,19 @@ def failure_from_exception(
         no_data=no_data,
         blame=blame,
         probable=probable,
+        remedy=remedy,
     )
+
+
+def remedy_of(exc: BaseException) -> "dict | None":
+    """The first ``remedy`` (see :class:`ActionableError`) in the exception's
+    ``__cause__``/``__context__`` chain, or ``None``. A wrapper such as
+    ``scidb.OutputSaveError`` may expose its causes' remedy as its own."""
+    for link in _exception_chain(exc):
+        remedy = getattr(link, "remedy", None)
+        if isinstance(remedy, dict) and remedy:
+            return remedy
+    return None
 
 
 def run_failure(exc: BaseException, *, fn_name: str) -> ComboFailure:
@@ -772,9 +796,11 @@ def groups_from_wire(raw) -> list[dict]:
         user_frame = _frame_or_none(g.get("user_frame"))
         blame = _wire_blame(g.get("blame") or example.get("blame"), no_data, user_frame)
         probable = bool(g.get("probable") or example.get("probable"))
+        remedy = _remedy_from_wire(g.get("remedy") or example.get("remedy"))
         out.append(
             {
                 **g,
+                "remedy": remedy,
                 "no_data": no_data,
                 "count": int(g.get("count") or 0),
                 "combos": [combos] if isinstance(combos, str) else [str(c) for c in _as_list(combos)],
@@ -788,10 +814,39 @@ def groups_from_wire(raw) -> list[dict]:
                     "user_frame": _frame_or_none(example.get("user_frame")),
                     "blame": blame,
                     "probable": probable,
+                    "remedy": remedy,
                 },
             }
         )
     return out
+
+
+def _remedy_from_wire(raw) -> "dict | None":
+    """A wire ``remedy`` with MATLAB ``jsonencode`` quirks undone: ``[]`` for
+    none, and a one-element ``items``/``steps``/``differing_columns`` list
+    written as a bare object or string."""
+    if not isinstance(raw, dict) or not raw:
+        return None
+    remedy = dict(raw)
+    remedy["items"] = []
+    for item in _as_list(raw.get("items")):
+        if not isinstance(item, dict):
+            continue
+        cols = item.get("differing_columns")
+        remedy["items"].append(
+            {
+                **item,
+                "differing_columns": [cols] if isinstance(cols, str) else [str(c) for c in _as_list(cols)],
+            }
+        )
+    # A step without a button: Python sends null, MATLAB [] — one spelling here.
+    remedy["steps"] = [
+        {**s, "action": s.get("action") or None}
+        for s in _as_list(raw.get("steps"))
+        if isinstance(s, dict)
+    ]
+    remedy["n_more"] = int(raw.get("n_more") or 0)
+    return remedy
 
 
 def _wire_blame(raw, no_data: bool, user_frame) -> str:
