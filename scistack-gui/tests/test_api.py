@@ -558,15 +558,18 @@ class TestDisconnectedEdges:
         edge = self._find_edge(client, "var__RawSignal", bp_node_id)
         self._delete(client, edge)
 
-        # A genuinely different source (never wired to this fn) must NOT
-        # match the hidden edge — falls through to a normal manual edge.
+        # A genuinely different source (never wired to this fn) onto the SAME
+        # port must NOT match the hidden edge — falls through to a normal
+        # manual edge. The port is a real argument of bandpass_filter: an edge
+        # on a port the function does not take is not drawn
+        # (edge_view.missing_port).
         r = client.put(
             "/api/edges/manual__newconst",
             json={
                 "source": "param__brand_new_constant",
                 "target": bp_node_id,
                 "source_handle": None,
-                "target_handle": "in__brand_new_constant",
+                "target_handle": "in__signal",
             },
         )
         assert r.status_code == 200

@@ -2351,12 +2351,19 @@ class TestDeriveTargetForNode:
         _registry._register_parameter(
             "brand_new_gain", Parameter(7, description="test default"), source="test"
         )
+
+        # The function must take brand_new_gain: an edge onto a port that is
+        # not an argument binds nothing (edge_view.missing_port).
+        def gain_filter(signal, brand_new_gain):
+            return signal * brand_new_gain
+
+        _registry._functions["gain_filter"] = gain_filter
         try:
             client.put("/api/layout/mv_o4_in", json={
                 "x": 0, "y": 0, "node_type": "variableNode", "label": "OtherSignal4",
             })
             client.put("/api/layout/mf_bp_other4", json={
-                "x": 10, "y": 0, "node_type": "functionNode", "label": "bandpass_filter",
+                "x": 10, "y": 0, "node_type": "functionNode", "label": "gain_filter",
             })
             client.put("/api/layout/mv_o4_out", json={
                 "x": 20, "y": 0, "node_type": "variableNode", "label": "OtherFiltered4",
@@ -2379,6 +2386,7 @@ class TestDeriveTargetForNode:
                 "of dropping the constant entirely"
             )
         finally:
+            _registry._functions.pop("gain_filter", None)
             _registry._parameters.pop("brand_new_gain", None)
             _registry._parameter_sources.pop("brand_new_gain", None)
 

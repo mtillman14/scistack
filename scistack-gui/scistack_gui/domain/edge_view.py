@@ -171,22 +171,46 @@ def missing_port(
     user redraws it).
 
     *signatures* memoizes ``{label: arguments}`` for one pass. An edge is kept
-    when nothing is known to be stale: the signature cannot be read (no
-    arguments: MATLAB not scanned, an import error) or the function takes
-    ``**kwargs``, which accepts any name.
+    when nothing is known to be stale (:func:`removed_argument`).
     """
-    import inspect
-
-    from scistack_gui.ids import IN_HANDLE_PREFIX, strip_placement
+    from scistack_gui.ids import IN_HANDLE_PREFIX
 
     target = edge.get("target") or ""
-    meta = manual_nodes.get(target) or manual_nodes.get(strip_placement(target))
-    if not meta or meta.get("type") not in _SIGNATURE_NODE_TYPES:
-        return None
     handle = edge.get("targetHandle") or edge.get("target_handle") or ""
     if not handle.startswith(IN_HANDLE_PREFIX):
         return None
-    label = meta.get("label") or strip_placement(target)
+    return removed_argument(
+        target, handle[len(IN_HANDLE_PREFIX):], manual_nodes, signatures
+    )
+
+
+def removed_argument(
+    node_id: str, port: str, manual_nodes: dict, signatures: dict
+) -> "tuple[str, list[str]] | None":
+    """The port form of :func:`missing_port`: is argument *port* of node
+    *node_id* gone from its function? ``(function label, its current argument
+    names)`` when it is, else ``None``.
+
+    The second reader is the disconnected-port check
+    (``execution_service.document_disconnected_ports``): a HIDDEN edge on a
+    removed argument is not a disconnected input, there is no input left to
+    reconnect. Before 2026-10-27 it was, so renaming ``df_in`` to
+    ``data_path`` and deleting the old edge left the node refusing every run
+    with "input 'df_in' is disconnected".
+
+    Nothing is known to be stale, so ``None``, when the node is not a function
+    or glue node, the signature cannot be read (no arguments: MATLAB not
+    scanned, an import error) or the function takes ``**kwargs``, which
+    accepts any name.
+    """
+    import inspect
+
+    from scistack_gui.ids import strip_placement
+
+    meta = manual_nodes.get(node_id) or manual_nodes.get(strip_placement(node_id))
+    if not meta or meta.get("type") not in _SIGNATURE_NODE_TYPES:
+        return None
+    label = meta.get("label") or strip_placement(node_id)
     if label not in signatures:
         from scistack_gui.api.pipeline import _fn_arguments
 
@@ -197,7 +221,7 @@ def missing_port(
     ):
         return None
     params = [a.name for a in arguments if not a.private]
-    if handle[len(IN_HANDLE_PREFIX):] in params:
+    if port in params:
         return None
     return label, params
 

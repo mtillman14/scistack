@@ -702,20 +702,38 @@ def document_disconnected_ports(
     stored row now, and removing one hides its connection
     (``layout_service.delete_edge``), so the hidden connection ids name the
     node's ports directly (``graph_builder.connection_id``: ``e__{src}__{tgt}
-    __{port}``). A port fed by another visible edge is covered.
+    __{port}``). A port fed by another visible edge is covered. A port that
+    is no longer an argument of the node's function is not an input at all
+    (``edge_view.removed_argument``), so its hidden edge disconnects nothing.
     """
+    from scistack_gui.domain.edge_view import removed_argument
     from scistack_gui.domain.graph_builder import endpoint_ref
 
     ref = endpoint_ref(node_id, manual_nodes)
     marker = f"__{ref}__"
     covered = set(resolved.bindings) if resolved is not None else set()
     ports: set[str] = set()
+    gone: dict[str, list[str]] = {}
+    signatures: dict = {}
     for cid in hidden_edge_ids or ():
         if not cid.startswith("e__") or marker not in cid:
             continue
         port = cid.rsplit("__", 1)[-1]
-        if port and port not in covered:
-            ports.add(port)
+        if not port or port in covered or port in gone:
+            continue
+        stale = removed_argument(node_id, port, manual_nodes or {}, signatures)
+        if stale is not None:
+            gone[port] = stale[1]
+            continue
+        ports.add(port)
+    if gone:
+        logger.info(
+            "[execution] node %s: hidden edge(s) on %s ignored for the "
+            "disconnected check: no longer argument(s) of its function (now %s)",
+            node_id,
+            sorted(gone),
+            next(iter(gone.values())),
+        )
     return sorted(ports)
 
 

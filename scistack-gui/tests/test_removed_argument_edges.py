@@ -99,3 +99,46 @@ def test_signature_is_read_once_per_pass(monkeypatch):
     for i in range(3):
         missing_port(_edge(f"e{i}", "in__df_in"), MANUAL_NODES, memo)
     assert calls == ["parse"]
+
+
+# --- The disconnected-port check (execution_service.document_disconnected_ports)
+#
+# Regression (2026-10-27, later the same day): with the df_in edge hidden and
+# data_path wired, every run was refused with "input 'df_in' is disconnected".
+# A hidden edge on a removed argument disconnects nothing.
+
+
+def _hidden_on(port, source="pathInput__data_path"):
+    from scistack_gui.domain.graph_builder import connection_id
+
+    return connection_id(source, FN_NODE, f"in__{port}", MANUAL_NODES)
+
+
+def _disconnected(hidden_ids, bound=()):
+    from types import SimpleNamespace
+
+    from scistack_gui.services.execution_service import document_disconnected_ports
+
+    resolved = SimpleNamespace(bindings={p: {} for p in bound})
+    return document_disconnected_ports(FN_NODE, set(hidden_ids), resolved, MANUAL_NODES)
+
+
+def test_hidden_edge_on_removed_argument_does_not_disconnect(signature, caplog):
+    signature([Argument("data_path", PK)])
+    with caplog.at_level("INFO", logger="scistack_gui.services.execution_service"):
+        assert _disconnected([_hidden_on("df_in")], bound=["data_path"]) == []
+    assert "['df_in'] ignored for the disconnected check" in caplog.text
+
+
+def test_hidden_edge_on_current_argument_still_disconnects(signature):
+    signature([Argument("data_path", PK), Argument("col", PK)])
+    assert _disconnected(
+        [_hidden_on("df_in"), _hidden_on("col", source="param__col")],
+        bound=["data_path"],
+    ) == ["col"]
+
+
+def test_unknown_signature_keeps_the_hidden_port_disconnected(signature):
+    """Nothing is known stale, so the hide still disconnects (as before)."""
+    signature([])
+    assert _disconnected([_hidden_on("df_in")]) == ["df_in"]
