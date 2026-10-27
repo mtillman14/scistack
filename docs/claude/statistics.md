@@ -88,7 +88,7 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
   model when within units are incomplete) or `complete_cases` (incomplete
   units are left out of EVERY test of the analysis, named). Every caption
   states the policy (`format.missing_sentence`).
-- **Empty cells are not missing data** (scidb.log 2026-10-20, C-Brace: no
+- **Empty cells are not missing data** (scistack.log 2026-10-20, C-Brace: no
   Traditional subject has one session). A model with every interaction is
   rank deficient there, so `catalog.recommend` recommends NO omnibus and a
   per-context pairwise test (never `lmm_pairwise`, which hangs on that one

@@ -72,7 +72,7 @@ def _skip_unresolvable(entry: str, label: str) -> bool:
 
     DEBUG only: the ``machine_config_paths`` startup notice reports these
     once (startup.check_machine_config_paths). They used to be a "File does
-    not exist" load error on every refresh (22x in scidb.log 2026-10-19).
+    not exist" load error on every refresh (22x in scistack.log 2026-10-19).
     """
     from scifor.machine import unresolvable_here
 

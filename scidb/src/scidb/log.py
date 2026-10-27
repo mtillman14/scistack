@@ -19,16 +19,21 @@ from pathlib import Path
 
 from scistacklog import LAYERS, Log
 
-__all__ = ["Log", "LAYERS", "log_path_for", "attach_log_file"]
+__all__ = ["Log", "LAYERS", "LOG_FILE_NAME", "log_path_for", "attach_log_file"]
+
+#: The file name of the log beside every database. The one owner: MATLAB's
+#: configure_database calls log_path_for, and the extension's
+#: failureReporter.ts copy is pinned to this by a scistack-gui test.
+LOG_FILE_NAME = "scistack.log"
 
 
 def log_path_for(db_path) -> Path:
-    """The log file that belongs to *db_path*: ``scidb.log`` beside it.
+    """The log file that belongs to *db_path*: ``scistack.log`` beside it.
 
     One definition of the convention, so every caller that needs the path
     before (or without) ``configure_database`` agrees with it.
     """
-    return Path(db_path).parent / "scidb.log"
+    return Path(db_path).parent / LOG_FILE_NAME
 
 
 def attach_log_file(db_path) -> Path:
@@ -41,7 +46,7 @@ def attach_log_file(db_path) -> Path:
     Attaching early is the point of this helper. Anything logged before the
     first call goes to stderr only, which is how the GUI's whole startup
     discovery pass — the registry scan that decides which functions,
-    variables and PathInputs exist — used to be missing from ``scidb.log``.
+    variables and PathInputs exist — used to be missing from ``scistack.log``.
     """
     log_path = log_path_for(db_path)
     if Log.get_path() == str(log_path):

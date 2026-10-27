@@ -469,7 +469,7 @@ def test_generated_code_reproduces_the_column_join_and_the_missing_level(
 #
 # Refusing a signal column used to cost one `sample_column_value` per muscle —
 # a whole EMG trace fetched out of DuckDB, classified as SERIES_1D and thrown
-# away. Measured on the user's project (scidb.log 2026-09-15): 4.2 s for
+# away. Measured on the user's project (scistack.log 2026-09-15): 4.2 s for
 # FilteredDelsys and 5.4 s for RawEMG, ~8 s added to EVERY panel open by two
 # variables that offer no groupings at all.
 #
@@ -860,7 +860,7 @@ def test_an_unpinned_grouping_says_it_had_to_choose(two_label_variants, caplog):
 
 
 def test_a_whole_table_saved_at_every_location_is_named(caplog):
-    """scidb.log run n1irqety (2026-09-29): the demographics CSV read once per
+    """scistack.log run n1irqety (2026-09-29): the demographics CSV read once per
     subject, so every subject held all three groups and "the first" was
     Digitimer for everyone. The warning must say that is what it looks like."""
     import logging

@@ -203,7 +203,7 @@ test('no meta or an unknown tick shades nothing', () => {
 })
 
 test('a bar or panel without its match does not throw, and is reported once', () => {
-  // scidb.log 2026-10-17: Object.keys(undefined) in dictId crashed the tab.
+  // scistack.log 2026-10-17: Object.keys(undefined) in dictId crashed the tab.
   const reports: string[] = []
   setMalformedReporter(what => reports.push(what))
   resetMalformedReports()

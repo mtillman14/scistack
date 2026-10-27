@@ -116,7 +116,7 @@ fix, `save → load → save` produced a *different* record_id the second time
 at the same location. After the fix the round trip is a fixed point. Pinned by
 `test_reload_hashes_the_same` and `test_nan_roundtrip_is_hash_stable`.
 
-## Reading it in `scidb.log`
+## Reading it in `scistack.log`
 
 | line | layer | meaning |
 |---|---|---|

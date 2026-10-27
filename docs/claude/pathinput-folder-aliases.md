@@ -106,7 +106,7 @@ whole declaration. The canvas node shows a `≈N aliases` badge.
 
 ## Diagnostics
 
-- `scidb.log`: `[path_input_service] update_path_input: ... aliases=...`, and
+- `scistack.log`: `[path_input_service] update_path_input: ... aliases=...`, and
   `generate_matlab_command: ... emits N template(s) [name: tpl aliases=[keys]]`.
 - scifor DEBUG: `pathinput_fallback: matched ... (captures, numeric keys,
   alias keys, report)` and `pathinput_alias_unresolved` for an on-disk

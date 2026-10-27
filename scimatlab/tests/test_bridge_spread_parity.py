@@ -9,7 +9,7 @@ not pin). Until 2026-09-15 nothing re-applied that decision on the bridge, so
 a ``loadFunctionalOutcomes`` run that returned a 73x27 table labelled by
 ``subject``/``session`` with every schema level deselected saved ONE
 dataset-level record on the MATLAB path and 73 on the Python path
-(scidb.log 2026-09-15 19:16, ``result_tbl shape=(1, 1)``).
+(scistack.log 2026-09-15 19:16, ``result_tbl shape=(1, 1)``).
 
 Runs entirely in Python without MATLAB: prepare -> the nested frame MATLAB
 would build -> for_each_save, mirroring test_bridge_endpoints.py.

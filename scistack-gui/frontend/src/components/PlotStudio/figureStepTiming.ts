@@ -1,7 +1,7 @@
 /**
  * How long one ◀ ▶ figure step takes, as the user sees it: click → painted.
  *
- * scidb.log shows the backend's share of a step (plot_resolve, the layout
+ * scistack.log shows the backend's share of a step (plot_resolve, the layout
  * timings) but nothing on either side of it: the panel's debounce before the
  * request goes, and Plotly drawing the answer after it lands. On 2026-10-16 a
  * "slow arrows" report could only be explained up to "resolved bar: figure N

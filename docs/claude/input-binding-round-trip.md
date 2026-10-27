@@ -215,7 +215,7 @@ Both live in **scidb**, under every caller — the GUI, MATLAB, the CLI and
 plain Python lose a selection identically, and only scidb sees them all. The
 GUI contributes the one fact scidb cannot see: whether a node config
 overrode history. Plus one INFO line per run naming every binding, so
-`scidb.log` always answers "what did this run actually feed the function?".
+`scistack.log` always answers "what did this run actually feed the function?".
 
 The model for all of this is the `[coarse-input]` line
 (`foreach.py:3623`): a silent, legitimate-looking narrowing of what a

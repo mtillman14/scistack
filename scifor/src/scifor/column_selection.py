@@ -113,7 +113,7 @@ def column_value(column: Any) -> Any:
     ``ColumnSelection``, each pass of ``for_columns`` (scifor), and scidb's
     per-combo selection. A record saved as a one-row table (a CSV spread one
     record per subject) gives each column one value per subject, and that
-    value is what the function means (scidb.log 2026-10-22: ``value.split``
+    value is what the function means (scistack.log 2026-10-22: ``value.split``
     on a pandas ``StringArray``). ``to_numpy`` rather than ``.values``: on
     pandas 3 a text column is a string dtype, and ``.values`` returns a pandas
     extension array, not numpy. A plain input with one data column already

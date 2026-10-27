@@ -149,7 +149,7 @@ which is node-tested.
 ## Diagnosing
 
 - **"My colour doesn't show":**
-  - `grep "\[colors\]" scidb.log` shows which config was read.
+  - `grep "\[colors\]" scistack.log` shows which config was read.
   - The per-resolve INFO line
     `colours: levels session 2/3 pinned (project 2, plot 0); single mark colour palette; …`
     lists pins that name no level (`1` vs `"01"`) and entries dropped as not

@@ -7,7 +7,7 @@
  * which call `useScope`/`useRunLog` and throw wherever those providers are not
  * mounted — which is the whole Plot Studio tab (`PlotRoot`). On 2026-09-15 the
  * grouping picker's first step drew the canvas without a provider and the tab
- * went blank, with nothing in scidb.log to say why.
+ * went blank, with nothing in scistack.log to say why.
  *
  * The fix made the provider the dialog's job (`PickerDialog` takes `selection`
  * and wraps the canvas itself). This test keeps it there. There is no React

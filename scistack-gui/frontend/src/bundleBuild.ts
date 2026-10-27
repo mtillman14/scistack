@@ -7,7 +7,7 @@
  * hand-built 0.1.0 extension, and finding that took an evening. The webview
  * now reports itself once on load; the extension host adds who loaded it and
  * judges the version (extension/src/webviewBuild.ts), and Python writes the
- * line to scidb.log (scistack_gui/services/client_build.py).
+ * line to scistack.log (scistack_gui/services/client_build.py).
  *
  * React-free so `npm test` can run it.
  */

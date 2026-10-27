@@ -200,7 +200,7 @@ import {
 } from './sidebarGroups'
 
 // A difference bar or panel that arrives without one of its dicts goes to
-// scidb.log (2026-10-17: one crashed the tab and the log could not say which).
+// scistack.log (2026-10-17: one crashed the tab and the log could not say which).
 setMalformedReporter((what, owner) => {
   console.warn('[Plot Studio] difference bars: missing', what, owner)
   let shape = ''
@@ -1019,7 +1019,7 @@ export default function PlotStudio({
   // request against (`adoptedFigureIndex`) — its closure holds the old one.
   const figureIndexRef = useRef(figureIndex)
   figureIndexRef.current = figureIndex
-  // Times one ◀ ▶ step, click to drawn, for scidb.log (figureStepTiming.ts).
+  // Times one ◀ ▶ step, click to drawn, for scistack.log (figureStepTiming.ts).
   const stepTimer = useRef(new FigureStepTimer())
   const [figureLabels, setFigureLabels] = useState<string[]>([])
   const figureLabelsRef = useRef(figureLabels)
@@ -1443,7 +1443,7 @@ export default function PlotStudio({
   )
 
   // Plotly finished drawing `index` (onInitialized / onUpdate). The frame
-  // after is when it is on screen; a finished ◀ ▶ step goes to scidb.log.
+  // after is when it is on screen; a finished ◀ ▶ step goes to scistack.log.
   const onFigureDrawn = useCallback((index: number) => {
     requestAnimationFrame(() => {
       const step = stepTimer.current.drawn(index, performance.now())
@@ -2569,7 +2569,7 @@ export default function PlotStudio({
     } catch (err) {
       const message = (err as Error).message
       setNotice(`Could not copy: ${message}`)
-      // To scidb.log: a clipboard refusal sends no RPC otherwise.
+      // To scistack.log: a clipboard refusal sends no RPC otherwise.
       callBackend('report_client_error', {
         where: 'Plot Studio copy_png',
         message,
@@ -2584,7 +2584,7 @@ export default function PlotStudio({
    *  Two buttons because the costs differ, but ONE shape: both are background
    *  jobs that report progress (`saveJob` below). A save renders at FULL
    *  resolution with no downsampling, and that is minutes per figure — 1543 s
-   *  for a two-figure fan-out (scidb.log 2026-09-11) — against a fixed 30 s
+   *  for a two-figure fan-out (scistack.log 2026-09-11) — against a fixed 30 s
    *  transport timeout. "Save current figure" was a request/response on the
    *  theory that one figure is cheap; it timed out just as reliably as saving
    *  everything did, and left the backend rendering a file nobody was waiting

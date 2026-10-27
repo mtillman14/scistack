@@ -154,7 +154,7 @@ def update_parameter(
     from scistack_gui.services.target_file_service import update_declaration
 
     if not values:
-        # Worth a line in scidb.log: this is the one edit that can take a
+        # Worth a line in scistack.log: this is the one edit that can take a
         # wired, previously-runnable Parameter back to un-runnable.
         from scistack_gui import registry
 

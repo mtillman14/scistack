@@ -1,7 +1,7 @@
 """
 Parameter-fed glue: the Parameter keeps its own value; the glue is a history hop.
 
-The bug (scidb.log 2026-10-21, ``load_xsens_one_file``): a Parameter ``config``
+The bug (scistack.log 2026-10-21, ``load_xsens_one_file``): a Parameter ``config``
 holding a PATH fed ``glue_xsens_config``, which read the JSON file and handed
 the function a dict. ``apply_constant_glue`` put the glued dict into
 ``__constants`` and ``record_run`` stamped ``declared_name='config'`` on that

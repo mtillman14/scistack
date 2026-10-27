@@ -1,6 +1,6 @@
 """A variable keeps the columns of its first save, and says so clearly.
 
-Regression for scidb.log 2026-10-01: GaitRiteSymmetry was first saved with
+Regression for scistack.log 2026-10-01: GaitRiteSymmetry was first saved with
 L_*/R_* columns. A later run produced A_*/U_* columns and failed with DuckDB's
 ``Binder Error: Table "GaitRiteSymmetry_data" does not have a column with
 name "A_Idx_GR"``, which says nothing about why or what to do. The other

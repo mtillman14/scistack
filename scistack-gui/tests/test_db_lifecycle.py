@@ -138,7 +138,7 @@ class TestAcquireRaisesDoesNotLeakRefcount:
     DuckDB lock) must not leak the refcount, or subsequent acquires will
     keep the lock permanently held and MATLAB can never reopen the file.
 
-    Reproduces the leak seen in scidb.log where a ``get_pipeline`` RPC
+    Reproduces the leak seen in scistack.log where a ``get_pipeline`` RPC
     fired while MATLAB held the lock, ``duckdb.connect()`` raised inside
     ``_db.reopen()``, and the pre-incremented refcount was never rolled
     back.  The next successful acquire then recorded ``refcount=2`` with

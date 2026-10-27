@@ -245,7 +245,7 @@ wired it the same way. Resolution, in order:
 
 **And raise a popup, not just a log line** (user decision 2026-09-22). Two
 nodes stating identical wiring compute identical things, so the state is
-almost certainly unintended, and a warning buried in `scidb.log` is a warning
+almost certainly unintended, and a warning buried in `scistack.log` is a warning
 nobody reads. It is also recoverable — rewire one and the ambiguity resolves
 itself — so the popup names both nodes and says that runs will be attributed
 to one of them until they differ.

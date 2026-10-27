@@ -72,7 +72,7 @@ class TestFreshProject:
         # new-to-coding.md tells users it is already ignored.
         init_project(tmp_path / "gait")
         lines = (tmp_path / "gait" / ".gitignore").read_text().splitlines()
-        for pattern in ("*.duckdb", "scidb.log", ".venv/", "venv/"):
+        for pattern in ("*.duckdb", "scistack.log", ".venv/", "venv/"):
             assert pattern in lines, f"{pattern!r} missing from the scaffolded .gitignore"
 
     def test_pyproject_is_packaging_only_and_buildable(self, tmp_path):

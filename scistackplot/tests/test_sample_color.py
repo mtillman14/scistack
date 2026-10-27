@@ -245,7 +245,7 @@ def test_mpl_draws_points_only_when_the_coloured_group_is_the_innermost_tick(tab
 
 @pytest.mark.parametrize("sample_color", ["subject", None])
 def test_lone_points_are_one_artist_per_colour_not_one_per_run(table, sample_color):
-    """Regression (scidb.log 2026-10-15): with a between-subject factor as
+    """Regression (scistack.log 2026-10-15): with a between-subject factor as
     the innermost tick every run is ONE point, and each run was its own
     scatter / plotly trace — ~1400 of them on the user's CosmedData figure,
     6.6 s per matplotlib render and 46 s with the auto text size's trials.
@@ -293,7 +293,7 @@ def test_joined_runs_are_still_one_line_each(table):
 def test_concurrent_renders_do_not_leak_text_sizes(table):
     """The GUI renders on one thread per RPC; ``rc_context`` saves and
     restores GLOBAL rcParams, so two overlapping renders could leave one's
-    sizes behind (three at once in scidb.log 2026-10-15 12:23:50). Renders
+    sizes behind (three at once in scistack.log 2026-10-15 12:23:50). Renders
     are one at a time (``render.mpl._MPL_LOCK``): the rcParams after a burst
     of threaded renders are the ones before it."""
     import threading

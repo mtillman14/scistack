@@ -1,6 +1,6 @@
 """A call site with more than one output type hashes to ONE agreed wiring.
 
-scidb.log 2026-09-29: ``pandas.read_csv(DemographicsPath)`` ran into
+scistack.log 2026-09-29: ``pandas.read_csv(DemographicsPath)`` ran into
 ``Demographics``, its node's output was rewired to ``DemographicsTable`` and
 run. A call site excludes outputs, so both histories were ONE call site. The
 canvas hashed the union of its outputs (``1540882c…``), a wiring no Run had

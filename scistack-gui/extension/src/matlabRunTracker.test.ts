@@ -141,7 +141,7 @@ test('the shared mark is ignored for a run that is not in flight', () => {
   assert.equal(tracker.sharedEngineActive, false);
 });
 
-// Regression (scidb.log 2026-09-25): a GUI Python run's own WAL writes fired
+// Regression (scistack.log 2026-09-25): a GUI Python run's own WAL writes fired
 // the file watcher mid-save, so the canvas rebuilt against the writer (26.5s)
 // and drew the pre-save graph. The run's own dag_updated is the refresh.
 test('db changes are dropped, not deferred, during a Python run', () => {

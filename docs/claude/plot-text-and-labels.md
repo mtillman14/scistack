@@ -397,7 +397,7 @@ the merge but has no GUI control yet.
 
 ## Diagnosing
 
-- "My alias doesn't show": `grep "\[aliases\]" scidb.log` shows which config
+- "My alias doesn't show": `grep "\[aliases\]" scistack.log` shows which config
   was read and the tables it declared. The per-resolve INFO line
   `labels: session 3/4 aliased (project 3, plot 0) …` shows what matched.
   A level that does not match is usually a text mismatch (`1` vs `"01"`).
@@ -406,7 +406,7 @@ the merge but has no GUI control yet.
 - "The text is the wrong size": the INFO figure-size line lists the resolved
   sizes and marks pinned ones. A size that seems ignored is usually unset and
   derived from `base`.
-- "Auto chose a small size": `grep "auto text size" scidb.log`. The INFO line
+- "Auto chose a small size": `grep "auto text size" scistack.log`. The INFO line
   names each element's size and the problem that stopped the next size up.
   At DEBUG, each trial layout's sizes and blame are listed, and the trial's
   own lines carry `[auto-size trial …]`. A binding of "plot area N% of the

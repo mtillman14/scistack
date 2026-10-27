@@ -47,7 +47,7 @@ def read_text_or_empty(path):
 
 
 def test_file_line_format(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.info("hello world")
     lines = read_lines(log_file)
@@ -57,7 +57,7 @@ def test_file_line_format(tmp_path):
 
 
 def test_file_uses_warn_not_warning(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.warn("careful")
     Log.error("boom")
@@ -68,14 +68,14 @@ def test_file_uses_warn_not_warning(tmp_path):
 
 
 def test_percent_style_args(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.info("count=%d for %s", 7, "PSD")
     assert read_lines(log_file)[0].endswith("count=7 for PSD")
 
 
 def test_exc_info_writes_traceback(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     try:
         raise ValueError("bad channel count")
@@ -113,7 +113,7 @@ def test_console_stream_is_stderr_not_stdout(capsys):
 
 
 def test_dual_sink_level_independence(tmp_path, capsys):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.set_level("DEBUG", sink="file")
     Log.set_level("INFO", sink="console")
@@ -128,7 +128,7 @@ def test_dual_sink_level_independence(tmp_path, capsys):
 
 
 def test_default_level_is_info_on_both_sinks(tmp_path, capsys):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.debug("hidden by default")
     assert "hidden by default" not in capsys.readouterr().err
@@ -152,7 +152,7 @@ def test_set_level_rejects_unknown_sink():
 def test_env_var_sets_both_sinks(tmp_path, monkeypatch):
     monkeypatch.setenv("SCIDB_LOG_LEVEL", "DEBUG")
     Log._reset_for_tests()
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.debug("env-enabled detail")
     assert "env-enabled detail" in log_file.read_text(encoding="utf-8")
@@ -180,7 +180,7 @@ def test_caplog_scidb_logger_name_unchanged(caplog):
 
 
 def test_layer_kwarg_routes_to_layer_logger(tmp_path, caplog):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with caplog.at_level(logging.INFO, logger="scifor"):
         Log.info("from the orchestrator", layer="scifor")
@@ -189,7 +189,7 @@ def test_layer_kwarg_routes_to_layer_logger(tmp_path, caplog):
 
 
 def test_every_declared_layer_reaches_the_file(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     for layer in LAYERS:
         Log.info("ping", layer=layer)
@@ -201,7 +201,7 @@ def test_every_declared_layer_reaches_the_file(tmp_path):
 def test_child_module_loggers_are_covered(tmp_path):
     """Plain logging.getLogger('<layer>.<module>') records land in the file
     tagged with the layer — this is how sciduckdb/scilineage/etc. log."""
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     logging.getLogger("scidb.discover").info("module-level record")
     logging.getLogger("scilineage.hashing").info("hash note")
@@ -211,7 +211,7 @@ def test_child_module_loggers_are_covered(tmp_path):
 
 
 def test_unknown_layer_falls_back_to_scidb_with_warning(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with pytest.warns(UserWarning, match="Unknown scistack layer"):
         Log.info("odd origin", layer="not_a_layer")
@@ -234,7 +234,7 @@ def test_set_path_repoints_mid_run(tmp_path):
 
 
 def test_set_path_none_detaches_file_sink(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.info("recorded")
     Log.set_path(None)
@@ -247,7 +247,7 @@ def test_attach_is_idempotent_no_duplicate_lines(tmp_path):
     Log.attach()
     Log.attach()
     Log.bridge_python_logging()
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.info("exactly once")
     assert log_file.read_text(encoding="utf-8").count("exactly once") == 1
@@ -257,7 +257,7 @@ def test_attach_is_idempotent_no_duplicate_lines(tmp_path):
 
 
 def test_step_entry_exit_at_debug(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.set_level("DEBUG", sink="file")
     with Log.step("resolve_empty_lists", layer="scifor"):
@@ -269,7 +269,7 @@ def test_step_entry_exit_at_debug(tmp_path):
 
 
 def test_step_silent_at_info(tmp_path, capsys):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with Log.step("quiet_op"):
         pass
@@ -278,7 +278,7 @@ def test_step_silent_at_info(tmp_path, capsys):
 
 
 def test_step_failure_logs_error_with_traceback_and_reraises(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with pytest.raises(ValueError, match="broken"):
         with Log.step("save_batch(PSD)"):
@@ -290,7 +290,7 @@ def test_step_failure_logs_error_with_traceback_and_reraises(tmp_path):
 
 
 def test_timer_summary_at_info_with_timing_tag(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with Log.timer("save_batch(PSD)", extra="114 items") as t:
         with t.phase("canonical_hash"):
@@ -306,7 +306,7 @@ def test_timer_summary_at_info_with_timing_tag(tmp_path):
 
 
 def test_timer_phase_table_at_debug_only(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with Log.timer("load(PSD)") as t:
         with t.phase("find"):
@@ -332,7 +332,7 @@ def test_timings_matches_timer_summary_shape(tmp_path):
     so they call this instead. The output contract must be identical to timer()
     so one grep finds both.
     """
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.timings(
         "save_batch(PSD)",
@@ -351,7 +351,7 @@ def test_timings_matches_timer_summary_shape(tmp_path):
 
 
 def test_timings_total_defaults_to_sum_when_absent(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.timings("record_run(fn=f)", {"meta_fetch": 1.0, "commit": 2.0})
     assert "TOTAL=3.000s" in log_file.read_text(encoding="utf-8")
@@ -359,7 +359,7 @@ def test_timings_total_defaults_to_sum_when_absent(tmp_path):
 
 def test_timings_top_keeps_the_info_line_readable(tmp_path):
     """~18 phases do not fit one line; the costliest few go to INFO."""
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     phases = {f"p{i}": float(i) for i in range(10)}
     Log.timings("save_batch(X)", phases, top=3)
@@ -376,7 +376,7 @@ def test_timings_top_keeps_the_info_line_readable(tmp_path):
 
 def test_timings_phase_table_at_debug_only(tmp_path):
     """Every phase still reaches DEBUG even when `top` trims the INFO line."""
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.set_level("DEBUG", sink="file")
     Log.timings("save_batch(X)", {"cheap": 0.001, "dear": 9.0}, top=1)
@@ -386,14 +386,14 @@ def test_timings_phase_table_at_debug_only(tmp_path):
 
 
 def test_timings_accepts_pairs(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.timings("x", [("a", 1.0), ("b", 2.0)])
     assert "a=1.000s, b=2.000s" in log_file.read_text(encoding="utf-8")
 
 
 def test_timer_emits_summary_even_when_body_raises(tmp_path):
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with pytest.raises(RuntimeError):
         with Log.timer("save_batch(X)"):
@@ -405,11 +405,11 @@ def test_live_timer_announces_each_phase_as_it_starts(tmp_path):
     """A live timer speaks DURING the work, not only after it.
 
     The case this exists for: a figure save whose resolve ran for 25 minutes
-    (scidb.log 2026-09-11 12:28 -> 12:54) and whose only instrumentation was a
+    (scistack.log 2026-09-11 12:28 -> 12:54) and whose only instrumentation was a
     summary emitted on exit — so a save that timed out, or was still running
     when the log was read, described itself not at all.
     """
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with Log.timer("save_figure", live=True) as t:
         with t.phase("resolve", extra="2 figure(s)"):
@@ -427,7 +427,7 @@ def test_live_timer_announces_each_phase_as_it_starts(tmp_path):
 
 def test_a_quiet_timer_says_nothing_until_it_is_done(tmp_path):
     """The default is unchanged: one summary, no narration, no notes."""
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     with Log.timer("load(PSD)") as t:
         with t.phase("find"):
@@ -441,7 +441,7 @@ def test_a_quiet_timer_says_nothing_until_it_is_done(tmp_path):
 
 def test_positional_matlab_call_shapes(tmp_path):
     """MATLAB calls py.scidb.log.Log.info(msg) and set_level(level[, sink])."""
-    log_file = tmp_path / "scidb.log"
+    log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.info("plain positional")
     Log.set_level("DEBUG")
@@ -458,7 +458,7 @@ def test_positional_matlab_call_shapes(tmp_path):
 def test_trial_demotes_info_and_warn_to_debug(tmp_path):
     """A discarded trial's INFO/WARN must not read as the real result's: at
     INFO they vanish from the file, at DEBUG they keep their level in text."""
-    path = tmp_path / "scidb.log"
+    path = tmp_path / "scistack.log"
     Log.set_path(str(path))
     with Log.trial("auto-size 12pt"):
         Log.info("figure size 8 x 6 in", layer="scistackplot")
@@ -471,7 +471,7 @@ def test_trial_demotes_info_and_warn_to_debug(tmp_path):
 
 
 def test_trial_records_keep_their_level_in_the_text(tmp_path):
-    path = tmp_path / "scidb.log"
+    path = tmp_path / "scistack.log"
     Log.set_path(str(path))
     Log.set_level("DEBUG", sink="file")
     with Log.trial("auto-size 12pt"):
@@ -481,7 +481,7 @@ def test_trial_records_keep_their_level_in_the_text(tmp_path):
 
 
 def test_trial_never_demotes_error(tmp_path):
-    path = tmp_path / "scidb.log"
+    path = tmp_path / "scistack.log"
     Log.set_path(str(path))
     with Log.trial("auto-size 12pt"):
         Log.error("render failed", layer="scistackplot")
@@ -489,7 +489,7 @@ def test_trial_never_demotes_error(tmp_path):
 
 
 def test_trial_ends_on_exception(tmp_path):
-    path = tmp_path / "scidb.log"
+    path = tmp_path / "scistack.log"
     Log.set_path(str(path))
     with pytest.raises(RuntimeError):
         with Log.trial("t"):

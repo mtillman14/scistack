@@ -21,7 +21,7 @@
  *     still left it out (a build-side bug — document view / scope filter).
  *
  * Pure: no React, no DOM, no RPC. PipelineDAG owns the instance and sends
- * the report (report_canvas_refresh -> scidb.log).
+ * the report (report_canvas_refresh -> scistack.log).
  */
 
 export type PendingKind = 'node' | 'edge'

@@ -10,7 +10,7 @@ Windows: never leave a read pending on the pipe.
     doing its first ``import numpy`` / ``scipy`` / ``matplotlib`` waited until
     the next line arrived — and the main thread starts the next read within
     microseconds, so in practice forever. Plot Studio's first ``plot_describe``
-    hung this way (scidb.log 2026-10-20 11:59:00, ``import_plot_packages
+    hung this way (scistack.log 2026-10-20 11:59:00, ``import_plot_packages
     started`` and never done). Standalone reproduction: main thread blocked
     reading a pipe, worker thread importing scistackplot → stuck in
     ``create_module`` for ``numpy._core._multiarray_umath``; the same worker

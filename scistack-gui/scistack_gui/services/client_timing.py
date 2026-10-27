@@ -1,7 +1,7 @@
 """
 Client-side (webview) timings, written into the shared log.
 
-scidb.log records the backend's share of a Plot Studio ◀ ▶ step (plot_resolve
+scistack.log records the backend's share of a Plot Studio ◀ ▶ step (plot_resolve
 and its layout timings) but nothing either side of it: the panel's debounce
 before the request leaves, and Plotly drawing the answer after it lands. On
 2026-10-16 "the arrows are slow" could be explained only up to "resolved

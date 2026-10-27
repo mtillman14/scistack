@@ -729,7 +729,7 @@ class AsiaLevel(BaseVariable):
 
 
 class TestForColumnsOneRowRecords:
-    """scidb.log 2026-10-22: a CSV spread one record per subject is a one-row
+    """scistack.log 2026-10-22: a CSV spread one record per subject is a one-row
     table per subject, and for_columns handed each call a pandas StringArray,
     so `value.split("|")` raised on every column. The function now gets the
     subject's cell, a plain str, after the full save/load round trip."""

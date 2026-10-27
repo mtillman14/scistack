@@ -85,7 +85,7 @@ LAYER = "scistackplot"
 #: on its own thread, and a render sets text sizes through ``rc_context`` —
 #: GLOBAL rcParams, saved on entry and restored on exit — so two renders
 #: overlapping (a pane resize while the previous resolve still lays out;
-#: scidb.log 2026-10-15 12:23:50, three at once) read each other's sizes and
+#: scistack.log 2026-10-15 12:23:50, three at once) read each other's sizes and
 #: the last to exit can leave the wrong ones behind. Re-entrant: a layout
 #: decision settles the auto text size, whose trials render.
 _MPL_LOCK = threading.RLock()
@@ -139,7 +139,7 @@ def _render(resolved: ResolvedPlot):
     with Log.timer("render_mpl", layer=LAYER, extra=str(resolved.kind)) as timer:
         # Consecutive laps rather than nested phases: the body is one long
         # sequence, and which pass of it is slow is the question a slow
-        # figure asks (scidb.log 2026-10-15: 6.6 s with no breakdown).
+        # figure asks (scistack.log 2026-10-15: 6.6 s with no breakdown).
         mark = time.perf_counter()
 
         def lap(name: str) -> None:
@@ -708,7 +708,7 @@ def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
     # lines: one artist per run made a figure whose innermost tick is a
     # between-subject factor (group) draw ~1400 scatters, and every layout
     # pass walks every artist — 6.6 s per render, 46 s with the auto text
-    # size's trials (scidb.log 2026-10-15 12:21). Same points, same paint.
+    # size's trials (scistack.log 2026-10-15 12:21). Same points, same paint.
     lone: dict[str, tuple[list[float], list[float]]] = {}
     artists = 0
     # (position, value) -> screen (x, y): a horizontal kind draws its
@@ -2305,7 +2305,7 @@ def layout_decisions(
     out at every reference it tries, and a layout depends on the auto result
     only through its ``reference`` (``textsize.sizes_for``). So the trial at
     the chosen reference IS the final layout, and its decisions are kept
-    rather than drawn again (scidb.log 2026-10-16: the redraw was ~0.4 s of
+    rather than drawn again (scistack.log 2026-10-16: the redraw was ~0.4 s of
     every ~0.85 s next/previous click). A custom kind's trial skips the
     user's function (``custom.measuring``), so it is always drawn again.
     """

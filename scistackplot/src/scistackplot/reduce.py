@@ -466,7 +466,7 @@ class _Plan:
     #: limits per kind. Until 2026-09-14 a LINE -> BAND switch was a cache HIT
     #: that drew the band inside the line's limits. Memoised per mode rather
     #: than added to the key, so a kind switch still costs only the limits
-    #: (25 ms in scidb.log) and never the variants, filters and fan-out.
+    #: (25 ms in scistack.log) and never the variants, filters and fan-out.
     #:
     #: The one field of a cached plan that is written after construction —
     #: under `_plan_cache_lock`, and only ever ADDED to; `replace()` copies
@@ -1296,7 +1296,7 @@ def _build_figure(
     axis_frame: pd.DataFrame | None = None,
 ) -> ResolvedPlot:
     # ``narrate`` makes this function announce each phase as it starts. A
-    # full-resolution figure is minutes of work (scidb.log 2026-09-11: 1543s for
+    # full-resolution figure is minutes of work (scistack.log 2026-09-11: 1543s for
     # two of them), and until the phases said so while they ran, the only
     # evidence available was one summary line that a timed-out save never
     # reached. The interactive path leaves it off: at 20k rows the narration
@@ -1816,7 +1816,7 @@ def _build_figure(
             bins=figure_bins,
         )
         # Which difference bars land on which panel, once per figure, so a bar
-        # that draws nowhere is explained in scidb.log (diffbars D3).
+        # that draws nowhere is explained in scistack.log (diffbars D3).
         log_difference_bars(resolved)
         return resolved
 
@@ -2284,7 +2284,7 @@ def _composed_key(
     | ".join, axis=1)`` is a Python call **per row**, and the interactive path
     never paid it because ``_downsample`` runs first (20 015 rows instead of
     8 906 400). At full resolution — the save path, and only the save path — one
-    figure took ~770s (scidb.log 2026-09-11, 1543s for two).
+    figure took ~770s (scistack.log 2026-09-11, 1543s for two).
 
     So: factorize each column (one C-level hash pass), fold the codes together
     into a dense combination id, build the text ONCE per distinct combination,
@@ -2637,7 +2637,7 @@ def _unlabelled_x_order(panels: list[Panel]) -> list[Any] | None:
     order at all and read as NUMERIC: plotly still drew the bars (it builds
     its own category axis from the ``""`` strings) but every "Show sample"
     overlay was silently dropped, and the matplotlib export placed the bars
-    at NaN (scidb.log 2026-09-21: colour by ColName with ColName the only
+    at NaN (scistack.log 2026-09-21: colour by ColName with ColName the only
     grouping layer).
     """
     for panel in panels:

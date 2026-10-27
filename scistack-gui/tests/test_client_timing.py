@@ -1,5 +1,5 @@
 """
-A Plot Studio ◀ ▶ step's click-to-drawn timing reaches scidb.log.
+A Plot Studio ◀ ▶ step's click-to-drawn timing reaches scistack.log.
 
 Background: on 2026-10-16 "the arrows are slow" could be explained only up to
 the backend's "resolved bar: figure N rendered" line; the panel's debounce

@@ -5,7 +5,7 @@ Tagging a grouping layer as the colour must change NOTHING a reader measures:
 not which marks exist, not where they sit, not how tall they are, not what
 the ticks and brackets say. It only paints, and adds a legend. Before this,
 the coloured layer was pulled out of the tick axis and dodged innermost
-(scidb.log 2026-09-21 16:00: colouring `session` on a `subject › session ›
+(scistack.log 2026-09-21 16:00: colouring `session` on a `subject › session ›
 ColName` nesting moved every bar), so a colour click looked like a grouping
 change and the figure could not be trusted to draw what it said.
 

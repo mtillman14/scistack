@@ -1,8 +1,8 @@
 """
-The canvas's applied refreshes, and anything they wiped, reach scidb.log.
+The canvas's applied refreshes, and anything they wiped, reach scistack.log.
 
 Background: on 2026-10-22 (after canvas-as-document) a node or edge just
-placed vanished for a moment and came back. scidb.log showed the server's
+placed vanished for a moment and came back. scistack.log showed the server's
 ``get_pipeline`` answers but not which refresh the canvas applied, in what
 order, or what it wiped. The canvas now reports each applied refresh
 (frontend components/DAG/canvasRefreshLog.ts) through

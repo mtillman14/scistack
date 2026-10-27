@@ -1,7 +1,7 @@
 /**
  * Tests for bundleBuild — run with `npm test` in frontend/.
  *
- * The report is how scidb.log learns which frontend a panel is running
+ * The report is how scistack.log learns which frontend a panel is running
  * (2026-10-16: a stale 0.1.0 bundle hid Copy PNG). It must name the view,
  * survive a missing vite define, and never throw into the render.
  */

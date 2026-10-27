@@ -146,7 +146,7 @@ BEFORE this change stays two nodes until you hide or rewire one — there is no
 absorb, because that would be a migration and this is a clean break
 (D-2026-09-22-4). It can no longer form again.
 
-## Reading scidb.log
+## Reading scistack.log
 
 | Line | Meaning |
 |---|---|
@@ -334,7 +334,7 @@ PathInput `e__{name}__{param}__{fn}__{tok}`). build_edges and
 A deliberate re-draw of the same connection is not caught: `layout_service.put_edge`
 auto-unhides the history edge.
 
-**scidb.log:** `[graph_builder] N stored manual edge(s) are hidden and bind nothing
+**scistack.log:** `[graph_builder] N stored manual edge(s) are hidden and bind nothing
 (own id hidden, or their history twin is): manual__x (src -> tgt.handle; twin e__... hidden)`.
 It is logged at INFO once per edge per process, and at debug after that.
 
@@ -359,7 +359,7 @@ ports from `is_current` call sites only, but mapped **every** call site's
 handle the node does not render, which React Flow drops silently. It also
 dropped the user's drawn edge as superseded by that invisible twin. Now
 `const_fns` follows `is_current` too (the key stays, so the Parameter node
-remains). scidb.log says `Parameter edge(s) come only from a node's history
+remains). scistack.log says `Parameter edge(s) come only from a node's history
 wiring and are not drawn`. Tests: `tests/test_history_parameter_edges.py`.
 PathInput edges followed on the same day (below).
 
@@ -381,7 +381,7 @@ PathInput edges followed on the same day (below).
   `identity.is_current` (`api/pipeline._build_graph`,
   `execution_service.disconnected_report_entries`).
 
-scidb.log: `PathInput edge(s) come only from a node's history wiring and are
+scistack.log: `PathInput edge(s) come only from a node's history wiring and are
 not drawn`. Tests: `tests/test_history_path_input_edges.py`.
 
 **A Parameter drawn onto `in__X` has the same twin (same day, 14:52).** Before a

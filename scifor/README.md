@@ -116,4 +116,4 @@ failed: 3 × "ValueError: bad channel count" — subject=s03, session=2; … (+N
 
 The first occurrence of each distinct failure reason is logged at WARN with the full traceback. Per-iteration `[run]`/`[skip]`/`[done]` lines are DEBUG — enable them with `Log.set_level("DEBUG")` or `SCIDB_LOG_LEVEL=DEBUG`. Dry-run output goes to stdout (it is the requested result, not logging).
 
-Standalone (no scidb) usage gets the same console output automatically; when used through SciDB, the records also land in `scidb.log`.
+Standalone (no scidb) usage gets the same console output automatically; when used through SciDB, the records also land in `scistack.log`.

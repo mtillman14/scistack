@@ -43,7 +43,7 @@ def test_both_ready_senders_use_the_one_builder():
 # ---------------------------------------------------------------------------
 # Regression: scistack.debug on + no debugpy in the interpreter made every Run
 # fail its debugger attach with "connection refused 127.0.0.1:5678", while
-# the server's only record of the failed listen predated scidb.log.
+# the server's only record of the failed listen predated scistack.log.
 
 
 def test_debugger_off_when_not_requested():
@@ -100,7 +100,7 @@ def test_ready_carries_the_debugger_status(monkeypatch, caplog):
         server._send_ready({"db_name": "x.duckdb"})
 
     assert sent[0]["params"]["debugger"] == failed
-    # Logged at ready time, i.e. after scidb.log is attached.
+    # Logged at ready time, i.e. after scistack.log is attached.
     assert any(
         "no debugpy listener" in r.getMessage() and r.levelno == logging.WARNING
         for r in caplog.records

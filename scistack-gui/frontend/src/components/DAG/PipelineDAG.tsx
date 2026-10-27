@@ -197,7 +197,7 @@ export default function PipelineDAG() {
   const dismissedWarnings = useRef<Set<string>>(new Set())
 
   // Which refresh dropped a just-placed node/edge (canvasRefreshLog.ts):
-  // one report per refresh into scidb.log via report_canvas_refresh.
+  // one report per refresh into scistack.log via report_canvas_refresh.
   const refreshLog = useRef(new CanvasRefreshLog())
 
   const fetchPipeline = useCallback(async (trigger: string = 'unknown') => {
@@ -318,7 +318,7 @@ export default function PipelineDAG() {
   }, [fetchPipeline, graphVersion])
 
   // Refresh DAG whenever the backend signals that data changed. `source`
-  // labels it in scidb.log: db_watcher / matlab_run_end / server_restart
+  // labels it in scistack.log: db_watcher / matlab_run_end / server_restart
   // (extension), put_layout / put_edge (layout_service); absent = server.
   // VS Code nests it in params; the WebSocket keeps it at the top level.
   useBackendMessage(useCallback((msg) => {

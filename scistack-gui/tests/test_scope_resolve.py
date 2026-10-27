@@ -1,6 +1,6 @@
 """A hand-placed node that has run is visible wherever it is placed.
 
-Regression for scidb.log 2026-10-01 22:51 / 23:03: duplicating the Aim 2
+Regression for scistack.log 2026-10-01 22:51 / 23:03: duplicating the Aim 2
 hypothesis drew 1 of 4 function nodes. The missing three had been dragged onto
 the canvas and then run, so each is BOTH a hand-placed row (scope main) and a DB
 node with the same allocated id. Duplicating placed them in the copy as

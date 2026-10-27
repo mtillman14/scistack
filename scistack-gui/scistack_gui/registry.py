@@ -81,7 +81,7 @@ attributed via ``_function_sources``.
 _load_errors: list[dict] = []
 """Discovery failures from the most recent load/refresh — [{"source", "error"}, ...].
 
-The DEBUG-level log line next to each of these only lands in scidb.log
+The DEBUG-level log line next to each of these only lands in scistack.log
 (Log.set_level("DEBUG", sink="file")) — this list is what actually surfaces
 a failed import to the user, queryable via ``get_load_errors``/
 ``api/project.py`` (📁 Paths -> Discovered Code), so a failure doesn't just
@@ -113,7 +113,7 @@ def _suppress_user_code_output():
     read as if the GUI itself had broken.
 
     Captured text is logged at DEBUG rather than discarded, so it's still
-    recoverable via ``scidb.log`` (``Log.set_level("DEBUG", sink="file")``)
+    recoverable via ``scistack.log`` (``Log.set_level("DEBUG", sink="file")``)
     if a user's script misbehaves and someone needs to see why.
 
     Best-effort: redirect_stdout/stderr swap process-wide streams, so a
@@ -486,7 +486,7 @@ def _exec_file_modules(
             # tree were never meant to be pipeline code) and must not read
             # as a GUI failure on the console. Still fully recorded via
             # _record_load_error for the 📁 Paths -> Discovered Code panel,
-            # and the traceback is recoverable via scidb.log at DEBUG.
+            # and the traceback is recoverable via scistack.log at DEBUG.
             logger.debug(
                 "[registry] Failed to load module file: %s", path, exc_info=True
             )
@@ -806,7 +806,7 @@ def _register_variable(name: str, *, source: str) -> None:
             # the declaration; the entities TOML is consulted only for a name
             # with no .m, and then generates one (materialize_variable_stubs).
             # So a .m beside a TOML entry is the tier rule working, not a
-            # duplicate — this WARN fired ~20x per scan in scidb.log 2026-10-19.
+            # duplicate — this WARN fired ~20x per scan in scistack.log 2026-10-19.
             logger.debug(
                 "[registry] Variable '%s': classdef %s is the declaration; the "
                 "entities-file entry in %s is not consulted",

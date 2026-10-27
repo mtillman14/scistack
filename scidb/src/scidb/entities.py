@@ -804,7 +804,7 @@ def declared_spelling(
     no integers: a declared ``formulaNum = 6`` reaches ``for_each`` from MATLAB
     as ``6.0``. Recorded as given, that value was ``"6.0"`` in history but
     ``6`` in the declaration, so the canvas drew two "6" rows
-    (scidb.log 2026-10-01). It was also a different constant identity
+    (scistack.log 2026-10-01). It was also a different constant identity
     (``constants_identity_key`` is repr-based) from a Python run of the same
     declared ``6``. The declaration owns the value; the transport's spelling
     is not part of it.
@@ -1305,7 +1305,7 @@ def upsert_entry(text: str, section: str, name: str, rendered: str) -> str:
     # The entry must start its own line. A section that ends the file
     # without a trailing newline puts the insertion point at the END of its
     # last entry, and gluing onto it -- `a = "x"b = ""` -- made the whole
-    # file unparseable (scidb.log 2026-10-17, "line 12, column 79").
+    # file unparseable (scistack.log 2026-10-17, "line 12, column 79").
     if insert_at > 0 and text[insert_at - 1] != "\n":
         line = "\n" + line
     return text[:insert_at] + line + text[insert_at:]

@@ -1145,7 +1145,7 @@ def for_each_save(
     # not pin) — that decision lives in scifor, and applying it here is what
     # keeps the two languages filing a labelled table identically. Before
     # this call a 73-row (subject, session) table saved as ONE dataset-level
-    # record on the MATLAB path (scidb.log 2026-09-15 19:16).
+    # record on the MATLAB path (scistack.log 2026-09-15 19:16).
     #
     # Single-output runs only. scifor's spread lays every output's columns
     # flat side by side, and _save_results then files ALL data columns under

@@ -46,7 +46,7 @@ const GLYPH: Record<string, string> = { pinned: '★ ', default: '☆ ' }
 
 export function variableNodeText(totalRecords: number, variant?: NodeVariants): VariableNodeText {
   // No variant payload: a server older than it, or its cards failed to build
-  // (WARN in scidb.log). Say the pooled number rather than nothing.
+  // (WARN in scistack.log). Say the pooled number rather than nothing.
   if (!variant) {
     return {
       countLine: totalRecords > 0 ? records(totalRecords) : null,

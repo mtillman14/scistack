@@ -2,7 +2,7 @@
 Client-side (webview) errors, written into the shared log.
 
 A React render error unmounts the whole webview tree and leaves a blank tab,
-and nothing about it reaches ``scidb.log``: the Python side only sees requests,
+and nothing about it reaches ``scistack.log``: the Python side only sees requests,
 and a crash in the browser sends none. On 2026-09-15 the grouping picker did
 exactly that — the log showed the popup's ``get_pipeline``/``get_layout`` and
 then silence, and the cause had to be re-derived from the source.
@@ -43,7 +43,7 @@ def report_client_error(params: dict[str, Any]) -> dict[str, Any]:
     stack = _clip(params.get("stack"))
     component_stack = _clip(params.get("component_stack"))
 
-    # The scistack_gui layer logger already feeds scidb.log (scistacklog's
+    # The scistack_gui layer logger already feeds scistack.log (scistacklog's
     # file sink), so this is one ERROR beside the RPC lines it interleaves with.
     logger.error("[client] render error in %s: %s", where, message)
     if component_stack:

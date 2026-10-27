@@ -4,7 +4,7 @@
 
 `for_each` catches every per-combo exception (skip-and-continue): one bad
 subject must not cost the other 32 their run. Before this work the only trace
-of *why* a combo failed was a WARN + traceback in `scidb.log`; the GUI got
+of *why* a combo failed was a WARN + traceback in `scistack.log`; the GUI got
 `str(e)` and printed `⚠ N combo(s) failed — see log above`. Now every failure
 is a **record** that carries the line that raised, and that record is shown
 where a VS Code user looks for errors. Skip-and-continue is still the default.

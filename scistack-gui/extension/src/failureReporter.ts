@@ -28,7 +28,7 @@ export class FailureReporter implements vscode.Disposable {
   constructor(
     name: string,
     private readonly log: LogSink,
-    /** `scidb.log` beside the database (scidb.log.log_path_for). */
+    /** `scistack.log` beside the database (scidb.log.log_path_for). */
     private readonly logPath: string,
     /** Ask the canvas to open its failures panel on this node. */
     private readonly showFailures: (nodeId: string | undefined) => void,
@@ -90,6 +90,10 @@ export class FailureReporter implements vscode.Disposable {
   }
 }
 
+// Copy of scidb.log.LOG_FILE_NAME (the owner); test_log_file_name_parity.py
+// fails if the two drift.
+export const LOG_FILE_NAME = 'scistack.log';
+
 export function logPathFor(dbPath: string): string {
-  return path.join(path.dirname(dbPath), 'scidb.log');
+  return path.join(path.dirname(dbPath), LOG_FILE_NAME);
 }

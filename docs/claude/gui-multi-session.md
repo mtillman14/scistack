@@ -38,7 +38,7 @@ database file:
 
 | Resource | Keyed by |
 |---|---|
-| `scidb.log` | `scidb.log.log_path_for(db)` — beside the `.duckdb` |
+| `scistack.log` | `scidb.log.log_path_for(db)` — beside the `.duckdb` |
 | pipeline / intent / layout / plot-cache tables | inside the `.duckdb` (positions too, since 2026-10-21) |
 | push notifications | that process's own stdout |
 | React state | per webview iframe |
@@ -213,7 +213,7 @@ Studio hides "Add to pipeline" on a CSV tab to match. "Export code" stays —
 
 ### Where a plot-only server logs
 
-It has no database, so `scidb.log`'s "beside the `.duckdb`" convention has no
+It has no database, so `scistack.log`'s "beside the `.duckdb`" convention has no
 anchor, and dropping a log into whichever folder the user's CSV happens to
 live in would scatter logs through their data. `--log-file` names the path,
 and the extension passes one inside its own storage (`context.logUri`).

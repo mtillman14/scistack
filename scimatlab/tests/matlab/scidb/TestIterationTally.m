@@ -1,7 +1,7 @@
 classdef TestIterationTally < matlab.unittest.TestCase
 %TESTITERATIONTALLY  scidb.for_each reports failed iterations to the run
 %   tally (+scidb/+internal/iteration_tally.m), which the GUI's generated
-%   script reads to fail a run whose iterations failed (scidb.log 2026-10-20:
+%   script reads to fail a run whose iterations failed (scistack.log 2026-10-20:
 %   completed=0, failed=1 was reported verdict=done).
 
     properties

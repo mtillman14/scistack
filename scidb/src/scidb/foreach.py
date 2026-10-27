@@ -5953,7 +5953,7 @@ def _save_results(
     # One line per output that could not be saved. Raised as OutputSaveError
     # after every output has been attempted and provenance written for what
     # did save -- a logged ERROR alone let a run that saved nothing report
-    # success (scidb.log 2026-10-01, GaitRiteSymmetry 0 of 420).
+    # success (scistack.log 2026-10-01, GaitRiteSymmetry 0 of 420).
     save_failures: list[str] = []
 
     for (output_idx, save_path), items in batch_items.items():

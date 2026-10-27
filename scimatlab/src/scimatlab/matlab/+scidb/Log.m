@@ -3,7 +3,7 @@ classdef Log
 %
 %   scidb.Log.set_level('DEBUG')          — show all messages (both sinks)
 %   scidb.Log.set_level('INFO')           — show INFO, WARN, ERROR (default)
-%   scidb.Log.set_level('DEBUG', 'file')  — full detail in scidb.log only
+%   scidb.Log.set_level('DEBUG', 'file')  — full detail in scistack.log only
 %   scidb.Log.set_level('WARN')           — show WARN, ERROR only
 %
 %   scidb.Log.debug('Processing %d items', n)
@@ -13,10 +13,10 @@ classdef Log
 %
 %   Two sinks with independent levels (see the scistacklog package):
 %   console (stderr): HH:MM:SS [layer] message
-%   file (scidb.log): YYYY-MM-DD HH:MM:SS.FFF LEVEL [layer] message
+%   file (scistack.log): YYYY-MM-DD HH:MM:SS.FFF LEVEL [layer] message
 %
 %   All logging calls delegate to the Python scistacklog.Log class to ensure
-%   unified log level settings and output. Writes to scidb.log next to the
+%   unified log level settings and output. Writes to scistack.log next to the
 %   database file (set automatically by scidb.configure_database()).
 %
 %   Delegation targets py.scistacklog.Log, NOT py.scidb.log.Log, even though

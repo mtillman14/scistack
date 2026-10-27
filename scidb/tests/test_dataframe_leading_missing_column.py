@@ -1,7 +1,7 @@
 """DataFrame column types: judged over the whole save, decided by the first
 values, refused only on a real contradiction.
 
-Regression for scidb.log 2026-10-22: ``pandas.read_csv`` on a CERNER pull
+Regression for scistack.log 2026-10-22: ``pandas.read_csv`` on a CERNER pull
 returned IP_SPINAL_STIMULATION as an object column holding NaN (blank) then
 'Y'. Column typing read row 0 only, so NaN typed it DOUBLE and the save
 failed with ``Could not convert string 'Y' to DOUBLE`` — reported everywhere

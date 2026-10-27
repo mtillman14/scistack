@@ -109,7 +109,7 @@ class PresetIdRequest(BaseModel):
 
 
 class GuideLogRequest(BaseModel):
-    """One wizard event from the webview (StatStudio/Guided), for scidb.log."""
+    """One wizard event from the webview (StatStudio/Guided), for scistack.log."""
 
     event: str
     step: str | None = None

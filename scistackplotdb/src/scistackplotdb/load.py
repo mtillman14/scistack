@@ -248,7 +248,7 @@ def is_container_type(data_type: str) -> bool:
 
     Why it is worth having at all: classifying by value means
     :func:`sample_column_value` pulls a whole EMG trace out of DuckDB per
-    muscle, only to discard it. Measured on the user's project (scidb.log
+    muscle, only to discard it. Measured on the user's project (scistack.log
     2026-09-15), that was 4.2 s for ``FilteredDelsys`` and 5.4 s for ``RawEMG``
     — ~8 s added to every panel open, by two variables that offer no groupings
     at all.
@@ -686,7 +686,7 @@ def _log_field_coverage(
     per field, when fewer than :data:`SPARSE_FIELD_SHARE` of its records hold
     one — naming the levels those records sit at, because a plot of such a
     field shows only them and reads as a broken grouping ("Dist_m showed one
-    group/one subject": 6 of 714 records held a number, scidb.log
+    group/one subject": 6 of 714 records held a number, scistack.log
     2026-10-15). The plot is right; the data is what to look at.
 
     Never raises: a diagnostic must not break a load.
@@ -1016,7 +1016,7 @@ def attach_variants(
                 "%d of %d record(s) are superseded but carry NO code or "
                 "run-option axis to tell them apart — plotting the current "
                 "ones only. This usually means their lineage was not recorded; "
-                "check scidb.log for 'NO variable input-binding source'",
+                "check scistack.log for 'NO variable input-binding source'",
                 n_superseded,
                 len(record_ids),
                 layer=LAYER,

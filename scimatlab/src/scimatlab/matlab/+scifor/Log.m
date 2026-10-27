@@ -3,7 +3,7 @@ classdef Log
 %
 %   scifor.Log.set_level('DEBUG')          — show all messages (both sinks)
 %   scifor.Log.set_level('INFO')           — show INFO, WARN, ERROR (default)
-%   scifor.Log.set_level('DEBUG', 'file')  — full detail in scidb.log only
+%   scifor.Log.set_level('DEBUG', 'file')  — full detail in scistack.log only
 %   scifor.Log.set_level('WARN')           — show WARN, ERROR only
 %
 %   scifor.Log.debug('Processing %d items', n)
@@ -13,7 +13,7 @@ classdef Log
 %
 %   Two sinks with independent levels (see the scistacklog package):
 %   console (stderr): HH:MM:SS [layer] message
-%   file (scidb.log): YYYY-MM-DD HH:MM:SS.FFF LEVEL [layer] message
+%   file (scistack.log): YYYY-MM-DD HH:MM:SS.FFF LEVEL [layer] message
 %
 %   All logging calls delegate to Python's scistacklog.Log class directly —
 %   NOT via scidb — so that standalone (no-database) scifor usage in MATLAB

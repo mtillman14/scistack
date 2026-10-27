@@ -520,7 +520,7 @@ def auto_label(
     ``RawEMG · low_hz=20``. A row's subject is the variable it draws; the
     selection only narrows it. Naming rows by their selection alone was how two
     rows reading "current" and "latest" ended up saying nothing about which was
-    EMG and which was force (observed 2026-09-11, scidb.log 12:26:18).
+    EMG and which was force (observed 2026-09-11, scistack.log 12:26:18).
 
     ``variable`` is the row's own, or the primary measure when it names none.
     Callers pass it; this function never guesses.

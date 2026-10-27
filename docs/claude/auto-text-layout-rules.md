@@ -120,7 +120,7 @@ case in which the fitting's destructive steps appear on an auto figure.
 
 ## Diagnostics
 
-Everything is in `scidb.log`:
+Everything is in `scistack.log`:
 
 - INFO, once per settle: `auto text size: print at W x H in: reference Rpt of
   B-T (at the top | next step up fails: … | at the bottom, still failing: …);

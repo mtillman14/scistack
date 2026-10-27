@@ -1,6 +1,6 @@
 /**
  * What a webview reports about the bundle it is running, and what the host
- * adds before the report reaches scidb.log.
+ * adds before the report reaches scistack.log.
  *
  * Nothing used to say which frontend a panel was running. The extension
  * reports its own version and the server reports its own, but the bundle is
@@ -11,7 +11,7 @@
  *
  * The webview sends `report_client_build` once on load
  * (`frontend/src/bundleBuild.ts`). The panel calls {@link prepareBuildReport}
- * and forwards the RESULT to Python, so the one scidb.log line carries the
+ * and forwards the RESULT to Python, so the one scistack.log line carries the
  * bundle, the extension that loaded it, and the verdict. The verdict is
  * decided here, by `versionCheck.ts` — Python logs it, never re-decides it.
  *

@@ -464,7 +464,7 @@ def _save_start(db, req: SaveRequest) -> dict:
 
     One method for one figure and for all of them — ``figure_index`` is the
     only difference, and neither fits a request/response budget: a single
-    full-resolution figure is ~12 minutes of work (scidb.log 2026-09-11). The
+    full-resolution figure is ~12 minutes of work (scistack.log 2026-09-11). The
     separate ``save-all`` is gone with the synchronous save it complemented.
     See ``plot_service.start_save_job``.
     """

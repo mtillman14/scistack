@@ -72,7 +72,7 @@ Env vars `SCISTACK_GUI_DEBUG` / `SCISTACK_GUI_DEBUG_PORT` are added when
 ### The readiness handshake
 
 The child speaks newline-delimited JSON-RPC on **stdout**; stderr is logging
-only (`scidb.log`'s console sink, raised to DEBUG) and is forwarded to the
+only (`scistack.log`'s console sink, raised to DEBUG) and is forwarded to the
 **SciStack** Output Channel.
 
 Three startup-relevant notification methods:
@@ -98,7 +98,7 @@ notification for the whole discovery step, so 25 imports (two of them
 running analysis on import) shared one window and the server was killed
 at the 16th file (`tests/test_startup.py::test_startup_discovery_reports_progress_per_module`
 guards the wiring). Per-file import times and the "Slow import" WARN are in
-`scidb.log`; see `code-discovery-categories.md` §7.
+`scistack.log`; see `code-discovery-categories.md` §7.
 
 `waitForReady` can also reject from the `exit` handler (child died) or the
 `error` handler (spawn failed).

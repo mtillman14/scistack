@@ -95,7 +95,7 @@ The crash also showed a second defect. Target derivation runs *before*
 nothing but a stderr traceback. No `run_done` was pushed and the run spun
 until the user cancelled it, so the crash looked like a hang.
 `api/run._report_crashed_run` now catches anything that escapes the thread.
-It logs the traceback to `scidb.log` and, if the run is still registered in
+It logs the traceback to `scistack.log` and, if the run is still registered in
 `_active_runs` (every path that already sent `run_done` popped it first),
 pushes a failed `run_done`. Pipeline runs already caught everything.
 

@@ -199,7 +199,7 @@ def empty_cells(design: Design, rows: pd.DataFrame) -> list[dict[str, str]]:
 
     With two or more factors, a model with every interaction (the default
     omnibus) has a column per combination, so an empty one makes it rank
-    deficient and csv-stats refuses it (scidb.log 2026-10-20: one session
+    deficient and csv-stats refuses it (scistack.log 2026-10-20: one session
     with no Traditional subjects, "rank deficient (54 of 60 columns)").
     One factor can't have an empty cell: its levels come from the rows.
     """

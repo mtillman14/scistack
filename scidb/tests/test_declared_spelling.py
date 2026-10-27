@@ -1,6 +1,6 @@
 """A Parameter value is recorded as DECLARED, not as the transport spelled it.
 
-Regression for scidb.log 2026-10-01: ``formulaNum = 6`` is declared in the
+Regression for scistack.log 2026-10-01: ``formulaNum = 6`` is declared in the
 entities file, and MATLAB passed it as ``6.0`` (MATLAB has no integers).
 History recorded ``"6.0"`` and the declaration said ``"6"``, so the canvas drew
 two "6" rows. ``constants_identity_key`` is repr-based, so a Python run of the

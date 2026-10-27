@@ -104,7 +104,7 @@ class TestResolve:
 class TestRecordedNarrowedToInputs:
     """The recorded level is read off where the records LANDED, which can be
     finer than what the call iterated (rows spread by a returned column, or
-    distribute). Never iterate a key no input carries — scidb.log run
+    distribute). Never iterate a key no input carries — scistack.log run
     n1irqety, 2026-09-29: a placeholder-free CSV re-read once per subject."""
 
     def test_spread_one_call_stays_one_call(self):
@@ -251,7 +251,7 @@ def test_call_sites_with_no_history_have_no_recorded_level(db):
 
 
 # ---------------------------------------------------------------------------
-# End to end: the scidb.log run n1irqety regression (2026-09-29)
+# End to end: the scistack.log run n1irqety regression (2026-09-29)
 # ---------------------------------------------------------------------------
 
 

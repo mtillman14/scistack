@@ -5,7 +5,7 @@ classdef TestSpreadParity < matlab.unittest.TestCase
 %   filed one record per row, at that row's own address, without
 %   distribute=. scifor (Python) owns the rule (_spread_decision) and the
 %   bridge applies it in for_each_save; before 2026-09-15 the MATLAB path
-%   saved such a table as ONE record (scidb.log, loadFunctionalOutcomes:
+%   saved such a table as ONE record (scistack.log, loadFunctionalOutcomes:
 %   `result_tbl shape=(1, 1)`, `DataFrame 73x27`).
 
     properties

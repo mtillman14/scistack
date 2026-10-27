@@ -295,7 +295,7 @@ def _unsettled_reference(text: TextSizes) -> float:
 
     Renderers settle first (``autosize.settle``), so this is reached only by a
     caller sizing text outside a render — a size estimate, a test, a describe.
-    Logged at DEBUG so a renderer that forgot to settle shows up in scidb.log
+    Logged at DEBUG so a renderer that forgot to settle shows up in scistack.log
     as this line next to its own render line.
     """
     span = reference_range(text)

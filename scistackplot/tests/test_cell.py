@@ -266,7 +266,7 @@ def _signal_table(values) -> LongTable:
 
 
 def test_some_empty_cells_log_at_debug_not_warn(caplog):
-    """Some empty cells are ordinary data — 78 WARNs per session in scidb.log
+    """Some empty cells are ordinary data — 78 WARNs per session in scistack.log
     2026-10-19. The per-collapse count is DEBUG now."""
     import logging
 

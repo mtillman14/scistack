@@ -68,7 +68,7 @@ function getSocket(): WebSocket | null {
 
   // Lifecycle logs: "run stuck on Running…" usually means push messages
   // aren't arriving — the browser console should show whether the socket
-  // is even open (pair with the backend's [ws] lines in scidb.log).
+  // is even open (pair with the backend's [ws] lines in scistack.log).
   socket.onopen = () => {
     console.info(`[ws] connected to ${WS_URL} (page=${PAGE_ID})`)
     // Identify the page first, so the backend can attribute this connection

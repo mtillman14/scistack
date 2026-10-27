@@ -118,7 +118,7 @@ def _order_of(config: Path) -> dict[str, list[str]]:
     order = _read(config)
     if not order:
         # Said once per read (i.e. once per edit of the file), so "why are my
-        # levels alphabetical?" has an answer in scidb.log.
+        # levels alphabetical?" has an answer in scistack.log.
         Log.info(
             "[schema_order] %s has no [%s] table — schema levels use the "
             "default order",

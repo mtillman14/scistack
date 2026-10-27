@@ -97,7 +97,7 @@ export class MatlabRunTracker {
    *
    * Why: the DB file-watcher cannot tell the server's own save from an
    * external write. A 15k-record save kept firing it, and the canvas rebuilt
-   * mid-save, contending with the writer (26.5s vs 1.9s; scidb.log
+   * mid-save, contending with the writer (26.5s vs 1.9s; scistack.log
    * 2026-09-25) and drawing the pre-save graph. Safe to call once per target
    * of a multi-target run: the id is a set member.
    */

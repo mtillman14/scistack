@@ -822,7 +822,7 @@ def test_row_counts_follow_first_match_wins():
 def test_an_unnamed_variant_still_reports_a_label():
     """The variable leads and the selection qualifies it — a row called just
     "filter v1" says nothing about WHAT it plots, which is how two rows ended
-    up reading "FilteredEMG" and "latest" (scidb.log 2026-09-11 12:26:18)."""
+    up reading "FilteredEMG" and "latest" (scistack.log 2026-09-11 12:26:18)."""
     table = _two_axis_table()
     spec = PlotSpec(
         measures=["value"], variant_sets=[VariantSet(None, {"Code:filter": "v1"})]

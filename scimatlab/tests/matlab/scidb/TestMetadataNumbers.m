@@ -89,8 +89,8 @@ classdef TestMetadataNumbers < matlab.unittest.TestCase
             RawSignal().save([1 2 3], 'subject', 1, 'session', 'A');
             scidb.for_each(@double_values, struct('x', RawSignal()), ...
                 {ProcessedSignal()}, 'subject', 1, 'session', "A");
-            log_path = fullfile(testCase.test_dir, 'scidb.log');
-            testCase.assumeTrue(isfile(log_path), 'scidb.log not written next to the database');
+            log_path = fullfile(testCase.test_dir, 'scistack.log');
+            testCase.assumeTrue(isfile(log_path), 'scistack.log not written next to the database');
             log_text = fileread(log_path);
             testCase.verifySubstring(log_text, '[save] subject=1, session=A: ProcessedSignal');
             testCase.verifyFalse(contains(log_text, '[save] subject=1.0'));

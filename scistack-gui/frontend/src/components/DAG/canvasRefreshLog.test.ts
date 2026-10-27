@@ -2,7 +2,7 @@
  * Tests for canvasRefreshLog — run with `npm test` in frontend/.
  *
  * 2026-10-22: a just-placed node/edge disappears for a moment, then comes
- * back. These pin the verdicts the diagnostics report into scidb.log.
+ * back. These pin the verdicts the diagnostics report into scistack.log.
  */
 
 import { test } from 'node:test'

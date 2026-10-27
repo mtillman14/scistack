@@ -53,7 +53,7 @@ in-memory DataFrame) — and likewise in MATLAB standalone scifor
   (`scifor.column_value`): the **cell itself** when the combo has one row (a
   plain `str`, `float`, ...), else a **numpy array** (`.to_numpy()`; on pandas 3
   a text column's `.values` is a pandas `StringArray`/`ArrowStringArray`, which
-  has no `.split` and is not numpy). History: scidb.log 2026-10-22, a CSV
+  has no `.split` and is not numpy). History: scistack.log 2026-10-22, a CSV
   spread one record per subject, where every call of `value.split("|")` raised.
 - **Per-column return → output columns** (see "Multi-output per column" below):
   a **scalar** yields one column named after the source column; a **dict /

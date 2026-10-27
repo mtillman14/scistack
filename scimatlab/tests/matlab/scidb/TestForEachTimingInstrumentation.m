@@ -32,7 +32,7 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
 
     properties
         test_dir
-        log_archive_dir  % stable location where scidb.log is copied before teardown
+        log_archive_dir  % stable location where scistack.log is copied before teardown
     end
 
     methods (TestClassSetup)
@@ -54,7 +54,7 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
             % keeps the DEBUG per-phase timing tables this test documents.
             scidb.Log.set_level('DEBUG', 'file');
 
-            % Stable archive dir for the scidb.log copy.  Located at the
+            % Stable archive dir for the scistack.log copy.  Located at the
             % workspace root so multiple runs accumulate side-by-side and
             % survive the test_dir teardown that wipes the temp folder.
             this_dir = fileparts(mfilename('fullpath'));
@@ -67,22 +67,22 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
 
     methods (TestMethodTeardown)
         function cleanup(testCase)
-            % Copy scidb.log out of the doomed temp dir before teardown
+            % Copy scistack.log out of the doomed temp dir before teardown
             % nukes it.  Uses a timestamp + test method name so successive
             % runs don't clobber.
             try
-                live_log = fullfile(testCase.test_dir, 'scidb.log');
+                live_log = fullfile(testCase.test_dir, 'scistack.log');
                 if isfile(live_log) && ~isempty(testCase.log_archive_dir)
                     ts = char(datetime('now', 'Format', 'yyyyMMdd-HHmmss'));
                     archived = fullfile(testCase.log_archive_dir, ...
                         sprintf('scidb-%s.log', ts));
                     copyfile(live_log, archived);
-                    fprintf('\n[timing-test] scidb.log archived to: %s\n', archived);
+                    fprintf('\n[timing-test] scistack.log archived to: %s\n', archived);
                 else
-                    fprintf('\n[timing-test] no scidb.log found at %s\n', live_log);
+                    fprintf('\n[timing-test] no scistack.log found at %s\n', live_log);
                 end
             catch err
-                fprintf('\n[timing-test] WARNING: could not archive scidb.log: %s\n', err.message);
+                fprintf('\n[timing-test] WARNING: could not archive scistack.log: %s\n', err.message);
             end
 
             try
@@ -198,10 +198,10 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
                 'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
             testCase.verifyEqual(height(result), 1);
 
-            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scidb.log')), newline);
+            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scistack.log')), newline);
             hits = lines(contains(lines, '[timing] for_each_postsave:'));
             testCase.verifyNotEmpty(hits, ...
-                'no [timing] for_each_postsave line found in scidb.log');
+                'no [timing] for_each_postsave line found in scistack.log');
 
             summary = hits{end};
             for label = {'from_python', 'flatten', 'type_restore', ...
@@ -234,10 +234,10 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
                 'as_table', true, ...
                 'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
 
-            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scidb.log')), newline);
+            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scistack.log')), newline);
             hits = lines(contains(lines, '[timing] for_each_postsave:'));
             testCase.verifyNotEmpty(hits, ...
-                'no [timing] for_each_postsave line found in scidb.log');
+                'no [timing] for_each_postsave line found in scistack.log');
             testCase.verifyTrue(contains(hits{end}, 'from_python=0.000s'), ...
                 'statement call still spent time in from_python — gate not firing');
 
@@ -262,10 +262,10 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
                 'as_table', true, ...
                 'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
 
-            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scidb.log')), newline);
+            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scistack.log')), newline);
             hits = lines(contains(lines, '[timing] for_each_result_transfer:'));
             testCase.verifyNotEmpty(hits, ...
-                'no [timing] for_each_result_transfer line found in scidb.log');
+                'no [timing] for_each_result_transfer line found in scistack.log');
             summary = hits{end};
             testCase.verifyTrue(contains(summary, '1 output(s), TOTAL='), summary);
             testCase.verifyTrue(contains(summary, 'DummyOut '), summary);

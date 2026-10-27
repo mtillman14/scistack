@@ -4,7 +4,7 @@ Shared "open or create a SciStack project" sequence.
 Both entry points that can load a database run the exact same steps: import
 user pipeline code (project / module / auto-discover), open or create the
 DuckDB file, restore manually-declared builtin function references, bridge
-Python logging into scidb.log, and run the project-open diagnostics.
+Python logging into scistack.log, and run the project-open diagnostics.
 
 Historically this only ran once, inline in ``__main__.py``'s ``main()``,
 because the browser CLI always loaded a database before starting uvicorn.

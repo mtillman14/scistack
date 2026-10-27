@@ -4,7 +4,7 @@
 
 ## The two goals
 
-1. **Pipeline documentation**: a run's log answers "what ran, what failed and why, what was skipped" — at the default level, in both the console and `scidb.log`.
+1. **Pipeline documentation**: a run's log answers "what ran, what failed and why, what was skipped" — at the default level, in both the console and `scistack.log`.
 2. **Framework debugging**: at DEBUG, the file becomes a nested execution trace with per-step durations, per-iteration detail, and `[timing]` phase breakdowns.
 
 The default file is deliberately NOT "everything": both sinks default to INFO, and DEBUG is opt-in. Compensation so the INFO file still answers "why did it fail": the first occurrence of each distinct failure reason logs at WARN **with traceback**, and the end-of-run summary aggregates all failures by reason.
@@ -22,7 +22,7 @@ layer loggers: scidb, scifor, sciduck, scihist, scilineage,
         │
         ├── console handler (stderr, singleton)   level: INFO default
         │      format: HH:MM:SS [layer] message   (level prefix only at WARN+)
-        └── file handler (scidb.log, singleton)   level: INFO default
+        └── file handler (scistack.log, singleton)   level: INFO default
                format: YYYY-MM-DD HH:MM:SS.mmm LEVEL [layer] message
                one record per line; WARN not WARNING; FileHandler(delay=True)
 ```
@@ -52,7 +52,7 @@ INFO inventory (keep it small): for_each banner + inputs/options, periodic progr
 | Python script | INFO narrative on stderr | `configure_database` sets file path + header |
 | `scidb` CLI | **WARN** unless `-v` (stdout=results, stderr=diagnostics) | `-v` → DEBUG both sinks; errors: one `Error: …` line to stderr + Log.error to file |
 | GUI (JSON-RPC server) | DEBUG console (stderr → VS Code Output Channel) | **No `logging.basicConfig`** — a root handler would double-print every layer record. Frontend run console is fed by `_RunLogRelay` (a scoped handler on the `scifor`/`scidb` loggers in `api/run.py`), NOT stdout; stdout redirect only carries dry-run output. Never attach the relay to `scistack_gui` (feedback loop via `emit()`'s own debug line). |
-| MATLAB | Same file; console = Python stderr (not `evalc`-capturable) | `+scidb/Log.m` gates client-side via appdata cache (min of both sinks) and tags `layer='matlab'`. MATLAB tests must assert on `scidb.log` content (`fileread(char(scidb.Log.get_path()))`), not `evalc`. Timing tests set `set_level('DEBUG','file')` so archives keep phase tables. |
+| MATLAB | Same file; console = Python stderr (not `evalc`-capturable) | `+scidb/Log.m` gates client-side via appdata cache (min of both sinks) and tags `layer='matlab'`. MATLAB tests must assert on `scistack.log` content (`fileread(char(scidb.Log.get_path()))`), not `evalc`. Timing tests set `set_level('DEBUG','file')` so archives keep phase tables. |
 
 Config surface: `SCIDB_LOG_LEVEL` env var (both sinks, read once at attach), `Log.set_level(level, sink="console"|"file"|"both")`, CLI `-v`. Nothing else.
 

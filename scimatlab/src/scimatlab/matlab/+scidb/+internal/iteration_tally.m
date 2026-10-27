@@ -7,7 +7,7 @@ function out = iteration_tally(action, summary)
 %
 %   scifor.for_each never throws on a failed iteration: it logs the failure
 %   and continues. A GUI-dispatched script therefore finished "done" even
-%   when every iteration raised (scidb.log 2026-10-20: load_cbrace,
+%   when every iteration raised (scistack.log 2026-10-20: load_cbrace,
 %   completed=0, failed=1, verdict=done). The Python Run fails the run when
 %   any iteration fails (scistack_gui/api/run.py, combo_totals); this is the
 %   MATLAB half of that rule.

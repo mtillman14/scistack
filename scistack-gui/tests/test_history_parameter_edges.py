@@ -1,6 +1,6 @@
 """A Parameter edge follows the node's CURRENT wiring, like its handle.
 
-Regression for scidb.log 2026-10-01 12:38: the user drew formulaNum ->
+Regression for scistack.log 2026-10-01 12:38: the user drew formulaNum ->
 calculateSymmetryOneVector and the edge disappeared. The node had been rewired
 (v: GAITRiteLoaded -> GaitRiteLoaded_UA), and its current wiring had never run,
 so it had no constant handle and formulaNum showed as an ``in__formulaNum``

@@ -59,7 +59,7 @@ before grouping sees exactly what `build_aggregate` produced, the same data
 - `node_identity._warn_minted_beside_orphans` WARNs if a mint ever again
   coincides with an existing node of that function dropping out of history.
 
-## What the failure looks like in scidb.log
+## What the failure looks like in scistack.log
 
 In order (2026-09-28, 09:41–09:57):
 
@@ -134,7 +134,7 @@ logs the edges drawn on it, and says that they aren't consulted
   dragged in.
 ## Follow-up 2026-09-29: a hand-dragged node that ran had an id nobody parsed
 
-After the fix above, the same node still could not run. `scidb.log`:
+After the fix above, the same node still could not run. `scistack.log`:
 `Deriving targets … node_id=fn__pandas.read_csv__rlw90w::main` followed
 straight by "No pipeline history…", with **nothing logged in between**. On
 every build, `hidden_wirings: [('pandas.read_csv', 'rlw90w')]` reported it as

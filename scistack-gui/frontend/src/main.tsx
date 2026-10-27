@@ -23,7 +23,7 @@ declare global {
 const view = window.__SCISTACK_VIEW__
 
 // Once per webview, before the first render: which bundle this is, so
-// scidb.log can say which frontend a panel ran (bundleBuild.ts).
+// scistack.log can say which frontend a panel ran (bundleBuild.ts).
 reportBundleBuild(view?.view === 'plot' || view?.view === 'stat' ? 'plot' : 'pipeline', callBackend)
 
 // The Plot Studio's colour tokens, on the page root in the default (dark)
@@ -38,7 +38,7 @@ for (const [name, value] of Object.entries(plotThemeVars(DEFAULT_PLOT_THEME))) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {/* Outermost, so a render crash anywhere shows itself and reaches
-        scidb.log instead of blanking the webview. */}
+        scistack.log instead of blanking the webview. */}
     {view?.view === 'plot' ? (
       <ClientErrorBoundary where="Plot Studio tab">
         <PlotRoot initial={view} />

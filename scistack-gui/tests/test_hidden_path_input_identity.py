@@ -563,7 +563,7 @@ class TestMintedBesideOrphansWarns:
 
 
 # ---------------------------------------------------------------------------
-# A hand-dragged function node that RAN keeps working (scidb.log 2026-09-29)
+# A hand-dragged function node that RAN keeps working (scistack.log 2026-09-29)
 # ---------------------------------------------------------------------------
 
 _SHORT = "fn__f__rlw90w"  # a hand-dragged node's id: 6 chars, outside the grammar

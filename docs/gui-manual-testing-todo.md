@@ -6,7 +6,7 @@ have checked an item, tell Claude (or move it to **Done** yourself) and note
 anything that looked wrong.
 
 Newest first. Each item says what changed, the backend steps (anything outside
-the webview: terminal, config files, restarts, `scidb.log`), the frontend
+the webview: terminal, config files, restarts, `scistack.log`), the frontend
 steps (clicks in the GUI), and what you should see.
 
 ---
@@ -25,7 +25,7 @@ are rebuilt; reload the VS Code window and restart the backend.
 `if subject == 2: raise KeyError("missing_channel")` to a function's body.
 
 **Backend**
-1. Run it. `scidb.log` has `iteration failed: subject=2 — <fn> raised: 'missing_channel' [at <your file>:<line> in <fn>]`
+1. Run it. `scistack.log` has `iteration failed: subject=2 — <fn> raised: 'missing_channel' [at <your file>:<line> in <fn>]`
    and the summary line `failed: N × "KeyError: 'missing_channel'" — ... [at <file>:<line> in <fn>]`.
 2. `[run_failures] <fn>: 1 failure group(s) (N combo(s)) on node fn__… (run_id=…)`.
 3. With **Stop at first error** ticked: `for_each(<fn>): on_error=stop — stopped at KeyError at <file>:<line> in <fn>; K combo(s) completed before it, re-raising the original exception`,
@@ -45,7 +45,7 @@ are rebuilt; reload the VS Code window and restart the backend.
 4. VS Code **Problems** panel: one error `<fn>: KeyError: 'missing_channel' — N combo(s) failed, e.g. subject=2`
    on the raising line (red squiggle in the editor).
 5. A notification `SciStack: N combo(s) failed in <fn>: KeyError: ... (<file>.py:<line>)` with
-   **Show failures** (opens the dialog) and **Open log** (opens `scidb.log` at its end).
+   **Show failures** (opens the dialog) and **Open log** (opens `scistack.log` at its end).
 6. Fix the function and run again: the badge, the Problems entry, and nothing pops up.
 7. Sidebar → **Run Options** → tick **Stop at first error**, break the function again,
    Run: the badge says `(stopped)`, the console says `■ Stopped at the first failure (on_error=stop)`,
@@ -66,7 +66,7 @@ call is on, as `ColName()` does in code. Both frontend bundles are rebuilt;
 reload the VS Code window and restart the backend.
 
 **Backend**
-1. After choosing ColName (frontend step 2), `scidb.log` has
+1. After choosing ColName (frontend step 2), `scistack.log` has
    `[intent_store] fn__…@main: ColName parameter(s) stated: ['<arg>']`.
 2. On Run: `[execution] '<fn>' (node …): ColName stated for ['<arg>']; bound on N of N target(s)`
    and `[execution] '<fn>': input '<arg>' receives the current column name (ColName)`.
@@ -103,7 +103,7 @@ panel names under each panel. Difference bars are not offered for it. Both
 frontend bundles are rebuilt; reload the VS Code window and restart the backend.
 
 **Backend**
-1. After step 1 below, `scidb.log` should have
+1. After step 1 below, `scistack.log` should have
    `hbar: categories down the left (first level at the top), values along x`
    and an INFO line `y category labels: … -> font …`.
 
@@ -136,7 +136,7 @@ control under the function's name. Both frontend bundles are rebuilt; reload
 the VS Code window and restart the backend.
 
 **Backend**
-1. After step 1 below, `scidb.log` should have a line like
+1. After step 1 below, `scistack.log` should have a line like
    `[graph_builder] fn__pandas.read_csv__… (pandas.read_csv): 1 port(s) shown, N optional hidden`.
 2. After step 4: `[layout_service] set_shown_argument (… argument='header', shown=True)`.
 
@@ -225,7 +225,7 @@ Doc: `docs/claude/histogram-and-regression.md`.
 **Backend**
 1. `pip install -e /workspace/csv-stats` (0.5.0 adds `csvstats.regression`;
    scistackplot now requires `csv-stats>=0.5.0`). Reload the VS Code window.
-2. `scidb.log` on a histogram: `histogram bins: auto: N bin(s) over [...]` and
+2. `scistack.log` on a histogram: `histogram bins: auto: N bin(s) over [...]` and
    `histogram: 1 panel(s), one shared y range 0..X, stat=count, layer`.
 3. On a regression: one `regression fit (...): n=… slope=… R²=… p=…` line per
    fit; a fit with < 3 points logs `regression fit skipped`.
@@ -275,7 +275,7 @@ datetimes keep their TimeZone and NaT through save/load. Plans:
 2. Save a datetime per session with zones, e.g. in Python
    `SessionStart.save(pd.Timestamp("2026-07-01 14:00", tz="Europe/Berlin"), subject="01", session="pre")`,
    another subject in `America/New_York`, one with no zone and one `pd.NaT`.
-3. `scidb.log`: `temporal: SessionStart -> wall-clock ms in local time (... aware in [...], ... naive)`
+3. `scistack.log`: `temporal: SessionStart -> wall-clock ms in local time (... aware in [...], ... naive)`
    on each resolve; `load_variable(SessionStart): datetime column ... restored` at DEBUG.
 
 **Frontend**
@@ -314,7 +314,7 @@ column fails that subject only; the run carries on to the others.
 
 **Backend**
 1. Reload the VS Code window.
-2. `scidb.log`: `[edge_view] put_edge cycle check: ... N drawn of M stored` on
+2. `scistack.log`: `[edge_view] put_edge cycle check: ... N drawn of M stored` on
    every drawn edge; a refused edge's WARN ends `(closed by drawn edge(s) [...])`.
 
 **Frontend**
@@ -346,7 +346,7 @@ way.
 
 **Backend**
 1. Reload the VS Code window.
-2. `scidb.log`: `[history] recent_changes surface=page: N to undo` on load;
+2. `scistack.log`: `[history] recent_changes surface=page: N to undo` on load;
    `[step_names] named runs claim wiring(s)` after a named script run;
    `[adoption] ... keeps its recorded settings` when a step is adopted.
 
@@ -380,7 +380,7 @@ history node. New toolbar button **Clear data…**.
 
 **Backend**
 1. Reload the VS Code window so the backend picks up the change.
-2. In `scidb.log` after opening a project that ran from a script: one
+2. In `scistack.log` after opening a project that ran from a script: one
    `[adoption] adopted step <fn> (...) into scope main with N edge(s)` per step,
    then `[pipeline] document view scope=main: {...}`. On the next refresh,
    `[adoption] plan:` adopts nothing.
@@ -470,7 +470,7 @@ for an undeclared key ticks the box for you. Doc:
    ticks itself and a grey note says "'trial' declared numeric: the pattern only
    matches digits". With zero-padded values stored, you get a hint telling you
    to tick it instead.
-6. `scidb.log` should show `schema key types: 'trial' None -> 'numeric'
+6. `scistack.log` should show `schema key types: 'trial' None -> 'numeric'
    (source=gui)` for each change (`source=gui:key_regex` for step 5).
 
 ## 0zzzzzz. Dict-valued Parameter on a rewired history node runs; a run that crashes early says so — added 2026-10-21
@@ -497,7 +497,7 @@ run. Doc: `docs/claude/constants-are-not-scalars.md` §2a.
    error.
 3. (Failure path, optional) Any run that crashes before its first target
    should now show a red failed state with `Error: <Type>: <message>` in the
-   run console. `scidb.log` should contain
+   run console. `scistack.log` should contain
    `[run_thread] '<fn>' crashed outside the per-target loop` with a traceback.
 
 ---
@@ -527,15 +527,15 @@ Frontend (the xsens case: `config` → `glue_xsens_config` →
    - `config` lists only the path value(s) you declared, with no dict;
    - the canvas shows `config → glue_xsens_config → load_xsens_one_file`, with
      no direct `config → load_xsens_one_file` edge;
-   - scidb.log has `[provenance] fn=load_xsens_one_file: Parameter-fed glue
+   - scistack.log has `[provenance] fn=load_xsens_one_file: Parameter-fed glue
      recorded as a history hop` and `[graph_builder] 1 history edge(s) drawn
      through their glue node`.
-3. Run it again with nothing changed: every location is skipped. scidb.log has
+3. Run it again with nothing changed: every location is skipped. scistack.log has
    `[skip] load_xsens_one_file: 'col_names' is a Parameter-fed glued constant`
    and `skipped=N (skip_computed, up to date)`.
 4. Edit a value inside `config.json` (same path) and run: it recomputes.
 5. Delete the glue node from the canvas: history's direct `config →
-   load_xsens_one_file` edge comes back. scidb.log: `glued history input(s)
+   load_xsens_one_file` edge comes back. scistack.log: `glued history input(s)
    have no matching glue chain on the canvas`.
 
 ---
@@ -551,7 +551,7 @@ input first and every Parameter-fed input after, so
 
 **Backend**
 1. Reload the VS Code window so the backend edits load.
-2. After the graph loads, `scidb.log` should contain
+2. After the graph loads, `scistack.log` should contain
    `[pipeline] assigned input port order on N node(s)`. For a node whose order
    changed, it should also have an INFO line
    `... input ports in signature order [...] (variable-fed first would have drawn [...])`.
@@ -585,15 +585,15 @@ GUI's interpreter, then reload the VS Code window (extension bundle rebuilt).
 
 Frontend:
 1. `scistack.debug` on, debugpy installed: the SciStack output channel shows
-   `debugger: listening on 127.0.0.1:5678`; scidb.log has `[startup]
+   `debugger: listening on 127.0.0.1:5678`; scistack.log has `[startup]
    debugger: listening (port 5678)`. Run a Python function with a breakpoint
    in it: the breakpoint is hit, with no "connection refused".
 2. `scistack.debug` on, debugpy NOT installed (`pip uninstall debugpy`):
-   scidb.log has a WARN `[startup] debugger: scistack.debug is on but no
+   scistack.log has a WARN `[startup] debugger: scistack.debug is on but no
    debugpy listener is running ...`. Run: no "connection refused". A single
    warning popup appears saying to install debugpy, and only once per canvas
    (not on every Run). The run itself completes.
-3. `scistack.debug` off: scidb.log has `[startup] debugger: off`. Run: no
+3. `scistack.debug` off: scistack.log has `[startup] debugger: off`. Run: no
    attach and no popup.
 
 ---
@@ -612,7 +612,7 @@ Frontend:
    function, inside a folder the project already scans.
 2. Click **Refresh Code** (no Restart). The function appears in the Process
    list, in alphabetical position.
-3. `scidb.log` has `[registry_reload] Python module files: N now (1 added, 0
+3. `scistack.log` has `[registry_reload] Python module files: N now (1 added, 0
    removed)` followed by `+ <path of the new file>`.
 4. Delete that file and Refresh Code again: it disappears, and the log shows
    `- <path>`.
@@ -694,7 +694,7 @@ Also in this round:
 
 **Backend:** reload the VS Code window, and reinstall scifor, scidb and
 scimatlab (MATLAB uses the site-packages copy). After a pattern edit,
-`scidb.log` should show `[path_input_service] update_path_input: ...
+`scistack.log` should show `[path_input_service] update_path_input: ...
 key_regex={...}`. A MATLAB run should log `... emits 1 template(s) [... key_regex={...}]`,
 and the generated script should contain `key_regex=struct('subject', 'R2_\d{3}')`.
 
@@ -710,7 +710,7 @@ and the generated script should contain `key_regex=struct('subject', 'R2_\d{3}')
    downstream function in Python and in MATLAB. A `Baseline` folder or file
    should load as session `01`.
 6. RERC: run `loadXSENSOneFile` again. If discovery still finds nothing,
-   `scidb.log` should have a `pathinput_discover found nothing for
+   `scistack.log` should have a `pathinput_discover found nothing for
    'xsens_path'` WARN that names the failing segment and some file names.
 7. The `glue_xsens_config` "2 incoming edges" WARN should be gone. It is
    replaced by one `[edge_view] stored edge manual__9jtr3v ... targets glue
@@ -736,7 +736,7 @@ now begin with a guarded `cd('<root>')`, and each Python run thread calls
 1. Run a MATLAB node. The MATLAB terminal should print
    `[SciStack] working directory: <project root>` before the pyenv preamble,
    and `pwd` should still be the project root after the run.
-2. Run a Python node. `scidb.log` should show
+2. Run a Python node. `scistack.log` should show
    `[pathinput] working directory ... (project root)`, and the printed cwd
    should be the project root.
 3. In MATLAB, `cd` somewhere else and run again. It should start from the
@@ -762,7 +762,7 @@ variable no longer logs "N group(s) of records hold IDENTICAL data".
    this sentence shouldn't appear at all.
 
 **Log**
-4. Open Best Popcorn's `Rating` in Plot Studio. `scidb.log` should have no
+4. Open Best Popcorn's `Rating` in Plot Studio. `scistack.log` should have no
    `IDENTICAL data` WARN line, and no `identical_content` phase in the
    `load_variable` timing line.
 
@@ -780,7 +780,7 @@ runs and `scidb.entities()`. An aliased schema key no longer raises the
 `docs/claude/pathinput-folder-aliases.md`.
 
 **Backend:** reload the VS Code window, and reinstall scifor, scidb and
-scimatlab (MATLAB uses the site-packages copy). After an edit, `scidb.log`
+scimatlab (MATLAB uses the site-packages copy). After an edit, `scistack.log`
 should show `[path_input_service] update_path_input: ... aliases={...}`. A
 MATLAB run should log `generate_matlab_command: ... emits 1 template(s) ['xsens: ... aliases=['session']']`,
 and the generated script should contain `aliases='{"session": {...}}'`.
@@ -814,7 +814,7 @@ each records under its own name. Plan:
 `docs/claude/alternate-pathinput-templates.md` (last section).
 
 **Backend:** reload the VS Code window, and reinstall scidb and scimatlab.
-`scidb.log` should show
+`scistack.log` should show
 `[graph_builder] load_cbrace node …: 2 PathInputs drawn onto 'filePath' — an EachOf, every one runs`
 and `generate_matlab_command: load_cbrace: PathInput ['cbrace_cosmed_path', 'cbrace_cosmed_path_controls'] bound to 'filePath' emits 2 template(s)`.
 The old WARN `a history node binds ONE` should be gone.
@@ -843,7 +843,7 @@ The old WARN `a history node binds ONE` should be gone.
 
 **Backend:** reload the VS Code window. MATLAB needs the updated scimatlab:
 your venv has a non-editable copy in site-packages, so reinstall it.
-`scidb.log` should show `run-state propagation follows N drawn output edge(s)`.
+`scistack.log` should show `run-state propagation follows N drawn output edge(s)`.
 If a variable still loses its colour, it should show a WARN
 `... will draw green: {...}`.
 
@@ -865,7 +865,7 @@ templates always come from the entities-file declaration, never from the one
 template an earlier run recorded. Doc: `docs/claude/alternate-pathinput-templates.md`.
 
 **Backend:** reload the VS Code window. When the command is generated,
-`scidb.log` should show
+`scistack.log` should show
 `generate_matlab_command: load_cbrace: PathInput 'cbrace_cosmed_path' bound to 'filePath' emits 2 template(s) [...]`.
 
 **Frontend**
@@ -895,7 +895,7 @@ when a combination of levels has no data. A pair with nothing to compare now
 says "no rows for group = Traditional at session=…". `group` is no longer
 called "the experimental unit".
 
-**Backend:** reload the VS Code window. `scidb.log` should show
+**Backend:** reload the VS Code window. `scistack.log` should show
 `[stats guide] 10 step(s)` and `[timing] stats_preview` lines as you move
 through the steps, and `[stats guided] show step=…` / `choose step=…` for
 every screen and click. It should also show `[timing] engine_import: csvstats`
@@ -949,13 +949,13 @@ hung forever at `import_plot_packages started`. The server now polls the pipe
 (`scistack_gui/stdin_reader.py`).
 
 **Backend:** install the release, reload the VS Code window, and confirm
-`scidb.log` shows `[stdin] reader=windows-pipe-poll` right after `Server
+`scistack.log` shows `[stdin] reader=windows-pipe-poll` right after `Server
 ready`. On macOS it should say `reader=blocking`.
 
 **Frontend**
 1. On the Windows C-Brace project, right after a fresh window reload, open
    Plot Studio on `CosmedData`. It should open within a few seconds.
-2. `scidb.log` should show `import_plot_packages done in` (about 4-6 s), then
+2. `scistack.log` should show `import_plot_packages done in` (about 4-6 s), then
    every later `plot_describe` phase, then one `TOTAL=` line.
 3. Click around the canvas: requests should feel as responsive as before (the
    poll adds at most 10 ms per request).
@@ -1039,7 +1039,7 @@ fixed factors writes the table's design, which raises the existing
    mixed model; Satterthwaite degrees of freedom)."
 4. Set **Missing data** to "Complete cases only". The incomplete subjects are
    named in the notes, n reads "X of 17", the omnibus becomes ANOVA, and
-   scidb.log has a `complete cases:` WARN.
+   scistack.log has a `complete cases:` WARN.
 5. Choose **Pairwise test → Paired t-test** under "use every observation". It
    runs (it is not greyed). The notes name the subjects it couldn't pair, and
    the Recommended box still shows the mixed model.
@@ -1062,7 +1062,7 @@ appearing as "File does not exist" load errors.
 
 **Backend steps.**
 1. Start the GUI once. The file `~/.scistack/machine.toml` should now exist,
-   and scidb.log should have `[machine] ... machine_id=...` and
+   and scistack.log should have `[machine] ... machine_id=...` and
    `[startup] machine paths: ...`.
 2. Edit it on Windows: add `rto = "Y:/"` under `[roots]` (on the Linux box:
    `rto = "/home/mtillman/mnt/rto"`).
@@ -1085,17 +1085,17 @@ appearing as "File does not exist" load errors.
    and clicking − removes it.
 5. (Added later the same day.) The load-errors list no longer contains "No
    function declaration found" for MATLAB scripts such as
-   main_entrypoint_aim2.m and main_overground.m, and scidb.log no longer
+   main_entrypoint_aim2.m and main_overground.m, and scistack.log no longer
    WARNs "Could not parse MATLAB function" for them. Their entities still
    load (`Loaded N entities from ...`).
 
 ---
 
-## 0zzzzh. All-NaN popup, quieter scidb.log, no false Plot Studio ERROR — added 2026-10-19
+## 0zzzzh. All-NaN popup, quieter scistack.log, no false Plot Studio ERROR — added 2026-10-19
 
 **What changed.** When every value of the plotted measure is NaN, Plot Studio
 shows a VS Code warning popup, once per message per panel. Some-but-not-all NaN
-cells no longer WARN in scidb.log. "y-limit scope ignores" is now DEBUG.
+cells no longer WARN in scistack.log. "y-limit scope ignores" is now DEBUG.
 "Connection already closed!" ERRORs from overlapping plot requests are gone. A
 `src/vars/*.m` classdef beside its TOML entry no longer WARNs "declared in more
 than one place".
@@ -1105,15 +1105,15 @@ bundles were rebuilt (static, webview, extension.js).
 
 **Frontend steps / what you should see.**
 1. Open Plot Studio on GAITRiteLoaded and click around for a minute (switch
-   kinds, filters). scidb.log should show no `_fetchdf FAILED` ERROR, no
+   kinds, filters). scistack.log should show no `_fetchdf FAILED` ERROR, no
    "collapsed to NaN" WARN and no "y-limit scope ignores" WARN.
 2. Plot a column that is entirely NaN (or filter down to rows that are). One
    popup should appear: "SciStack: Every value of '…' is NaN in the N row(s)
-   being plotted…". Changing another control must NOT re-raise it. scidb.log
+   being plotted…". Changing another control must NOT re-raise it. scistack.log
    has `all-NaN measure:` at WARN, and the SciStack output channel has
    `[plot] show_warning:`.
 3. Plot a column with some NaN. There should be no popup.
-4. Restart the GUI. scidb.log should have no "declared in more than one place"
+4. Restart the GUI. scistack.log should have no "declared in more than one place"
    for variables with a `src/vars/*.m`.
 
 ---
@@ -1163,7 +1163,7 @@ For SPM also `pip install spm1d`.
     "Variant sweep" table (one row per variant per pair).
 11. (spm1d installed) a 1-D variable, Family = spm: comparisons list
     supra-threshold clusters ("nodes 34.0–58.0 (p = .003)") and t*.
-12. `scidb.log`: `[stats rows]`, `[design]`, `[stats] … family statement`,
+12. `scistack.log`: `[stats rows]`, `[design]`, `[stats] … family statement`,
     `[timing] stats_run`, `[stats] compute … in …s`, `difference bars: N
     derived (test)`.
 
@@ -1191,11 +1191,11 @@ the VS Code window.
    `csvstats.descriptive`, bind `_ci95 = ci_interval` and pass
    `errorbar=_ci95`, not `("ci", 95)`. Its docstring says `error bars: ci95 (t-based) across …`.
 4. Run the exported code. Its error bars should match the preview.
-5. `scidb.log` at DEBUG shows `spread ci95: t-based (csvstats.descriptive), n …`.
+5. `scistack.log` at DEBUG shows `spread ci95: t-based (csvstats.descriptive), n …`.
 
 ---
 
-## 0zzzze. scidb.log triage fixes: entities-file write, node colour, Plot Studio crash — added 2026-10-17
+## 0zzzze. scistack.log triage fixes: entities-file write, node colour, Plot Studio crash — added 2026-10-17
 
 What changed (plan `.claude/scidb-log-triage-2026-10-17.md`):
 - **Entities file:** adding a PathInput/Parameter to a `scistack_entities.toml`
@@ -1206,7 +1206,7 @@ What changed (plan `.claude/scidb-log-triage-2026-10-17.md`):
   that it has never written is red until it runs. Doc
   `docs/claude/function-node-colour.md`.
 - **Plot Studio:** a difference bar or panel missing its `match` no longer
-  crashes the tab. It is reported to scidb.log instead.
+  crashes the tab. It is reported to scistack.log instead.
 - **scifor:** a DataFrame spread that still files several rows at one address
   logs a WARN that names the missing schema key.
 
@@ -1217,18 +1217,18 @@ the next release.
 **Frontend**
 1. Delete the trailing newline from `scistack_entities.toml` by hand, then
    add a PathInput in the GUI. The new PathInput and every existing one
-   should still be listed. scidb.log should show no `is not valid TOML`.
+   should still be listed. scistack.log should show no `is not valid TOML`.
 2. Take a function node that has run, hide its output variable, drag in a
    NEW variable and wire the function to it. The function node should turn
-   red, and scidb.log should show `drawn output(s) ['<New>'] never recorded`.
+   red, and scistack.log should show `drawn output(s) ['<New>'] never recorded`.
    Run it: it should turn green.
 3. In Plot Studio, add a difference bar, then do what you did on
    2026-10-17 at 00:16:30. The tab should not go blank. If the case
-   reproduces, scidb.log shows `render error in Plot Studio difference bars:
+   reproduces, scistack.log shows `render error in Plot Studio difference bars:
    bar.match is missing` (or `panel.match`) with the object's contents.
    Report that line.
 4. Load a CSV whose ID column is NOT named after a schema key (for example
-   `participant` while the schema key is `person`). scidb.log should show a
+   `participant` while the schema key is `person`). scistack.log should show a
    WARN `still files several rows at one address ... Schema key(s)
    ['person'] are not a column`.
 
@@ -1259,7 +1259,7 @@ the mark.
 3. Add a second bar that shares a tick with the first, so the two stack. The
    upper bar's legs should drop visibly toward the lower bar's label.
 4. Save or export the figure. The exported legs should match the preview.
-5. In `scidb.log`, the line `difference bars placed: ...` should end with
+5. In `scistack.log`, the line `difference bars placed: ...` should end with
    `shortest leg 5.0 pt, lowest foot 6.0 pt above the data`, or larger
    numbers.
 
@@ -1301,18 +1301,18 @@ browser storage.
 
 ---
 
-## 0zzzzb. Faster figure arrows (one layout per figure) + click-to-drawn timing in scidb.log — added 2026-10-16
+## 0zzzzb. Faster figure arrows (one layout per figure) + click-to-drawn timing in scistack.log — added 2026-10-16
 
 What changed: each ◀ ▶ step used to lay the figure out twice in matplotlib
 (once in the auto text size search, then again for the preview's decisions,
 at the same size and text). The search's layout is now reused, which saves
 ~0.4 s of a ~0.85 s step. Each step's click-to-drawn time now goes to
-`scidb.log` too.
+`scistack.log` too.
 
 **Backend**
 1. Reload the VS Code window so the backend edits load.
 2. Open a Plot Studio figure with several iterated figures and auto text
-   size. Press ▶. `scidb.log` should show
+   size. Press ▶. `scistack.log` should show
    `layout_decisions (...): kept the 12pt auto-size trial's layout (1 trial(s)); no second matplotlib layout`.
    There should be NO INFO `render_mpl` / `x tick labels` lines for that
    step (those are now DEBUG, inside the trial), and `layout_decisions TOTAL`
@@ -1343,7 +1343,7 @@ popup's card headers and `scidb variants X --cards` show the same V-number in
 place of the old [1]/[2] position.
 
 **Backend**
-1. Open a pipeline. `scidb.log` should show
+1. Open a pipeline. `scistack.log` should show
    `[pipeline] canvas_variants: N variable(s) in X ms` and
    `current_variants: ... (slowest <Var> Y ms)`. Note X: is the canvas
    noticeably slower than before?
@@ -1365,7 +1365,7 @@ place of the old [1]/[2] position.
 
 ---
 
-## 0zzzz. Which webview bundle is running (scidb.log + SciStack output) — added 2026-10-16
+## 0zzzz. Which webview bundle is running (scistack.log + SciStack output) — added 2026-10-16
 
 What changed: every panel now reports which frontend bundle it loaded, and
 which copy of the extension loaded it. Before this, a stale hand-built 0.1.0
@@ -1380,13 +1380,13 @@ extension hid Copy PNG under scistack-gui 0.1.37 and no log said so.
    `[webview] pipeline view: bundle ...` line and one `[webview] plot view: bundle ...`
    line, each with a commit, a build time, the path, and `— match` (or `— skipped`
    with a reason for a dev build).
-3. `scidb.log` should have the matching `[client] <view> view runs bundle ...`
+3. `scistack.log` should have the matching `[client] <view> view runs bundle ...`
    INFO lines.
 4. Mismatch check (optional): run a dev-built extension whose `package.json`
    version you set by hand to an older release (e.g. `0.1.30`) against
    scistack-gui 0.1.37. Expect one VS Code warning ("webview bundle from release
    0.1.30 …"), shown once only, and a `[client] stale webview bundle` WARNING
-   in `scidb.log`.
+   in `scistack.log`.
 
 **Frontend**
 1. Open **Developer: Open Webview Developer Tools** on a Plot tab. Its console
@@ -1419,7 +1419,7 @@ Backend: reload the VS Code window.
    CSV matches the table each time (it contains the `(all)` text when
    collapsed).
 
-`scidb.log`: `[schema] schema_inventory … collapse=True -> N/N row(s) sent`
+`scistack.log`: `[schema] schema_inventory … collapse=True -> N/N row(s) sent`
 and, at DEBUG, `inventory_table: collapse rows A -> B (blocks collapsed from
 key: {…})`.
 
@@ -1443,7 +1443,7 @@ Backend: reload the VS Code window.
 3. On the first row, click Select and pick the OLD version (v1). Expect: that
    row draws v1. The other row is unchanged.
 
-`scidb.log`: `stacked [...]: one CodeIsLatest flag ({…: 'CodeIsLatest',
+`scistack.log`: `stacked [...]: one CodeIsLatest flag ({…: 'CodeIsLatest',
 …: 'no flag: all current'}), so rows naming no code draw current code`, and
 `variant rows' effective selections: '…': source default {'CodeIsLatest':
 True} …`.
@@ -1487,7 +1487,7 @@ Backend: reload the VS Code window (backend edits). Bundles were rebuilt.
    set `Variant` to Separate figures: the title has no `Variant=…`. Add a
    second row: each figure's title is `Variant=<row name>`.
 
-`scidb.log` should show: on save `[saved_plot] froze code for 1 row(s) over N
+`scistack.log` should show: on save `[saved_plot] froze code for 1 row(s) over N
 record(s): {'0': {'load_cbrace': ['<hash>']}}`; on open `[saved_plot] … frozen
 code -> {0: {'Code:load_cbrace': ['v2']}}; newer: ['row 0 load_cbrace ['v2'] <
 ['v3']']`; on every resolve `variant rows' effective selections: … frozen …`
@@ -1516,7 +1516,7 @@ Frontend:
    text sizes stay right (no plot drawn at another plot's font sizes).
 4. Switch the field to `Dist_m`.
 
-`scidb.log` should show: `drew N artist(s) … sample overlay R run(s) as A
+`scistack.log` should show: `drew N artist(s) … sample overlay R run(s) as A
 artist(s)` with A far smaller than R; `render_mpl` timing with phases
 (`marks`, `sample_overlay`, `legend_and_layout`, `x_labels`, …);
 `RPC << plot_resolve OK (…ms) — slow` for any plot call over 1 s; possibly
@@ -1554,7 +1554,7 @@ counts line.
    shows, and ↻ Run and Export CSV… are disabled.
 6. **Export CSV…** with a Within key: the CSV has the Within column and the
    same rows as the popup (all of them).
-7. `grep schema_inventory scidb.log` shows `within=['group'] strata=2`.
+7. `grep schema_inventory scistack.log` shows `within=['group'] strata=2`.
 
 ---
 
@@ -1591,7 +1591,7 @@ it; excluded wins over present). **Export CSV…** writes the whole table.
    afterwards (`scidb include subject=S02 --reason test`).
 7. **Export CSV…**: pick a path; the message says how many rows were written.
    Open the file: one column per checked key, plus `status` only in *All* mode.
-8. `grep schema_inventory scidb.log` shows the keys, per-key value counts and
+8. `grep schema_inventory scistack.log` shows the keys, per-key value counts and
    the present/missing/excluded counts for each run.
 
 ---
@@ -1623,7 +1623,7 @@ missing something. Levels you filtered out never come back as empty ticks.
    session keeps its bracket with empty leaves under it.
 7. Save the figure, and export the code. Both should draw the same ticks as
    the preview, ticked and unticked.
-8. `grep "no data in this figure" scidb.log` shows the missing levels and
+8. `grep "no data in this figure" scistack.log` shows the missing levels and
    which way they were drawn.
 
 ---
@@ -1645,7 +1645,7 @@ panel, so a level missing from the first facet panel was listed late.
 2. The legend should read `BL, POST, FU`, whichever panel each level first
    appears in.
 3. Save the figure. The PNG's legend should have the same order.
-4. `grep "legend order" scidb.log` (DEBUG) shows the `preview legend order:`
+4. `grep "legend order" scistack.log` (DEBUG) shows the `preview legend order:`
    and `export legend order:` lists.
 
 ---
@@ -1675,7 +1675,7 @@ Both frontend bundles are rebuilt.
 1. Open a plot with many figures (subject = ITERATE). Click ▶ as fast as you
    can about ten times, then stop. The panel should settle on the figure the
    counter shows, with no flicker afterwards. Do the same with ◀ and with the
-   keyboard arrows. `scidb.log` / the webview console may show
+   keyboard arrows. `scistack.log` / the webview console may show
    `figure_answer_superseded` lines. Those are expected.
 2. **Save all figures** into an empty folder. The files should be named
    `<variable>_subject=<value>.png`, plus `<variable>.figures.json`.
@@ -1689,7 +1689,7 @@ Both frontend bundles are rebuilt.
 6. If you have a plot that iterates over Variant, save it. Short variant
    labels should give named files. A variant whose label is a long config
    should still give `_v{n}`, with a `numbering it instead` INFO line in
-   `scidb.log`.
+   `scistack.log`.
 
 ---
 
@@ -1720,7 +1720,7 @@ these figures, each with its reason. Docs: docs/claude/custom-plot-kinds.md.
 **Frontend**
 1. Right-click the `plot_two` node: **Open in Plot Studio** appears (not on
    other function nodes). A tab named `Plot — plot_two` opens.
-2. The figure is a PNG of exactly what Save writes. `scidb.log`:
+2. The figure is a PNG of exactly what Save writes. `scistack.log`:
    `[custom] plot_two: panel-level, layout from steps …` and
    `[custom] preview: … PNG … (N call(s), …s in the function)`.
 3. Facet by session: one call per panel, and the ticks, legend and text sizes
@@ -1730,7 +1730,7 @@ these figures, each with its reason. Docs: docs/claude/custom-plot-kinds.md.
    that message. Make subject "Separate figures": it draws, and `mass` is a
    number.
 5. Make the function raise: the figure area shows `plot_two raised …`, and
-   the traceback is in scidb.log.
+   the traceback is in scistack.log.
 6. A function without `ax` that returns `plotly.graph_objects.Figure`: the
    preview is an interactive plotly figure. Save image needs kaleido
    (`pip install 'scistackplot[plotly-export]'`). Without it the save says so.
@@ -1756,7 +1756,7 @@ has a **Proportions** grid (Ratio / Floor / Ceiling / Drawn per element).
 
 **Frontend**
 1. Plot Studio, one panel at 8 × 6 in, Font empty: under the size boxes the
-   line should read `Reference 12 pt of 8–12 (the top)`. `scidb.log`:
+   line should read `Reference 12 pt of 8–12 (the top)`. `scistack.log`:
    `auto text size: print at 8.00 x 6.00 in: reference 12pt … (at the top); … 1 layout(s)`.
 2. A 2 × 3 grid of 5 panels (facet by a 5-level factor) at 8 × 6 in, then at
    13.06 × 8.89 in: the larger canvas never shows a smaller reference, and the
@@ -1793,7 +1793,7 @@ values and y title distance.
 1. On a MATLAB loader node (C-Brace `load_cbrace`) that has already run, edit
    the `.m` file (add a comment) and save. Do **not** press Refresh.
 2. Run the node. When it finishes, the node and its output variable should be
-   **green**. In `scidb.log`: `[source_hash] load_cbrace: building its MATLAB
+   **green**. In `scistack.log`: `[source_hash] load_cbrace: building its MATLAB
    command from … a run should record hash X` and, from MATLAB,
    `[source_hash] load_cbrace: run hashes … -> X (…)` with the SAME X. Before
    the run, a line `changed on disk since the last scan` should appear.
@@ -1801,7 +1801,7 @@ values and y title distance.
    should turn red with
    "the function's source has changed since it last ran".
 4. Plot Studio, CosmedData, one panel (8 × 6 in): the auto text line in
-   `scidb.log` should show `y_ticks=12` (no "runs …in off the canvas").
+   `scistack.log` should show `y_ticks=12` (no "runs …in off the canvas").
 5. Facet by session with per-panel y scales (scope includes session), 2 × 3
    grid: no panel's y numbers or y title should touch the panel on its left
    in the preview, and the preview's y numbers should match the saved PNG's.
@@ -1822,7 +1822,7 @@ in this canvas places that node here. Reload the VS Code window.
    you put it.
 3. On the root canvas, a node that was already positioned keeps its position
    when a twin of it graduates.
-4. `scidb.log`: `[scope_filter] <scope>: placed by their drawn edges ...` on
+4. `scistack.log`: `[scope_filter] <scope>: placed by their drawn edges ...` on
    the first view. `... edge(s) point at a node not on this canvas` should
    NOT appear; if it does, that line names the edge.
 
@@ -1865,7 +1865,7 @@ Reload the VS Code window. Test in a **virtual environment**; a system
 Python is never installed into.
 
 1. **Export with a wheelhouse** from a project that lists a library you
-   installed from a folder (`pip install -e`). `scidb.log` shows
+   installed from a folder (`pip install -e`). `scistack.log` shows
    `[environment] wheel for <lib>: building from its source`.
    `scistack bundle-info` lists a `wheelhouse` section.
 2. **Import into a fresh venv** where the library and one dependency are
@@ -1907,7 +1907,7 @@ window.
    setting, rename it. All work now.
 5. The library row is gone from Libraries. Pressing ✎ again is impossible;
    `scistack library copy <lib>` says it is not a library of this project.
-6. `scidb.log`: `[library_copy] <lib> copied into ...`.
+6. `scistack.log`: `[library_copy] <lib> copied into ...`.
 
 ---
 
@@ -1941,7 +1941,7 @@ bundles are rebuilt; reload the VS Code window.
    root folder yet (set yours).
 5. Terminal: `scistack library create --from-submodule NAME --into DIR
    [--name LIB]` produces the same folder.
-6. `scidb.log`: `[library_share] shared ...` with counts and
+6. `scistack.log`: `[library_share] shared ...` with counts and
    `[library_service] placement_check ...`.
 
 ---
@@ -1975,7 +1975,7 @@ Backend setup (until Stage 10b can generate one):
 4. **Binding:** on the main canvas, editing the placed node's binding works.
 5. **Upgrade:** add a node to the library's JSON, then press Refresh. The
    library's canvas shows it, and the placement on main is unchanged.
-   `scidb.log`: `[library_service] re-synced gaitlib/preprocessing` with
+   `scistack.log`: `[library_service] re-synced gaitlib/preprocessing` with
    old → new hash.
 6. **MATLAB:** put `matlab/+gaitlib/lowpass.m` in the library. After
    Refresh, the function palette lists `gaitlib.lowpass`. A run command
@@ -1999,7 +1999,7 @@ and the extension are rebuilt; reload the VS Code window.
    same defaults.
 2. Click **Export…**: a save dialog filtered to `.scistack`, suggesting
    `<database name>.scistack`. Save. The popover shows the path and size.
-   `scidb.log`: `[bundles] export_project_bundle -> ...` and `[bundle]
+   `scistack.log`: `[bundles] export_project_bundle -> ...` and `[bundle]
    export ...` lines.
 3. Untick History and tick Data, then Export: an error says data needs its
    history (nothing written).
@@ -2052,7 +2052,7 @@ the VS Code window to load the backend.
    before importing; after import B's note is unchanged.
 5. **Old export file:** importing a JSON exported before today shows an error
    naming `format_version` (nothing is created).
-6. `scidb.log`: lines `[canvas_snapshot] capture ...` and `[canvas_snapshot]
+6. `scistack.log`: lines `[canvas_snapshot] capture ...` and `[canvas_snapshot]
    apply -> ...` with counts of nodes, statements, edges.
 
 ---
@@ -2068,7 +2068,7 @@ Backend steps: none beyond the reload. Terminal checks are at the end.
 1. **Create from VS Code** in an EMPTY folder `gait_test`: new database,
    schema keys `subject`. Expect in the folder: `pyproject.toml`,
    `scistack.toml`, `.gitignore`, `src/gait_test/__init__.py`,
-   `src/gait_test/scistack_entities.toml`, the `.duckdb`. `scidb.log` has
+   `src/gait_test/scistack_entities.toml`, the `.duckdb`. `scistack.log` has
    `[project] init_project: root=... package=gait_test` and `created ...` lines.
 2. In that project, create a Variable and a PathInput from the sidebar "+".
    They land in `src/gait_test/scistack_entities.toml`.
@@ -2146,7 +2146,7 @@ saved size). Typing a Font number brings back the old fixed behaviour.
 **Backend:**
 - Reload the VS Code window to load the backend. Both frontend bundles are
   rebuilt.
-- scidb.log shows one INFO per figure:
+- scistack.log shows one INFO per figure:
   `auto text size: print band at W x H in: x_ticks=9.5 (x ticks rotate 45°), y_ticks=12, …; N layout(s) in M ms`.
   Note the ms: that is the extra cost per preview resize. Please report it.
 - With `SCIDB_LOG_LEVEL=DEBUG`, every trial layout appears as
@@ -2189,7 +2189,7 @@ y label and the y limits. Clicking a preset applies it to the open plot.
 **Backend:**
 - Reload the VS Code window to load the backend. Both frontend bundles are
   rebuilt; no build is needed.
-- scidb.log should show `[preset] template made from <var>: ...` on save,
+- scistack.log should show `[preset] template made from <var>: ...` on save,
   `[preset] applied '<name>' to <var>: N note(s), kind ...` on apply, and
   one `[apply_preset]`/`[reconcile]` WARN per note.
 
@@ -2231,7 +2231,7 @@ has one stack. Each Plot Studio has its own.
 **Backend:**
 - Reload the VS Code window to load the backend. Both frontend bundles are
   rebuilt; no build is needed.
-- scidb.log should show one `[history] history_record id=... method=... rows=N
+- scistack.log should show one `[history] history_record id=... method=... rows=N
   files=M snapshot_ms=a+b` line per edit, and `[history] undo id=... -> ok` per
   undo. **Note the `snapshot_ms` values on the Aim 2 project:** they are the
   per-edit cost of undo and have not been measured on real data.
@@ -2291,7 +2291,7 @@ Nothing undoes a run, a variant Delete, or an export.
    old `GAITRiteLoaded -> v` edge should still be hidden, and `v` fed only by `GaitRiteLoaded_UA`.
    (A hidden OUTPUT edge from before may reappear once: hide it again.)
 2. **Parameter port.** `formulaNum` connects to an ordinary `formulaNum` port, the same kind as `v`.
-   scidb.log shows `[edge_view] stored edge manual__a118jj ... targets the retired port 'param__formulaNum'`.
+   scistack.log shows `[edge_view] stored edge manual__a118jj ... targets the retired port 'param__formulaNum'`.
    That is expected; the connection stays visible through history.
 3. **Delete and redraw.** Delete the `formulaNum` edge: the node shows disconnected and Run says why.
    Redraw it: `put_edge: reconnecting hidden DB-derived edge ... unhiding`, and the node runs.
@@ -2320,7 +2320,7 @@ wiring (`group_call_sites_by_wiring`, `hidden_wirings(is_current=...)`).
    Delete your drawn `GaitRiteLoaded_UA -> v` edge, then redraw it. The node should
    not turn red because of the hidden history edge alone.
 
-**You should see:** in scidb.log, `PathInput edge(s) come only from a node's history
+**You should see:** in scistack.log, `PathInput edge(s) come only from a node's history
 wiring and are not drawn: ['<old> -> fn__loadGaitRiteOneFile__....gaitRitePath']`.
 
 ---
@@ -2341,7 +2341,7 @@ already stores 450 record(s) with a different set of data columns ...)`, listing
 new A_*/U_* and missing L_*/R_* columns and the two fixes: a new variable, or delete
 the existing records and run again. Also check that the message is readable in the
 Runs console, not cut off.
-In scidb.log: `[batch_save] calculateSymmetryOneVector: 1 output(s) NOT saved; the run fails`
+In scistack.log: `[batch_save] calculateSymmetryOneVector: 1 output(s) NOT saved; the run fails`
 and a `[matlab_watch] ... verdict=` other than `done`.
 
 ---
@@ -2359,7 +2359,7 @@ records the declared `6` (`scidb.entities.declared_spelling`). Before, history s
    stays; it is the 09-29 `6.0` records, which are not migrated.
 2. Run `calculateSymmetryOneVector`.
 
-**You should see:** in `scidb.log`, `[parameter] formulaNum (argument 'formulaNum'):
+**You should see:** in `scistack.log`, `[parameter] formulaNum (argument 'formulaNum'):
 recording the declared value 6 (int) for the passed 6.0 (float)`. After the run, the
 new records are counted on the declared `6` row, not on a third row.
 (This run currently fails to SAVE because of the GaitRiteSymmetry column mismatch,
@@ -2382,7 +2382,7 @@ type" and nothing ran.
    `GaitRiteLoaded_UA` edge.
 2. Click Run on `calculateSymmetryOneVector`.
 
-**You should see:** the MATLAB run starts. In `scidb.log`:
+**You should see:** the MATLAB run starts. In `scistack.log`:
 - one INFO line `stored manual edge(s) are hidden and bind nothing ... twin
   e__GAITRiteLoaded__calculateSymmetryOneVector__... hidden`
 - `run-state propagation follows ... {'v': 'GaitRiteLoaded_UA'}`, a bare string, not a list
@@ -2394,7 +2394,7 @@ node should show as disconnected (before, a stale twin could hide that).
 Also (Parameter edge on a rewired node): the `formulaNum -> calculateSymmetryOneVector`
 edge now stays on the canvas after you draw it. You have three stored copies from
 earlier attempts (`manual__vdw6ip`, `manual__aitsva`, `manual__zg1466`); they draw
-on top of each other. scidb.log shows `1 Parameter edge(s) come only from a node's
+on top of each other. scistack.log shows `1 Parameter edge(s) come only from a node's
 history wiring and are not drawn`.
 
 ---
@@ -2409,7 +2409,7 @@ bundles were rebuilt.
 
 **Backend:** your existing database will NOT open for runs (there is no migration; the
 `_invocation` table gained a column). Start a fresh database and re-run the pipeline.
-`scidb.log`'s `configure_database` line now shows the interpreter path,
+`scistack.log`'s `configure_database` line now shows the interpreter path,
 e.g. `python=3.11.9 (/path/to/venv/bin/python)`.
 
 **Frontend**
@@ -2419,17 +2419,17 @@ e.g. `python=3.11.9 (/path/to/venv/bin/python)`.
    `run options of pandas.read_csv = distribute=false, level=subject` vs
    `… level=(one call)`. The per-subject one reads "replaced by a newer run".
 3. Plot one subject (e.g. SS23) of `DemographicsTable`: one value per column, not 17.
-   `scidb.log` has `variant selection: no variant rows — the source default … keeps N of
+   `scistack.log` has `variant selection: no variant rows — the source default … keeps N of
    M row(s)`.
 4. Expand the old card → **Locations** → open `subject SS02`, click 🗑 on its leaf →
    the dialog names "at subject SS02" and plans only that record → delete it.
 5. Re-run the node at the SAME level with "skip computed" (Run all): it should skip.
 6. After the one-call re-run, the `DemographicsTable` variable node turns **green**,
    even though the hidden phantom `pandas.read_csv` node (`…4b9cac03…`) is still in
-   history. `scidb.log` has `[run_state] left 1 hidden call site(s) out of the cascade`.
+   history. `scistack.log` has `[run_state] left 1 hidden call site(s) out of the cascade`.
 7. Only ONE `GaitRiteLoaded_UA` node: the hand-placed one folded into the history node at
    the hand-placed position, and its edge to `calculateSymmetryOneVector` came with it.
-   `scidb.log` has `merge_manual_nodes: graduating …__k7huza onto the already-placed …`.
+   `scistack.log` has `merge_manual_nodes: graduating …__k7huza onto the already-placed …`.
 
 **Expect:** each level a card, the NEWEST (most recently saved) card at the top and the
 oldest at the bottom; superseded data never drawn by default; per-location
@@ -2480,7 +2480,7 @@ prints the same cards; `scidb pins` and `scidb tombstones` show what the popup d
 
 **Expect:** no 🔍 Provenance / 🧬 Variants buttons in the header; Escape closes the
 popup; refusals (e.g. a reason left empty, or a database that changed since the delete
-plan) appear in red in place, not as a crash. `scidb.log` has `[variants]`, `[default]`,
+plan) appear in red in place, not as a crash. `scistack.log` has `[variants]`, `[default]`,
 `variant_pins:` and `delete_plan:` / `delete_variant:` lines for each action.
 
 ---
@@ -2511,7 +2511,7 @@ whenever MATLAB had not yet run a SciStack script this session.
 **Frontend:** run a MATLAB function node (e.g. `calculateSymmetryOneVector`) from the GUI.
 
 **Expect:** no "Unable to resolve" error; the script gets past the preamble; the node
-resolves to success/failure (not "unknown"). `scidb.log` shows
+resolves to success/failure (not "unknown"). `scistack.log` shows
 `[run_marker] begin marker for <run_id>: adds its writer's dir first: …`.
 
 ---
@@ -2529,7 +2529,7 @@ what each Run wrote together. Plan: `.claude/plan-multi-output-call-site-wiring.
 1. Stroke-R01-Aim-2 already has a phantom node,
    `fn__pandas.read_csv__4b9cac03…`. Hide it on the canvas. It will not be
    removed automatically.
-2. Refresh the canvas. `scidb.log` should show
+2. Refresh the canvas. `scistack.log` should show
    `[graph_builder] call site pandas.read_csv/f64b61f0… split into 3 wiring(s)`
    (the third comes from the phantom's claim). It should not show
    `minted … for wiring`.
@@ -2557,7 +2557,7 @@ than what the function's inputs carry. Plan:
 **Backend**
 1. Stroke-R01-Aim-2: `pandas.read_csv` ← `DemographicsPath` → `DemographicsTable`,
    with no Schema Level set on the node.
-2. Run it. `scidb.log` should show
+2. Run it. `scistack.log` should show
    `[schema-level] recorded level ['subject'] narrowed to nothing: one call`,
    then `for_each(pandas.read_csv) — 1 iteration`, then
    `discriminated by unpinned schema key(s) ['subject'] — spreading rows`.
@@ -2601,7 +2601,7 @@ already run is now what its Run uses. Plan
 3. Press Run on the function node. It runs (it doesn't say "No pipeline
    history"), reads the new file, and saves into the new variable. Afterwards
    there is still ONE function node.
-4. `scidb.log` should NOT contain `[node_identity] … match nothing in history`
+4. `scistack.log` should NOT contain `[node_identity] … match nothing in history`
    (that WARN means a hide leaked into identity again). It should contain
    `manual edge(s) override {'filepath_or_buffer': 'PathInput …'}` and
    `overriding DB output types … with manual wiring`.
@@ -2609,7 +2609,7 @@ already run is now what its Run uses. Plan
    function node in turn. No other node changes id or position, and nothing
    except the hidden node leaves the canvas.
 6. (Added 2026-09-29) Drag a NEW function node in by hand, wire it, and run
-   it. After the refresh, `scidb.log` shows `re-keyed function node
+   it. After the refresh, `scistack.log` shows `re-keyed function node
    fn__…__<6 chars> -> fn__…__<16 hex>`. The node stays exactly where it was,
    with its edges. Drawing a new output edge on it and pressing Run then runs
    (on Stroke-R01-Aim-2, `read_csv` → `DemographicsTable`).
@@ -2647,7 +2647,7 @@ Project colours go to `[colors]` in scistack.toml. Plan
    step. **No other bar changes colour.**
 3. Type `rgb(0, 0, 0)` in the second level's box and press Enter. That bar
    turns black. Type `nonsense` and press Enter. The bar keeps its previous
-   colour, and scidb.log has a WARN `colours: the plot's session … is
+   colour, and scistack.log has a WARN `colours: the plot's session … is
    ignored`.
 4. Click **↑ project** on the first level. The box empties, the placeholder
    reads `#…… (project)`, and scistack.toml now has
@@ -2673,7 +2673,7 @@ Project colours go to `[colors]` in scistack.toml. Plan
 ## 0zzk. Copy PNG works in the webview (CSP `img-src blob:`) — added 2026-09-27
 
 **What changed:** Copy PNG (§0zzb) failed in the VS Code webview with
-`Could not copy: undefined` / scidb.log `render error in Plot Studio copy_png:
+`Could not copy: undefined` / scistack.log `render error in Plot Studio copy_png:
 (no message)`. Plotly.toImage loads the figure's SVG into an `<img>` from a
 `blob:` URL, and the webview CSP allowed only `data:` images, so the load was
 refused and Plotly rejected with a bare Event. The CSP now has ONE owner,
@@ -2689,7 +2689,7 @@ e.g. `render (Plotly.toImage) failed: Event "error" on <img> src=blob:…`.
 **Frontend**
 1. Do the §0zzb steps, in both a plot tab and the DAG window's Plot Studio.
    The notice should say `Copied … px PNG (300 dpi)`.
-2. If it still fails, the notice and scidb.log should now name the step
+2. If it still fails, the notice and scistack.log should now name the step
    (`render (Plotly.toImage)` or `clipboard write`). Send that line.
 
 ---
@@ -2734,7 +2734,7 @@ dropped units are listed. Plan `.claude/plan-compare-to-reference.md`, doc
    note changes to *Per summary…*, and the reference bar has an error bar
    around 0.
 9. Filter out one subject's reference session (Data > Schema keys). A line
-   *Dropped 1 (no reference value): subject=…* appears, and scidb.log has
+   *Dropped 1 (no reference value): subject=…* appears, and scistack.log has
    a WARN `compare (sample): dropped 1 unit(s)…`.
 10. Turn on Appearance > Y axis log (if offered). The section says *Not
     applied: A log y axis cannot show…*, and the raw values are drawn.
@@ -2791,7 +2791,7 @@ the list has an editable label and ✕. Text size: Appearance > Text >
    image (light) draws them black.
 11. **Export code**, run it: the file has the same bars at the same places
    (the code says the positions were fitted to this data).
-12. `scidb.log`: `difference bars [..]: N resolved`, `difference bars placed:`
+12. `scistack.log`: `difference bars [..]: N resolved`, `difference bars placed:`
    with the top before → after, and the `[Plot Studio] difference_bar_pick` /
    `difference_bar_added` console lines.
 
@@ -2845,7 +2845,7 @@ the panels. Code export draws the same panels as the preview.
    cleared.
 8. Export code and run it: panel ranges and titles match the preview.
 9. Save the plot, reopen it: the settings are restored.
-10. `scidb.log`: INFO `panel overrides [subject=01]: N applied (…), N not in
+10. `scistack.log`: INFO `panel overrides [subject=01]: N applied (…), N not in
     this figure` per figure. On export, INFO `export panel overrides: N
     limit(s), N title(s) baked in`. DEBUG `y titles hidden: …` next to
     `panel text reach`. Webview console: `[Plot Studio] panel_overrides_set`.
@@ -2877,7 +2877,7 @@ also logs a WARN if one panel's text runs into its neighbour.
 4. Wrapped grid (3 facet levels, 2 columns) with a nested x axis and ticks at
    90°: the top-right panel's labels and brackets should stay above the
    bottom-left panel.
-5. `scidb.log` (DEBUG) should show `preview frame from the export's text reach
+5. `scistack.log` (DEBUG) should show `preview frame from the export's text reach
    (left …pt (margin) / …pt (between columns) …)`. A WARN `the column gap needs
    …px but only …px fits` means the figure is too small for its labels.
 
@@ -2907,7 +2907,7 @@ to fit them. The saved file already measured this, so it should look unchanged.
 4. Give the axis a stated x title. It should sit below the bracket rows at
    every angle.
 5. Save the figure. The PNG's brackets should sit where the preview put them.
-6. `scidb.log` (DEBUG) should show `preview x brackets from the export:
+6. `scistack.log` (DEBUG) should show `preview x brackets from the export:
    tick labels reach …pt below the axes`, with a larger number at 90° than at 0°.
 
 **Update:** the gap between panel rows is now sized from the measured labels too (see 0zzg).
@@ -2929,7 +2929,7 @@ pick a bucket, click levels, shift-click for a range. This also fixes the odd
 x ticks (a bucket nested INSIDE its own source). Plan:
 `.claude/plot-studio-combine-section.md`.
 
-**Backend steps:** none. `scidb.log` shows `combine 'X' replaces 'Y' (depth
+**Backend steps:** none. `scistack.log` shows `combine 'X' replaces 'Y' (depth
 1 -> 0.5): N level(s) -> [...]` when a combine applies. The webview console
 (Developer Tools) shows `[combine] add / slot / editor mount|unmount` lines.
 
@@ -3034,7 +3034,7 @@ lives in `PlotStudio/copyImage.ts`; the Plotly/clipboard call is in
 `clipboardPng.ts`.
 
 **Backend**
-1. Nothing to run. A failed copy goes to `scidb.log` as a client error with
+1. Nothing to run. A failed copy goes to `scistack.log` as a client error with
    `where = Plot Studio copy_png` and the figure index and size.
 
 **Frontend**
@@ -3065,7 +3065,7 @@ SHAM, RMT30, …) stay, because PRE/POST sit above them. One owner:
 preview. See `spec/images/bars_wrong_horz_lines.png`.
 
 **Backend**
-1. With `scidb.log` at DEBUG, look for `x bracket row ...: nothing shown above
+1. With `scistack.log` at DEBUG, look for `x bracket row ...: nothing shown above
    it, rules omitted` (export) and `preview: N bracket rule(s) dropped (blank
    label or nothing shown above)`.
 
@@ -3089,7 +3089,7 @@ still showed every group's label below the plot.
 
 **Backend steps:** none beyond the usual: commit and push, then pull in the
 GUI runtime clone and restart it (the fix is in `scistackplot`, so no bundle
-rebuild). With DEBUG logging, `scidb.log` shows
+rebuild). With DEBUG logging, `scistack.log` shows
 `x groups: N bracket(s) on x… in axis coordinates` once per bottom panel.
 
 **Frontend steps:**
@@ -3163,7 +3163,7 @@ does not fade fills (`saturation=1`), and states the same opacity.
 
 **Backend steps:** restart the GUI (Python changed; no frontend change).
 Commit and push, then pull in the GUI runtime clone. With a bad palette
-name in a spec, `scidb.log` shows `palette '<name>' is not a
+name in a spec, `scistack.log` shows `palette '<name>' is not a
 seaborn/matplotlib palette … drawing the default palette`.
 
 **Frontend steps:**
@@ -3191,7 +3191,7 @@ line stays inside one colour), line and points are in that colour as before.
 The exported figure draws the same.
 
 **Backend steps:** restart the GUI (Python changed; no frontend change).
-Commit and push, then pull in the GUI runtime clone. In `scidb.log`, look
+Commit and push, then pull in the GUI runtime clone. In `scistack.log`, look
 for `sample overlay in the marks' colour ('timepoint'): each point its mark's
 colour; a line crossing 'timepoint' levels is drawn in #808080` (INFO), and
 at DEBUG `sample overlay: N of M run(s) cross the marks' colour`.
@@ -3223,7 +3223,7 @@ in `df`.
 
 **Backend steps:** restart the GUI (Python changed). The frontend was rebuilt
 (both bundles). Commit and push, then pull in the GUI runtime clone. In
-`scidb.log`, look for `grouping <Var> by its own column(s) [...] — carried on
+`scistack.log`, look for `grouping <Var> by its own column(s) [...] — carried on
 each row, not joined` and `carried 'Var.Side' as factor 'Side' on the
 measure's own rows (N level(s))`.
 
@@ -3275,14 +3275,14 @@ Commit and push, then pull in the GUI runtime clone.
 
 **Expect:**
 - Step 3: an alert "PathInput 'GaitSpeed' is already on this canvas" and no
-  second node; scidb.log has `Refusing to place PathInput 'GaitSpeed'`.
+  second node; scistack.log has `Refusing to place PathInput 'GaitSpeed'`.
 - Step 4: every node stays green and nothing new is saved (`0 new rows`);
-  scidb.log has `PathInput 'GaitSpeed': location changed … nothing re-runs
+  scistack.log has `PathInput 'GaitSpeed': location changed … nothing re-runs
   because of it`.
 - After each run, every node keeps exactly its own PathInput edge and its own
   output edge. No node feeds two tables, and there is no "graduation
-  collision" WARN in scidb.log.
-- scidb.log shows `pipeline_variants: 3 invocation(s) -> 3 variant(s)` after
+  collision" WARN in scistack.log.
+- scistack.log shows `pipeline_variants: 3 invocation(s) -> 3 variant(s)` after
   the third run.
 - The plot opens within a few seconds, showing ONE field (the first). The
   field filter shows only that field ticked. The log has `default_spec(...):
@@ -3297,7 +3297,7 @@ Commit and push, then pull in the GUI runtime clone.
 **What changed:** the extension's `.duckdb` file watcher no longer refreshes the
 canvas while this session's own Python run is writing (it still waits for
 MATLAB as before). The run's own `dag_updated` after `run_done` does the one
-refresh. `scidb.log` now names DB-derived / hidden / superseded edges, call
+refresh. `scistack.log` now names DB-derived / hidden / superseded edges, call
 sites that record several output types, and why each manual function node is
 red or green. A first run of a new wiring logs INFO, not a "cannot run" WARN.
 
@@ -3309,12 +3309,12 @@ red or green. A first run of a new wiring logs INFO, not a "cannot run" WARN.
 
 **You should see:**
 - During the save: the Output channel says `DuckDB file changed during this
-  session's own Python run — skipping the watcher refresh`, and `scidb.log`
+  session's own Python run — skipping the watcher refresh`, and `scistack.log`
   has **no** `Starting graph build orchestration` between `run_start` and
   `run_done`.
 - After `run_done`: exactly one graph build, and the UnmatchedTable node shows
   its records.
-- In `scidb.log`: a `build_edges detail:` line listing edges as
+- In `scistack.log`: a `build_edges detail:` line listing edges as
   `source->target`; a `call site pandas.read_csv/... records 2 output types`
   line; a `manual fn node ... state=` line per manual function node.
 
@@ -3331,7 +3331,7 @@ where it used to say `scidb.PathInput(...)`. Plan:
 **Backend**
 1. Reload the GUI (both bundles were rebuilt).
 2. After the rename, `src/scistack_entities.toml` should show the new key with
-   the same value and comment. `scidb.log` should have lines for
+   the same value and comment. `scistack.log` should have lines for
    `rename_declaration`, `recorded PathInput rename`, `rebase_node ... {counts}`
    and `rename_path_input ... done`.
 
@@ -3370,7 +3370,7 @@ of run. A new database's folder is only added to `scistack.toml` if it has
 3. `src/stats/create_change_score_df.py` and `create_cohensd_df.py` should
    show `Refusing to import ... inside a top-level for loop at line N` (or
    `with`/`if` block), and no new "Saved ANOVA df ..." CSVs should appear.
-4. In `scidb.log`, each "Loaded module file" line ends with `import X.XXs`,
+4. In `scistack.log`, each "Loaded module file" line ends with `import X.XXs`,
    and there is one "Imported 25 module files in ..." line. Any file taking
    over 5 s logs a `Slow import` WARN naming it.
 5. With a brand-new database in a folder with no code, the new
@@ -3404,7 +3404,7 @@ transparent background, for the screen only. Doc:
 **Extension:** the "SciStack" output channel logs `plot theme: light (stored;
 N other webview(s) told)` on each toggle.
 
-**Backend:** `scidb.log`'s `figure size … in (…)` line (written on save) now
+**Backend:** `scistack.log`'s `figure size … in (…)` line (written on save) now
 ends with `paper #ffffff bg, #000000 frame 0.8pt, ticks out 3.5pt, grid off`.
 
 **Frontend:**
@@ -3443,7 +3443,7 @@ row's labels (that layer is also the colour), the horizontal lines under the
 tick labels are no longer drawn either. Brackets that still show their labels
 keep their lines. Applies to the preview and the saved figure.
 
-**Backend:** `scidb.log` has `x bracket row 'InterventionGroup': no label
+**Backend:** `scistack.log` has `x bracket row 'InterventionGroup': no label
 shown, rules omitted` for the export, and `preview: N bracket rule(s) dropped
 with their blank labels` for the preview.
 
@@ -3464,7 +3464,7 @@ bottom of the axis. It now uses the same numbers the preview uses. An exported
 bar chart that autoscales now also leaves the same small gap below zero as the
 preview, instead of starting at exactly 0.
 
-**Backend:** after exporting, `scidb.log` has one `export y limits: …` line
+**Backend:** after exporting, `scistack.log` has one `export y limits: …` line
 saying whether the range was baked in (and its numbers) or autoscaled.
 
 **Frontend:**
@@ -3513,7 +3513,7 @@ width, marker size and opacity (it used seaborn's defaults before).
 - Step 3: cleared boxes show the `1×` placeholder; a reopened saved plot is
   not "● modified".
 - Step 4: the saved/exported figure has the same weights as the preview.
-  `scidb.log` INFO `figure size … marks lines 2x (…); sample 0.5x (…)`.
+  `scistack.log` INFO `figure size … marks lines 2x (…); sample 0.5x (…)`.
 
 ---
 
@@ -3534,7 +3534,7 @@ ran anyway, for such a Parameter only. Backend only.
 2. Untick one of `gaitrite_config`'s values and run again.
 
 **What you should see**
-- Step 1 runs the staged value: `scidb.log` shows `[execution] pending
+- Step 1 runs the staged value: `scistack.log` shows `[execution] pending
   override on … target: {'gaitRiteConfig': …}`.
 - Step 2 runs without the unticked value's combination.
 
@@ -3557,7 +3557,7 @@ after a template edit. Backend only.
 **What you should see**
 - The function node and its PathInput edge stay where they were; no second
   function node appears.
-- `scidb.log`: `[provenance] fn=…: … PathInput edge(s) named by declared PathInput`.
+- `scistack.log`: `[provenance] fn=…: … PathInput edge(s) named by declared PathInput`.
 - `scidb graph` in a terminal shows the same number of steps as the canvas.
 
 ---
@@ -3619,7 +3619,7 @@ after you change a project alias. Plan:
     and titles come back and it is not "● modified".
 11. Click **Export code**. The code has an `_aliases = {…}` literal, and the
     exported figure reads like the preview.
-12. `scidb.log` has an `aliases: levels session 1/N (project 1, plot 0)…`
+12. `scistack.log` has an `aliases: levels session 1/N (project 1, plot 0)…`
     line on each resolve, and `[config] set_project_alias: wrote …` for each
     project edit.
 
@@ -3661,7 +3661,7 @@ note naming `font_size` / `tick_font_size`. Plan:
 6. Save the plot (Saved plots rail) and reopen it. Every size comes back, and
    it is not marked "● modified". Clear a box and set it again to the same
    value; the ● goes away when the value matches the saved one.
-7. Save the figure. In `scidb.log` the `figure size … text …` line lists every
+7. Save the figure. In `scistack.log` the `figure size … text …` line lists every
    size, and the fixed ones carry `*`.
 8. Click **Reset**. Every box empties, and Font stays at 20.
 9. Open a saved plot from before today. The yellow note names
@@ -3711,9 +3711,9 @@ a CSV. Plan: `.claude/plan-saved-plots.md`.
   preview mode, figure number.
 - **Please check:** opening a fresh plot or a saved plot and touching
   nothing must NOT show ● modified. If it does, some setting is being
-  adjusted automatically after opening. Send the `scidb.log` lines below and
+  adjusted automatically after opening. Send the `scistack.log` lines below and
   describe what you changed.
-- `scidb.log`: `[saved_plot] saved <Var> / 'Fig A' as version N (… bytes,
+- `scistack.log`: `[saved_plot] saved <Var> / 'Fig A' as version N (… bytes,
   envelope format 1)`, `[saved_plot] opened <Var> / 'Fig A' version N …: 0
   note(s)`, `[restore] <Var>: K stored setting(s), 0 note(s)`.
 - A CSV plot has no Saved plots rail.
@@ -3740,7 +3740,7 @@ intended: the picker is about selection, not freshness.
 **What you should see**
 - The canvas colours are unchanged, and it appears noticeably faster.
 - Both popups open in about 1-2 s, and their nodes have no green/red border.
-- In `scidb.log`: `[timing] pipeline_variants: … (invocation_edges=…, outputs=…, group=…, annotate=…)`,
+- In `scistack.log`: `[timing] pipeline_variants: … (invocation_edges=…, outputs=…, group=…, annotate=…)`,
   and `[timing] check_multiple_nodes_state` with `expected.variant_configs`,
   `expected.realized_inputless` and `expected.predict` — please send those lines.
 - For each popup: `[pipeline] run states not requested — skipping the state check`.
@@ -3810,7 +3810,7 @@ re-resolving. Both bundles rebuilt.
   pane.
 - Step 3: Width/Height take the readout's numbers, the mode goes back to
   Export size, and the preview looks the same as it did in Fit pane.
-- `scidb.log`: `[plot] preview (export|pane) decided at W x H in: ticks …;
+- `scistack.log`: `[plot] preview (export|pane) decided at W x H in: ticks …;
   legend …` and, on a resize, `re-rendered from the last resolve`.
 
 ---
@@ -3834,9 +3834,9 @@ bundles rebuilt.
 **What you should see**
 - Both PNGs are exactly the readout's pixel size, whatever their labels
   and legend.
-- Nothing is cut off at the edges. If something is, `scidb.log` has a
+- Nothing is cut off at the edges. If something is, `scistack.log` has a
   `figure content reaches …in past the … canvas` WARN; send it to Claude.
-- `scidb.log`: `[plot] saved figure …: … 7.20 x 4.05 in = 1440 x 810 px`.
+- `scistack.log`: `[plot] saved figure …: … 7.20 x 4.05 in = 1440 x 810 px`.
 
 ---
 
@@ -3862,10 +3862,10 @@ many columns as fit. The preview is not changed yet (stage 4).
   "subject"), and the panel is wider than before.
 - graph2 (ticked): the legend sits below the panels in several columns; the
   panels use the full width, and the session labels are readable (or
-  `scidb.log` WARNs that they still overlap).
+  `scistack.log` WARNs that they still overlap).
 - graph2 (unticked): a short legend (Digitimer / Onward / Sham), and still
   no overlap with the panels.
-- `scidb.log`: `legend at the right: …` or `legend moved below the panels:
+- `scistack.log`: `legend at the right: …` or `legend moved below the panels:
   <reason> …` per saved figure.
 
 ---
@@ -3926,7 +3926,7 @@ figure. The preview is NOT changed yet (stage 4).
   "session / InterventionGroup" text anywhere.
 - Subject plot: labels `01, 02, …` (no `SS`), rotated and/or every k-th, first
   and last always shown.
-- `scidb.log`: an INFO line `x tick labels: … -> font …` (and `x bracket
+- `scistack.log`: an INFO line `x tick labels: … -> font …` (and `x bracket
   labels: …`) per saved figure; a WARN only if labels still overlap.
 - Not yet: the preview may still overlap, and the saved file size may still
   differ from the requested size (stage 3).
@@ -3997,12 +3997,12 @@ and it applies only to requests that go to Python.
    open the database in the SciStack extension.
 3. After pulling Python changes, click **Restart** in the GUI toolbar (or reload
    the VS Code window) so the Python server loads the new code.
-4. Keep `scidb.log` open (`tail -f scidb.log` in the project folder). Most items
+4. Keep `scistack.log` open (`tail -f scistack.log` in the project folder). Most items
    below name a log line that confirms the backend did the right thing.
 
 **Frontend**
 - Plot Studio opens from a Variable node on the DAG canvas (**📈 Plot**).
-- If a panel goes blank, the render error is reported to `scidb.log` by
+- If a panel goes blank, the render error is reported to `scistack.log` by
   `ClientErrorBoundary`. Search for `report_client_error`.
 
 ---
@@ -4044,7 +4044,7 @@ Backend + MATLAB only.
 
 ---
 
-## 0x. MATLAB addpath breakdown in scidb.log — added 2026-09-23
+## 0x. MATLAB addpath breakdown in scistack.log — added 2026-09-23
 
 **What changed:** the generated MATLAB script now times each `addpath`
 directory (addpath was ~4.4 s of every run's ~4.7 s preamble). Backend only.
@@ -4056,7 +4056,7 @@ directory (addpath was ~4.4 s of every run's ~4.7 s preamble). Backend only.
 1. Run any MATLAB function node.
 
 **What you should see**
-- In `scidb.log`, right after `[timing] matlab_preamble …`: one line
+- In `scistack.log`, right after `[timing] matlab_preamble …`: one line
   `[timing] matlab_addpath: TOTAL=…s (dirs=N, already_on_path=K,
   path_entries=A->B, slowest=…s <dir>)`. Send it to Claude: it decides whether
   the fix is fewer folders, skipping folders already on the path, or one slow
@@ -4081,7 +4081,7 @@ to iterate EVERY key). Frontend rebuilt (both targets).
 
 **Backend**
 1. Pull, then **Restart** the GUI.
-2. Keep `scidb.log` open; every run logs one `[schema-level] … -> iterating …
+2. Keep `scistack.log` open; every run logs one `[schema-level] … -> iterating …
    (<rule>) via <route>` line.
 
 **Frontend**
@@ -4104,7 +4104,7 @@ to iterate EVERY key). Frontend rebuilt (both targets).
   node with `as_table` on and no level set now runs at its automatic level,
   one table per location. To aggregate, untick the keys to pool over (untick
   all for one call). Nodes that already ran as one call keep doing so.
-- Step 4: the MATLAB log shows `1 iteration: no metadata`, and `scidb.log`
+- Step 4: the MATLAB log shows `1 iteration: no metadata`, and `scistack.log`
   shows `[schema-level] loadDemographics … -> iterating nothing: one call over
   the whole dataset (the finest level its inputs carry) via matlab run`.
 
@@ -4123,7 +4123,7 @@ no frontend rebuild.
 **Backend**
 1. Pull, then **Restart** the GUI (the database gains a `declared_name`
    column on first open; the log says `added declared_name column`).
-2. Keep `scidb.log` open.
+2. Keep `scistack.log` open.
 
 **Frontend**
 1. Unhide the two extra Parameter nodes you hid earlier today, if you want to
@@ -4138,7 +4138,7 @@ no frontend rebuild.
 **What you should see**
 - The generated MATLAB command ends its `scidb.for_each` call with
   `'parameter_names', struct('gaitRiteConfig', 'gaitrite_config')`.
-- `scidb.log`: `[provenance] fn=…: N constant edge(s) named by declared
+- `scistack.log`: `[provenance] fn=…: N constant edge(s) named by declared
   Parameter; argument->Parameter {'gaitRiteConfig': 'gaitrite_config'}`, then
   on the rebuild `[graph_builder] 1 Parameter edge(s) feed an argument of
   another name …`.
@@ -4159,7 +4159,7 @@ use the same input-type shape as history. Backend only — no frontend rebuild.
 
 **Backend**
 1. Pull, then **Restart** the GUI.
-2. Keep `scidb.log` open.
+2. Keep `scistack.log` open.
 
 **Frontend**
 1. On a function node that has never run (grSides, or a fresh node wired to
@@ -4184,7 +4184,7 @@ Backend (`target_file_service.entity_editability`, RPC `get_entity_editability`)
 - [ ] Same for a Parameter declared in a `.m`/`.py` outside the entities file → banner shown; Add value, ×, and the Generate inputs/Replace values button are all disabled.
 - [ ] Select a PathInput/Parameter declared in `scistack_entities.toml` → no banner, everything editable exactly as before.
 - [ ] Edit the declaration in the `.m` file, hit 🔄 Refresh Code, reselect the node → the new values show.
-- [ ] `scidb.log` shows `get_entity_editability: path_input '<name>' -> editable=False reason=read_only file=… line=…` on each selection.
+- [ ] `scistack.log` shows `get_entity_editability: path_input '<name>' -> editable=False reason=read_only file=… line=…` on each selection.
 
 ---
 
@@ -4192,7 +4192,7 @@ Backend (`target_file_service.entity_editability`, RPC `get_entity_editability`)
 
 Backend only (`scifor.project_root`, `registry.all_load_errors`); no frontend rebuild needed.
 
-- [ ] Open a project, then run a function fed by a PathInput with no `root_folder` → it resolves under the opened folder. `scidb.log` shows `[pathinput] project root override set to <that folder>` at load.
+- [ ] Open a project, then run a function fed by a PathInput with no `root_folder` → it resolves under the opened folder. `scistack.log` shows `[pathinput] project root override set to <that folder>` at load.
 - [ ] A project whose `scistack.toml` has `[schema_keys]` → tables and plots still follow the declared level order.
 - [ ] Break one Python entity and one MATLAB `.m` file → both errors still appear wherever load errors are shown (the registry panel and the project scan).
 - [ ] MATLAB terminal run via the generated command → rootless PathInputs still resolve under the project.
@@ -4248,7 +4248,7 @@ panel share one owner. **Frontend:** `components/Variants/TopologiesPanel.tsx`
    entry from Provenance — they answer opposite questions.
 7. Pick a variable with no producing steps (a raw-saved one). It should say so
    in words, not show an error.
-8. `scidb.log` should carry `[variants] <name>: N topology/ies, M variant(s),
+8. `scistack.log` should carry `[variants] <name>: N topology/ies, M variant(s),
    K not current`.
 
 ---
@@ -4281,7 +4281,7 @@ you can see what the churn actually costs before paying it on Stroke-R01-Aim-2.
 
 **Steps:**
 
-1. **The first open.** Open a copy of the real project. `scidb.log` should show
+1. **The first open.** Open a copy of the real project. `scistack.log` should show
    `[node_identity] allocated N node id(s)` once, then
    `[node_wiring] <node> now runs as wiring <W>` per wiring — and **nothing**
    on later refreshes. Nodes will be re-laid-out; note anything else that
@@ -4297,11 +4297,11 @@ you can see what the churn actually costs before paying it on Stroke-R01-Aim-2.
    Not two. *Tell me if a second one appears.*
 6. **Its handles show the NEW shape only.** The node should show `side` bound,
    and should NOT have grown an extra handle or edge for the shape it had
-   before. `scidb.log` says `[pipeline] N wiring(s) are history rather than a
+   before. `scistack.log` says `[pipeline] N wiring(s) are history rather than a
    node's current shape` when that has happened.
 7. **Run it again.** It must run the shape it has now — not also re-run the
    records it produced before you drew the edge. Check the run's target count.
-8. `scidb.log` should carry `[execution] run <id> on node <n> ('grSides') claims
+8. `scistack.log` should carry `[execution] run <id> on node <n> ('grSides') claims
    N wiring(s) … recorded at dispatch` before the run, and NOT
    `[pipeline] manual edge … moved onto …` (that repair path is deleted).
 9. **The same, from the terminal.** Repeat on a MATLAB node run through the
@@ -4371,7 +4371,7 @@ numbers unstable, which is why I did not do it.
 ## 0n. Node colours: correct, cascading, and refreshed — added 2026-09-22
 
 **What changed:** three separate defects that together made the canvas
-colours untrustworthy. Found by reading `scidb.log` from the 2026-09-22
+colours untrustworthy. Found by reading `scistack.log` from the 2026-09-22
 session. Plan: `.claude/plan-run-state-and-duplicate-nodes.md` (Problems 1, 2
 and 4). Docs: `run-option-variants.md` §"The third consumer",
 `manual-edges-on-history-nodes.md` §Colour, `matlab-run-completion.md` §5.
@@ -4395,14 +4395,14 @@ VS Code window. **No frontend change — no rebuild needed.**
 **Steps:**
 
 1. Open the Stroke-R01-Aim-2 database. Look at `grSides`. It should now be
-   **green** if its work is complete. In `scidb.log`, the line
+   **green** if its work is complete. In `scistack.log`, the line
    `node grSides: red — 130 expected invocation(s) not present` should be
    gone. *(If it is red with a different, smaller number, that is a real
    shortfall — tell me the number.)*
 2. Run a MATLAB node from the canvas and **do not touch anything**. When
    MATLAB finishes, the canvas should repaint on its own — the node's colour
    should update without you clicking Refresh or switching tabs. In
-   `scidb.log` look for `[notify] Emitting dag_updated` immediately after the
+   `scistack.log` look for `[notify] Emitting dag_updated` immediately after the
    run's verdict.
 3. Open a plot of a variable the run just wrote. It should show the **new**
    data without you reopening the tab (the plot cache is dropped by the same
@@ -4636,7 +4636,7 @@ Pull and reload the window.
 5. Command Palette ▸ **SciStack: Plot Variable…** with only CSV tabs open
    should say a database is needed, not fail obscurely.
 6. The plot-only server's log goes to the extension's own storage folder, not
-   next to your CSV. Check no stray `scidb.log` appears beside the data.
+   next to your CSV. Check no stray `scistack.log` appears beside the data.
 
 ---
 
@@ -4682,7 +4682,7 @@ brackets); pull, rebuild if you build locally.
    layer every subject has at every level (a speed, a variant, `ColName`):
    each subject's polyline is drawn once per bracket, never across it.
    Save PNG: same (`units=_run` in the generated code).
-7. scidb.log at DEBUG: `overlay join: shown=[…] span='ColName'
+7. scistack.log at DEBUG: `overlay join: shown=[…] span='ColName'
    brackets=['session'] … -> True (…)` and `sample overlay: N point(s) in
    panel …; R run(s) over S identity(ies), span=… brackets=…` with
    R = S × number of brackets.
@@ -4697,7 +4697,7 @@ the axis read as numeric, and both renderers dropped the Show-sample overlay
 silently (plotly still drew the bars off the empty-string category; the
 matplotlib export placed them at NaN). `reduce` now lists the single
 unlabelled level as `x_order`, and a shared renderer guard
-(`render.base.sample_dropped_reason`) WARNs in scidb.log whenever an
+(`render.base.sample_dropped_reason`) WARNs in scistack.log whenever an
 overlay is built but not drawn.
 
 **Backend:** `scistackplot.reduce` / `render.base` / `render.mpl` /
@@ -4716,7 +4716,7 @@ overlay is built but not drawn.
    the overlay in the subject palette and a subject legend.
 3. Set Colour by back to none: overlay unchanged.
 4. Save PNG: the export shows both bars AND the overlay at the single tick.
-5. scidb.log: no `sample overlay panel … NOT drawn` WARN line during any
+5. scistack.log: no `sample overlay panel … NOT drawn` WARN line during any
    of the above.
 
 ---
@@ -4757,7 +4757,7 @@ ACROSS the marks' colours (pre → post inside one group) — which is what used
 to make Lines / Auto (lines) draw nothing when `session` was the coloured
 layer. Doc: `docs/claude/show-sample-overlay.md` ("The overlay's own colour").
 
-**Backend:** none beyond the common setup. `scidb.log` gets
+**Backend:** none beyond the common setup. `scistack.log` gets
 `sample overlay coloured by 'subject': N level(s) — joined across colour levels`
 at INFO on every resolve.
 
@@ -4873,7 +4873,7 @@ Backend: nothing to configure. Frontend: **rebuild both vite targets**
       a reload.
 - [ ] Either transport: force a webview render error (or POST
       `/api/client-error` with `{"where":"x","message":"y"}`) — the line
-      reaches `scidb.log` at ERROR, with no database needed.
+      reaches `scistack.log` at ERROR, with no database needed.
 
 ## 0b. Run options reach the compiled pipeline and both code exports — added 2026-09-20
 
@@ -4886,14 +4886,14 @@ pipeline as a *different* call — writing a second record at every location.
 All three now read the node's config (`scidb.foreach_config.RunOptions`).
 
 **Backend**
-1. Nothing special. Keep `scidb.log` open.
+1. Nothing special. Keep `scistack.log` open.
 
 **Frontend**
 1. Pick a function node whose output makes sense distributed (a loader that
    returns one row per trial). Open its settings panel and tick
    **distribute**.
 2. Click **Run Pipeline** (not the node's own Run button).
-3. In `scidb.log`, find the `resolve_distribute_target: '<key>'` line for that
+3. In `scistack.log`, find the `resolve_distribute_target: '<key>'` line for that
    function — that is scifor confirming the option took effect. Before this
    fix the line was absent on this path.
 4. Now export the pipeline to Python (**Export code**). The generated
@@ -4917,17 +4917,17 @@ model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.
 **Backend**
 1. Open a project whose database has an already-run function with a
    column selection saved on its node (or make one: item 11 below).
-2. In `scidb.log`, on the first GUI start after pulling, confirm the one-time
+2. In `scistack.log`, on the first GUI start after pulling, confirm the one-time
    import ran: `[intent_store] imported column selections from N node config(s)`.
    The selections still show on their nodes (Inputs section) — the storage moved
    from `_node_config` to `_intent`, the panel should look identical.
-3. Run that node from the GUI. Confirm in `scidb.log`:
+3. Run that node from the GUI. Confirm in `scistack.log`:
    - `[execution] '<fn>': bindings — value: <Type> ("col") · ...` — one line
      naming EVERY signature parameter (unbound ones say `(unbound)`).
    - no `[selector-lost]` and no `[selector-dropped]` line.
 4. Run the SAME function from a Python script or the MATLAB prompt with a
    different (or no) column selection. Then click Restart / refresh the DAG.
-   - `scidb.log`: `[graph_builder] fn__...: saved column selection not reflected
+   - `scistack.log`: `[graph_builder] fn__...: saved column selection not reflected
      by its last run — <param>: stated ..., last run (script) bound ... [script_run]`.
    - `[selector-dropped]` WARN at the start of that script run if it bound the
      whole variable where the GUI's last run had a selection.
@@ -4958,7 +4958,7 @@ model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.
       running it, the node's last run shows as a GUI run (no amber marker).
 - [ ] **Pins survive the panel.** In Plot Studio, add/rename a variant row,
       close the panel, reopen the same variable: the rows are back
-      (`scidb.log`: `[plot] <Var>: N stored variant pin(s) replace the default`).
+      (`scistack.log`: `[plot] <Var>: N stored variant pin(s) replace the default`).
       Open a DIFFERENT variable: its own default, not the other's pins.
 - [ ] **MATLAB parity.** For a node whose selection came from a Python
       `Var["col"]` run (no node config), generate the MATLAB command: it loads
@@ -4968,7 +4968,7 @@ model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.
       <Var> <key=val> --intent` appends one block per function in the chain.
 - [ ] **Hidden state and edges still work** after the storage move: hide a
       value on a Parameter node, hide/unhide an edge, draw a manual edge,
-      stage a pending constant — each behaves as before, and `scidb.log`
+      stage a pending constant — each behaves as before, and `scistack.log`
       shows `[intent_store] import <name>: N row(s) carried over` once on
       the first start.
 
@@ -4986,7 +4986,7 @@ hint / colour-radio wording only. Bundles rebuilt 2026-09-21.
       subject]` (innermost first), trial collapsed, one figure per speed.
       Note the bar layout. Tick the colour on `session`, then on `subject`,
       then off. The bars, brackets and tick labels must not move at all —
-      only the bar colours and the legend change. `scidb.log` shows the new
+      only the bar colours and the legend change. `scistack.log` shows the new
       `grouping: ticks=[...] ... colour=X paints only` line with the SAME
       `ticks=` on every one of those resolves.
 - [ ] **Coloured innermost layer.** Colour the FIRST grouping entry: same
@@ -5028,7 +5028,7 @@ greys the button out with the reason. Uncommitted. Doc:
    bundles and `extension/dist/extension.js` were rebuilt 2026-09-19. If
    you pulled instead, rebuild all three (see the common setup, plus
    `npm run build` in `scistack-gui/extension`).
-2. After a save, run `grep "plot-data\|saved data of" scidb.log`. Expect
+2. After a save, run `grep "plot-data\|saved data of" scistack.log`. Expect
    `[plot-data] <measure>: N figure(s), chain … -> subject (sample),
    depth=subject -> R row(s) x C column(s) [...]` and
    `[plot] saved data of <measure> to <path>: R row(s) …`.
@@ -5062,7 +5062,7 @@ greys the button out with the reason. Uncommitted. Doc:
    column and one row per field instead. Set `ColName` to Collapse: the
    checkbox should disappear at the default depth and come back at the
    deepest ("raw") depth.
-   In `scidb.log`, expect `[plot-data] one column per ColName: … field
+   In `scistack.log`, expect `[plot-data] one column per ColName: … field
    column(s) [...]`.
 
 ## 2. Every plot kind draws the sample (schema-level parity) — added 2026-09-19
@@ -5072,12 +5072,12 @@ example subjects) into one point. They draw one point per subject, the same
 rows a bar summarises and a box draws. Line plots draw one line per subject.
 Spaghetti plots draw one line per subject inside each line group when the
 subject recurs across the x ticks. When it doesn't (for example trials
-under a session tick), each line is the mean, and `scidb.log` says so.
+under a session tick), each line is the mean, and `scistack.log` says so.
 Uncommitted. Doc: `docs/claude/grouping-and-collapse.md`.
 
 **Backend**
 1. Restart the GUI.
-2. For the spaghetti fallback, run `grep "spaghetti draws the mean" scidb.log`.
+2. For the spaghetti fallback, run `grep "spaghetti draws the mean" scistack.log`.
 
 **Frontend**
 1. Scalar variable: group `session`, collapse `subject` (and `trial`),
@@ -5110,7 +5110,7 @@ Edits to the file now apply **without a restart**. Commit `72a7b938`. Doc:
    session = ["BL", "POST", "FU"]   # use your real levels
    ```
 2. Restart once (**Restart** button) so the new code is loaded.
-3. Run `grep schema_order scidb.log`. Expect
+3. Run `grep schema_order scistack.log`. Expect
    `[schema_order] using <path>/scistack.toml (found from the working directory …)`
    and `declares level order for session (3)`. If you see
    `no project config found from …` instead, the server's working directory is
@@ -5193,7 +5193,7 @@ the old role strings now raise `LegacySpecError`. Re-open and re-save them.
 6. Pick **Spaghetti** with fewer than 2 groups. It should be refused with a
    reason.
 7. Check the uncoloured series (line kinds). They should get dash styles, and a
-   warning should appear in `scidb.log` when there are more than the dash
+   warning should appear in `scistack.log` when there are more than the dash
    cycle holds.
 
 ---
@@ -5234,10 +5234,10 @@ variable. The old bare-string spelling now raises a `ValueError`.
 2. Pick `InterventionGroup`. The factor should be named `InterventionGroup` (not
    `Demographics.InterventionGroup`), and the bars should split by group.
 3. Take a subject that is not in the sheet. It should appear as `(missing)`
-   last, and `scidb.log` should warn about it.
+   last, and `scistack.log` should warn about it.
 4. **Export code**. The generated code should group by the same column and give
    an identical figure.
-5. In `scidb.log`, `groupable_columns(RawEMG)` should now be fast. It used to
+5. In `scistack.log`, `groupable_columns(RawEMG)` should now be fast. It used to
    take 4–5 s on every panel open.
 
 ---
@@ -5254,7 +5254,7 @@ and that was fixed. **Step two has never been checked.**
 3. Step two: choose a specific variant of that grouping variable. The groups
    should change to match that variant. Switch back to latest and check that
    they revert.
-4. If the tab blanks, search `scidb.log` for `report_client_error`.
+4. If the tab blanks, search `scistack.log` for `report_client_error`.
 
 ---
 
@@ -5299,7 +5299,7 @@ a new parameter (for example `side`) to its signature, then click
 **Frontend**
 1. Draw an edge from `Demographics` to the new `side` input. The panel should
    not show `n/a`, and the node's id should not change.
-2. Run the function. `scidb.log` should show the edge being used, and the new
+2. Run the function. `scistack.log` should show the edge being used, and the new
    records should reflect it.
 3. Draw a second source onto an input that still shows its history edge. Both
    sources should run (EachOf), and the panel should list both.
@@ -5319,7 +5319,7 @@ Doc: `docs/claude/column-selection.md` (§From the GUI).
 1. Select a function node whose input is a wide variable. In the Node tab's
    settings, pick one column for that input. The node should show the column
    next to the input.
-2. Run it. `scidb.log` should contain
+2. Run it. `scistack.log` should contain
    `[execution] '<fn>': '<param>' restricted to ...`. If that line is missing,
    the whole table was loaded.
 3. Pick several columns, then switch to iterate (`for_columns`) and run again.

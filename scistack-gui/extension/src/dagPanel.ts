@@ -98,7 +98,7 @@ export class DagPanel {
         if (method === 'report_client_build') {
           // Not answered here: the host adds the extension that loaded this
           // bundle and the verdict, and the forward below takes it to
-          // scidb.log (webviewBuild.ts).
+          // scistack.log (webviewBuild.ts).
           msg = { ...msg, params: this.session.reportWebviewBuild(msg.params as Record<string, unknown> | undefined) };
         }
         // Host-side methods don't go through Python — they drive the VS Code API.

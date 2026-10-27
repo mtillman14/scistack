@@ -546,7 +546,7 @@ def _batch_column_type(cells: pd.Series, col_name: Any) -> tuple[str, dict]:
     """The DuckDB type of one DataFrame column, judged over the WHOLE batch.
 
     ``cells`` is the column across every record of one save (one run's
-    output: every iteration, every schema level). History, scidb.log
+    output: every iteration, every schema level). History, scistack.log
     2026-10-22: ``pd.read_csv`` of a CERNER pull gave IP_SPINAL_STIMULATION
     (mostly blank, some 'Y') object dtype; typing from row 0 read NaN and
     made it DOUBLE, then 'Y' failed the insert. The re-run spread the CSV one
@@ -2266,7 +2266,7 @@ class SciDuck:
         Takes ``_lock`` so a close never lands between another thread's
         is-open check and its statement (see ``_fetchdf_if_open``): two
         overlapping GUI requests sharing one refcounted connection hit that
-        window on 2026-10-19 (scidb.log 15:08:27, "Connection already
+        window on 2026-10-19 (scistack.log 15:08:27, "Connection already
         closed!" 4 ms after ``is_open`` said True).
         """
         thread = threading.get_ident()

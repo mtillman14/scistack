@@ -274,7 +274,7 @@ owners or no owner, **bug class present**.
 **Symptom (user, 2026-09-23):** after a run, a second Parameter node appears;
 only one of the two is connected to the function.
 
-**Evidence (`scidb.log`):** each first successful run of a function raises
+**Evidence (`scistack.log`):** each first successful run of a function raises
 `build_parameter_nodes` from 4 to 5 names (11:55:54 `loadGaitRiteOneFile`,
 14:45:56 `calculateSymmetryOneVector`); the user then hides the extra
 (`filter_hidden … 1 const` at 11:56:57, `2 const` at 14:46:55). The run log
@@ -341,7 +341,7 @@ Only diagnostic callers (the chip, `[selector-changed]`). Tests in
 ## 4. Critical-path flow diagrams
 
 Function-level traces of the paths §1 flagged. Each is annotated with where
-the time goes (**measured** from `scidb.log` timestamps, or *unmeasured*), the
+the time goes (**measured** from `scistack.log` timestamps, or *unmeasured*), the
 queries it issues, and where one layer reconstructs something another already
 knows.
 
@@ -465,7 +465,7 @@ Canvas (FunctionSettingsPanel)          ─► null shown as EVERY box ticked
 
 ### 4.3 A MATLAB run, end to end (load + save included)
 
-Measured from `scidb.log` [timing] lines, 2026-09-23. Two runs:
+Measured from `scistack.log` [timing] lines, 2026-09-23. Two runs:
 **A** `loadGaitRiteOneFile` (PathInput loader, 150 combos, 450 records saved,
 70.5 s script total) and **B** `calculateSymmetryOneVector` (one trial-level
 `for_columns()` input, 450 combos, 420 records).

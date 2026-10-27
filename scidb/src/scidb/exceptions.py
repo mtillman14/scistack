@@ -105,7 +105,7 @@ class OutputSaveError(SciStackError):
 
     The function ran, but its results did not reach the database. The save
     used to log ERROR and return normally, so a MATLAB run that computed 420
-    results and saved none was reported "done" (scidb.log 2026-10-01,
+    results and saved none was reported "done" (scistack.log 2026-10-01,
     GaitRiteSymmetry). Raised after every output has been attempted and
     provenance has been written for what did save, so one failing output
     neither hides nor blocks the others.

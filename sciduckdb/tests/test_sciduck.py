@@ -1242,7 +1242,7 @@ def test_list_variables_if_open_returns_none_when_closed_without_error(
     tmp_path, caplog
 ):
     """The best-effort read checks and queries as one step: closed -> None,
-    and no ERROR traceback (scidb.log 2026-10-19 15:08:27)."""
+    and no ERROR traceback (scistack.log 2026-10-19 15:08:27)."""
     import logging
 
     from sciduckdb import SciDuck
@@ -1264,7 +1264,7 @@ def test_close_waits_for_an_in_flight_statement(tmp_path):
     """close() takes the statement lock, so it cannot land between another
     thread's open check and its query. Before, two overlapping GUI requests
     on one refcounted connection closed it 4 ms after is_open said True
-    (scidb.log 2026-10-19 15:08:27, "Connection already closed!")."""
+    (scistack.log 2026-10-19 15:08:27, "Connection already closed!")."""
     from sciduckdb import SciDuck
 
     db = SciDuck(str(tmp_path / "race.duckdb"), dataset_schema=["subject"])

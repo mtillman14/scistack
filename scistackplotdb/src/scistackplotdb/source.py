@@ -1019,7 +1019,7 @@ class ScidbSource(BaseSource):
             if ambiguous:
                 # Name what was discarded. When every ambiguous location holds
                 # the SAME set of labels, the grouping variable is almost
-                # certainly one whole table saved at every location (scidb.log
+                # certainly one whole table saved at every location (scistack.log
                 # run n1irqety, 2026-09-29: the demographics CSV read once per
                 # subject, so every subject "was" the first row, Digitimer).
                 values = right.groupby(on, dropna=False)[factor].agg(
@@ -1630,7 +1630,7 @@ class ScidbSource(BaseSource):
         expensive question, asked once per click by :meth:`groupable_columns`.
 
         Why the split. Answering both together cost ~8 s on every panel open of
-        the user's project (scidb.log 2026-09-15): `FilteredDelsys` 4.2 s and
+        the user's project (scistack.log 2026-09-15): `FilteredDelsys` 4.2 s and
         `RawEMG` 5.4 s, both offering nothing, because classifying a column
         meant fetching one of its EMG traces. Stage 4 made *that* cheap; this
         makes the per-column work happen only when someone asks for a specific
@@ -1879,7 +1879,7 @@ class ScidbSource(BaseSource):
         **Container-typed columns are refused from the schema alone**, before
         any value is read. Classifying them by value meant one whole EMG trace
         fetched per muscle and thrown away: 4.2 s for ``FilteredDelsys`` and
-        5.4 s for ``RawEMG`` on the user's project (scidb.log 2026-09-15), ~8 s
+        5.4 s for ``RawEMG`` on the user's project (scistack.log 2026-09-15), ~8 s
         added to every panel open by two variables that offer nothing. The type
         check only ever REFUSES — see :func:`~scistackplotdb.load.
         is_container_type` for why that asymmetry is what keeps it safe.

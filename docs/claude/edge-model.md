@@ -100,7 +100,7 @@ A node is disconnected when ANY recorded target of its current wiring has a
 hidden input that no drawn edge covers. Then NONE of that wiring's targets run
 (`variant_resolver.reconcile_manual_inputs`), matching the red node on the
 canvas (`hidden_wirings`). Per-target exclusion let a recorded run that never
-used the hidden Parameter run anyway (scidb.log 2026-10-01 23:03).
+used the hidden Parameter run anyway (scistack.log 2026-10-01 23:03).
 
 ### A hand-placed node that ran is visible wherever it is placed
 

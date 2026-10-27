@@ -191,7 +191,7 @@ class TestCreateWritesToml:
         assert "StepLength" in BaseVariable._all_subclasses
 
     def test_create_into_a_file_without_a_final_newline(self, populated_db, tmp_path):
-        """scidb.log 2026-10-17: creating `popcorn_path` glued it onto the
+        """scistack.log 2026-10-17: creating `popcorn_path` glued it onto the
         last line of a hand-edited file and every declaration in it vanished."""
         from scidb.entities import load
 

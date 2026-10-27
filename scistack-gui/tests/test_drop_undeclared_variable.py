@@ -2,7 +2,7 @@
 A variable type nothing declares must be surfaced early and clearly -- but
 not blocked, because Python is not the authority on MATLAB's path.
 
-From scidb.log, 2026-09-01: ``Raw_EMG`` was placed on the canvas at
+From scistack.log, 2026-09-01: ``Raw_EMG`` was placed on the canvas at
 15:31:58 (``put_layout`` -> ``write_manual_node``, layout only -- nothing
 declared it), the command generator warned about it at 15:33:03, and MATLAB
 failed at 15:35:02 with ``Unrecognized function or variable 'Raw_EMG'``.

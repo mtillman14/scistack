@@ -295,7 +295,7 @@ def test_a_pin_matching_no_rows_resolves_rather_than_raising():
 # Reported 2026-09-11: a project with no variant axes opened with an EMPTY
 # Variants list, so the section said nothing about the variable being plotted,
 # and the user's first row only appeared once they added a second. The names
-# were no better — scidb.log 12:26:18 shows two rows called "FilteredEMG" and
+# were no better — scistack.log 12:26:18 shows two rows called "FilteredEMG" and
 # "latest", the second of which plots RawEMG and never says so.
 
 

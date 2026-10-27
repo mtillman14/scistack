@@ -85,7 +85,7 @@ interface FunctionNodeData {
  * The one spelling of a column selection, matching the backend's
  * `domain/column_selection.describe` and the settings panel's
  * `describeColumnSelection`. Kept in sync by hand across the three because
- * a user reading "3 columns" on the node and `["a","b"]` in scidb.log has no
+ * a user reading "3 columns" on the node and `["a","b"]` in scistack.log has no
  * way to tell whether they are looking at the same thing.
  */
 function describeColumns(sel: { columns: string[]; iterate: boolean } | undefined): string | null {

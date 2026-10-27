@@ -427,7 +427,7 @@ class TestDiscoveryOutputSuppression:
 
         captured = capsys.readouterr()
         assert "hello from noisy module" not in captured.out
-        # Not discarded — recoverable via scidb.log at DEBUG if needed.
+        # Not discarded — recoverable via scistack.log at DEBUG if needed.
         assert "hello from noisy module" in caplog.text
         # The module still gets scanned normally despite the redirect.
         assert "noisy_fn" in registry._functions

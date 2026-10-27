@@ -2,7 +2,7 @@
 
 On Windows a read left pending on the stdin pipe stalled every first-time
 native import on a request thread: Plot Studio's first ``plot_describe`` hung
-in ``import_plot_packages`` (scidb.log 2026-10-20). The reader polls the pipe
+in ``import_plot_packages`` (scistack.log 2026-10-20). The reader polls the pipe
 there instead. These tests pin the line reassembly both paths share, the poll
 loop, that the server reads only through this owner, and — on Windows — the
 hang itself.

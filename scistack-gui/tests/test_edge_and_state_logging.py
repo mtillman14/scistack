@@ -1,6 +1,6 @@
-"""The log lines that let scidb.log answer "why does the canvas look like this".
+"""The log lines that let scistack.log answer "why does the canvas look like this".
 
-Regression suite for the 2026-09-25 scidb.log triage (Stroke-R01-Aim1), where
+Regression suite for the 2026-09-25 scistack.log triage (Stroke-R01-Aim1), where
 three canvas questions had no answer in the log:
 
 1. A ``pandas.read_csv`` node drew two outputs. Its call site had recorded

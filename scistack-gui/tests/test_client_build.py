@@ -1,9 +1,9 @@
 """
-A webview's bundle build reaches scidb.log, with a WARN when it is stale.
+A webview's bundle build reaches scistack.log, with a WARN when it is stale.
 
 Background: on 2026-10-16 Plot Studio had no Copy PNG button under
 scistack-gui 0.1.37. VS Code was running a hand-built 0.1.0 extension whose
-webview bundle predated the button, and nothing in scidb.log said which
+webview bundle predated the button, and nothing in scistack.log said which
 bundle the panel had loaded. Each webview now reports its build once on load
 (``report_client_build``); the VS Code host adds the loading extension and the
 version verdict (``extension/src/webviewBuild.ts`` owns that rule). These

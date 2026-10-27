@@ -3,7 +3,7 @@
  *
  * The regression these lock down: `plot_save_complete` was forwarded only to
  * the DAG webview, so a save started from the standalone Plot tab finished in
- * the backend (scidb.log 2026-09-11, "save job ps-n68e4u6j complete") while
+ * the backend (scistack.log 2026-09-11, "save job ps-n68e4u6j complete") while
  * the panel's Save button sat on "Saving…" and refused a second save. Plot
  * tabs are created after the notification handler is registered and there can
  * be more than one, so the forwarding needs a registry to address.

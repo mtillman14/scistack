@@ -172,7 +172,7 @@ def check(
         elif name == unit:
             # Only the unit itself. A schema key ABOVE it (group in
             # group / subject) is constant within each unit: a between
-            # factor, not the unit (scidb.log 2026-10-20 flagged group).
+            # factor, not the unit (scistack.log 2026-10-20 flagged group).
             error(f"{name} identifies the experimental unit; it belongs in a random term like (1 | {unit})", name)
         elif name in strata:
             error(f"{name} separates the analyses (each figure/panel is analysed on its own); "

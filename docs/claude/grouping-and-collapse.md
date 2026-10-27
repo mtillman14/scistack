@@ -58,7 +58,7 @@ Rules that follow:
   `tests/plot_geometry.py`, which reads the DRAWN marks back as data. Until
   2026-09-21 the coloured layer was pulled out of the ticks and dodged
   innermost, so colouring the middle of a nesting rearranged every bar
-  (scidb.log 2026-09-21 16:00).
+  (scistack.log 2026-09-21 16:00).
 * `MAX_X_LAYERS = 3` caps the tick layers — every grouping layer, coloured
   or not.
 * Series ids (`__series`, and the exported `_series`) are composed

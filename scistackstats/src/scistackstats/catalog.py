@@ -219,7 +219,7 @@ def recommend(analysis: Analysis, design: Design, rows: Any, y: str, engine: Any
     welch = "ttest_ind_student" if analysis.equal_var else "ttest_ind_welch"
     between_pair = welch if normal else "mann_whitney"
     if design.empty_cells:
-        # Never recommend a model csv-stats will refuse (scidb.log
+        # Never recommend a model csv-stats will refuse (scistack.log
         # 2026-10-20: a full-interaction mixed model on data with empty
         # cells was refused, and every contrast that hung on it with it).
         # The pairwise tests run inside each combination of the other

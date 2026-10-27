@@ -5,7 +5,7 @@ incomplete units are dropped (``Analysis.missing``, recorded and stated); the
 GUI recommends a test from the data but any test that fits the data's shape
 can be chosen; csv-stats offers every family, including mixed models.
 
-The shape under test is scidb.log 2026-10-19's: ``session`` nested below
+The shape under test is scistack.log 2026-10-19's: ``session`` nested below
 ``subject``, and one subject (S05) missing a session because it hasn't been
 recorded yet.
 """

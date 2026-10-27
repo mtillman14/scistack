@@ -348,8 +348,8 @@ def describe(
     from scistack_gui.db import db_connection
 
     # live=True: each phase logs as it starts, so a panel that never opens
-    # leaves the step it is stuck in as the last line of scidb.log. Before
-    # this, a hang (scidb.log 2026-10-20 10:25:21) was one "reopened
+    # leaves the step it is stuck in as the last line of scistack.log. Before
+    # this, a hang (scistack.log 2026-10-20 10:25:21) was one "reopened
     # connection" line and then silence, naming no step.
     with Log.timer(
         "plot_describe",
@@ -438,7 +438,7 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
     # `groupable_report` used to answer both here, which meant every wide
     # variable's per-column work ran on every panel open whether or not anyone
     # looked: 4.2 s for FilteredDelsys and 5.4 s for RawEMG on the user's
-    # project (scidb.log 2026-09-15), both offering nothing. The columns are now
+    # project (scistack.log 2026-09-15), both offering nothing. The columns are now
     # `plot_grouping_columns`, asked once per variable the user opens.
     with phase("groupable"):
         grouping = source.groupable_variables(variable)
@@ -1148,7 +1148,7 @@ def save_figure(
     with neither, a file keeps its own suffix and a folder gets PNG.
 
     **Both are slow, and how slow was the thing nobody could see.** A
-    full-resolution resolve of a two-figure fan-out took **1543s** (scidb.log
+    full-resolution resolve of a two-figure fan-out took **1543s** (scistack.log
     2026-09-11 12:54) — ~12 minutes per figure, against a 30s client timeout in
     ``api.ts``. Everything here therefore reports itself *while it runs*:
     ``resolve`` narrates its phases (``narrate=True``), and every figure
@@ -1312,7 +1312,7 @@ def save_figure(
                     done = write_figure(item, out, dpi=dpi)
                 except CustomFunctionError as exc:
                     # The user's plot_ function raised (its traceback is in
-                    # scidb.log); the files already written stay.
+                    # scistack.log); the files already written stay.
                     logger.info("[plot] save stopped: %s", exc)
                     return {"ok": False, "error": str(exc), "files": written}
 
@@ -1808,7 +1808,7 @@ def start_save_job(
     **Both go through a job. Neither is answerable in one round trip.** The
     single-figure save used to be a request/response RPC on the theory that one
     figure is cheap next to a fan-out. It is not: a full-resolution figure of a
-    1-D measure took ~12 minutes (scidb.log 2026-09-11, 1543s for two of them)
+    1-D measure took ~12 minutes (scistack.log 2026-09-11, 1543s for two of them)
     against a 30s client timeout in ``api.ts``, so "Save current figure" failed
     exactly as reliably as "Save all" ever did — with the backend still working
     on a file nobody was waiting for any more. There is no timeout value that

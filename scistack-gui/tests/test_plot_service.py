@@ -130,7 +130,7 @@ def test_describe_is_json_serializable(populated_db):
 
 
 #: Every step `describe` narrates, in the order it runs them. A panel that
-#: never opens (scidb.log 2026-10-20 10:25:21) leaves the stuck one last.
+#: never opens (scistack.log 2026-10-20 10:25:21) leaves the stuck one last.
 DESCRIBE_PHASES = [
     "import_plot_packages",
     "acquire_connection",
@@ -866,7 +866,7 @@ def test_save_reports_the_resolve_before_any_file_exists(populated_db, tmp_path)
     """Resolving is the expensive half; it has to be reported while it happens.
 
     A save of two figures at full resolution spent ~25 minutes in `resolve`
-    (scidb.log 2026-09-11 12:28 -> 12:54) and reported nothing until the first
+    (scistack.log 2026-09-11 12:28 -> 12:54) and reported nothing until the first
     PNG existed. The panel was indistinguishable from a hung one.
     """
     spec = _pooled_spec(populated_db)
@@ -1323,7 +1323,7 @@ def test_there_is_one_save_method_and_it_is_a_job():
     """The synchronous save is GONE, not deprecated — beta, clean break.
 
     It existed on the theory that one figure fits a round trip. One
-    full-resolution figure is ~12 minutes (scidb.log 2026-09-11), so it did not,
+    full-resolution figure is ~12 minutes (scistack.log 2026-09-11), so it did not,
     and leaving it reachable would leave the timeout reachable.
     """
     from scistack_gui.server import METHODS
@@ -2446,7 +2446,7 @@ def test_the_export_of_a_collapsed_1d_variable_runs(populated_db):
 #
 # `describe` used to answer both at once, so opening the panel paid every wide
 # variable's per-column queries whether or not anyone looked. On the user's
-# project that was ~8 s (scidb.log 2026-09-15): 4.2 s for FilteredDelsys and
+# project that was ~8 s (scistack.log 2026-09-15): 4.2 s for FilteredDelsys and
 # 5.4 s for RawEMG, two variables that offer no groupings at all. The columns
 # are now `plot_grouping_columns`, asked once per variable the user opens.
 

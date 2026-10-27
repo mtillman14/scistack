@@ -95,7 +95,7 @@ that interpreter.
 
 ## Troubleshooting
 
-- **Something does not appear in the GUI.** `scidb.log` (beside the
+- **Something does not appear in the GUI.** `scistack.log` (beside the
   database) records which config file was loaded, which files and packages
   were scanned, and each module's import errors. Lines tagged `[config]` show
   the resolved project root and every `modules`/`packages` entry.

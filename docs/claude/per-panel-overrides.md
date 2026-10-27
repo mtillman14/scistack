@@ -100,7 +100,7 @@ margins and gaps from that (docs/claude/plot-panel-spacing.md). Two limits:
   longer title does not widen the gap.
 
 DEBUG `y titles hidden: SOL (0,1); ...` sits just before the `panel text
-reach` line, so a gap that did not shrink can be explained from `scidb.log`.
+reach` line, so a gap that did not shrink can be explained from `scistack.log`.
 
 ## Export (codegen)
 

@@ -88,7 +88,7 @@ def test_design_refusal_stops_the_pairwise_tests_with_its_reason():
 
 
 def test_a_design_refusal_logs_its_reason(caplog):
-    """scidb.log 2026-10-19 said "3 refused ... (see the refusals)" and never
+    """scistack.log 2026-10-19 said "3 refused ... (see the refusals)" and never
     WHY, so an empty comparison table had no explanation in the log."""
     import logging
 

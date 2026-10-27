@@ -3,7 +3,7 @@ Which frontend bundle a webview is running, written into the shared log.
 
 On 2026-10-16 Plot Studio had no Copy PNG button under scistack-gui 0.1.37:
 VS Code was running a hand-built 0.1.0 copy of the extension, whose
-``dist/webview/`` predated the button. scidb.log said nothing about it,
+``dist/webview/`` predated the button. scistack.log said nothing about it,
 because nothing ever reported which bundle a panel loaded.
 
 Now every webview sends ``report_client_build`` once on load

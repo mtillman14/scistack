@@ -91,7 +91,7 @@ INFO) rather than importing that limitation into MATLAB.
 from a returned column; Python stamped ordinals regardless. Python now
 matches MATLAB (`_distribute_pieces`).
 
-## Reading a run in `scidb.log`
+## Reading a run in `scistack.log`
 
 1. `resolve_distribute_target: '<key>'` — only if `distribute` is on.
 2. `distribute: output carries a '<key>' column …` — column-reading took

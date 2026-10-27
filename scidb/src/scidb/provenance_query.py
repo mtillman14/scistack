@@ -921,7 +921,7 @@ def run_option_superseded_records(
     if stale:
         # DEBUG, not INFO: node state calls this per variable per canvas
         # refresh, so an INFO line here is a per-refresh multiple — the shape
-        # that made scidb.log 24 MB (2026-09-22). Callers that want a summary
+        # that made scistack.log 24 MB (2026-09-22). Callers that want a summary
         # at INFO log their own, once, for the whole collapse (`_find_record`).
         logger.debug(
             "run_option_supersession: %d of %d record(s) were built under a "
@@ -1279,7 +1279,7 @@ def _supersede_same_invocation(duck, peers: dict, is_latest_of: dict, saved: dic
 
     * the iteration level: a placeholder-free CSV read per subject saved the
       whole table at every subject; the one-call re-run saved one row there
-      (scidb.log run n1irqety, 2026-09-29);
+      (scistack.log run n1irqety, 2026-09-29);
     * the file behind a PathInput was edited — its identity is the NAME only
       (`to_key`), never the file's content;
     * a nondeterministic function, re-run.

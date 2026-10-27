@@ -117,7 +117,7 @@ read the id). If the node whose checkbox misbehaves is in that list, the toggle
 cannot stick; if it is *not* in the list and still misbehaves, the problem is
 elsewhere (frontend merge, dirty-patch guard, watcher timing).
 
-Other lines to follow in `scidb.log`:
+Other lines to follow in `scistack.log`:
 
 - `[pipeline_store] update_node_config (node_id=…, keys=[…])` — what was
   written and under which id. `keys=[]` means the panel had nothing in

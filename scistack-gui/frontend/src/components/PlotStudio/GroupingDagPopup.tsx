@@ -19,7 +19,7 @@
  * **Why the columns are fetched here and not sent with `describe`.** Listing
  * them means one `SELECT DISTINCT` per column of every wide variable at or
  * above the measure's level. On the user's project that was ~8 s added to every
- * panel open (scidb.log 2026-09-15) by two EMG variables that offer no
+ * panel open (scistack.log 2026-09-15) by two EMG variables that offer no
  * groupings at all. `plot_grouping_columns` asks for one variable, when the
  * user opens it.
  *

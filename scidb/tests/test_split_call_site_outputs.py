@@ -3,7 +3,7 @@ site's outputs form one wiring" (2026-09-29).
 
 A call site (call_id) excludes outputs, so a rewired node's old and new
 outputs share one. The canvas hashed their union and the run path one output
-per variant; they disagreed and a phantom node was minted (scidb.log
+per variant; they disagreed and a phantom node was minted (scistack.log
 2026-09-29, pandas.read_csv Demographics -> DemographicsTable). Claims made
 by Runs decide the split.
 """
@@ -26,7 +26,7 @@ def _w(outputs):
 
 
 def test_the_hashes_from_the_log():
-    """The ids scidb.log showed, so the tests below are about the real case."""
+    """The ids scistack.log showed, so the tests below are about the real case."""
     assert _w(["Demographics"]) == "15506ac7814b3a09"
     assert _w(["DemographicsTable"]) == "7ade34e9ef0a9bdf"
     assert _w(["Demographics", "DemographicsTable"]) == "1540882c6bfa05de"

@@ -139,7 +139,7 @@ def test_py_class_static_calls_target_existing_attributes():
 
 @pytest.mark.parametrize("package", ["+scidb", "+scifor"])
 def test_matlab_log_delegates_to_scistacklog(package):
-    """Pin the specific regression: neither Log.m may route through scidb.log."""
+    """Pin the specific regression: neither Log.m may route through scistack.log."""
     src = (_MATLAB_ROOTS[0] / package / "Log.m").read_text(encoding="utf-8")
     code = _strip_comments(src)
     assert "py.scistacklog.Log" in code, f"{package}/Log.m must delegate to py.scistacklog.Log"

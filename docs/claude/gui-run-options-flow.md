@@ -180,7 +180,7 @@ The diagnostic: `scifor`'s `resolve_distribute_target:` line
 names the target key. Its **absence** from a run whose request logged
 `distribute: True` localises the loss to everything upstream of scifor. It is at
 INFO for this reason — at DEBUG, a working run and a dropped one were
-indistinguishable in `scidb.log`.
+indistinguishable in `scistack.log`.
 
 **Silent drop in persistence (same investigation).** `update_node_config` was a
 bare `UPDATE ... WHERE node_id = ?`. A node id with no matching row updated zero
@@ -196,7 +196,7 @@ debounce) turned every config write into a `dag_updated`, the refetched node
 came back configless, and the checkbox snapped back ~7 s after each click
 (2 s debounce + a ~5 s `get_pipeline`). Fixed by `apply_placement_configs`;
 that pass also WARNs about *orphan* configs (a saved id no node in the resolved
-graph carries) so the next id-shape mismatch names itself in `scidb.log`.
+graph carries) so the next id-shape mismatch names itself in `scistack.log`.
 
 A secondary effect worth knowing: `updateNodeData` builds the payload from
 `node.data`, so once a refetch has stripped the keys, the *next* toggle saves
@@ -208,7 +208,7 @@ All three bugs were invisible in the same way, and each hid the next: the checkb
 not sticking looked like the cause of distribute not working, when in fact the
 request log showed `distribute: True` on the wire for every attempted run.
 
-## Reading a run in `scidb.log`
+## Reading a run in `scistack.log`
 
 Follow one run by its `run_id`:
 

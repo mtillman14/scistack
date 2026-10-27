@@ -167,7 +167,7 @@ rather than a parallel `column_selections` dict — one map, one parser
 (template/first-run, single-function, per-pipeline-step) are covered at once.
 
 The diagnostic when a selection shows in the panel but the run loads whole
-tables is the **absence** of this INFO line in `scidb.log`:
+tables is the **absence** of this INFO line in `scistack.log`:
 
 ```
 [execution] 'summarise': 'table_in' restricted to "filename" (['filename']) on 1 target(s)
@@ -221,7 +221,7 @@ ColName argument as fed, so an optional one stays drawn.
 
 Diagnostic when the panel shows ColName and the function gets nothing: the
 absence of `[execution] '<fn>' (node …): ColName stated for [...]` in
-`scidb.log` (the statement never matched the node), or a `[colname]` WARN
+`scistack.log` (the statement never matched the node), or a `[colname]` WARN
 saying why it was dropped.
 
 ### The call_id asymmetry (non-obvious, load-bearing)

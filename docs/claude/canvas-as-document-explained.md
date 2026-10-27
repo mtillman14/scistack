@@ -565,7 +565,7 @@ kept; Q6 step names deferred.
 | MATLAB terminal runs (Stage 6) | nothing MATLAB-specific: they are recorded history, adopted like a script run. Needs a real MATLAB run to confirm. |
 | tests | `scistack-gui/tests/test_canvas_document.py`, updated `test_canvas_shape.py`, `test_graph_builder.py`, `test_api.py`, `test_pipeline_call_sites.py`, `test_pipeline_scopes.py`, `test_variant_resolver.py`, `test_constants_identity_gui.py` |
 
-**Reading scidb.log.** `[adoption] plan: …` on every build (DEBUG when
+**Reading scistack.log.** `[adoption] plan: …` on every build (DEBUG when
 empty), `[adoption] adopted step <fn> (<id>) into scope <s> with N edge(s)`
 once per adopted step, `[adoption] step <fn> … ran k of n combinations`,
 `[pipeline] document view scope=<s>: {...}`, `[pipeline] adoption deferred`

@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Preamble timing instrumentation
 #
-# Measured from a real session's scidb.log: a short MATLAB run spent ~4.4s
+# Measured from a real session's scistack.log: a short MATLAB run spent ~4.4s
 # between the GUI emitting this script and MATLAB's FIRST scidb log line, then
 # ~0.43s of logged scidb work. Everything in that first window — VS Code
 # writing/dispatching the temp script, MATLAB parsing it, the pyenv preamble,
 # the addpath block — was unlogged, so it could not be attributed to any one
 # cause. These lines split it up.
 #
-# `script_start` is a wall-clock stamp in scidb.log's own format
+# `script_start` is a wall-clock stamp in scistack.log's own format
 # (`yyyy-mm-dd HH:MM:SS.FFF`) so it can be diffed directly against the
 # extension's `runInMatlabTerminal` timestamps — that difference IS the
 # dispatch latency, which nothing else can observe.
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # Per-section lines use `fprintf` because the early ones run before Python
 # (and therefore scidb.Log) is reachable; the consolidated summary goes
 # through scidb.Log.info in the same `[timing] name: TOTAL=…s (phase=…s)`
-# shape scistacklog's Log.timer emits, so it greps out of scidb.log next to
+# shape scistacklog's Log.timer emits, so it greps out of scistack.log next to
 # for_each's existing timing lines.
 # ---------------------------------------------------------------------------
 
@@ -161,7 +161,7 @@ class _PreambleTiming:
 
         Placed after configure_database — the first point where both Python
         and the +scidb package are guaranteed reachable — and before the
-        first for_each, so the summary lands in scidb.log immediately ahead
+        first for_each, so the summary lands in scistack.log immediately ahead
         of ``for_each_prepare returned in …``. Mirrors the
         ``[timing] name: TOTAL=…s (phase=…s, …)`` shape scistacklog's
         Log.timer emits, so one grep finds both.
@@ -960,7 +960,7 @@ def _iteration_failure_check_lines(run_id: "str | None") -> list[str]:
     """Last lines inside the run's ``try``: fail the run if any iteration did.
 
     ``scifor.for_each`` logs a failed iteration and carries on, so the script
-    used to end "done" with every iteration failed (scidb.log 2026-10-20:
+    used to end "done" with every iteration failed (scistack.log 2026-10-20:
     ``load_cbrace`` completed=0, failed=1, verdict=done). Raising here routes
     it through the ``catch``, which writes the failure marker carrying the
     message (``+scidb/+internal/iteration_tally.m``). Records the successful

@@ -83,7 +83,7 @@ def marker_dir(db_path) -> Path:
     """The directory of run markers belonging to *db_path*.
 
     ``<stem>.runs/`` beside the database, matching the conventions already
-    there — ``scidb.log`` (``scidb.log.log_path_for``) and
+    there — ``scistack.log`` (``scidb.log.log_path_for``) and
     ``<stem>.layout.json``. Beside the database rather than in the OS temp
     directory so that the markers are per-database (two GUI sessions cannot
     collide) and so they still work when MATLAB runs on a different machine

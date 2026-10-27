@@ -244,7 +244,7 @@ def test_plotly_overlay_never_paints_labels_on_the_marks(unbalanced, kind):
 
 # --- the colour is the ONLY grouping layer ------------------------------------------
 #
-# Regression (scidb.log 2026-09-21): grouping by ColName alone and colouring by
+# Regression (scistack.log 2026-09-21): grouping by ColName alone and colouring by
 # ColName used to leave no tick layer (the coloured layer was pulled out of
 # the ticks), so the marks sat at one unlabelled position, ``x_order`` was
 # ``None``, the axis read as numeric, and both renderers dropped the overlay
@@ -321,7 +321,7 @@ def test_mpl_draws_the_overlay_when_the_colour_is_the_only_grouping(unbalanced):
 
 def test_a_dropped_overlay_is_said_out_loud(unbalanced, monkeypatch):
     """The guard both renderers share names the panel and the axis when it
-    discards points, so a future silent drop shows in scidb.log."""
+    discards points, so a future silent drop shows in scistack.log."""
     from scistackplot.render import base
 
     figure = _figure(_colour_only(["subject"]), unbalanced)

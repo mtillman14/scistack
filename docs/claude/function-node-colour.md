@@ -1,6 +1,6 @@
 # How a function node's colour is decided
 
-Written 2026-10-17 after a scidb.log triage: `pandas.read_csv`, rewired from
+Written 2026-10-17 after a scistack.log triage: `pandas.read_csv`, rewired from
 a hidden `RatingsData` to a new, empty `Rating`, stayed green. Read with
 `manual-edges-on-history-nodes.md` (the rule "visible edges are the ground
 truth") and `node-identity.md` (tokens, `token_for`).
@@ -96,9 +96,9 @@ the node (the placement-id lookup trap).
 - **A failed run does not colour the node.** Colour reads what the database
   holds, and a failed `OutputSaveError` run leaves the previous records in
   place, so the node stays green. The failure is reported by the run panel
-  and in scidb.log (`Thread finished (success=False ...)`).
+  and in scistack.log (`Thread finished (success=False ...)`).
 
-## Diagnosing "why is this node this colour" in scidb.log
+## Diagnosing "why is this node this colour" in scistack.log
 
 - `manual fn node <id> (<fn>): state=...` — manual nodes, with the reason.
 - `[timing] check_multiple_nodes_state: ...` — pass 1 ran, over how many combos.

@@ -1,6 +1,6 @@
 """A glued history input is drawn through its glue node, not past it.
 
-Regression for scidb.log 2026-10-21 (run uw6ncxs0): Parameter ``config`` ->
+Regression for scistack.log 2026-10-21 (run uw6ncxs0): Parameter ``config`` ->
 ``glue_xsens_config`` -> ``load_xsens_one_file.col_names``. After the run,
 history drew ``param__config -> fn.col_names`` straight into the function,
 beside the user's drawn ``glue -> fn`` edge — two paths into one handle, and

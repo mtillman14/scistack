@@ -105,7 +105,7 @@ statement about a scidb run, not about a webview (CLAUDE.md NOTE 3).
 * `<db stem>.runs/<run_id>.done` — `ok`, `interrupted`, MATLAB's
   `identifier` and `message`.
 
-Beside the database, matching `scidb.log` and `<stem>.layout.json`:
+Beside the database, matching `scistack.log` and `<stem>.layout.json`:
 per-database by construction, and it still works when MATLAB runs on a
 different machine as long as the project path is shared.
 
@@ -228,7 +228,7 @@ seconds since dispatch, and the last lock probe. "Why is this node still
 spinning?" has no other answer — the run is in another process, behind a
 terminal nothing can query.
 
-`scidb.log` carries the same transitions: tracking started, `.started` seen
+`scistack.log` carries the same transitions: tracking started, `.started` seen
 with the PID, the verdict and why.
 
 Stale markers (a MATLAB killed mid-run leaves its `.started` behind) are
@@ -275,7 +275,7 @@ which log WARN "N of M record(s) SKIPPED") are not a failure: the rest of that
 output saved. With an EachOf (several Parameter values), a failed save stops
 the remaining alternatives.
 
-scidb.log: `[batch_save] <fn>: N output(s) NOT saved; the run fails: ...`.
+scistack.log: `[batch_save] <fn>: N output(s) NOT saved; the run fails: ...`.
 Tests: `scidb/tests/test_output_save_error.py`.
 
 ---

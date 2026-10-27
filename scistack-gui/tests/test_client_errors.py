@@ -1,5 +1,5 @@
 """
-A webview render error reaches scidb.log.
+A webview render error reaches scistack.log.
 
 Background: on 2026-09-15 the grouping picker crashed inside React and the
 Plot Studio tab went blank. The Python log showed the popup's pipeline fetch

@@ -848,7 +848,7 @@ def split_call_site_outputs(
     * one call wrote them together — a multi-output function;
     * separate runs saved the same inputs into different variables — the node's
       output was REWIRED (pandas.read_csv: Demographics, then DemographicsTable;
-      scidb.log 2026-09-29).
+      scistack.log 2026-09-29).
 
     Provenance cannot tell those apart. The GUI can: every Run records, at
     dispatch, the wiring of the outputs it writes together (``_node_wiring``,

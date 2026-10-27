@@ -57,7 +57,7 @@ Both protocols share the same service layer, allowing the GUI to run either as a
 3. Load project config (if `--project`) → `config.py` parses `[tool.scistack]`
 4. Load function registry → `registry.py` discovers functions
 5. Initialize database → `db.py` creates singleton `DatabaseManager`
-6. Bridge Python logging → `scidb.log`
+6. Bridge Python logging → `scistack.log`
 7. Check lockfile → `startup.py` validates/cleans stale locks
 8. Start uvicorn → `app.py` creates FastAPI app on `localhost:{port}`
 9. Open browser → `webbrowser.open()`
@@ -1347,9 +1347,9 @@ logger = logging.getLogger(__name__)
 logger.info("Message")
 ```
 
-**scidb.log bridge** (`app.py` lines 50-80):
+**scistack.log bridge** (`app.py` lines 50-80):
 ```python
-# Redirect Python logging → scidb.log
+# Redirect Python logging → scistack.log
 from scidb.log import Log
 logging.basicConfig(handlers=[LogHandler()])
 ```

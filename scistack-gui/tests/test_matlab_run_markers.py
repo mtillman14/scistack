@@ -39,7 +39,7 @@ from scistack_gui.matlab_run_watch import (
 
 
 def test_marker_dir_sits_beside_the_database():
-    """Same convention as scidb.log and <stem>.layout.json.
+    """Same convention as scistack.log and <stem>.layout.json.
 
     Per-database by construction, so two GUI sessions watching two databases
     cannot read each other's markers.
@@ -680,7 +680,7 @@ def _variant_script(run_id="run-xyz"):
     "make", [_script, _variant_script, _pipeline_script], ids=["first_run", "variants", "pipeline"]
 )
 def test_failed_iterations_fail_the_run(make):
-    """scidb.log 2026-10-20: load_cbrace finished completed=0, failed=1 and was
+    """scistack.log 2026-10-20: load_cbrace finished completed=0, failed=1 and was
     reported verdict=done. Every GUI route resets the iteration tally inside
     its try and raises after its last for_each, BEFORE closing the database,
     so the catch writes the failure marker — the Python Run's rule

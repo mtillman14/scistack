@@ -757,7 +757,7 @@ def test_a_column_mixing_scalar_and_array_cells_scales_every_panel(caplog):
 
 
 def test_an_ineligible_scope_factor_is_dropped_at_debug(caplog):
-    """It fired WARN on every resolve of an unchanged plot (31x in scidb.log
+    """It fired WARN on every resolve of an unchanged plot (31x in scistack.log
     2026-10-19); the panel already offers only eligible factors."""
     from scistackplot import LongTable, Role
     from scistackplot.ylimits import LAYER, eligible_scope

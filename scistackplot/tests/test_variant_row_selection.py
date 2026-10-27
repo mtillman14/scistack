@@ -2,7 +2,7 @@
 What a variant row selects — ONE owner (``variants.row_mask``) for the figure,
 the row counts and the span banner.
 
-Found 2026-10-15 (scidb.log): a saved plot stored ``variant_sets=[{selection:
+Found 2026-10-15 (scistack.log): a saved plot stored ``variant_sets=[{selection:
 {}}]``. After ``load_cbrace.m`` was edited and re-run, the FIGURE applied the
 source default and drew v2 only, while ``capability.variant_summary`` measured
 the empty row 0 as "every row" and its banner read "CosmedData mixes v1 | v2".

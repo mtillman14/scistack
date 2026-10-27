@@ -1,6 +1,6 @@
 """WARN when a run iterates but nothing varies with the combo.
 
-scidb.log run n1irqety (2026-09-29): a placeholder-free demographics CSV was
+scistack.log run n1irqety (2026-09-29): a placeholder-free demographics CSV was
 read once per subject — 18 identical reads — and the per-row ``subject``
 column was dropped as pinned. The warning names the file and the fix.
 """

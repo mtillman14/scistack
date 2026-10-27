@@ -16,7 +16,7 @@ for ``--history``. The work itself is ``headless``'s compositions.
 
 With ``--json``, the result is printed to stdout as ONE line of JSON, last
 (the extension parses the last line); the console log is held at WARN on
-stderr, and the INFO narrative goes to ``scidb.log`` as usual.
+stderr, and the INFO narrative goes to ``scistack.log`` as usual.
 """
 
 from __future__ import annotations

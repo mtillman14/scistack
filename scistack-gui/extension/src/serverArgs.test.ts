@@ -93,7 +93,7 @@ test('a plot-only server takes no database, project root or schema keys', () => 
 });
 
 test('a plot-only server logs to the file it is given', () => {
-  // It has no database to anchor scidb.log to, so the extension supplies a
+  // It has no database to anchor scistack.log to, so the extension supplies a
   // path in its own storage rather than scattering logs beside CSVs.
   const args = buildPlotOnlyServerArgs({ logFile: '/ext/storage/plot-session.log' });
   assert.strictEqual(args[args.indexOf('--log-file') + 1], '/ext/storage/plot-session.log');

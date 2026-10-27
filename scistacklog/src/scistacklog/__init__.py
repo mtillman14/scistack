@@ -4,7 +4,7 @@ Dual-sink design:
 
 - **console** (stderr): concise pipeline narrative for the person running the
   pipeline. Time-only timestamps, level shown only at WARN and above.
-- **file** (``scidb.log`` next to the database, set via ``Log.set_path``):
+- **file** (``scistack.log`` next to the database, set via ``Log.set_path``):
   the run document. Date + millisecond timestamps, level, and originating
   layer on every line; one record per line.
 
@@ -138,7 +138,7 @@ class _Timer:
     ``live`` makes a phase announce itself on entry and on exit instead of
     waiting for the summary. That matters for operations measured in minutes:
     the summary is a post-mortem, and an operation that has not finished yet
-    produces no summary at all — a 25-minute figure save (scidb.log 2026-09-11,
+    produces no summary at all — a 25-minute figure save (scistack.log 2026-09-11,
     12:28 -> 12:54) was 25 minutes of complete silence followed by one line.
     A phase that says "started" is the only way a log can distinguish "working"
     from "hung".

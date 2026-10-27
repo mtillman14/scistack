@@ -57,7 +57,7 @@ def _start_debugger(env=os.environ) -> dict:
     The returned status is the ONE answer to "is a debugger listening": it
     rides on the ``ready`` frame (:func:`_send_ready`), and the extension
     attaches only when ``state == "listening"``. Before this, a failed listen
-    was a warning logged before scidb.log was attached, and the extension
+    was a warning logged before scistack.log was attached, and the extension
     attached anyway — "connection refused 127.0.0.1:5678" on every run.
 
     ``state`` is ``"off"`` (not requested), ``"listening"`` or ``"failed"``
@@ -116,7 +116,7 @@ def _send_ready(params: dict) -> None:
     extension come from different releases. "0.0.0" = never-installed tree.
 
     Also carries ``debugger`` (:func:`_start_debugger`'s status), and logs it
-    here because this runs after scidb.log is attached — the import-time
+    here because this runs after scistack.log is attached — the import-time
     listen predates the file sink, so its own log line only reaches stderr.
     """
     from scistack_gui import __version__ as version
@@ -510,7 +510,7 @@ def _run_plot_only(t0: float, log_file: "Path | None") -> None:
     _PLOT_ONLY = True
 
     if log_file is not None:
-        # No database means no `scidb.log` beside one, so the caller says
+        # No database means no `scistack.log` beside one, so the caller says
         # where. Without a path the file sink stays off and stderr — which
         # the extension forwards to its Output Channel at DEBUG — is the
         # whole record.
@@ -556,7 +556,7 @@ def main():
         "--log-file",
         type=Path,
         default=None,
-        help="Where the file log sink writes. Defaults to scidb.log beside "
+        help="Where the file log sink writes. Defaults to scistack.log beside "
         "the database; a plot-only server has no database to sit beside, so "
         "the caller supplies a path (the extension uses its own storage "
         "rather than scattering logs into the user's data folders).",
@@ -650,7 +650,7 @@ def main():
     # scan below — which is the single most diagnostically valuable part of
     # startup (it decides which functions, variables and PathInputs exist,
     # and it is where load errors are produced). Everything it logged used
-    # to reach stderr only, so scidb.log began mid-startup at
+    # to reach stderr only, so scistack.log began mid-startup at
     # "configure_database:" and a question like "why is this PathInput
     # missing?" had no record to answer it. attach_log_file is idempotent,
     # so the later configure_database() call is a no-op.
@@ -862,7 +862,7 @@ def main():
     except Exception:
         logger.debug("[startup] run-marker sweep failed", exc_info=True)
 
-    # Bridge Python logging → scidb.log so that scihist/scistack_gui logger
+    # Bridge Python logging → scistack.log so that scihist/scistack_gui logger
     # calls appear in the unified log file.
     from scidb.log import Log
 

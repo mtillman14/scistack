@@ -510,7 +510,7 @@ def for_each(
     # observable difference between "distribute ran" and "distribute was
     # silently dropped somewhere upstream", and the latter fails invisibly:
     # the run still succeeds and still saves, just at the wrong granularity.
-    # At DEBUG the two were indistinguishable in scidb.log, which is how a
+    # At DEBUG the two were indistinguishable in scistack.log, which is how a
     # MATLAB run with distribute=true went undiagnosed until the saved columns
     # were inspected by hand (2026-09-14).
     distribute_key = None
@@ -846,7 +846,7 @@ def for_each(
     # distribute: whether the "key column addresses the pieces" branch has
     # been reported yet. Once per run at INFO, then DEBUG per combo — the
     # ordinal-vs-column choice changes every saved address, so it must be
-    # visible in scidb.log without flooding it.
+    # visible in scistack.log without flooding it.
     distribute_column_reported = False
     # Failure aggregation for the end-of-run summary: reason -> FailureGroup
     # (scifor.failures owns the record). `stop` holds the (exception, failure)
@@ -1506,7 +1506,7 @@ def _warn_repeated_static_path_inputs(
     same file(s); the only difference between calls is the address the
     result is saved under.
 
-    scidb.log run n1irqety (2026-09-29): ``pandas.read_csv`` on a
+    scistack.log run n1irqety (2026-09-29): ``pandas.read_csv`` on a
     placeholder-free demographics CSV iterated per subject, read the whole
     file 18 times, and its ``subject`` column was dropped as pinned. Returns
     whether it warned (for tests).
@@ -2435,7 +2435,7 @@ def _crowded_addresses(
     row lands at, the most rows any one of them gets, and the unpinned schema
     keys no returned DataFrame carries -- the usual reason. A spread by
     ``brand`` alone of a 300-row ratings table whose person column is named
-    ``participant`` files 100 records at each brand (scidb.log 2026-10-17);
+    ``participant`` files 100 records at each brand (scistack.log 2026-10-17);
     each is distinguishable only by its contents, the same silent
     multiplication :func:`_spread_decision` refuses for a table with NO
     discriminating key.

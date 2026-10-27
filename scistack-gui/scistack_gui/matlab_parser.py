@@ -980,7 +980,7 @@ def is_matlab_script(path: Path) -> bool:
     ``[matlab] functions`` entry that is a directory sweeps in entry-point
     scripts (main_entrypoint_aim2.m) that were never meant to be functions;
     they were a "No function declaration found" load error on every refresh
-    (scidb.log 2026-10-19).
+    (scistack.log 2026-10-19).
 
     Deliberately NOT ``_FUNCTION_RE``/``_CLASSDEF_RE``: those require
     parentheses and a superclass, so a no-argument ``function runAll`` or a

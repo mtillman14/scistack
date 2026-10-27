@@ -126,7 +126,7 @@ def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
         # counts the factor summary reports, so "this trial recorded nothing"
         # would read as "this trial does not exist".
         #
-        # DEBUG: SOME empty cells are ordinary data (78 WARNs in scidb.log
+        # DEBUG: SOME empty cells are ordinary data (78 WARNs in scistack.log
         # 2026-10-19). The case worth a WARN — nothing at all to draw — is
         # `all_nan_warning`'s, over the post-filter rows.
         Log.debug(

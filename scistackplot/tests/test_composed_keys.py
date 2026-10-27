@@ -4,7 +4,7 @@ A 1-D measure explodes: 24 rows of EMG become 8 906 400 samples, all of which
 carry the same 24 answers to "which trace is this?". Asking that question per
 row — ``df[cols].astype(str).agg(" | ".join, axis=1)``, a Python call for every
 sample — is what made a full-resolution figure take ~770s while the identical
-interactive figure took 3.8s (scidb.log 2026-09-11). The interactive path never
+interactive figure took 3.8s (scistack.log 2026-09-11). The interactive path never
 paid it because `_downsample` runs before the panels are built.
 
 Two things have to hold, and both are tested here:

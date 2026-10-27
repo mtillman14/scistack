@@ -437,7 +437,7 @@ class TestEdgesEndpoints:
     def test_put_edge_ignores_a_removed_edge_in_the_cycle_check(self, client):
         # Removing an edge hides it and keeps the stored row (D2). The cycle
         # check must see the canvas, not the row: n1 -> n2 removed, so
-        # drawing n2 -> n1 closes nothing (scidb.log 2026-10-22 17:51).
+        # drawing n2 -> n1 closes nothing (scistack.log 2026-10-22 17:51).
         client.put(
             "/api/edges/e_n1_n2",
             json={"source": "n1", "target": "n2", "source_handle": None, "target_handle": None},

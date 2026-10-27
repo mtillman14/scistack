@@ -1,6 +1,6 @@
 """Machine-specific roots in the GUI's config handling (``scifor.machine``).
 
-scidb.log 2026-10-19: a Linux path in the shared scistack.toml, read on
+scistack.log 2026-10-19: a Linux path in the shared scistack.toml, read on
 Windows as ``y:\\home\\mtillman\\mnt\\rto\\...``, was a "File does not exist"
 load error on every refresh (22x). Now such entries are skipped, reported
 once by a startup notice, and the Paths popup records ``{root}/rest``.

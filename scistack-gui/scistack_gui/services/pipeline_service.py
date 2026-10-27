@@ -29,7 +29,7 @@ def get_pipeline_graph(
 
     Failures are logged here before propagating. FastAPI runs the sync
     handler on a threadpool thread, so an uncaught exception surfaces only
-    on uvicorn's stderr and never reaches scidb.log — on 2026-08-25 that
+    on uvicorn's stderr and never reaches scistack.log — on 2026-08-25 that
     left a graph build that just stopped mid-log with no error at all, and
     the traceback had to be recovered from the terminal by hand.
     """

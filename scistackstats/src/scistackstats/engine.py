@@ -151,7 +151,7 @@ class CsvStatsEngine:
 
     def __init__(self) -> None:
         # Timed: the first stats_compute of a session paid ~1.7 s here with
-        # nothing logged (scidb.log 2026-10-20), csv-stats' cold import.
+        # nothing logged (scistack.log 2026-10-20), csv-stats' cold import.
         t0 = time.perf_counter()
         import csvstats
         from csvstats import core, descriptive

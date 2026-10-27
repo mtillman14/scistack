@@ -3,7 +3,7 @@
 ``scistack.toml`` is committed and opened on several computers, so an
 absolute path in it is right on one machine only (``Y:\\`` on Windows,
 ``/home/me/mnt/rto`` on Linux). Everywhere else it was a "File does not
-exist" load error on every registry refresh — 22 in scidb.log 2026-10-19.
+exist" load error on every registry refresh — 22 in scistack.log 2026-10-19.
 
 The config now writes such a path once, portably, as ``{name}/rest``. Each
 machine says what ``name`` means in a file OUTSIDE the repo::
@@ -169,7 +169,7 @@ def unresolvable_here(raw: str) -> str | None:
     - ``{name}`` with no ``name`` in this machine's ``[roots]``;
     - a Windows-absolute path on Linux/macOS;
     - a Linux/macOS-absolute path (``/home/...``) on Windows, where it would
-      otherwise be read as relative to the current DRIVE — scidb.log
+      otherwise be read as relative to the current DRIVE — scistack.log
       2026-10-19's ``y:\\home\\mtillman\\mnt\\rto\\...``.
     """
     name = root_name(raw)

@@ -52,7 +52,7 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     """The edges *scope*'s canvas draws: see the module docstring.
 
     *caller* names the reader in the INFO line, so a run's view can be matched
-    against the canvas's in scidb.log.
+    against the canvas's in scistack.log.
     """
     from scistack_gui import pipeline_store
     from scistack_gui.domain.graph_builder import visible_manual_edges

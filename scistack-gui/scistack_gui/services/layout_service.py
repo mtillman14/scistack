@@ -240,7 +240,7 @@ def put_edge(
     # Checked against the edges the canvas DRAWS (edge_view.effective_edges),
     # not every stored row: since D2 (2026-10-22) removing an edge hides it
     # and keeps the row, and a removed edge closing a "cycle" rejected the
-    # user's rewiring (scidb.log 2026-10-22 17:51: LoadedData -> fn was
+    # user's rewiring (scistack.log 2026-10-22 17:51: LoadedData -> fn was
     # removed, then fn -> LoadedData was refused three times).
     # Not the full graph build (domain.pipeline_service.get_pipeline_graph ->
     # api.pipeline._build_graph): it PERSISTS manual-node graduation as part
@@ -615,7 +615,7 @@ def rename_path_input(name: str, new_name: str) -> dict:
             "error": (
                 f"'{name}' was renamed to '{new_name}' in {result.get('file')}, "
                 f"but its canvas placements could not be moved: {e}. Re-place "
-                f"'{new_name}' on the canvas; see scidb.log."
+                f"'{new_name}' on the canvas; see scistack.log."
             ),
             "reason": "partial",
         }

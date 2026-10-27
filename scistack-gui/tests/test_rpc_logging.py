@@ -2,7 +2,7 @@
 
 Both halves of this file come from one incident. Three PathInputs were
 discovered at project creation and rendered on the canvas, but the sidebar's
-list was empty, and ``scidb.log`` could settle neither question it was asked:
+list was empty, and ``scistack.log`` could settle neither question it was asked:
 
 * whether ``get_path_inputs`` had even been called, let alone returned an
   empty list — every RPC line was DEBUG, so an empty read was invisible;

@@ -26,7 +26,7 @@ Consequences worth remembering:
   next to `rows`/`cols`. That is how the export size is *stated* to the GUI
   without the preview honouring it.
 - `render_matplotlib` logs `figure size W x H in (aspect), R x C panel grid`
-  at INFO. A figure that "came out squashed" is diagnosed from `scidb.log`,
+  at INFO. A figure that "came out squashed" is diagnosed from `scistack.log`,
   not from the panel.
 
 ## One vocabulary: `scistackplot.figsize`

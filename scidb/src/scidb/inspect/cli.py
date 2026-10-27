@@ -1423,7 +1423,7 @@ def dispatch(args: argparse.Namespace) -> int:
         db_path, source = resolve_db_path(args.db)
         if not Path(db_path).is_file():
             raise CLIError(f"Database not found: {db_path} (from {source})")
-        # Same convention as configure_database: scidb.log next to the db file.
+        # Same convention as configure_database: scistack.log next to the db file.
         if Log.get_path() is None:
             from scidb.log import attach_log_file
 

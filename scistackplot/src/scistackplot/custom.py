@@ -83,7 +83,7 @@ class CustomFunctionError(RuntimeError):
 
     The message names the function and the call (figure and panel), so the
     panel can say which call failed; the original exception is ``__cause__``
-    and its traceback is in scidb.log.
+    and its traceback is in scistack.log.
     """
 
 

@@ -965,7 +965,7 @@ scidb logs to a file (set by `configure_database()`) via the `Log` class (source
 
 scifor's per-combo log lines (`[run]`, `[done]`, `[skip]`) are forwarded to the same log file via `_log_fn=Log.info`.
 
-The log format is `[HH:MM:SS.FFF] [LEVEL] message`, written to `scidb.log` next to the database file.
+The log format is `[HH:MM:SS.FFF] [LEVEL] message`, written to `scistack.log` next to the database file.
 
 ---
 

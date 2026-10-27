@@ -830,7 +830,7 @@ run*, which makes a node's wiring chronology a query.
 *Ambiguity resolves by scope, then history, then age — and raises a popup.*
 Different scopes are already separated (D-2026-09-20-9). Within one scope,
 prefer a node that has already run as W, else the oldest; either way warn the
-user in the GUI, not only in `scidb.log`, because two nodes stating identical
+user in the GUI, not only in `scistack.log`, because two nodes stating identical
 wiring compute identical things and the state is almost certainly unintended.
 **Not auto-merged**: silently collapsing two nodes a person created is worse
 than a message they can act on, and the existing

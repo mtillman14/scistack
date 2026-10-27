@@ -3,7 +3,7 @@
  *
  * Without a boundary, one component throwing during render unmounts the whole
  * React tree: the webview goes blank, and because a browser-side crash sends
- * no request, nothing reaches `scidb.log` either. That is how the grouping
+ * no request, nothing reaches `scistack.log` either. That is how the grouping
  * picker failed on 2026-09-15 — the log showed the popup's pipeline fetch and
  * then silence, and the cause had to be re-derived from source.
  *
@@ -11,7 +11,7 @@
  *   1. Show the error and React's component stack in place, with a button to
  *      try again (re-mounting the children) — the user keeps the rest of the
  *      tab and can read what broke.
- *   2. Forward it to Python (`report_client_error`), so it sits in scidb.log
+ *   2. Forward it to Python (`report_client_error`), so it sits in scistack.log
  *      beside the RPCs that led up to it. Best effort: a failed report is
  *      swallowed, because the boundary must not itself throw.
  *
@@ -63,7 +63,7 @@ export default class ClientErrorBoundary extends Component<Props, State> {
         <div style={styles.message}>{error.message}</div>
         {componentStack && <pre style={styles.stack}>{componentStack.trim()}</pre>}
         <div style={styles.note}>
-          This was written to scidb.log as a “[client] render error”.
+          This was written to scistack.log as a “[client] render error”.
         </div>
         <button
           type="button"

@@ -222,7 +222,7 @@ def resolve_schema_level(
     record per subject (and ``distribute`` saves a level down). Iterating a key
     no input carries only repeats the identical call: a placeholder-free
     PathInput re-ran once per subject, every call reading the whole CSV and
-    dropping its ``subject`` column (scidb.log run n1irqety, 2026-09-29). With
+    dropping its ``subject`` column (scistack.log run n1irqety, 2026-09-29). With
     no input level to go on (constants only), nothing is narrowed; a node that
     really wants that fan-out states its level, which wins above.
     """

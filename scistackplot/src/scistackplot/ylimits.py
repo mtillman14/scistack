@@ -187,7 +187,7 @@ def eligible_scope(
     dropped = [name for name in wanted if name not in allowed]
     if dropped:
         # DEBUG, not WARN: the panel shows the eligible scope, and this fired
-        # on every resolve of an unchanged plot (31x in scidb.log 2026-10-19).
+        # on every resolve of an unchanged plot (31x in scistack.log 2026-10-19).
         Log.debug(
             "y-limit scope ignores %s: only factors that separate PANELS "
             "(iterate, facet) can separate y limits — %s. Limits will be shared "

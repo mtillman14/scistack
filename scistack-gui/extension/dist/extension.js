@@ -557,7 +557,7 @@ var MatlabRunTracker = class {
    *
    * Why: the DB file-watcher cannot tell the server's own save from an
    * external write. A 15k-record save kept firing it, and the canvas rebuilt
-   * mid-save, contending with the writer (26.5s vs 1.9s; scidb.log
+   * mid-save, contending with the writer (26.5s vs 1.9s; scistack.log
    * 2026-09-25) and drawing the pre-save graph. Safe to call once per target
    * of a multi-target run: the id is a set member.
    */
@@ -1566,8 +1566,9 @@ var FailureReporter = class {
     this.collection.dispose();
   }
 };
+var LOG_FILE_NAME = "scistack.log";
 function logPathFor(dbPath) {
-  return path4.join(path4.dirname(dbPath), "scidb.log");
+  return path4.join(path4.dirname(dbPath), LOG_FILE_NAME);
 }
 
 // src/pythonProcess.ts
@@ -2276,7 +2277,7 @@ var Session = class _Session {
   /**
    * A panel's `report_client_build`: log which bundle it runs and where it
    * was loaded from, warn if it is from another release than this session's
-   * server, and return the params to forward to Python for scidb.log.
+   * server, and return the params to forward to Python for scistack.log.
    * Both panels call this; neither words the line or decides the verdict.
    */
   reportWebviewBuild(raw) {
@@ -2619,7 +2620,7 @@ var SessionManager = class {
   /**
    * Where a plot-only server writes its log.
    *
-   * It has no database, so `scidb.log`'s "beside the .duckdb" convention has
+   * It has no database, so `scistack.log`'s "beside the .duckdb" convention has
    * no anchor, and dropping a log into whichever folder the user's CSV
    * happens to live in would scatter logs through their data. The
    * extension's own storage is the one place that is neither.

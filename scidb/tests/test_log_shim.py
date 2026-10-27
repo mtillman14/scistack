@@ -31,7 +31,7 @@ class _ShimVar(scidb.BaseVariable):
 
 
 def test_configure_database_writes_run_context_header(db, tmp_path):
-    log_text = (tmp_path / "scidb.log").read_text(encoding="utf-8")
+    log_text = (tmp_path / "scistack.log").read_text(encoding="utf-8")
     assert "configure_database:" in log_text
     assert "python=" in log_text
     assert "pid=" in log_text
@@ -45,7 +45,7 @@ def test_timing_summary_in_file_at_default_level(db, tmp_path):
             (np.array([3.0, 4.0]), {"subject": "S01", "trial": "2"}),
         ],
     )
-    log_text = (tmp_path / "scidb.log").read_text(encoding="utf-8")
+    log_text = (tmp_path / "scistack.log").read_text(encoding="utf-8")
     assert "[timing] save_batch(_ShimVar):" in log_text
     # Per-phase timing table is DEBUG-only (and phase names carry no
     # numbering — snake_case operations only).
@@ -54,7 +54,7 @@ def test_timing_summary_in_file_at_default_level(db, tmp_path):
 
 def test_per_record_internals_absent_at_default_level(db, tmp_path):
     _ShimVar.save(np.array([1.0, 2.0]), subject="S01", trial="1")
-    log_text = (tmp_path / "scidb.log").read_text(encoding="utf-8")
+    log_text = (tmp_path / "scistack.log").read_text(encoding="utf-8")
     # DEBUG-tier internals must not reach the file at the INFO default.
     assert "save_variable(_ShimVar): metadata=" not in log_text
     assert "[content_hash]" not in log_text
@@ -67,7 +67,7 @@ def test_per_record_internals_absent_at_default_level(db, tmp_path):
 # The file sink used to be opened only by configure_database(), i.e. after a
 # caller had already done work worth logging. The GUI server's whole startup
 # discovery pass (the registry scan that decides which functions, variables
-# and PathInputs exist) landed on stderr only, so scidb.log began mid-startup
+# and PathInputs exist) landed on stderr only, so scistack.log began mid-startup
 # and could not answer "why is this PathInput missing?". attach_log_file lets
 # a caller open the sink first; configure_database must then leave it alone.
 
@@ -75,7 +75,7 @@ def test_per_record_internals_absent_at_default_level(db, tmp_path):
 def test_log_path_for_is_beside_the_database(tmp_path):
     from scidb.log import log_path_for
 
-    assert log_path_for(tmp_path / "proj.duckdb") == tmp_path / "scidb.log"
+    assert log_path_for(tmp_path / "proj.duckdb") == tmp_path / "scistack.log"
 
 
 def test_attach_log_file_opens_the_sink_before_any_database(tmp_path):
@@ -83,7 +83,7 @@ def test_attach_log_file_opens_the_sink_before_any_database(tmp_path):
 
     try:
         path = attach_log_file(tmp_path / "not_created_yet.duckdb")
-        assert path == tmp_path / "scidb.log"
+        assert path == tmp_path / "scistack.log"
         assert real_log.get_path() == str(path)
         real_log.info("before configure_database")
         assert "before configure_database" in path.read_text(encoding="utf-8")
@@ -125,7 +125,7 @@ def test_setup_phase_timings_reach_the_file(tmp_path):
 
     db = scidb.configure_database(str(db_path), ["subject"])
     try:
-        log_text = (tmp_path / "scidb.log").read_text(encoding="utf-8")
+        log_text = (tmp_path / "scistack.log").read_text(encoding="utf-8")
     finally:
         db.close()
         real_log.set_path(None)

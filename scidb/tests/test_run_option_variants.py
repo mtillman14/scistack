@@ -103,7 +103,7 @@ def _consumed_values(db) -> list[float]:
     frame = db.load_all_as_df(Consumed)
     assert "data" in frame.columns, (
         "for_each wrote no Consumed records at all — every combo was skipped; "
-        "check scidb.log for 'consume raised'"
+        "check scistack.log for 'consume raised'"
     )
     return sorted(float(v) for v in frame["data"].tolist())
 

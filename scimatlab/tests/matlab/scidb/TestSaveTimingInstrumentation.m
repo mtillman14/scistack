@@ -54,16 +54,16 @@ classdef TestSaveTimingInstrumentation < matlab.unittest.TestCase
     methods (TestMethodTeardown)
         function cleanup(testCase)
             try
-                live_log = fullfile(testCase.test_dir, 'scidb.log');
+                live_log = fullfile(testCase.test_dir, 'scistack.log');
                 if isfile(live_log) && ~isempty(testCase.log_archive_dir)
                     ts = char(datetime('now', 'Format', 'yyyyMMdd-HHmmss'));
                     archived = fullfile(testCase.log_archive_dir, ...
                         sprintf('scidb-save-%s.log', ts));
                     copyfile(live_log, archived);
-                    fprintf('\n[timing-test] scidb.log archived to: %s\n', archived);
+                    fprintf('\n[timing-test] scistack.log archived to: %s\n', archived);
                 end
             catch err
-                fprintf('\n[timing-test] WARNING: could not archive scidb.log: %s\n', err.message);
+                fprintf('\n[timing-test] WARNING: could not archive scistack.log: %s\n', err.message);
             end
 
             try

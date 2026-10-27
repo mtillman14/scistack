@@ -1,6 +1,6 @@
 """A stored manual edge whose history twin is hidden binds nothing.
 
-Regression for scidb.log 2026-10-01 11:29-11:32: the user disconnected
+Regression for scistack.log 2026-10-01 11:29-11:32: the user disconnected
 ``GAITRiteLoaded -> calculateSymmetryOneVector.v`` (hid the history edge) and
 drew ``GaitRiteLoaded_UA -> v``. An older hand-drawn ``GAITRiteLoaded -> v``
 row was still in the layout. build_edges never drew it (it is superseded by
@@ -308,7 +308,7 @@ class TestDeriveTargetForNodeIgnoresHiddenTwin:
 
 
 class TestOldParameterEdgeOnAnInputPort:
-    """Regression for scidb.log 2026-10-01 14:52: three formulaNum edges were
+    """Regression for scistack.log 2026-10-01 14:52: three formulaNum edges were
     stored on in__formulaNum (from before the node ran with formulaNum). History
     then drew the same connection on param__formulaNum. Deleting that visible
     edge hid it, but the in__ copies kept binding formulaNum for edge

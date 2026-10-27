@@ -1,6 +1,6 @@
 """A run whose results cannot be saved fails; it does not report success.
 
-Regression for scidb.log 2026-10-01: calculateSymmetryOneVector computed 420
+Regression for scistack.log 2026-10-01: calculateSymmetryOneVector computed 420
 results, the GaitRiteSymmetry batch insert failed (the table had no
 ``A_Idx_GR`` column), _save_results logged ERROR and returned normally, and
 the MATLAB run was reported ``verdict=done``. It now raises OutputSaveError

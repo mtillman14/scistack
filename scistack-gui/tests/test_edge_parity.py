@@ -232,7 +232,7 @@ def test_an_edge_hidden_in_another_tab_does_not_disconnect_main(setup):
 def test_a_duplicate_carries_the_source_tabs_hides(setup):
     """Hides are per scope, and a duplicate is drawn from the source's VISIBLE
     graph, so a hidden history edge came back in the copy once its nodes
-    graduated (scidb.log 2026-10-01 23:08: formulaNum disconnected in main,
+    graduated (scistack.log 2026-10-01 23:08: formulaNum disconnected in main,
     connected in "main copy 4"). _clone_nodes now carries the hides."""
     client, node, graph = setup
     _delete(client, _history_edge(graph, node, "param__low_hz"))

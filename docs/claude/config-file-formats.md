@@ -165,7 +165,7 @@ workspace folder), then the database file's folder.
 | `ScidbSource._cache_generation` | drops built plot tables when the declaration changes |
 | `scistackplot.codegen._level_order_lines` | exported seaborn code: `order=`, `hue_order=`, `col_order=`, `row_order=` (filtered to the levels each figure's `df` holds) |
 
-**Diagnosing "my levels are alphabetical".** `grep schema_order scidb.log`:
+**Diagnosing "my levels are alphabetical".** `grep schema_order scistack.log`:
 `[schema_order] using <config> (found from the …)` names the config in use;
 `no project config found from …` lists where it looked; `<config> has no
 [schema_keys] table` and `declares level order for …` say what was read; and
@@ -211,7 +211,7 @@ levels = { "F" = "Female", "M" = "Male" }
 - **The GUI round-trips it** through `_render_scistack_toml(aliases=)`, whose
   `[aliases]` text comes from `scidb.aliases.render_aliases_table`. Inline
   `levels = {…}` comes back as a `[….levels]` sub-table.
-- **Diagnosing:** `grep "\[aliases\]" scidb.log` shows what was read
+- **Diagnosing:** `grep "\[aliases\]" scistack.log` shows what was read
   (`session (name, 2 level(s))`) and any warnings.
 
 ## `[colors]`: mark colours for figures
@@ -242,7 +242,7 @@ default = "#333333"               # the one colour of a figure with no colour la
 - **The GUI round-trips it** through `_render_scistack_toml(colors=)`. Every
   whole-file write passes `colors=section.get("colors")`.
   `set_project_color` canonicalises to `#rrggbb` before writing.
-- **Diagnosing:** `grep "\[colors\]" scidb.log`.
+- **Diagnosing:** `grep "\[colors\]" scistack.log`.
 
 ## All fields are optional
 
@@ -395,7 +395,7 @@ rto = "Y:/"                  # on the Linux box: "/home/mtillman/mnt/rto"
 - **Unresolvable:** the reason comes from `unresolvable_here`. It covers an
   unmapped root; a Windows-absolute path on POSIX; and a POSIX-absolute
   `/home/...` on Windows, which Windows would otherwise read relative to the
-  current drive (scidb.log 2026-10-19: `y:\home\mtillman\mnt\rto\...`).
+  current drive (scistack.log 2026-10-19: `y:\home\mtillman\mnt\rto\...`).
 
 ## Implementation
 

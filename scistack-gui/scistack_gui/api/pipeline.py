@@ -179,7 +179,7 @@ def build_aggregate(db, scidb_agg: dict):
     # together (scidb.provenance.split_call_site_outputs) BEFORE anything
     # hashes a wiring, so every FnKey below has exactly one. Without it a
     # rewired node's call site hashed old+new outputs together and minted a
-    # phantom node (scidb.log 2026-09-29).
+    # phantom node (scistack.log 2026-09-29).
     return gb.split_call_sites_by_claims(agg, node_wiring.claimed_wirings(db))
 
 
@@ -623,7 +623,7 @@ def _matlab_param_to_class_from_db(
                 unresolved.add(onum)
         if unresolved:
             # DEBUG and aggregated: this runs per DB record on every canvas
-            # refresh, and one line each is what made scidb.log 24 MB.
+            # refresh, and one line each is what made scistack.log 24 MB.
             logger.debug(
                 "[pipeline] matlab_param_to_class: fn=%s left %d variant(s) "
                 "unmapped — output_num %s names no slot in its %d declared "
@@ -1283,7 +1283,7 @@ def _build_graph(
                 )
                 # INFO: a manual node's colour is decided here and nowhere
                 # the run-state pass logs, so without this line "why is this
-                # node red/green" has no answer in scidb.log.
+                # node red/green" has no answer in scistack.log.
                 logger.info(
                     "[pipeline] manual fn node %s (%s): state=%s — states wiring %s "
                     "(outputs=%s, inputs=%s), %s",
@@ -1615,7 +1615,7 @@ def _build_graph(
     if identity_warnings:
         # §7b: a popup, not just a log line. Two nodes stating identical
         # wiring compute identical things, so the state is almost certainly
-        # unintended — and a warning buried in scidb.log is a warning nobody
+        # unintended — and a warning buried in scistack.log is a warning nobody
         # reads. It is also recoverable (rewire one), which is why nothing is
         # merged and the message says what will happen until they differ.
         result["warnings"] = identity_warnings

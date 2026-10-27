@@ -393,7 +393,7 @@ class TestUpsert:
         assert updated == "[parameters]\nA = 1\nB = 2\n\n[path_inputs]\nP = \"x.csv\"\n"
 
     def test_new_entry_starts_its_own_line_when_the_file_lacks_a_final_newline(self):
-        """scidb.log 2026-10-17: a hand-edited file ending `P = "x.csv"` with
+        """scistack.log 2026-10-17: a hand-edited file ending `P = "x.csv"` with
         no newline got the new entry glued on -- `P = "x.csv"Q = ""` -- and
         the whole file stopped parsing ("line 12, column 79")."""
         text = 'variables = []\n\n[path_inputs]\nP = "x.csv"'

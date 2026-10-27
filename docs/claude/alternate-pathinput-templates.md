@@ -50,7 +50,7 @@ location, the newer save wins (same-invocation-latest).
 
 `_collect_edge_path_inputs` copied only `template` and `root_folder` from the
 display dict, and `_format_path_input` could only emit one `PathInput`. A MATLAB
-run therefore discovered the primary template alone. In `scidb.log`:
+run therefore discovered the primary template alone. In `scistack.log`:
 `pathinput_discover: 1 combo(s)` and `inputs: {filePath: <scifor.PathInput>}`.
 The fix routes every MATLAB PathInput dict through `_declared_path_input`.
 

@@ -103,7 +103,7 @@ as the `is_latest` signature component, as the `Run:<fn>` level, and as the
 - Unmapped-axis list treats `run` like `code`. Span banners say "version (or
   run options)".
 
-## Reading it in `scidb.log`
+## Reading it in `scistack.log`
 
 - `run_option_axes: N function(s) ran under >1 run-option set — ...` (scidb,
   INFO) — the axis exists.
@@ -196,7 +196,7 @@ decision someone will want to revisit:
   the two without deciding which question node state is asking.
 - **The helper logs at DEBUG.** Node state calls it per variable per canvas
   refresh; an INFO line there is a per-refresh multiple, which is the shape
-  that made one project's `scidb.log` 24 MB. Callers that want a summary log
+  that made one project's `scistack.log` 24 MB. Callers that want a summary log
   their own, once.
 
 One other consumer moved with it: `locations._present_by_location` (the

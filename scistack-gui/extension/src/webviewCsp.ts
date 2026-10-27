@@ -7,7 +7,7 @@
  * rasterises the figure by loading its SVG into an <img> from a `blob:` object
  * URL (a `data:` URL only on Safari). Without `blob:` the load is refused, the
  * <img> fires `error`, and Plotly rejects with that bare Event — no message, no
- * stack (scidb.log 2026-09-27: "render error in Plot Studio copy_png: (no
+ * stack (scistack.log 2026-09-27: "render error in Plot Studio copy_png: (no
  * message)").
  */
 

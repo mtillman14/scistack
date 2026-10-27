@@ -874,7 +874,7 @@ def _preamble(spec, table, roles, shape) -> list[str]:
         # Vectorized, not `.agg(' | '.join, axis=1)`. That form reads better
         # and costs a Python call PER ROW, which for a 1-D measure is per
         # sample: a 24-row frame of EMG traces is 8.9 million rows once
-        # exploded, and the join alone ran for minutes (scidb.log 2026-09-11).
+        # exploded, and the join alone ran for minutes (scistack.log 2026-09-11).
         lines.extend(
             [
                 (

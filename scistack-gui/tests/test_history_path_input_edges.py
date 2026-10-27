@@ -135,7 +135,7 @@ class TestHidingAHistoryEdgeDoesNotDisconnectTheNode:
 
 
 class TestRewiredNodeStillColoursItsDrawnOutput:
-    """scidb.log 2026-10-20: ``load_cbrace`` was rewired to a new PathInput by
+    """scistack.log 2026-10-20: ``load_cbrace`` was rewired to a new PathInput by
     a run whose every iteration failed, so its only call site became history.
     The grouped node then had no outputs, the second propagation pass never
     reached ``CosmedData``, and the variable drew green under a red function.

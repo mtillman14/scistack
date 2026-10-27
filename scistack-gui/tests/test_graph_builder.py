@@ -3021,7 +3021,7 @@ class TestPlacementQualifiedConfigRehydration:
 
     Symptom without it (2026-09-14, loadGaitRiteOneFile): every toggle
     writes fine (``update_node_config ... keys=['schemaLevel']`` in
-    scidb.log), the DuckDB file watcher fires dag_updated ~2 s later, the
+    scistack.log), the DuckDB file watcher fires dag_updated ~2 s later, the
     refetched node carries no config, and the checkbox snaps back.
 
     See docs/claude/placement-qualified-ids.md.
@@ -3124,7 +3124,7 @@ class TestPlacementQualifiedConfigRehydration:
     def test_orphan_config_is_warned_not_silently_ignored(self, caplog):
         """A config keyed by an id no node in the graph carries -- by exact
         OR bare id -- is the signature of an id-shape mismatch. It has to be
-        visible in scidb.log; this class of bug is otherwise silent."""
+        visible in scistack.log; this class of bug is otherwise silent."""
         import logging
 
         from scistack_gui.domain.graph_builder import apply_placement_configs
@@ -3829,7 +3829,7 @@ class TestDeclaredOnlyNodesStartOffCanvas:
 
 class TestUnproducedOutputs:
     """graph_builder.unproduced_output_fkeys — the output-side mirror of
-    input_params_with_manual_edges. scidb.log 2026-10-17: pandas.read_csv,
+    input_params_with_manual_edges. scistack.log 2026-10-17: pandas.read_csv,
     rewired from the hidden RatingsData to a new empty Rating, stayed green."""
 
     FN = "pandas.read_csv"

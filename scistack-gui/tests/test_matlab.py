@@ -1079,7 +1079,7 @@ class TestMatlabRegistryLoadFromSources:
     ):
         """A [matlab] functions directory sweeps in entry-point scripts
         (main_entrypoint_aim2.m); they were a "No function declaration found"
-        load error plus a WARN on every refresh (scidb.log 2026-10-19). A
+        load error plus a WARN on every refresh (scistack.log 2026-10-19). A
         plain script is DEBUG now; a file that is neither a function nor a
         script (a non-variable classdef) is still a load error."""
         import logging
@@ -2828,7 +2828,7 @@ class TestMatlabParamToClassFromDb:
         assert result == {"loadGaitRiteOneFile": {"grTable": "GAITRiteLoaded"}}
         assert caplog.text == "", (
             "450 records produced log output — this ran once per DB record on "
-            "every canvas refresh and is what made scidb.log 24 MB"
+            "every canvas refresh and is what made scistack.log 24 MB"
         )
 
     def test_one_output_with_conflicting_types_warns_and_is_deterministic(
@@ -3241,7 +3241,7 @@ class TestPreambleTimingInstrumentation:
     def test_consolidated_summary_precedes_the_run(self):
         """Emitted after configure_database (first point where both Python
         and +scidb are reachable) and before for_each, so it lands in
-        scidb.log immediately ahead of `for_each_prepare returned in …`."""
+        scistack.log immediately ahead of `for_each_prepare returned in …`."""
         cmd = self._variant_cmd()
 
         assert "scidb.Log.info('[timing] matlab_preamble: TOTAL=%.3fs" in cmd
@@ -3731,7 +3731,7 @@ class TestGeneratedStubAttribution:
     ):
         """Tiered lookup (user decision 2026-10-19): a .m classdef is the
         declaration and the TOML entry is not consulted. It used to WARN
-        "declared in more than one place" ~20x per scan (scidb.log
+        "declared in more than one place" ~20x per scan (scistack.log
         2026-10-19) for src/vars/*.m beside their TOML entries."""
         from scistack_gui import matlab_registry, registry
 

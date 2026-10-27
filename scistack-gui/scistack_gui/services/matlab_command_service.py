@@ -324,7 +324,7 @@ def _warn_on_glue_language(
       ``apply_constant_glue`` refuses MATLAB.
 
     scidb raises either way, with a message that explains itself. This exists
-    only so the contradiction is visible in ``scidb.log`` *before* the user
+    only so the contradiction is visible in ``scistack.log`` *before* the user
     waits on a MATLAB launch — the canvas gives no signal today.
     """
     from scistack_gui.domain.edge_resolver import BINDING_PARAMETER

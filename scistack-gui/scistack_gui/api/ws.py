@@ -26,7 +26,7 @@ Two entry points:
   1. ``broadcast()``   — from ASYNC endpoint handlers; sends directly.
   2. ``push_message()`` — from BACKGROUND RUN THREADS; hops onto the event
      loop via call_soon_threadsafe and fans out to every client's outbox.
-Every drop point logs, so a delivery failure can be traced in scidb.log
+Every drop point logs, so a delivery failure can be traced in scistack.log
 via the [ws] lines.
 
 Multiple clients are legitimate: the server holds ONE project (db._db is a

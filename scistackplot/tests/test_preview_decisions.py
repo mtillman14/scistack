@@ -189,7 +189,7 @@ def test_rotated_ticks_push_the_preview_brackets_down(gait_table, rotation):
 
 # ---------------------------------------------------------------------------
 # One layout per click: the auto-size trial at the chosen reference is kept
-# as the final layout (scidb.log 2026-10-16: the redraw was ~0.4 s of every
+# as the final layout (scistack.log 2026-10-16: the redraw was ~0.4 s of every
 # ~0.85 s next/previous click).
 
 

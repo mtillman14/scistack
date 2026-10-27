@@ -5,7 +5,7 @@ csv-stats records every row or subject it could not use in
 two levels; a repeated-measures test can't use one missing any within level
 (``core._Prepared.complete_subjects``). Until 2026-10-19 that record reached
 only a truncated table note ("… dropped: SS01, …" — at most 10 names), the
-n column showed the n USED with no denominator, and scidb.log said nothing.
+n column showed the n USED with no denominator, and scistack.log said nothing.
 
 User rule (2026-10-19): data is never dropped silently. This module is the
 one owner of reading that record and saying it; ``run`` attaches the result

@@ -125,7 +125,7 @@ classdef TestForEachSchemaFiltering < matlab.unittest.TestCase
         end
 
         function test_info_message_logged(testCase)
-            % The combo-filtering notice is an INFO record in scidb.log
+            % The combo-filtering notice is an INFO record in scistack.log
             % (console output moved to stderr in the logging redesign, which
             % evalc cannot capture — assert on the log file instead).
             RawSignal().save([1 2 3], 'subject', 1, 'session', 'A');
@@ -139,7 +139,7 @@ classdef TestForEachSchemaFiltering < matlab.unittest.TestCase
         end
 
         function test_no_info_message_when_nothing_filtered(testCase)
-            % All combos exist — no filtering notice in scidb.log
+            % All combos exist — no filtering notice in scistack.log
             RawSignal().save([1 2 3], 'subject', 1, 'session', 'A');
             RawSignal().save([4 5 6], 'subject', 1, 'session', 'B');
             RawSignal().save([7 8 9], 'subject', 2, 'session', 'A');

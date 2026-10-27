@@ -3,7 +3,7 @@
 ``{rto}/LabMembers/...`` in a shared scistack.toml resolves through each
 machine's ``~/.scistack/machine.toml``. Before, an absolute path was right on
 one machine and a "File does not exist" load error on every other one, on
-every refresh (scidb.log 2026-10-19).
+every refresh (scistack.log 2026-10-19).
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def test_a_windows_absolute_path_is_unresolvable_on_posix(machine_file):
 
 
 def test_a_posix_absolute_path_is_unresolvable_on_windows(machine_file, monkeypatch):
-    """scidb.log 2026-10-19: /home/mtillman/mnt/rto/... read on Windows as
+    """scistack.log 2026-10-19: /home/mtillman/mnt/rto/... read on Windows as
     y:\\home\\mtillman\\mnt\\rto\\... (relative to the current drive)."""
     monkeypatch.setattr(machine.os, "sep", "\\")
     assert "Windows" in machine.unresolvable_here("/home/mtillman/mnt/rto/x")

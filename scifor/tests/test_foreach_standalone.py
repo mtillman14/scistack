@@ -433,7 +433,7 @@ _TEXT_DTYPE = "str" if int(pd.__version__.split(".")[0]) >= 3 else "string"
 
 def test_column_value_one_row_text_is_a_plain_str():
     """One row of a text column is a plain Python str, not a pandas array
-    (scidb.log 2026-10-22: `value.split("|")` on a StringArray)."""
+    (scistack.log 2026-10-22: `value.split("|")` on a StringArray)."""
     s = pd.Series(["C5|C6"], dtype=_TEXT_DTYPE)
     v = scifor.column_value(s)
     assert type(v) is str and v.split("|") == ["C5", "C6"]
@@ -941,7 +941,7 @@ def test_iterate_function_failure_lists_all_bad_columns(capsys):
 def test_iterate_function_failure_fails_the_combo_not_the_run():
     """A per-column failure fails ITS combo only, like any function error:
     the run carries on and the other combos produce their rows. A failure can
-    depend on one subject's data (scidb.log 2026-10-22: the whole run stopped
+    depend on one subject's data (scistack.log 2026-10-22: the whole run stopped
     on the first subject, and 32 subjects never ran)."""
     set_schema(["subject"])
     df = pd.DataFrame({"subject": [1, 2], "a": ["bad", "2.0"]})
@@ -2157,7 +2157,7 @@ def test_spread_nested_results_spreads_labelled_table(caplog):
 
 
 def test_spread_that_leaves_several_rows_per_address_warns(caplog):
-    """scidb.log 2026-10-17: schema keys (person, brand), but the CSV named
+    """scistack.log 2026-10-17: schema keys (person, brand), but the CSV named
     its person column 'participant'. The spread by brand alone filed many
     records at each brand; the WARN must name the absent key."""
     from scifor.foreach import spread_nested_results

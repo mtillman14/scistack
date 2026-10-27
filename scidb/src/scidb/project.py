@@ -108,7 +108,7 @@ _GITIGNORE = """\
 *.duckdb
 *.duckdb.wal
 *.duckdb.tmp
-scidb.log
+scistack.log
 
 # Python
 __pycache__/

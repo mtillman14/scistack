@@ -2,7 +2,7 @@
 Canvas refreshes, as the webview applied them, written into the shared log.
 
 Symptom (user, 2026-10-22, after canvas-as-document): a node or edge just
-placed disappears for a moment, then reappears. scidb.log shows each
+placed disappears for a moment, then reappears. scistack.log shows each
 ``get_pipeline`` the server answered, but not which refresh the canvas
 APPLIED, in what order, or what it wiped: the canvas replaces its node and
 edge lists wholesale with every snapshot (frontend PipelineDAG

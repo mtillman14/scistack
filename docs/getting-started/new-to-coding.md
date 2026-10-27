@@ -253,7 +253,7 @@ Install any other packages your analysis needs the same way, for example `pip in
 
 ## Step 8 (if you use Git): keep the environment out of version control
 
-The `.venv` folder is specific to your computer and can be several hundred megabytes, so it shouldn't be committed. When you create a SciStack project (see [Create New Project](create-new-project.md)), the `.gitignore` file it creates already excludes `.venv/` and `venv/`, along with the database file and `scidb.log`. If you named your environment something else, add that folder name to `.gitignore` on its own line, ending in `/`.
+The `.venv` folder is specific to your computer and can be several hundred megabytes, so it shouldn't be committed. When you create a SciStack project (see [Create New Project](create-new-project.md)), the `.gitignore` file it creates already excludes `.venv/` and `venv/`, along with the database file and `scistack.log`. If you named your environment something else, add that folder name to `.gitignore` on its own line, ending in `/`.
 
 ## Checklist
 

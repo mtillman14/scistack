@@ -918,7 +918,7 @@ def _sample_traces(
     # Lone points (not joined: a points-only overlay, or a one-point run)
     # of one legend group and colour share ONE markers trace — one trace per
     # run was ~1400 traces when the innermost tick is a between-subject
-    # factor (scidb.log 2026-10-15), each one an SVG group in the browser.
+    # factor (scistack.log 2026-10-15), each one an SVG group in the browser.
     # Same points, same legend group (hiding a level still hides them).
     lone: dict[tuple[str, str], dict] = {}
     runs = sample_runs(sample, resolved)

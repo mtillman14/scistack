@@ -167,9 +167,9 @@ The job contract, worth copying for the next one:
 
 Work outward. Each hop logs, and the hop that stops logging is the broken one.
 
-1. **Did the backend finish?** `scidb.log` — the service's own completion line
+1. **Did the backend finish?** `scistack.log` — the service's own completion line
    (`[plot] save job ps-… complete: 1 file(s) in 2.8s`).
-2. **Did it try to send?** `scidb.log` — `[notify] Emitting <method> to
+2. **Did it try to send?** `scistack.log` — `[notify] Emitting <method> to
    extension host`. Note this line is logged **unconditionally**; it says the
    frame was written to stdout, *not* that anyone received it. In WebSocket
    mode the equivalent lines are `[ws]`, which do report drops
@@ -240,5 +240,5 @@ refresh, so a refetch cannot race the run's own result.
 
 - `docs/claude/gui-vscode-extension.md` — panel/process lifecycle
 - `docs/claude/scistack-gui-backend-internals.md` — the JSON-RPC server loop
-- `docs/claude/logging-architecture.md` — where `scidb.log` comes from
+- `docs/claude/logging-architecture.md` — where `scistack.log` comes from
 - `docs/claude/matlab-run-database-ownership.md` — the one-response-per-RPC rule

@@ -8,7 +8,7 @@ called once with a fixed argument contributed a one-level factor: tagged
 ``variant`` in the Factors list, carrying a role selector, and indistinguishable
 from a genuinely swept parameter until you counted its levels.
 
-Measured on a real project 2026-09-11 (`scidb.log`): ``filterDelsys.config`` and
+Measured on a real project 2026-09-11 (`scistack.log`): ``filterDelsys.config`` and
 ``filterDelsys.Fs`` each held ONE level across both records of ``FilteredEMG``
 and both demanded a role. Code axes never had this problem — scidb's
 ``code_version_ordinals`` omits single-version functions — so this restores the

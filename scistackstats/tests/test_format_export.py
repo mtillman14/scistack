@@ -229,7 +229,7 @@ def test_latex_and_html_escape_level_names():
 def test_an_excluded_subject_is_named_in_the_n_column_notes_and_log(caplog):
     """csv-stats records every subject a paired/RM test cannot use. That used
     to reach only a truncated note (10 names max), the n column showed the n
-    USED with no denominator, and scidb.log said nothing."""
+    USED with no denominator, and scistack.log said nothing."""
     import logging
 
     reason = "missing a within-subject level"

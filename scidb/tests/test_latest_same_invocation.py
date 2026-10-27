@@ -3,7 +3,7 @@ save wins (`provenance_query._supersede_same_invocation`, 2026-09-29).
 
 One invocation = one call (same code, options, inputs, constants). Two
 different records from it at one location mean something the identity cannot
-see changed between runs — the iteration level (scidb.log run n1irqety: a
+see changed between runs — the iteration level (scistack.log run n1irqety: a
 placeholder-free CSV read per subject saved the whole table at every subject),
 or the file behind a PathInput (identity is its NAME only). Before this, both
 records shared one chain signature, both were latest, and Plot Studio "took

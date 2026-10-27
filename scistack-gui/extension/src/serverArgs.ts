@@ -26,7 +26,7 @@ export interface ServerArgsOptions {
   projectRoot?: string;
   /**
    * Where the file sink should write. Only the plot-only session passes it:
-   * with no database there is no `scidb.log` to sit beside, and scattering
+   * with no database there is no `scistack.log` to sit beside, and scattering
    * one into whichever folder a CSV happens to live in is worse than
    * putting it in the extension's own storage.
    */

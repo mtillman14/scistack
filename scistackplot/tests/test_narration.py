@@ -1,6 +1,6 @@
 """What a long resolve says about itself WHILE it runs.
 
-A full-resolution resolve of two 1-D figures took 1543 s (scidb.log 2026-09-11,
+A full-resolution resolve of two 1-D figures took 1543 s (scistack.log 2026-09-11,
 12:28 -> 12:54) and emitted exactly one line — on exit. Every save that timed
 out, and every save still running when the log was read, was therefore
 indistinguishable from a hang: no phase, no figure number, no panel.

@@ -17,7 +17,7 @@ One `Log` call, two destinations with independent levels:
   14:33:15 [scifor] WARN: iteration failed: subject=s03, session=2 — ValueError: bad channel count
   ```
 
-- **file** (`scidb.log` next to the database, pointed via `Log.set_path`,
+- **file** (`scistack.log` next to the database, pointed via `Log.set_path`,
   done automatically by `scidb.configure_database()`) — the run document.
   One record per line: date + millisecond timestamp, level, originating layer.
 
@@ -68,7 +68,7 @@ grep for it.
 
 **`live=True` for anything that can run for minutes.** A summary is a
 post-mortem, and an operation that has not finished yet has no post-mortem: a
-25-minute figure save (scidb.log 2026-09-11) logged nothing at all, and a save
+25-minute figure save (scistack.log 2026-09-11) logged nothing at all, and a save
 that timed out logged nothing ever. A live timer announces each phase as it
 starts and as it ends, and enables `t.note(...)` for progress inside a long
 phase:

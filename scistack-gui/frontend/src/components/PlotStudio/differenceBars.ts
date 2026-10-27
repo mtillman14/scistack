@@ -78,7 +78,7 @@ export const DEFAULT_LABEL = '*'
 
 /** Receives `(what, owner)` once per `what` when a bar or panel arrives
  *  without one of its dicts. PlotStudio points it at `report_client_error`
- *  so it lands in scidb.log; this module stays free of the API import. */
+ *  so it lands in scistack.log; this module stays free of the API import. */
 export type MalformedReporter = (what: string, owner: unknown) => void
 
 let reportMalformed: MalformedReporter = (what, owner) =>
@@ -98,7 +98,7 @@ export function resetMalformedReports(): void {
  * *values*, or `{}` when it is missing — reported once per *what*.
  *
  * Python always sends every dict (a single panel's `match` is `{}`), so a
- * missing one means something on the client lost it. scidb.log 2026-10-17:
+ * missing one means something on the client lost it. scistack.log 2026-10-17:
  * `Object.keys(undefined)` here took down the whole Plot Studio tab, and
  * the stack could not say which bar or panel it was. Rendering on with `{}`
  * keeps the tab; the report names the object, so the next one names its

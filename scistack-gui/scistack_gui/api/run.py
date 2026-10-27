@@ -43,7 +43,7 @@ from scistack_gui.domain.schema_selection import is_empty
 # to write to stderr with the "[scistack] …" prefix. The extension forwards
 # stderr to the SciStack Output channel, so .info() calls here show up in
 # VS Code's UI in addition to being captured by scidb.log.Log for the on-disk
-# scidb.log file.
+# scistack.log file.
 logger = logging.getLogger(__name__)
 
 router = APIRouter()

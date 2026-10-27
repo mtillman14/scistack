@@ -112,19 +112,19 @@ GUI's 📋 Inventory button shows the same table. Details:
 
 ## Logging
 
-Every scidb operation logs through the shared [`scistacklog`](../scistacklog/README.md) facade. `configure_database()` points the file sink at `scidb.log` next to the database file and writes a run-context header (package versions, Python version, pid), so each log file is self-describing.
+Every scidb operation logs through the shared [`scistacklog`](../scistacklog/README.md) facade. `configure_database()` points the file sink at `scistack.log` next to the database file and writes a run-context header (package versions, Python version, pid), so each log file is self-describing.
 
 Two sinks with independent levels, both defaulting to INFO:
 
 - **console** (stderr): the pipeline narrative — for_each banner, periodic progress, run summary with failure reasons, `[timing]` summaries.
-- **file** (`scidb.log`): the same narrative, with date + millisecond timestamps and the originating layer (`[scidb]`, `[scifor]`, `[matlab]`, …) on every line; one record per line.
+- **file** (`scistack.log`): the same narrative, with date + millisecond timestamps and the originating layer (`[scidb]`, `[scifor]`, `[matlab]`, …) on every line; one record per line.
 
 For debugging, raise a sink to DEBUG to capture the full execution trace (named internal steps with durations, per-iteration `[run]`/`[skip]` lines, per-phase `[timing]` tables, column/dtype dumps):
 
 ```python
 from scidb import Log
 
-Log.set_level("DEBUG", sink="file")   # full detail in scidb.log only
+Log.set_level("DEBUG", sink="file")   # full detail in scistack.log only
 Log.set_level("DEBUG")                # both sinks
 ```
 

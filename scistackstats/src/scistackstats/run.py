@@ -298,7 +298,7 @@ def _pairwise(engine, test, frame, rows, design, tiers, analysis, stratum_text, 
             absent = [lv for lv in (a, b) if not (pair_rows[primary] == lv).any()]
             if absent:
                 # An empty cell (design.empty_cells): say which, instead of
-                # csv-stats' "levels [...] are not in column ..." (scidb.log
+                # csv-stats' "levels [...] are not in column ..." (scistack.log
                 # 2026-10-20).
                 where = f" at {_key_text(context)}" if context else ""
                 comparison.refused = (f"no rows for {primary} = {', '.join(str(lv) for lv in absent)}{where}: "
@@ -552,7 +552,7 @@ def run_analysis(analysis: Analysis, frames: list[AnalysisFrame], refusals: list
                 test = selection.pairwise
                 if test is None or selection.pairwise_reason:
                     stratum_refusal = selection.pairwise_reason
-                    # The reason, not just a count: scidb.log 2026-10-19 said
+                    # The reason, not just a count: scistack.log 2026-10-19 said
                     # "3 refused ... (see the refusals)" and nothing else, so
                     # an empty comparison table had no explanation in the log.
                     Log.warn("[stats] %s %s: comparisons not run: %s", frame.dv.key,

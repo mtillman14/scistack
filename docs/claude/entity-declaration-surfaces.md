@@ -93,7 +93,7 @@ fixture's, or another importer's are not theirs to delete. That proof is
 ## Reload cost — read this before adding a refresh
 
 A full `_refresh_registries()` re-imports every configured Python module and
-re-classifies every MATLAB source. Measured on a real project (scidb.log,
+re-classifies every MATLAB source. Measured on a real project (scistack.log,
 2026-09-01):
 
 | stage | cost |

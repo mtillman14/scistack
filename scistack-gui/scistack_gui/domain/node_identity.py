@@ -79,7 +79,7 @@ class Ambiguity:
 
     Carried out of the resolution rather than logged and forgotten: it is a
     **popup**, not a log line (user decision 2026-09-22). A warning buried in
-    ``scidb.log`` is a warning nobody reads, and this one is both surprising
+    ``scistack.log`` is a warning nobody reads, and this one is both surprising
     (two nodes computing identical things) and recoverable (rewire one).
     """
 
@@ -264,7 +264,7 @@ def resolve_identities(
             # parse — a hand-dragged node that was run (its dispatch record is
             # the claim). Left as is, `parse_fn_node_id` returns None for it in
             # ~40 places: its drawn edges are never indexed and its Run button
-            # derives nothing (scidb.log 2026-09-29, `rlw90w`). Give it an id
+            # derives nothing (scistack.log 2026-09-29, `rlw90w`). Give it an id
             # in the grammar, once, and have the caller move its state across.
             old = chosen
             chosen = plan.rekeys.get(old) or str(mint(fn_name, taken))

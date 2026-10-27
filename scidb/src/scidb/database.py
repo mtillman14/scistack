@@ -1650,7 +1650,7 @@ class DatabaseManager:
         Returns the MERGED ``(data_col_types, dtype_meta)``: the stored type
         and metadata wherever they stand, so the ``_variables.dtype`` upsert
         never overwrites a decided column with this save's guess. History:
-        scidb.log 2026-10-22, IP_SPINAL_STIMULATION blank then 'Y'.
+        scistack.log 2026-10-22, IP_SPINAL_STIMULATION blank then 'Y'.
         """
         if dtype_meta.get("mode") != "dataframe" or dtype_meta.get("custom"):
             return data_col_types, dtype_meta
@@ -2627,13 +2627,13 @@ class DatabaseManager:
         Plot Studio reads lazily, sometimes after the GUI has released this
         connection. A closed connection is asked first (`SciDuck.is_open`)
         rather than queried: querying it made sciduckdb log an ERROR with a
-        traceback for a case this code expects and handles (scidb.log
+        traceback for a case this code expects and handles (scistack.log
         2026-10-01 22:29, "Connection already closed!").
 
         The check and the query are one atomic step in sciduckdb
         (`list_variables_if_open`): checking `is_open` here and querying
         after left a window that a concurrent GUI request's close hit
-        (scidb.log 2026-10-19 15:08:27).
+        (scistack.log 2026-10-19 15:08:27).
         """
         duck = getattr(self, "_duck", None)
         if duck is None:

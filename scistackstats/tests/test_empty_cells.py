@@ -1,4 +1,4 @@
-"""Empty cells and keys above the unit (scidb.log 2026-10-20, the C-Brace data).
+"""Empty cells and keys above the unit (scistack.log 2026-10-20, the C-Brace data).
 
 The shape under test: ``group`` is a schema key ABOVE the unit
 (``group / subject``), ``session`` is nested below it, one session has no

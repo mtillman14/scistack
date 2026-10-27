@@ -268,7 +268,7 @@ class TestThroughTheManager:
         self, db, tmp_path, caplog
     ):
         """Plot Studio reads aliases after the GUI released the connection
-        (scidb.log 2026-10-01 22:29). That used to query the closed connection,
+        (scistack.log 2026-10-01 22:29). That used to query the closed connection,
         so sciduckdb logged an ERROR with a traceback, and it marked the table
         validated with no variables, so a typo went unreported."""
         config = write_config(tmp_path, '[aliases.sesion]\nname = "Visit"\n')
@@ -297,7 +297,7 @@ class TestThroughTheManager:
         self, db, tmp_path, caplog, monkeypatch
     ):
         """A concurrent GUI request closed the connection after is_open said
-        True and before the query (scidb.log 2026-10-19 15:08:27). Validation
+        True and before the query (scistack.log 2026-10-19 15:08:27). Validation
         asks sciduckdb's atomic `list_variables_if_open`, never is_open then
         list_variables, so the race defers rather than errors."""
         config = write_config(tmp_path, '[aliases.sesion]\nname = "Visit"\n')

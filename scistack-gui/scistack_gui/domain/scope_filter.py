@@ -97,7 +97,7 @@ def _resolve_in_scope(
         # A hand-placed node that has run keeps its (allocated) id, so it is
         # ALSO a DB node, and can be placed in another scope by placement id:
         # duplicating a hypothesis does exactly that. Checking only the row's
-        # own scope dropped every such node from the copy (scidb.log
+        # own scope dropped every such node from the copy (scistack.log
         # 2026-10-01 23:03, "placed in [..., 'pipe_bf2a723782c5']" yet not in
         # that view).
         #
@@ -260,7 +260,7 @@ def resolve_scope_view(
         )
 
     # A FUNCTION node missing from a scope's view is what "the canvas lost my
-    # nodes" looks like (scidb.log 2026-10-01 22:51, a duplicated hypothesis
+    # nodes" looks like (scistack.log 2026-10-01 22:51, a duplicated hypothesis
     # drew 1 of 4 function nodes). Name each, with where it IS placed.
     dropped_fns = [
         n["id"]

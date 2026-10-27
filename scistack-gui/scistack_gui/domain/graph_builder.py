@@ -380,7 +380,7 @@ def group_call_sites_by_wiring(
     # `param__X -> node` onto a `param__X` handle the node no longer renders.
     # React Flow dropped that edge silently, and because it shares its
     # endpoints with the user's drawn `in__X` edge, build_edges dropped the
-    # drawn one as superseded too: the edge "just disappeared" (scidb.log
+    # drawn one as superseded too: the edge "just disappeared" (scistack.log
     # 2026-10-01 12:38, formulaNum -> calculateSymmetryOneVector).
     dropped_history_const_edges: list[str] = []
     for const_name, fkeys in agg.const_fns.items():
@@ -955,7 +955,7 @@ def split_call_sites_by_claims(agg: "AggregatedData", claimed_wirings) -> "Aggre
     every per-call-site loop downstream (identity, hidden wirings, run-state
     propagation, grouping) already assumes — before, a rewired call site hashed
     the union of old and new outputs, a wiring no Run had claimed, and the
-    build minted a phantom node for it (scidb.log 2026-09-29, pandas.read_csv).
+    build minted a phantom node for it (scistack.log 2026-09-29, pandas.read_csv).
     """
     from scidb.provenance import split_call_site_outputs
 
@@ -1030,7 +1030,7 @@ def _log_multi_output_call_sites(agg: "AggregatedData") -> None:
     into different variables are ONE call site, and its node shows both
     outputs. Legitimate for a multi-output function; for a one-output function
     it means a run saved into a variable its inputs were not meant for
-    (scidb.log 2026-09-25: GaitSpeedTable read from the Symmetry CSV).
+    (scistack.log 2026-09-25: GaitSpeedTable read from the Symmetry CSV).
     """
     path_inputs_by_fkey: dict[FnKey, dict[str, str]] = defaultdict(dict)
     for pi_name, pi in agg.path_inputs.items():
@@ -2805,7 +2805,7 @@ def outputs_with_manual_edges(
     output-side mirror of :func:`input_params_with_manual_edges`.
 
     A grouped node takes its outputs from its CURRENT wiring's call sites
-    only. A node rewired by a run that saved nothing (scidb.log 2026-10-20: a
+    only. A node rewired by a run that saved nothing (scistack.log 2026-10-20: a
     PathInput swapped, every iteration raised) has no current call site, so
     its outputs were empty and the cascade never reached the variable its
     drawn edge feeds: ``load_cbrace`` red, ``CosmedData`` green. The edges
@@ -2854,7 +2854,7 @@ def unproduced_output_fkeys(
 
     Own state (``scidb.check_multiple_nodes_state``) is asked about the
     RECORDED outputs, so a node rewired to a new, empty output kept the colour
-    of the output it used to write. scidb.log 2026-10-17: ``pandas.read_csv``
+    of the output it used to write. scistack.log 2026-10-17: ``pandas.read_csv``
     stayed green with its only visible output ``Rating`` holding 0 records,
     because the hidden ``RatingsData`` it had written was complete. The edges
     visible on the DAG are the ground truth
@@ -3543,7 +3543,7 @@ def apply_placement_configs(
     Also warns about ORPHAN configs -- rows whose node id matches no node in
     the resolved graph -- because that is exactly the signature of a fourth
     id shape nobody thought of, and in the 2026-09-14 case a single WARN
-    here would have named the mismatch directly in scidb.log instead of it
+    here would have named the mismatch directly in scistack.log instead of it
     hiding behind a "checkbox flickers" report.
     See docs/claude/placement-qualified-ids.md.
     """
@@ -3768,7 +3768,7 @@ def merge_manual_nodes(
                 continue
             # INFO, not DEBUG (2026-10-01): this branch leaves a hand-placed
             # node BESIDE its DB-derived twin on the canvas, and "why is there
-            # a duplicate node" had no answer in scidb.log.
+            # a duplicate node" had no answer in scistack.log.
             logger.info(
                 "[graph_builder] merge_manual_nodes: NOT graduating %s into %s — "
                 "the target already has a saved position, so both stay on the "

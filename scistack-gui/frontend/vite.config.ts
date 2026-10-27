@@ -5,7 +5,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 // What this bundle is, stamped in at build time and reported by the running
-// webview (src/bundleBuild.ts → report_client_build → scidb.log). The version
+// webview (src/bundleBuild.ts → report_client_build → scistack.log). The version
 // is extension/package.json's — the field CI stamps from the release tag
 // before building, so it CONSUMES the tag rather than restating it ("0.0.0"
 // = a local, unstamped build). build-on-windows.ps1 builds a copy in %TEMP%

@@ -169,7 +169,7 @@ way to see the others. That decides what `codegen._y_limit_plan` can emit:
 | …and FACET factors too | `facet_kws={"sharey": False}` (seaborn shares y by **default**, so this must be said or the export differs) |
 | scope is FACET factors only, and does not name every ITERATE factor | a per-panel literal table `_ylims = {(facet values as str): (lo, hi)}`, set on each axis via `g.axes_dict`, with the whole-dataset range as fallback (added 2026-09-24; before, one global literal flattened small-valued facets) |
 | scope does **not** name every ITERATE factor | a literal `g.set(ylim=(lo, hi))`, computed at generation time |
-| scope names SOME ITERATE factors but not all | the widest range, a docstring NOTE and a WARN in `scidb.log` — the only case where the export cannot match, because which group a figure belongs to is an iteration key, not a column |
+| scope names SOME ITERATE factors but not all | the widest range, a docstring NOTE and a WARN in `scistack.log` — the only case where the export cannot match, because which group a figure belongs to is an iteration key, not a column |
 | `minimum` and `maximum` both set | that literal |
 
 **The literal is the preview's number, never a recomputation.** It is read

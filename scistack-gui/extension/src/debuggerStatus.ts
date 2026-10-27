@@ -5,7 +5,7 @@
  * `ready` frame (`server._start_debugger`). Attaching without asking used to
  * fail on every Run with "connection refused 127.0.0.1:5678" whenever
  * `scistack.debug` was on but the interpreter had no debugpy — the server's
- * only record of why was a warning logged before scidb.log existed.
+ * only record of why was a warning logged before scistack.log existed.
  *
  * Kept free of `vscode` so it runs under `npm test`.
  */
