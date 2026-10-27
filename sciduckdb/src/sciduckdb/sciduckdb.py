@@ -40,6 +40,10 @@ from .datetimes import (
 
 logger = logging.getLogger("sciduck")
 
+# A lock wait at least this long is logged by _log_contended; shorter,
+# uncontended statements are not (they flooded the debug log and the GUI output).
+_SLOW_LOCK_WAIT_S = 0.1
+
 
 def _truncate_sql(sql: str, limit: int = 200) -> str:
     """Collapse whitespace and cap length for log lines."""
@@ -1109,6 +1113,27 @@ class SciDuck:
                 "register", view, type(exc).__name__, exc,
             )
 
+    def _log_contended(
+        self, op: str, thread: int, waited: float, foreign_tx: bool, sql: str,
+        detail: str = "",
+    ) -> None:
+        """Debug-log a locked statement only when it was contended.
+
+        Every routine statement used to log here (~90% of scistack-debug.log
+        on 2026-10-27, flooding the GUI output too). Only the cases these
+        lines were added to catch remain: a lock wait of at least
+        ``_SLOW_LOCK_WAIT_S``, or a statement run inside another thread's
+        open transaction. Callers log failures separately, regardless.
+        Call with ``_lock`` held.
+        """
+        if not (foreign_tx or waited >= _SLOW_LOCK_WAIT_S):
+            return
+        logger.debug(
+            "%s thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s %ssql=%s",
+            op, thread, waited, self._tx_owner, foreign_tx, detail,
+            _truncate_sql(sql),
+        )
+
     def _execute(self, sql: str, params=None):
         # NOTE: DuckDB's Python connection returns itself from execute(), so
         # execute() and fetchXxx() share the same connection state.  All callers
@@ -1130,10 +1155,7 @@ class SciDuck:
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "_execute thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s sql=%s",
-                thread, waited, self._tx_owner, foreign_tx, _truncate_sql(sql),
-            )
+            self._log_contended("_execute", thread, waited, foreign_tx, sql)
             try:
                 if params:
                     return self.con.execute(sql, params)
@@ -1162,10 +1184,7 @@ class SciDuck:
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "_fetch_table thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s sql=%s",
-                thread, waited, self._tx_owner, foreign_tx, _truncate_sql(sql),
-            )
+            self._log_contended("_fetch_table", thread, waited, foreign_tx, sql)
             try:
                 cur = self.con.execute(sql, params) if params else self.con.execute(sql)
                 columns = [d[0] for d in (cur.description or [])]
@@ -1347,10 +1366,7 @@ class SciDuck:
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "_fetchall thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s sql=%s",
-                thread, waited, self._tx_owner, foreign_tx, _truncate_sql(sql),
-            )
+            self._log_contended("_fetchall", thread, waited, foreign_tx, sql)
             try:
                 if params:
                     return self.con.execute(sql, params).fetchall()
@@ -1393,11 +1409,9 @@ class SciDuck:
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "_fetchall_with_frame thread=%d waited=%.4fs tx_owner=%s "
-                "foreign_tx=%s view=%s rows=%d sql=%s",
-                thread, waited, self._tx_owner, foreign_tx, view, len(frame),
-                _truncate_sql(sql),
+            self._log_contended(
+                "_fetchall_with_frame", thread, waited, foreign_tx, sql,
+                detail=f"view={view} rows={len(frame)} ",
             )
             self.con.register(view, frame)
             try:
@@ -1435,11 +1449,9 @@ class SciDuck:
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "_fetchdf_with_frame thread=%d waited=%.4fs tx_owner=%s "
-                "foreign_tx=%s view=%s rows=%d sql=%s",
-                thread, waited, self._tx_owner, foreign_tx, view, len(frame),
-                _truncate_sql(sql),
+            self._log_contended(
+                "_fetchdf_with_frame", thread, waited, foreign_tx, sql,
+                detail=f"view={view} rows={len(frame)} ",
             )
             self.con.register(view, frame)
             try:
@@ -1470,10 +1482,7 @@ class SciDuck:
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "_fetchone thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s sql=%s",
-                thread, waited, self._tx_owner, foreign_tx, _truncate_sql(sql),
-            )
+            self._log_contended("_fetchone", thread, waited, foreign_tx, sql)
             try:
                 result = self.con.execute(sql, params) if params else self.con.execute(sql)
                 row = result.fetchone()
@@ -1504,10 +1513,7 @@ class SciDuck:
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "_fetchdf thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s sql=%s",
-                thread, waited, self._tx_owner, foreign_tx, _truncate_sql(sql),
-            )
+            self._log_contended("_fetchdf", thread, waited, foreign_tx, sql)
             try:
                 if params:
                     return self.con.execute(sql, params).fetchdf()

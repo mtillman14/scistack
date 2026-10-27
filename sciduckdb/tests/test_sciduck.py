@@ -1279,3 +1279,44 @@ def test_close_waits_for_an_in_flight_statement(tmp_path):
     closer.join(timeout=5)
     assert not closer.is_alive()
     assert not db.is_open
+
+
+_STATEMENT_CALLS = {
+    "_execute": lambda db: db._execute("SELECT 1"),
+    "_fetch_table": lambda db: db._fetch_table("SELECT 1"),
+    "_fetchall": lambda db: db._fetchall("SELECT 1"),
+    "_fetchone": lambda db: db._fetchone("SELECT 1"),
+    "_fetchdf": lambda db: db._fetchdf("SELECT 1"),
+    "_fetchall_with_frame": lambda db: db._fetchall_with_frame(
+        "SELECT * FROM _query_frame", pd.DataFrame({"a": [1]})
+    ),
+    "_fetchdf_with_frame": lambda db: db._fetchdf_with_frame(
+        "SELECT * FROM _query_frame", pd.DataFrame({"a": [1]})
+    ),
+}
+
+
+@pytest.mark.parametrize("op", sorted(_STATEMENT_CALLS))
+def test_routine_statement_is_not_logged_but_contention_is(tmp_path, caplog, op):
+    """A plain uncontended statement emits no `<op> thread=` line (these were
+    ~99% of scistack-debug.log on 2026-10-27); a statement interleaved into
+    another thread's open transaction still does."""
+    import logging
+
+    db = SciDuck(str(tmp_path / "quiet.duckdb"), dataset_schema=["subject"])
+    caplog.set_level(logging.DEBUG, logger="sciduck")
+    caplog.clear()
+    _STATEMENT_CALLS[op](db)
+    assert not [r for r in caplog.records if f"{op} thread=" in r.getMessage()]
+
+    db._tx_owner = threading.get_ident() + 1  # pretend another thread owns a tx
+    try:
+        _STATEMENT_CALLS[op](db)
+    finally:
+        db._tx_owner = None
+    assert [
+        r for r in caplog.records
+        if r.getMessage().startswith(f"{op} thread=")
+        and "foreign_tx=True" in r.getMessage()
+    ]
+    db.close()
