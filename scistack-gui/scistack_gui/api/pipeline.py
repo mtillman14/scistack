@@ -253,17 +253,15 @@ def _resolve_node_identity(
     # Stored nodes that have never run state a wiring too (rule 1). Without
     # this, a hand-placed node whose exact wiring a script then ran got a
     # third node beside it once graduation was removed (Stage 5).
-    # A removed (hidden) row keeps its row (never delete) but must not claim.
+    # A removed (hidden) row keeps its row (never delete) but must not claim —
+    # resolve_identities(hidden_node_ids=) is the one owner of that rule, for
+    # stated AND recorded claims (a hidden node used to out-claim a visible
+    # twin through its _node_wiring row: scistack.log 2026-10-26 16:53:09).
     from scistack_gui import pipeline_store as _ps_hidden
 
     hidden_everywhere = _ps_hidden.get_hidden_node_ids(db, None)
-    claimable = {
-        nid: meta
-        for nid, meta in manual_nodes.items()
-        if nid not in hidden_everywhere
-    }
     for key, holders in gb.document_stated_claims(
-        claimable, manual_edges, current_by_node, history
+        manual_nodes, manual_edges, current_by_node, history
     ).items():
         merged = stated_by.setdefault(key, [])
         for node_id in holders:
@@ -284,6 +282,9 @@ def _resolve_node_identity(
             agg.fn_outputs.get(fkey, set()),
             pi_by_fkey.get(fkey, {}),
         ),
+        # Not a second claim owner: step_claims takes the NEWEST step name with
+        # a holder, so a hidden holder must not be seen at all or it would
+        # shadow an older visible one before resolve_identities could drop it.
         {nid: meta for nid, meta in manual_nodes.items() if nid not in hidden_everywhere},
         names,
     )
@@ -295,6 +296,7 @@ def _resolve_node_identity(
         stated_by=stated_by,
         current_by_node=current_by_node,
         scope_of=lambda node_id: _node_scope(db, node_id),
+        hidden_node_ids=hidden_everywhere,
     )
     # Re-keys FIRST: they move the old id's `_node_wiring` rows (and every other
     # node-keyed row) onto the new id, which `to_record` then writes under.

@@ -66,6 +66,7 @@ the first; attribution and the Variants view follow the second.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from scistack_gui.ids import ROOT_SCOPE, BareNodeId, fn_nodes_prefix, parse_fn_node_id
@@ -184,6 +185,7 @@ def resolve_identities(
     current_by_node=None,
     scope_of=None,
     mint=None,
+    hidden_node_ids: "Collection[str]" = frozenset(),
 ) -> IdentityPlan:
     """Assign a node id to every wiring in history. ONE pass.
 
@@ -207,6 +209,13 @@ def resolve_identities(
             position says otherwise.
         mint: ``(fn_name, taken) -> node_id``. Defaults to
             ``node_wiring.mint_node_id``.
+        hidden_node_ids: nodes the user hid. THE one owner of "may a hidden
+            node claim?" (callers pass every claim unfiltered): a hidden node
+            never claims by STATING a wiring, and loses a RECORDED wiring to
+            any visible node that also recorded it. Only when every recorded
+            claimant is hidden does a hidden node keep it, because hiding a
+            node must never change any node's identity
+            (docs/claude/node-identity.md §12).
 
     Returns an :class:`IdentityPlan`. **Nothing is written** — the caller
     persists ``to_record`` — so this function is a pure decision and can be
@@ -243,13 +252,22 @@ def resolve_identities(
         # capture this one. No `or claimants` fallback: if the filter empties
         # the list, there genuinely is no claimant for THIS function and the
         # next rule should get its turn.
-        claimants = [
+        claimants: list[str] = [
             n for n in (by_wiring.get(wiring) or []) if n.startswith(fn_nodes_prefix(fn_name))
         ]
         source = "recorded"
+        # A visible node that recorded W beats a hidden one that did; with no
+        # visible claimant the hidden node keeps W (its identity is unchanged).
+        visible = [n for n in claimants if n not in hidden_node_ids]
+        if visible and len(visible) < len(claimants):
+            _log_hidden_passed_over(fn_name, wiring, claimants, visible, source)
+            claimants = visible
         if not claimants:
-            claimants = [n for n in dict.fromkeys(stated_by.get(key) or ()) if n]
+            stated = [n for n in dict.fromkeys(stated_by.get(key) or ()) if n]
+            claimants = [n for n in stated if n not in hidden_node_ids]
             source = "stated"
+            if len(claimants) < len(stated):
+                _log_hidden_passed_over(fn_name, wiring, stated, claimants, source)
         if not claimants:
             node_id = BareNodeId(mint(fn_name, taken))
             taken.add(str(node_id))
@@ -369,6 +387,18 @@ def _warn_minted_beside_orphans(plan: IdentityPlan, *, taken_before, fn_of_node)
                 wiring,
                 orphans,
             )
+
+
+def _log_hidden_passed_over(fn_name, wiring, before, after, source) -> None:
+    logger.info(
+        "[node_identity] wiring %s of '%s': hidden node(s) %s passed over (%s "
+        "claim) — remaining claimant(s) %s",
+        wiring,
+        fn_name,
+        sorted(n for n in before if n not in after),
+        source,
+        after or "none",
+    )
 
 
 def _prefer(candidates: list[str], already_ran: list[str], age: dict[str, tuple]) -> str:

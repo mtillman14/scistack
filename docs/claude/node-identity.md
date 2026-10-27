@@ -243,6 +243,8 @@ wired it the same way. Resolution, in order:
 1. prefer a node that has already run as W (association history);
 2. else the **oldest** node — deterministic and stable across rebuilds.
 
+Hidden nodes are dropped from the claimants first (§12).
+
 **And raise a popup, not just a log line** (user decision 2026-09-22). Two
 nodes stating identical wiring compute identical things, so the state is
 almost certainly unintended, and a warning buried in `scistack.log` is a warning
@@ -491,3 +493,44 @@ function name; `_wiring_conflicts_with_candidate`, `_find_db_fn_candidate` and
 `_own_state_for_function` are deleted. Entity boxes (variables, Parameters,
 PathInputs) still fold into their canonical node (user decision D3); the fold
 now leaves the canonical node a stored row.
+
+## 12. Hidden nodes and claims — one owner (2026-10-27)
+
+**Bug** (scistack.log 2026-10-26 16:53:09). The user hid `read_csv` node A on
+2026-10-22, placed node B, wired it exactly as A was, and ran B. The run
+recorded a `_node_wiring` row for B, so the wiring now had TWO recorded
+claimants. The next build raised "Two nodes are wired the same", naming the
+node the user had already hidden, and the age tie-break (§7b) gave the
+wiring to the older A. B stayed red even though its output had data.
+
+**Cause.** "May a hidden node claim a wiring?" had two owners that disagreed:
+`api/pipeline.py` dropped hidden nodes from the STATED claims, but
+`resolve_identities` took RECORDED claimants straight from `associations`.
+
+**Rule now** — `resolve_identities(hidden_node_ids=...)` is the only place it
+is decided. Callers pass every claim unfiltered.
+
+| claim | hidden node's standing |
+|---|---|
+| stated (drawn edges, never ran) | never claims |
+| recorded, alongside a visible recorded claimant | loses to the visible one |
+| recorded, every claimant hidden | keeps the wiring |
+
+The last row exists because hiding a node must never change any node's
+identity (`hidden-path-input-identity.md`). If a hidden node lost its own
+recorded wiring, a new node would be minted on the canvas for that history.
+
+Ambiguity (§7b) is computed over the claimants that remain, so the popup
+names only visible nodes. Each time a hidden claimant is dropped, an INFO
+line is logged: `[node_identity] wiring W of 'fn': hidden node(s) [...]
+passed over (recorded|stated claim) — remaining claimant(s) [...]`.
+
+**Deliberate exception.** `step_names.step_claims` still receives only
+visible nodes. It picks the NEWEST step name that has a holder and stops
+there, so a hidden holder would hide an older visible holder before
+`resolve_identities` ever saw it. It decides which nodes hold a step name,
+not who wins the claim, and its input is filtered for that reason.
+
+**Tests.** `scistack-gui/tests/test_node_identity.py::TestHiddenClaimants`
+covers the pure-domain rules. It also has an AST guard checking that
+`api/pipeline.py` passes `hidden_node_ids` to `resolve_identities`.

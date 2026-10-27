@@ -323,6 +323,103 @@ class TestIdentityPlanLookups:
         assert not hasattr(node_identity, "identity_token")
 
 
+class TestHiddenClaimants:
+    """A hidden node must not out-claim a visible one.
+
+    scistack.log 2026-10-26 16:53:09: the user hid ``read_csv`` node A, placed
+    node B wired the same way, and ran B. Both now had a ``_node_wiring`` row
+    for the wiring, so the build raised "Two nodes are wired the same" naming
+    the HIDDEN node and attributed B's runs to it, leaving B red. The stated
+    path already ignored hidden nodes; the recorded path did not.
+    """
+
+    HIDDEN = "fn__f__aaa0000000000000"
+    VISIBLE = "fn__f__bbb0000000000000"
+
+    def _both_recorded(self, hidden):
+        return resolve_identities(
+            [("f", "w1")],
+            associations=[
+                # The hidden node is OLDER, so the age tie-break used to pick it.
+                {"node_id": self.HIDDEN, "wiring_id": "w1", "first_seen": "2026-10-22"},
+                {"node_id": self.VISIBLE, "wiring_id": "w1", "first_seen": "2026-10-26"},
+            ],
+            hidden_node_ids=hidden,
+        )
+
+    def test_a_visible_recorded_claimant_beats_a_hidden_one(self):
+        plan = self._both_recorded({self.HIDDEN})
+
+        assert plan.node_by_wiring[("f", "w1")] == self.VISIBLE, (
+            "runs of the visible node are attributed to the node the user hid"
+        )
+
+    def test_a_hidden_twin_raises_no_ambiguity(self):
+        plan = self._both_recorded({self.HIDDEN})
+
+        assert plan.ambiguities == [], (
+            "the popup tells the user to hide a node they already hid"
+        )
+
+    def test_two_visible_recorded_claimants_still_raise_an_ambiguity(self):
+        plan = self._both_recorded(set())
+
+        assert len(plan.ambiguities) == 1
+        assert plan.node_by_wiring[("f", "w1")] == self.HIDDEN, "oldest wins, as before"
+
+    def test_a_hidden_node_alone_keeps_its_recorded_wiring(self):
+        """Hiding a node never changes any node's identity: with no visible
+        claimant, the hidden node keeps W rather than a new node being minted."""
+        plan = resolve_identities(
+            [("f", "w1")],
+            associations=[{"node_id": self.HIDDEN, "wiring_id": "w1", "first_seen": "2026-10-22"}],
+            hidden_node_ids={self.HIDDEN},
+        )
+
+        assert plan.node_by_wiring[("f", "w1")] == self.HIDDEN
+        assert plan.minted == []
+
+    def test_a_hidden_node_never_claims_by_stating(self):
+        plan = resolve_identities(
+            [("f", "w1")],
+            associations=[],
+            stated_by={("f", "w1"): [self.HIDDEN, self.VISIBLE]},
+            hidden_node_ids={self.HIDDEN},
+        )
+
+        assert plan.node_by_wiring[("f", "w1")] == self.VISIBLE
+        assert plan.ambiguities == []
+
+    def test_passing_over_a_hidden_node_is_logged(self, caplog):
+        with caplog.at_level("INFO", logger="scistack_gui.domain.node_identity"):
+            self._both_recorded({self.HIDDEN})
+
+        assert any(
+            "passed over" in r.getMessage() and self.HIDDEN in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_the_graph_build_hands_hidden_nodes_to_resolve_identities(self):
+        """resolve_identities is the one owner of "may a hidden node claim?";
+        the build must pass it the hidden ids rather than pre-filter claims."""
+        import ast
+        import inspect
+
+        from scistack_gui.api import pipeline
+
+        tree = ast.parse(inspect.getsource(pipeline))
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "resolve_identities"
+        ]
+        assert calls, "api/pipeline no longer calls resolve_identities"
+        for call in calls:
+            assert "hidden_node_ids" in {kw.arg for kw in call.keywords}
+
+
 class TestTheGrSidesShapeEndToEnd:
     """Draw an edge onto an unbound parameter, run, and there is ONE node.
 
