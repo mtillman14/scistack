@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -75,10 +76,13 @@ def exclude_schema(
 def include_schema(
     reason: str, db: DatabaseManager | None = None, **schema_keys
 ) -> None:
-    """Re-include a previously excluded schema-key combination.
+    """Re-include a schema-key combination that is currently excluded.
 
-    The record is stored in the database (the original exclusion row is NOT
-    deleted — the full history is preserved).
+    The exclusion may be on this exact keyset or on a coarser one: after
+    ``exclude_schema(subject=3)``, ``include_schema(subject=3, trial=2)``
+    re-includes only trial 2 (a more specific row wins), and the rest of
+    subject 3 stays excluded. The record is stored in the database (the
+    original exclusion row is NOT deleted — the full history is preserved).
 
     Args:
         reason: Human-readable explanation of why this data is re-included.
@@ -86,21 +90,37 @@ def include_schema(
         **schema_keys: Schema key values identifying the combination to include.
 
     Raises:
-        ValueError: If the exact keyset has no exclusion record or is already
-            included.
+        ValueError: If the keyset is already included in effect: no
+            exclusion covers it, or the row that governs it is an include
+            (:func:`governing_overrides`). The exact keyset's own row, when
+            there is one, always governs, so this is the old exact-keyset
+            guard whenever such a row exists.
     """
     db = _get_db(db)
     if not schema_keys:
         raise ValueError("At least one schema key must be specified.")
     _validate_keys(db, schema_keys)
 
-    status = _current_status(db, schema_keys)
-    if status is None:
+    keyset = {k: str(v) for k, v in schema_keys.items()}
+    (governing,) = governing_overrides([keyset], db.dataset_schema_keys, db)
+    from .log import Log
+
+    Log.debug(
+        f"[scidb] include_schema: keyset={keyset} governed by "
+        + (
+            f"{governing.keys} (included={governing.included}, "
+            f"reason={governing.reason!r})"
+            if governing is not None
+            else "nothing (default: included)"
+        )
+    )
+    if governing is None:
         raise ValueError(
-            f"Schema combination {schema_keys!r} has no exclusion record. "
+            f"Schema combination {schema_keys!r} has no exclusion record and "
+            "no exclusion covers it, so it is already included. "
             "Call exclude_schema() first."
         )
-    if status is True:
+    if governing.included:
         raise ValueError(f"Schema combination {schema_keys!r} is already included.")
 
     _insert_row(db, schema_keys, status=True, reason=reason)
@@ -179,6 +199,109 @@ def get_schema_overrides_hash(db: DatabaseManager) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+@dataclass(frozen=True)
+class Override:
+    """One ``__scidb_schema_overrides`` row: the keyset it names (NULL columns
+    left out), whether it includes or excludes, why, and when."""
+
+    keys: dict[str, str]
+    included: bool
+    reason: str
+    changed_at: datetime
+
+    def to_dict(self) -> dict:
+        return {
+            "keys": dict(self.keys),
+            "included": self.included,
+            "reason": self.reason,
+            "changed_at": self.changed_at.isoformat() if self.changed_at else None,
+        }
+
+
+def governing_overrides(
+    combos: list[dict],
+    schema_keys_order: list[str],
+    db: DatabaseManager,
+) -> list[Override | None]:
+    """The override row that decides each combo, or None. One per combo, in order.
+
+    The one owner of "which exclusion applies here" — :func:`exclusion_status`
+    (and through it ``for_each`` and ``scidb.inventory``), the
+    ``include_schema`` guard and the GUI inventory popup all ask this.
+
+    Resolution algorithm (per design doc):
+    1. Collect all rows in ``__scidb_schema_overrides`` whose non-NULL columns
+       equal the combo's values at those keys (NULL = wildcard).
+    2. Among those, pick the row with the most non-NULL columns (most specific);
+       break ties by the most recent ``changed_at``.
+    3. No matching row = None (the default state, included).
+
+    A combo may name only some of the schema keys (a coarser iteration). An
+    override row that names a key the combo lacks does NOT match it: excluding
+    ``trial=3`` never excludes the whole ``subject/session`` above it.
+
+    Backends without a DuckDB layer (no ``_duck``), and databases that predate
+    the overrides table, have no overrides: every combo reads None.
+    """
+    duck = _overrides_backend(db)
+    if duck is None:
+        return [None] * len(combos)
+    table_exists = getattr(duck, "_table_exists", None)
+    if table_exists is not None and not table_exists(_TABLE):
+        from .log import Log
+
+        Log.debug(f"[scidb] schema overrides: no {_TABLE} table; no exclusions")
+        return [None] * len(combos)
+    key_cols_sql = ", ".join(f'"{k}"' for k in schema_keys_order)
+    rows = duck._fetchall(
+        f"SELECT {key_cols_sql}, status, reason, changed_at FROM {_TABLE} "
+        f"ORDER BY changed_at DESC"
+    )
+
+    if not rows:
+        return [None] * len(combos)
+
+    n_keys = len(schema_keys_order)
+
+    # Parse rows: list of (specificity, Override)
+    override_rows: list[tuple[int, Override]] = []
+    for row in rows:
+        key_values = {}
+        for i, k in enumerate(schema_keys_order):
+            v = row[i]
+            if v is not None:
+                key_values[k] = str(v)
+        override = Override(
+            keys=key_values,
+            included=bool(row[n_keys]),
+            reason=row[n_keys + 1],
+            changed_at=row[n_keys + 2],
+        )
+        override_rows.append((len(key_values), override))
+
+    governing: list[Override | None] = []
+    for combo in combos:
+        combo_str = {k: str(v) for k, v in combo.items() if k in schema_keys_order}
+
+        best_specificity = -1
+        best: Override | None = None
+
+        for specificity, override in override_rows:
+            if not all(combo_str.get(k) == v for k, v in override.keys.items()):
+                continue
+            # This row matches the combo; check if it beats the current best
+            if specificity > best_specificity or (
+                specificity == best_specificity
+                and override.changed_at > best.changed_at  # type: ignore[union-attr]
+            ):
+                best_specificity = specificity
+                best = override
+
+        governing.append(best)
+
+    return governing
+
+
 def exclusion_status(
     combos: list[dict],
     schema_keys_order: list[str],
@@ -186,79 +309,14 @@ def exclusion_status(
 ) -> list[bool]:
     """Is each combo excluded? One bool per combo, in order.
 
-    The one owner of "does an exclusion apply here" — ``filter_excluded_combos``
-    (for_each) and ``scidb.inventory`` both ask this.
-
-    Resolution algorithm (per design doc):
-    1. Collect all rows in ``__scidb_schema_overrides`` whose non-NULL columns
-       equal the combo's values at those keys (NULL = wildcard).
-    2. Among those, pick the row with the most non-NULL columns (most specific);
-       break ties by the most recent ``changed_at``.
-    3. The combo is excluded iff that row's ``status = FALSE``.  A combo with
-       no matching row is included (default state).
-
-    A combo may name only some of the schema keys (a coarser iteration). An
-    override row that names a key the combo lacks does NOT match it: excluding
-    ``trial=3`` never excludes the whole ``subject/session`` above it.
-
-    Backends without a DuckDB layer (no ``_duck``), and databases that predate
-    the overrides table, have no exclusions: every combo reads ``False``.
+    A consumer of :func:`governing_overrides`, which owns the matching rules:
+    a combo is excluded iff the row that governs it has ``status = FALSE``.
+    ``filter_excluded_combos`` (for_each) and ``scidb.inventory`` ask this.
     """
-    duck = _overrides_backend(db)
-    if duck is None:
-        return [False] * len(combos)
-    table_exists = getattr(duck, "_table_exists", None)
-    if table_exists is not None and not table_exists(_TABLE):
-        from .log import Log
-
-        Log.debug(f"[scidb] schema overrides: no {_TABLE} table; no exclusions")
-        return [False] * len(combos)
-    key_cols_sql = ", ".join(f'"{k}"' for k in schema_keys_order)
-    rows = duck._fetchall(
-        f"SELECT {key_cols_sql}, status, changed_at FROM {_TABLE} "
-        f"ORDER BY changed_at DESC"
-    )
-
-    if not rows:
-        return [False] * len(combos)
-
-    n_keys = len(schema_keys_order)
-
-    # Parse rows: list of (specificity, changed_at, {key: val}, is_included)
-    override_rows: list[tuple] = []
-    for row in rows:
-        key_values = {}
-        for i, k in enumerate(schema_keys_order):
-            v = row[i]
-            if v is not None:
-                key_values[k] = str(v)
-        is_included = bool(row[n_keys])
-        changed_at = row[n_keys + 1]
-        specificity = len(key_values)
-        override_rows.append((specificity, changed_at, key_values, is_included))
-
-    excluded: list[bool] = []
-    for combo in combos:
-        combo_str = {k: str(v) for k, v in combo.items() if k in schema_keys_order}
-
-        best_specificity = -1
-        best_changed_at = None
-        best_included = True  # default: included
-
-        for specificity, changed_at, key_values, is_included in override_rows:
-            if not all(combo_str.get(k) == v for k, v in key_values.items()):
-                continue
-            # This row matches the combo; check if it beats the current best
-            if specificity > best_specificity or (
-                specificity == best_specificity and changed_at > best_changed_at
-            ):
-                best_specificity = specificity
-                best_changed_at = changed_at
-                best_included = is_included
-
-        excluded.append(best_specificity != -1 and not best_included)
-
-    return excluded
+    return [
+        o is not None and not o.included
+        for o in governing_overrides(combos, schema_keys_order, db)
+    ]
 
 
 def filter_excluded_combos(

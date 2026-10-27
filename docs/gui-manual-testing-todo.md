@@ -11,6 +11,114 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzo. Hidden node no longer "wired the same" as its replacement — added 2026-10-27
+
+What changed: a hidden function node used to out-claim a visible node wired
+the same way, once both had run. You got a **Two nodes are wired the same**
+popup that named the hidden node, and the visible node stayed red after a
+successful run. Hidden nodes now lose to visible ones.
+Doc: `docs/claude/node-identity.md` §12.
+
+Backend steps:
+1. Restart the GUI so the Python change loads.
+2. After the first graph build, `scistack-debug.log` should contain
+   `[node_identity] wiring 19071db8003f5548 of 'pandas.read_csv': hidden
+   node(s) ['fn__pandas.read_csv__f4ff19e9f5544592'] passed over (recorded
+   claim) — remaining claimant(s) ['fn__pandas.read_csv__qsiu0z']`.
+
+Frontend steps and what you should see (TSS data pull project):
+1. Open the pipeline. No **Two nodes are wired the same** popup appears.
+2. The `pandas.read_csv` node is no longer red (it ran on 2026-10-26).
+3. Fresh repro: hide a function node that has run, drag in a new node of the
+   same function, wire it the same way, and click **▶ Run**. Again, no popup,
+   and the new node takes the run's state.
+
+## 0zzzzzzn. Run journal (`scistack.log`) + who-can-fix-it labels — added 2026-10-26
+
+What changed: the log beside the database is now two files. `scistack.log`
+is a short journal for the scientist (one entry per run, each failure
+labelled with who can fix it). `scistack-debug.log` has everything, at DEBUG,
+with `run=<id>` on every line written during a run. Failures in the GUI carry
+the same label. Docs: `docs/guide/reading-your-log.md`,
+`docs/claude/logging-architecture.md`, `docs/claude/error-surfacing.md` §7.
+
+Backend steps:
+1. Reinstall/restart the GUI so the rebuilt bundles and Python load.
+2. Make a Python function that raises on purpose for some subjects (e.g.
+   `raise KeyError("chan")` when `subject == 2`), and one that refuses with a
+   setup problem (e.g. a function that calls `scidb` load on a variable that
+   does not exist).
+
+Frontend steps and what you should see:
+1. Run the raising function. The Problems panel entry starts with
+   **Error in your function <name>.**; the error notification reads
+   "… failed in <name>: Error in your function <name> — KeyError: …".
+2. Click the red **✗ N combos failed** badge. The Failures panel card shows a
+   yellow line **Error in your function <name>** above the exception type.
+3. Click **Open log** in the notification. `scistack.log` opens with one block
+   for the run: header `── <time>  <name>  (run=xxxxxxxx) ──`, counts, the
+   failure with the file:line and code line, and NO `[db]`/`[pipeline]` lines.
+4. Search `scistack-debug.log` for that `run=xxxxxxxx`. Every line of the run
+   carries it, including `failure_from_exception: … -> blame=user_code via …`.
+5. Drag an edge that would close a cycle. The GUI refuses as before; the
+   journal gains a `put_edge failed` block headed **Problem with your setup or
+   data** (not "internal").
+6. Open a plot of a variable with text columns (e.g. LoadedData). The journal
+   gains ONE `note:` line about columns that hold numbers in only some
+   records; reopening the plot adds no second note.
+
+MATLAB (if you run one): a MATLAB run also writes a block (`language` matlab).
+A function returning tables whose columns differ in type between subjects
+now fails with **Fixable in your function <name>**, naming the column and the
+subjects on each side, instead of a bare `vertcat` error.
+
+---
+
+## 0zzzzzzm. Exclude / Include from the Data inventory — added 2026-10-26
+
+What changed: every row in the 📋 Inventory table now has an **Exclude…**
+button, or **Include…** on an excluded row. The button opens a panel under the
+table. The panel spells out the exact keys, including the ones the row leaves
+out (e.g. "— every trial"), and for Include it shows which exclusion applies
+and its reason. A reason is required. The change goes through
+`scidb.exclude_schema` / `include_schema`. Include… on a row that a coarser
+exclusion covers now re-includes **only that row**: `include_schema` accepts a
+keyset whose exclusion is on a coarser keyset (see
+`.claude/plan-inventory-exclusion-actions.md`).
+
+Backend: reload the VS Code window.
+
+1. Open 📋 Inventory with "Missing only". Click **Exclude…** on a missing row.
+   Expect: the row is highlighted, and the panel reads `Exclude subject=…,
+   session=… — every <deeper key>`. The Exclude button stays disabled until
+   you type a reason.
+2. Type a reason and press Enter. Expect: a green "Excluded …" line, the table
+   re-runs, the row is gone, and the counts line shows one more excluded.
+3. Switch to "All, with status" (collapse on). Click **Exclude…** on a wholly
+   present subject (session *(all)*). Expect: the panel says `subject=S… —
+   every session, every …`. Confirm. Expect: that subject's row turns grey
+   `excluded`.
+4. Untick "Collapse uniform blocks". Click **Include…** on one of that
+   subject's rows. Expect: the panel reads "Excluded by subject=S…: “<your
+   reason>” (date). Only this row is re-included; the rest of that exclusion
+   stays." Confirm. Expect: only that row turns back to present or missing.
+5. Click **Include…** on the collapsed excluded subject row (collapse on).
+   Expect: "This lifts that exclusion." Confirm. The whole subject is back,
+   except rows you excluded more specifically.
+6. Error path: Exclude a row, then Exclude the same row again before the
+   re-run lands (or from Python with `scidb.exclude_schema(...)` on the same
+   keys). Expect: a red "already excluded" message inside the panel, and
+   nothing written.
+7. After an exclude, re-open a plot that used that data. Expect: the excluded
+   location is gone (the plot cache invalidates itself).
+
+`scistack.log`: `[schema] inventory_row_override keys=… -> excluded (governed
+by {…})`, `[schema] exclude_schema_combo keys=… reason=…`,
+`[schema] include_schema_combo …`. At DEBUG, `row_keyset: … -> {…}` and
+`[scidb] include_schema: keyset=… governed by …`.
+
+---
+
 ## 0zzzzzzl. Run failures made visible + Stop at first error — added 2026-10-26
 
 What changed (`.claude/plan-error-surfacing-26-10-26.md`, `docs/claude/error-surfacing.md`):

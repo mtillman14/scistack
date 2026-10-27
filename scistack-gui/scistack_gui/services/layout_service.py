@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from scidb import BaseVariable
+from scifor.failures import ActionableError
 
 from scistack_gui.domain.display_order import display_sorted
 from scistack_gui.ids import (
@@ -19,6 +20,12 @@ from scistack_gui.ids import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class EdgeCycleError(ActionableError, ValueError):
+    """Connecting two nodes would close a dependency cycle. A refusal whose
+    message says which edge to remove, so the journal files it as a setup
+    problem, not a SciStack bug (``scifor.failures.classify_blame``)."""
 
 
 def _notify_dag_updated(source: str | None = None) -> None:
@@ -266,7 +273,7 @@ def put_edge(
                 if pair in by_ends
             ],
         )
-        raise ValueError(
+        raise EdgeCycleError(
             f"connecting '{source}' to '{target}' would create a dependency "
             f"cycle: {' -> '.join(cycle_path)}"
         )

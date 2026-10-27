@@ -27,12 +27,17 @@ from .failures import (
     ComboFailure,
     FailureGroup,
     StoppedRun,
+    UserValueError,
     attach_stopped_run,
+    call_user_function,
+    describe_value_kinds,
     exception_reason,
     failure_from_exception,
     format_user_frame,
     groups_to_wire,
+    journaled,
     stopped_run_of,
+    user_value_seam,
     validate_on_error,
 )
 from .fixed import Fixed
@@ -129,6 +134,7 @@ def _skip_failure_payload(failure: ComboFailure) -> dict:
     }
 
 
+@journaled
 def for_each(
     fn: Callable,
     inputs: dict[str, Any],
@@ -1226,30 +1232,46 @@ def for_each(
                 f"[{format_user_frame(group.example.user_frame)}]",
                 layer="scifor",
             )
+    summary_event = {
+        "event": "summary",
+        "current": total,  # keeps positional consumers (GUI) safe
+        "total": total,
+        "completed": completed,
+        "failed": failed_count,
+        "no_data": no_data_count,
+        "skipped": skipped,  # legacy key: consumers that tally every event
+        "cancelled": was_cancelled,
+        "stopped": stop is not None,
+        "failures": groups_to_wire(failure_groups),
+    }
+    # The same summary feeds the journal block of the run this loop belongs
+    # to (scifor.failures.journal_run, opened by for_each's entry).
+    journal = Log.current_run()
+    if journal is not None:
+        journal.add_summary(summary_event)
     if _progress_fn is not None:
-        _progress_fn(
-            {
-                "event": "summary",
-                "current": total,  # keeps positional consumers (GUI) safe
-                "total": total,
-                "completed": completed,
-                "failed": failed_count,
-                "no_data": no_data_count,
-                "skipped": skipped,  # legacy key: consumers that tally every event
-                "cancelled": was_cancelled,
-                "stopped": stop is not None,
-                "failures": groups_to_wire(failure_groups),
-            }
-        )
+        _progress_fn(summary_event)
 
     Log.debug(
         "building output DataFrame from %d result row(s)",
         len(collected_rows),
         layer="scifor",
     )
-    result_df = _results_to_output_dataframe(
-        collected_rows, resolved_output_names, schema_col_dtypes, full_schema_keys
-    )
+    # Combining every combo's return into one table is where a function that
+    # returns different kinds of value for different combos fails — inside
+    # SciStack, but fixable by the user. The seam says so (and names the
+    # combos, via describe_value_kinds) instead of blaming SciStack.
+    with user_value_seam(
+        "combine_outputs",
+        fn_name=fn_name,
+        fn=fn,
+        diagnose=lambda: _describe_output_kinds(
+            collected_rows, resolved_output_names, fn_name
+        ),
+    ):
+        result_df = _results_to_output_dataframe(
+            collected_rows, resolved_output_names, schema_col_dtypes, full_schema_keys
+        )
     if stop is not None:
         stop_exc, stop_failure = stop
         Log.info(
@@ -1268,7 +1290,7 @@ def for_each(
 
 def _call_fn(fn, kwargs, n_outputs):
     """Call fn with the right number of output captures."""
-    return fn(**kwargs)
+    return call_user_function(fn, **kwargs)
 
 
 def _resolve_path_outputs(kwargs: dict, metadata: dict, column: "str | None") -> dict:
@@ -1324,11 +1346,12 @@ class NoDataError(RuntimeError):
     summary rather than as "failed"."""
 
 
-class ForColumnsError(ValueError):
+class ForColumnsError(UserValueError, ValueError):
     """A structural error in for_columns reassembly (e.g. a colliding output
     column or a non-collapsible return). These are deterministic across combos
     and indicate a function/return-contract bug, so they propagate as hard
-    errors rather than being swallowed as a per-combo ``[skip]``."""
+    errors rather than being swallowed as a per-combo ``[skip]``. Raised inside
+    SciStack about what the user's function returned, so a ``UserValueError``."""
 
 
 class ColumnFunctionError(ValueError):
@@ -1419,7 +1442,7 @@ def _run_column_iteration(
             else:
                 call_kwargs[name] = column_value(df[col])
         try:
-            res = fn(**call_kwargs)
+            res = call_user_function(fn, **call_kwargs)
         except Exception as e:
             # Record and keep going so the raised error names every bad column.
             failures.append((col, f"{type(e).__name__}: {e}"))
@@ -2471,6 +2494,29 @@ def _strip_pinned_key_columns(
     """
     present = [c for c in pinned if c in df.columns]
     return df.drop(columns=present) if present else df
+
+
+def _describe_output_kinds(
+    collected_rows: "list[tuple[dict, tuple]]", output_names: list[str], fn_name: str
+) -> "str | None":
+    """The first output whose values differ in kind across combos, as a
+    message naming the combos (``describe_value_kinds``); ``None`` if none.
+    The diagnosis of the ``combine_outputs`` seam — runs only after combining
+    has failed."""
+    width = max((len(result) for _meta, result in collected_rows), default=0)
+    for i in range(width):
+        labelled = [
+            (
+                ", ".join(f"{k}={v}" for k, v in meta.items()) or "the only combo",
+                result[i] if i < len(result) else None,
+            )
+            for meta, result in collected_rows
+        ]
+        name = output_names[i] if i < len(output_names) else None
+        message = describe_value_kinds(labelled, fn_name=fn_name, output=name)
+        if message:
+            return message
+    return None
 
 
 def _results_to_output_dataframe(

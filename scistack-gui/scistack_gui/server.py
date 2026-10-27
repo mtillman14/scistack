@@ -273,6 +273,38 @@ def _summarize_params(params: dict, max_len: int = 120) -> str:
     return s[:max_len] + "..." if len(s) > max_len else s
 
 
+def _journal_action_failure(method: str, exc: BaseException) -> str:
+    """Write a failed user action to the journal (``scistack.log``); return
+    `` [run=<id>]`` for the debug-log line, so the journal entry and its
+    traceback can be found from each other.
+
+    Read RPCs (``get_*`` / ``list_*``) are left out: they run on every
+    refresh, and a failing one would fill the journal with repeats of
+    something the scientist did not ask for. Never raises — losing the
+    journal entry is better than losing the RPC's error response.
+    """
+    if method.startswith(("get_", "list_")):
+        return ""
+    try:
+        import uuid
+
+        from scifor.failures import run_failure
+
+        run_id = uuid.uuid4().hex[:8]
+        _Log.journal(
+            {
+                "kind": "action_failed",
+                "action": method,
+                "run_id": run_id,
+                "failure": run_failure(exc, fn_name=method).to_dict(),
+            }
+        )
+        return f" [run={run_id}]"
+    except Exception as journal_exc:  # noqa: BLE001
+        _Log.debug(f"[journal] action failure for {method} not written: {journal_exc!r}")
+        return ""
+
+
 def _summarize_result(result, max_len: int = 160) -> "str | None":
     """Compact size summary of an RPC result, or ``None`` if there is
     nothing worth counting.
@@ -423,7 +455,8 @@ def _handle_request(req: dict) -> None:
             )
         except Exception as e:
             elapsed_ms = (time.monotonic() - t0) * 1000
-            Log.error(f"RPC << {method} FAILED ({elapsed_ms:.1f}ms): {e}")
+            ref = _journal_action_failure(method, e)
+            Log.error(f"RPC << {method} FAILED ({elapsed_ms:.1f}ms){ref}: {e}")
             logger.exception("Error handling %s", method)
             _answer(lambda: _respond_error(req_id, -32000, str(e)))
         finally:

@@ -19,26 +19,42 @@ first genuine failure and re-raise the ORIGINAL exception, with a
 :class:`StoppedRun` attached (read it back with :func:`stopped_run_of`) so a
 database layer can still save the combos that completed before the stop.
 
+``classify_blame`` is the single place that decides WHO can fix a failure
+(``Blame``): the user's code, a value the user's function produced, the
+user's setup, or SciStack itself. Every record carries the answer; the
+journal, the GUI and MATLAB (``+scifor/failure_from_mexception.m``) only
+read it. :class:`ActionableError` marks an error SciStack raises on purpose
+about something the user can change; :func:`user_value_seam` turns an
+unexpected failure while SciStack handles the user's values into a
+:class:`UserValueError`.
+
 See docs/claude/error-surfacing.md.
 """
 
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import linecache
 import os
 import sysconfig
 import traceback
+from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from scistacklog import Log
+from scistacklog.journal import blame_headline
 
 if TYPE_CHECKING:
     import pandas as pd
 
 FrameOrigin = Literal["user", "framework", "library"]
+#: Who can fix a failure — see :func:`classify_blame`.
+Blame = Literal["no_data", "user_value", "setup", "user_code", "internal"]
+BLAME_VALUES = ("no_data", "user_value", "setup", "user_code", "internal")
 # "run": an exception outside the per-combo loop (a save failure, a setup
 # error), recorded by a caller that catches what escaped for_each.
 FailureStage = Literal["prepare_inputs", "call", "run"]
@@ -67,6 +83,60 @@ FRAMEWORK_PACKAGES = (
 )
 
 ON_ERROR_VALUES = ("continue", "stop")
+
+
+# ---------------------------------------------------------------------------
+# Errors the user can act on
+# ---------------------------------------------------------------------------
+
+
+class ActionableError(Exception):
+    """An error SciStack raises ON PURPOSE about something the user can
+    change: their setup, their data, or what their function returned. Its
+    message says what to change.
+
+    The marker is what separates "SciStack refused, and says why" from
+    "SciStack broke": an exception raised inside SciStack's own code without
+    this marker is classified ``internal``. ``scidb.SciStackError`` and
+    scifor's ``SchemaKeyTypeError`` subclass it.
+
+    ``blame`` and ``probable`` are read by :func:`classify_blame`; a subclass
+    whose blame depends on its contents (``scidb.OutputSaveError``) overrides
+    them as properties.
+    """
+
+    blame: str = "setup"
+    probable: bool = False
+
+
+class UserValueError(ActionableError):
+    """Raised inside SciStack, caused by a value the user's function
+    produced (or was handed), fixable by the user.
+
+    ``probable=False``: a check identified the cause, and the message names
+    it (and the combos it applies to). ``probable=True``: an unexpected
+    exception escaped one of SciStack's steps that handle the user's values
+    (:func:`user_value_seam`); the cause is most likely the values, but the
+    message says it may be a SciStack bug. The original exception is the
+    ``__cause__`` either way, so the debug log keeps its traceback.
+    """
+
+    blame = "user_value"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        fn_name: str | None = None,
+        output: str | None = None,
+        stage: str | None = None,
+        probable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.fn_name = fn_name
+        self.output = output
+        self.stage = stage
+        self.probable = probable
 
 
 def validate_on_error(on_error: str) -> str:
@@ -171,6 +241,8 @@ class ComboFailure:
     frames: tuple[FailureFrame, ...]
     user_frame: FailureFrame | None
     no_data: bool
+    blame: str = "internal"
+    probable: bool = False
 
     @property
     def reason(self) -> str:
@@ -188,6 +260,8 @@ class ComboFailure:
             "frames": [f.to_dict() for f in self.frames],
             "user_frame": self.user_frame.to_dict() if self.user_frame else None,
             "no_data": self.no_data,
+            "blame": self.blame,
+            "probable": self.probable,
         }
 
 
@@ -222,6 +296,12 @@ class FailureGroup:
             "user_frame": (
                 self.example.user_frame.to_dict() if self.example.user_frame else None
             ),
+            "blame": self.example.blame,
+            "probable": self.example.probable,
+            # Display text for the GUI; the wording is scistacklog.journal's.
+            "blame_label": blame_headline(
+                self.example.blame, self.example.probable, self.example.fn_name
+            ),
             "example": self.example.to_dict(),
         }
 
@@ -251,6 +331,63 @@ def _frames_of(exc: BaseException) -> list[FailureFrame]:
             )
         )
     return frames
+
+
+# ---------------------------------------------------------------------------
+# Who can fix it
+# ---------------------------------------------------------------------------
+
+
+def call_user_function(fn: Callable, /, *args: Any, **kwargs: Any) -> Any:
+    """Call the user's function. Every for_each call of ``fn`` goes through
+    here, because :func:`classify_blame` looks for this frame: everything
+    deeper in a traceback is the user's function at work, even when that
+    function is a library's (``pandas.read_csv`` wired up in the GUI)."""
+    return fn(*args, **kwargs)
+
+
+def _is_user_call_frame(frame: FailureFrame) -> bool:
+    return frame.function == call_user_function.__name__ and frame.origin == "framework"
+
+
+def classify_blame(
+    exc: BaseException, frames: "list[FailureFrame]", *, no_data: bool = False
+) -> "tuple[str, bool, str]":
+    """Who can fix this failure: ``(blame, probable, rule)``. The ONE classifier.
+
+    Rules, in order:
+
+    1. ``no_data`` — a combo with no data (NoDataError). Not an error.
+    2. The exception is an :class:`ActionableError` — its own ``blame``
+       (``setup``; ``user_value`` for :class:`UserValueError`).
+    3. Find the innermost frame that is not library code. If it is the
+       user's, or it is the :func:`call_user_function` frame itself (a
+       library function the user chose failed on what it was given) —
+       ``user_code``.
+    4. Otherwise (SciStack's own code raised, unmarked) — ``internal``.
+
+    Only the exception itself is checked for the marker, not its
+    ``__context__``: a bug raised while handling an ActionableError is
+    still a bug. ``frames`` are the untrimmed frames the record was built
+    from. ``rule`` says which rule decided (logged at DEBUG, so a wrong
+    label can be traced to its cause).
+    """
+    if no_data:
+        return "no_data", False, "NoDataError"
+    if isinstance(exc, ActionableError):
+        blame = str(getattr(exc, "blame", "setup"))
+        if blame not in BLAME_VALUES:
+            blame = "setup"
+        return blame, bool(getattr(exc, "probable", False)), f"{type(exc).__name__} is an ActionableError"
+    innermost = next((f for f in reversed(frames) if f.origin != "library"), None)
+    if innermost is None:
+        return "internal", False, "no non-library frame"
+    where = f"{innermost.file}:{innermost.line}"
+    if innermost.origin == "user":
+        return "user_code", False, f"innermost non-library frame is user code ({where})"
+    if _is_user_call_frame(innermost):
+        return "user_code", False, f"raised inside library code the user's function called directly ({where})"
+    return "internal", False, f"innermost non-library frame is SciStack code ({where})"
 
 
 def _trim(frames: list[FailureFrame]) -> list[FailureFrame]:
@@ -295,6 +432,30 @@ def failure_from_exception(
             break
     else:
         frames = _frames_of(exc)
+    # Blame follows only EXPLICIT chaining (`raise X from user_error`, as
+    # ColumnFunctionError does). An exception raised while merely HANDLING a
+    # user error (implicit __context__) is judged by its own frames: a
+    # SciStack bug in an except block must not read as the user's fault.
+    def _reaches_user(fs: "list[FailureFrame]") -> bool:
+        return any(f.origin == "user" for f in fs)
+
+    blame_frames = _frames_of(exc)
+    link: BaseException = exc
+    while not _reaches_user(blame_frames) and link.__cause__ is not None:
+        link = link.__cause__
+        blame_frames = _frames_of(link)
+    if not _reaches_user(blame_frames):
+        blame_frames = _frames_of(exc)
+    blame, probable, rule = classify_blame(exc, blame_frames, no_data=no_data)
+    Log.debug(
+        "failure_from_exception: %s in %s -> blame=%s%s via %s",
+        type(exc).__name__,
+        fn_name,
+        blame,
+        " (probable)" if probable else "",
+        rule,
+        layer="scifor",
+    )
     frames = _trim(frames)
     user_frame = next((f for f in reversed(frames) if f.origin == "user"), None)
     if user_frame is None and not no_data:
@@ -315,7 +476,207 @@ def failure_from_exception(
         frames=tuple(frames),
         user_frame=user_frame,
         no_data=no_data,
+        blame=blame,
+        probable=probable,
     )
+
+
+def run_failure(exc: BaseException, *, fn_name: str) -> ComboFailure:
+    """The record of an exception that ended a whole run (outside the
+    per-combo loop): a save, a setup check, combining the results."""
+    return failure_from_exception(exc, fn_name=fn_name, metadata={}, stage="run")
+
+
+# ---------------------------------------------------------------------------
+# Steps that handle the user's values
+# ---------------------------------------------------------------------------
+
+
+#: How each seam stage reads in a message: "SciStack couldn't <verb> ...".
+_SEAM_VERBS = {"combine_outputs": "combine", "save": "save"}
+
+
+def _type_label(value: Any) -> str:
+    """A short, scientist-readable kind for a value: ``DataFrame``,
+    ``ndarray (2-D)``, ``float``, ``None``."""
+    if value is None:
+        return "None"
+    name = type(value).__name__
+    ndim = getattr(value, "ndim", None)
+    if name == "ndarray" and isinstance(ndim, int):
+        return f"ndarray ({ndim}-D)"
+    return name
+
+
+def describe_value_kinds(
+    labelled: "list[tuple[str, Any]]", *, fn_name: str, output: str | None = None
+) -> str | None:
+    """When one output's values are of different kinds across combos, the
+    message that names them; ``None`` when they all agree.
+
+    ``labelled`` is ``(combo label, value)`` per combo. Used as the
+    ``diagnose`` of :func:`user_value_seam`: it runs only after the step has
+    already failed, so a run that works is never refused by it.
+    """
+    by_kind: dict[str, list[str]] = {}
+    for label, value in labelled:
+        by_kind.setdefault(_type_label(value), []).append(label)
+    if len(by_kind) < 2:
+        return None
+    ranked = sorted(by_kind.items(), key=lambda kv: -len(kv[1]))
+    parts = []
+    for kind, labels in ranked:
+        shown = "; ".join(labels[:3])
+        more = f"; +{len(labels) - 3} more" if len(labels) > 3 else ""
+        parts.append(f"{kind} for {len(labels)} combo(s) ({shown}{more})")
+    what = f"output {output!r} of {fn_name}" if output else f"{fn_name}'s output"
+    return (
+        f"{what} has different kinds of value in different combos: "
+        + ", but ".join(parts)
+        + ". SciStack can only combine one kind per output. Make the function "
+        "return the same kind of value for every combo."
+    )
+
+
+def _definition_site(fn: Any) -> str:
+    try:
+        target = inspect.unwrap(fn)
+        file = inspect.getsourcefile(target)
+        line = inspect.getsourcelines(target)[1]
+    except (TypeError, OSError, ValueError):
+        return ""
+    return f" (defined at {file}:{line})" if file else ""
+
+
+def as_user_value_error(
+    exc: BaseException,
+    *,
+    stage: str,
+    fn_name: str,
+    fn: Any = None,
+    output: str | None = None,
+    diagnose: "Callable[[], str | None] | None" = None,
+) -> BaseException:
+    """What an exception from a step that handles the user's values becomes.
+
+    An :class:`ActionableError` is returned unchanged: it already says what
+    to change. Anything else becomes a :class:`UserValueError` whose
+    ``__cause__`` is the original: precise (``probable=False``) when
+    ``diagnose`` names the cause, hedged (``probable=True``) when it can't.
+    Each hedged one logs ``[seam_fallback]`` — a step that has no check for
+    this cause yet; give it one, and a regression test.
+    """
+    if isinstance(exc, ActionableError):
+        return exc
+    precise = None
+    if diagnose is not None:
+        try:
+            precise = diagnose()
+        except Exception as diag_exc:  # noqa: BLE001 — diagnosis must not mask the error
+            Log.debug(f"[seam] diagnose for {stage} raised {diag_exc!r}", layer="scifor")
+    if precise:
+        new = UserValueError(precise, fn_name=fn_name, output=output, stage=stage)
+    else:
+        what = f"the output {output!r} of {fn_name}" if output else f"the outputs of {fn_name}"
+        new = UserValueError(
+            f"SciStack couldn't {_SEAM_VERBS.get(stage, 'process')} {what}"
+            f"{_definition_site(fn)}: {type(exc).__name__}: {exc}. This usually "
+            f"means the function returns different kinds, shapes or columns "
+            f"for different combos.",
+            fn_name=fn_name,
+            output=output,
+            stage=stage,
+            probable=True,
+        )
+        Log.warn(
+            f"[seam_fallback] stage={stage} fn={fn_name} output={output} "
+            f"{type(exc).__name__}: {exc} — no check names this cause yet",
+            layer="scifor",
+        )
+    new.__cause__ = exc
+    return new
+
+
+@contextmanager
+def user_value_seam(
+    stage: str,
+    *,
+    fn_name: str,
+    fn: Any = None,
+    output: str | None = None,
+    diagnose: "Callable[[], str | None] | None" = None,
+):
+    """Wrap a SciStack step that processes the user's values (combining
+    outputs across combos, saving them). An unexpected exception escaping it
+    is re-raised as a :class:`UserValueError` (see :func:`as_user_value_error`),
+    so the journal says the user can fix it instead of blaming SciStack.
+
+    Usage::
+
+        with user_value_seam("combine_outputs", fn_name=name, diagnose=...):
+            result = _results_to_output_dataframe(...)
+    """
+    try:
+        yield
+    except Exception as e:
+        new = as_user_value_error(
+            e, stage=stage, fn_name=fn_name, fn=fn, output=output, diagnose=diagnose
+        )
+        if new is e:
+            raise
+        raise new from e
+
+
+# ---------------------------------------------------------------------------
+# The journal entry of a run
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def journal_run(fn_name: str, *, enabled: bool = True):
+    """The journal block for one for_each call (``Log.run``), with the
+    exception that ends it classified here, where :func:`classify_blame`
+    lives. Nested calls share the outermost block. ``enabled=False`` (a dry
+    run) writes nothing.
+    """
+    if not enabled:
+        yield None
+        return
+    with Log.run(fn_name) as run:
+        try:
+            yield run
+        except Exception as e:
+            if stopped_run_of(e) is not None:
+                run.fail(None)  # on_error="stop": the summary already has it
+            else:
+                run.fail(run_failure(e, fn_name=fn_name).to_dict())
+            raise
+
+
+def journaled(impl: Callable) -> Callable:
+    """Decorate a for_each so each call is one journal block (:func:`journal_run`).
+
+    Reads ``fn`` and ``dry_run`` from the call (a dry run writes nothing);
+    ``functools.wraps`` keeps the signature, so ``inspect.signature`` and the
+    scifor/scidb parity tests see the real one. scifor and scidb both use it;
+    a scidb call wrapping a scifor call is still one block.
+    """
+    import functools
+
+    sig = inspect.signature(impl)
+
+    @functools.wraps(impl)
+    def wrapper(*args, **kwargs):
+        try:
+            bound = sig.bind_partial(*args, **kwargs).arguments
+        except TypeError:
+            bound = {}
+        fn = bound.get("fn", args[0] if args else kwargs.get("fn"))
+        name = getattr(fn, "__name__", None) or repr(fn)
+        with journal_run(name, enabled=not bound.get("dry_run", False)):
+            return impl(*args, **kwargs)
+
+    return wrapper
 
 
 def format_user_frame(frame: FailureFrame | None) -> str:
@@ -407,18 +768,37 @@ def groups_from_wire(raw) -> list[dict]:
         example = g.get("example") if isinstance(g.get("example"), dict) else {}
         frames = [f for f in _as_list(example.get("frames")) if isinstance(f, dict)]
         combos = g.get("combos")
+        no_data = bool(g.get("no_data"))
+        user_frame = _frame_or_none(g.get("user_frame"))
+        blame = _wire_blame(g.get("blame") or example.get("blame"), no_data, user_frame)
+        probable = bool(g.get("probable") or example.get("probable"))
         out.append(
             {
                 **g,
-                "no_data": bool(g.get("no_data")),
+                "no_data": no_data,
                 "count": int(g.get("count") or 0),
                 "combos": [combos] if isinstance(combos, str) else [str(c) for c in _as_list(combos)],
-                "user_frame": _frame_or_none(g.get("user_frame")),
+                "user_frame": user_frame,
+                "blame": blame,
+                "probable": probable,
+                "blame_label": blame_headline(blame, probable, str(g.get("fn_name") or "")),
                 "example": {
                     **example,
                     "frames": frames,
                     "user_frame": _frame_or_none(example.get("user_frame")),
+                    "blame": blame,
+                    "probable": probable,
                 },
             }
         )
     return out
+
+
+def _wire_blame(raw, no_data: bool, user_frame) -> str:
+    """A wire group's blame. A writer that predates the field (or sent an
+    unknown value) gets the frame rule's answer, logged so it is visible."""
+    if raw in BLAME_VALUES:
+        return str(raw)
+    inferred = "no_data" if no_data else ("user_code" if user_frame else "internal")
+    Log.debug(f"groups_from_wire: blame {raw!r} not on the wire; inferred {inferred}", layer="scifor")
+    return inferred

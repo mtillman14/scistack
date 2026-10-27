@@ -76,6 +76,7 @@ function GroupCard({ group }: { group: FailureGroup }) {
   const stage = group.example?.stage
   return (
     <div style={styles.card}>
+      {group.blame_label && <div style={styles.blame}>{group.blame_label}</div>}
       <div style={styles.reasonRow}>
         <span style={styles.excType}>{group.exc_type}</span>
         <span style={styles.count}>{group.count} combo{group.count === 1 ? '' : 's'}</span>
@@ -143,6 +144,8 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 10,
     background: '#221722',
   },
+  // Who can fix it — the backend sends the wording (scistacklog.journal).
+  blame: { fontSize: 12, fontWeight: 600, color: '#fde68a', marginBottom: 2 },
   reasonRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' },
   excType: { fontFamily: 'monospace', fontWeight: 700, color: '#fca5a5' },
   count: { fontSize: 11, color: '#bbb' },

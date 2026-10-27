@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 
 from scifor import stopped_run_of, validate_on_error
-from scifor.failures import failure_from_exception, format_user_frame
+from scifor.failures import FailureGroup, failure_from_exception, format_user_frame
 
 logger = logging.getLogger(__name__)
 
@@ -129,17 +129,9 @@ class RunFailures:
                 f"    {stopped.completed} combo(s) completed before it were saved.\n"
             )
         failure = failure_from_exception(exc, fn_name=fn_name, metadata={}, stage="run")
-        group = {
-            "reason": failure.reason,
-            "fn_name": fn_name,
-            "exc_type": failure.exc_type,
-            "message": failure.message,
-            "no_data": False,
-            "count": 1,
-            "combos": [],
-            "user_frame": failure.user_frame.to_dict() if failure.user_frame else None,
-            "example": failure.to_dict(),
-        }
+        # The wire shape has one owner (FailureGroup.to_dict); a run-level
+        # failure is one occurrence with no combo, and it carries the blame.
+        group = {**FailureGroup(example=failure).to_dict(), "count": 1}
         self._groups.append({**group, "node_id": node_id, "target": target})
         logger.info(
             "[run_failures] %s: run-level %s on node %s %s (run_id=%s)",

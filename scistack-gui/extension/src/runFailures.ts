@@ -27,6 +27,11 @@ export interface WireFailureGroup {
   count: number;
   combos: string[];
   user_frame: WireFrame | null;
+  /** Who can fix it (scifor.failures.classify_blame). */
+  blame?: string;
+  probable?: boolean;
+  /** Display text for `blame`, worded by scistacklog.journal (never copied here). */
+  blame_label?: string;
   node_id?: string | null;
   target?: string;
 }
@@ -57,7 +62,8 @@ export function readRunFailures(raw: unknown): WireRunFailures {
 
 export function diagnosticMessage(g: WireFailureGroup): string {
   const example = g.combos?.length ? `, e.g. ${g.combos[0]}` : '';
-  return `${g.fn_name}: ${g.reason} — ${g.count} combo(s) failed${example}`;
+  const label = g.blame_label ? `${g.blame_label}. ` : '';
+  return `${label}${g.fn_name}: ${g.reason} — ${g.count} combo(s) failed${example}`;
 }
 
 function entriesFor(groups: WireFailureGroup[]): DiagnosticEntry[] {
@@ -141,7 +147,7 @@ export function failureNotice(
   return {
     message:
       `SciStack: ${combos} combo(s) failed in ${fns.join(', ') || 'the run'}${stopped}: ` +
-      `${first}${where}${more}`,
+      `${groups[0].blame_label ? groups[0].blame_label + ' — ' : ''}${first}${where}${more}`,
     nodeId: nodeGroup?.node_id ?? undefined,
   };
 }

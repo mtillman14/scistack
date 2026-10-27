@@ -28,6 +28,11 @@ export interface FailureGroup {
   count: number
   combos: string[]
   user_frame: FailureFrame | null
+  /** Who can fix it (scifor.failures.classify_blame) and its display text
+   *  (worded by scistacklog.journal; never copied here). */
+  blame?: string
+  probable?: boolean
+  blame_label?: string
   node_id?: string | null
   target?: string
   example?: { stage?: string; frames?: FailureFrame[]; metadata?: Record<string, string> }

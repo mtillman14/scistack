@@ -109,6 +109,7 @@ _GITIGNORE = """\
 *.duckdb.wal
 *.duckdb.tmp
 scistack.log
+scistack-debug.log*
 
 # Python
 __pycache__/

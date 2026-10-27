@@ -28,7 +28,7 @@ When `--db PATH` is omitted, the database is discovered in this order:
 4. exactly one `*.duckdb` file in the current directory
    (an error lists the candidates if there are several)
 
-The resolved path and its source are logged to `scistack.log` next to the
+The resolved path and its source are logged to `scistack-debug.log` next to the
 database file on every invocation.
 
 ## Command reference

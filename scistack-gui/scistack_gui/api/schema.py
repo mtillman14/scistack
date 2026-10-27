@@ -6,13 +6,18 @@ Database metadata — the handler table for both transports (``api/handlers.py``
     GET  /api/variables         get_variables_list
     POST /api/inventory         schema_inventory        — missing schema-key combinations
     POST /api/inventory/export  export_schema_inventory — the same table as CSV
+    POST /api/inventory/row-override  inventory_row_override — what decides one row
+    POST /api/inventory/exclude       exclude_schema_combo   — exclude one row
+    POST /api/inventory/include       include_schema_combo   — re-include one row
     GET  /api/schema/key-types          get_schema_key_types   — declared numeric/string types
     POST /api/schema/key-types/impact   schema_key_type_impact — what a change would re-spell
     PUT  /api/schema/key-types/{key}    set_schema_key_type    — the Numeric checkbox
 
 The inventory statuses, the two views ("missing only" / "all") and the CSV
 layout are owned by ``scidb.inventory``; these handlers only cap the rows the
-popup is sent (docs/claude/data-inventory.md).
+popup is sent (docs/claude/data-inventory.md). A row becomes schema keys in
+``scidb.inventory.row_keyset`` and the exclusion rules are
+``scidb.exclusions``; the row handlers only wire them together.
 """
 
 from __future__ import annotations
@@ -110,6 +115,63 @@ def _export_schema_inventory(db, req: ExportInventory) -> dict:
     return {"path": str(out), "rows": n}
 
 
+class InventoryRow(BaseModel):
+    #: One view's header and row, exactly as ``schema_inventory`` sent them;
+    #: ``scidb.inventory.row_keyset`` turns them into schema keys.
+    columns: list[str]
+    row: list[str]
+
+
+class InventoryRowChange(InventoryRow):
+    reason: str
+
+
+def _inventory_row_override(db, req: InventoryRow) -> dict:
+    """The keys a row stands for and the override that decides it (the
+    popup's confirm panel)."""
+    from scidb.exclusions import governing_overrides
+    from scidb.inventory import row_keyset
+
+    keys = row_keyset(req.columns, req.row)
+    (governing,) = governing_overrides([keys], db.dataset_schema_keys, db)
+    effective = "excluded" if governing is not None and not governing.included else "included"
+    logger.info(
+        "[schema] inventory_row_override keys=%s -> %s (governed by %s)",
+        keys, effective, governing.keys if governing else None,
+    )
+    return {
+        "keys": keys,
+        "effective": effective,
+        "governed_by": governing.to_dict() if governing else None,
+    }
+
+
+def _change_row(db, req: InventoryRowChange, *, exclude: bool) -> dict:
+    from scidb.exclusions import exclude_schema, include_schema
+    from scidb.inventory import row_keyset
+
+    reason = req.reason.strip()
+    if not reason:
+        raise ValueError("A reason is required.")
+    keys = row_keyset(req.columns, req.row)
+    (exclude_schema if exclude else include_schema)(reason, db=db, **keys)
+    logger.info(
+        "[schema] %s keys=%s reason=%r",
+        "exclude_schema_combo" if exclude else "include_schema_combo", keys, reason,
+    )
+    return {"keys": keys}
+
+
+def _exclude_schema_combo(db, req: InventoryRowChange) -> dict:
+    """Exclude the combination(s) one inventory row stands for."""
+    return _change_row(db, req, exclude=True)
+
+
+def _include_schema_combo(db, req: InventoryRowChange) -> dict:
+    """Re-include the combination(s) one inventory row stands for."""
+    return _change_row(db, req, exclude=False)
+
+
 class SchemaKeyTypeQuery(BaseModel):
     key: str
     #: "numeric" | "string", or None to clear the declaration.
@@ -155,6 +217,12 @@ SCHEMA_HANDLERS: tuple[Handler, ...] = (
     Handler("get_variables_list", "/variables", None, _get_variables_list, needs_db=False, http_method="GET"),
     Handler("schema_inventory", "/inventory", InventoryRequest, _schema_inventory, http_errors=_BAD_REQUEST, undoable=False),
     Handler("export_schema_inventory", "/inventory/export", ExportInventory, _export_schema_inventory, http_errors=_BAD_REQUEST, undoable=False),
+    Handler("inventory_row_override", "/inventory/row-override", InventoryRow, _inventory_row_override, http_errors=_BAD_REQUEST, undoable=False),
+    # Not undoable: database writes (the overrides table is its own audit
+    # trail; Include/Exclude on the same row is the way back). dag_updated so
+    # the canvas re-reads run state.
+    Handler("exclude_schema_combo", "/inventory/exclude", InventoryRowChange, _exclude_schema_combo, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
+    Handler("include_schema_combo", "/inventory/include", InventoryRowChange, _include_schema_combo, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
 )
 
 install_routes(router, SCHEMA_HANDLERS)

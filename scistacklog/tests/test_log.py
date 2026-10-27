@@ -22,8 +22,13 @@ FILE_LINE = re.compile(
 
 @pytest.fixture(autouse=True)
 def clean_log_state():
-    """Each test starts and ends with a fully detached, default-level Log."""
+    """Each test starts and ends with a fully detached Log.
+
+    The debug file defaults to DEBUG (test_journal.py pins that); these tests
+    pin what each level lets through, so they start the file at INFO, the
+    console's default, and raise it where they need DEBUG."""
     Log._reset_for_tests()
+    Log.set_level("INFO", sink="file")
     yield
     Log._reset_for_tests()
 
@@ -127,13 +132,15 @@ def test_dual_sink_level_independence(tmp_path, capsys):
     assert "visible narrative" in content
 
 
-def test_default_level_is_info_on_both_sinks(tmp_path, capsys):
-    log_file = tmp_path / "scistack.log"
+def test_default_levels_info_console_debug_file(tmp_path, capsys):
+    Log._reset_for_tests()  # undo the fixture's INFO file level
+    log_file = tmp_path / "scistack-debug.log"
     Log.set_path(str(log_file))
-    Log.debug("hidden by default")
-    assert "hidden by default" not in capsys.readouterr().err
-    assert "hidden by default" not in read_text_or_empty(log_file)
-    assert Log.get_level() == Log.INFO
+    Log.debug("detail")
+    assert "detail" not in capsys.readouterr().err
+    assert "detail" in read_text_or_empty(log_file)
+    assert Log.get_level("console") == Log.INFO
+    assert Log.get_level("file") == Log.DEBUG
 
 
 def test_get_level_reports_min_of_sinks():

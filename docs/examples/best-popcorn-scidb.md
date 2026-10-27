@@ -364,7 +364,7 @@ Put each function in **its own file** instead of at the bottom of the script. sc
 You also need the **Statistics and Machine Learning Toolbox** (`friedman`, `signrank`) and MATLAB R2021a or newer for the `name=value` syntax.
 ///
 
-When the script first runs, it creates a database file, `popcorn.duckdb`, and a log file, `scistack.log`, in this folder.
+When the script first runs, it creates a database file, `popcorn.duckdb`, and two log files in this folder: `scistack.log`, a short journal of each run, and `scistack-debug.log`, with full detail.
 
 ## Step 2: Configure the database
 

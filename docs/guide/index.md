@@ -14,3 +14,4 @@ jobs, filtering, and exporting results.
 - [Batch Processing (for_each)](for_each.md)
 - [Filtering & Selection](filters.md)
 - [Browsing & Exporting](browsing.md)
+- [Reading your log](reading-your-log.md)

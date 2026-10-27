@@ -140,9 +140,43 @@ the step loop, and `run_pipeline(report_sink=...)` fills the caller's list in a
 
 ## 6. Tests
 
-`scifor/tests/test_failures.py`, `scidb/tests/test_on_error_stop.py`,
+`scifor/tests/test_failures.py`, `scifor/tests/test_blame.py`, `scidb/tests/test_on_error_stop.py`,
 `scistack-gui/tests/test_run_failures.py`,
 `scimatlab/tests/test_matlab_failure_record_shape.py`,
 `scistack-gui/extension/src/runFailures.test.ts`,
 `scistack-gui/frontend/src/components/DAG/runFailures.test.ts`.
 GUI manual checks: `docs/gui-manual-testing-todo.md` §0zzzzzzl.
+
+## 7. Who can fix it: `blame` (added 2026-10-26)
+
+Plan: `.claude/scientist-facing-log-plan.md`. Every `ComboFailure` (and
+`FailureGroup.to_dict`) carries `blame`, `probable` and, on groups,
+`blame_label`, the display text worded by `scistacklog.journal.blame_headline`.
+The journal (`scistack.log`, see logging-architecture.md), the FailuresPanel
+label, the Problems entry and the error notification all show that label.
+None of them keeps its own copy of the wording.
+
+**One classifier: `scifor.failures.classify_blame(exc, frames, no_data=)`**,
+rules in order:
+
+| blame | rule | headline |
+|---|---|---|
+| `no_data` | NoDataError | No data |
+| marker's own (`setup`, or `user_value` for `UserValueError`) | the exception itself (not its `__context__`) is an `ActionableError` | Problem with your setup or data / Fixable in your function F |
+| `user_code` | innermost non-library frame is the user's, **or** is `call_user_function` (a library function wired up as the function, e.g. `pandas.read_csv`) | Error in your function F |
+| `internal` | otherwise | SciStack internal error, not caused by your code |
+
+- **`ActionableError`** (`scifor.failures`): a deliberate, actionable refusal. `scidb.SciStackError`, scifor's `SchemaKeyTypeError`, and the GUI's `layout_service.EdgeCycleError` subclass it. `scidb.OutputSaveError` computes `blame`/`probable` from its `causes`.
+- **`call_user_function(fn, ...)`**: every for_each call of the user's function goes through it (`_call_fn`, `_run_column_iteration`); its frame is how the classifier sees where the user's function starts.
+- **User-value seam**: SciStack steps that handle the user's values run inside `user_value_seam(stage, fn_name=, fn=, output=, diagnose=)`, or pass their exception through `as_user_value_error`. Today that covers scifor's combine step (`_results_to_output_dataframe`, AST-guarded in `test_blame.py`), scidb's per-output save (`_save_seam_error`), and MATLAB's flatten-mode `vertcat` (`+scifor/for_each.m` `user_value_error` / `describe_table_kinds`). An unmarked exception becomes a `UserValueError` with the original as `__cause__`:
+  - **precise** when `diagnose` names the cause (`describe_value_kinds`: the output's values differ in kind across combos, naming the combos on each side). The diagnosis runs only after the step has failed, so a working run is never refused.
+  - **probable** otherwise: hedged wording ("Probably fixable…", "may be a SciStack bug: report run=…") and a `[seam_fallback] stage=… fn=…` WARN. **Each `[seam_fallback]` in a real log is a missing check: add it to the diagnosis, plus a regression test.**
+- `ForColumnsError` is a `UserValueError` (still a `ValueError`).
+- MATLAB (`+scifor/failure_from_mexception.m` `classify_blame`): `scifor:NoData` → no_data; `scistack:userValue[:probable]` → user_value; innermost non-library frame user → user_code; framework frame + `scifor:`/`scidb:`/`scihist:`/`scistack:` identifier → setup; else internal. `failure_groups` asks Python for `blame_label`.
+- `groups_from_wire`: a group without `blame` gets the frame rule's answer (`user_frame` → user_code, else internal), logged at DEBUG.
+
+**Limit:** blame says where an error was *raised*, not its root cause. That is why
+`user_code` reads "Error in your function F" and always shows the line.
+
+Diagnostics: `failure_from_exception: <Type> in <fn> -> blame=<b> via <rule>`
+(scifor DEBUG, MATLAB `failure_from_mexception: … via …`); `[seam_fallback]` (WARN).

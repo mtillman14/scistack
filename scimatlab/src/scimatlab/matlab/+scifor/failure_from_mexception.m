@@ -42,6 +42,10 @@ function failure = failure_from_mexception(err, fn_name, metadata_str, stage, no
             'code', '', ...
             'origin', scifor.frame_origin(stack(k).file)); %#ok<AGROW>
     end
+    [blame, probable, rule] = classify_blame(err, frames, no_data);
+    scifor.Log.debug('failure_from_mexception: %s in %s -> blame=%s via %s', ...
+        exc_type, char(fn_name), blame, rule);
+
     first_user = find(~strcmp({frames.origin}, 'framework'), 1);
     if ~isempty(first_user)
         frames = frames(first_user:end);
@@ -70,5 +74,51 @@ function failure = failure_from_mexception(err, fn_name, metadata_str, stage, no
         'reason', sprintf('%s: %s', exc_type, message), ...
         'frames', frames, ...
         'user_frame', user_frame, ...
-        'no_data', logical(no_data));
+        'no_data', logical(no_data), ...
+        'blame', blame, ...
+        'probable', probable);
+end
+
+
+function [blame, probable, rule] = classify_blame(err, frames, no_data)
+%CLASSIFY_BLAME  Who can fix this failure. The MATLAB twin of Python's
+%   scifor.failures.classify_blame, in the same order:
+%
+%   1. no_data    -- scifor:NoData (a combo with no data). Not an error.
+%   2. user_value -- a scistack:userValue error: SciStack failed handling a
+%      value the user's function returned (scistack:userValue:probable when
+%      no check named the cause).
+%   3. user_code  -- the innermost non-library frame is the user's.
+%   4. setup      -- SciStack's own code raised it on purpose: an error()
+%      call with a scifor:/scidb:/scihist:/scistack: identifier, whose message
+%      says what to change (Python's ActionableError).
+%   5. internal   -- anything else SciStack's code raised.
+%
+%   Known limit: a built-in passed directly as the function (fn = )
+%   that fails is classified internal, because MATLAB has no frame for the
+%   call site the way Python's scifor.failures.call_user_function is.
+    probable = false;
+    id = char(err.identifier);
+    if no_data
+        blame = 'no_data'; rule = 'scifor:NoData';
+        return;
+    end
+    if startsWith(id, 'scistack:userValue')
+        blame = 'user_value';
+        probable = strcmp(id, 'scistack:userValue:probable');
+        rule = id;
+        return;
+    end
+    innermost = find(~strcmp({frames.origin}, 'library'), 1, 'last');
+    if ~isempty(innermost) && strcmp(frames(innermost).origin, 'user')
+        blame = 'user_code';
+        rule = sprintf('innermost non-library frame is user code (%s:%d)', ...
+            frames(innermost).file, frames(innermost).line);
+    elseif startsWith(id, {'scifor:', 'scidb:', 'scihist:', 'scistack:'})
+        blame = 'setup';
+        rule = sprintf('SciStack raised %s on purpose', id);
+    else
+        blame = 'internal';
+        rule = 'innermost non-library frame is SciStack code';
+    end
 end

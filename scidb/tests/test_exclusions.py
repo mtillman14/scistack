@@ -17,8 +17,10 @@ from scidb.database import _local
 from scidb.exclusions import (
     _TABLE,
     _current_status,
+    exclusion_status,
     filter_excluded_combos,
     get_schema_overrides_hash,
+    governing_overrides,
 )
 
 from scidb import (
@@ -347,3 +349,78 @@ class TestForEachIntegration:
         # (subject=1, trial=2) should have been skipped
         assert len(processed) == 2
         assert 20.0 not in processed
+
+
+# ===========================================================================
+# governing_overrides (the one owner of the matching rules) and the
+# include guard built on it
+# ===========================================================================
+
+
+class TestGoverningOverrides:
+    def test_no_rows_is_none(self, db):
+        assert governing_overrides([{"subject": "1", "trial": "1"}], ["subject", "trial"], db) == [None]
+
+    def test_wildcard_row_governs_with_reason(self, db):
+        exclude_schema(subject=3, reason="withdrew", db=db)
+        (o,) = governing_overrides([{"subject": "3", "trial": "2"}], ["subject", "trial"], db)
+        assert o.keys == {"subject": "3"}
+        assert o.included is False
+        assert o.reason == "withdrew"
+        assert o.changed_at is not None
+
+    def test_specific_beats_wildcard(self, db):
+        exclude_schema(subject=3, trial=2, reason="bad trial", db=db)
+        exclude_schema(subject=3, reason="withdrew", db=db)  # later but coarser
+        (o,) = governing_overrides([{"subject": "3", "trial": "2"}], ["subject", "trial"], db)
+        assert o.reason == "bad trial"
+
+    def test_tie_broken_by_latest(self, db):
+        exclude_schema(subject=3, reason="first", db=db)
+        include_schema(subject=3, reason="second", db=db)
+        (o,) = governing_overrides([{"subject": "3"}], ["subject", "trial"], db)
+        assert o.reason == "second" and o.included is True
+
+    def test_deeper_row_does_not_govern_coarser_combo(self, db):
+        exclude_schema(subject=3, trial=2, reason="bad trial", db=db)
+        assert governing_overrides([{"subject": "3"}], ["subject", "trial"], db) == [None]
+
+    def test_exclusion_status_agrees(self, db):
+        exclude_schema(subject=3, reason="withdrew", db=db)
+        include_schema(subject=3, trial=2, reason="fine", db=db)
+        combos = [{"subject": "3", "trial": "1"}, {"subject": "3", "trial": "2"}, {"subject": "1", "trial": "1"}]
+        assert exclusion_status(combos, ["subject", "trial"], db) == [True, False, False]
+
+    def test_to_dict(self, db):
+        exclude_schema(subject=3, reason="withdrew", db=db)
+        (o,) = governing_overrides([{"subject": "3"}], ["subject", "trial"], db)
+        d = o.to_dict()
+        assert d["keys"] == {"subject": "3"} and d["included"] is False
+        assert d["reason"] == "withdrew" and isinstance(d["changed_at"], str)
+
+
+class TestIncludeUnderCoarserExclusion:
+    def test_partial_reinclude_is_allowed(self, db):
+        exclude_schema(subject=3, reason="withdrew", db=db)
+        include_schema(subject=3, trial=2, reason="trial 2 fine", db=db)
+        assert _current_status(db, {"subject": 3, "trial": 2}) is True
+        assert _current_status(db, {"subject": 3}) is False
+        combos = [{"subject": "3", "trial": "1"}, {"subject": "3", "trial": "2"}]
+        assert filter_excluded_combos(combos, ["subject", "trial"], db) == [combos[1]]
+
+    def test_double_partial_reinclude_raises(self, db):
+        exclude_schema(subject=3, reason="withdrew", db=db)
+        include_schema(subject=3, trial=2, reason="fine", db=db)
+        with pytest.raises(ValueError, match="already included"):
+            include_schema(subject=3, trial=2, reason="again", db=db)
+
+    def test_reinclude_after_coarser_include_raises(self, db):
+        exclude_schema(subject=3, reason="withdrew", db=db)
+        include_schema(subject=3, reason="came back", db=db)
+        with pytest.raises(ValueError, match="already included"):
+            include_schema(subject=3, trial=2, reason="redundant", db=db)
+
+    def test_deeper_exclusion_does_not_cover_a_coarser_include(self, db):
+        exclude_schema(subject=3, trial=2, reason="bad trial", db=db)
+        with pytest.raises(ValueError, match="no exclusion record"):
+            include_schema(subject=3, reason="nothing to lift", db=db)

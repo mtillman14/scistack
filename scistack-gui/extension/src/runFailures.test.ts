@@ -84,3 +84,14 @@ test('notice says stopped, and is skipped when cancelled or clean', () => {
   assert.strictEqual(failureNotice(failures, { cancelled: true }), null);
   assert.strictEqual(failureNotice(readRunFailures({ by_node: { fn__a: [] }, other: [] }), {}), null);
 });
+
+test('the backend-worded blame label leads the entry and the notice', () => {
+  const g = group({ blame: 'user_code', blame_label: 'Error in your function filt' });
+  const failures = readRunFailures({ by_node: { fn__a: [g] }, other: [] });
+  const state = nextDiagnosticState(new Map(), failures);
+  assert.match(state.get('fn__a')![0].message, /^Error in your function filt\. filt: KeyError/);
+  assert.match(
+    failureNotice(failures, {})!.message,
+    /failed in filt: Error in your function filt — KeyError: 'chan'/,
+  );
+});

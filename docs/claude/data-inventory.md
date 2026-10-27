@@ -140,7 +140,9 @@ the per-stratum products, and the message names the largest strata. Tests pass
 |---|---|---|
 | Each key's values, in declared order | `DatabaseManager.distinct_schema_values` | inventory, `for_each` |
 | Combinations that exist | `DatabaseManager.distinct_schema_combinations` | inventory |
-| Is a combination excluded? | `scidb.exclusions.exclusion_status` | `filter_excluded_combos` (`for_each`), inventory |
+| Which override decides a combination | `scidb.exclusions.governing_overrides` | `exclusion_status`, the `include_schema` guard, GUI `inventory_row_override` |
+| Is a combination excluded? | `scidb.exclusions.exclusion_status` (consumes `governing_overrides`) | `filter_excluded_combos` (`for_each`), inventory |
+| A displayed row -> schema keys (`status` and `(all)` dropped) | `scidb.inventory.row_keyset` | GUI Exclude… / Include… handlers |
 | Statuses | `scidb.inventory.schema_inventory` | `Inspector.inventory`, CLI, GUI handlers |
 | Which columns/rows a view shows, collapsed or not | `scidb.inventory.inventory_table` (collapse: `_collapse_rows`) | `SchemaInventory.to_dict`, `write_inventory_csv`, `render.render_inventory` |
 | CSV layout | `scidb.inventory.write_inventory_csv` | CLI `--csv`, GUI export |
@@ -169,6 +171,19 @@ both views from `inventory_table` and never filter or format rows themselves.
   `export_schema_inventory` RPC (`POST /api/inventory/export`), which writes
   the full table and is never truncated. A size-guard refusal reaches the
   popup as an ordinary RPC error (HTTP 400).
+- GUI actions (2026-10-26, `.claude/plan-inventory-exclusion-actions.md`):
+  every row has **Exclude…** (**Include…** on an excluded row). The
+  frontend sends the row as it was displayed (`columns`, `row`). The backend
+  owns the interpretation: `row_keyset` turns the row into keys, so a
+  collapsed row means its whole block and an Off key means every value.
+  `inventory_row_override` (`POST /api/inventory/row-override`) returns
+  `{keys, effective, governed_by}` for the confirm panel.
+  `exclude_schema_combo` / `include_schema_combo`
+  (`POST /api/inventory/exclude|include`) require a non-blank reason, call
+  `scidb.exclude_schema` / `include_schema`, are not undoable (the overrides
+  table is its own audit trail), and push `dag_updated`. Include… on a row
+  that a coarser exclusion covers inserts a more-specific include, so only
+  that row comes back.
 - There is no MATLAB entry point, by decision.
 
 ## Observability
@@ -183,6 +198,10 @@ both views from `inventory_table` and never filter or format rows themselves.
   {session: a, minute: b})`. WARNING if a key has a real level `(all)`.
 - GUI: `[schema] schema_inventory keys=… within=… strata=N … ->
   sent/total row(s) (truncated)`.
+- GUI: `[schema] inventory_row_override keys=… -> excluded (governed by {…})`,
+  `[schema] exclude_schema_combo keys=… reason=…` (also `include_schema_combo`).
+  DEBUG: `row_keyset: columns=… row=… -> {…}` and
+  `[scidb] include_schema: keyset=… governed by …`.
 - GUI popup: each key has a Cross / Within / Off segmented control (all Cross
   by default), sent as `keys` and `within`; one sub-line per stratum under the
   counts line.

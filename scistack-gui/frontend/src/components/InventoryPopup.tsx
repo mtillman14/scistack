@@ -11,6 +11,13 @@
  * Each key has one role: Cross (every value expected at every combination),
  * Within (the inventory runs separately per combination of these keys'
  * values, e.g. a study arm), or Off (projected out).
+ *
+ * Each row has Exclude… (Include… on an excluded row). The backend turns the
+ * row into schema keys (scidb.inventory.row_keyset: "(all)" and Off keys are
+ * wildcards) and says which exclusion decides it; the confirm panel spells
+ * that out and takes the required reason before scidb.exclude_schema /
+ * include_schema write it. Include… on a row covered by a coarser exclusion
+ * re-includes only that row.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -50,6 +57,37 @@ interface InventoryResult {
   all_marker: string
 }
 
+// One override row (scidb.exclusions.Override.to_dict).
+interface Override {
+  keys: Record<string, string>
+  included: boolean
+  reason: string
+  changed_at: string | null
+}
+
+// The inventory_row_override reply: the keys a row stands for
+// (scidb.inventory.row_keyset) and the override that decides it.
+interface RowOverride {
+  keys: Record<string, string>
+  effective: 'excluded' | 'included'
+  governed_by: Override | null
+}
+
+type RowAction = 'exclude' | 'include'
+
+// The confirm panel under the table for one row's Exclude… / Include….
+interface PendingChange {
+  action: RowAction
+  row: string[]
+  info: RowOverride | null // null while loading
+  reason: string
+  busy: boolean
+  error: string
+}
+
+const keyText = (keys: Record<string, string>) =>
+  Object.entries(keys).map(([k, v]) => `${k}=${v}`).join(', ')
+
 const STATUS_COLORS: Record<string, string> = {
   present: '#9ae6b4',
   missing: '#f87171',
@@ -62,6 +100,40 @@ function Tally({ counts }: { counts: StatusCounts }) {
       <span style={{ color: STATUS_COLORS.present }}>{counts.present.toLocaleString()} present</span>,{' '}
       <span style={{ color: STATUS_COLORS.missing }}>{counts.missing.toLocaleString()} missing</span>,{' '}
       <span style={{ color: STATUS_COLORS.excluded }}>{counts.excluded.toLocaleString()} excluded</span>
+    </>
+  )
+}
+
+/** What the confirm panel says a change will do. Every key the row leaves
+ *  out (collapsed "(all)" or Off) is spelled out as "every <key>", so a
+ *  wildcard is never a surprise. */
+function ChangeSummary({ change, schemaKeys }: { change: PendingChange; schemaKeys: string[] }) {
+  const info = change.info
+  if (!info) return <div style={styles.hint}>Looking up this row…</div>
+  const wild = schemaKeys.filter(k => !(k in info.keys))
+  const target = (
+    <>
+      <code>{keyText(info.keys)}</code>
+      {wild.length > 0 && <> — every {wild.join(', every ')}</>}
+    </>
+  )
+  const g = info.governed_by
+  if (change.action === 'exclude') {
+    return <div>Exclude {target} from every analysis.</div>
+  }
+  const sameKeys = g != null && keyText(g.keys) === keyText(info.keys)
+  return (
+    <>
+      <div>Re-include {target}.</div>
+      {g && (
+        <div style={styles.hint}>
+          Excluded by <code>{keyText(g.keys)}</code>: “{g.reason}”
+          {g.changed_at ? ` (${g.changed_at.slice(0, 10)})` : ''}.{' '}
+          {sameKeys
+            ? 'This lifts that exclusion.'
+            : 'Only this row is re-included; the rest of that exclusion stays.'}
+        </div>
+      )}
     </>
   )
 }
@@ -144,7 +216,40 @@ export default function InventoryPopup({
     }
   }
 
+  const [pending, setPending] = useState<PendingChange | null>(null)
+
+  const startChange = (action: RowAction, row: string[]) => {
+    if (!result) return
+    setMessage('')
+    setPending({ action, row, info: null, reason: '', busy: false, error: '' })
+    callBackend('inventory_row_override', { columns: result.columns, row })
+      .then(d => setPending(p => (p && p.row === row ? { ...p, info: d as RowOverride } : p)))
+      .catch(err => setPending(p => (p && p.row === row ? { ...p, error: (err as Error).message } : p)))
+  }
+
+  const confirmChange = async () => {
+    if (!pending || !result || !pending.reason.trim()) return
+    setPending({ ...pending, busy: true, error: '' })
+    try {
+      const r = await callBackend(
+        pending.action === 'exclude' ? 'exclude_schema_combo' : 'include_schema_combo',
+        { columns: result.columns, row: pending.row, reason: pending.reason },
+      ) as { keys: Record<string, string> }
+      setPending(null)
+      setMessage(`${pending.action === 'exclude' ? 'Excluded' : 'Re-included'} ${keyText(r.keys)}`)
+      run()
+    } catch (err) {
+      setPending(p => (p ? { ...p, busy: false, error: (err as Error).message } : p))
+    }
+  }
+
+  // A new table (another view, a re-run) makes the open row stale.
+  useEffect(() => { setPending(null) }, [result])
+
   const statusCol = result ? result.columns.indexOf('status') : -1
+  // The Missing-only view has no status column: every row there is missing.
+  const rowAction = (row: string[]): RowAction =>
+    statusCol >= 0 && row[statusCol] === 'excluded' ? 'include' : 'exclude'
 
   return (
     <div style={modalStyles.overlay} onClick={onClose}>
@@ -252,11 +357,12 @@ export default function InventoryPopup({
                   <thead>
                     <tr>
                       {result.columns.map(c => <th key={c} style={styles.th}>{c}</th>)}
+                      <th style={styles.th} />
                     </tr>
                   </thead>
                   <tbody>
                     {result.rows.map((row, i) => (
-                      <tr key={i}>
+                      <tr key={i} style={pending?.row === row ? styles.pendingRow : undefined}>
                         {row.map((cell, j) => (
                           <td
                             key={j}
@@ -271,10 +377,49 @@ export default function InventoryPopup({
                             {cell}
                           </td>
                         ))}
+                        <td style={styles.actionTd}>
+                          <button
+                            type="button"
+                            style={styles.rowBtn}
+                            title={rowAction(row) === 'exclude'
+                              ? 'Exclude this row from every analysis (scidb.exclude_schema)'
+                              : 'Re-include this row (scidb.include_schema)'}
+                            onClick={() => startChange(rowAction(row), row)}
+                          >
+                            {rowAction(row) === 'exclude' ? 'Exclude…' : 'Include…'}
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+            {pending && (
+              <div style={styles.changePanel}>
+                <ChangeSummary change={pending} schemaKeys={schemaKeys} />
+                <div style={styles.controls}>
+                  <input
+                    style={styles.reasonInput}
+                    placeholder={pending.action === 'exclude' ? 'Reason (required), e.g. sensor slipped' : 'Reason (required), e.g. re-reviewed, data fine'}
+                    value={pending.reason}
+                    autoFocus
+                    onChange={e => setPending({ ...pending, reason: e.target.value })}
+                    onKeyDown={e => { if (e.key === 'Enter') confirmChange() }}
+                  />
+                  <button
+                    style={styles.primary}
+                    type="button"
+                    disabled={!pending.info || !pending.reason.trim() || pending.busy}
+                    onClick={confirmChange}
+                  >
+                    {pending.busy ? 'Saving…' : pending.action === 'exclude' ? 'Exclude' : 'Include'}
+                  </button>
+                  <button style={styles.btn} type="button" onClick={() => setPending(null)}>
+                    Cancel
+                  </button>
+                </div>
+                {pending.error && <div style={styles.errorBlock}>{pending.error}</div>}
               </div>
             )}
           </>
@@ -340,6 +485,34 @@ const styles: Record<string, React.CSSProperties> = {
     color: '#ccc',
   },
   td: { padding: '2px 8px', borderBottom: '1px solid #23233a', fontFamily: 'monospace', color: '#ccc' },
+  pendingRow: { background: '#2a2a48' },
+  actionTd: { padding: '1px 6px', borderBottom: '1px solid #23233a', textAlign: 'right', whiteSpace: 'nowrap' },
+  rowBtn: {
+    background: 'transparent',
+    border: '1px solid #3a3a5a',
+    borderRadius: 3,
+    color: '#aaa',
+    padding: '0 6px',
+    fontSize: 11,
+    cursor: 'pointer',
+  },
+  changePanel: {
+    marginTop: 8,
+    padding: 8,
+    border: '1px solid #3a3a5a',
+    borderRadius: 4,
+    background: '#1c1c30',
+    color: '#ddd',
+  },
+  reasonInput: {
+    flex: 1,
+    minWidth: 200,
+    background: '#15152a',
+    border: '1px solid #3a3a5a',
+    borderRadius: 3,
+    color: '#ddd',
+    padding: '4px 6px',
+  },
   btn: {
     background: 'transparent',
     border: '1px solid #3a3a5a',

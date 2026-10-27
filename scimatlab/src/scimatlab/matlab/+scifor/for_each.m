@@ -797,6 +797,8 @@ function varargout = for_each(fn, inputs, varargin)
     % min-interval guard also spaces the FIRST line away from loop start.
     progress_last_emit = 0;
     loop_t0 = tic;
+    % Wall-clock start of the run for its journal block (write_journal).
+    journal_started = posixtime(datetime('now', 'TimeZone', 'local'));
 
     % share_limits prepass (port of Python scifor's _compute_shared_limits):
     % per named input, group its table by the held-fixed schema keys and
@@ -1227,10 +1229,17 @@ function varargout = for_each(fn, inputs, varargin)
             end
         else
             output_tables = cell(1, n_outputs);
-            for o = 1:n_outputs
-                output_tables{o} = build_single_output_table( ...
-                    collected_per_output{o}, resolved_output_names{o}, opts.categorical, effective_keys, opts.nest_table_outputs, schema_col_types, ...
-                    distribute_key, distribute_key_synthetic);
+            try
+                for o = 1:n_outputs
+                    output_tables{o} = build_single_output_table( ...
+                        collected_per_output{o}, resolved_output_names{o}, opts.categorical, effective_keys, opts.nest_table_outputs, schema_col_types, ...
+                        distribute_key, distribute_key_synthetic, fn_name);
+                end
+            catch build_err
+                write_journal(fn_name, journal_started, loop_t0, completed, skipped, ...
+                    no_data_count, total, stop_err, failure_order, failure_reasons, ...
+                    failure_examples, build_err);
+                rethrow(build_err);
             end
             n_return = max(nargout, 1);
             for o = 1:n_return
@@ -1241,6 +1250,9 @@ function varargout = for_each(fn, inputs, varargin)
                 end
             end
         end
+        write_journal(fn_name, journal_started, loop_t0, completed, skipped, ...
+            no_data_count, total, stop_err, failure_order, failure_reasons, ...
+            failure_examples, []);
     end
     % on_error='stop': the ORIGINAL error, after the summary and outputs. A
     % caller that saves the completed combos first (scidb.for_each) passes
@@ -2268,7 +2280,7 @@ end
 % Return value helpers
 % =========================================================================
 
-function tbl = build_single_output_table(collected, output_name, categorical_flag, schema_keys, nest_table_outputs, col_types, distribute_key, distribute_key_synthetic)
+function tbl = build_single_output_table(collected, output_name, categorical_flag, schema_keys, nest_table_outputs, col_types, distribute_key, distribute_key_synthetic, fn_name)
 %BUILD_SINGLE_OUTPUT_TABLE  Build one result table for a single output.
 %
 %   collected - cell array of {metadata_struct, value} pairs for one output
@@ -2300,6 +2312,9 @@ function tbl = build_single_output_table(collected, output_name, categorical_fla
     end
     if nargin < 8
         distribute_key_synthetic = false;
+    end
+    if nargin < 9
+        fn_name = 'the function';
     end
 
     n_rows = numel(collected);
@@ -2351,7 +2366,16 @@ function tbl = build_single_output_table(collected, output_name, categorical_fla
             end
             parts{r} = [meta_tbl, data_tbl];
         end
-        tbl = vertcat(parts{:});
+        % Stacking every combo's table is where a function that returns
+        % different column types for different combos fails -- inside
+        % SciStack, but fixable by the user. Say so (scistack:userValue),
+        % naming the column and the combos, instead of a bare vertcat error.
+        try
+            tbl = vertcat(parts{:});
+        catch vcat_err
+            throw(user_value_error(vcat_err, 'combine_outputs', fn_name, ...
+                output_name, describe_table_kinds(collected, fn_name, output_name)));
+        end
     else
         % Nested mode: metadata columns + single output column
         tbl = table();
@@ -3062,6 +3086,134 @@ function [failure_reasons, failure_order, failure_examples] = record_iteration_f
 end
 
 
+function write_journal(fn_name, started, loop_t0, completed, skipped, no_data_count, ...
+        total, stop_err, failure_order, failure_reasons, failure_examples, run_err)
+%WRITE_JOURNAL  This run's block in scistack.log, the scientist's journal.
+%   Same event shape as Python's scistacklog.JournalRun.to_event, rendered by
+%   scistacklog.journal (one owner of the wording). RUN_ERR is the error that
+%   ended the run ([] when it finished). Never throws: a journal entry that
+%   cannot be written is logged to the debug file instead.
+%
+%   Known limit: an EachOf input writes one block per alternative, and the
+%   debug-file lines of a MATLAB run carry no run= token.
+    try
+        ev = struct('kind', 'run', 'name', char(fn_name), 'language', 'matlab', ...
+            'started', started, 'elapsed', toc(loop_t0), ...
+            'completed', completed, 'failed', skipped - no_data_count, ...
+            'no_data', no_data_count, 'total', total, ...
+            'stopped', ~isempty(stop_err), 'cancelled', false);
+        ev.failures = failure_groups(failure_order, failure_reasons, failure_examples);
+        if isempty(run_err)
+            ev.error = [];
+        else
+            ev.error = scifor.failure_from_mexception(run_err, fn_name, '', 'run', false);
+        end
+        py.scistacklog.Log.journal_json(jsonencode(ev));
+    catch journal_err
+        scifor.Log.debug('[journal] MATLAB run block for %s not written: %s', ...
+            char(fn_name), journal_err.message);
+    end
+end
+
+
+function new_err = user_value_error(err, stage, fn_name, output, precise)
+%USER_VALUE_ERROR  An error from a SciStack step that handles the user's
+%   values, as the user-fixable error it most likely is. The MATLAB twin of
+%   Python's scifor.failures.as_user_value_error:
+%
+%   PRECISE non-empty -- a check named the cause: scistack:userValue.
+%   PRECISE empty     -- no check did: scistack:userValue:probable, hedged
+%                        wording, and a [seam_fallback] WARN (give this cause
+%                        a check, and a regression test).
+%
+%   The original error is attached as the cause, so its report survives.
+    if ~isempty(precise)
+        new_err = MException('scistack:userValue', '%s', precise);
+    else
+        new_err = MException('scistack:userValue:probable', ...
+            ['SciStack couldn''t combine the output ''%s'' of %s: %s. This ' ...
+             'usually means the function returns different kinds, shapes or ' ...
+             'columns for different combos.'], char(output), char(fn_name), err.message);
+        scifor.Log.warn('[seam_fallback] stage=%s fn=%s output=%s %s: %s — no check names this cause yet', ...
+            stage, char(fn_name), char(output), err.identifier, err.message);
+    end
+    new_err = addCause(new_err, err);
+end
+
+
+function msg = describe_table_kinds(collected, fn_name, output_name)
+%DESCRIBE_TABLE_KINDS  When combos returned tables whose columns differ (a
+%   column missing from some, or of another type), the message naming the
+%   first such column and the combos on each side; '' when none differ.
+%   The diagnosis of the combine_outputs seam -- it runs only after vertcat
+%   has already failed, so a run that works is never refused by it.
+    msg = '';
+    n = numel(collected);
+    labels = cell(n, 1);
+    kinds = cell(n, 1);   % per combo: containers.Map column -> class
+    all_cols = {};
+    for r = 1:n
+        labels{r} = combo_label(collected{r}{1});
+        t = collected{r}{2};
+        m = containers.Map('KeyType', 'char', 'ValueType', 'char');
+        names = t.Properties.VariableNames;
+        for c = 1:numel(names)
+            m(names{c}) = class(t.(names{c}));
+        end
+        kinds{r} = m;
+        all_cols = union(all_cols, names, 'stable');
+    end
+    for c = 1:numel(all_cols)
+        col = all_cols{c};
+        by_kind = containers.Map('KeyType', 'char', 'ValueType', 'any');
+        for r = 1:n
+            if isKey(kinds{r}, col)
+                k = kinds{r}(col);
+            else
+                k = 'missing';
+            end
+            if isKey(by_kind, k)
+                by_kind(k) = [by_kind(k), labels(r)];
+            else
+                by_kind(k) = labels(r);
+            end
+        end
+        if by_kind.Count < 2
+            continue;
+        end
+        parts = {};
+        ks = keys(by_kind);
+        for i = 1:numel(ks)
+            combos = by_kind(ks{i});
+            shown = strjoin(combos(1:min(3, numel(combos))), '; ');
+            if numel(combos) > 3
+                shown = sprintf('%s; +%d more', shown, numel(combos) - 3);
+            end
+            parts{end+1} = sprintf('%s for %d combo(s) (%s)', ks{i}, numel(combos), shown); %#ok<AGROW>
+        end
+        msg = sprintf(['output ''%s'' of %s: column ''%s'' is %s. SciStack can ' ...
+            'only stack tables whose columns match; make the function return ' ...
+            'the same columns, of the same type, for every combo.'], ...
+            char(output_name), char(fn_name), col, strjoin(parts, ', but '));
+        return;
+    end
+end
+
+
+function s = combo_label(metadata)
+%COMBO_LABEL  'subject=1, session=A' for a combo's metadata struct.
+    f = fieldnames(metadata);
+    bits = cell(1, numel(f));
+    for i = 1:numel(f)
+        bits{i} = sprintf('%s=%s', f{i}, short_value(metadata.(f{i})));
+    end
+    s = strjoin(bits, ', ');
+    if isempty(s)
+        s = 'the only combo';
+    end
+end
+
+
 function stop_err = stop_error_after(on_error, stop_err, err)
 %STOP_ERROR_AFTER  on_error='stop': the first genuine failure ends the loop.
 %   scifor:NoData (a combo with no data) never stops a run.
@@ -3090,6 +3242,10 @@ function groups = failure_groups(failure_order, failure_reasons, failure_example
             'count', numel(combos), ...
             'combos', {combos(1:min(numel(combos), WIRE_COMBOS_MAX))}, ...
             'user_frame', example.user_frame, ...
+            'blame', example.blame, ...
+            'probable', example.probable, ...
+            'blame_label', char(py.scistacklog.journal.blame_headline( ...
+                example.blame, example.probable, example.fn_name)), ...
             'example', example);
     end
 end

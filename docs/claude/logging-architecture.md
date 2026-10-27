@@ -1,13 +1,17 @@
 # Logging architecture (scistacklog)
 
-*Written 2026-07-07 alongside the logging redesign (plan: `.claude/logging-redesign-plan.md`). Read this before touching log levels, formats, or handlers anywhere in the stack.*
+*Written 2026-07-07 alongside the logging redesign (plan: `.claude/logging-redesign-plan.md`); rewritten 2026-10-26 for the journal/debug split (plan: `.claude/scientist-facing-log-plan.md`). Read this before touching log levels, formats, handlers, or the journal anywhere in the stack.*
 
-## The two goals
+## Two audiences, two files
 
-1. **Pipeline documentation**: a run's log answers "what ran, what failed and why, what was skipped" — at the default level, in both the console and `scistack.log`.
-2. **Framework debugging**: at DEBUG, the file becomes a nested execution trace with per-step durations, per-iteration detail, and `[timing]` phase breakdowns.
+| File | Reader | Content | Written by |
+|---|---|---|---|
+| `scistack.log` (**journal**) | the scientist | one block per run: what ran, counts, duration, each failure labelled with **who can fix it**; data notes; failed GUI actions | `Log.journal` only (via `Log.run`, `Log.journal_note`, `Log.journal_json`) |
+| `scistack-debug.log` | whoever debugs SciStack | everything, **DEBUG by default**, `run=<id>` on every line inside a run | every `Log.*` call / layer logger |
 
-The default file is deliberately NOT "everything": both sinks default to INFO, and DEBUG is opt-in. Compensation so the INFO file still answers "why did it fail": the first occurrence of each distinct failure reason logs at WARN **with traceback**, and the end-of-run summary aggregates all failures by reason.
+Both sit beside the database. `scidb.log.attach_log_file(db)` sets both (`log_path_for` = journal, `debug_log_path_for` = debug; the debug name is derived by `scistacklog.debug_path_for`). `configure_database` (Python and MATLAB), the GUI server and the `scidb` CLI all call it.
+
+**Both goals, one emit stream.** Audience is a separate axis from level: a scientist never has to read a level-filtered framework log, and a debugger never has to re-run with `-v`. The debug file is a **superset**: every journal block is also logged as one INFO record (`[journal]`, layer `scistack`) to the debug file and the console. A journal block names `run=<id>`; grepping the debug file for that token gives the whole trace of that run.
 
 ## Topology
 
@@ -15,65 +19,68 @@ The default file is deliberately NOT "everything": both sinks default to INFO, a
 Log.debug/info/warn/error(msg, *args, layer=..., exc_info=...)   ← scistacklog facade
         │  emits on logging.getLogger(layer)
         ▼
-layer loggers: scidb, scifor, sciduck, scihist, scilineage,
-               scistack, scistack_gui, matlab        (LAYERS tuple)
+layer loggers (LAYERS): scidb, scifor, sciduck, scihist, scilineage, scistack, scistack_gui, …, matlab
    • pinned to level DEBUG, propagate=True  ← NEVER filter here (caplog contract)
-   • module loggers (scidb.discover, scilineage.hashing, …) are children — free coverage
         │
-        ├── console handler (stderr, singleton)   level: INFO default
-        │      format: HH:MM:SS [layer] message   (level prefix only at WARN+)
-        └── file handler (scistack.log, singleton)   level: INFO default
-               format: YYYY-MM-DD HH:MM:SS.mmm LEVEL [layer] message
-               one record per line; WARN not WARNING; FileHandler(delay=True)
+        ├── console handler (stderr, singleton)        level: INFO default
+        │      HH:MM:SS [layer] message   (level prefix only at WARN+)
+        └── debug-file handler (_CappedFileHandler)     level: DEBUG default
+               YYYY-MM-DD HH:MM:SS.mmm LEVEL [layer] run=<id> message   (run= only inside a run)
+               rolls to .1…​.5 past DEBUG_MAX_BYTES (10 MB); a failed rename
+               (Windows, another process has it open) is given up for the session
+
+Log.run(name) ─► JournalRun ─► on exit, if a summary or an error reached it:
+Log.journal(event) ─► scistacklog.journal.render(event) ─► append to scistack.log
+                                                          └► Log.info("[journal]\n…", layer="scistack")
 ```
 
-- **Levels live on the handlers, never on loggers.** Records always propagate to root, so pytest `caplog` sees everything regardless of sink levels. The default `layer="scidb"` emits on logger `"scidb"` — the historical caplog contract.
-- `Log.attach()` is idempotent and lazy (first emit / `set_path`); nothing happens at import. `bridge_python_logging()` is a deprecated alias kept for the GUI.
-- `scidb/src/scidb/log.py` is a **re-export shim** — MATLAB's `py.scidb.log.Log.*` delegation and `from scidb.log import Log` imports are public contracts.
-- `set_path` swaps the FileHandler (`delay=True` → the file may legitimately never exist if everything was level-suppressed).
+- **Levels live on the handlers, never on loggers.** caplog sees everything.
+- `_RecordTagger` adds `layer`, `levelshort` and `runtag` (from the `_RUN` contextvar).
+- `set_path(debug, journal_path=None)`; `get_path()` is the **debug** file (MATLAB tests `fileread` it), `get_journal_path()` the journal.
 
-## Level policy (the triage rule)
+## The journal
 
-**INFO only if O(1) per user-visible operation** (a for_each run, one save/load call, one CLI invocation). Per-iteration / per-column / per-phase / internals = DEBUG. WARN = recoverable anomaly worth seeing once (includes first-occurrence iteration failures, with traceback). ERROR = a failed operation, always with traceback to the file.
+- **`Log.run(name)`**: only the OUTERMOST run on a context creates a `JournalRun`; nested runs share it, so `scidb.for_each` → `scifor.for_each` (and EachOf alternatives) are one block. Written on exit only if a summary or an error reached it, so a dry run or a pipeline step that was only registered writes nothing.
+- **`scifor.failures.journal_run` / `journaled`**: the decorator on both `scifor.for_each` and `scidb.for_each`. It classifies an escaping exception (`run_failure` → blame) before `Log.run` sees it; an `on_error="stop"` exception calls `run.fail(None)` because the summary already holds it. An exception nobody classified is recorded neutrally ("The run failed"), never as "internal".
+- What feeds a block: scifor's summary event (`journal.add_summary`, same dict as the `summary` progress event), scidb's `count("saved", n)` (in `_save_results`) and `count("up_to_date", n)` (skip_computed).
+- **Rendering** (`scistacklog/journal.py`): plain dicts in, text out, never raises. `blame_headline` is the ONE wording of each blame category. It is also sent to the GUI as `blame_label` on every failure group, so the TS code holds no copy.
+- `Log.journal_note(text, key=)`: once per key per process. Used by scistackplotdb's field-coverage check (one note per variable + column set, instead of a WARN per column per load).
+- `Log.journal_json(text)`: the MATLAB entry. `+scifor/for_each.m`'s `write_journal` builds the same event and calls it after the outputs are built (or, with `error`, when building them fails).
+- GUI actions: `server._journal_action_failure` writes `action_failed` for a failed non-read RPC, and puts ` [run=<id>]` on the debug-file `RPC << … FAILED` line. Read RPCs (`get_*`/`list_*`) are left out: they repeat on every refresh.
 
-INFO inventory (keep it small): for_each banner + inputs/options, periodic progress, run summary + per-reason failure lines, `skip_computed: N/M`, `filtered N non-existent combos`, `loaded N inputs`, `saved -> record_id` (direct saves), capped `[save]` lines, `[batch_save]` Preparing/Completed (test-pinned), `[draft]` endpoint notices, `[provenance] recorded run_id`, all `[timing]` summaries, `configure_database` run-context header.
+## Level policy (debug file and console)
 
-**Naming: snake_case operation names, never `Step N` / `4a_` prefixes** (user feedback, firm). Ordering is conveyed by log sequence and nesting. Subsystem tags like `[timing]`, `[batch_save]` are stable grep targets — keep them.
+Unchanged triage rule: **INFO only if O(1) per user-visible operation**; per-iteration / per-column / internals = DEBUG; WARN = recoverable anomaly worth seeing once (first occurrence of each failure reason, with traceback); ERROR = failed operation, with traceback. The INFO/DEBUG split now decides only what the **console** shows and what a deliberately quieted debug file keeps. The scientist's view is the journal, so there was no reason to demote the GUI's 747 INFO call sites (a sweep was considered and not done).
 
-## Instrumentation helpers (scistacklog)
+**Naming: snake_case operation names, never `Step N`.** Grep tags `[timing]`, `[batch_save]`, `[journal]`, `[seam_fallback]`, `[run]` are stable.
 
-- `with Log.step("resolve_empty_lists", layer=...):` — `→ name` / `← name done in Xs` at DEBUG; on exception an ERROR with duration + traceback, then re-raise. Wired around scidb for_each's three phases (`for_each_prepare`, `delegate_to_scifor`, `for_each_save`), so a failed run's log always ends with the error in context.
-- `with Log.timer("save_batch(X)", extra="114 items") as t: / t.phase("commit")` — one `[timing] name: …TOTAL=Xs (phase=Ys, …)` INFO line + DEBUG per-phase table. Use for new hot-path timing instead of hand-rolled dicts. (`database.py`'s save_batch kept its accumulator dict — same output format — because per-row accumulation doesn't fit the context-manager shape.)
+## Instrumentation helpers
+
+- `Log.step(name)`: `→`/`←` at DEBUG, ERROR + traceback on failure.
+- `Log.timer(name, live=)` / `Log.timings(...)`: one `[timing] … TOTAL=` INFO line + DEBUG phase table (now in the debug file by default).
+- `Log.trial(label)`: demote INFO/WARN to DEBUG for discarded work.
 
 ## Per-host behavior
 
-| Host | Console policy | Notes |
+| Host | Console | Notes |
 |---|---|---|
-| Python script | INFO narrative on stderr | `configure_database` sets file path + header |
-| `scidb` CLI | **WARN** unless `-v` (stdout=results, stderr=diagnostics) | `-v` → DEBUG both sinks; errors: one `Error: …` line to stderr + Log.error to file |
-| GUI (JSON-RPC server) | DEBUG console (stderr → VS Code Output Channel) | **No `logging.basicConfig`** — a root handler would double-print every layer record. Frontend run console is fed by `_RunLogRelay` (a scoped handler on the `scifor`/`scidb` loggers in `api/run.py`), NOT stdout; stdout redirect only carries dry-run output. Never attach the relay to `scistack_gui` (feedback loop via `emit()`'s own debug line). |
-| MATLAB | Same file; console = Python stderr (not `evalc`-capturable) | `+scidb/Log.m` gates client-side via appdata cache (min of both sinks) and tags `layer='matlab'`. MATLAB tests must assert on `scistack.log` content (`fileread(char(scidb.Log.get_path()))`), not `evalc`. Timing tests set `set_level('DEBUG','file')` so archives keep phase tables. |
+| Python script | INFO narrative + journal blocks on stderr | `configure_database` attaches both files |
+| `scidb` CLI | **WARN** unless `-v` | errors: one `Error: …` line to stderr + Log.error to file |
+| GUI (JSON-RPC server) | DEBUG (stderr → VS Code Output Channel) | no `logging.basicConfig`; run console fed by `_RunLogRelay` on `scifor`/`scidb` loggers only (the `[journal]` mirror is layer `scistack`, so it is not relayed). The extension's "Open log" opens the journal. |
+| MATLAB | same files | `+scidb/Log.m` gates client-side on `get_level()` (min of sinks), which is now **DEBUG**: every MATLAB `Log.debug` crosses the bridge. Watch `TestForEachTimingInstrumentation` for the cost. MATLAB tests read `scidb.Log.get_path()` = the debug file. |
 
-Config surface: `SCIDB_LOG_LEVEL` env var (both sinks, read once at attach), `Log.set_level(level, sink="console"|"file"|"both")`, CLI `-v`. Nothing else.
-
-## scifor specifics
-
-- scifor stays scidb-free; it depends only on `scistacklog` and calls `Log.*(..., layer="scifor")`.
-- Periodic progress: one INFO line per **outermost-iterated-key transition** (`progress: subject=s06 (6/12) — 57/120 combos (47.5%) …`), guarded by `_PROGRESS_START_DELAY_S` (5s — fast runs emit none) and `_PROGRESS_MIN_INTERVAL_S` (2s, measured elapsed-to-elapsed from loop start). Module constants, monkeypatched in tests.
-- Failure aggregation: `failure_reasons: dict[reason → [combo_str]]`, reason = `f"{type(e).__name__}: {e}"`; summary caps combos at 5 with `(+N more)`. Same logic ported to MATLAB `+scifor/for_each.m` (`record_iteration_failure` with `containers.Map`).
-- `_progress_fn` gained a final `{"event": "summary", current, total, completed, failed, skipped, cancelled, failure_reasons}` event (`current` kept for positional consumers like the GUI). scidb consumes it for the authoritative `run summary:` line, folding in `skip_computed_count` from `_ForEachState`.
-- `_log_fn` is deprecated and ignored everywhere (kept in signatures so call sites don't break).
-- Dry-run output is `print()` to stdout by design — it is the requested result, not logging. Same for `[stat draft]` payloads and `save_batch(profile=True)` tables.
+Config: `SCIDB_LOG_LEVEL` (both sinks, at attach), `Log.set_level(level, sink)`, CLI `-v`.
 
 ## Testing contracts
 
-- Tests asserting per-iteration `[run]`/`[skip]`/`[recompute]` use `caplog.at_level(logging.DEBUG, logger="scifor"|"scidb")`, filtered by `record.name` when counting (scifor and scidb records both propagate to root).
-- `scistacklog/tests/test_log.py` pins formats (file-line regex, time-only console), dual-sink independence, caplog-at-ERROR-sinks, idempotence, MATLAB call shapes, step/timer behavior.
-- `scidb/tests/test_log_shim.py` pins the shim identity, run-context header, `[timing]`-at-INFO, internals-absent-at-INFO.
-- `scifor/tests/test_logging.py` pins the summary/progress/WARN-once behavior and the no-scidb-import + no-`/tmp/scihist_diag.log` guarantees.
+- `scistacklog/tests/test_log.py`: formats, sink independence, caplog. Its fixture sets the file to INFO, because these tests pin what each level lets through. `test_default_levels_info_console_debug_file` pins the real defaults.
+- `scistacklog/tests/test_journal.py`: two files, superset, one block per outermost run, `run=` token, neutral unclassified errors, renderer, notes, MATLAB events, rollover, single-writer source guard.
+- `scifor/tests/test_blame.py`: every blame category from real runs, wire round trip, seam (precise / probable / pass-through), AST guard that the combine step is inside the seam, run-level error in the block.
+- `scidb/tests/test_log_shim.py`: shim identity, `attach_log_file` paths, `[timing]` in the debug file, internals in the debug file and never the journal.
 
-## Known trade-offs / future work
+## Known trade-offs
 
-- MATLAB users don't see the console narrative in the command window reliably (Python stderr routing varies); the file is the source of truth there.
-- `save_batch`'s timing stays hand-rolled (accumulator pattern); migrate to `Log.timer` only with a restructure that can be properly verified.
-- A pre-existing bug (2 combos → 4 fn calls with `generates_file=True`) was found during this work — tracked separately, not logging-related.
+- MATLAB: an EachOf input writes one block per alternative, and MATLAB-originated debug lines carry no `run=` token (the Python run context does not span MATLAB code).
+- MATLAB: a built-in passed directly as the function (`@readtable`) that fails is classified `internal` (there is no MATLAB equivalent of `call_user_function`'s marker frame).
+- A GUI action failure whose exception carries no marker is rendered with hedged wording ("If the message doesn't say what to change, this is likely a SciStack bug"), because the GUI's ~90 deliberate `raise ValueError` refusals are not marked yet. `layout_service.EdgeCycleError` is the first that is.
+- The debug file at DEBUG costs disk and some time per record; rollover caps the disk.

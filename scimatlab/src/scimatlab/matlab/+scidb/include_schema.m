@@ -12,9 +12,12 @@ function include_schema(reason, varargin)
 %       reason   - Human-readable explanation (string)
 %       varargin - Schema key/value pairs, e.g. 'subject', 1, 'trial', 2
 %
-%   Raises an error if:
-%       - The exact keyset has no exclusion record
-%       - The exact keyset is already included
+%   The exclusion may be on a coarser keyset: after
+%   scidb.exclude_schema(R, 'subject', 3), include_schema(R, 'subject', 3, 'trial', 2)
+%   re-includes only trial 2 (the more specific row wins).
+%
+%   Raises an error if the keyset is already included in effect (no
+%   exclusion covers it, or the row that decides it is an include).
 
     arguments
         reason (1,1) string

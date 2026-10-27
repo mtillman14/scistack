@@ -23,6 +23,7 @@ import scifor as _scifor
 from scifor import ColName, ColumnSelection, EachOf, Fixed, Merge, require_alternatives
 from scifor import for_each as _scifor_for_each
 from scifor import stopped_run_of, validate_on_error
+from scifor.failures import journaled
 from scifor import output_column_name as _output_column_name
 
 from . import glue as _glue
@@ -246,6 +247,7 @@ class _ForEachState:
 # ---------------------------------------------------------------------------
 
 
+@journaled
 def for_each(
     fn: Callable,
     inputs: dict[str, Any],
@@ -1091,6 +1093,9 @@ def _for_each_execute(
                 f"skipped={state.skip_computed_count} (skip_computed, up to date)"
             )
         _summary_parts.append(f"total={_run_summary['total'] + state.skip_computed_count}")
+        _journal = Log.current_run()
+        if _journal is not None and state.skip_computed_count:
+            _journal.count("up_to_date", state.skip_computed_count)
         if _run_summary["cancelled"]:
             _summary_parts.append("cancelled")
         if _run_summary["stopped"]:
@@ -5955,6 +5960,9 @@ def _save_results(
     # did save -- a logged ERROR alone let a run that saved nothing report
     # success (scistack.log 2026-10-01, GaitRiteSymmetry 0 of 420).
     save_failures: list[str] = []
+    # The exceptions behind save_failures, each passed through the save seam
+    # (as_user_value_error) so OutputSaveError can say who can fix it.
+    save_causes: list[BaseException] = []
 
     for (output_idx, save_path), items in batch_items.items():
         output_obj = outputs[output_idx]
@@ -6098,6 +6106,9 @@ def _save_results(
                 f"{_output_type_label(output_obj)}: {len(items)} record(s) not saved "
                 f"({type(e).__name__}: {e})"
             )
+            save_causes.append(
+                _save_seam_error(e, fn_name, state, output_obj, items)
+            )
             for data, meta in items[:3]:
                 meta_str = ", ".join(
                     f"{k}={v}" for k, v in meta.items() if not k.startswith("__")
@@ -6185,6 +6196,9 @@ def _save_results(
                     f"{_output_type_label(output_obj)} (generates_file): 1 item not saved "
                     f"({type(e).__name__}: {e})"
                 )
+                save_causes.append(
+                    _save_seam_error(e, fn_name, state, output_obj, [])
+                )
 
     # ===========================================================================
     # PHASE 4: Write the bipartite provenance graph + append-only _run audit.
@@ -6267,6 +6281,9 @@ def _save_results(
     # Summary
     # ===========================================================================
     batch_total_elapsed = time.perf_counter() - batch_start_time
+    _journal = Log.current_run()
+    if _journal is not None:
+        _journal.count("saved", total_saved)
     Log.info(
         f"[batch_save] Total: saved {total_saved} record(s) in {batch_total_elapsed:.3f}s "
         f"({total_saved / batch_total_elapsed:.1f} records/s)"
@@ -6278,12 +6295,46 @@ def _save_results(
             f"[batch_save] {fn_name}: {len(save_failures)} output(s) NOT saved; "
             f"the run fails: " + "; ".join(save_failures)
         )
-        raise OutputSaveError(fn_name, save_failures, total_saved)
+        raise OutputSaveError(fn_name, save_failures, total_saved, causes=save_causes)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _save_seam_error(
+    exc: BaseException, fn_name: str, state: "_ForEachState", output_obj: Any, items: list
+) -> BaseException:
+    """A save failure as the save seam sees it: an ``ActionableError`` stays
+    as it is (``ColumnSetChangedError`` already says what to change);
+    anything else is most likely the values the function returned, so it
+    becomes a ``UserValueError`` — precise when the batch's values differ in
+    kind across combos, hedged otherwise (``scifor.failures.as_user_value_error``).
+    """
+    from scifor.failures import as_user_value_error, describe_value_kinds
+
+    output = _output_type_label(output_obj)
+
+    def _diagnose() -> "str | None":
+        labelled = [
+            (
+                ", ".join(f"{k}={v}" for k, v in meta.items() if not str(k).startswith("__"))
+                or "the only combo",
+                data,
+            )
+            for data, meta in items
+        ]
+        return describe_value_kinds(labelled, fn_name=fn_name, output=output)
+
+    return as_user_value_error(
+        exc,
+        stage="save",
+        fn_name=fn_name,
+        fn=getattr(state, "fn", None),
+        output=output,
+        diagnose=_diagnose,
+    )
 
 
 def _get_schema_keys(db: Any | None) -> set:

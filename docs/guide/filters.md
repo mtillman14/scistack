@@ -112,7 +112,14 @@ list_exclusions()        # inspect current exclusions (returns a DataFrame)
 
 # Re-include later (logged; the original exclusion row is preserved)
 include_schema(subject=1, trial=2, reason="re-reviewed video, recording was valid")
+
+# Re-include part of a wider exclusion: the more specific row wins, and the
+# rest of subject 3 stays excluded
+include_schema(subject=3, trial=1, reason="trial 1 was recorded before withdrawal")
 ```
+
+In the GUI, the 📋 Inventory popup has an **Exclude…** / **Include…** button on
+every row. Each one asks for a reason and calls these same functions.
 
 Because the exclusion set is hashed into the outputs' version keys, adding or
 removing an exclusion **invalidates cached results** — runs that should now

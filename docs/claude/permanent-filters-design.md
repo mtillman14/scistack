@@ -334,8 +334,19 @@ finds the most recent row matching that exact keyset (if any) and
 compares its `status` to the requested one.
 
 The default (no row with that exact keyset on file) counts as included,
-so `include_schema` on a never-touched keyset raises; `exclude_schema`
-on the same keyset succeeds.
+so `exclude_schema` on a never-touched keyset succeeds.
+
+**`include_schema` guard (changed 2026-10-26,
+`.claude/plan-inventory-exclusion-actions.md`):** it raises iff the
+keyset is already included **in effect**, meaning the row that governs it
+(`scidb.exclusions.governing_overrides`, the one owner of the matching
+rule) is an include, or no row covers it at all. The exact keyset's own row
+always governs when there is one (nothing else matching it can be as
+specific), so this is the old exact-keyset guard whenever such a row exists.
+What it adds: after `exclude_schema(subject=3)`,
+`include_schema(subject=3, trial=2)` now works without restating the
+exclusion at the finer level first. It re-includes only trial 2. The data
+inventory popup's Include… relies on this.
 
 ```python
 scidb.exclude_schema(subject=1, trial=2, reason="...")   # ok

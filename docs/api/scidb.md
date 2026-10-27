@@ -12,7 +12,7 @@ from scidb import configure_database, BaseVariable, for_each, Fixed, Parameter
 
 | Name | Purpose |
 |---|---|
-| `configure_database(path, schema_keys, schema_key_types=None)` | Open (or create) the database and register every known variable type. Returns the `DatabaseManager`. Also starts `scistack.log` next to the file. |
+| `configure_database(path, schema_keys, schema_key_types=None)` | Open (or create) the database and register every known variable type. Returns the `DatabaseManager`. Also starts `scistack.log` (the journal) and `scistack-debug.log` next to the file. |
 | `get_database()` | The current `DatabaseManager`. Raises `DatabaseNotConfiguredError` if none is configured. |
 
 ```python
@@ -237,7 +237,9 @@ Installing `scidb` adds a `scidb` command for inspecting a database. Most comman
 
 ## Logging
 
-`Log.set_level("DEBUG")` turns on full detail on the console and in `scistack.log`. Pass `sink="file"` to raise only the log file. The `SCIDB_LOG_LEVEL` environment variable and `scidb -v` do the same.
+SciStack writes two files beside the database. `scistack.log` is the journal: one entry per run, saying what ran, what failed, and whether the failure is in your code, your function's values, your setup, or SciStack itself (see [Reading your log](../guide/reading-your-log.md)). `scistack-debug.log` records everything, at full detail, for debugging SciStack.
+
+`Log.set_level("DEBUG")` turns on full detail on the console too. `Log.set_level("INFO", sink="file")` makes the debug file quieter. The `SCIDB_LOG_LEVEL` environment variable and `scidb -v` set both.
 
 ## Exceptions
 

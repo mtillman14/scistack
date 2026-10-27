@@ -112,7 +112,7 @@ There are three ways to run:
 
 Endpoint nodes also have a **👁 Show** button. It draws the figure or result as a draft, without saving anything, so you can adjust it as often as you like.
 
-While a run is going, the Runs dock shows its progress. When it ends, the dock summarises what finished, what failed and why, and what was skipped. The full story is also written to `scistack.log`, next to your database.
+While a run is going, the Runs dock shows its progress. When it ends, the dock summarises what finished, what failed and why, and what was skipped. Each run also gets an entry in `scistack.log`, next to your database, which says what failed and whether it is something you can fix or a SciStack bug. Full technical detail is in `scistack-debug.log`.
 
 **Running again is safe.** If a function produces the same result at the same location, SciStack keeps the existing record rather than adding a duplicate. You can re-run after any change without cleaning up first.
 

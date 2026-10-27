@@ -4,8 +4,8 @@ The file was renamed ``scidb.log`` -> ``scistack.log`` (2026-10-26). Python
 reaches the name through ``scidb.log.log_path_for``; two other languages need
 it too and cannot import it:
 
-- MATLAB's ``+scidb/configure_database.m`` calls ``log_path_for`` through
-  ``py.`` rather than spelling the name, so it cannot drift. Pinned here.
+- MATLAB's ``+scidb/configure_database.m`` calls ``attach_log_file`` through
+  ``py.`` rather than spelling the names, so it cannot drift. Pinned here.
 - The extension's ``failureReporter.ts`` opens the log from TypeScript, so it
   keeps a copy. Pinned here to the owner's value.
 
@@ -39,5 +39,5 @@ def test_matlab_configure_database_uses_owner():
         _REPO / "scimatlab" / "src" / "scimatlab" / "matlab" / "+scidb" / "configure_database.m"
     ).read_text(encoding="utf-8")
     code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("%"))
-    assert "py.scidb.log.log_path_for(" in code
+    assert "py.scidb.log.attach_log_file(" in code
     assert ".log'" not in code, "configure_database.m spells a log file name itself"

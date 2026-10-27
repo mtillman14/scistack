@@ -1,10 +1,16 @@
 """Custom exceptions for scidb."""
 
+from scifor.failures import ActionableError
 from scifor.schema_types import SchemaKeyTypeError as _SciforSchemaKeyTypeError
 
 
-class SciStackError(Exception):
-    """Base exception for all scidb errors."""
+class SciStackError(ActionableError):
+    """Base exception for all scidb errors.
+
+    Every one is raised on purpose, with a message that says what to change,
+    so it is an ``ActionableError``: the journal files it under "your setup
+    or data", never under "SciStack internal error"
+    (``scifor.failures.classify_blame``)."""
 
     pass
 
@@ -111,17 +117,39 @@ class OutputSaveError(SciStackError):
     neither hides nor blocks the others.
 
     ``failures`` holds one line per failed output: its name, how many records
-    were lost, and the cause.
+    were lost, and the cause. ``causes`` holds the exceptions themselves, each
+    already passed through the save seam (``scifor.failures.as_user_value_error``),
+    so each is an ``ActionableError``; who can fix this error is read from them.
     """
 
-    def __init__(self, fn_name: str, failures: "list[str]", saved: int) -> None:
+    def __init__(
+        self,
+        fn_name: str,
+        failures: "list[str]",
+        saved: int,
+        causes: "list[BaseException] | None" = None,
+    ) -> None:
         self.fn_name = fn_name
         self.failures = list(failures)
         self.saved = saved
+        self.causes = list(causes or [])
         super().__init__(
             f"{fn_name}: {len(self.failures)} output(s) could not be saved "
             f"({saved} record(s) saved): " + "; ".join(self.failures)
         )
+
+    @property
+    def blame(self) -> str:  # type: ignore[override]
+        """``user_value`` if any output failed on its values, else ``setup``."""
+        blames = {getattr(c, "blame", "setup") for c in self.causes}
+        return "user_value" if "user_value" in blames else "setup"
+
+    @property
+    def probable(self) -> bool:  # type: ignore[override]
+        """True when every value-caused failure is a best guess (no check
+        named its cause)."""
+        valued = [c for c in self.causes if getattr(c, "blame", None) == "user_value"]
+        return bool(valued) and all(getattr(c, "probable", False) for c in valued)
 
 
 class ColumnSetChangedError(SciStackError):

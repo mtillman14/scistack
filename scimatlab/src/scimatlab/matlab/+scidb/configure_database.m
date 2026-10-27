@@ -70,9 +70,10 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
     % distribute=true work identically in DB-backed and standalone modes.
     scifor.set_schema(dataset_schema_keys);
 
-    % Log file beside the database. scidb.log.log_path_for owns the file
-    % name, so MATLAB and Python always write the same file.
-    scidb.Log.set_path(char(py.str(py.scidb.log.log_path_for(dataset_db_path))));
+    % The journal (scistack.log) and the debug log (scistack-debug.log)
+    % beside the database. scidb.log.attach_log_file owns both names, so
+    % MATLAB and Python always write the same files.
+    py.scidb.log.attach_log_file(dataset_db_path);
 
     scidb.Log.info('configure_database (MATLAB host): %s', dataset_db_path);
 

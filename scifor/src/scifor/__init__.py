@@ -42,12 +42,17 @@ from .discovery import (
 )
 from .each_of import EachOf, require_alternatives
 from .failures import (
+    BLAME_VALUES,
     ON_ERROR_VALUES,
+    ActionableError,
     ComboFailure,
     FailureFrame,
     FailureGroup,
     StoppedRun,
+    UserValueError,
+    classify_blame,
     stopped_run_of,
+    user_value_seam,
     validate_on_error,
 )
 from .filters import Col, ColFilter, CompoundFilter, NotFilter
@@ -112,6 +117,12 @@ __all__ = [
     "StoppedRun",
     "stopped_run_of",
     "ON_ERROR_VALUES",
+    # Who can fix a failure (docs/claude/error-surfacing.md)
+    "ActionableError",
+    "UserValueError",
+    "BLAME_VALUES",
+    "classify_blame",
+    "user_value_seam",
     "validate_on_error",
     "spread_nested_results",
     "DB_ONLY_KWARGS",

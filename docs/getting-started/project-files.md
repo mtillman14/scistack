@@ -200,7 +200,7 @@ speed   = ["SLOW", "SSV", "FAST"]
 
 By default a schema key's values are sorted alphabetically, so sessions come out as `BL, FU, POST`. List a key here to fix its order. Values you list come first, in your order; any others follow in the default order, so a session added later still appears. Keys you don't list are unaffected.
 
-Values are matched as text, so `"01"` matches `"01"` and not `1`. A key that isn't one of the database's schema keys is warned about in `scistack.log`.
+Values are matched as text, so `"01"` matches `"01"` and not `1`. A key that isn't one of the database's schema keys is warned about in `scistack-debug.log`.
 
 **Used by:** loaded DataFrames (`load(as_df=True)`, CSV exports), `for_each` iteration order, the GUI's location picker, plot axes, facets and legends, and code exported from Plot Studio (`order=`, `hue_order=`, ...). **Written by:** you; the GUI keeps it but never edits it.
 
@@ -219,7 +219,7 @@ name = "Sex"
 levels = { "F" = "Female", "M" = "Male" }
 ```
 
-A "thing" can be a schema key, a variable, a variable's column (`"Var.Column"`), or a figure factor such as `ColName` or `Variant`. Level keys are the values as text, always in quotes. Figures show the aliases in titles, axes and legends; each saved plot can override them. Unknown names and two levels with the same alias are warned about in `scistack.log`; a malformed entry is skipped.
+A "thing" can be a schema key, a variable, a variable's column (`"Var.Column"`), or a figure factor such as `ColName` or `Variant`. Level keys are the values as text, always in quotes. Figures show the aliases in titles, axes and legends; each saved plot can override them. Unknown names and two levels with the same alias are warned about in `scistack-debug.log`; a malformed entry is skipped.
 
 **Used by:** Plot Studio and Stat Studio, and their exported code. **Written by:** you, or the GUI's label editor in Plot Studio.
 
@@ -240,7 +240,7 @@ Fixes the colour of each level wherever that thing colours a figure, so Baseline
 
 ### Finding out what SciStack read
 
-Every read is logged to `scistack.log` in your database's folder. Search it for:
+Every read is logged to `scistack-debug.log` in your database's folder. Search it for:
 
 | Search for | Shows |
 |---|---|

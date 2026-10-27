@@ -348,6 +348,42 @@ def inventory_table(
     return [*inv.columns, "status"], list(rows)
 
 
+def row_keyset(
+    columns: list[str], row: list[str] | tuple, all_marker: str = ALL_LEVELS
+) -> dict[str, str]:
+    """The schema keys one displayed row stands for — what to pass to
+    ``exclude_schema`` / ``include_schema`` to act on exactly that row.
+
+    *columns* and *row* are one view's header and row as
+    :func:`inventory_table` (or ``to_dict``) produced them. The ``status``
+    cell is dropped, and so is every *all_marker* cell: a collapsed row
+    ``subject=C03, session=(all)`` stands for every session of C03, which is
+    the wildcard ``{subject: C03}``. Keys not in the view (Off) are absent,
+    so they are wildcards too.
+
+    Raises ``ValueError`` when *row* and *columns* differ in length or no key
+    is left (a row that is ``(all)`` everywhere is the whole dataset, which
+    is refused rather than excluded).
+    """
+    if len(row) != len(columns):
+        raise ValueError(
+            f"row has {len(row)} cell(s) but there are {len(columns)} column(s): "
+            f"{columns}"
+        )
+    keys = {
+        c: str(v)
+        for c, v in zip(columns, row)
+        if c != "status" and str(v) != all_marker
+    }
+    if not keys:
+        raise ValueError(
+            "This row stands for every combination (no key has a single "
+            "value); refusing to act on the whole dataset."
+        )
+    Log.debug(f"row_keyset: columns={list(columns)} row={list(row)} -> {keys}")
+    return keys
+
+
 def _collapse_rows(inv: SchemaInventory) -> list[tuple]:
     """``inv.rows`` with every uniform block folded into one row.
 

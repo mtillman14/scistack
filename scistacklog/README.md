@@ -7,37 +7,64 @@ scidb, sciduckdb, …) emits through it or through a plain
 
 ## Design
 
-One `Log` call, two destinations with independent levels:
+Two audiences, so two files, fed by one emit stream:
 
-- **console** (stderr) — a concise pipeline narrative for the person running
-  the pipeline. Time-only timestamps; level prefix only at WARN and above.
-
-  ```
-  14:32:06 [scifor] for_each(compute_psd) — 120 iterations: subject=12 values [s01,…,s12]
-  14:33:15 [scifor] WARN: iteration failed: subject=s03, session=2 — ValueError: bad channel count
-  ```
-
-- **file** (`scistack.log` next to the database, pointed via `Log.set_path`,
-  done automatically by `scidb.configure_database()`) — the run document.
-  One record per line: date + millisecond timestamp, level, originating layer.
+- **journal** (`scistack.log` beside the database) — for the scientist. One
+  block per run: what ran, the counts, how long, and each failure labelled
+  with who can fix it. Nothing about the framework's internals.
 
   ```
-  2026-07-07 14:32:06.001 INFO  [scifor] for_each(compute_psd) — 120 iterations: subject=12 values [s01,…,s12]
-  2026-07-07 14:33:20.100 INFO  [scidb] [timing] save_batch(PSD): 114 items, 12 schemas, 0.412s
+  ── 2026-10-22 17:55:18  clean_asia  (run=a3f2c1d9) ─────────────────────
+     finished with 34 failures: ✓ 0 completed   ✗ 34 failed   – 0 no data   2m 14s
+
+     ✗ Error in your function clean_asia — 34 combos
+       AttributeError: 'StringArray' object has no attribute 'split'
+       at C:\lab\clean_asia.py:42 in parse_level
+           levels = col.split(",")
+       combos: subject=2204674; subject=2204675; subject=2204676; subject=2204677; subject=2204678 (+29 more)
+
+     Failed combos saved nothing; completed combos were kept.
   ```
 
-Both sinks default to INFO. DEBUG detail (per-iteration lines, timing phase
-tables, framework internals) is opt-in:
+- **debug file** (`scistack-debug.log` beside it) — for whoever debugs
+  SciStack. Everything, at DEBUG by default, capped at 10 MB × 5. Every line
+  written during a run carries the `run=<id>` the journal block names.
+
+  ```
+  2026-10-22 17:55:18.001 INFO  [scifor] run=a3f2c1d9 for_each(clean_asia) — 34 iterations: subject=…
+  2026-10-22 17:55:18.120 DEBUG [scifor] run=a3f2c1d9 failure_from_exception: AttributeError in clean_asia -> blame=user_code via …
+  ```
+
+- **console** (stderr) — the narrative for the person watching, at INFO.
+  Time-only timestamps; level prefix only at WARN and above.
+
+The debug file is a superset of the journal: each block is also logged there
+(as one `[journal]` record). `scidb.configure_database()` points both files
+beside the database (`scidb.log.attach_log_file`); directly:
 
 ```python
 from scistacklog import Log
 
-Log.set_level("DEBUG", sink="file")   # full detail in the file only
-Log.set_level("DEBUG")                # both sinks
+Log.set_path("proj/scistack-debug.log", journal_path="proj/scistack.log")
+Log.set_level("INFO", sink="file")   # a quieter debug file
+Log.set_level("DEBUG")               # both sinks
 ```
 
 or set the `SCIDB_LOG_LEVEL` environment variable (applies to both sinks),
 or pass `-v` to the `scidb` CLI.
+
+### Writing to the journal
+
+```python
+with Log.run("compute_psd") as run:      # one block per outermost run
+    run.add_summary(summary_event)       # scifor's end-of-run summary
+    run.count("saved", 114)
+Log.journal_note("PSD: 3 columns hold text", key="psd-text")   # once per key
+```
+
+Who-can-fix-it (`blame`) is decided by `scifor.failures.classify_blame` and
+arrives in the event; `scistacklog.journal.blame_headline` is the one wording.
+See `docs/claude/logging-architecture.md`.
 
 ## Usage
 

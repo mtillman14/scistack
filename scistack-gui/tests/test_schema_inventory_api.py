@@ -134,3 +134,100 @@ def test_collapse_passes_through(inv_client, tmp_path):
         json={"keys": None, "missing_only": False, "out_path": str(out)},
     )
     assert r.json() == {"path": str(out), "rows": 4}
+
+
+# --- Exclude / Include actions (.claude/plan-inventory-exclusion-actions.md) ---
+# Row -> keys is scidb.inventory.row_keyset and the rules are scidb.exclusions
+# (both tested in scidb/tests); these cover the wiring and the 400s.
+
+
+def _all_rows(client) -> dict:
+    r = client.post("/api/inventory", json={"keys": None, "missing_only": False})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_exclude_a_row_changes_the_counts(inv_client):
+    r = inv_client.post(
+        "/api/inventory/exclude",
+        json={"columns": ["subject", "session"], "row": ["3", "post"], "reason": "never collected"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"keys": {"subject": "3", "session": "post"}}
+    d = _all_rows(inv_client)
+    assert d["counts"] == {"present": 5, "missing": 0, "excluded": 1}
+
+
+def test_exclude_a_collapsed_row_excludes_the_block(inv_client):
+    d = _all_rows(inv_client)
+    row = next(r for r in d["rows"] if r[0] == "1")
+    assert row[1] == d["all_marker"]
+    r = inv_client.post(
+        "/api/inventory/exclude", json={"columns": d["columns"], "row": row, "reason": "withdrew"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"keys": {"subject": "1"}}
+    assert _all_rows(inv_client)["counts"]["excluded"] == 2
+
+
+def test_row_override_and_partial_reinclude(inv_client):
+    cols = ["subject", "session", "status"]
+    inv_client.post(
+        "/api/inventory/exclude",
+        json={"columns": cols, "row": ["2", "(all)", "present"], "reason": "withdrew"},
+    )
+    r = inv_client.post(
+        "/api/inventory/row-override", json={"columns": cols, "row": ["2", "pre", "excluded"]}
+    )
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["keys"] == {"subject": "2", "session": "pre"}
+    assert d["effective"] == "excluded"
+    assert d["governed_by"]["keys"] == {"subject": "2"}
+    assert d["governed_by"]["reason"] == "withdrew"
+
+    r = inv_client.post(
+        "/api/inventory/include",
+        json={"columns": cols, "row": ["2", "pre", "excluded"], "reason": "pre was fine"},
+    )
+    assert r.status_code == 200, r.text
+    rows = {tuple(x[:2]): x[2] for x in inv_client.post(
+        "/api/inventory", json={"keys": None, "missing_only": False, "collapse": False}
+    ).json()["rows"]}
+    assert rows[("2", "pre")] == "present"
+    assert rows[("2", "post")] == "excluded"
+
+
+def test_blank_reason_is_a_400(inv_client):
+    r = inv_client.post(
+        "/api/inventory/exclude",
+        json={"columns": ["subject", "session"], "row": ["3", "post"], "reason": "   "},
+    )
+    assert r.status_code == 400
+    assert "reason is required" in r.text
+
+
+def test_duplicate_exclude_is_a_400_with_scidbs_message(inv_client):
+    body = {"columns": ["subject", "session"], "row": ["3", "post"], "reason": "x"}
+    assert inv_client.post("/api/inventory/exclude", json=body).status_code == 200
+    r = inv_client.post("/api/inventory/exclude", json=body)
+    assert r.status_code == 400
+    assert "already excluded" in r.text
+
+
+def test_include_of_an_included_row_is_a_400(inv_client):
+    r = inv_client.post(
+        "/api/inventory/include",
+        json={"columns": ["subject", "session"], "row": ["1", "pre"], "reason": "x"},
+    )
+    assert r.status_code == 400
+    assert "already included" in r.text
+
+
+def test_whole_dataset_row_is_a_400(inv_client):
+    r = inv_client.post(
+        "/api/inventory/exclude",
+        json={"columns": ["subject", "status"], "row": ["(all)", "present"], "reason": "x"},
+    )
+    assert r.status_code == 400
+    assert "whole dataset" in r.text

@@ -29,13 +29,16 @@ from typing import Any, Callable
 
 from scistacklog import Log
 
+from .failures import ActionableError
+
 #: The declarable schema-key types.
 VALID_SCHEMA_KEY_TYPES = ("numeric", "string")
 
 
-class SchemaKeyTypeError(ValueError):
+class SchemaKeyTypeError(ActionableError, ValueError):
     """A schema key's value violates its declared type, or its spelling is
-    ambiguous. ``scidb.SchemaKeyTypeError`` subclasses this one."""
+    ambiguous. ``scidb.SchemaKeyTypeError`` subclasses this one. A setup
+    problem the user fixes, so an ``ActionableError``."""
 
     # scifor.for_each aborts the whole run on this error instead of recording
     # a per-combo skip: it is a configuration problem that would repeat

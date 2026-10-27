@@ -1,17 +1,23 @@
 """scistacklog — the shared logging facade for every scistack layer.
 
-Dual-sink design:
+Two audiences, three destinations:
 
-- **console** (stderr): concise pipeline narrative for the person running the
-  pipeline. Time-only timestamps, level shown only at WARN and above.
-- **file** (``scistack.log`` next to the database, set via ``Log.set_path``):
-  the run document. Date + millisecond timestamps, level, and originating
-  layer on every line; one record per line.
+- **journal** (``scistack.log`` beside the database, ``Log.set_path(...,
+  journal_path=...)``): written for the scientist. One block per run (what
+  ran, the counts, each failure labelled with who can fix it) and nothing
+  about the framework's internals. Written only through :meth:`Log.journal`
+  and :meth:`Log.run`; rendered by :mod:`scistacklog.journal`.
+- **debug file** (``scistack-debug.log``, ``Log.set_path``): written for
+  whoever debugs SciStack. Everything, at DEBUG by default, size-capped.
+  Date + millisecond timestamps, level, originating layer, and ``run=<id>``
+  on every line written inside a run (the id the journal block names).
+- **console** (stderr): the narrative for the person watching. INFO by
+  default; time-only timestamps, level shown only at WARN and above.
 
-Both sinks default to INFO. DEBUG detail (per-iteration lines, timing phase
-tables, framework internals) is opt-in per sink::
+The debug file is a superset of the journal: every journal block is also
+written to it (and to the console) as one INFO record. Levels per sink::
 
-    Log.set_level("DEBUG", sink="file")     # full detail in the file only
+    Log.set_level("INFO", sink="file")      # a quieter debug file
     Log.set_level("DEBUG")                  # both sinks
 
 or via the ``SCIDB_LOG_LEVEL`` environment variable (applied to both sinks).
@@ -34,16 +40,20 @@ regardless of sink levels.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
 import threading
 import time
+import uuid
 import warnings
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-__all__ = ["Log", "LAYERS"]
+from . import journal as _journal
+
+__all__ = ["Log", "LAYERS", "debug_path_for"]
 
 #: Top-level logger name for each scistack layer. A record's ``[layer]`` tag
 #: in the log line is the first dotted component of its logger name.
@@ -65,6 +75,26 @@ LAYERS = (
 #: Set inside :meth:`Log.trial`: the label its demoted records carry.
 _TRIAL: ContextVar[str | None] = ContextVar("scistacklog_trial", default=None)
 
+#: Set inside :meth:`Log.run`: the outermost run in progress on this context.
+_RUN: ContextVar["JournalRun | None"] = ContextVar("scistacklog_run", default=None)
+
+# The debug file's size cap: past DEBUG_MAX_BYTES it rolls to .1 … .N. A
+# rollover that fails (another process holds the file — routine on Windows,
+# where the GUI server and MATLAB share it) is given up for the session; the
+# file keeps growing rather than spraying handler errors.
+DEBUG_MAX_BYTES = 10 * 1024 * 1024
+DEBUG_BACKUPS = 5
+# How many records between size checks (a stat per record would cost more
+# than the write).
+_ROLLOVER_CHECK_EVERY = 500
+
+
+def debug_path_for(journal_path) -> str:
+    """``scistack-debug.log`` for ``scistack.log``: the one derivation of the
+    debug file's name from the journal's (``<stem>-debug<suffix>``)."""
+    root, ext = os.path.splitext(str(journal_path))
+    return f"{root}-debug{ext or '.log'}"
+
 # scidb's historical 0-3 level scale — the MATLAB-facing numeric contract.
 _SCIDB_TO_PY = {
     0: logging.DEBUG,
@@ -81,18 +111,154 @@ _SHORT_NAMES = {
     logging.CRITICAL: "ERROR",
 }
 
-_FILE_FORMAT = "%(asctime)s.%(msecs)03d %(levelshort)-5s [%(layer)s] %(message)s"
+_FILE_FORMAT = (
+    "%(asctime)s.%(msecs)03d %(levelshort)-5s [%(layer)s]%(runtag)s %(message)s"
+)
 _FILE_DATEFMT = "%Y-%m-%d %H:%M:%S"
 _CONSOLE_DATEFMT = "%H:%M:%S"
 
 
 class _RecordTagger(logging.Filter):
-    """Adds the fields the formatters need: layer and short level name."""
+    """Adds the fields the formatters need: layer, short level name, and the
+    ``run=<id>`` token of the run in progress (empty outside a run)."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         record.layer = record.name.split(".", 1)[0]
         record.levelshort = _SHORT_NAMES.get(record.levelno, record.levelname)
+        if not hasattr(record, "runtag"):
+            run = _RUN.get()
+            record.runtag = f" run={run.run_id}" if run is not None else ""
         return True
+
+
+class _CappedFileHandler(logging.FileHandler):
+    """The debug file: a FileHandler that rolls itself over past a size cap.
+
+    Not ``RotatingFileHandler``: that one retries (and reports) a failed
+    rename on every record, and on Windows the rename fails whenever a second
+    process (MATLAB, the sidecar) has the file open. Here a failed rollover is
+    logged once and abandoned for the session.
+    """
+
+    def __init__(self, path: str) -> None:
+        super().__init__(path, mode="a", encoding="utf-8", delay=True)
+        self._since_check = 0
+        self._rollover_disabled = False
+        self.rollover_note: str | None = None
+        self._rollover_if_large()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        self._since_check += 1
+        if self._since_check >= _ROLLOVER_CHECK_EVERY:
+            self._since_check = 0
+            self._rollover_if_large()
+
+    def _rollover_if_large(self) -> None:
+        if self._rollover_disabled:
+            return
+        try:
+            if os.path.getsize(self.baseFilename) < DEBUG_MAX_BYTES:
+                return
+        except OSError:
+            return
+        self.acquire()
+        try:
+            if self.stream is not None:
+                self.stream.close()
+                self.stream = None  # delay=True reopens on the next emit
+            for i in range(DEBUG_BACKUPS - 1, 0, -1):
+                src = f"{self.baseFilename}.{i}"
+                if os.path.exists(src):
+                    os.replace(src, f"{self.baseFilename}.{i + 1}")
+            os.replace(self.baseFilename, f"{self.baseFilename}.1")
+            self.rollover_note = (
+                f"[log] rolled {self.baseFilename} over at "
+                f"{DEBUG_MAX_BYTES // (1024 * 1024)} MB (keeping {DEBUG_BACKUPS})"
+            )
+        except OSError as e:
+            self._rollover_disabled = True
+            self.rollover_note = (
+                f"[log] could not roll {self.baseFilename} over ({e}); "
+                f"it keeps growing for this session"
+            )
+        finally:
+            self.release()
+
+
+class JournalRun:
+    """One run's journal entry, collected while the run executes.
+
+    Created by :meth:`Log.run` for the OUTERMOST run on a context; nested
+    runs (scidb.for_each → scifor.for_each, EachOf alternatives) share it, so
+    one user-visible call is one journal block. Emitted on exit only if
+    something reached it — a summary or an error — so a dry run or a call
+    that only registered a pipeline step writes nothing.
+    """
+
+    def __init__(self, name: str, *, language: str = "python") -> None:
+        self.run_id = uuid.uuid4().hex[:8]
+        self.name = name
+        self.language = language
+        self.started = time.time()
+        self._t0 = time.perf_counter()
+        self.summaries: list[dict] = []
+        self.error: dict | None = None
+        self.error_handled = False
+        self.counters: dict[str, int] = {}
+
+    def add_summary(self, summary: dict) -> None:
+        """A loop's end-of-run summary (scifor's ``summary`` event shape)."""
+        self.summaries.append(dict(summary))
+
+    def fail(self, failure: "dict | None") -> None:
+        """Record the error that ended the run (a ``ComboFailure.to_dict()``).
+
+        The first call wins: the innermost handler knows the most. ``None``
+        marks the exception as already accounted for (an ``on_error="stop"``
+        failure is in the summary), so :meth:`Log.run` adds nothing.
+        """
+        if self.error_handled:
+            return
+        self.error_handled = True
+        self.error = failure
+
+    def count(self, key: str, n: int) -> None:
+        """Add to a counter shown in the block (``saved``, ``up_to_date``)."""
+        self.counters[key] = self.counters.get(key, 0) + int(n)
+
+    def to_event(self) -> dict:
+        totals = {"completed": 0, "failed": 0, "no_data": 0, "total": 0}
+        groups: dict[str, dict] = {}
+        cancelled = stopped = False
+        for s in self.summaries:
+            for k in totals:
+                totals[k] += int(s.get(k) or 0)
+            cancelled = cancelled or bool(s.get("cancelled"))
+            stopped = stopped or bool(s.get("stopped"))
+            for g in s.get("failures") or []:
+                reason = g.get("reason")
+                if reason in groups:
+                    merged = groups[reason]
+                    merged["count"] = int(merged.get("count") or 0) + int(g.get("count") or 0)
+                    merged["combos"] = list(merged.get("combos") or []) + list(g.get("combos") or [])
+                else:
+                    groups[reason] = dict(g)
+        return {
+            "kind": "run",
+            "name": self.name,
+            "run_id": self.run_id,
+            "language": self.language,
+            "started": self.started,
+            "elapsed": time.perf_counter() - self._t0,
+            **totals,
+            "up_to_date": self.counters.get("up_to_date", 0),
+            "saved": self.counters.get("saved"),
+            "cancelled": cancelled,
+            "stopped": stopped,
+            "failures": list(groups.values()),
+            "error": self.error,
+        }
 
 
 class _ConsoleFormatter(logging.Formatter):
@@ -185,8 +351,9 @@ class _Timer:
 class Log:
     """Framework-wide logging facade (classmethod API, MATLAB-bridged).
 
-    Backed by stdlib logging: one stderr console handler and one file
-    handler, both attached to every layer logger in :data:`LAYERS`.
+    Backed by stdlib logging: one stderr console handler and one debug-file
+    handler, both attached to every layer logger in :data:`LAYERS`, plus the
+    journal file, which only :meth:`journal` writes.
     """
 
     DEBUG = 0
@@ -200,8 +367,13 @@ class Log:
     _console_handler: logging.Handler | None = None
     _file_handler: logging.FileHandler | None = None
     _path: str | None = None
+    _journal_path: str | None = None
+    _journal_lock = threading.Lock()
+    _notes_seen: set[str] = set()
     _console_py_level: int = logging.INFO
-    _file_py_level: int = logging.INFO
+    # The debug file records everything unless told otherwise: a bug should
+    # never need a second run with -v to be diagnosable.
+    _file_py_level: int = logging.DEBUG
     _unknown_layers: set[str] = set()
 
     # -- setup ------------------------------------------------------------
@@ -246,10 +418,12 @@ class Log:
         cls.attach()
 
     @classmethod
-    def set_path(cls, log_path: str | None) -> None:
-        """Point the file sink at ``log_path`` (``None`` detaches it).
+    def set_path(cls, log_path: str | None, journal_path: str | None = None) -> None:
+        """Point the debug file at ``log_path`` and the journal at
+        ``journal_path`` (``None`` detaches either).
 
-        Called automatically by ``scidb.configure_database()``.
+        ``scidb.log.attach_log_file`` (called by ``configure_database``) sets
+        both: ``scistack-debug.log`` and ``scistack.log`` beside the database.
         """
         cls.attach()
         with cls._lock:
@@ -259,22 +433,29 @@ class Log:
                 cls._file_handler.close()
                 cls._file_handler = None
             cls._path = None if log_path is None else str(log_path)
+            cls._journal_path = None if journal_path is None else str(journal_path)
             if cls._path is None:
                 return
-            handler = logging.FileHandler(
-                cls._path, mode="a", encoding="utf-8", delay=True
-            )
+            handler = _CappedFileHandler(cls._path)
             handler.setLevel(cls._file_py_level)
             handler.setFormatter(logging.Formatter(_FILE_FORMAT, datefmt=_FILE_DATEFMT))
             handler.addFilter(cls._tagger)
             cls._file_handler = handler
             for name in LAYERS:
                 logging.getLogger(name).addHandler(handler)
+        if handler.rollover_note:
+            cls.info(handler.rollover_note, layer="scistack")
+            handler.rollover_note = None
 
     @classmethod
     def get_path(cls) -> str | None:
-        """Current log file path (``None`` if the file sink is detached)."""
+        """Current debug-file path (``None`` if the file sink is detached)."""
         return cls._path
+
+    @classmethod
+    def get_journal_path(cls) -> str | None:
+        """Current journal path (``None`` if no journal is written)."""
+        return cls._journal_path
 
     # -- levels -----------------------------------------------------------
 
@@ -504,6 +685,107 @@ class Log:
         for p, s in parts:
             cls.debug(f"  {name} {p:<30s} {s:.3f}s", layer=layer)
 
+    # -- journal ------------------------------------------------------------
+
+    @classmethod
+    @contextmanager
+    def run(cls, name: str, *, language: str = "python"):
+        """One user-visible run: a journal block, and a ``run=<id>`` token on
+        every debug-file line written inside it.
+
+        Only the OUTERMOST ``run`` on a context creates a :class:`JournalRun`;
+        nested ones yield the same object, so ``scidb.for_each`` delegating to
+        ``scifor.for_each`` (or an EachOf fanning out) is one block. The block
+        is written on exit only if a summary or an error reached it.
+
+        An exception that escapes without the caller having classified it
+        (``JournalRun.fail``) is recorded by type and message only; the layers
+        that know who can fix it (``scifor.failures.journal_run``) classify
+        before it gets here.
+
+        Usage::
+
+            with Log.run("compute_psd") as run:
+                ...
+                run.add_summary(summary_event)
+        """
+        outer = _RUN.get()
+        if outer is not None:
+            yield outer
+            return
+        run = JournalRun(name, language=language)
+        token = _RUN.set(run)
+        cls.debug(f"[run] {name}: started (run={run.run_id})", layer="scistack")
+        try:
+            yield run
+        except BaseException as e:
+            if not run.error_handled:
+                run.fail({"exc_type": type(e).__name__, "message": str(e), "blame": None})
+            raise
+        finally:
+            try:
+                if run.summaries or run.error is not None:
+                    cls.journal(run.to_event())
+                cls.debug(f"[run] {name}: ended (run={run.run_id})", layer="scistack")
+            finally:
+                _RUN.reset(token)
+
+    @classmethod
+    def current_run(cls) -> "JournalRun | None":
+        """The run in progress on this context, or ``None``."""
+        return _RUN.get()
+
+    @classmethod
+    def journal(cls, event: dict) -> str:
+        """Write one event to the journal; return the rendered text.
+
+        The ONLY writer of the journal file (an AST test pins that nothing
+        else opens it). The same text goes to the debug file and the console
+        as one INFO record tagged ``[journal]``, so the debug file stays a
+        superset of the journal. A journal that cannot be written never fails
+        the caller: the error goes to the debug file.
+        """
+        event = dict(event)
+        if not event.get("run_id"):
+            current = _RUN.get()
+            event["run_id"] = current.run_id if current is not None else uuid.uuid4().hex[:8]
+        event.setdefault("started", time.time())
+        text = _journal.render(event)
+        path = cls._journal_path
+        if path is not None:
+            try:
+                with cls._journal_lock, open(path, "a", encoding="utf-8") as fh:
+                    fh.write(text + "\n\n")
+            except OSError as e:
+                cls.error(f"[journal] could not write {path}: {e}", layer="scistack")
+        cls.info("[journal]\n" + text, layer="scistack")
+        return text
+
+    @classmethod
+    def journal_json(cls, event_json: str) -> str:
+        """:meth:`journal` for a JSON-encoded event (the MATLAB bridge)."""
+        try:
+            event = json.loads(str(event_json))
+        except ValueError as e:
+            cls.error(f"[journal] unreadable event from MATLAB: {e}", layer="scistack")
+            return ""
+        if not isinstance(event, dict):
+            cls.error(f"[journal] event is not an object: {str(event_json)[:200]}", layer="scistack")
+            return ""
+        return cls.journal(event)
+
+    @classmethod
+    def journal_note(cls, text: str, *, key: str | None = None) -> None:
+        """A note about the data for the journal, written once per ``key``
+        per process (``text`` when no key), so a warning a refresh repeats
+        does not repeat in the journal."""
+        dedupe = key or text
+        with cls._lock:
+            if dedupe in cls._notes_seen:
+                return
+            cls._notes_seen.add(dedupe)
+        cls.journal({"kind": "note", "text": text})
+
     # -- internals ---------------------------------------------------------
 
     @classmethod
@@ -583,6 +865,8 @@ class Log:
             cls._console_handler = None
             cls._file_handler = None
             cls._path = None
+            cls._journal_path = None
+            cls._notes_seen = set()
             cls._attached = False
             cls._console_py_level = logging.INFO
-            cls._file_py_level = logging.INFO
+            cls._file_py_level = logging.DEBUG

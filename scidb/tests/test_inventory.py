@@ -31,6 +31,7 @@ from scidb.inventory import (
     MISSING,
     PRESENT,
     inventory_table,
+    row_keyset,
     schema_inventory,
     write_inventory_csv,
 )
@@ -134,7 +135,8 @@ class TestExclusions:
 
     def test_include_overrides_a_wildcard(self, db):
         exclude_schema("bad subject", db=db, subject="S02")
-        # include_schema needs an exclusion on that exact keyset first; the
+        # An exact exclusion first is allowed (not needed, see
+        # TestRowKeyset.test_partial_reinclude_under_a_coarser_exclusion); the
         # specific include row then beats the subject-wide wildcard.
         exclude_schema("bad session", db=db, subject="S02", session="BL")
         include_schema("BL was fine", db=db, subject="S02", session="BL")
@@ -769,3 +771,64 @@ class TestCollapseCli:
         out = capsys.readouterr().out
         assert rc == 0, out
         assert ALL in out
+
+
+class TestRowKeyset:
+    """``row_keyset``: a displayed row -> the keys exclude/include act on."""
+
+    def test_plain_row(self):
+        assert row_keyset(["subject", "session"], ["S01", "BL"]) == {
+            "subject": "S01", "session": "BL",
+        }
+
+    def test_status_cell_is_dropped(self):
+        assert row_keyset(["subject", "session", "status"], ["S01", "BL", "present"]) == {
+            "subject": "S01", "session": "BL",
+        }
+
+    def test_collapsed_cells_become_wildcards(self):
+        assert row_keyset(
+            ["subject", "session", "trial", "status"], ["S03", ALL_LEVELS, ALL_LEVELS, "missing"]
+        ) == {"subject": "S03"}
+
+    def test_off_key_is_absent(self):
+        # session Off: the keyset skips it, so it matches every session.
+        assert row_keyset(["subject", "trial"], ["S01", "2"]) == {"subject": "S01", "trial": "2"}
+
+    def test_all_wildcards_is_refused(self):
+        with pytest.raises(ValueError, match="whole dataset"):
+            row_keyset(["subject", "status"], [ALL_LEVELS, "missing"])
+
+    def test_length_mismatch_is_refused(self):
+        with pytest.raises(ValueError, match="cell"):
+            row_keyset(["subject", "session"], ["S01"])
+
+    def test_within_stratum_row(self, tmp_path):
+        database = configure_database(tmp_path / "w.duckdb", ["group", "subject", "session"])
+        try:
+            InvTrial.save(1.0, group="A", subject="S01", session="BL")
+            InvTrial.save(2.0, group="A", subject="S01", session="POST")
+            InvTrial.save(3.0, group="B", subject="S02", session="BL")
+            inv = schema_inventory(database, None, ["group"])
+            columns, rows = inventory_table(inv, missing_only=False, collapse=True)
+            by_subject = {r[columns.index("subject")]: r for r in rows}
+            # S01 is wholly present: one row, session (all), group kept.
+            assert row_keyset(columns, by_subject["S01"]) == {"group": "A", "subject": "S01"}
+        finally:
+            database.close()
+
+    def test_excluding_a_collapsed_row_excludes_the_block(self, db):
+        inv = schema_inventory(db, ["subject", "session", "trial"])
+        columns, rows = inventory_table(inv, missing_only=True, collapse=True)
+        s03 = next(r for r in rows if r[0] == "S03")
+        exclude_schema("withdrew", db=db, **row_keyset(columns, s03))
+        after = statuses(schema_inventory(db, ["subject", "session", "trial"]))
+        assert {v for k, v in after.items() if k[0] == "S03"} == {EXCLUDED}
+        assert after[("S01", "BL", "1")] == PRESENT
+
+    def test_partial_reinclude_under_a_coarser_exclusion(self, db):
+        exclude_schema("bad subject", db=db, subject="S02")
+        include_schema("BL was fine", db=db, subject="S02", session="BL")
+        s = statuses(schema_inventory(db, ["subject", "session"]))
+        assert s[("S02", "BL")] == PRESENT
+        assert s[("S02", "POST")] == EXCLUDED

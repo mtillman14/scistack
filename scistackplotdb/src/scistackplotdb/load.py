@@ -727,6 +727,21 @@ def _log_field_coverage(
                 f", at {located}" if c.numeric and located else "",
                 layer=LAYER,
             )
+        # The same finding, once, in the scientist's journal: it is about
+        # their data, but the WARNs above repeat on every load (171 of them in
+        # one session's log, 2026-10-22). One note per variable and set of
+        # columns per session; a different set is a new finding.
+        sparse = [c for c in gaps if c.numeric < SPARSE_FIELD_SHARE * c.records]
+        if sparse:
+            names = sorted(str(c.column) for c in sparse)
+            shown = ", ".join(names[:6]) + (f", +{len(names) - 6} more" if len(names) > 6 else "")
+            Log.journal_note(
+                f"{variable}: {len(names)} column(s) hold numbers in only some of "
+                f"their records ({shown}); a plot of them shows only those records. "
+                f"If they hold text, that is expected; if they should be numbers, "
+                f"check what the loading function returned.",
+                key=f"field_coverage:{variable}:{'|'.join(names)}",
+            )
     except Exception as exc:  # noqa: BLE001 — diagnostic only
         Log.debug("field coverage of %s failed: %s", variable, exc, layer=LAYER)
 
