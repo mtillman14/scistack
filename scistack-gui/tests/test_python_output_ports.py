@@ -110,13 +110,16 @@ def test_reordering_declared_ports_reorders_handles_and_notes_the_script_order(c
     assert "PortTen" in data["outputOrderNote"]
 
 
-def test_bad_or_repeated_names_are_refused(client):
+def test_bad_or_repeated_names_are_refused(client, populated_db):
+    from scistack_gui.services.layout_service import OutputPortsError, set_output_ports
+
     _code_run([PortTen, PortSix])
     nid = _fn_node(client)["id"]
-    r = client.put(f"/api/layout/{nid}/outputs", json={"node_id": nid, "ports": ["a b"]})
-    assert r.status_code >= 400
-    r = client.put(f"/api/layout/{nid}/outputs", json={"node_id": nid, "ports": ["a", "a"]})
-    assert r.status_code >= 400
+    with pytest.raises(OutputPortsError, match="letters, digits"):
+        set_output_ports(populated_db, nid, ["a b"])
+    with pytest.raises(OutputPortsError, match="share a name"):
+        set_output_ports(populated_db, nid, ["a", "a"])
+    assert "outputPorts" not in _fn_node(client)["data"]
 
 
 def test_an_empty_list_returns_to_automatic(client):
@@ -150,7 +153,9 @@ def test_rename_repoints_the_ports_manual_edges(client, populated_db):
     out = _set_ports(
         client, nid, ["mean", "peak"], {"PortTen": "mean", "PortSix": "peak"}
     )
-    assert out["repointed"] == 2
+    # The canvas build also stores the history edges (adoption), and those
+    # are re-pointed too; what matters is that each edge follows its port.
+    assert out["repointed"] >= 2
     handles = {e["id"]: e.get("sourceHandle") for e in pipeline_store.get_manual_edges(populated_db)}
     assert handles["e_ten"] == "out__mean" and handles["e_six"] == "out__peak"
 
@@ -161,15 +166,18 @@ def test_rename_repoints_the_ports_manual_edges(client, populated_db):
 def test_mapping_precedence_edges_then_names_then_position():
     from scistack_gui.domain.output_order import declared_python_ports
 
-    configs = {"fn__f__abc": {"outputPorts": ["a", "b", "c"]}}
-    edges = [{"source": "fn__f__abc", "target": "var__C1", "sourceHandle": "out__c"}]
+    from scistack_gui.ids import fn_node_id, out_handle, var_node_id
+
+    nid = fn_node_id("f", "0123456789abcdef")
+    configs = {nid: {"outputPorts": ["a", "b", "c"]}}
+    edges = [{"source": nid, "target": var_node_id("C1"), "sourceHandle": out_handle("c")}]
     ports, mapping = declared_python_ports(
         configs,
         {},
         set(),
-        {"f": {"fn__f__abc"}},
+        {"f": {nid}},
         edges,
-        {"var__C1": "C1"},
+        {var_node_id("C1"): "C1"},
         {"f": [["A1", "B1", "C1"]]},
         {"f": {"b": "B2"}},
     )

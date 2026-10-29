@@ -884,7 +884,14 @@ def set_output_ports(db, node_id: str, ports: list, renames: "dict | None" = Non
     connection. An empty list clears the declaration (automatic again).
     """
     from scistack_gui import intent_store, pipeline_store
-    from scistack_gui.ids import new_manual_edge_id, out_handle, strip_placement, var_node_id
+    from scistack_gui.ids import (
+        OUT_HANDLE_PREFIX,
+        VAR_ID_PREFIX,
+        new_manual_edge_id,
+        out_handle,
+        strip_placement,
+        var_node_id,
+    )
 
     names = [str(p).strip() for p in ports or []]
     bad = [p for p in names if not _PORT_NAME.match(p)]
@@ -963,13 +970,16 @@ def set_output_ports(db, node_id: str, ports: list, renames: "dict | None" = Non
         # so each edge goes back to its variable's handle.
         for e in from_node:
             target = strip_placement(e.get("target", ""))
-            if target.startswith("var__") and e.get("sourceHandle") != out_handle(target[5:]):
-                intent_store.write_manual_edge(db, {**e, "sourceHandle": out_handle(target[5:])})
+            if not target.startswith(VAR_ID_PREFIX):
+                continue
+            variable = target[len(VAR_ID_PREFIX):]
+            if e.get("sourceHandle") != out_handle(variable):
+                intent_store.write_manual_edge(db, {**e, "sourceHandle": out_handle(variable)})
                 repointed += 1
     kept = {out_handle(p) for p in names}
     for e in from_node:
         handle = e.get("sourceHandle")
-        if names and handle and handle.startswith("out__") and handle not in kept:
+        if names and handle and handle.startswith(OUT_HANDLE_PREFIX) and handle not in kept:
             if not any(handle == out_handle(new) for new in old_of):
                 pipeline_store.delete_manual_edge(db, e["id"])
                 removed += 1

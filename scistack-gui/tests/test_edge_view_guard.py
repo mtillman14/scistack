@@ -31,6 +31,10 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("services/layout_service.py", "delete_edge"): (
         "mutator: decides whether the id is a stored manual edge to delete"
     ),
+    ("services/layout_service.py", "set_output_ports"): (
+        "mutator: re-points, writes and deletes the node's stored output "
+        "edges when its declared Python output ports change"
+    ),
     ("services/scope_service.py", "extract_to_submodule"): (
         "mutator: moves stored edges into the new submodule"
     ),
