@@ -2,11 +2,16 @@ name: Build Docs
 
 # Strict MkDocs build as a CI gate: fails on broken internal links, missing
 # nav pages, or bad references — the same checks Read the Docs applies.
-# On push to main it then triggers a Read the Docs build (the publish step).
+# On push to main it then triggers a Read the Docs build of `latest`; on a
+# release tag (v*) it triggers `stable`, which Read the Docs keeps on the
+# highest release tag, so the release docs never carry a dev label.
 
 on:
   push:
     branches: [main]
+    # A release tag rebuilds `stable`. GitHub does not evaluate `paths` for
+    # tag pushes, so every release tag runs this workflow.
+    tags: ['v*']
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
@@ -72,12 +77,12 @@ jobs:
           fi
           case "$label" in v[0-9]*) ;; *) echo "::error::Label '$label' is not tag-derived (tags not fetched?)"; exit 1;; esac
 
-      # Publish: ask Read the Docs to rebuild `latest` from this commit, so the
-      # site updates even when RTD's own GitHub webhook is missing or silent.
-      # Push to main only (never PRs). Needs the RTD_TOKEN repo secret: an API
-      # token from readthedocs.org -> Settings -> API Tokens.
+      # Publish: ask Read the Docs to rebuild `latest` (push to main) or
+      # `stable` (a release tag), so the site updates even when RTD's own GitHub
+      # webhook is missing or silent. Never PRs. Needs the RTD_TOKEN repo
+      # secret: an API token from readthedocs.org -> Settings -> API Tokens.
       - name: Trigger Read the Docs build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         env:
           RTD_TOKEN: ${{ secrets.RTD_TOKEN }}
         run: |
@@ -85,10 +90,14 @@ jobs:
             echo "::error::RTD_TOKEN secret is not set (repo Settings -> Secrets and variables -> Actions)"
             exit 1
           fi
-          echo "Triggering RTD build: project=scistack version=latest commit=$GITHUB_SHA"
+          case "$GITHUB_REF" in
+            refs/tags/v*) rtd_version=stable ;;
+            *) rtd_version=latest ;;
+          esac
+          echo "Triggering RTD build: project=scistack version=$rtd_version ref=$GITHUB_REF commit=$GITHUB_SHA"
           curl --silent --show-error --fail-with-body \
             -X POST \
             -H "Authorization: Token $RTD_TOKEN" \
-            https://readthedocs.org/api/v3/projects/scistack/versions/latest/builds/
+            "https://readthedocs.org/api/v3/projects/scistack/versions/$rtd_version/builds/"
           echo
           echo "Build queued: https://readthedocs.org/projects/scistack/builds/"

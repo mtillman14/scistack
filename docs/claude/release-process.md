@@ -50,6 +50,16 @@ tag push
 users to `pip install scistack-gui==X.Y.Z`, so that version must already be on
 PyPI before the extension can auto-update anyone.
 
+### The docs
+
+The same tag push runs `docs.yml`, which builds the docs strictly and asks
+Read the Docs to rebuild **`stable`** (Read the Docs keeps it on the highest
+release tag, so its header label reads `vX.Y.Z`, never `+N (dev)`). Pushes to
+`main` that touch the docs rebuild `latest`, which is labelled
+`vX.Y.Z+N (dev)` whenever `main` is past the last tag. The project's default
+version on readthedocs.org is `stable`, so readers land on the release docs.
+The label comes from git (`docs/hooks/doc_version.py`); no file holds it.
+
 ### Tags that are refused
 
 `stamp-version.js` accepts only `^v\d+\.\d+\.\d+$`. The Marketplace has no
