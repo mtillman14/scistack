@@ -152,8 +152,14 @@ def _reconstruct_input_for_keys(spec):
     if kind == "column_selection":
         from scidb.column_selection import ColumnSelection
 
-        cols = spec["columns"]
-        cols = list(cols) if cols is not None else None
+        from scifor.column_selection import spec_from_wire
+
+        if spec.get("groups"):
+            # Column groups ([{"name"?, "columns"}], scifor.groups_to_wire).
+            cols = spec_from_wire(list(spec["groups"]))
+        else:
+            cols = spec["columns"]
+            cols = list(cols) if cols is not None else None
         return ColumnSelection(
             get_surrogate_class(spec["type_name"]),
             cols,
@@ -577,7 +583,16 @@ def for_each_prepare(
     # The Python-only path does this in scidb.for_each before _for_each_prepare;
     # the MATLAB path calls _for_each_prepare directly, so resolve here so the
     # concrete column set drives version keys and the per-column MATLAB loop.
-    inputs = external_loop.resolve_for_columns(inputs, resolved_db)
+    from scifor import output_column_name as _output_column_name
+
+    # Output names let it refuse a for_columns() split across outputs here,
+    # before anything loads (the combine/split owner is scifor's
+    # resolve_column_groups; MATLAB's loop asks its port again).
+    inputs = external_loop.resolve_for_columns(
+        inputs,
+        resolved_db,
+        [_output_column_name(get_surrogate_class(str(n))) for n in list(output_class_names)],
+    )
 
     # Step 1.6: record each Parameter value as DECLARED. MATLAB passes every
     # number as a double, so a declared 6 arrives as 6.0. The skip hook below
@@ -974,6 +989,61 @@ def for_each_prepare(
     }
 
 
+def _merge_output_tables(dfs: list, output_names: list):
+    """MATLAB's per-output result tables -> the ONE result table the save
+    path reads, outer-merged on their shared metadata columns.
+
+    A combination missing from one output's table was skipped for that
+    output only (for_columns split: no data, or the group raised; the MATLAB
+    loop already logged why). Its cell becomes ``scifor.outputs.NoOutput(
+    "skipped")`` so the save writes no record there, rather than the NaN the
+    merge would leave, which would save as a record. A None or empty table
+    is an output skipped everywhere. Positions in ``dfs`` match
+    ``output_names``.
+    """
+    import pandas as pd
+    from scifor.outputs import NoOutput
+
+    from scidb.log import Log as _Log
+
+    present = [
+        (i, df) for i, df in enumerate(dfs) if isinstance(df, pd.DataFrame) and len(df)
+    ]
+    if not present:
+        return pd.DataFrame()
+    flags = {i: f"__present_{i}" for i, _ in present}
+    result = None
+    for i, df in present:
+        tagged = df.assign(**{flags[i]: True})
+        if result is None:
+            result = tagged
+            continue
+        shared = [
+            c for c in result.columns if c in tagged.columns and c not in flags.values()
+        ]
+        if shared:
+            result = result.merge(tagged, on=shared, how="outer")
+        else:
+            # No shared columns to merge on; fall back to row-wise concat.
+            result = pd.concat([result, tagged], axis=1)
+    for i, name in enumerate(output_names):
+        if i in flags:
+            absent = result[flags[i]].isna()
+            if not absent.any() or name not in result.columns:
+                continue
+            col = result[name].astype(object)
+            col[absent] = [NoOutput("skipped") for _ in range(int(absent.sum()))]
+            result[name] = col
+            _Log.info(
+                f"[bridge] {name}: skipped at {int(absent.sum())} of "
+                f"{len(result)} combination(s) (absent from MATLAB's table)"
+            )
+        else:
+            result[name] = [NoOutput("skipped") for _ in range(len(result))]
+            _Log.info(f"[bridge] {name}: skipped at every combination")
+    return result.drop(columns=list(flags.values()))
+
+
 def for_each_describe_loaded_input(val):
     """Describe one ``loaded_inputs`` value so MATLAB can rebuild the
     matching MATLAB-side scifor wrapper.
@@ -1014,12 +1084,17 @@ def for_each_describe_loaded_input(val):
             "fixed_metadata": dict(val.fixed_metadata),
         }
     if isinstance(val, _SciforColSel):
-        return {
+        from scifor.column_selection import groups_to_wire
+
+        desc = {
             "kind": "column_selection",
             "inner": for_each_describe_loaded_input(val.data),
             "columns": list(val.columns),
             "iterate": bool(getattr(val, "iterate", False)),
         }
+        if val.groups is not None:
+            desc["groups"] = groups_to_wire(val.groups)
+        return desc
     if isinstance(val, _SciforMerge):
         return {
             "kind": "merge",
@@ -1108,7 +1183,9 @@ def for_each_save(
     if isinstance(result_dataframes, pd.DataFrame):
         dfs = [result_dataframes]
     else:
-        dfs = [df for df in list(result_dataframes) if df is not None]
+        # Positions stay aligned with state.output_names: a None (nothing
+        # returned for that output) is handled by _merge_output_tables.
+        dfs = list(result_dataframes)
 
     if reverse_map:
         dfs = [
@@ -1120,21 +1197,12 @@ def for_each_save(
             for df in dfs
         ]
 
-    if not dfs:
+    if not any(df is not None for df in dfs):
         result_tbl = pd.DataFrame()
     elif len(dfs) == 1:
         result_tbl = dfs[0]
     else:
-        # Outer-merge on the shared metadata columns so combos that produced
-        # different output counts (e.g. distribute) are preserved.
-        result_tbl = dfs[0]
-        for df in dfs[1:]:
-            shared = [c for c in result_tbl.columns if c in df.columns]
-            if shared:
-                result_tbl = result_tbl.merge(df, on=shared, how="outer")
-            else:
-                # No shared columns to merge on; fall back to row-wise concat.
-                result_tbl = pd.concat([result_tbl, df], axis=1)
+        result_tbl = _merge_output_tables(dfs, list(state.output_names))
 
     from scidb.log import Log as _Log
 

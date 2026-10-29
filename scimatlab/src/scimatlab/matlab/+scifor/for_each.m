@@ -625,8 +625,14 @@ function varargout = for_each(fn, inputs, varargin)
     end
 
     iterate_columns = string.empty;
+    % Column groups the loop runs over (struct array: name, columns) and
+    % 'combine' / 'split' (resolve_column_groups, port of Python scifor's
+    % owner of the decision).
+    column_groups = struct('name', {}, 'columns', {});
+    for_columns_mode = '';
     if has_iterate
         first_set = true;
+        first_cs = [];
         for p = find(iterate_pos)
             cs = unwrap_column_selection(inputs.(input_names{p}));
             cols = string(cs.columns);
@@ -644,7 +650,15 @@ function varargout = for_each(fn, inputs, varargin)
             end
             if first_set
                 iterate_columns = cols;
+                first_cs = cs;
                 first_set = false;
+            elseif ~isempty(first_cs.groups) || ~isempty(cs.groups)
+                if ~isequal(first_cs.groups, cs.groups)
+                    error('scifor:for_each:forColumnsGroups', ...
+                        ['for_columns inputs are zipped group by group, so they ' ...
+                         'must declare the same groups. ''%s'' and ''%s'' differ.'], ...
+                        input_names{find(iterate_pos, 1)}, input_names{p});
+                end
             elseif ~isequal(sort(cols), sort(iterate_columns))
                 error('scifor:for_each', ...
                     ['for_columns inputs must iterate over the same columns ' ...
@@ -653,14 +667,17 @@ function varargout = for_each(fn, inputs, varargin)
                     input_names{p}, strjoin(cols, ', '));
             end
         end
-        if n_outputs ~= 1
-            error('scifor:for_each', ...
-                'for_columns supports exactly one output; got %d.', n_outputs);
-        end
+        [for_columns_mode, column_groups] = resolve_column_groups( ...
+            iterate_columns, first_cs.groups, resolved_output_names, ...
+            isempty(first_cs.columns));
         if strlength(distribute_key) > 0
             error('scifor:for_each', ...
                 'for_columns cannot be combined with distribute=true.');
         end
+        scifor.Log.info('%s', describe_for_columns_plan( ...
+            input_names(iterate_pos), for_columns_mode, column_groups, ...
+            resolved_output_names));
+        warn_overlapping_groups(column_groups);
     end
 
     % --- Build combo list ---
@@ -765,6 +782,12 @@ function varargout = for_each(fn, inputs, varargin)
     for o = 1:n_outputs
         collected_per_output{o} = {};
     end
+    % for_columns: groups skipped at a combination (split: that output;
+    % combine: that column) -> {combo text, reason, detail} entries, and the
+    % column names each combine group produced (group -> string array).
+    group_skips = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    group_skip_order = {};
+    group_columns = containers.Map('KeyType', 'char', 'ValueType', 'any');
 
     % Failure aggregation for the end-of-run summary (mirrors Python scifor):
     % reason -> cellstr of combo strings; first occurrence of each distinct
@@ -1023,8 +1046,8 @@ function varargout = for_each(fn, inputs, varargin)
 
         % --- Call the function ---
         if has_iterate
-            run_msg = sprintf('[run] %s: %s x %d column(s) (%s)', metadata_str, ...
-                fn_name, numel(iterate_columns), ...
+            run_msg = sprintf('[run] %s: %s x %d group(s) (%s)', metadata_str, ...
+                fn_name, numel(column_groups), ...
                 strjoin(string(input_names'), ', '));
         else
             run_msg = sprintf('[run] %s: %s(%s)', metadata_str, fn_name, ...
@@ -1045,11 +1068,12 @@ function varargout = for_each(fn, inputs, varargin)
 
         try
             if has_iterate
-                % for_columns: run fn once per column and reassemble into a
-                % single 1xN-wide table (one output, validated at Step 6.5).
-                result = {run_column_iteration(fn, loaded, iterate_pos, ...
-                    iterate_tables, iterate_columns, full_schema_keys, ...
-                    as_table_set, input_names)};
+                % for_columns: run fn once per column group. Combine: one
+                % 1xN-wide table; split: one slot per output, with the
+                % skipped groups listed in slot_skips.
+                [result, slot_skips, produced] = run_column_iteration(fn, loaded, ...
+                    iterate_pos, iterate_tables, column_groups, for_columns_mode, ...
+                    full_schema_keys, as_table_set, input_names, metadata_str);
             elseif n_outputs == 0
                 % Zero-output function (e.g. plotting side-effects only)
                 fn(call_args{:});
@@ -1140,8 +1164,38 @@ function varargout = for_each(fn, inputs, varargin)
                 end
             end
         else
-            % Normal: collect each output value separately
+            % Normal: collect each output value separately. A for_columns
+            % group skipped here (split: its output; combine: its column)
+            % is tallied; a skipped split slot adds no row to its output's
+            % table, which is how the gap reaches the bridge.
+            skipped_slots = [];
+            if has_iterate
+                for k = 1:numel(slot_skips)
+                    sk = slot_skips(k);
+                    tally_key = char(sk.name);
+                    entry = {metadata_str, sk.reason, sk.detail};
+                    if isKey(group_skips, tally_key)
+                        group_skips(tally_key) = [group_skips(tally_key), {entry}];
+                    else
+                        group_skips(tally_key) = {entry};
+                        group_skip_order{end+1} = tally_key; %#ok<AGROW>
+                    end
+                    skipped_slots(end+1) = sk.slot; %#ok<AGROW>
+                end
+                for k = 1:numel(produced)
+                    g = produced(k);
+                    if isKey(group_columns, char(g.name))
+                        group_columns(char(g.name)) = unique( ...
+                            [group_columns(char(g.name)), g.columns], 'stable');
+                    else
+                        group_columns(char(g.name)) = g.columns;
+                    end
+                end
+            end
             for o = 1:min(n_outputs, numel(result))
+                if strcmp(for_columns_mode, 'split') && ismember(o, skipped_slots)
+                    continue
+                end
                 collected_per_output{o}{end+1} = {metadata, result{o}}; %#ok<AGROW>
             end
         end
@@ -1219,6 +1273,20 @@ function varargout = for_each(fn, inputs, varargin)
                 'failures', {failure_groups(failure_order, failure_reasons, failure_examples)}, ...
                 'stopped', ~isempty(stop_err), ...
                 'stop_error', {stop_err}));
+        end
+        for k = 1:numel(group_skip_order)
+            log_group_skips(group_skip_order{k}, group_skips(group_skip_order{k}), ...
+                for_columns_mode, SUMMARY_COMBOS_MAX);
+        end
+        if strcmp(for_columns_mode, 'combine') && ~isempty(collected_per_output{1})
+            % Every combination's row gets every group's columns, in group
+            % order, so the output's column set does not depend on which
+            % data existed (port of Python's _combine_output_columns).
+            expected = combine_output_columns(column_groups, group_columns);
+            templates = missing_templates(collected_per_output{1});
+            collected_per_output{1} = cellfun(@(e) {e{1}, ...
+                reindex_combine_row(e{2}, expected, templates)}, ...
+                collected_per_output{1}, 'UniformOutput', false);
         end
         if n_outputs == 0
             % Zero-output function: nothing to collect
@@ -1436,30 +1504,39 @@ function tbl = select_rows_by_id(tbl, sel_rids, rid_col)
 end
 
 
-function result_tbl = run_column_iteration(fn, base_args, iterate_pos, iterate_tables, iterate_columns, schema_keys, as_table_set, input_names)
-%RUN_COLUMN_ITERATION  Run fn once per column and reassemble into a single
-%   one-row wide table. For each column, every iterate input is sliced to that
-%   column and passed positionally; non-iterate inputs/constants in BASE_ARGS
-%   pass through unchanged. An iterate input named in AS_TABLE_SET is sliced to
-%   a table holding all schema key columns plus that one column (mirroring the
-%   non-iterate ColumnSelection as_table behavior in prepare_input); otherwise
-%   it is sliced to that column's bare values (the default).
+function [result, slot_skips, produced] = run_column_iteration(fn, base_args, iterate_pos, iterate_tables, column_groups, mode, schema_keys, as_table_set, input_names, metadata_str)
+%RUN_COLUMN_ITERATION  Run fn once per column group at one combination (port
+%   of Python scifor's _run_column_iteration; the two must agree).
 %
-%   The per-column return is expanded into output columns by
-%   EXPAND_COLUMN_RESULT: a scalar yields one column named after the source
-%   column; a struct / 1-row table yields one column per field/variable, named
-%   "<col><sep><key>". Different source columns may return different numbers
-%   (and names) of outputs — the reassembled row is the ordered concatenation
-%   of every produced column, so a single for_each call supports an arbitrary,
-%   per-column-varying number of outputs.
+%   COLUMN_GROUPS is a struct array (name, columns) from
+%   RESOLVE_COLUMN_GROUPS; a plain for_columns list is one single-column
+%   group per column, named after it. For each group, every iterate input is
+%   sliced to the group's columns and passed positionally; non-iterate
+%   inputs/constants in BASE_ARGS pass through unchanged. A one-column group
+%   arrives as that column's values (unwrapped from a scalar cell); several
+%   columns arrive as a sub-table. An iterate input named in AS_TABLE_SET
+%   arrives as a table of all schema key columns plus the group's columns.
+%   Deferred ColName() and {ColName} tokens resolve to the group's name.
+%
+%   No data: a group whose every value is missing in every iterate input
+%   (GROUP_HAS_NO_DATA) is not called; it is listed in SLOT_SKIPS.
+%
+%   'combine' (one output): RESULT = {1-row table}, each group's return
+%   expanded by EXPAND_COLUMN_RESULT under the group's name; PRODUCED lists
+%   the names each group gave. A raising group fails the combination.
+%   'split' (several outputs): RESULT has one slot per group; a group with
+%   no data or one fn raised on is listed in SLOT_SKIPS (its slot is left
+%   empty and the caller adds no row for it). Every group skipped -> the
+%   first error is rethrown, or scifor:NoData when none raised.
     sep = '__';
-    n = numel(iterate_columns);
+    n = numel(column_groups);
     iter_positions = find(iterate_pos);
+    is_split = strcmp(mode, 'split');
     % Constant positions holding a deferred ColName() marker resolve to the name
-    % of the column currently being iterated (recomputed each pass below).
+    % of the group currently being iterated (recomputed each pass below).
     deferred_colname_positions = [];
     % Char/string constants carrying a literal {ColName} token (pre-resolved
-    % PathOutput paths keep the token for per-column substitution here).
+    % PathOutput paths keep the token for per-group substitution here).
     colname_token_positions = [];
     for k = 1:numel(base_args)
         if isa(base_args{k}, 'scifor.ColName') && base_args{k}.is_deferred()
@@ -1471,40 +1548,75 @@ function result_tbl = run_column_iteration(fn, base_args, iterate_pos, iterate_t
     end
     out_names = {};
     out_values = {};
-    for ci = 1:n
-        col = char(iterate_columns(ci));
+    slots = cell(1, n);
+    slot_skips = struct('slot', {}, 'name', {}, 'reason', {}, 'detail', {});
+    produced = struct('name', {}, 'columns', {});
+    first_err = [];
+    for gi = 1:n
+        gname = char(column_groups(gi).name);
+        gcols = column_groups(gi).columns;
+        no_data = true;
+        for qi = 1:numel(iter_positions)
+            if ~group_has_no_data(iterate_tables{iter_positions(qi)}, gcols)
+                no_data = false;
+                break
+            end
+        end
+        if no_data
+            scifor.Log.debug(['[for_columns] %s: group %s has no data (all %d ' ...
+                'column(s) missing) — not called'], metadata_str, gname, numel(gcols));
+            slot_skips(end+1) = struct('slot', gi, 'name', string(gname), ...
+                'reason', 'no_data', 'detail', ''); %#ok<AGROW>
+            continue
+        end
         call_args = base_args;
         for di = 1:numel(deferred_colname_positions)
-            call_args{deferred_colname_positions(di)} = col;
+            call_args{deferred_colname_positions(di)} = gname;
         end
         for di = 1:numel(colname_token_positions)
             k_tok = colname_token_positions(di);
             call_args{k_tok} = strrep( ...
-                char(string(base_args{k_tok})), '{ColName}', col);
+                char(string(base_args{k_tok})), '{ColName}', gname);
         end
-        for pi = 1:numel(iter_positions)
-            p = iter_positions(pi);
+        for qi = 1:numel(iter_positions)
+            p = iter_positions(qi);
             t = iterate_tables{p};
             wants_table = ~isempty(as_table_set) && ...
                 ismember(string(input_names{p}), as_table_set);
             if wants_table
-                % Keep all schema key columns alongside the current column.
+                % Keep all schema key columns alongside the group's columns.
                 schema_cols = intersect( ...
                     string(t.Properties.VariableNames), schema_keys, 'stable');
-                keep_cols = [schema_cols(:)', string(col)];
+                keep_cols = [schema_cols(:)', gcols(:)'];
                 call_args{p} = t(:, cellstr(keep_cols));
-                continue
+            elseif isscalar(gcols)
+                vals = t.(char(gcols));
+                if iscell(vals) && isscalar(vals)
+                    vals = vals{1};
+                end
+                call_args{p} = vals;
+            else
+                call_args{p} = t(:, cellstr(gcols));
             end
-            vals = t.(col);
-            if iscell(vals) && isscalar(vals)
-                vals = vals{1};
+        end
+        if is_split
+            try
+                slots{gi} = fn(call_args{:});
+            catch err
+                scifor.Log.warn('[for_columns] %s: %s not saved — %s', ...
+                    metadata_str, gname, err.message);
+                slot_skips(end+1) = struct('slot', gi, 'name', string(gname), ...
+                    'reason', 'failed', 'detail', err.message); %#ok<AGROW>
+                if isempty(first_err)
+                    first_err = err;
+                end
             end
-            call_args{p} = vals;
+            continue
         end
         res = fn(call_args{:});
         % for_columns: res is a plain value. Upstream provenance is recorded
         % at save time from input record_ids (no per-call lineage wrapper).
-        [names_i, values_i] = expand_column_result(col, res, sep);
+        [names_i, values_i] = expand_column_result(gname, res, sep);
         for k = 1:numel(names_i)
             if any(strcmp(names_i{k}, out_names))
                 error('scifor:for_each:forColumnsDuplicate', ...
@@ -1516,8 +1628,333 @@ function result_tbl = run_column_iteration(fn, base_args, iterate_pos, iterate_t
             out_names{end+1} = names_i{k}; %#ok<AGROW>
             out_values{end+1} = values_i{k}; %#ok<AGROW>
         end
+        produced(end+1) = struct('name', string(gname), ...
+            'columns', string(names_i)); %#ok<AGROW>
     end
-    result_tbl = cell2table(out_values, 'VariableNames', out_names);
+    if numel(slot_skips) == n
+        if ~isempty(first_err)
+            rethrow(first_err);
+        end
+        error('scifor:NoData', ...
+            'No data in any for_columns group (%s).', strjoin([slot_skips.name], ', '));
+    end
+    if is_split
+        result = slots;
+    else
+        result = {cell2table(out_values, 'VariableNames', out_names)};
+    end
+end
+
+
+function [mode, groups_out] = resolve_column_groups(columns, groups, output_names, every_column)
+%RESOLVE_COLUMN_GROUPS  'combine' or 'split', and the groups the loop runs
+%   over (struct array: name, columns). Port of Python scifor's
+%   resolve_column_groups, the owner of the rule; the two must agree. One
+%   output -> combine: each group becomes column(s) of it, named by the group
+%   (a multi-column group needs a dictionary key). Several outputs -> split:
+%   group i is saved as output i, so the counts must match and the groups
+%   come unnamed. EVERY_COLUMN: the columns came from for_columns() (data
+%   order), so splitting them across outputs is refused.
+    n_out = numel(output_names);
+    if isempty(groups)
+        groups = struct('name', num2cell(columns), 'columns', num2cell(columns));
+        if n_out <= 1
+            mode = 'combine';
+            groups_out = groups;
+            return;
+        end
+        if every_column
+            error('scifor:for_each:forColumnsGroups', ...
+                ['for_columns() with every column cannot be split across %d ' ...
+                 'outputs: the pairing would follow the data''s column order. ' ...
+                 'List the columns (or groups) in the same order as the outputs.'], n_out);
+        end
+        [groups.name] = deal("");
+    end
+    named = strlength(groups(1).name) > 0;
+    if n_out <= 1
+        if ~named
+            error('scifor:for_each:forColumnsGroups', ...
+                ['With one output, each for_columns group becomes a column of ' ...
+                 'it, so a group of several columns needs a name: pass a ' ...
+                 'dictionary. (Several outputs would split the groups into one ' ...
+                 'output each.)']);
+        end
+        mode = 'combine';
+        groups_out = groups;
+        return;
+    end
+    if named
+        error('scifor:for_each:forColumnsGroups', ...
+            ['With %d outputs, each for_columns group is saved as one of them, ' ...
+             'paired in order, so the group names would name nothing. Pass the ' ...
+             'groups as a cell array, in the same order as the outputs.'], n_out);
+    end
+    if numel(groups) ~= n_out
+        error('scifor:for_each:forColumnsGroups', ...
+            ['for_columns has %d group(s) but there are %d outputs; with several ' ...
+             'outputs each group is saved as one output, paired in order, so the ' ...
+             'counts must match.'], numel(groups), n_out);
+    end
+    mode = 'split';
+    groups_out = groups;
+    for i = 1:n_out
+        groups_out(i).name = string(output_names{i});
+    end
+end
+
+
+function line = describe_for_columns_plan(params, mode, groups, output_names)
+%DESCRIBE_FOR_COLUMNS_PLAN  The one run-start line for a for_columns call
+%   (same text as Python's _describe_for_columns_plan).
+    max_shown = 10;
+    params_text = strjoin(cellfun(@(p) ['''' p ''''], params, 'UniformOutput', false), ', ');
+    n_shown = min(numel(groups), max_shown);
+    pairs = strings(1, n_shown);
+    for i = 1:n_shown
+        pairs(i) = groups(i).name + " ← [" + strjoin(groups(i).columns, ', ') + "]";
+    end
+    pairs_text = strjoin(pairs, '; ');
+    if numel(groups) > n_shown
+        pairs_text = pairs_text + sprintf('; … (+%d more)', numel(groups) - n_shown);
+    end
+    if strcmp(mode, 'split')
+        line = sprintf('[for_columns] %s split into %d output(s): %s', ...
+            params_text, numel(groups), pairs_text);
+    else
+        line = sprintf('[for_columns] %s combine → %s, %d group(s): %s', ...
+            params_text, char(output_names{1}), numel(groups), pairs_text);
+    end
+end
+
+
+function warn_overlapping_groups(groups)
+%WARN_OVERLAPPING_GROUPS  One WARN per run naming each column in several groups.
+    owners = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    order = {};
+    for i = 1:numel(groups)
+        for c = groups(i).columns
+            key = char(c);
+            if isKey(owners, key)
+                owners(key) = [owners(key), groups(i).name];
+            else
+                owners(key) = groups(i).name;
+                order{end+1} = key; %#ok<AGROW>
+            end
+        end
+    end
+    parts = {};
+    for i = 1:numel(order)
+        names = owners(order{i});
+        if numel(names) > 1
+            parts{end+1} = sprintf('%s in [%s]', order{i}, ...
+                strjoin("'" + names + "'", ', ')); %#ok<AGROW>
+        end
+    end
+    if ~isempty(parts)
+        scifor.Log.warn('%s', ['[for_columns] column(s) in more than one group: ' ...
+            strjoin(parts, '; ') ' — each group still receives it']);
+    end
+end
+
+
+function tf = group_has_no_data(t, cols)
+%GROUP_HAS_NO_DATA  Is every value of every column in COLS missing? Port of
+%   Python scifor.missing (the owner): NaN / NaT / <missing> / undefined, an
+%   empty cell, and an empty or whitespace-only string are missing;
+%   placeholder text such as "—" is data. A table with no rows has no data.
+    tf = true;
+    if height(t) == 0
+        return;
+    end
+    for c = 1:numel(cols)
+        if ~all_missing(t.(char(cols(c))))
+            tf = false;
+            return;
+        end
+    end
+end
+
+
+function tf = all_missing(v)
+    if isnumeric(v)
+        tf = all(isnan(double(v(:))));
+    elseif isdatetime(v)
+        tf = all(isnat(v(:)));
+    elseif isduration(v)
+        tf = all(isnan(v(:)));
+    elseif isstring(v)
+        tf = all(ismissing(v(:)) | strlength(strtrim(v(:))) == 0);
+    elseif ischar(v)
+        tf = isempty(strtrim(v));
+    elseif iscategorical(v)
+        tf = all(isundefined(v(:)));
+    elseif iscell(v)
+        tf = all(cellfun(@cell_missing, v(:)));
+    else
+        tf = false;
+    end
+end
+
+
+function tf = cell_missing(e)
+    if isempty(e)
+        tf = true;
+    elseif ischar(e) || isstring(e)
+        tf = all(ismissing(string(e))) || all(strlength(strtrim(string(e))) == 0);
+    elseif isnumeric(e) && isscalar(e)
+        tf = isnan(double(e));
+    elseif isdatetime(e) && isscalar(e)
+        tf = isnat(e);
+    else
+        tf = false;
+    end
+end
+
+
+function log_group_skips(name, entries, mode, max_combos)
+%LOG_GROUP_SKIPS  End-of-run lines for one group's skips, one per reason
+%   (same text as Python's _describe_output_skips / combine group lines).
+    keys_seen = {};
+    combos_by = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    for i = 1:numel(entries)
+        e = entries{i};
+        key = [e{2} char(30) e{3}];
+        if isKey(combos_by, key)
+            combos_by(key) = [combos_by(key), {e{1}}];
+        else
+            combos_by(key) = {e{1}};
+            keys_seen{end+1} = key; %#ok<AGROW>
+        end
+    end
+    for i = 1:numel(keys_seen)
+        parts = strsplit(keys_seen{i}, char(30), 'CollapseDelimiters', false);
+        reason = parts{1};
+        detail = parts{2};
+        combos = combos_by(keys_seen{i});
+        n_shown = min(numel(combos), max_combos);
+        shown = strjoin(combos(1:n_shown), '; ');
+        if numel(combos) > n_shown
+            shown = sprintf('%s (+%d more)', shown, numel(combos) - n_shown);
+        end
+        if strcmp(mode, 'split')
+            label = 'no data';
+            if strcmp(reason, 'failed')
+                label = 'failed';
+            end
+            why = '';
+            if ~isempty(detail)
+                why = sprintf(' "%s"', detail);
+            end
+            scifor.Log.info('output %s: %s × %d%s — %s', name, label, ...
+                numel(combos), why, shown);
+        else
+            scifor.Log.info('for_columns group %s: no data × %d — %s (left missing in the row)', ...
+                name, numel(combos), shown);
+        end
+    end
+end
+
+
+function columns = combine_output_columns(groups, group_columns)
+%COMBINE_OUTPUT_COLUMNS  The combine output's full column list, in group
+%   order (port of Python's _combine_output_columns). A group with no data
+%   at every combination takes the other groups' shape: scalars -> <name>;
+%   the same struct fields -> <name>__<field>; otherwise <name> with a WARN.
+    sep = '__';
+    shapes = {};
+    for i = 1:numel(groups)
+        key = char(groups(i).name);
+        if isKey(group_columns, key)
+            cols = group_columns(key);
+            suffix = strings(1, numel(cols));
+            for k = 1:numel(cols)
+                if cols(k) == groups(i).name
+                    suffix(k) = "";
+                else
+                    suffix(k) = extractAfter(cols(k), strlength(groups(i).name) + strlength(sep));
+                end
+            end
+            shapes{end+1} = char(strjoin(suffix, char(31))); %#ok<AGROW>
+        end
+    end
+    shapes = unique(shapes);
+    columns = strings(1, 0);
+    for i = 1:numel(groups)
+        key = char(groups(i).name);
+        if isKey(group_columns, key)
+            columns = [columns, group_columns(key)]; %#ok<AGROW>
+            continue
+        end
+        if numel(shapes) == 1
+            suffix = string(strsplit(shapes{1}, char(31), 'CollapseDelimiters', false));
+            added = strings(1, numel(suffix));
+            for k = 1:numel(suffix)
+                if suffix(k) == ""
+                    added(k) = groups(i).name;
+                else
+                    added(k) = groups(i).name + sep + suffix(k);
+                end
+            end
+            scifor.Log.info(['[for_columns] group %s had no data at any combination; ' ...
+                'added empty column(s) [%s], shaped like the other groups'], ...
+                key, strjoin(added, ', '));
+        else
+            added = groups(i).name;
+            scifor.Log.warn(['[for_columns] group %s had no data at any combination ' ...
+                'and the other groups returned different shapes; added an empty ' ...
+                'column [%s]. A later run where %s has data may produce different ' ...
+                'columns.'], key, key, key);
+        end
+        columns = [columns, added]; %#ok<AGROW>
+    end
+end
+
+
+function templates = missing_templates(rows)
+%MISSING_TEMPLATES  Column name -> the missing value of that column's type,
+%   from the first combination that produced it.
+    templates = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    for i = 1:numel(rows)
+        tbl = rows{i}{2};
+        for v = string(tbl.Properties.VariableNames)
+            if ~isKey(templates, char(v))
+                templates(char(v)) = missing_like(tbl.(char(v)));
+            end
+        end
+    end
+end
+
+
+function m = missing_like(v)
+    if isstring(v)
+        m = string(missing);
+    elseif isdatetime(v)
+        m = NaT;
+    elseif iscategorical(v)
+        m = categorical(missing);
+    elseif iscell(v)
+        m = {[]};
+    else
+        m = NaN;
+    end
+end
+
+
+function tbl = reindex_combine_row(tbl, expected, templates)
+%REINDEX_COMBINE_ROW  One combination's 1-row table with every expected
+%   column, in order; a column it lacks is filled with its type's missing.
+    have = string(tbl.Properties.VariableNames);
+    for name = expected
+        if ~any(have == name)
+            if isKey(templates, char(name))
+                tbl.(char(name)) = templates(char(name));
+            else
+                tbl.(char(name)) = NaN;
+            end
+        end
+    end
+    tbl = tbl(:, cellstr(expected));
 end
 
 

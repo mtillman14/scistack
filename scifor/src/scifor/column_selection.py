@@ -360,3 +360,26 @@ def overlapping_columns(
         for c in cols:
             owners.setdefault(c, []).append(name)
     return {c: names for c, names in owners.items() if len(names) > 1}
+
+
+def groups_to_wire(groups: "list[tuple[str | None, list[str]]]") -> "list[dict]":
+    """Column groups as stored and sent across a boundary (the DB selector,
+    the GUI, the MATLAB bridge): ``[{"name": "6MWT", "columns": [...]}, ...]``
+    (combine) or without ``name`` (split, paired with the outputs in order).
+    A list of objects, not a dict, so a ``sort_keys`` JSON dump keeps the
+    group ORDER, which is meaning (output column order / output pairing)."""
+    return [
+        {"columns": list(cols)} if name is None else {"name": name, "columns": list(cols)}
+        for name, cols in groups
+    ]
+
+
+def spec_from_wire(wire: Any) -> Any:
+    """:func:`groups_to_wire`'s form back into a column spec for
+    :func:`parse_column_groups`: a dict when every group is named, else a
+    list of column lists."""
+    if not isinstance(wire, (list, tuple)):
+        raise ColumnGroupsError(f"Column groups must be a list; got {wire!r}.")
+    if wire and all(isinstance(g, Mapping) and g.get("name") for g in wire):
+        return {str(g["name"]): list(g.get("columns") or []) for g in wire}
+    return [list(g.get("columns") or []) if isinstance(g, Mapping) else g for g in wire]

@@ -51,6 +51,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from scifor.column_selection import groups_to_wire, spec_from_wire
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -357,7 +359,7 @@ def normalize_columns(raw: Any) -> dict | None:
         if isinstance(cols, str):
             cols = [cols] if cols else []
         if raw.get("groups"):
-            columns, groups = _parse_spec(_spec_from_wire(raw["groups"]))
+            columns, groups = _parse_spec(spec_from_wire(raw["groups"]))
         elif isinstance(cols, Mapping):
             columns, groups = _parse_spec(cols)
         else:
@@ -380,7 +382,7 @@ def normalize_columns(raw: Any) -> dict | None:
         return None
     out: dict = {"columns": columns, "iterate": iterate}
     if groups is not None:
-        out["groups"] = _groups_to_wire(groups)
+        out["groups"] = groups_to_wire(groups)
     return out
 
 
@@ -391,28 +393,6 @@ def _parse_spec(spec: Any) -> "tuple[list[str], list | None]":
 
     columns, groups = parse_column_groups(spec)
     return [str(c) for c in columns], groups
-
-
-def _groups_to_wire(groups: list) -> "list[dict]":
-    """Column groups as stored and sent: ``[{"name": "6MWT", "columns":
-    [...]}, ...]`` (combine), or without ``name`` (split, paired with the
-    outputs in order). A list of objects, not a dict, so a ``sort_keys``
-    dump keeps the group ORDER, which is meaning (output column order /
-    output pairing)."""
-    return [
-        {"columns": list(cols)} if name is None else {"name": name, "columns": list(cols)}
-        for name, cols in groups
-    ]
-
-
-def _spec_from_wire(wire: Any) -> Any:
-    """The stored/sent groups back into a column spec (dict or list of lists)."""
-    if not isinstance(wire, (list, tuple)):
-        logger.warning("[intent] ignoring malformed column groups: %r", wire)
-        return []
-    if wire and all(isinstance(g, Mapping) and g.get("name") for g in wire):
-        return {str(g["name"]): list(g.get("columns") or []) for g in wire}
-    return [list(g.get("columns") or []) if isinstance(g, Mapping) else g for g in wire]
 
 
 def describe_columns(sel: Any) -> str:

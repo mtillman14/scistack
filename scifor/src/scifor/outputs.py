@@ -88,8 +88,10 @@ def _short(value: Any, limit: int = 40) -> str:
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
-#: Reasons a :class:`NoOutput` slot can carry.
-NO_OUTPUT_REASONS = ("no_data", "failed")
+#: Reasons a :class:`NoOutput` slot can carry. ``"skipped"``: the producer
+#: already reported why (the MATLAB loop leaves a skipped combination out of
+#: that output's table and logs the reason; the bridge only sees the gap).
+NO_OUTPUT_REASONS = ("no_data", "failed", "skipped")
 
 
 class NoOutput:
@@ -106,7 +108,7 @@ class NoOutput:
     Not exported and never returned by user code: absence comes from the
     input, so SciStack decides it (``.claude/plan-for-columns-groups.md``).
 
-    ``reason`` is ``"no_data"`` or ``"failed"``; ``detail`` is the one-line
+    ``reason`` is one of :data:`NO_OUTPUT_REASONS`; ``detail`` is the one-line
     reason shown in the run summary (``"ValueError: all blank"``).
     """
 

@@ -1217,4 +1217,114 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
 
     end
 
+
+    % =====================================================================
+    % for_columns column groups (.claude/plan-for-columns-groups.md)
+    % =====================================================================
+    methods (Test)
+
+        function test_groups_split_saves_each_group_sparsely(tc)
+        %   Several outputs: group i is output i. A group with no data at a
+        %   subject (every value missing, "" and whitespace included) adds no
+        %   row to its output's table; the other groups still produce.
+            scifor.set_schema(["subject"]);
+            tbl = groups_table();
+            [six, ten] = scifor.for_each(@latest_score, ...
+                struct('g', scifor.ColumnSelection(tbl, ...
+                    {["Six", "Six_Date"], ["Ten", "Ten_Date"]}, true)), ...
+                outputs={"SixOut", "TenOut"}, subject=[1 2 3]);
+            tc.verifyEqual(six.subject, [1; 3]);
+            tc.verifyEqual(six.SixOut, [12; 9]);
+            tc.verifyEqual(ten.subject, [1; 2]);
+            tc.verifyEqual(ten.TenOut, [6; 8]);
+        end
+
+        function test_groups_combine_names_columns_by_key_in_key_order(tc)
+        %   One output: a dictionary names each group's column, in key order;
+        %   a group with no data at a subject is left missing in its row.
+            scifor.set_schema(["subject"]);
+            tbl = groups_table();
+            result = scifor.for_each(@latest_score, ...
+                struct('g', scifor.ColumnSelection(tbl, dictionary( ...
+                    ["Ten", "Six"], {["Ten", "Ten_Date"], ["Six", "Six_Date"]}), true)), ...
+                outputs={"Out"}, subject=[1 2 3]);
+            names = string(result.Properties.VariableNames);
+            tc.verifyEqual(names(end-1:end), ["Ten", "Six"]);
+            tc.verifyEqual(result.Six(1), 12);
+            tc.verifyTrue(isnan(result.Six(2)));
+            tc.verifyEqual(result.Ten(2), 8);
+            tc.verifyTrue(isnan(result.Ten(3)));
+        end
+
+        function test_groups_combine_keeps_a_column_with_no_data_anywhere(tc)
+            scifor.set_schema(["subject"]);
+            tbl = groups_table();
+            result = scifor.for_each(@latest_score, ...
+                struct('g', scifor.ColumnSelection(tbl, dictionary( ...
+                    ["Ten", "Six"], {["Ten", "Ten_Date"], ["Six", "Six_Date"]}), true)), ...
+                outputs={"Out"}, subject=2);
+            tc.verifyTrue(ismember('Six', result.Properties.VariableNames));
+            tc.verifyTrue(isnan(result.Six(1)));
+        end
+
+        function test_groups_colname_is_the_group_name(tc)
+            scifor.set_schema(["subject"]);
+            tbl = groups_table();
+            function out = name_of(~, name)
+                out = string(name);
+            end
+            [six, ten] = scifor.for_each(@name_of, ...
+                struct('g', scifor.ColumnSelection(tbl, ...
+                    {["Six", "Six_Date"], ["Ten", "Ten_Date"]}, true), ...
+                    'name', scifor.ColName()), ...
+                outputs={"SixOut", "TenOut"}, subject=1);
+            tc.verifyEqual(string(six.SixOut), "SixOut");
+            tc.verifyEqual(string(ten.TenOut), "TenOut");
+        end
+
+        function test_groups_parse_and_normalize(tc)
+            [cols, groups] = scifor.ColumnSelection.parse_groups( ...
+                {["a", "a_d"], "b"});
+            tc.verifyEqual(cols, ["a", "a_d", "b"]);
+            tc.verifyEqual([groups.name], ["", ""]);
+            [cols, groups] = scifor.ColumnSelection.parse_groups({"a", "b"});
+            tc.verifyEqual(cols, ["a", "b"]);
+            tc.verifyEmpty(groups);
+            [cols, groups] = scifor.ColumnSelection.parse_groups( ...
+                dictionary(["a", "b"], {"a", "b"}));
+            tc.verifyEqual(cols, ["a", "b"]);
+            tc.verifyEmpty(groups);
+        end
+
+        function test_groups_refusals(tc)
+            scifor.set_schema(["subject"]);
+            tbl = groups_table();
+            tc.verifyError(@() scifor.ColumnSelection(tbl, ...
+                containers.Map({'Six'}, {["Six", "Six_Date"]}), true), ...
+                'scifor:ColumnSelection:mapUnordered');
+            tc.verifyError(@() scifor.ColumnSelection(tbl, ...
+                {["Six", "Six_Date"]}, false), ...
+                'scifor:ColumnSelection:groupsNeedIterate');
+            tc.verifyError(@() scifor.for_each(@latest_score, ...
+                struct('g', scifor.ColumnSelection(tbl, ...
+                    {["Six", "Six_Date"], ["Ten", "Ten_Date"]}, true)), ...
+                outputs={"Out"}, subject=1), 'scifor:for_each:forColumnsGroups');
+            tc.verifyError(@() scifor.for_each(@latest_score, ...
+                struct('g', scifor.ColumnSelection(tbl, ...
+                    {["Six", "Six_Date"], ["Ten", "Ten_Date"]}, true)), ...
+                outputs={"A", "B", "C"}, subject=1), 'scifor:for_each:forColumnsGroups');
+        end
+
+    end
+
+end
+
+
+function tbl = groups_table()
+%GROUPS_TABLE  The whiteboard example: two rows per subject, subject 2 blank
+%   for Six, subject 3 for Ten ("" and whitespace count as missing).
+    tbl = table([1; 1; 2; 2; 3; 3], ...
+        [10; 12; NaN; NaN; 8; 9], ["a"; "b"; ""; "  "; "c"; "d"], ...
+        [5; 6; 7; 8; NaN; NaN], ["e"; "f"; "g"; "h"; missing; missing], ...
+        'VariableNames', {'subject', 'Six', 'Six_Date', 'Ten', 'Ten_Date'});
 end

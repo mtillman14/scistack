@@ -324,6 +324,36 @@ Built first because split mode depends on it; it is independent of groups.
   selector bytes for existing flat selections unchanged (identity regression);
   cache hit on identical re-run; key reorder.
 
+### Stage 4 status (2026-10-28): built, tests pending user run (pytest + MATLAB)
+- Wire form owner moved to scifor: `column_selection.groups_to_wire` /
+  `spec_from_wire`; `scidb.intent` and the bridge both import them.
+- `NoOutput` reason `"skipped"`: the MATLAB loop leaves a skipped split
+  combination OUT of that output's table (and logs why); the bridge's
+  `_merge_output_tables` tags each per-output table, outer-merges, and turns
+  absent cells into `NoOutput("skipped")` (a None/empty table = skipped
+  everywhere). A real NaN output is not a skip. Positions stay aligned with
+  `state.output_names` (MATLAB appends py.None for an empty output).
+- Bridge: `_reconstruct_input_for_keys` / `for_each_describe_loaded_input`
+  carry `groups`; `for_each_prepare` passes output names to
+  `resolve_for_columns` (refuses a `for_columns()` split before loading).
+- MATLAB `+scifor/ColumnSelection.m`: `groups` (struct: name, columns),
+  static `parse_groups` (port; cell → unnamed, `dictionary` → named,
+  `containers.Map` refused: it sorts keys), `with_data`, `column_spec`.
+- MATLAB `+scifor/for_each.m`: Step 6.5 ports `resolve_column_groups`,
+  plan log line, overlap WARN; `run_column_iteration` ports the group loop
+  (no-data rule via `group_has_no_data`, split try/catch per group, combine
+  unchanged fail-on-raise); per-group skip tally + end-of-run lines;
+  combine rows reindexed (`combine_output_columns`, typed missing fill).
+  Not ported: `output_skips` in the summary struct (log lines only).
+- MATLAB `+scidb`: `BaseVariable.column_groups` + `for_columns` parses via
+  `scifor.ColumnSelection.parse_groups`; `describe_input_for_python` ships
+  `groups`; `build_scifor_input_from_desc` rebuilds them; coercion rebuild
+  uses `with_data`.
+- Tests: `scimatlab/tests/test_bridge_column_groups.py`;
+  `TestSciforForEachFeatures.m::test_groups_*`; `TestForColumns.m::test_groups_*`
+  (MATLAB uses `Six`/`Ten`: a name starting with a digit is not a valid
+  MATLAB table variable after the bridge).
+
 ### Stage 4: MATLAB
 - `+scifor/ColumnSelection.m`, `+scidb/BaseVariable.m` `for_columns`: cell of
   string arrays (split) and `dictionary` (combine); `containers.Map` → clear

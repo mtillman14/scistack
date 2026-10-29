@@ -224,5 +224,60 @@ classdef TestForColumns < matlab.unittest.TestCase
             testCase.verifyEqual(numel(versions), 2);
         end
 
+
+        % -----------------------------------------------------------------
+        % Column groups (.claude/plan-for-columns-groups.md)
+        % -----------------------------------------------------------------
+
+        function test_groups_split_saves_each_group_sparsely(testCase)
+            testCase.seedWalks();
+            scidb.for_each(@latest_score, ...
+                struct('g', Walks().for_columns( ...
+                    {["Six", "Six_Date"], ["Ten", "Ten_Date"]})), ...
+                {SixMWT(), TenMWT()}, 'subject', [], 'session', []);
+            s1 = SixMWT().load('subject', "1", 'session', "A");
+            testCase.verifyEqual(double(s1.data), 12, 'AbsTol', 1e-10);
+            t2 = TenMWT().load('subject', "2", 'session', "A");
+            testCase.verifyEqual(double(t2.data), 8, 'AbsTol', 1e-10);
+            % Sparse: no SixMWT record for subject 2, no TenMWT for subject 3.
+            testCase.verifyError(@() SixMWT().load('subject', "2", 'session', "A"), ?MException);
+            testCase.verifyError(@() TenMWT().load('subject', "3", 'session', "A"), ?MException);
+        end
+
+        function test_groups_combine_saves_a_column_per_group(testCase)
+            testCase.seedWalks();
+            scidb.for_each(@latest_score, ...
+                struct('g', Walks().for_columns(dictionary(["Six", "Ten"], ...
+                    {["Six", "Six_Date"], ["Ten", "Ten_Date"]}))), ...
+                {WalkSummary()}, 'subject', [], 'session', []);
+            w2 = WalkSummary().load('subject', "2", 'session', "A");
+            testCase.verifyEqual(string(w2.data.Properties.VariableNames), ["Six", "Ten"]);
+            testCase.verifyTrue(isnan(w2.data.Six(1)));
+            testCase.verifyEqual(w2.data.Ten(1), 8, 'AbsTol', 1e-10);
+        end
+
+        function test_groups_every_column_cannot_split(testCase)
+            testCase.seedWalks();
+            testCase.verifyError(@() scidb.for_each(@latest_score, ...
+                struct('g', Walks().for_columns()), ...
+                {SixMWT(), TenMWT()}, 'subject', [], 'session', []), ?MException);
+        end
+
+    end
+
+    methods (Access = private)
+        function seedWalks(~)
+        %SEEDWALKS  The whiteboard example per subject: subject 2 blank for
+        %   Six, subject 3 for Ten.
+            six = {[10; 12], [NaN; NaN], [8; 9]};
+            six_d = {["a"; "b"], [""; "  "], ["c"; "d"]};
+            ten = {[5; 6], [7; 8], [NaN; NaN]};
+            ten_d = {["e"; "f"], ["g"; "h"], [""; ""]};
+            for s = 1:3
+                Walks().save(table(six{s}, six_d{s}, ten{s}, ten_d{s}, ...
+                    'VariableNames', {'Six', 'Six_Date', 'Ten', 'Ten_Date'}), ...
+                    'subject', string(s), 'session', "A");
+            end
+        end
     end
 end

@@ -1256,7 +1256,7 @@ function val = coerce_meta_columns(val, meta_original_classes)
         else
             new_data = val.data;
         end
-        val = scifor.ColumnSelection(new_data, val.columns, val.iterate);
+        val = val.with_data(new_data);
         return;
     end
     if isa(val, 'scifor.Merge')
@@ -1351,6 +1351,10 @@ function val = build_scifor_input_from_desc(desc)
             desc_keys = cellfun(@char, cell(py.list(desc.keys())), 'UniformOutput', false);
             if any(strcmp('iterate', desc_keys))
                 iter_flag = logical(desc{'iterate'});
+            end
+            if any(strcmp('groups', desc_keys))
+                % Column groups, in scifor's wire form (groups_to_wire).
+                cols = column_spec_from_wire(desc{'groups'});
             end
             val = scifor.ColumnSelection(inner_val, cols, iter_flag);
 
@@ -1620,6 +1624,9 @@ function spec = describe_input_for_python(val)
             'type_name', class(val), ...
             'columns', cols_py, ...
             'iterate', logical(is_iter)));
+        if isprop(val, 'column_groups') && ~isempty(val.column_groups)
+            spec{'groups'} = column_groups_to_wire(val.column_groups);
+        end
 
     elseif isa(val, 'scidb.BaseVariable')
         scidb.internal.ensure_registered(class(val));
@@ -2258,5 +2265,46 @@ function s = format_input_bytes(n)
         s = sprintf('%.1fMB', n / 1024^2);
     else
         s = sprintf('%.1fKB', n / 1024);
+    end
+end
+
+
+function wire = column_groups_to_wire(groups)
+%COLUMN_GROUPS_TO_WIRE  Column groups in scifor's wire form (Python
+%   scifor.column_selection.groups_to_wire, the owner): a list of dicts with
+%   'columns' and, for a named group, 'name'. Order is meaning.
+    wire = py.list();
+    for i = 1:numel(groups)
+        g = py.dict(pyargs('columns', py.list(cellstr(groups(i).columns(:)'))));
+        if strlength(groups(i).name) > 0
+            g{'name'} = char(groups(i).name);
+        end
+        wire.append(g);
+    end
+end
+
+
+function spec = column_spec_from_wire(wire)
+%COLUMN_SPEC_FROM_WIRE  scifor's wire form back into a MATLAB column spec:
+%   a dictionary when every group is named, else a cell array of string
+%   arrays (scifor.ColumnSelection.parse_groups reads either).
+    items = cell(py.list(wire));
+    names = strings(1, numel(items));
+    cols = cell(1, numel(items));
+    all_named = ~isempty(items);
+    for i = 1:numel(items)
+        g = items{i};
+        cols{i} = string(cellfun(@char, cell(py.list(g{'columns'})), 'UniformOutput', false));
+        keys_i = cellfun(@char, cell(py.list(g.keys())), 'UniformOutput', false);
+        if any(strcmp('name', keys_i))
+            names(i) = string(char(g{'name'}));
+        else
+            all_named = false;
+        end
+    end
+    if all_named
+        spec = dictionary(names, cols);
+    else
+        spec = cols;
     end
 end

@@ -51,6 +51,7 @@ classdef BaseVariable < dynamicprops
         py_obj                  % Python BaseVariable shadow (internal)
         selected_columns string % Column names to extract on load (empty = all columns)
         iterate logical = false % for_columns: iterate per-column and reassemble
+        column_groups struct = struct('name', {}, 'columns', {}) % for_columns groups (scifor.ColumnSelection.parse_groups)
     end
 
     methods
@@ -95,11 +96,23 @@ classdef BaseVariable < dynamicprops
         %
         %   Multiple for_columns inputs in one call are zipped by column name
         %   and must resolve to the same column set.
-            if nargin >= 2 && ~isempty(cols)
-                obj.selected_columns = string(cols);
-            else
-                obj.selected_columns = string.empty;
+        %
+        %   Column groups pass several columns together, as a sub-table:
+        %
+        %   % Several outputs: one output per group, paired in order
+        %   OBJ = TypeClass().for_columns({["6MWT","6MWT_Date"], ["10MWT","10MWT_Date"]})
+        %   % One output: a dictionary names each group's column(s), in key order
+        %   OBJ = TypeClass().for_columns(dictionary(["6MWT","10MWT"], ...
+        %             {["6MWT","6MWT_Date"], ["10MWT","10MWT_Date"]}))
+        %
+        %   A group with no data at a location (every value blank) is not
+        %   passed to the function: no record there (several outputs), or an
+        %   empty column (one output).
+            if nargin < 2
+                cols = [];
             end
+            [obj.selected_columns, obj.column_groups] = ...
+                scifor.ColumnSelection.parse_groups(cols);
             obj.iterate = true;
         end
 
