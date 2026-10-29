@@ -459,6 +459,39 @@ class TestForColumnsCaching:
         versions = DeltaGait.list_versions(db=db, subject="1", session="A")
         assert len(versions) == 2
 
+    def test_reordered_columns_rerun_saves_by_name(self, db):
+        """Same columns in a different order is a new selection (the column
+        list is part of to_key), so it saves a second record into a table
+        whose physical columns were fixed by the first save. Each value must
+        land under its own name, not by position. Precondition for grouped
+        combine mode, where dict key order sets the output column order."""
+        _seed_wide(db)
+
+        for_each(
+            col_mean,
+            inputs={"value": GaitData.for_columns(["StepLength", "Cadence"])},
+            outputs=[DeltaGait],
+            db=db,
+            subject=[],
+            session=[],
+        )
+        for_each(
+            col_mean,
+            inputs={"value": GaitData.for_columns(["Cadence", "StepLength"])},
+            outputs=[DeltaGait],
+            db=db,
+            subject=[],
+            session=[],
+        )
+
+        versions = DeltaGait.list_versions(db=db, subject="1", session="A")
+        assert len(versions) == 2
+        loaded = DeltaGait.load(db=db, version="all", subject="1", session="A")
+        assert len(loaded) == 2
+        for rec in loaded:
+            assert rec.data["StepLength"].iloc[0] == pytest.approx(2.0)
+            assert rec.data["Cadence"].iloc[0] == pytest.approx(20.0)
+
 
 # ---------------------------------------------------------------------------
 # dry_run
@@ -713,6 +746,27 @@ class TestEveryColumnFromMetadata:
 
     def test_an_unregistered_type_has_no_metadata_answer(self, db):
         assert db.data_column_names(OtherData) is None
+
+    def test_every_column_of_an_unsaved_variable_is_actionable(self, db):
+        """for_columns() over a variable with no records is the user's to fix
+        (run the producing step first), not "SciStack internal error"
+        (tmp_stage0_empty_variable.py, 2026-10-28)."""
+        from scifor.failures import classify_blame
+
+        from scidb.exceptions import ForColumnsNoColumnsError
+
+        with pytest.raises(ForColumnsNoColumnsError, match="no saved records yet") as exc:
+            for_each(
+                col_mean,
+                inputs={"value": OtherData.for_columns()},
+                outputs=[DeltaGait],
+                db=db,
+                subject=[],
+                session=[],
+            )
+        assert isinstance(exc.value, ValueError)
+        blame, _probable, _rule = classify_blame(exc.value, [])
+        assert blame == "setup"
 
 
 # ---------------------------------------------------------------------------

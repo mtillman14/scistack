@@ -1026,6 +1026,40 @@ def test_iterate_empty_list_equivalent_to_all():
     assert list(result.columns) == ["subject", "a", "b"]
 
 
+def test_iterate_logs_plan_once_at_info(caplog):
+    """One INFO line at run start names the iterate input, the mode, the
+    output and which source columns feed which output column."""
+    set_schema(["subject"])
+    df = pd.DataFrame({"subject": [1, 2], "a": [5.0, 6.0], "b": [7.0, 8.0]})
+    with caplog.at_level(logging.INFO, logger="scifor"):
+        for_each(
+            lambda v: float(np.max(v)),
+            inputs={"v": ColumnSelection(df, ["a", "b"], iterate=True)},
+            outputs=["Out"],
+            subject=[1, 2],
+        )
+    lines = [r.getMessage() for r in caplog.records if "[for_columns]" in r.getMessage()]
+    assert lines == ["[for_columns] 'v' combine → Out, 2 group(s): a ← [a]; b ← [b]"]
+
+
+def test_iterate_plan_line_elides_wide_tables(caplog):
+    """A wide all-columns table names the first groups and counts the rest."""
+    set_schema(["subject"])
+    cols = {f"c{i}": [float(i)] for i in range(15)}
+    df = pd.DataFrame({"subject": [1], **cols})
+    with caplog.at_level(logging.INFO, logger="scifor"):
+        for_each(
+            lambda v: float(v),
+            inputs={"v": ColumnSelection(df, iterate=True)},
+            subject=[1],
+        )
+    (line,) = [r.getMessage() for r in caplog.records if "[for_columns]" in r.getMessage()]
+    assert "15 group(s)" in line
+    assert "c9 ← [c9]" in line
+    assert "c10 ← [c10]" not in line
+    assert line.endswith("… (+5 more)")
+
+
 def test_iterate_none_alias_for_all():
     """None is accepted as a backward-compatible alias for the [] sentinel."""
     set_schema(["subject"])

@@ -5181,9 +5181,17 @@ def _resolve_all_columns(var_type: Any, db: Any | None) -> list[str]:
         f"read from {source}"
     )
     if not cols:
-        raise ValueError(
-            f"for_columns(): no data columns found for '{var_name}' "
-            f"(columns were {list(loaded.columns)})."
+        from .exceptions import ForColumnsNoColumnsError
+
+        if not names:
+            raise ForColumnsNoColumnsError(
+                f"for_columns(): '{var_name}' has no data columns to iterate "
+                f"because it has no saved records yet. Run the step that "
+                f"produces it first, or pass an explicit column list."
+            )
+        raise ForColumnsNoColumnsError(
+            f"for_columns(): no data columns found for '{var_name}': every "
+            f"column it has ({names}) is a schema key or internal."
         )
     return cols
 

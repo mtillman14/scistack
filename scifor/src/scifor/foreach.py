@@ -696,12 +696,13 @@ def for_each(
             )
         if distribute_key is not None:
             raise ValueError("for_columns cannot be combined with distribute=True.")
-        Log.debug(
-            "resolve_iterate_columns: column iteration over %d column(s) %s "
-            "for input(s) %s",
-            len(iterate_columns),
-            iterate_columns,
-            iterate_params,
+        Log.info(
+            _describe_for_columns_plan(
+                iterate_params,
+                "combine",
+                [(c, [c]) for c in iterate_columns],
+                resolved_output_names,
+            ),
             layer="scifor",
         )
 
@@ -1374,6 +1375,38 @@ class ColumnFunctionError(ValueError):
 # for_columns function returns multiple named values (dict / Series / 1-row
 # DataFrame) instead of a single scalar.
 FOR_COLUMNS_OUTPUT_SEP = "__"
+
+# How many groups the run-start for_columns line spells out before eliding;
+# a wide all-columns table would otherwise put hundreds of names on one line.
+_FOR_COLUMNS_PLAN_SHOWN = 10
+
+
+def _describe_for_columns_plan(
+    iterate_params: "list[str]",
+    mode: str,
+    groups: "list[tuple[str, list[str]]]",
+    output_names: "list[str]",
+) -> str:
+    """The ONE run-start line saying what a for_columns call will do: which
+    input(s), combine or split, and which source columns feed which output
+    name. Logged once per run so a mis-ordered split (group i paired with
+    the wrong output) is visible before anyone reads the saved data.
+
+    ``groups`` is ``[(name, [source columns])]``: in combine mode ``name`` is
+    the output column; in split mode it is the paired output variable.
+    """
+    params = ", ".join(f"'{p}'" for p in iterate_params)
+    shown = groups[:_FOR_COLUMNS_PLAN_SHOWN]
+    pairs = "; ".join(f"{name} ← [{', '.join(cols)}]" for name, cols in shown)
+    if len(groups) > len(shown):
+        pairs += f"; … (+{len(groups) - len(shown)} more)"
+    if mode == "split":
+        return f"[for_columns] {params} split into {len(groups)} output(s): {pairs}"
+    target = output_names[0] if output_names else "output"
+    return (
+        f"[for_columns] {params} combine → {target}, "
+        f"{len(groups)} group(s): {pairs}"
+    )
 
 
 def _run_column_iteration(

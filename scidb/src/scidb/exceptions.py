@@ -86,6 +86,15 @@ class SchemaKeyTypeConflictError(SciStackError, ValueError):
     pass
 
 
+class ForColumnsNoColumnsError(SciStackError, ValueError):
+    """``MyVar.for_columns()`` (every column) found no data column to iterate:
+    the variable has no saved records yet, or every column it has is a schema
+    key or internal. Before 2026-10-28 this was a plain ``ValueError`` and the
+    run journal filed it as "SciStack internal error"."""
+
+    pass
+
+
 class SchemaKeyTypeChangeError(SciStackError, ValueError):
     """A schema-key type change would re-spell or merge stored values and was
     not confirmed. ``.impact`` is ``scidb.schema_types.impact``'s dict."""
