@@ -194,7 +194,9 @@ class BaseVariable(metaclass=VariableMeta):
         )
 
     @classmethod
-    def for_columns(cls, columns: "list[str] | None" = None) -> "ColumnSelection":
+    def for_columns(
+        cls, columns: "list[str] | list[list[str]] | dict[str, list[str]] | None" = None
+    ) -> "ColumnSelection":
         """
         Iterate a for_each() function over each column of this table variable.
 
@@ -208,8 +210,23 @@ class BaseVariable(metaclass=VariableMeta):
         a value), they are zipped by column name and must share the same column
         set.
 
+        **Column groups** pass several columns to the function together (a
+        score with its date), as a DataFrame of those columns. The number of
+        outputs decides what happens to the results:
+
+        - one output: a dict names each group, and each group's result
+          becomes that output's column(s) under its name, in key order —
+          ``Obj1.for_columns({"6MWT": ["6MWT", "6MWT_Date"], ...})``;
+        - several outputs: a list of groups, each saved as the output in the
+          same position — ``Obj1.for_columns([["6MWT", "6MWT_Date"],
+          ["10MWT", "10MWT_Date"]])`` with ``outputs=[SixMWT, TenMWT]``.
+
+        A group with no data at a location (every value blank) is not passed
+        to the function: no record (several outputs) or an empty column (one
+        output).
+
         Args:
-            columns: Column names to iterate over. An empty list ``[]`` (the
+            columns: Column names (or groups, above) to iterate over. An empty list ``[]`` (the
                 default, via ``MyVar.for_columns()``) iterates over all data
                 columns, resolved at for_each time — mirroring how an empty
                 iteration list (``subject=[]``) means "all values from the

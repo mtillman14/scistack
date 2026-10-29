@@ -331,6 +331,11 @@ def normalize_columns(raw: Any) -> dict | None:
     * a binding dict that also carries ``kind``/``ref``;
     * a ``ColumnSelection`` (or anything with ``.columns``/``.iterate``).
 
+    Column GROUPS (``for_columns({"A": [...]})`` / ``for_columns([[...]])``)
+    add a ``"groups"`` key, ONLY when grouped: ``[{"name": "A", "columns":
+    [...]}]`` (combine) or ``[{"columns": [...]}]`` (split); ``"columns"`` is
+    then the union. What a spec means is scifor's ``parse_column_groups``.
+
     Returns ``None`` for an EMPTY, non-iterate selection: no columns and no
     iteration means "the whole variable", which is what binding the bare
     class already does, and wrapping it anyway forks the version key for no
@@ -340,21 +345,28 @@ def normalize_columns(raw: Any) -> dict | None:
     """
     if raw is None:
         return None
+    groups = None
     if isinstance(raw, str):
         columns: list = [raw] if raw else []
         iterate = False
     elif isinstance(raw, (list, tuple)):
-        columns = [str(c) for c in raw if c]
+        columns, groups = _parse_spec([c for c in raw if c])
         iterate = False
     elif isinstance(raw, Mapping):
         cols = raw.get("columns")
         if isinstance(cols, str):
             cols = [cols] if cols else []
-        columns = [str(c) for c in (cols or []) if c]
+        if raw.get("groups"):
+            columns, groups = _parse_spec(_spec_from_wire(raw["groups"]))
+        elif isinstance(cols, Mapping):
+            columns, groups = _parse_spec(cols)
+        else:
+            columns, groups = _parse_spec([c for c in (cols or []) if c])
         iterate = bool(raw.get("iterate"))
     elif hasattr(raw, "columns") or hasattr(raw, "iterate"):
         # A live ColumnSelection (scifor's or scidb's subclass).
         columns = [str(c) for c in (getattr(raw, "columns", None) or []) if c]
+        groups = getattr(raw, "groups", None)
         iterate = bool(getattr(raw, "iterate", False))
     else:
         logger.warning(
@@ -366,7 +378,41 @@ def normalize_columns(raw: Any) -> dict | None:
 
     if not columns and not iterate:
         return None
-    return {"columns": columns, "iterate": iterate}
+    out: dict = {"columns": columns, "iterate": iterate}
+    if groups is not None:
+        out["groups"] = _groups_to_wire(groups)
+    return out
+
+
+def _parse_spec(spec: Any) -> "tuple[list[str], list | None]":
+    """``(columns, groups)`` through scifor's owner of what a column spec
+    means (``parse_column_groups``), names stringified."""
+    from scifor.column_selection import parse_column_groups
+
+    columns, groups = parse_column_groups(spec)
+    return [str(c) for c in columns], groups
+
+
+def _groups_to_wire(groups: list) -> "list[dict]":
+    """Column groups as stored and sent: ``[{"name": "6MWT", "columns":
+    [...]}, ...]`` (combine), or without ``name`` (split, paired with the
+    outputs in order). A list of objects, not a dict, so a ``sort_keys``
+    dump keeps the group ORDER, which is meaning (output column order /
+    output pairing)."""
+    return [
+        {"columns": list(cols)} if name is None else {"name": name, "columns": list(cols)}
+        for name, cols in groups
+    ]
+
+
+def _spec_from_wire(wire: Any) -> Any:
+    """The stored/sent groups back into a column spec (dict or list of lists)."""
+    if not isinstance(wire, (list, tuple)):
+        logger.warning("[intent] ignoring malformed column groups: %r", wire)
+        return []
+    if wire and all(isinstance(g, Mapping) and g.get("name") for g in wire):
+        return {str(g["name"]): list(g.get("columns") or []) for g in wire}
+    return [list(g.get("columns") or []) if isinstance(g, Mapping) else g for g in wire]
 
 
 def describe_columns(sel: Any) -> str:
@@ -379,6 +425,8 @@ def describe_columns(sel: Any) -> str:
     if not sel:
         return "whole variable"
     columns = sel.get("columns") or []
+    if sel.get("groups"):
+        return f"per group ({len(sel['groups'])})"
     if sel.get("iterate"):
         return "per column" if not columns else f"per column ({len(columns)})"
     if len(columns) == 1:
@@ -391,8 +439,8 @@ def selector_json(sel: Any) -> str | None:
 
     **The bytes here are identity.** ``compute_invocation_id`` folds this
     string in, so a change to the serialisation re-identifies every recorded
-    call: ``iterate`` is emitted ONLY when set, and keys are sorted, exactly
-    as the save path has always written them.
+    call: ``iterate`` and ``groups`` are emitted ONLY when set, and keys are
+    sorted, exactly as the save path has always written them.
     """
     sel = normalize_columns(sel)
     if sel is None:
@@ -400,6 +448,8 @@ def selector_json(sel: Any) -> str | None:
     out: dict = {"columns": list(sel["columns"])}
     if sel["iterate"]:
         out["iterate"] = True
+    if sel.get("groups"):
+        out["groups"] = sel["groups"]
     return json.dumps(out, sort_keys=True)
 
 

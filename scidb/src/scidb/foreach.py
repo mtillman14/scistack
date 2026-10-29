@@ -725,7 +725,9 @@ def for_each(
     # Expand empty columns ([] / all) -> all data columns and validate the shared column
     # axis BEFORE version keys are built (Step 8) and before dry-run display,
     # so caching reflects the concrete column set.
-    inputs = _resolve_for_columns(inputs, db)
+    inputs = _resolve_for_columns(
+        inputs, db, [_output_column_name(o) for o in outputs] if outputs else None
+    )
     _has_for_columns = any(
         _iterate_column_selection(s) is not None for s in inputs.values()
     )
@@ -3351,6 +3353,14 @@ def _check_path_outputs(
         _colname_columns = None
         for _spec in inputs.values():
             _cs = _iterate_column_selection(_spec)
+            if _cs is not None and _cs.groups is not None:
+                # {ColName} is the group's name (a dict key, or the paired
+                # output in split mode). The preview only needs one distinct
+                # label per group, so an unnamed group's position will do.
+                _colname_columns = [
+                    name or f"group{i + 1}" for i, (name, _cols) in enumerate(_cs.groups)
+                ]
+                break
             if _cs is not None and _cs.columns:
                 _colname_columns = list(_cs.columns)
                 break
@@ -4105,7 +4115,7 @@ def _convert_inputs_for_display(inputs: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(var_spec, ColumnSelection):
             dummy = pd.DataFrame(columns=var_spec.columns or [])
             result[param_name] = _scifor.ColumnSelection(
-                dummy, var_spec.columns, iterate=var_spec.iterate
+                dummy, var_spec.column_spec, iterate=var_spec.iterate
             )
         elif isinstance(var_spec, Fixed) and isinstance(
             var_spec.data, ColumnSelection
@@ -4113,7 +4123,7 @@ def _convert_inputs_for_display(inputs: dict[str, Any]) -> dict[str, Any]:
             inner = var_spec.data
             dummy = pd.DataFrame(columns=inner.columns or [])
             dummy_cs = _scifor.ColumnSelection(
-                dummy, inner.columns, iterate=inner.iterate
+                dummy, inner.column_spec, iterate=inner.iterate
             )
             result[param_name] = _scifor.Fixed(dummy_cs, **var_spec.fixed_metadata)
         elif isinstance(var_spec, Fixed) and not isinstance(var_spec.data, Merge):
@@ -4528,7 +4538,7 @@ def _load_input(
                 ),
             )
             return _scifor.ColumnSelection(
-                loaded_df, var_spec.columns, iterate=var_spec.iterate
+                loaded_df, var_spec.column_spec, iterate=var_spec.iterate
             )
         return PerComboLoader(var_spec)
 
@@ -5198,13 +5208,23 @@ def _resolve_all_columns(var_type: Any, db: Any | None) -> list[str]:
     return cols
 
 
-def _resolve_for_columns(inputs: dict, db: Any | None) -> dict:
+def _resolve_for_columns(
+    inputs: dict, db: Any | None, output_names: "list[str] | None" = None
+) -> dict:
     """Resolve iterate-mode ColumnSelection inputs (``for_columns``).
 
     Expands empty ``columns`` ([] / all) to all data columns and validates that every
-    iterate input shares the same column set (zipped by name). Returns a new
-    inputs dict with concrete ColumnSelections; raises ValueError on mismatch.
-    Inputs without any iterate selection are returned unchanged.
+    iterate input shares the same column set (zipped by name), or the same
+    column GROUPS when grouped. Returns a new inputs dict with concrete
+    ColumnSelections; raises on mismatch. Inputs without any iterate
+    selection are returned unchanged.
+
+    ``output_names``: when given, the combine/split decision is checked here,
+    before anything loads (``scifor.column_selection.resolve_column_groups``
+    owns it; scifor asks again at its Step 6.5). It must be asked HERE for
+    ``for_columns()`` (every column): after this expansion scifor sees an
+    explicit list and could no longer tell that splitting it across outputs
+    would pair them in the data's column order.
     """
     iterate_params = {
         name: cs
@@ -5222,8 +5242,13 @@ def _resolve_for_columns(inputs: dict, db: Any | None) -> dict:
 
     resolved_cols: dict[str, list[str]] = {}
     for name, cs in iterate_params.items():
-        if not cs.columns:  # empty [] (or legacy None) -> all data columns
+        if cs.groups is not None:
+            cols = list(cs.columns)  # groups list their columns explicitly
+        elif not cs.columns:  # empty [] (or legacy None) -> all data columns
             cols = _resolve_all_columns(cs.data, resolved_db)
+            if cs.excl_columns:
+                excl = set(cs.excl_columns)
+                cols = [c for c in cols if c not in excl]
             Log.debug(
                 f"for_columns: resolved '{name}' to all {len(cols)} column(s): {cols}"
             )
@@ -5231,21 +5256,44 @@ def _resolve_for_columns(inputs: dict, db: Any | None) -> dict:
             cols = list(cs.columns)
         resolved_cols[name] = cols
 
-    # Zip-by-name: every iterate input must cover the same column set.
+    # Zip: every iterate input must cover the same columns (or groups).
     ref_name = next(iter(resolved_cols))
+    ref_cs = iterate_params[ref_name]
     ref_set = set(resolved_cols[ref_name])
     for name, cols in resolved_cols.items():
-        if set(cols) != ref_set:
+        cs = iterate_params[name]
+        if ref_cs.groups is not None or cs.groups is not None:
+            if cs.groups != ref_cs.groups:
+                from scifor.column_selection import ColumnGroupsError
+
+                raise ColumnGroupsError(
+                    f"for_columns inputs are zipped group by group, so they must "
+                    f"declare the same groups. '{ref_name}' has {ref_cs.column_spec} "
+                    f"but '{name}' has {cs.column_spec}."
+                )
+        elif set(cols) != ref_set:
             raise ValueError(
                 f"for_columns inputs must iterate over the same columns "
                 f"(zipped by name). '{ref_name}' resolves to "
                 f"{sorted(ref_set)} but '{name}' resolves to {sorted(cols)}."
             )
 
+    if output_names is not None:
+        from scifor.column_selection import resolve_column_groups
+
+        mode, groups = resolve_column_groups(
+            resolved_cols[ref_name],
+            ref_cs.groups,
+            output_names,
+            every_column=ref_cs.groups is None and not ref_cs.columns,
+        )
+        Log.debug(f"for_columns: {mode} over {len(groups)} group(s)")
+
     # Rebuild inputs with concrete, iterate-mode ColumnSelections.
     new_inputs = dict(inputs)
     for name, cs in iterate_params.items():
-        new_cs = ColumnSelection(cs.data, resolved_cols[name], iterate=True)
+        spec_cols = cs.column_spec if cs.groups is not None else resolved_cols[name]
+        new_cs = ColumnSelection(cs.data, spec_cols, iterate=True)
         spec = inputs[name]
         if isinstance(spec, Fixed):
             new_inputs[name] = Fixed(new_cs, **spec.fixed_metadata)

@@ -87,6 +87,17 @@ class ColumnSelection:
             )
 
     @property
+    def column_spec(self) -> "list[str] | list[list[str]] | dict[str, list[str]]":
+        """``columns`` as it would be passed in: the flat list, the list of
+        group lists, or the dict of named groups. What every rebuild of a
+        selection over new data passes, so the groups survive it."""
+        if self.groups is None:
+            return list(self.columns)
+        if self.groups[0][0] is None:
+            return [list(cols) for _, cols in self.groups]
+        return {name: list(cols) for name, cols in self.groups}
+
+    @property
     def __name__(self) -> str:
         """Return a display name for format_inputs and error messages."""
         data_name = _display_name(self.data)

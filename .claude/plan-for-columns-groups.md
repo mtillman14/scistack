@@ -292,6 +292,25 @@ Built first because split mode depends on it; it is independent of groups.
   still return; as_table per group; deferred ColName per mode; two iterate
   inputs with matching / mismatching groups; flat list unchanged (regression).
 
+### Stage 3 status (2026-10-28): built, tests pending user run
+- scifor `ColumnSelection.column_spec`: the spec as passed in (flat list,
+  list of lists, dict). Every scidb rebuild over loaded data uses it
+  (`_load_input`, dry-run display, `_resolve_for_columns`, `spec_name`), so
+  groups survive.
+- `_resolve_for_columns(inputs, db, output_names)`: group-aware zip check;
+  asks `resolve_column_groups(every_column=...)` BEFORE expanding
+  `for_columns()`, since afterwards scifor cannot tell the list came from
+  data order. Also now applies `excl_columns` to the every-column expansion
+  (it was silently dropped by the rebuild before).
+- `scidb.intent`: canonical selection gains `"groups"` only when grouped
+  (`[{"name", "columns"}]` combine / `[{"columns"}]` split; a list so a
+  `sort_keys` dump keeps group order). Spec parsing goes through scifor's
+  `parse_column_groups`. Flat selector bytes unchanged (pinned by test).
+  `describe_columns` → `per group (N)`.
+- PathOutput collision preview uses group names (positional labels for
+  unnamed groups; only distinctness matters).
+- Tests: `scidb/tests/test_for_columns_groups.py`.
+
 ### Stage 3: scidb (Python)
 - `scidb/variable.py` `for_columns` accepts the new shapes.
 - `scidb/foreach.py` `_resolve_for_columns`: groups survive resolution;

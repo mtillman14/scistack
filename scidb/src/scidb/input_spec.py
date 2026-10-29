@@ -212,7 +212,7 @@ def spec_name(spec: Any) -> str:
     if isinstance(spec, AcrossVariants):
         return f"AcrossVariants({spec_name(spec.var_type)})"
     if isinstance(spec, ColumnSelection):
-        return f"ColumnSelection({spec_name(spec.data)}, {spec.columns})"
+        return f"ColumnSelection({spec_name(spec.data)}, {spec.column_spec})"
     if isinstance(spec, type):
         return spec.__name__
     if hasattr(spec, "__name__"):
