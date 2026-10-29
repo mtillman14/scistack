@@ -3052,6 +3052,39 @@ def recorded_output_orders(duck, function_names) -> dict[str, list[list[str]]]:
     return out
 
 
+def recorded_output_params(duck, function_names) -> dict[str, dict[str, str]]:
+    """``{function_name: {signature output name: output type}}``: which
+    variable each NAMED MATLAB output saved to, from the runs that recorded
+    their signature names (``_run_outputs.output_params``), newest run first
+    per name.
+
+    By NAME, never by position: a signature edited from ``[time, force]`` to
+    ``[force, time]`` after a run still maps ``force`` to the variable
+    ``force`` saved to. A run whose names and outputs differ in count (a
+    for_columns split writes N variables from one output) maps nothing.
+    Python functions record no names and are absent. One query.
+    """
+    names = sorted({str(n) for n in (function_names or []) if n})
+    if not names or not duck._table_exists("_run_outputs"):
+        return {}
+    ph = ", ".join(["?"] * len(names))
+    out: dict[str, dict[str, str]] = {}
+    for fn, outputs, params in duck._fetchall(
+        "SELECT r.function_name, ro.outputs, ro.output_params FROM _run_outputs ro "
+        f"JOIN _run r ON r.run_id = ro.run_id WHERE r.function_name IN ({ph}) "
+        "AND ro.output_params IS NOT NULL "
+        "ORDER BY r.timestamp DESC, r.run_id DESC",
+        names,
+    ):
+        outputs, params = list(outputs or []), list(params or [])
+        if not params or len(params) != len(outputs):
+            continue
+        mapping = out.setdefault(fn, {})
+        for p, t in zip(params, outputs, strict=True):
+            mapping.setdefault(str(p), str(t))
+    return out
+
+
 def _annotate_variants(duck, groups: dict, group_records: dict) -> list[dict]:
     """Add chronology, locations and the load-path verdict to each variant.
 

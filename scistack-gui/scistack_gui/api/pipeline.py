@@ -547,12 +547,44 @@ def _compute_run_states(
     return result
 
 
+def matlab_class_handle_functions(
+    matlab_functions, matlab_output_order: dict, recorded_output_orders: dict
+) -> list[str]:
+    """MATLAB functions whose newest run wrote MORE outputs than the
+    signature declares (a for_columns split: one return value per group, one
+    output variable per group). They draw one handle per output CLASS, in
+    recorded order, like a Python function, instead of one per signature
+    output, which would leave the extra outputs' edges nowhere to attach."""
+    out = []
+    for fn in sorted(matlab_functions):
+        newest = (recorded_output_orders.get(fn) or [[]])[0]
+        declared = (matlab_output_order or {}).get(fn, [])
+        if declared and len(newest) > len(declared):
+            logger.info(
+                "[pipeline] matlab fn=%s wrote %s but declares %s output(s): "
+                "class-named handles in recorded order",
+                fn,
+                newest,
+                len(declared),
+            )
+            out.append(fn)
+    return out
+
+
 def _matlab_param_to_class_from_db(
     aggregated_functions: dict,
     matlab_functions: set,
     matlab_output_order: dict,
+    recorded_output_params: "dict[str, dict[str, str]] | None" = None,
 ) -> dict[str, dict[str, str]]:
     """``{fn_name: {output_param_name: class_name}}`` derived from DB variants.
+
+    **The recorded output NAMES win** (``_run_outputs.output_params``,
+    2026-10-28): a MATLAB run records which variable each named signature
+    output saved to, so ``time`` maps to the class ``time`` wrote even after
+    the signature is reordered. Mapped BY NAME, for the names the current
+    signature still declares; ``output_num`` below only fills names no run
+    recorded (runs from before it was recorded).
 
     The DB-derived half of ``matlab_param_to_class``;
     ``infer_manual_fn_param_to_class`` supplies the manual-edge half. When BOTH
@@ -589,6 +621,12 @@ def _matlab_param_to_class_from_db(
         if fn_name not in matlab_functions:
             continue
         names = matlab_output_order.get(fn_name) or []
+        by_name = (recorded_output_params or {}).get(fn_name) or {}
+        named = {p: by_name[p] for p in names if p in by_name}
+        if named:
+            from_db.setdefault(fn_name, {}).update(named)
+            if len(named) == len(names):
+                continue
         variants = fn_data.get("variants", [])
         if len(names) == 1:
             # One declared output: the number is noise here.
@@ -620,7 +658,8 @@ def _matlab_param_to_class_from_db(
             if out_type is None:
                 continue
             if onum is not None and 0 <= int(onum) < len(names):
-                from_db.setdefault(fn_name, {})[names[int(onum)]] = out_type
+                # A recorded name already mapped wins over a slot number.
+                from_db.setdefault(fn_name, {}).setdefault(names[int(onum)], out_type)
             else:
                 unresolved.add(onum)
         if unresolved:
@@ -902,9 +941,24 @@ def _build_graph(
     # Build matlab_param_to_class from DB variants' output_num and, as a
     # fallback for ungraduated fns with no DB history yet, from persisted
     # manual edges.
-    # Source 1: DB variants' output_num → the fn's signature output name.
+    # Output order (domain.output_order owns it): each function's recorded
+    # outputs= orders, newest run first. One query for every function; the
+    # MATLAB mapping below and build_function_nodes both read it.
+    from scistack_gui.domain.output_order import recorded_orders
+
+    recorded_output_orders = recorded_orders(
+        db, {fn for (fn, _cid) in agg.fn_input_params} | set(matlab_functions)
+    )
+
+    # Source 1: the recorded output NAMES (else DB variants' output_num) →
+    # the fn's signature output name.
+    from scistack_gui.domain.output_order import recorded_params
+
     from_db = _matlab_param_to_class_from_db(
-        scidb_agg["functions"], matlab_functions, matlab_output_order
+        scidb_agg["functions"],
+        matlab_functions,
+        matlab_output_order,
+        recorded_params(db, matlab_functions),
     )
     matlab_param_to_class: dict[str, dict[str, str]] = {
         fn: dict(mapping) for fn, mapping in from_db.items()
@@ -1012,6 +1066,17 @@ def _build_graph(
     nodes += gb.build_path_input_nodes(agg.path_inputs)
     path_input_node_count = len(nodes) - var_node_count - const_node_count
     sweep_node_count = 0
+    # A MATLAB function whose run wrote MORE outputs than its signature
+    # declares (a for_columns split: one return value per group, one output
+    # variable per group) cannot draw one handle per signature output: it
+    # draws one per output CLASS, in recorded order, like a Python function.
+    # Dropping its param mapping here makes build_function_nodes and
+    # build_edges both use class-named handles.
+    for fn in matlab_class_handle_functions(
+        matlab_functions, matlab_output_order, recorded_output_orders
+    ):
+        matlab_output_order.pop(fn, None)
+        matlab_param_to_class.pop(fn, None)
     nodes += gb.build_function_nodes(
         agg.fn_input_params,
         agg.fn_outputs,
@@ -1024,6 +1089,7 @@ def _build_graph(
         matlab_output_order=matlab_output_order,
         matlab_param_to_class=matlab_param_to_class,
         node_configs=node_configs,
+        recorded_output_orders=recorded_output_orders,
     )
     fn_node_count = (
         len(nodes)
@@ -1246,7 +1312,16 @@ def _build_graph(
             for p, t in inferred_inputs.items():
                 if p not in resolved_input_params:
                     resolved_input_params[p] = t
-            resolved_output_types = resolved.output_types
+            # Output order (domain.output_order): a recorded order for this
+            # function if any run of it recorded one, else the order the
+            # output edges were drawn (manual edges come back drawn-first).
+            from scistack_gui.domain.output_order import node_output_order
+
+            resolved_output_types = node_output_order(
+                resolved.output_types,
+                recorded_output_orders.get(fn_label),
+                edge_order=resolved.output_types,
+            )
             # For state computation, always use the edge-resolved output types
             # (the actual variable class names like 'XSENSLoaded'), NOT the
             # MATLAB declared output parameter names (like 'extracted_data').

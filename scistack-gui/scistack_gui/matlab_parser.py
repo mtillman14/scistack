@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from scidb.source_edit import Span
-from scimatlab.source_hash import hash_source_bytes
+from scimatlab.source_hash import hash_source_bytes, matlab_output_names
 
 logger = logging.getLogger(__name__)
 
@@ -242,19 +242,11 @@ def parse_matlab_function(path: Path) -> MatlabFunctionInfo | None:
     )
     logger.debug("[matlab_parser] Function has %d parameters", len(params))
 
-    # Count output arguments and extract names from the declaration.
-    #   Group 1: "[out1, out2]" → count comma-separated names
-    #   Group 2: "out"          → single output
-    #   Neither:                → void (0 outputs)
-    if m.group(1) is not None:
-        output_names = [o.strip() for o in m.group(1).split(",") if o.strip()]
-        n_outputs = len(output_names)
-    elif m.group(2) is not None:
-        output_names = [m.group(2).strip()]
-        n_outputs = 1
-    else:
-        output_names = []
-        n_outputs = 0
+    # Output names: scimatlab owns them (a MATLAB run records the same names
+    # beside its outputs=, so the two readers cannot parse them two ways).
+    # "[a b]" (whitespace-separated) counts as two, as MATLAB reads it.
+    output_names = matlab_output_names(text, m.group(3))
+    n_outputs = len(output_names)
     logger.debug("[matlab_parser] Function has %d outputs", n_outputs)
 
     docstring = _extract_docstring(text, m.end())

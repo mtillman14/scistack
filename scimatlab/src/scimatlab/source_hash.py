@@ -26,6 +26,7 @@ text is the faithful UTF-8 decoding of the hashed bytes.
 
 from __future__ import annotations
 
+import re as _re
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -119,3 +120,43 @@ def matlab_function_source(path: str, name: str = "") -> tuple[str, str]:
         )
         return src.hash, ""
     return src.hash, src.text
+
+
+# ---------------------------------------------------------------------------
+# The signature's output names
+# ---------------------------------------------------------------------------
+
+#: ``function [a, b] = name(`` / ``function out = name(`` / ``function name(``.
+_FUNCTION_DECL = _re.compile(
+    r"^\s*function\s+(?:\[([^\]]*)\]\s*=\s*|(\w+)\s*=\s*)?([\w.]+)\s*(?:\(|$)",
+    _re.MULTILINE,
+)
+
+
+def matlab_output_names(text: str, name: str = "") -> list[str]:
+    """The declared output names of a MATLAB function, in signature order:
+    ``function [time, force] = f(x)`` -> ``["time", "force"]``.
+
+    THE owner of this fact: a MATLAB run records these names beside its
+    ``outputs=`` (scidb ``_run_outputs.output_params``) so the GUI can map
+    each output NAME to the variable it saved to, which survives a later
+    reordering of the signature (``.claude/plan-output-order-owner.md``); the
+    GUI's ``matlab_parser`` reads the same names through here.
+
+    Outputs may be separated by commas or whitespace (``[a b]`` is valid
+    MATLAB). ``%`` comments are ignored. *name* picks that function's
+    declaration in a file with several (local functions); default: the first.
+    ``varargout`` is kept as a name. No declaration: ``[]``.
+    """
+    stripped = "\n".join(line.split("%", 1)[0] for line in (text or "").splitlines())
+    for m in _FUNCTION_DECL.finditer(stripped):
+        fn = m.group(3).rsplit(".", 1)[-1]
+        if name and fn != name.rsplit(".", 1)[-1]:
+            continue
+        if m.group(1) is not None:
+            # "..." is a line continuation inside the brackets, not a name.
+            return [o for o in _re.split(r"[\s,]+", m.group(1).strip()) if o and o != "..."]
+        if m.group(2) is not None:
+            return [m.group(2)]
+        return []
+    return []

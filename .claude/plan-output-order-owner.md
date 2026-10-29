@@ -1,6 +1,6 @@
 # Plan: one owner for a function node's output order
 
-Status: DRAFT, awaiting approval (2026-10-28).
+Status: Stages 0-1 committed; 2-4 written 2026-10-28, pending tests.
 Follows `.claude/plan-for-columns-groups.md` (split mode pairs column groups
 with outputs BY POSITION, which made output order carry meaning).
 
@@ -140,3 +140,44 @@ MATLAB. Node/npm checks and bundle rebuilds by Claude if any frontend changes
 - Run log membership: `bundle.HISTORY_TABLES`, `clear_data.KEPT_BY_CLEAR`,
   deleted with its run in `variant_delete`.
 - Tests: `scidb/tests/test_output_order_recorded.py`.
+
+## Stages 2-4 status (2026-10-28): built, tests pending user run
+- Owner `scistack_gui/domain/output_order.py` (`node_output_order`,
+  `recorded_orders`, `writes_together`).
+- Graph: `_build_graph` queries recorded orders once; Python handles via the
+  owner (alphabetical only as the logged last resort); never-run nodes via the
+  owner with drawn edge order; `intent_store.manual_edges` sorted by
+  `stated_at`; MATLAB split → `matlab_class_handle_functions` (class handles);
+  `_matlab_param_to_class_from_db` prefers recorded order over `output_num`;
+  `build_function_nodes` MATLAB branch now requires the fn in
+  `matlab_output_order` (else the class rule, instead of zero handles).
+- Python canvas run: `run_output_types(..., recorded)`; all node outputs in one
+  call for a split or `writes_together` (fixes the one-output bug).
+- MATLAB command: owner class order as `output_types`;
+  `_order_group_outputs` sorts history groups; never-run uses signature as
+  `declared`.
+- Known gap left: functions whose runs wrote outputs SEPARATELY still get one
+  output per call, and de-duplication keeps one target for them.
+- Docs: `docs/claude/output-order.md`; manual check §0zzzzzzr.
+- Tests: `scistack-gui/tests/test_output_order.py` (renamed from the Stage 0
+  diagnostics).
+
+## Round 2 (2026-10-28): changing outputs + MATLAB by name, tests pending
+- MATLAB mapping BY NAME: each MATLAB run records its signature output names
+  (`_run_outputs.output_params`, ADD COLUMN IF NOT EXISTS; parsed by the new
+  owner `scimatlab.source_hash.matlab_output_names`, which the GUI's
+  `matlab_parser` now calls; handles `[a b]` and `...`). The bridge sentinel
+  carries them (`output_params`), `_save_results` passes them to `record_run`.
+  Reader `provenance_query.recorded_output_params` → `{fn: {name: class}}`.
+  `_matlab_param_to_class_from_db` maps by recorded name first (the Stage 2
+  positional mapping was the same flaw as output_num and is gone).
+  `output_order.matlab_output_order`: the CURRENT signature mapped by name
+  (MATLAB pairs returns by position), or the recorded order for a split; the
+  MATLAB command service uses it in both branches.
+- `run_output_types`: outputs only OLDER runs wrote (dropped from outputs=)
+  are not passed when the newest run wrote several together.
+- Tests: user's 1-6 in `scistack-gui/tests/test_output_order.py`,
+  `scidb/tests/test_output_order_recorded.py` (names),
+  `scimatlab/tests/test_matlab_output_names.py`.
+- Open (needs the user): Python port model (alphabetical default,
+  user-reorderable ports, port count from the function).

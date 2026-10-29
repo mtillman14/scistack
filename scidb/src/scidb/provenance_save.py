@@ -551,11 +551,14 @@ def record_run(
     parameter_names: dict | None = None,
     path_input_specs: dict | None = None,
     output_types: "list[str] | None" = None,
+    output_params: "list[str] | None" = None,
 ) -> str | None:
     """Write the bipartite graph for ``graph_records`` plus a fresh ``_run`` row.
 
     ``output_types``: the call's output variable types in ``outputs=`` order,
     recorded on ``_run_outputs`` (the one record of output order).
+    ``output_params``: a MATLAB function's signature output names, position
+    for position (``_run_outputs.output_params``); ``None`` for Python.
 
     ``path_input_specs`` is ``{argument: PathInput.to_spec()}`` — what each
     PathInput-fed argument's record STORES (template, root_folder, ...). The
@@ -972,6 +975,7 @@ def record_run(
         declared_edges=declared_edges,
         pathinput_spec_rows=pathinput_spec_rows,
         output_types=output_types,
+        output_params=output_params,
     )
     timings["3_commit"] = time.perf_counter() - _t_commit
     timings["total"] = time.perf_counter() - _t_start
@@ -1198,6 +1202,7 @@ def _commit_graph(
     declared_edges: dict | None = None,
     pathinput_spec_rows: dict | None = None,
     output_types: "list[str] | None" = None,
+    output_params: "list[str] | None" = None,
 ) -> None:
     """Transactionally insert the assembled graph rows + the append-only run.
 
@@ -1378,12 +1383,20 @@ def _commit_graph(
             logger.info("run %s of %s recorded as step %r", run_id, function_name, step)
         if output_types:
             duck.con.execute(
-                "INSERT INTO _run_outputs (run_id, outputs) VALUES (?, ?) "
+                "INSERT INTO _run_outputs (run_id, outputs, output_params) VALUES (?, ?, ?) "
                 "ON CONFLICT (run_id) DO NOTHING",
-                [run_id, [str(t) for t in output_types]],
+                [
+                    run_id,
+                    [str(t) for t in output_types],
+                    [str(p) for p in output_params] if output_params else None,
+                ],
             )
             logger.info(
-                "run %s of %s wrote outputs in order %s", run_id, function_name, list(output_types)
+                "run %s of %s wrote outputs in order %s%s",
+                run_id,
+                function_name,
+                list(output_types),
+                f" from signature outputs {list(output_params)}" if output_params else "",
             )
         _timed(
             "3f_run_invocation",

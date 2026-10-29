@@ -162,18 +162,26 @@ def test_run_output_types_split_uses_every_node_output():
     class RunWalks(BaseVariable):
         pass
 
+    # Runs that wrote A and B SEPARATELY: only a splitting selection puts both
+    # in one call (output_order.writes_together decides the rest; see
+    # test_output_order.py for the never-run and written-together cases).
+    separate = [["SixMWT"], ["TenMWT"]]
     split = {"g": RunWalks.for_columns([SIX, TEN])}
-    assert run_output_types(split, ["SixMWT", "TenMWT"], "SixMWT") == ["SixMWT", "TenMWT"]
-    # One node output, or a combine dict: one output per call, as before.
+    assert run_output_types(split, ["SixMWT", "TenMWT"], "SixMWT", separate) == ["SixMWT", "TenMWT"]
+    # One node output: one output per call.
     assert run_output_types(split, ["SixMWT"], "SixMWT") == ["SixMWT"]
     combine = {"g": RunWalks.for_columns({"6MWT": SIX, "10MWT": TEN})}
-    assert run_output_types(combine, ["A", "B"], "A") == ["A"]
+    assert run_output_types(combine, ["SixMWT", "TenMWT"], "SixMWT", separate) == ["SixMWT"]
     # for_columns() (every column) never splits; no for_columns at all is untouched.
-    assert run_output_types({"g": RunWalks.for_columns()}, ["A", "B"], "A") == ["A"]
-    assert run_output_types({"g": RunWalks}, ["A", "B"], "B") == ["B"]
+    every = {"g": RunWalks.for_columns()}
+    assert run_output_types(every, ["SixMWT", "TenMWT"], "SixMWT", separate) == ["SixMWT"]
+    assert run_output_types({"g": RunWalks}, ["SixMWT", "TenMWT"], "TenMWT", separate) == ["TenMWT"]
     # A flat list with as many columns as outputs splits one column per output.
     flat = {"g": RunWalks.for_columns(["a", "b"])}
-    assert run_output_types(flat, ["A", "B"], "A") == ["A", "B"]
+    assert run_output_types(flat, ["SixMWT", "TenMWT"], "SixMWT", separate) == ["SixMWT", "TenMWT"]
+    # Never run, two outputs drawn: one call writes both (the run reports a
+    # combine dict's "would name nothing", as the picker does).
+    assert run_output_types(combine, ["A", "B"], "A") == ["A", "B"]
 
 
 # --- Output handle tooltips ----------------------------------------------------

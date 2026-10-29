@@ -6297,6 +6297,9 @@ def _save_results(
                 parameter_names=state.parameter_names,
                 path_input_specs=state.path_input_specs,
                 output_types=[_output_type_label(o) for o in outputs],
+                # A MATLAB function's signature output names (the bridge's
+                # sentinel carries them); a Python function has none.
+                output_params=getattr(fn, "output_params", None),
             )
             Log.info(
                 f"[provenance] recorded run_id={run_id} for {len(graph_records)} "

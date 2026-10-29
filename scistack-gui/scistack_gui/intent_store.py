@@ -979,8 +979,16 @@ def delete_manual_edge(db, edge_id: str) -> int:
 
 
 def manual_edges(db) -> list[dict]:
+    """Manual edges, in the order they were DRAWN (``stated_at``, ISO text).
+
+    The order is meaning for a function's output edges: a function node that
+    has never run has no recorded ``outputs=`` order, so its output order is
+    the order its output edges were drawn (``domain.output_order``). The
+    table read itself has no order (no ORDER BY), hence the sort here.
+    Re-drawing an edge re-states it, which moves it last."""
     out = []
-    for s in load_statements(db, aspect=ASPECT_WIRING, subject_kind=SUBJECT_EDGE):
+    statements = load_statements(db, aspect=ASPECT_WIRING, subject_kind=SUBJECT_EDGE)
+    for s in sorted(statements, key=lambda st: str(st.stated_at or "")):
         v = s.value or {}
         entry: dict = {"id": s.subject_ref, "source": v.get("source", ""), "target": v.get("target", "")}
         if v.get("sourceHandle") is not None:

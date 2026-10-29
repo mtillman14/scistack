@@ -34,6 +34,7 @@ from scistack_gui.ids import (
     strip_placement,
     var_node_id,
 )
+from scistack_gui.domain.output_order import node_output_order
 from scistack_gui.domain.scope_filter import DECLARED_ONLY
 
 logger = logging.getLogger(__name__)
@@ -1762,6 +1763,7 @@ def build_function_nodes(
     matlab_output_order: dict[str, list[str]] | None = None,
     matlab_param_to_class: dict[str, dict[str, str]] | None = None,
     node_configs: dict[str, dict] | None = None,
+    recorded_output_orders: dict[str, list[list[str]]] | None = None,
 ) -> list[dict]:
     """Build React Flow function nodes — one per aggregate key.
 
@@ -1824,7 +1826,7 @@ def build_function_nodes(
         # MATLAB fns render handles in MATLAB-signature order using param names
         # (e.g. "time", "force_left"). Non-MATLAB fns use the class names directly.
         actual_outputs = fn_outputs.get(fkey, set())
-        if fn in matlab_functions and matlab_output_order:
+        if fn in matlab_functions and fn in (matlab_output_order or {}):
             declared = matlab_output_order.get(fn, [])
             p2c = (matlab_param_to_class or {}).get(fn, {})
             connected_classes = set(p2c.values()) | actual_outputs
@@ -1867,7 +1869,11 @@ def build_function_nodes(
                 p2c,
             )
         else:
-            out_types = sorted(actual_outputs)
+            # Output order: domain.output_order owns it (recorded outputs=
+            # order, newest run first), never alphabetical by default.
+            out_types = node_output_order(
+                actual_outputs, (recorded_output_orders or {}).get(fn)
+            )
 
         node_id = fn_node_id(fn, cid)
         fn_data: dict = {

@@ -1447,22 +1447,64 @@ def _apply_column_selection(var_cls, sel: "dict | None"):
     return var_cls[spec]
 
 
-def run_output_types(inputs: dict, node_output_types: "list[str] | None", output_type: str) -> list[str]:
-    """The output types ONE for_each call of a target writes.
+def run_output_types(
+    inputs: dict,
+    node_output_types: "list[str] | None",
+    output_type: str,
+    recorded: "list[list[str]] | None" = None,
+) -> list[str]:
+    """The output types ONE for_each call of a target writes, in order.
 
-    A GUI run is one call per target with the target's single output type.
-    A for_columns selection that SPLITS its groups across the node's outputs
-    (several outputs: group i saves as output i) needs every output in that
-    one call, in the node's handle order, the order the Inputs picker pairs
-    against (``column_selection.plan_groups``). scifor's
-    ``resolve_column_groups`` decides combine vs split, as it does in the
-    run itself; a grouping it refuses is left for the run to report.
+    ``node_output_types`` is the node's handle order, which
+    ``domain.output_order`` owns (a run's recorded ``outputs=`` order, else
+    the drawn edge order). Every output in one call, in that order, when:
+
+    * a for_columns selection SPLITS its groups across them (group i saves as
+      output i; scifor's ``resolve_column_groups`` decides, as in the run); or
+    * the function writes them together (``output_order.writes_together``:
+      a run recorded two or more of them in one ``outputs=``, or nothing is
+      recorded and several are drawn). Before 2026-10-28 a canvas run wrote
+      ONE output per call and de-duplication kept one target, so a
+      two-output function's second output was never written
+      (``test_output_order_diagnostics``).
+
+    Otherwise (runs wrote them separately) the target's single output.
+    ``recorded``: the function's recorded orders, newest first.
     """
     from scifor.column_selection import SPLIT, ColumnGroupsError, resolve_column_groups
 
+    from scistack_gui.domain.output_order import writes_together
+
     outputs = [str(t) for t in (node_output_types or []) if t]
+    if recorded and len(recorded[0]) >= 2:
+        # An output only OLDER runs wrote (dropped from outputs= since) keeps
+        # its handle while its records exist, but the function no longer
+        # returns it: not passed. Never-recorded outputs (newly connected)
+        # and the newest run's are. Only when the newest run wrote several
+        # outputs together: a one-output newest run may be one of a
+        # function's SEPARATE runs, which says nothing about the others.
+        ever = set().union(*(set(r) for r in recorded))
+        stale = [t for t in outputs if t in ever and t not in set(recorded[0])]
+        if stale:
+            logger.info(
+                "[execution] outputs %s were written only by older runs (newest "
+                "outputs= %s): not passed to this run",
+                stale,
+                recorded[0],
+            )
+            outputs = [t for t in outputs if t not in stale]
+            if output_type in stale and outputs:
+                output_type = outputs[0]
     if len(outputs) < 2:
         return [output_type]
+    if writes_together(outputs, recorded):
+        logger.info(
+            "[execution] node outputs %s are written together (recorded %s): "
+            "one call writes all of them",
+            outputs,
+            recorded,
+        )
+        return outputs
     for spec in (inputs or {}).values():
         cs = spec.data if hasattr(spec, "fixed_metadata") else spec
         if not getattr(cs, "iterate", False) or not hasattr(cs, "groups"):

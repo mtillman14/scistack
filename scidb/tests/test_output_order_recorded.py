@@ -83,3 +83,47 @@ def test_the_table_is_part_of_the_run_log():
 
     assert "_run_outputs" in HISTORY_TABLES
     assert "_run_outputs" in KEPT_BY_CLEAR
+
+
+# --- MATLAB output NAMES (_run_outputs.output_params) --------------------------
+
+
+def matlab_like(x):
+    return float(np.mean(x)), float(np.max(x))
+
+
+def split_like(x):
+    return float(np.mean(x)), float(np.max(x))
+
+
+def test_output_names_map_by_name_across_a_reordered_signature(db):
+    """A MATLAB run records its signature's output names beside outputs=.
+    After the signature is reordered, the names still map to the variables
+    they saved to (test 6 of plan-output-order-owner)."""
+    from scidb.provenance_query import recorded_output_params
+
+    matlab_like.output_params = ["time", "force"]
+    try:
+        for_each(matlab_like, inputs={"x": OrdIn}, outputs=[OrdA, OrdB], subject=[1, 2], db=db)
+        # The .m is edited to [force, time]; the next run lists outputs to match.
+        matlab_like.output_params = ["force", "time"]
+        for_each(matlab_like, inputs={"x": OrdIn}, outputs=[OrdB, OrdA], subject=[1, 2], db=db)
+    finally:
+        del matlab_like.output_params
+    assert recorded_output_params(db._duck, ["matlab_like"]) == {
+        "matlab_like": {"force": "OrdB", "time": "OrdA"}
+    }
+
+
+def test_python_runs_record_no_names_and_a_split_maps_none(db):
+    from scidb.provenance_query import recorded_output_params
+
+    for_each(mean_and_max, inputs={"x": OrdIn}, outputs=[OrdB, OrdA], subject=[1, 2], db=db)
+    assert recorded_output_params(db._duck, ["mean_and_max"]) == {}
+    # One signature output, two variables (a for_columns split): no mapping.
+    split_like.output_params = ["result"]
+    try:
+        for_each(split_like, inputs={"x": OrdIn}, outputs=[OrdA, OrdB], subject=[1], db=db)
+    finally:
+        del split_like.output_params
+    assert "split_like" not in recorded_output_params(db._duck, ["split_like"])

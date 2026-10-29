@@ -318,9 +318,9 @@ selection now runs once with every node output in handle order
 `output_types`, the list the picker pairs with). Output handle tooltips:
 `graph_builder.mark_output_groups` attaches `outputGroups` (from
 `plan_groups`) on every graph build; `columnGroups.describeOutputHandle`
-words it. Open: a MATLAB node's canvas run orders its outputs by signature /
-history (`matlab_command_service`, ~715), not by handle order, so a split
-there could pair groups with the wrong outputs.
+words it. Which output is "output i" is owned by `domain.output_order`
+(recorded `outputs=` order), read by the handles, both canvas runs, the
+picker and the tooltips: `docs/claude/output-order.md`.
 
 Logging: `[for_columns] 'g' split into 2 output(s): SixMWT ← [...]; ...` /
 `combine → Obj2, N group(s): ...` (INFO, once per run; >10 groups elided);

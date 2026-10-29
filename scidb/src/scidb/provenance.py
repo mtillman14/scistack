@@ -668,12 +668,23 @@ def ensure_provenance_tables(duck) -> None:
     # runs and a distributed run's slot is the slice index
     # (.claude/plan-output-order-owner.md). Reader:
     # provenance_query.recorded_output_orders.
+    #
+    # ``output_params``: a MATLAB run's signature output NAMES at run time,
+    # position for position with ``outputs`` (``function [time, force] = f``
+    # wrote ``[Time, Force]``). Maps each output name to the variable it saved
+    # to, which survives a later reordering of the signature; NULL for Python
+    # (its functions declare no outputs). Added the same day as the table, so
+    # an ADD COLUMN IF NOT EXISTS keeps a store opened in between working.
     duck._execute("""
         CREATE TABLE IF NOT EXISTS _run_outputs (
-            run_id  VARCHAR PRIMARY KEY,
-            outputs VARCHAR[] NOT NULL
+            run_id        VARCHAR PRIMARY KEY,
+            outputs       VARCHAR[] NOT NULL,
+            output_params VARCHAR[]
         )
     """)
+    duck._execute(
+        "ALTER TABLE _run_outputs ADD COLUMN IF NOT EXISTS output_params VARCHAR[]"
+    )
 
     # Many-to-many: which invocations a run (re)produced.
     duck._execute("""

@@ -11,6 +11,35 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzr. Output handles in outputs= order; canvas Run writes every output — added 2026-10-28
+
+What changed: a function node's output handles are drawn in the order its
+last run listed `outputs=` (was alphabetical for Python). A canvas ▶ Run of a
+function whose runs write several outputs together now writes all of them in
+one call (it used to write only one). A MATLAB for_columns split draws one
+handle per output variable. Doc: `docs/claude/output-order.md`.
+
+Backend steps:
+1. Restart the GUI (Python change only; no bundle rebuild).
+2. From a script, run a two-output function with `outputs=[TenMWT, SixMWT]`
+   (deliberately not alphabetical). `scistack.log`:
+   `run … of <fn> wrote outputs in order ['TenMWT', 'SixMWT']`.
+
+Frontend steps and what you should see:
+1. The function node's output handles read, top to bottom, **TenMWT** then
+   **SixMWT** (hover them; with a for_columns split, the tooltip's column list
+   matches what the script saved).
+2. ▶ Run the node. `scistack.log` shows one line
+   `[run_thread] target 0 writes output(s) ['TenMWT', 'SixMWT'] …`, and BOTH
+   variables get new records (before, only one did).
+3. A never-run Python function: draw its output edges to B, then A. Its
+   handles read B, A (drawn order). Delete and redraw B: it moves last.
+4. MATLAB (if available): a for_columns split function writing two variables
+   shows two handles named after the variables, both edges attached; Run in
+   MATLAB lists `{TenMWT(), SixMWT()}` in the recorded order in the script.
+
+---
+
 ## 0zzzzzzq. for_columns column groups: Group columns picker — added 2026-10-28
 
 What changed: a parameter that runs once per column can now pass several

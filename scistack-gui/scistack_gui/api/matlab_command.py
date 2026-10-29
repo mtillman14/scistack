@@ -1296,7 +1296,7 @@ def generate_matlab_command(
     lines.extend(
         _for_each_call_lines(
             function_name,
-            _group_variants(variants),
+            _order_group_outputs(_group_variants(variants), output_types),
             schema_keys,
             schema_filter,
             schema_level,
@@ -1392,6 +1392,21 @@ def _collect_var_types(variants: list[dict]) -> set[str]:
         excluded_path_inputs,
     )
     return all_var_types
+
+
+def _order_group_outputs(groups: list[dict], output_order: "list[str] | None") -> list[dict]:
+    """Each group's outputs in *output_order* (``domain.output_order``, the
+    owner; passed in as ``output_types``), the rest after it in their own
+    order. Without it a group lists outputs in variant-row order, which is
+    the database's, not the call's ``outputs=``."""
+    if not output_order:
+        return groups
+    rank = {t: i for i, t in enumerate(output_order)}
+    for g in groups:
+        g["output_types"] = sorted(
+            g["output_types"], key=lambda t: (t not in rank, rank.get(t, 0))
+        )
+    return groups
 
 
 def _group_variants(variants: list[dict]) -> list[dict]:

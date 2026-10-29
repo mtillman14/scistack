@@ -401,6 +401,16 @@ def _make_matlab_fn_sentinel(
                     f"[bridge] {fn_name}: source text does not hash to "
                     f"{str(fn_hash)[:12]}; not capturing it"
                 )
+    if source_text:
+        # The signature's output names as MATLAB ran it, recorded beside the
+        # run's outputs= (_run_outputs.output_params): which variable each
+        # NAMED output saved to, which survives a later reordering of the
+        # signature. Owner: scimatlab.source_hash.matlab_output_names.
+        from .source_hash import matlab_output_names
+
+        names = matlab_output_names(str(source_text), fn_name)
+        if names:
+            _sentinel.output_params = names
     return _sentinel
 
 

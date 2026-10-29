@@ -378,6 +378,12 @@ def _run_in_thread(
 
     record_dispatch_wirings(db, node_id, function_name, unique_targets, run_id)
 
+    # Whether this function's runs wrote its outputs together (one call) or
+    # separately (execution_service.run_output_types), from the run log.
+    from scistack_gui.domain.output_order import recorded_orders
+
+    recorded_output_order = recorded_orders(db, [function_name]).get(function_name)
+
     # Extract run options (dry_run, save, distribute, as_table).
     logger.info("[run_thread] Extracting run options (run_id=%s)", run_id)
     opts = run_options or {}
@@ -559,7 +565,9 @@ def _run_in_thread(
 
                 output_classes = [
                     registry.get_variable_class(t)
-                    for t in run_output_types(inputs, node_output_types, v["output_type"])
+                    for t in run_output_types(
+                        inputs, node_output_types, v["output_type"], recorded_output_order
+                    )
                 ]
                 # INFO: which outputs this call writes, and in which order, is
                 # what output order is about (plan-output-order-owner Stage 0).

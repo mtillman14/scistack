@@ -713,7 +713,44 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     # Edge inference gives correct class names but in arbitrary edge order; we
     # re-sort them to match the function signature order from params.
     output_types: list[str] = params.get("output_types") or []
-    if not fn_variants:
+    # Output order: domain.output_order.matlab_output_order owns it. MATLAB
+    # pairs return values with the outputs cell BY POSITION, so it is the
+    # CURRENT signature, each output name mapped to its class by name (the
+    # names a run recorded, then the node's edges), or the recorded order
+    # for a for_columns split. Passed as CLASS names.
+    from scistack_gui.domain.edge_resolver import infer_manual_fn_param_to_class
+    from scistack_gui.domain.output_order import (
+        matlab_output_order,
+        recorded_orders,
+        recorded_params,
+    )
+
+    recorded = recorded_orders(db, [function_name]).get(function_name)
+    try:
+        signature = list(matlab_registry.get_matlab_function(function_name).output_names)
+    except Exception:
+        signature = []
+        logger.info("generate_matlab_command: no parsed signature for %s", function_name)
+    param_to_class = dict(recorded_params(db, [function_name]).get(function_name) or {})
+    for p, c in infer_manual_fn_param_to_class(
+        _fn_node_ids(function_name, manual_edges, manual_nodes),
+        manual_edges,
+        manual_nodes,
+        existing_node_labels={},
+    ).items():
+        param_to_class.setdefault(p, c)
+    if fn_variants:
+        classes = [v["output_type"] for v in fn_variants if v.get("output_type")]
+        output_types = matlab_output_order(signature, param_to_class, classes, recorded)
+        logger.info(
+            "generate_matlab_command: output order %s (signature=%s, by name=%s, "
+            "recorded=%s)",
+            output_types,
+            signature,
+            param_to_class,
+            recorded,
+        )
+    else:
         inferred = infer_manual_fn_output_types(
             _fn_node_ids(function_name, manual_edges, manual_nodes),
             manual_edges,
@@ -721,19 +758,31 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
             existing_node_labels={},
         )
         if inferred:
-            # Re-order inferred class names to match the function parameter order
-            # from params.output_types (which has the correct signature order but
-            # may use lowercase MATLAB param names instead of class names).
+            # The signature order, as classes: params.output_types has the
+            # signature order but may use lowercase MATLAB param names.
             params_output_types = params.get("output_types") or []
-            if params_output_types:
-                inferred = _sort_inferred_by_params_order(inferred, params_output_types)
+            declared = (
+                _sort_inferred_by_params_order(inferred, params_output_types)
+                if params_output_types
+                else []
+            )
+            ordered = matlab_output_order(
+                signature,
+                param_to_class,
+                inferred,
+                recorded,
+                edge_order=declared or inferred,
+            )
             logger.info(
                 "generate_matlab_command: inferred output_types=%s from manual edges "
-                "(overrides params output_types=%s)",
+                "(drawn order %s, signature order %s; overrides params "
+                "output_types=%s)",
+                ordered,
                 inferred,
+                declared,
                 output_types,
             )
-            output_types = inferred
+            output_types = ordered
         elif not output_types:
             logger.warning(
                 "generate_matlab_command: no DB variants and no edge-inferred outputs "
