@@ -324,6 +324,7 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
                 columns=list(sel.get("columns") or []) if sel else None,
                 iterate=bool(sel.get("iterate", False)),
                 pool_variants=pooled,
+                groups=sel.get("groups") if sel else None,
             )
             if pooled:
                 logger.info(
@@ -1436,12 +1437,52 @@ def _apply_column_selection(var_cls, sel: "dict | None"):
     for_each time"; ``MyVar[[]]`` is not a thing the UI can produce, because
     :func:`column_selection.normalize` drops an empty non-iterate selection.
     """
+    from scistack_gui.domain import column_selection as _cs
+
     if sel is None:
         return var_cls
-    columns = list(sel.get("columns") or [])
+    spec = _cs.selection_spec(sel)
     if sel.get("iterate"):
-        return var_cls.for_columns(columns)
-    return var_cls[columns]
+        return var_cls.for_columns(spec)
+    return var_cls[spec]
+
+
+def run_output_types(inputs: dict, node_output_types: "list[str] | None", output_type: str) -> list[str]:
+    """The output types ONE for_each call of a target writes.
+
+    A GUI run is one call per target with the target's single output type.
+    A for_columns selection that SPLITS its groups across the node's outputs
+    (several outputs: group i saves as output i) needs every output in that
+    one call, in the node's handle order, the order the Inputs picker pairs
+    against (``column_selection.plan_groups``). scifor's
+    ``resolve_column_groups`` decides combine vs split, as it does in the
+    run itself; a grouping it refuses is left for the run to report.
+    """
+    from scifor.column_selection import SPLIT, ColumnGroupsError, resolve_column_groups
+
+    outputs = [str(t) for t in (node_output_types or []) if t]
+    if len(outputs) < 2:
+        return [output_type]
+    for spec in (inputs or {}).values():
+        cs = spec.data if hasattr(spec, "fixed_metadata") else spec
+        if not getattr(cs, "iterate", False) or not hasattr(cs, "groups"):
+            continue
+        if not cs.columns:
+            # for_columns() (every column) never splits: data order would pair it.
+            continue
+        try:
+            mode, _ = resolve_column_groups(list(cs.columns), cs.groups, outputs)
+        except ColumnGroupsError as e:
+            logger.info("[execution] for_columns grouping not runnable as split: %s", e)
+            continue
+        if mode == SPLIT:
+            logger.info(
+                "[execution] for_columns splits across the node's outputs %s: one "
+                "call writes all of them",
+                outputs,
+            )
+            return outputs
+    return [output_type]
 
 
 def _apply_pooling(spec, binding: dict):
@@ -1772,6 +1813,8 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
                 if sel:
                     entry["columns"] = list(sel["columns"])
                     entry["iterate"] = bool(sel["iterate"])
+                    if sel.get("groups"):
+                        entry["groups"] = [dict(g) for g in sel["groups"]]
                 # Omitted when false, the same rule `variable_binding` uses,
                 # so a plain selection's rendering is byte-identical to what
                 # it was before pooling existed.

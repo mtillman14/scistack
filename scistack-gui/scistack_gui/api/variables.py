@@ -328,6 +328,7 @@ def get_variable_plot_data(variable_name: str, db: DatabaseManager) -> dict:
 #     GET  /api/variables/{name}/records            get_variable_records
 #     GET  /api/variables/{name}/plot-data          get_variable_plot_data
 #     GET  /api/variables/{variable_type}/columns   get_variable_columns
+#     POST /api/variables/column-groups/plan        plan_column_groups
 #     POST /api/variables/create                    create_variable
 
 
@@ -339,6 +340,14 @@ class VariableColumnsQuery(BaseModel):
     variable_type: str | None = None
     #: The older spelling some callers still send.
     name: str | None = None
+
+
+class ColumnGroupsPlanRequest(BaseModel):
+    #: The selection as the picker would store it ({"columns", "iterate",
+    #: "groups"?}).
+    selection: dict | None = None
+    #: The node's output types, in the order a run pairs them.
+    output_names: list[str] = []
 
 
 class CreateVariableRequest(BaseModel):
@@ -380,6 +389,15 @@ def _get_variable_columns(db, req: VariableColumnsQuery) -> dict:
     return variable_service.input_columns(variable_type, db=db)
 
 
+def _plan_column_groups(req: ColumnGroupsPlanRequest) -> dict:
+    """Combine or split, the group pairing and any error for a for_columns
+    selection on a node with these outputs (``column_selection.plan_groups``,
+    which asks scifor's owners). Called by the Inputs picker on every edit."""
+    from scistack_gui.domain import column_selection
+
+    return column_selection.plan_groups(req.selection, req.output_names)
+
+
 def _create_variable(req: CreateVariableRequest) -> dict:
     """Define a new BaseVariable subclass by appending it to the user's
     module file, then refresh the registry so it's immediately available.
@@ -408,6 +426,7 @@ VARIABLE_HANDLERS: tuple[Handler, ...] = (
     Handler("get_variable_records", "/variables/{name}/records", VariableName, _get_variable_records, http_method="GET"),
     Handler("get_variable_plot_data", "/variables/{name}/plot-data", VariableName, _get_variable_plot_data, http_method="GET"),
     Handler("get_variable_columns", "/variables/{variable_type}/columns", VariableColumnsQuery, _get_variable_columns, http_method="GET"),
+    Handler("plan_column_groups", "/variables/column-groups/plan", ColumnGroupsPlanRequest, _plan_column_groups, needs_db=False, undoable=False),
     Handler("create_variable", "/variables/create", CreateVariableRequest, _create_variable, needs_db=False, undoable=True, undo_label="new variable"),
 )
 

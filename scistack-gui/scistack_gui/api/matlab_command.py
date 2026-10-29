@@ -665,12 +665,20 @@ def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool, bool]":
         types = ref.get("types") or []
         if isinstance(types, str):
             types = [types]
-        columns = ref.get("columns") or []
-        if isinstance(columns, str):
-            columns = [columns]
+        if ref.get("groups"):
+            # Column groups: the spec (list of column lists / dict of named
+            # groups) is what MATLAB's for_columns takes.
+            from scidb.intent import selection_spec
+
+            columns = selection_spec(ref)
+        else:
+            columns = ref.get("columns") or []
+            if isinstance(columns, str):
+                columns = [columns]
+            columns = [str(c) for c in columns if c]
         return (
             [str(t) for t in types if t],
-            [str(c) for c in columns if c],
+            columns,
             bool(ref.get("iterate")),
             bool(ref.get("pool_variants")),
         )
@@ -679,7 +687,7 @@ def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool, bool]":
 
 
 def _format_variable_class(
-    name: str, columns: list[str], iterate: bool, pool_variants: bool = False
+    name: str, columns, iterate: bool, pool_variants: bool = False
 ) -> str:
     """One variable type as the MATLAB expression ``for_each`` loads from.
 
@@ -696,17 +704,18 @@ def _format_variable_class(
     ``["a", "b"]``                        ``Trials(["a", "b"])``
     iterate, ``["a", "b"]``               ``Trials().for_columns(["a", "b"])``
     iterate, all columns                  ``Trials().for_columns()``
+    iterate, groups                       ``Trials().for_columns({["a", "a_d"], ...})``
+    iterate, named groups                 ``Trials().for_columns(dictionary(...))``
     ====================================  =================================
+
+    The ``for_columns`` argument is :func:`format_matlab_column_spec`'s.
 
     ``pool_variants`` wraps the result in ``scidb.AcrossVariants(...)`` — the
     input pools every variant group into one aggregating call, as the run
     this binding was derived from recorded (``_invocation.across_variants``).
     """
     if iterate:
-        if not columns:
-            expr = f"{name}().for_columns()"
-        else:
-            expr = f"{name}().for_columns({_format_matlab_string_array(columns)})"
+        expr = f"{name}().for_columns({format_matlab_column_spec(columns)})"
     elif not columns:
         expr = f"{name}()"
     elif len(columns) == 1:
@@ -728,7 +737,9 @@ def _format_variable_input(
     one selection per PARAMETER, not per edge, matching the Python side.
     """
     names = [type_names] if isinstance(type_names, str) else list(type_names)
-    cols = list(columns or [])
+    # A dict is named column groups (combine): keep it whole, list() would
+    # keep only its keys.
+    cols = columns if isinstance(columns, dict) else list(columns or [])
     if len(names) == 1:
         return _format_variable_class(names[0], cols, iterate, pool_variants)
     items = ", ".join(
@@ -2234,6 +2245,34 @@ def _format_matlab_struct(inputs_dict: dict[str, str]) -> str:
 def _format_matlab_cell(items: list[str]) -> str:
     """Build a MATLAB cell array ``{Item1(), Item2()}``."""
     return "{" + ", ".join(items) + "}"
+
+
+def format_matlab_column_spec(spec) -> str:
+    """The MATLAB argument of ``for_columns(...)`` for a column spec
+    (``scidb.intent.selection_spec``). THE renderer: the MATLAB command and
+    the code export both call it.
+
+    - ``[]`` -> ``""`` (``for_columns()``: every column)
+    - ``["a", "b"]`` -> ``["a", "b"]``
+    - ``[["a", "a_d"], ["b"]]`` -> ``{["a", "a_d"], ["b"]}`` (split groups)
+    - ``{"A": ["a", "a_d"]}`` -> ``dictionary(["A"], {["a", "a_d"]})``
+      (combine; a dictionary, not a struct: ``"6MWT"`` is no field name,
+      and ``containers.Map`` would sort the keys)
+    """
+    if isinstance(spec, dict):
+        names = _format_matlab_string_array([str(k) for k in spec])
+        groups = ", ".join(_format_matlab_string_array(list(v)) for v in spec.values())
+        return f"dictionary({names}, {{{groups}}})"
+    spec = list(spec or [])
+    if not spec:
+        return ""
+    if any(isinstance(item, (list, tuple)) for item in spec):
+        groups = ", ".join(
+            _format_matlab_string_array(list(item) if isinstance(item, (list, tuple)) else [item])
+            for item in spec
+        )
+        return f"{{{groups}}}"
+    return _format_matlab_string_array([str(c) for c in spec])
 
 
 def _format_matlab_string_array(items: list[str]) -> str:

@@ -26,6 +26,20 @@ import {
   isInert,
 } from '../PlotStudio/locationSelection'
 import { colNamesAfterSelectionChange, hasIterateInput, withColName } from './colNameInputs'
+import {
+  addColumnToGroup,
+  describeOverlaps,
+  describePlan,
+  groupsFromSelection,
+  moveGroup,
+  removeColumnFromGroup,
+  removeGroup,
+  renameGroup,
+  sameSelection,
+  selectionFromGroups,
+  type ColumnGroup,
+  type GroupPlan,
+} from './columnGroups'
 
 /** `get_schema_level`: the level a Run of this node would iterate, and why. */
 interface ResolvedSchemaLevel {
@@ -88,6 +102,9 @@ export interface WhereFilter {
 export interface ColumnSelection {
   columns: string[]
   iterate: boolean
+  // for_columns column groups (columnGroups.ts); absent when every column
+  // is its own group.
+  groups?: ColumnGroup[]
 }
 
 export type ColumnSelectionMap = Record<string, ColumnSelection>
@@ -119,6 +136,7 @@ export type UnusedIntentMap = Record<string, UnusedIntent>
 export function describeColumnSelection(sel: ColumnSelection | undefined): string {
   if (!sel) return '(whole variable)'
   const n = sel.columns.length
+  if (sel.groups && sel.groups.length > 0) return `per group (${sel.groups.length})`
   if (sel.iterate) return n === 0 ? 'per column' : `per column (${n})`
   if (n === 1) return `"${sel.columns[0]}"`
   return `${n} columns`
@@ -146,6 +164,9 @@ interface Props {
   runOptions: RunOptions
   inputParams: Record<string, string>
   columnSelections: ColumnSelectionMap
+  // The node's output types, in the order its handles (and a run) list them;
+  // split column groups pair with them by position.
+  outputTypes?: string[]
   // Parameters that receive the current for_columns column name (deferred
   // ColName()) — the `colname` intent aspect, blob key `colNameInputs`.
   colNameInputs: string[]
@@ -231,6 +252,8 @@ interface ColumnSelectRowProps {
   colNameAvailable: boolean
   isColName: boolean
   onColNameChange: (param: string, on: boolean) => void
+  // The node's output types, in the order a run pairs split groups with them.
+  outputNames: string[]
 }
 
 /**
@@ -243,7 +266,7 @@ interface ColumnSelectRowProps {
  * the note saying why, which is why an "empty" picker still shows one row
  * instead of looking broken.
  */
-function ColumnSelectRow({ param, variableType, columns, selection, onChange, colNameAvailable, isColName, onColNameChange }: ColumnSelectRowProps) {
+function ColumnSelectRow({ param, variableType, columns, selection, onChange, colNameAvailable, isColName, onColNameChange, outputNames }: ColumnSelectRowProps) {
   const [open, setOpen] = useState(false)
   const available = columns?.data_columns ?? []
   const loaded = columns !== undefined
@@ -269,6 +292,50 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange, co
       : available.filter(c => picked.includes(c) || c === col)  // keep source order
     emit(next, iterate)
   }, [picked, available, iterate, emit])
+
+  // ---- Column groups (for_columns). The draft is edited here; it is SAVED
+  // only when the backend's plan (scifor's rule) says it can run, so a
+  // half-built group (no columns yet) is never stored.
+  const [grouping, setGrouping] = useState(Boolean(selection?.groups?.length))
+  const [draft, setDraft] = useState<ColumnGroup[]>(() => groupsFromSelection(selection))
+  const [plan, setPlan] = useState<GroupPlan | null>(null)
+  const outputsKey = outputNames.join('\u0001')
+  const candidate = iterate
+    ? (grouping ? selectionFromGroups(draft, outputNames.length) : selection)
+    : undefined
+  const candidateKey = JSON.stringify(candidate ?? null)
+  useEffect(() => {
+    if (!candidate) {
+      setPlan(null)
+      return
+    }
+    let cancelled = false
+    callBackend('plan_column_groups', { selection: candidate, output_names: outputNames })
+      .then(raw => {
+        const res = raw as GroupPlan
+        if (cancelled) return
+        setPlan(res)
+        const stored = (res.selection ?? candidate) as ColumnSelection
+        if (grouping && res.ok && !sameSelection(stored, selection)) {
+          console.info('[FunctionSettings] column groups saved for', param, stored)
+          onChange(param, stored)
+        }
+      })
+      .catch(err => console.error('[FunctionSettings] plan_column_groups failed:', err))
+    return () => { cancelled = true }
+    // candidateKey/outputsKey stand for candidate/outputNames' content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateKey, outputsKey])
+
+  const startGrouping = useCallback(() => {
+    setDraft(groupsFromSelection(selection))
+    setGrouping(true)
+  }, [selection])
+  const stopGrouping = useCallback(() => {
+    setGrouping(false)
+    // Back to a plain list: every grouped column, one call each.
+    emit(selectionFromGroups(draft, outputNames.length).columns, true)
+  }, [draft, outputNames.length, emit])
 
   return (
     <div style={styles.inputRow}>
@@ -341,7 +408,7 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange, co
                   onClick={() => emit([], iterate)}
                 >Deselect all</button>
               </div>
-              <div style={styles.columnList}>
+              {!grouping && <div style={styles.columnList}>
                 {available.map(col => (
                   <label key={col} style={styles.checkboxLabel}>
                     <input
@@ -353,7 +420,15 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange, co
                     <span style={styles.checkboxText}>{col}</span>
                   </label>
                 ))}
-              </div>
+              </div>}
+              {iterate && grouping && (
+                <GroupEditor
+                  groups={draft}
+                  available={available}
+                  outputNames={outputNames}
+                  onChange={setDraft}
+                />
+              )}
               <label
                 style={styles.optionLabel}
                 title={
@@ -372,11 +447,110 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange, co
                 <span style={styles.optionText}>Run once per column</span>
                 <span style={styles.optionHint}>for_columns</span>
               </label>
+              {iterate && (
+                <label
+                  style={styles.optionLabel}
+                  title={
+                    'Pass several columns to the function together (e.g. a score '
+                    + 'with its date), one call per group. With one output each '
+                    + 'group becomes a named column of it; with several outputs '
+                    + 'each group saves to the output in the same position.'
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={grouping}
+                    onChange={() => (grouping ? stopGrouping() : startGrouping())}
+                    style={styles.checkbox}
+                  />
+                  <span style={styles.optionText}>Group columns</span>
+                </label>
+              )}
+              {iterate && plan && (
+                <div style={plan.ok ? styles.columnNote : styles.groupError}>
+                  {describePlan(plan, outputNames)}
+                </div>
+              )}
+              {iterate && describeOverlaps(plan) && (
+                <div style={styles.groupWarn}>{describeOverlaps(plan)}</div>
+              )}
               {columns.note && <div style={styles.columnNote}>{columns.note}</div>}
             </>
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+interface GroupEditorProps {
+  groups: ColumnGroup[]
+  available: string[]
+  outputNames: string[]
+  onChange: (next: ColumnGroup[]) => void
+}
+
+/**
+ * One row per column group. With several outputs each row shows the output
+ * it saves to (pairing is by position, so ↑↓ reorder it); with one output
+ * the row's name field names its column. Validity is not decided here: the
+ * row's parent shows the backend's plan and saves only a valid draft.
+ */
+function GroupEditor({ groups, available, outputNames, onChange }: GroupEditorProps) {
+  const split = outputNames.length > 1
+  return (
+    <div style={styles.groupList}>
+      {groups.map((g, i) => (
+        <div key={i} style={styles.groupRow}>
+          <span style={styles.groupLabel}>Group {i + 1}</span>
+          {g.columns.map(col => (
+            <span key={col} style={styles.groupChip}>
+              {col}
+              <button
+                type="button"
+                style={styles.groupChipRemove}
+                title={`Remove ${col} from this group`}
+                onClick={() => onChange(removeColumnFromGroup(groups, i, col))}
+              >×</button>
+            </span>
+          ))}
+          <select
+            style={styles.groupAdd}
+            value=""
+            onChange={e => e.target.value && onChange(addColumnToGroup(groups, i, e.target.value))}
+            title="Add a column to this group"
+          >
+            <option value="">+ column</option>
+            {available.filter(c => !g.columns.includes(c)).map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          {split ? (
+            <span style={styles.groupTarget} title="Saved as this output (paired by position)">
+              → {outputNames[i] ?? '(no output)'}
+            </span>
+          ) : (
+            <input
+              style={styles.groupName}
+              value={g.name ?? g.columns[0] ?? ''}
+              placeholder="column name"
+              title="The name of this group's column in the output"
+              onChange={e => onChange(renameGroup(groups, i, e.target.value))}
+            />
+          )}
+          <button type="button" style={styles.columnActionBtn} disabled={i === 0}
+            title="Move up" onClick={() => onChange(moveGroup(groups, i, -1))}>↑</button>
+          <button type="button" style={styles.columnActionBtn} disabled={i === groups.length - 1}
+            title="Move down" onClick={() => onChange(moveGroup(groups, i, 1))}>↓</button>
+          <button type="button" style={styles.columnActionBtn}
+            title="Remove this group" onClick={() => onChange(removeGroup(groups, i))}>✕</button>
+        </div>
+      ))}
+      <button
+        type="button"
+        style={styles.columnActionBtn}
+        onClick={() => onChange([...groups, { columns: [] }])}
+      >+ Add group</button>
     </div>
   )
 }
@@ -429,7 +603,7 @@ const unusedIntentBadgeStyle: React.CSSProperties = {
   marginRight: 4,
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, colNameInputs, unusedIntent }: Props) {
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, colNameInputs, unusedIntent, outputTypes = [] }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
@@ -778,6 +952,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
                   colNameAvailable={colNameAvailable}
                   isColName={colNameInputs.includes(param)}
                   onColNameChange={setColName}
+                  outputNames={outputTypes}
                 />
                 {unusedIntent?.[param] && (
                   <UnusedIntentNote param={param} note={unusedIntent[param]} />
@@ -968,7 +1143,11 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
         {Object.entries(columnSelections).some(([, sel]) => sel?.iterate) && (
           <div style={styles.optionLabel}>
             <span style={{ ...styles.checkbox, visibility: 'hidden' }} />
-            <span style={styles.optionText}>Run once per column</span>
+            <span style={styles.optionText}>
+              {Object.values(columnSelections).some(sel => sel?.groups?.length)
+                ? 'Run once per group'
+                : 'Run once per column'}
+            </span>
             <span style={styles.optionHint}>
               {Object.entries(columnSelections)
                 .filter(([, sel]) => sel?.iterate)
@@ -1297,5 +1476,69 @@ const styles: Record<string, React.CSSProperties> = {
     fontStyle: 'italic',
     lineHeight: 1.4,
     marginTop: 4,
+  },
+  groupError: {
+    fontSize: 10,
+    color: '#f87171',
+    lineHeight: 1.4,
+    marginTop: 4,
+  },
+  groupWarn: {
+    fontSize: 10,
+    color: '#fbbf24',
+    lineHeight: 1.4,
+    marginTop: 2,
+  },
+  groupList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    marginBottom: 6,
+  },
+  groupRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 4,
+  },
+  groupLabel: {
+    fontSize: 10,
+    color: '#777',
+    minWidth: 48,
+  },
+  groupChip: {
+    fontSize: 10,
+    color: '#ccc',
+    background: '#22223a',
+    border: '1px solid #2a2a4a',
+    borderRadius: 3,
+    padding: '0 4px',
+  },
+  groupChipRemove: {
+    background: 'none',
+    border: 'none',
+    color: '#777',
+    fontSize: 10,
+    padding: '0 0 0 3px',
+    cursor: 'pointer',
+  },
+  groupAdd: {
+    fontSize: 10,
+    background: '#16162a',
+    color: '#6bb5f0',
+    border: '1px solid #2a2a4a',
+    borderRadius: 3,
+  },
+  groupTarget: {
+    fontSize: 10,
+    color: '#6bb5f0',
+  },
+  groupName: {
+    fontSize: 10,
+    width: 80,
+    background: '#16162a',
+    color: '#ccc',
+    border: '1px solid #2a2a4a',
+    borderRadius: 3,
   },
 }

@@ -45,6 +45,8 @@ interface FnNodeData {
   columnSelections?: ColumnSelectionMap
   colNameInputs?: string[]
   unusedIntent?: UnusedIntentMap
+  // Output types, in handle order (FunctionNode draws them from this).
+  output_types?: string[]
 }
 
 interface ParameterNodeData {
@@ -196,6 +198,7 @@ export default function Sidebar() {
             runOptions={(selectedNode.data as FnNodeData).runOptions ?? { dry_run: false, save: true, distribute: false, as_table: false }}
             inputParams={(selectedNode.data as FnNodeData).input_params ?? {}}
             columnSelections={(selectedNode.data as FnNodeData).columnSelections ?? {}}
+            outputTypes={(selectedNode.data as FnNodeData).output_types ?? []}
             colNameInputs={(selectedNode.data as FnNodeData).colNameInputs ?? []}
             unusedIntent={(selectedNode.data as FnNodeData).unusedIntent}
           />

@@ -52,8 +52,12 @@ def variable_binding(
     columns: "list[str] | None" = None,
     iterate: bool = False,
     pool_variants: bool = False,
+    groups: "list | None" = None,
 ) -> dict:
     """A variable binding, optionally restricted to named columns.
+
+    ``groups``: for_columns column groups in scifor's wire form
+    (``[{"name"?, "columns"}]``), omitted when there are none.
 
     ``columns``/``iterate`` express the GUI's column selection
     (``MyVar["col"]`` / ``MyVar.for_columns([...])``) and are OMITTED entirely
@@ -71,6 +75,8 @@ def variable_binding(
     if columns or iterate:
         binding["columns"] = list(columns or [])
         binding["iterate"] = bool(iterate)
+    if groups:
+        binding["groups"] = [dict(g) for g in groups]
     # ``pool_variants`` (``AcrossVariants``): every variant group of the
     # input in ONE aggregating call instead of one call per group. Recorded
     # on ``_invocation.across_variants`` by a run and carried back here by

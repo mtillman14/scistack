@@ -146,7 +146,7 @@ def _each_of_cls():
 
 
 def _column_selection_parts(value):
-    """``(inner, columns, iterate)`` for a ``scifor.ColumnSelection``, or
+    """``(inner, column spec, iterate)`` for a ``scifor.ColumnSelection``, or
     ``None`` for anything else.
 
     Matched against the SCIFOR base class, not scidb's subclass: a bare
@@ -160,7 +160,8 @@ def _column_selection_parts(value):
         return None
     if not isinstance(value, ColumnSelection):
         return None
-    return value.data, list(value.columns or []), bool(value.iterate)
+    # column_spec: the flat list, or the column groups as written.
+    return value.data, value.column_spec, bool(value.iterate)
 
 
 def _is_deferred_colname(value) -> bool:
@@ -427,12 +428,9 @@ def _matlab_literal(value) -> str:
         inner, columns, iterate = parts
         name = inner.__name__ if isinstance(inner, type) else str(inner)
         if iterate:
-            cols = (
-                "[" + ", ".join(_matlab_str(c) for c in columns) + "]"
-                if columns
-                else ""
-            )
-            return f"{name}().for_columns({cols})"
+            from scistack_gui.api.matlab_command import format_matlab_column_spec
+
+            return f"{name}().for_columns({format_matlab_column_spec(columns)})"
         if len(columns) == 1:
             return f"{name}({_matlab_str(columns[0])})"
         return f"{name}([" + ", ".join(_matlab_str(c) for c in columns) + "])"

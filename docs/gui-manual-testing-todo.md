@@ -11,6 +11,51 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzq. for_columns column groups: Group columns picker — added 2026-10-28
+
+What changed: a parameter that runs once per column can now pass several
+columns together (a score with its date). One output: each group becomes a
+named column of it (combine). Several outputs: each group saves to the
+output in the same position (split), and a subject with no data in a group
+gets no record for that output. Plan: `.claude/plan-for-columns-groups.md`.
+
+Backend steps:
+1. Restart the GUI so the Python change loads (both bundles are rebuilt).
+2. Have a wide variable like the whiteboard example (`6MWT`, `6MWT_Date`,
+   `10MWT`, `10MWT_Date`, two rows per subject, one subject blank for 6MWT),
+   a function that takes one table argument, and either one output variable
+   (combine) or two (split, e.g. `SixMWT`, `TenMWT`).
+3. After a run, `scistack.log` should contain one line like
+   `[for_columns] 'g' split into 2 output(s): SixMWT ← [6MWT, 6MWT_Date]; TenMWT ← [10MWT, 10MWT_Date]`
+   and, for the blank subject, `output SixMWT: no data × 1 — subject=2`.
+
+Frontend steps and what you should see:
+1. Select the function node. In **Inputs**, open the parameter's column
+   button and tick **Run once per column**. A new checkbox **Group columns**
+   appears under it.
+2. Tick **Group columns**. The column list is replaced by one row per group
+   (**Group 1**, …) with a chip per column (× removes it), a **+ column**
+   dropdown, ↑ ↓ ✕ buttons, and **+ Add group**.
+3. With TWO outputs wired: each row ends in **→ SixMWT** / **→ TenMWT** (the
+   output it saves to). ↑ ↓ swap the pairing. The line under the rows reads
+   **Split: each group saves to its own output**.
+4. With ONE output: each row has a name box instead (defaults to the group's
+   first column). The line reads **Combine into <Output>: one column per group**.
+5. Add a group with no column, or make the group count differ from the
+   outputs: the line turns red with the reason, and nothing is saved until it
+   is fixed (reselect the node: the last valid grouping is still there).
+6. Put one column in two groups: a yellow line **Shared by more than one
+   group — each still receives it: …**.
+7. The node's chip reads **per group (2)**; **Run options** reads
+   **Run once per group**.
+8. ▶ Run (split): `SixMWT` has no record for the blank subject; `TenMWT`
+   does. Check the pairing shown in step 3 matches what was saved: the
+   picker pairs with the node's output handles in their drawn order.
+
+Not built: the per-output-edge tooltip listing each group's columns.
+
+---
+
 ## 0zzzzzzp. Duplicate rows at one location: save refused + "How to fix" popup — added 2026-10-27
 
 What changed: a save that would put two DIFFERENT records at one schema

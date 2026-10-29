@@ -369,6 +369,38 @@ Built first because split mode depends on it; it is independent of groups.
 - Tests: `TestSciforForEachFeatures.m` (`test_groups_*`), `TestForColumns.m`
   (`test_groups_*`, including the sparse subject 2 case).
 
+### Stage 5 status (2026-10-28): built, pytest + manual check pending
+- `scidb.intent.selection_spec(sel)`: the spec a stored selection stands for;
+  every GUI rebuilder/renderer goes through it.
+- Bindings carry `groups` (`edge_resolver.variable_binding(groups=)`,
+  `column_selection.apply_to_bindings`, history `selectors`, MATLAB
+  `variable_inputs` entry); `build_run_inputs` → `for_columns(spec)`.
+- `api.matlab_command.format_matlab_column_spec`: THE MATLAB renderer
+  (`{...}` split / `dictionary(...)` combine); `_format_variable_class` and
+  `code_export_service._matlab_literal` both use it; Python export renders
+  `column_spec` via repr.
+- Backend call `plan_column_groups` (`column_selection.plan_groups`): mode,
+  pairing, overlaps, error-as-answer, and the normalized `selection` the store
+  keeps (the picker saves that, so it never loops on a rewritten spelling).
+- Picker (`FunctionSettingsPanel` `ColumnSelectRow` + `GroupEditor`, helpers
+  in `columnGroups.ts` with node tests): **Group columns** checkbox under
+  **Run once per column**; saves only when the plan is ok. Chip / Run options
+  text `per group (N)` / `Run once per group`.
+- **Found while wiring:** a GUI run is one `for_each` per target with ONE
+  output (`api/run.py`, `outputs=[OutputCls]`), and dedup keeps one target per
+  variant. `execution_service.run_output_types` now returns every node output
+  (handle order, from the run request's `output_types`, the same list the
+  picker pairs with) when a for_columns selection splits; `_run_in_thread`
+  takes `node_output_types`. Behaviour change: a node with several outputs
+  and a flat `for_columns([...])` of matching length now splits (it ran
+  combine into the first output before).
+- Not built: per-output-edge tooltip listing each group's columns. MATLAB GUI
+  run path (generate_matlab_command) not checked for split outputs.
+- Bundles rebuilt (standalone + webview). Manual check:
+  `docs/gui-manual-testing-todo.md` §0zzzzzzq.
+- Tests: `scistack-gui/tests/test_column_groups_gui.py`;
+  `frontend/src/components/Sidebar/columnGroups.test.ts` (npm test: 655 pass).
+
 ### Stage 5: GUI
 **Column picker** (FunctionSettingsPanel's Inputs section, under the existing
 **Run once per column** checkbox):

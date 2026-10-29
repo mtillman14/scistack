@@ -46,17 +46,19 @@ import logging
 
 from scidb.intent import describe_columns as describe
 from scidb.intent import normalize_columns as normalize
-from scidb.intent import parse_selector, same_columns, selector_json
+from scidb.intent import parse_selector, same_columns, selection_spec, selector_json
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "apply_to_bindings",
+    "plan_groups",
     "describe",
     "from_binding",
     "normalize",
     "parse_selector",
     "same_columns",
+    "selection_spec",
     "selector_json",
 ]
 
@@ -120,4 +122,58 @@ def apply_to_bindings(
             continue
         binding["columns"] = list(sel["columns"])
         binding["iterate"] = sel["iterate"]
+        if sel.get("groups"):
+            binding["groups"] = [dict(g) for g in sel["groups"]]
+        else:
+            binding.pop("groups", None)
     return out
+
+
+def plan_groups(selection: "dict | None", output_names: "list[str]") -> dict:
+    """What a for_columns selection will do with these outputs, for the
+    Inputs picker: ``{"ok", "mode", "groups": [{"name", "columns"}],
+    "overlaps": {column: [group names]}, "error", "selection"}``
+    (``selection``: the normalized form the store keeps, when ok).
+
+    Asks scifor's owners (``parse_column_groups`` via ``normalize``,
+    ``resolve_column_groups``, ``overlapping_columns``) so the picker shows
+    exactly the rule a run applies; the frontend never re-derives it. An
+    empty selection (every column, resolved at run time) reports ``mode``
+    with no groups. A malformed draft is ``ok: False`` with the reason,
+    never an exception: the picker calls this on every edit.
+    """
+    from scifor.column_selection import (
+        COMBINE,
+        ColumnGroupsError,
+        overlapping_columns,
+        parse_column_groups,
+        resolve_column_groups,
+    )
+
+    outputs = [str(n) for n in (output_names or [])]
+    try:
+        sel = normalize(selection)
+        if not sel or not sel.get("iterate"):
+            return {"ok": True, "mode": None, "groups": [], "overlaps": {}, "error": None}
+        columns, groups = parse_column_groups(selection_spec(sel))
+        if not columns and groups is None:
+            # Every column: resolved at run time, so only the mode is known,
+            # and it cannot split (scifor raises: data order would pair them).
+            if len(outputs) > 1:
+                resolve_column_groups([], None, outputs, every_column=True)
+            return {"ok": True, "mode": COMBINE, "groups": [], "overlaps": {}, "error": None}
+        mode, resolved = resolve_column_groups(columns, groups, outputs or ["output"])
+    except ColumnGroupsError as e:
+        logger.info("[column_selection] plan_groups: %s", e)
+        return {"ok": False, "mode": None, "groups": [], "overlaps": {}, "error": str(e)}
+    return {
+        "ok": True,
+        "mode": mode,
+        "groups": [{"name": name, "columns": list(cols)} for name, cols in resolved],
+        "overlaps": overlapping_columns(resolved),
+        "error": None,
+        # What the store will hold for it (groups that add nothing are
+        # dropped), so the picker saves exactly that and never loops on a
+        # spelling the store rewrites.
+        "selection": sel,
+    }

@@ -145,9 +145,10 @@ class RunRequest(BaseModel):
     # backend asks matlab_registry itself (see route_matlab_single_run), so
     # a browser client that never sends this still gets MATLAB routing.
     language: str | None = None
-    # MATLAB output parameter names for command generation when the function
-    # has no DB history yet. Consumed by generate_matlab_command; ignored on
-    # the Python path.
+    # The node's output types, in handle order. MATLAB: output parameter names
+    # for command generation when the function has no DB history yet
+    # (generate_matlab_command). Python: the outputs a for_columns selection
+    # that splits its groups pairs with (execution_service.run_output_types).
     output_types: list[str] | None = None
 
 
@@ -161,8 +162,12 @@ def _run_in_thread(
     run_options: dict | None = None,
     where_filters: list[WhereFilterSpec] | None = None,
     node_id: str | None = None,
+    node_output_types: list[str] | None = None,
 ):
     """
+    ``node_output_types``: the node's outputs in handle order (the request's
+    ``output_types``), which a splitting for_columns selection pairs with.
+
     Executed in a background thread. Runs for_each for each variant,
     captures stdout line-by-line, and pushes it to the WebSocket queue.
     """
@@ -547,9 +552,18 @@ def _run_in_thread(
                 )
 
                 OutputCls = registry.get_variable_class(v["output_type"])
+                # One output per call, except a for_columns selection that
+                # splits its groups across the node's outputs: then every
+                # output, in handle order (execution_service.run_output_types).
+                from scistack_gui.services.execution_service import run_output_types
+
+                output_classes = [
+                    registry.get_variable_class(t)
+                    for t in run_output_types(inputs, node_output_types, v["output_type"])
+                ]
                 logger.debug(
-                    "[run_thread] Output class: %s (run_id=%s)",
-                    v["output_type"],
+                    "[run_thread] Output class(es): %s (run_id=%s)",
+                    [c.__name__ for c in output_classes],
                     run_id,
                 )
             except KeyError as e:
@@ -670,7 +684,7 @@ def _run_in_thread(
                     for_each(
                         fn,
                         inputs=inputs,
-                        outputs=[OutputCls],
+                        outputs=output_classes,
                         dry_run=opt_dry_run,
                         save=opt_save,
                         distribute=opt_distribute,
@@ -1222,6 +1236,7 @@ def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict
                 req.run_options,
                 req.where_filters,
                 req.node_id,
+                req.output_types,
             )
         except BaseException as exc:
             _report_crashed_run(run_id, req.function_name, exc)

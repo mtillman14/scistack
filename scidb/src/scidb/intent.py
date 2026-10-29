@@ -414,6 +414,20 @@ def describe_columns(sel: Any) -> str:
     return f"{len(columns)} columns"
 
 
+def selection_spec(sel: Any) -> "list[str] | list[list[str]] | dict[str, list[str]]":
+    """The column spec a selection stands for: exactly what
+    ``MyVar.for_columns(...)`` / ``MyVar[...]`` (Python) or
+    ``for_columns(...)`` (MATLAB) takes. A flat list, or the groups as a
+    list of column lists (split) / a dict of named groups (combine).
+    Every renderer and rebuilder of a stored selection goes through here."""
+    sel = normalize_columns(sel)
+    if not sel:
+        return []
+    if sel.get("groups"):
+        return spec_from_wire(sel["groups"])
+    return list(sel["columns"])
+
+
 def selector_json(sel: Any) -> str | None:
     """The stored spelling of a column selection (``_invocation_input.selector``).
 

@@ -67,7 +67,7 @@ interface FunctionNodeData {
   // param_name → which columns of its wired variable the function receives.
   // Display only here: editing lives in FunctionSettingsPanel's Inputs
   // section, which is also the only writer of the stored node config.
-  columnSelections?: Record<string, { columns: string[]; iterate: boolean }>
+  columnSelections?: Record<string, { columns: string[]; iterate: boolean; groups?: { name?: string; columns: string[] }[] }>
   // Parameters that receive the current for_columns column name (deferred
   // ColName()). Display only here, like columnSelections; written by the
   // Inputs section's n/a | ColName dropdown.
@@ -88,9 +88,10 @@ interface FunctionNodeData {
  * a user reading "3 columns" on the node and `["a","b"]` in scistack.log has no
  * way to tell whether they are looking at the same thing.
  */
-function describeColumns(sel: { columns: string[]; iterate: boolean } | undefined): string | null {
+function describeColumns(sel: { columns: string[]; iterate: boolean; groups?: unknown[] } | undefined): string | null {
   if (!sel) return null
   const n = sel.columns.length
+  if (sel.groups && sel.groups.length > 0) return `per group (${sel.groups.length})`
   if (sel.iterate) return n === 0 ? 'per column' : `per column (${n})`
   if (n === 0) return null
   if (n === 1) return `"${sel.columns[0]}"`
