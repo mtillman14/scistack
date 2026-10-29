@@ -3449,6 +3449,28 @@ class DatabaseManager:
         # Cache locally
         self._registered_types[type_name] = variable_class
 
+    def ensure_variable_table(self, variable_class: type[BaseVariable]) -> bool:
+        """Give a variable with no records an EMPTY data table and its view,
+        so SQL on the view returns no rows instead of "does not exist".
+        Returns whether a table was created (False: it already existed).
+
+        The table holds ``record_id`` only: a variable's data columns are
+        not known until a value exists. ``_check_column_set`` drops and
+        rebuilds an empty table with the first real save's columns, so the
+        placeholder never conflicts. scidb's loads answer from the record
+        tables and behave the same with or without it (Stage 0 of
+        .claude/plan-for-columns-groups.md, 2026-10-28).
+        """
+        table_name = self._ensure_registered(variable_class)
+        if self._duck._table_exists(table_name):
+            return False
+        self._duck._execute(
+            f'CREATE TABLE "{table_name}" (record_id VARCHAR NOT NULL)'
+        )
+        self._create_variable_view(variable_class)
+        Log.debug(f"ensure_variable_table: created empty table '{table_name}'")
+        return True
+
     def _ensure_registered(
         self, variable_class: type[BaseVariable], auto_register: bool = True
     ) -> str:

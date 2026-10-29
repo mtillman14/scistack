@@ -25,6 +25,7 @@ from scifor import for_each as _scifor_for_each
 from scifor import stopped_run_of, validate_on_error
 from scifor.failures import journaled
 from scifor import output_column_name as _output_column_name
+from scifor.outputs import is_no_output as _is_no_output
 
 from . import glue as _glue
 from .across_variants import AcrossVariants
@@ -1077,6 +1078,7 @@ def _for_each_execute(
                 _path_input_resolver=_path_input_resolver,
                 _mapping_inputs=state.mapping_inputs,
                 _select_rows=_select_rows,
+                _keep_no_output=True,
                 **state.extended_metadata_iterables,
             )
     finally:
@@ -5802,6 +5804,8 @@ def _save_results(
     from .provenance_save import invocation_identity as _invocation_identity
 
     _inv_id_cache: dict = {}
+    # output slot -> the NoOutput reasons of the combinations it was skipped at
+    no_output_reasons: "dict[int, list[str]]" = {}
     for _row_idx, row in enumerate(rows):
         # 1. The row's input edges — every consumed record with its selector —
         # from the ONE assembly (`RunBindings.for_combo`): full-iteration rows
@@ -5913,6 +5917,14 @@ def _save_results(
                 continue
 
             output_value = row[output_name]
+
+            # This output has nothing to save at this combination while the
+            # call's other outputs do (for_columns split mode: a group with
+            # no data, or one the function raised on). No record is written;
+            # scifor already counted and logged why.
+            if _is_no_output(output_value):
+                no_output_reasons.setdefault(output_idx, []).append(output_value.reason)
+                continue
 
             # generates_file output: side-effect function (writes a file, returns
             # no storable data). Save lineage-only — graph + metadata, no data
@@ -6126,6 +6138,8 @@ def _save_results(
                     f"culprit) {meta_str}: {_output_type_label(output_obj)}"
                 )
 
+    _report_no_output_skips(no_output_reasons, batch_items, outputs, db)
+
     # ===========================================================================
     # PHASE 3: generates_file outputs — lineage-only save (graph + metadata, no
     # data row), keyed ``generated:{invocation_id}``. Built entirely from each
@@ -6309,6 +6323,47 @@ def _save_results(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _report_no_output_skips(
+    no_output_reasons: "dict[int, list[str]]",
+    batch_items: dict,
+    outputs: "list[Any]",
+    db: Any | None,
+) -> None:
+    """One line per output that was skipped at some combinations, and an
+    empty table for one that saved NOTHING this run.
+
+    The empty table (``DatabaseManager.ensure_variable_table``) is what lets
+    SQL on the variable's view return no rows instead of "does not exist";
+    scidb's own loads already answer from the record tables either way
+    (Stage 0 of .claude/plan-for-columns-groups.md). The first real save
+    rebuilds it with its columns (``_check_column_set``).
+    """
+    if not no_output_reasons:
+        return
+    saved_slots = {idx for (idx, _path), items in batch_items.items() if items}
+    for output_idx, reasons in no_output_reasons.items():
+        output_obj = outputs[output_idx]
+        label = _output_type_label(output_obj)
+        counts = ", ".join(
+            f"{reasons.count(r)} {r.replace('_', ' ')}"
+            for r in dict.fromkeys(reasons)
+        )
+        if output_idx in saved_slots:
+            Log.info(f"[save] {label}: skipped at {len(reasons)} combination(s) ({counts})")
+            continue
+        out_cls = output_obj if isinstance(output_obj, type) else type(output_obj)
+        active_db = db
+        if active_db is None:
+            from .database import get_database
+
+            active_db = get_database()
+        created = active_db.ensure_variable_table(out_cls)
+        Log.info(
+            f"[save] {label}: 0 records this run ({counts})"
+            + ("; created empty table" if created else "")
+        )
 
 
 def _save_seam_error(

@@ -43,7 +43,7 @@ from .failures import (
 from .fixed import Fixed
 from .locations import LocationFilter, filter_combos
 from .merge import Merge
-from .outputs import discard_db_only_kwargs, output_column_name
+from .outputs import NoOutput, discard_db_only_kwargs, is_no_output, output_column_name
 from .pathinput import PathInput
 from .pathoutput import PathOutput
 from .schema import expand_schema_keys, get_schema
@@ -155,6 +155,7 @@ def for_each(
     _path_input_resolver: "Callable[['PathInput', dict], Any] | None" = None,
     _mapping_inputs: "dict[str, list[str]] | None" = None,
     _select_rows: "Callable[[str, 'pd.DataFrame', dict], 'pd.DataFrame'] | None" = None,
+    _keep_no_output: bool = False,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -258,6 +259,11 @@ def for_each(
                  ``set_schema`` so this filter would match on them, and
                  stripped them back out in four places). A frame the caller
                  has nothing to say about must be returned unchanged.
+        _keep_no_output: Leave ``NoOutput`` slots (an output with nothing
+                 to save at a combination whose other outputs were kept) in
+                 the returned table, for a caller that saves per output and
+                 skips them (scidb). Default: replaced with ``None``, a
+                 missing cell.
         **metadata_iterables: Iterables of metadata values to combine.
 
     Returns:
@@ -322,6 +328,7 @@ def for_each(
                     _path_input_resolver=_path_input_resolver,
                     _mapping_inputs=_mapping_inputs,
                     _select_rows=_select_rows,
+                    _keep_no_output=_keep_no_output,
                     **metadata_iterables,
                 )
             except Exception as e:
@@ -860,6 +867,9 @@ def for_each(
     # that ended an on_error="stop" run.
     failure_groups: dict[str, FailureGroup] = {}
     stop: "tuple[Exception, ComboFailure] | None" = None
+    # Outputs skipped at a combination whose other outputs were kept
+    # (NoOutput slots): output label -> [(combo text, NoOutput)].
+    output_skips: "dict[str, list[tuple[str, NoOutput]]]" = {}
 
     # Periodic progress state: a line per outermost-key transition (guarded).
     progress_key = display_keys[0] if display_keys else None
@@ -1097,6 +1107,7 @@ def for_each(
                 fn_elapsed,
                 layer="scifor",
             )
+            _raise_if_every_output_skipped(result, resolved_output_names)
         except ForColumnsError:
             # Structural for_columns errors are deterministic across combos and
             # indicate a return-contract bug — surface immediately, don't skip.
@@ -1140,6 +1151,15 @@ def for_each(
         # Normalize single output to tuple
         if not isinstance(result, tuple):
             result = (result,)
+
+        # Some (never all, see _raise_if_every_output_skipped) outputs have
+        # nothing to save here: tally them per output for the summary. The
+        # slots stay in the row; scidb's save writes no record for them.
+        for i, slot in enumerate(result):
+            if is_no_output(slot):
+                output_skips.setdefault(_output_label(resolved_output_names, i), []).append(
+                    (metadata_str, slot)
+                )
 
         # Handle distribute: expand result into multiple rows
         if distribute_key is not None:
@@ -1233,6 +1253,8 @@ def for_each(
                 f"[{format_user_frame(group.example.user_frame)}]",
                 layer="scifor",
             )
+    for line in _describe_output_skips(output_skips):
+        Log.info(line, layer="scifor")
     summary_event = {
         "event": "summary",
         "current": total,  # keeps positional consumers (GUI) safe
@@ -1244,6 +1266,7 @@ def for_each(
         "cancelled": was_cancelled,
         "stopped": stop is not None,
         "failures": groups_to_wire(failure_groups),
+        "output_skips": _output_skips_to_wire(output_skips),
     }
     # The same summary feeds the journal block of the run this loop belongs
     # to (scifor.failures.journal_run, opened by for_each's entry).
@@ -1273,6 +1296,8 @@ def for_each(
         result_df = _results_to_output_dataframe(
             collected_rows, resolved_output_names, schema_col_dtypes, full_schema_keys
         )
+    if output_skips and not _keep_no_output:
+        result_df = _no_output_to_missing(result_df, resolved_output_names)
     if stop is not None:
         stop_exc, stop_failure = stop
         Log.info(
@@ -1369,6 +1394,89 @@ class ColumnFunctionError(ValueError):
     def __init__(self, message: str, failures: "list[tuple[str, str]]"):
         super().__init__(message)
         self.failures = failures
+
+
+def _output_label(output_names: "list[str]", i: int) -> str:
+    """The summary label of output slot ``i`` (its result column name)."""
+    return output_names[i] if i < len(output_names) else f"output_{i + 1}"
+
+
+def _raise_if_every_output_skipped(result: Any, output_names: "list[str]") -> None:
+    """A call whose EVERY output slot is a ``NoOutput`` saved nothing, so it
+    is one no-data or failed combination, not a completed one: raise so the
+    loop's ordinary skip path counts and groups it. All ``no_data`` ->
+    ``NoDataError``; otherwise ``ColumnFunctionError`` naming each slot."""
+    slots = result if isinstance(result, tuple) else (result,)
+    if not slots or not all(is_no_output(s) for s in slots):
+        return
+    pairs = [
+        (_output_label(output_names, i), s.detail or s.reason) for i, s in enumerate(slots)
+    ]
+    details = "; ".join(f"{name}: {why}" for name, why in pairs)
+    if all(s.reason == "no_data" for s in slots):
+        raise NoDataError(f"No data for any output ({details}).")
+    raise ColumnFunctionError(f"No output could be produced ({details}).", pairs)
+
+
+def _no_output_to_missing(result_df: Any, output_names: "list[str]") -> Any:
+    """A standalone result shows a skipped output as a missing cell: the
+    ``NoOutput`` marker is for a saving caller only."""
+    if result_df is None or getattr(result_df, "empty", True):
+        return result_df
+    result_df = result_df.copy()
+    for name in output_names:
+        if name in result_df.columns:
+            result_df[name] = [None if is_no_output(v) else v for v in result_df[name]]
+    return result_df
+
+
+def _group_output_skips(
+    skips: "list[tuple[str, NoOutput]]",
+) -> "list[tuple[str, str, list[str]]]":
+    """``[(reason, detail, [combo text])]`` in first-seen order: one entry
+    per distinct reason, like the per-combo failure groups."""
+    groups: "dict[tuple[str, str], list[str]]" = {}
+    for combo, slot in skips:
+        groups.setdefault((slot.reason, slot.detail), []).append(combo)
+    return [(reason, detail, combos) for (reason, detail), combos in groups.items()]
+
+
+def _describe_output_skips(
+    output_skips: "dict[str, list[tuple[str, NoOutput]]]",
+) -> "list[str]":
+    """The end-of-run lines for outputs skipped at combinations whose other
+    outputs were kept: ``output SixMWT: no data × 1 — subject=2``. One line
+    per output and reason; nothing when no output was skipped."""
+    lines = []
+    for name, skips in output_skips.items():
+        for reason, detail, combos in _group_output_skips(skips):
+            shown = combos[:_SUMMARY_COMBOS_MAX]
+            more = f" (+{len(combos) - len(shown)} more)" if len(combos) > len(shown) else ""
+            label = "no data" if reason == "no_data" else "failed"
+            why = f' "{detail}"' if detail else ""
+            lines.append(
+                f"output {name}: {label} × {len(combos)}{why} — {'; '.join(shown)}{more}"
+            )
+    return lines
+
+
+def _output_skips_to_wire(
+    output_skips: "dict[str, list[tuple[str, NoOutput]]]",
+) -> "dict[str, list[dict]]":
+    """The summary event's ``output_skips``: ``{output: [{reason, detail,
+    count, combos}]}``, combos capped like the failure groups."""
+    return {
+        name: [
+            {
+                "reason": reason,
+                "detail": detail,
+                "count": len(combos),
+                "combos": combos[:_SUMMARY_COMBOS_MAX],
+            }
+            for reason, detail, combos in _group_output_skips(skips)
+        ]
+        for name, skips in output_skips.items()
+    }
 
 
 # Separator joining a source column name to a per-column output key when a
@@ -2577,6 +2685,26 @@ def _results_to_output_dataframe(
             collected_rows, schema_keys
         )
         _out = ", ".join(str(n) for n in output_names) or "output"
+        per_output = spread and len(output_names) > 1
+        if per_output:
+            # Spreading concatenates every output's frame into ONE row set,
+            # after which nothing says which column belongs to which output:
+            # scidb's flatten save then built EVERY output's record from ALL
+            # the columns, and same-named columns collided (2026-10-28,
+            # scidb/tests/test_multi_output_frames.py). Each output keeps its
+            # own frame in its own cell instead -- one record per output per
+            # combination, as a multi-row frame already was.
+            Log.info(
+                "outputs %s: %d outputs, so each output's DataFrame is saved "
+                "as its own record per combination (rows are not spread%s)",
+                _out,
+                len(output_names),
+                f"; schema key(s) {disc_keys} in the frames stay data columns"
+                if disc_keys
+                else "",
+                layer="scifor",
+            )
+            spread = False
         if collisions:
             # A schema key is an ADDRESS, never data. The combination already
             # says where these rows go, so the returned column can add nothing
@@ -2642,7 +2770,7 @@ def _results_to_output_dataframe(
                     ),
                     layer="scifor",
                 )
-        elif not spread:
+        elif not spread and not per_output:
             Log.info(
                 "output %s: %d DataFrame(s), up to %d row(s) each, carry no "
                 "unpinned schema-key column, so every row shares one address — "

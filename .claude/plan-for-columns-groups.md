@@ -203,6 +203,32 @@ a missing value in the table it returns.
   "stored NULL" where `""` is data. The no-input check is a different concept
   and gets its own scifor owner; consolidating the four is separate work.
 
+### Stage 1 status (2026-10-28): built, tests pending user run
+- **Pre-existing bug fixed first** (found reading the result assembly,
+  confirmed by `scidb/tests/test_multi_output_frames.py` failing 2 of 3):
+  with several outputs that are all ≤1-row DataFrames, scifor spread them
+  into one wide row and scidb's flatten save built EVERY output's record
+  from ALL columns (same-named columns collided). Now several outputs are
+  never spread: each keeps its frame in its own cell
+  (`_results_to_output_dataframe`, `per_output` flag + INFO line). Single
+  output unchanged. MATLAB gets it via `spread_nested_results`.
+- Marker: `scifor.outputs.NoOutput(reason, detail)` + `is_no_output`
+  (a class, not a bare sentinel, so the summary can say why).
+- scifor loop: a call whose every slot is `NoOutput` raises
+  (`_raise_if_every_output_skipped`: all no_data → `NoDataError`, else
+  `ColumnFunctionError`) so it is counted as one no-data/failed combo;
+  partial skips tallied per output → INFO `output A: no data × 1 — subject=2`
+  and summary event key `output_skips`. Standalone result replaces the marker
+  with `None`; private `_keep_no_output=True` (scidb) keeps it.
+- scidb `_save_results`: skips the slot; `_report_no_output_skips` logs
+  `[save] X: skipped at N combination(s) (...)` or, when the output saved
+  nothing, calls `DatabaseManager.ensure_variable_table` and logs
+  `[save] X: 0 records this run (...); created empty table`.
+- Not yet: the journal block does not render `output_skips` (log only);
+  MATLAB bridge carrying the marker (Stage 4).
+- Tests: `scifor/tests/test_no_output.py`, `scidb/tests/test_no_output_save.py`,
+  `scidb/tests/test_multi_output_frames.py`.
+
 ### Stage 1: `NO_OUTPUT` + per-output summary (scifor + scidb, Python)
 Built first because split mode depends on it; it is independent of groups.
 - scifor: internal `NO_OUTPUT` marker; result table carries it; standalone

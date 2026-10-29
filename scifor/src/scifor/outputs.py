@@ -86,3 +86,45 @@ def _short(value: Any, limit: int = 40) -> str:
         f"<{type(value).__name__}>"
     )
     return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+#: Reasons a :class:`NoOutput` slot can carry.
+NO_OUTPUT_REASONS = ("no_data", "failed")
+
+
+class NoOutput:
+    """INTERNAL marker: this output has nothing to save at this combination,
+    while the call's other outputs may.
+
+    A slot of a multi-output result holds one of these instead of a value.
+    scifor sets it (for_columns split mode: a group with no data, or one the
+    function raised on), keeps it in the result table for scidb, and
+    replaces it with ``None`` in a standalone result. scidb's save loop
+    writes no record for it. A call whose EVERY slot is a ``NoOutput`` is
+    counted as one no-data or failed combination, never as completed.
+
+    Not exported and never returned by user code: absence comes from the
+    input, so SciStack decides it (``.claude/plan-for-columns-groups.md``).
+
+    ``reason`` is ``"no_data"`` or ``"failed"``; ``detail`` is the one-line
+    reason shown in the run summary (``"ValueError: all blank"``).
+    """
+
+    __slots__ = ("reason", "detail")
+
+    def __init__(self, reason: str, detail: str = ""):
+        if reason not in NO_OUTPUT_REASONS:
+            raise ValueError(
+                f"NoOutput reason must be one of {NO_OUTPUT_REASONS}, got {reason!r}"
+            )
+        self.reason = reason
+        self.detail = detail
+
+    def __repr__(self) -> str:
+        detail = f", {self.detail!r}" if self.detail else ""
+        return f"NoOutput({self.reason!r}{detail})"
+
+
+def is_no_output(value: Any) -> bool:
+    """Is *value* a :class:`NoOutput` slot? The one test every consumer uses."""
+    return isinstance(value, NoOutput)
