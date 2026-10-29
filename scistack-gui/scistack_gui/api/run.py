@@ -561,9 +561,15 @@ def _run_in_thread(
                     registry.get_variable_class(t)
                     for t in run_output_types(inputs, node_output_types, v["output_type"])
                 ]
-                logger.debug(
-                    "[run_thread] Output class(es): %s (run_id=%s)",
+                # INFO: which outputs this call writes, and in which order, is
+                # what output order is about (plan-output-order-owner Stage 0).
+                logger.info(
+                    "[run_thread] target %d writes output(s) %s (target output_type=%s, "
+                    "node handles=%s, run_id=%s)",
+                    idx,
                     [c.__name__ for c in output_classes],
+                    v["output_type"],
+                    node_output_types,
                     run_id,
                 )
             except KeyError as e:
