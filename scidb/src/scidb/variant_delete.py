@@ -558,6 +558,7 @@ def delete_variant(
         deleted["_invocation"] = _delete_in(
             duck, "_invocation", "invocation_id", plan.invocation_ids
         )
+        deleted["_run_outputs"] = _delete_in(duck, "_run_outputs", "run_id", plan.run_ids)
         deleted["_run"] = _delete_in(duck, "_run", "run_id", plan.run_ids)
         for t in sorted(types):
             if t in GLUE_RECORD_TYPES:

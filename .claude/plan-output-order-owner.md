@@ -125,3 +125,18 @@ MATLAB. Node/npm checks and bundle rebuilds by Claude if any frontend changes
 - Manual edges have no guaranteed read order (`intent_store.manual_edges`,
   no ORDER BY). Decided (user): never-run Python output order = edge
   statement `stated_at` order; re-drawing an edge moves it last.
+
+## Stage 1 status (2026-10-28): built, tests pending user run
+- Changed from the draft: the order is recorded per RUN in a new table
+  `_run_outputs (run_id, outputs VARCHAR[])` (like `_run_step`), not as an
+  `_invocation` column: outputs are not part of invocation_id and
+  `_invocation` inserts are DO NOTHING, so a re-run in another order would
+  have kept the first order forever.
+- Written by `record_run` → `_commit_graph` (same transaction as `_run`) from
+  `_save_results` (`[_output_type_label(o) for o in outputs]`); MATLAB runs
+  save through the same path.
+- Reader: `provenance_query.recorded_output_orders(duck, fns)` →
+  `{fn: [[types], ...]}` distinct orders, newest run first.
+- Run log membership: `bundle.HISTORY_TABLES`, `clear_data.KEPT_BY_CLEAR`,
+  deleted with its run in `variant_delete`.
+- Tests: `scidb/tests/test_output_order_recorded.py`.

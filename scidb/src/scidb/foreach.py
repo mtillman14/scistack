@@ -6296,6 +6296,7 @@ def _save_results(
                 glue_chains=glue_chains,
                 parameter_names=state.parameter_names,
                 path_input_specs=state.path_input_specs,
+                output_types=[_output_type_label(o) for o in outputs],
             )
             Log.info(
                 f"[provenance] recorded run_id={run_id} for {len(graph_records)} "

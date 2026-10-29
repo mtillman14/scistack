@@ -658,6 +658,23 @@ def ensure_provenance_tables(duck) -> None:
         )
     """)
 
+    # The output variable types a run wrote, in its ``outputs=`` ORDER (the
+    # function's return order; a for_columns split's group pairing). Its own
+    # table like `_run_step`: an existing database gains it on open. NOT
+    # identity, and per RUN rather than per invocation: outputs are not part
+    # of invocation_id, so a re-run listing them in another order reuses the
+    # invocations and only a run row can say what that run's order was.
+    # `_invocation_output.output_num` cannot answer this: slots append across
+    # runs and a distributed run's slot is the slice index
+    # (.claude/plan-output-order-owner.md). Reader:
+    # provenance_query.recorded_output_orders.
+    duck._execute("""
+        CREATE TABLE IF NOT EXISTS _run_outputs (
+            run_id  VARCHAR PRIMARY KEY,
+            outputs VARCHAR[] NOT NULL
+        )
+    """)
+
     # Many-to-many: which invocations a run (re)produced.
     duck._execute("""
         CREATE TABLE IF NOT EXISTS _run_invocation (

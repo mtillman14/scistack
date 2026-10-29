@@ -3022,6 +3022,36 @@ def run_steps_by_invocation(duck) -> dict[str, list[str]]:
     return out
 
 
+def recorded_output_orders(duck, function_names) -> dict[str, list[list[str]]]:
+    """``{function_name: [[output type, ...], ...]}``: each distinct
+    ``outputs=`` order its runs recorded (``_run_outputs``), NEWEST run first.
+
+    THE reader of output order. A function node's output handles, the canvas
+    run and the MATLAB command take the order from here (via the GUI's
+    ``domain.output_order``), never from ``_invocation_output.output_num``,
+    which is a slot, not a position (slots append across runs; a distributed
+    run's slot is the slice index). A function with no recorded order (runs
+    from before 2026-10-28, or none) is absent: an unknown order, not
+    alphabetical. One query.
+    """
+    names = sorted({str(n) for n in (function_names or []) if n})
+    if not names or not duck._table_exists("_run_outputs"):
+        return {}
+    ph = ", ".join(["?"] * len(names))
+    out: dict[str, list[list[str]]] = {}
+    for fn, outputs in duck._fetchall(
+        "SELECT r.function_name, ro.outputs FROM _run_outputs ro "
+        f"JOIN _run r ON r.run_id = ro.run_id WHERE r.function_name IN ({ph}) "
+        "ORDER BY r.timestamp DESC, r.run_id DESC",
+        names,
+    ):
+        order = [str(t) for t in (outputs or [])]
+        seen = out.setdefault(fn, [])
+        if order and order not in seen:
+            seen.append(order)
+    return out
+
+
 def _annotate_variants(duck, groups: dict, group_records: dict) -> list[dict]:
     """Add chronology, locations and the load-path verdict to each variant.
 

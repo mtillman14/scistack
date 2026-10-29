@@ -550,8 +550,12 @@ def record_run(
     glue_chains: dict | None = None,
     parameter_names: dict | None = None,
     path_input_specs: dict | None = None,
+    output_types: "list[str] | None" = None,
 ) -> str | None:
     """Write the bipartite graph for ``graph_records`` plus a fresh ``_run`` row.
+
+    ``output_types``: the call's output variable types in ``outputs=`` order,
+    recorded on ``_run_outputs`` (the one record of output order).
 
     ``path_input_specs`` is ``{argument: PathInput.to_spec()}`` — what each
     PathInput-fed argument's record STORES (template, root_folder, ...). The
@@ -967,6 +971,7 @@ def record_run(
         timings=timings,
         declared_edges=declared_edges,
         pathinput_spec_rows=pathinput_spec_rows,
+        output_types=output_types,
     )
     timings["3_commit"] = time.perf_counter() - _t_commit
     timings["total"] = time.perf_counter() - _t_start
@@ -1192,8 +1197,12 @@ def _commit_graph(
     timings: dict | None = None,
     declared_edges: dict | None = None,
     pathinput_spec_rows: dict | None = None,
+    output_types: "list[str] | None" = None,
 ) -> None:
     """Transactionally insert the assembled graph rows + the append-only run.
+
+    ``output_types``: the run's ``outputs=`` order, written to
+    ``_run_outputs`` beside the ``_run`` row.
 
     Used by :func:`record_run` (the for_each save path). All graph inserts are
     idempotent (``ON CONFLICT DO NOTHING``); the ``_run`` row is always appended.
@@ -1367,6 +1376,15 @@ def _commit_graph(
                 [run_id, step],
             )
             logger.info("run %s of %s recorded as step %r", run_id, function_name, step)
+        if output_types:
+            duck.con.execute(
+                "INSERT INTO _run_outputs (run_id, outputs) VALUES (?, ?) "
+                "ON CONFLICT (run_id) DO NOTHING",
+                [run_id, [str(t) for t in output_types]],
+            )
+            logger.info(
+                "run %s of %s wrote outputs in order %s", run_id, function_name, list(output_types)
+            )
         _timed(
             "3f_run_invocation",
             lambda: duck._bulk_insert(
