@@ -245,6 +245,35 @@ Built first because split mode depends on it; it is independent of groups.
   EVERY combo leaves an empty table that loads as empty (not an error), and a
   later run that does produce data rebuilds it with real columns.
 
+### Stage 2 status (2026-10-28): built, tests pending user run
+- `scifor/column_selection.py`: `parse_column_groups` (owner of what a spec
+  means; groups that add nothing normalize to the flat list),
+  `resolve_column_groups` (owner of COMBINE/SPLIT; `every_column=True`
+  refuses to split `for_columns()` across outputs, since the pairing would
+  follow data order), `overlapping_columns`, `describe_column_groups`,
+  `ColumnGroupsError(ActionableError, ValueError)`. `ColumnSelection.groups`
+  (None when flat); groups need `iterate=True` and refuse `excl_columns`;
+  `to_key`/`__hash__`/`__name__` carry groups only when grouped.
+- `scifor/missing.py`: `is_missing_value`, `frame_has_no_data`.
+- `_run_column_iteration` loops groups; skip rule = the group is all-missing
+  in EVERY iterate input. Combine: skipped group left out of the row (NaN
+  in the table) + INFO `for_columns group X: no data × n — ...`. Split:
+  `NoOutput` slots; WARN per raising group; all-skipped → `NoDataError` or
+  `ColumnFunctionError` (with cause).
+- Behaviour change for PLAIN `for_columns([...])` (1-column groups): a
+  column that is all missing at a subject is no longer passed to the
+  function; it is left missing (all columns missing → no-data combo).
+- Combine keeps one column set (user, 2026-10-28): every row is reindexed
+  to every group's columns in group order (`_combine_output_columns`). A
+  group with no data anywhere in the run is inferred from the other groups'
+  shape (scalars → `<name>`, same dict keys → `<name>__<key>`, INFO); when
+  the others disagree → `<name>` + WARN. Residual edge: a FIRST run where a
+  dict-returning group is inferred wrongly would fix a column set a later
+  run with data contradicts (ColumnSetChangedError, clear message).
+- scidb `_resolve_for_columns` still rebuilds a flat ColumnSelection
+  (drops groups): Stage 3.
+- Tests: `scifor/tests/test_for_columns_groups.py`.
+
 ### Stage 2: scifor groups (Python)
 - `scifor/column_selection.py`: `ColumnSelection.columns` accepts flat list,
   list with sublists, or dict; `resolve_column_groups`; `__name__`/`to_key`/`__hash__`.

@@ -21,7 +21,16 @@ if TYPE_CHECKING:
     import pandas as pd
 
 from .colname import ColName
-from .column_selection import ColumnSelection, column_value
+from .column_selection import (
+    SPLIT,
+    ColumnGroupsError,
+    ColumnSelection,
+    column_value,
+    describe_column_groups,
+    overlapping_columns,
+    resolve_column_groups,
+)
+from .missing import frame_has_no_data
 from .each_of import EachOf, require_alternatives
 from .failures import (
     ComboFailure,
@@ -683,35 +692,55 @@ def for_each(
         )
 
     iterate_columns: list[str] | None = None
+    # [(name, [source columns])] the loop runs over, and COMBINE / SPLIT
+    # (column_selection.resolve_column_groups owns both).
+    column_groups: "list[tuple[str, list[str]]] | None" = None
+    for_columns_mode: "str | None" = None
     if iterate_params:
         col_sets = {
             name: _resolve_iterate_columns(data_inputs[name], full_schema_keys)
             for name in iterate_params
         }
         iterate_columns = col_sets[iterate_params[0]]
+        first_cs = _unwrap_column_selection(data_inputs[iterate_params[0]])
         for name in iterate_params[1:]:
-            if set(col_sets[name]) != set(iterate_columns):
+            other_cs = _unwrap_column_selection(data_inputs[name])
+            if first_cs.groups is not None or other_cs.groups is not None:
+                if first_cs.groups != other_cs.groups:
+                    raise ColumnGroupsError(
+                        f"for_columns inputs are zipped group by group, so they "
+                        f"must declare the same groups. '{iterate_params[0]}' has "
+                        f"{_groups_text(first_cs)} but '{name}' has "
+                        f"{_groups_text(other_cs)}."
+                    )
+            elif set(col_sets[name]) != set(iterate_columns):
                 raise ValueError(
                     f"for_columns inputs must iterate over the same columns "
                     f"(zipped by name). '{iterate_params[0]}' has "
                     f"{iterate_columns} but '{name}' has {col_sets[name]}."
                 )
-        if n_outputs != 1:
-            raise ValueError(
-                f"for_columns supports exactly one output; got {n_outputs} "
-                f"({resolved_output_names})."
-            )
+        for_columns_mode, column_groups = resolve_column_groups(
+            iterate_columns,
+            first_cs.groups,
+            resolved_output_names,
+            every_column=not first_cs.columns,
+        )
         if distribute_key is not None:
             raise ValueError("for_columns cannot be combined with distribute=True.")
         Log.info(
             _describe_for_columns_plan(
-                iterate_params,
-                "combine",
-                [(c, [c]) for c in iterate_columns],
-                resolved_output_names,
+                iterate_params, for_columns_mode, column_groups, resolved_output_names
             ),
             layer="scifor",
         )
+        shared = overlapping_columns(column_groups)
+        if shared:
+            Log.warn(
+                "[for_columns] column(s) in more than one group: "
+                + "; ".join(f"{c} in {names}" for c, names in shared.items())
+                + " — each group still receives it",
+                layer="scifor",
+            )
 
     # Build combo list
     if _all_combos is not None:
@@ -870,6 +899,12 @@ def for_each(
     # Outputs skipped at a combination whose other outputs were kept
     # (NoOutput slots): output label -> [(combo text, NoOutput)].
     output_skips: "dict[str, list[tuple[str, NoOutput]]]" = {}
+    # for_columns combine: groups left missing at a combination because they
+    # had no data there: group name -> [combo text].
+    no_data_groups: "dict[str, list[str]]" = {}
+    # for_columns combine: the output column names each group produced,
+    # first-seen order (group name -> [column]).
+    group_columns: "dict[str, list[str]]" = {}
 
     # Periodic progress state: a line per outermost-key transition (guarded).
     progress_key = display_keys[0] if display_keys else None
@@ -1056,7 +1091,7 @@ def for_each(
         )
         if iterate_params:
             msg = (
-                f"[run] {metadata_str}: {fn_name} x {len(iterate_columns)} column(s) "
+                f"[run] {metadata_str}: {fn_name} x {len(column_groups)} group(s) "
                 f"({', '.join(all_param_names)})"
             )
         else:
@@ -1079,18 +1114,22 @@ def for_each(
         try:
             fn_t0 = time.perf_counter()
             if iterate_params:
-                result = (
-                    _run_column_iteration(
-                        fn,
-                        filtered_inputs,
-                        iterate_dfs,
-                        iterate_columns,
-                        full_schema_keys,
-                        as_table_set,
-                        metadata,
-                        path_input_resolver=_path_input_resolver,
-                    ),
+                iterated = _run_column_iteration(
+                    fn,
+                    filtered_inputs,
+                    iterate_dfs,
+                    column_groups,
+                    full_schema_keys,
+                    as_table_set,
+                    metadata,
+                    path_input_resolver=_path_input_resolver,
+                    mode=for_columns_mode,
+                    metadata_str=metadata_str,
+                    no_data_groups=no_data_groups,
+                    group_columns=group_columns,
                 )
+                # Split: one slot per output already. Combine: the one row.
+                result = iterated if for_columns_mode == SPLIT else (iterated,)
             else:
                 # PathOutput/PathInput constants resolve to a finished path
                 # from this combo's metadata (no column outside for_columns).
@@ -1255,6 +1294,14 @@ def for_each(
             )
     for line in _describe_output_skips(output_skips):
         Log.info(line, layer="scifor")
+    for name, combos in no_data_groups.items():
+        shown = combos[:_SUMMARY_COMBOS_MAX]
+        more = f" (+{len(combos) - len(shown)} more)" if len(combos) > len(shown) else ""
+        Log.info(
+            f"for_columns group {name}: no data × {len(combos)} — "
+            f"{'; '.join(shown)}{more} (left missing in the row)",
+            layer="scifor",
+        )
     summary_event = {
         "event": "summary",
         "current": total,  # keeps positional consumers (GUI) safe
@@ -1281,6 +1328,15 @@ def for_each(
         len(collected_rows),
         layer="scifor",
     )
+    if for_columns_mode is not None and for_columns_mode != SPLIT and collected_rows:
+        # Every combination's row gets every group's columns, in group order:
+        # a group with no data somewhere (or everywhere) is still a column,
+        # so the output's column set does not depend on which data existed.
+        expected = _combine_output_columns(column_groups, group_columns)
+        collected_rows = [
+            (meta, (row.reindex(columns=expected),)) for meta, (row,) in collected_rows
+        ]
+
     # Combining every combo's return into one table is where a function that
     # returns different kinds of value for different combos fails — inside
     # SciStack, but fixable by the user. The seam says so (and names the
@@ -1441,6 +1497,51 @@ def _group_output_skips(
     return [(reason, detail, combos) for (reason, detail), combos in groups.items()]
 
 
+def _combine_output_columns(
+    column_groups: "list[tuple[str, list[str]]]",
+    group_columns: "dict[str, list[str]]",
+) -> "list[str]":
+    """The combine output's full column list, in group order.
+
+    A group that produced columns anywhere in the run contributes those. A
+    group with no data at EVERY combination was never called, so its names
+    are inferred from the other groups (same function, same shape): scalars
+    -> ``<name>``; the same dict keys -> ``<name>__<key>``. When the other
+    groups disagree, ``<name>`` with a warning, since a later run with data
+    may produce different columns.
+    """
+    sep = FOR_COLUMNS_OUTPUT_SEP
+
+    def shape(name: str, cols: "list[str]") -> "tuple":
+        return tuple(None if c == name else c[len(name) + len(sep):] for c in cols)
+
+    shapes = {shape(n, group_columns[n]) for n, _ in column_groups if n in group_columns}
+    columns: "list[str]" = []
+    for name, _cols in column_groups:
+        if name in group_columns:
+            columns.extend(group_columns[name])
+            continue
+        if len(shapes) == 1:
+            (only,) = shapes
+            added = [name if k is None else f"{name}{sep}{k}" for k in only]
+            Log.info(
+                f"[for_columns] group {name} had no data at any combination; "
+                f"added empty column(s) {added}, shaped like the other groups",
+                layer="scifor",
+            )
+        else:
+            added = [name]
+            Log.warn(
+                f"[for_columns] group {name} had no data at any combination and "
+                f"the other groups returned different shapes; added an empty "
+                f"column {added}. A later run where {name} has data may produce "
+                f"different columns.",
+                layer="scifor",
+            )
+        columns.extend(added)
+    return columns
+
+
 def _describe_output_skips(
     output_skips: "dict[str, list[tuple[str, NoOutput]]]",
 ) -> "list[str]":
@@ -1489,6 +1590,13 @@ FOR_COLUMNS_OUTPUT_SEP = "__"
 _FOR_COLUMNS_PLAN_SHOWN = 10
 
 
+def _groups_text(cs: Any) -> str:
+    """A ColumnSelection's columns or groups as they read in code."""
+    if cs.groups is not None:
+        return describe_column_groups(cs.groups)
+    return str(cs.columns) if cs.columns else "every column"
+
+
 def _describe_for_columns_plan(
     iterate_params: "list[str]",
     mode: str,
@@ -1521,98 +1629,179 @@ def _run_column_iteration(
     fn,
     base_kwargs,
     iterate_dfs,
-    iterate_columns,
+    column_groups,
     schema_keys,
     as_table_set,
     metadata,
     path_input_resolver=None,
+    mode="combine",
+    metadata_str="",
+    no_data_groups=None,
+    group_columns=None,
 ):
-    """Run fn once per column and reassemble into a single one-row DataFrame.
+    """Run fn once per column group at one combination.
 
-    For each column, every iterate input is sliced to that column and passed to
-    fn; non-iterate inputs/constants in ``base_kwargs`` pass through unchanged.
-    An iterate input named in ``as_table_set`` is sliced to a DataFrame holding
-    all schema key columns plus that one column (mirroring the non-iterate
-    ColumnSelection as_table behavior at ``_prepare_input``); otherwise it is
-    sliced by ``column_value`` (the default): the cell for a one-row combo,
-    else a numpy array of the column.
+    ``column_groups`` is ``[(name, [source columns])]`` from
+    ``column_selection.resolve_column_groups``; a plain ``for_columns`` list
+    is one single-column group per column, named after it. For each group,
+    every iterate input is sliced to the group's columns and passed to fn;
+    non-iterate inputs/constants in ``base_kwargs`` pass through unchanged.
+    A one-column group arrives as ``column_value`` gives it (the cell for a
+    one-row combo, else a numpy array); several columns arrive as a
+    DataFrame of those columns, exactly as ``MyVar[[...]]`` gives them. An
+    iterate input named in ``as_table_set`` arrives as a DataFrame of all
+    schema key columns plus the group's columns. Deferred ``ColName()`` and
+    PathOutput ``{ColName}`` resolve to the group's name.
 
-    The per-column return is expanded into output columns by
-    ``_expand_column_result``: a scalar yields one column named after the source
-    column; a dict / pandas Series / 1-row DataFrame yields one column per key,
-    named ``"<col><sep><key>"``. Different source columns may return different
-    numbers (and names) of outputs — the reassembled row is the ordered
-    concatenation of every produced column, so a single for_each call supports
-    an arbitrary, per-column-varying number of outputs.
+    **No data:** a group whose every value, in every row and column, is
+    missing in every iterate input (``scifor.missing``) is not called.
+
+    **COMBINE** (one output) returns ONE row: each group's return expanded by
+    ``_expand_column_result`` under the group's name (scalar -> ``<name>``;
+    dict / Series / 1-row frame -> ``<name><sep><key>``), ordered; a group
+    with no data is left out of the row (missing in the result table, and
+    tallied in ``no_data_groups``; ``_combine_output_columns`` puts the
+    column back, empty, so every row has the same columns). The names each
+    group produced accumulate in ``group_columns``. Any group raising fails
+    the combination
+    with one ``ColumnFunctionError`` naming every failing group.
+
+    **SPLIT** (several outputs) returns a tuple with one slot per group,
+    each holding that group's return as-is (any shape). A group with no data
+    or one fn raised on is a ``NoOutput`` slot, so the other groups still
+    save. A combination where every group is skipped raises instead:
+    ``NoDataError`` when all had no data, else ``ColumnFunctionError``.
     """
     import pandas as pd
 
     ordered: list[tuple[str, Any]] = []
-    # Per-column failures, collected across the whole loop so we can report
-    # every offending column at once instead of dying on the first one.
+    slots: list[Any] = []
+    # Per-group failures, collected across the whole loop so we can report
+    # every offending group at once instead of dying on the first one.
     failures: list[tuple[str, str]] = []
     first_error: "Exception | None" = None
+    skipped_no_data: list[str] = []
     # Constant inputs that are deferred ColName() markers resolve to the name of
-    # the column currently being iterated (recomputed each pass below).
+    # the group currently being iterated (recomputed each pass below).
     deferred_colname_params = [
         name
         for name, v in base_kwargs.items()
         if isinstance(v, ColName) and v.is_deferred
     ]
-    # PathOutput constants resolve per-column (current combo metadata + column).
+    # PathOutput constants resolve per-group (current combo metadata + name).
     path_output_params = [
         name for name, v in base_kwargs.items() if isinstance(v, PathOutput)
     ]
     # PathInput constants have no per-column token (unlike PathOutput's
-    # {ColName}) -- the same path applies to every column in this combo, so
+    # {ColName}) -- the same path applies to every group in this combo, so
     # resolve once up front rather than inside the loop.
     base_kwargs = _resolve_path_inputs(base_kwargs, metadata, resolver=path_input_resolver)
-    for col in iterate_columns:
+    for group_name, group_cols in column_groups:
+        if iterate_dfs and all(
+            frame_has_no_data(df[group_cols]) for df in iterate_dfs.values()
+        ):
+            Log.debug(
+                "[for_columns] %s: group %s has no data (all %d column(s) "
+                "missing) — not called",
+                metadata_str,
+                group_name,
+                len(group_cols),
+                layer="scifor",
+            )
+            skipped_no_data.append(group_name)
+            slots.append(NoOutput("no_data"))
+            continue
         call_kwargs = dict(base_kwargs)
         for name in deferred_colname_params:
-            call_kwargs[name] = col
+            call_kwargs[name] = group_name
         for name in path_output_params:
             # PathOutput resolves to a finished path using this combo's metadata
-            # and the current column ({ColName}).
-            call_kwargs[name] = base_kwargs[name].resolve(metadata, col)
+            # and the current group's name ({ColName}).
+            call_kwargs[name] = base_kwargs[name].resolve(metadata, group_name)
         for name, df in iterate_dfs.items():
             if name in as_table_set:
-                # Keep the schema keys + the current column.
-                keep = [c for c in df.columns if c in schema_keys] + [col]
+                # Keep the schema keys + the group's columns.
+                keep = [c for c in df.columns if c in schema_keys] + list(group_cols)
                 call_kwargs[name] = df[keep]
+            elif len(group_cols) == 1:
+                call_kwargs[name] = column_value(df[group_cols[0]])
             else:
-                call_kwargs[name] = column_value(df[col])
+                call_kwargs[name] = df[list(group_cols)]
         try:
             res = call_user_function(fn, **call_kwargs)
         except Exception as e:
-            # Record and keep going so the raised error names every bad column.
-            failures.append((col, f"{type(e).__name__}: {e}"))
+            # Record and keep going so the raised error names every bad group.
+            failures.append((group_name, f"{type(e).__name__}: {e}"))
             if first_error is None:
                 # Chained as __cause__ so the failure record finds the
                 # user line (scifor.failures.failure_from_exception).
                 first_error = e
+            if mode == SPLIT:
+                Log.warn(
+                    f"[for_columns] {metadata_str}: {group_name} not saved — "
+                    f"{type(e).__name__}: {e}",
+                    layer="scifor",
+                )
+            slots.append(NoOutput("failed", f"{type(e).__name__}: {e}"))
             continue
         if isinstance(res, tuple):
-            # for_columns is a single (reassembled) output; a tuple return is
-            # collapsed to its first element. Return a dict/Series/1-row frame
-            # to emit multiple named values per column.
+            # Each group is ONE output; a tuple return is collapsed to its
+            # first element. Return a dict/Series/1-row frame to emit
+            # multiple named values per group.
             res = res[0]
-        ordered.extend(_expand_column_result(col, res))
+        slots.append(res)
+        if mode != SPLIT:
+            expanded = _expand_column_result(group_name, res)
+            ordered.extend(expanded)
+            if group_columns is not None:
+                seen = group_columns.setdefault(group_name, [])
+                seen.extend(n for n, _ in expanded if n not in seen)
 
-    if failures:
-        fn_name = getattr(fn, "__name__", repr(fn))
-        detail = "\n".join(f"  - {col}: {msg}" for col, msg in failures)
+    fn_name = getattr(fn, "__name__", repr(fn))
+    every_column = all(len(cols) == 1 for _, cols in column_groups)
+    unit = "column" if every_column else "group"
+
+    def column_function_error() -> ColumnFunctionError:
+        detail = "\n".join(f"  - {name}: {msg}" for name, msg in failures)
         message = (
             f"for_columns: {fn_name} raised on {len(failures)} of "
-            f"{len(iterate_columns)} iterated column(s). These columns could not "
+            f"{len(column_groups)} iterated {unit}(s). These {unit}s could not "
             f"be processed:\n{detail}\n"
-            f"Each call gets one column of this combo: its value when the combo "
-            f"has one row, else a numpy array of the column. Schema keys are "
-            f"already excluded; to skip columns the function cannot handle, "
-            f"narrow the selection (ColumnSelection(df, columns=[...]) or "
-            f"excl_columns=[...])."
         )
-        raise ColumnFunctionError(message, failures) from first_error
+        if every_column:
+            message += (
+                f"Each call gets one column of this combo: its value when the combo "
+                f"has one row, else a numpy array of the column. Schema keys are "
+                f"already excluded; to skip columns the function cannot handle, "
+                f"narrow the selection (ColumnSelection(df, columns=[...]) or "
+                f"excl_columns=[...])."
+            )
+        else:
+            message += (
+                "Each call gets one group of this combo: a one-column group as "
+                "its value (one row) or numpy array, a larger group as a "
+                "DataFrame of its columns."
+            )
+        return ColumnFunctionError(message, failures)
+
+    if mode == SPLIT:
+        if all(is_no_output(s) for s in slots):
+            if failures:
+                raise column_function_error() from first_error
+            raise NoDataError(
+                f"No data in any for_columns group ({', '.join(skipped_no_data)})."
+            )
+        return tuple(slots)
+
+    if failures:
+        raise column_function_error() from first_error
+    if skipped_no_data and len(skipped_no_data) == len(column_groups):
+        raise NoDataError(
+            f"No data in any for_columns {unit} ({', '.join(skipped_no_data)})."
+        )
+    if no_data_groups is not None:
+        for group_name in skipped_no_data:
+            no_data_groups.setdefault(group_name, []).append(metadata_str)
 
     # Assemble a one-row DataFrame, preserving encounter order and rejecting
     # collisions (two produced names mapping to the same output column).
