@@ -1,6 +1,6 @@
 # Plan: column groups in `for_columns` (combine + split)
 
-Status: DRAFT, awaiting approval (2026-10-28). All design questions answered.
+Status: Stages 0-6 written 2026-10-28; output handle tooltips added. Open: MATLAB canvas run output order for split, manual GUI check.
 Design discussion: whiteboard photo `spec/images/example_data_and_syntax.HEIC`
 (an `Obj1` with `Subject`, `6MWT`, `6MWT_Date`; two rows per subject, blanks
 for subject 2).

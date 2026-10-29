@@ -174,3 +174,33 @@ def test_run_output_types_split_uses_every_node_output():
     # A flat list with as many columns as outputs splits one column per output.
     flat = {"g": RunWalks.for_columns(["a", "b"])}
     assert run_output_types(flat, ["A", "B"], "A") == ["A", "B"]
+
+
+# --- Output handle tooltips ----------------------------------------------------
+
+
+def test_mark_output_groups_split_and_combine():
+    from scistack_gui.domain.graph_builder import mark_output_groups
+
+    split_node = {
+        "type": "functionNode",
+        "data": {"output_types": ["SixMWT", "TenMWT"], "columnSelections": {"g": SPLIT_SEL}},
+    }
+    combine_node = {
+        "type": "functionNode",
+        "data": {"output_types": ["Walks"], "columnSelections": {"g": COMBINE_SEL}},
+    }
+    broken_node = {
+        "type": "functionNode",
+        "data": {"output_types": ["A", "B", "C"], "columnSelections": {"g": SPLIT_SEL}},
+    }
+    plain_node = {"type": "functionNode", "data": {"output_types": ["A"]}}
+    nodes = [split_node, combine_node, broken_node, plain_node, {"type": "variableNode", "data": {}}]
+    assert mark_output_groups(nodes) == 2
+    assert split_node["data"]["outputGroups"] == {
+        "SixMWT": [{"name": "SixMWT", "columns": SIX}],
+        "TenMWT": [{"name": "TenMWT", "columns": TEN}],
+    }
+    assert [g["name"] for g in combine_node["data"]["outputGroups"]["Walks"]] == ["6MWT", "10MWT"]
+    assert "outputGroups" not in broken_node["data"]
+    assert "outputGroups" not in plain_node["data"]

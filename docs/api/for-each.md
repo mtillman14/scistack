@@ -108,7 +108,14 @@ Constituents may be `Fixed`/column selections. Has `.to_csv(path)` and
 Var["col"]          # one column  -> array
 Var[["a", "b"]]     # subset      -> DataFrame
 Var.for_columns(columns=[])   # run once per column, reassembled into one output
+Var.for_columns({"A": ["a", "a_date"], "B": ["b", "b_date"]})  # groups -> columns A, B of one output
+Var.for_columns([["a", "a_date"], ["b", "b_date"]])            # groups -> outputs[0], outputs[1]
 ```
+A group is passed to the function as a DataFrame of its columns. One output: a
+dict names each group's column(s), in key order. Several outputs: a list of
+groups, paired with `outputs=` by position; the counts must match. A group with
+no data at a location is not called (no record for its output there). See
+[Columns that belong together](../guide/for_each.md#columns-that-belong-together).
 The same indexing builds column filters (`Var["col"] != 0`) for `where=`. In
 MATLAB use the constructor form `Var("col")`.
 

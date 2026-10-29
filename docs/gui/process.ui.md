@@ -139,7 +139,7 @@ Click a node to see its settings in the sidebar.
 | Section | What it controls |
 |---|---|
 | **Variants** | Every combination of parameter values this function runs with. Click **hide** to stop running one combination without deleting its results. |
-| **Inputs** | For an input that's a table, which of its columns the function receives. |
+| **Inputs** | For an input that's a table, which of its columns the function receives. **Run once per column** calls the function for each column; **Group columns** then passes columns that belong together (a score and its date) as one group. |
 | **Data Filters** | Conditions a record must meet to be used, such as `Rating > 0`. |
 | **Schema Selection** | Which schema locations the function runs at. Everything runs unless you leave some out. |
 | **Schema Level** | Which schema keys the function runs **once per**. See below. |
@@ -152,6 +152,19 @@ Click a node to see its settings in the sidebar.
 - Tick **nothing**: it runs once, on the whole dataset. This is how you run a test that compares the brands.
 
 You rarely need to set it by hand. SciStack picks a sensible level from the step's inputs, and you change it only when you want something different.
+
+#### Columns that belong together
+
+Some columns only mean something together, like a walking-test score and the date it was taken. In **Inputs**, open the input's column button, tick **Run once per column**, then **Group columns**. Each row is one group: add columns with **+ column**, reorder with ↑ ↓, and add rows with **+ Add group**. The function receives each group as a table of its columns.
+
+- If the function has **several outputs**, each row shows the output it saves to (**→ SixMWT**). Rows pair with outputs in order, so ↑ ↓ change which output a group goes to.
+- If it has **one output**, each row has a name box instead: the name of that group's column in the output.
+
+The line under the rows says what will happen, or in red why it can't run yet; nothing is saved until it can. A participant with no data in a group (every value blank) gets no record for that group's output, so missing tests stay missing.
+
+/// info | 📷 Screenshot
+**Show:** the Inputs section with **Group columns** ticked, two group rows (6MWT and 10MWT with their date columns) each ending in → their output, and the "Split: each group saves to its own output" line.
+///
 
 ### Variables
 

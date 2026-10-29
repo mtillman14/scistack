@@ -109,3 +109,17 @@ export function describeOverlaps(plan: GroupPlan | null): string {
 export function sameSelection(a: ColumnSelectionWithGroups | undefined | null, b: ColumnSelectionWithGroups | undefined | null): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 }
+
+/** One output handle's tooltip: its type, then the for_columns group(s) it
+ *  receives (`outputGroups` from the backend's graph build). Split: the one
+ *  group paired with it; combine: every group, each as its column name. */
+export function describeOutputHandle(
+  outputType: string,
+  groups: { name: string; columns: string[] }[] | undefined,
+): string {
+  if (!groups || groups.length === 0) return outputType
+  if (groups.length === 1 && groups[0].name === outputType) {
+    return `${outputType}\nfrom columns: ${groups[0].columns.join(', ')}`
+  }
+  return [outputType, ...groups.map(g => `${g.name} ← ${g.columns.join(', ')}`)].join('\n')
+}

@@ -205,6 +205,8 @@ itself):
 | `MyVar["col"]` | one column → the function receives an array |
 | `MyVar[["a", "b"]]` | a subset → the function receives a DataFrame |
 | `MyVar.for_columns()` | run once per column, reassembled into one output |
+| `MyVar.for_columns({"A": ["a", "a_date"]})` | run once per group (a DataFrame); each group a named column of the one output |
+| `MyVar.for_columns([["a", "a_date"], ["b", "b_date"]])` | run once per group; group *i* saved as `outputs[i]` |
 
 The same indexing builds column filters (`MyVar["col"] != 0`) for `where=` — see
 [Filters](filters.md). In MATLAB, use the constructor form `MyVar("col")`.

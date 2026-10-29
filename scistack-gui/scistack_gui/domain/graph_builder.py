@@ -3811,6 +3811,42 @@ UNUSED_CHANGED_SINCE = "changed_since"  # stated after the last run, not yet run
 UNUSED_NEVER_RUN = "never_run"  # no run recorded for this function at all
 
 
+def mark_output_groups(nodes: list[dict]) -> int:
+    """Attach ``outputGroups`` to each function node whose for_columns
+    selection uses column groups: ``{output_type: [{"name", "columns"}]}``,
+    what each output handle's tooltip lists. Split: each output gets the one
+    group paired with it; combine: the one output gets every group.
+
+    The pairing is ``column_selection.plan_groups``' (scifor's rule, the
+    node's ``output_types`` in handle order), the same answer the Inputs
+    picker shows and a run uses. A selection that cannot run, or no
+    for_columns at all, attaches nothing. Pure: no I/O. Returns the number of
+    nodes marked.
+    """
+    from scistack_gui.domain.column_selection import plan_groups
+
+    marked = 0
+    for n in nodes:
+        if n.get("type") != "functionNode":
+            continue
+        data = n.get("data") or {}
+        outputs = list(data.get("output_types") or [])
+        for raw in (data.get("columnSelections") or {}).values():
+            plan = plan_groups(raw, outputs)
+            if not plan["ok"] or not plan["groups"]:
+                continue
+            if plan["mode"] == "split":
+                groups = {g["name"]: [g] for g in plan["groups"]}
+            elif outputs:
+                groups = {outputs[0]: plan["groups"]}
+            else:
+                continue
+            data["outputGroups"] = groups
+            marked += 1
+            break
+    return marked
+
+
 def mark_unused_intent(nodes: list[dict], latest_runs: dict) -> int:
     """Stamp ``unusedIntent`` on function nodes whose saved column selection
     is not what their most recent run actually bound.

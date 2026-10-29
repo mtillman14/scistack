@@ -1509,6 +1509,11 @@ def _build_graph(
             "[pipeline] rehydrated placement-qualified config on %d node(s)", applied
         )
 
+    # Which for_columns groups each output handle carries (its tooltip).
+    grouped = gb.mark_output_groups(nodes)
+    if grouped:
+        logger.debug("[pipeline] %d node(s) carry for_columns output groups", grouped)
+
     # Intent the last run did not use (decision A: a script run ignores the
     # GUI's statements) — one batched provenance query for every function
     # with a saved selection, then a pure pass over the nodes.

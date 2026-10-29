@@ -26,6 +26,7 @@ import { movePinsAfterRun, usePinGate } from '../Variants/RunPinGate'
 import { inputPorts, optionalPorts, OPTIONAL_ARGS_ATTR } from './inputPorts'
 import type { OptionalPort } from './inputPorts'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
+import { describeOutputHandle } from '../Sidebar/columnGroups'
 
 interface FnVariantRow {
   constants: Record<string, unknown>
@@ -46,6 +47,9 @@ interface FunctionNodeData {
   optional_ports?: OptionalPort[]
   shownArguments?: string[]
   output_types?: string[]
+  // for_columns groups each output receives (graph_builder.mark_output_groups):
+  // split, the one paired group; combine, every group. The handle tooltip.
+  outputGroups?: Record<string, { name: string; columns: string[] }[]>
   constant_params?: string[]
   variants?: FnVariantRow[]
   // Endpoint classification from scidb's _endpoint_kind (plot_/stat_ name
@@ -700,7 +704,7 @@ function PipelineFunctionNode({ id, data }: Props) {
               type="source"
               position={Position.Right}
               style={handleStyle(i, outTypes.length, 'right')}
-              title={t}
+              title={describeOutputHandle(t, data.outputGroups?.[t])}
             />
           ))
         : <Handle type="source" position={Position.Right} />
@@ -841,7 +845,7 @@ function VariantFunctionNode({
               type="source"
               position={Position.Right}
               style={handleStyle(i, outputs.length, 'right')}
-              title={t}
+              title={describeOutputHandle(t, data.outputGroups?.[t])}
             />
           ))
         : <Handle type="source" position={Position.Right} />

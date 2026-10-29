@@ -134,6 +134,41 @@ Variable-type inputs can be wrapped to change *what* gets loaded:
   `Var[["a", "b"]]` feeds a subset (as a DataFrame); `Var.for_columns()` runs the
   function once per column and reassembles the results.
 
+### Columns that belong together
+
+Some columns only mean something together, such as a score and the date it was
+measured. `for_columns` can pass them as a group: the function receives a
+DataFrame of the group's columns, once per group. The number of outputs decides
+where each group's result goes.
+
+```python
+# One output: each group becomes a column of it, named by the dict key.
+for_each(latest_score,
+         inputs={"walks": Walks.for_columns({"6MWT":  ["6MWT",  "6MWT_Date"],
+                                             "10MWT": ["10MWT", "10MWT_Date"]})},
+         outputs=[WalkSummary])
+
+# Several outputs: each group is saved as the output in the same position.
+for_each(latest_score,
+         inputs={"walks": Walks.for_columns([["6MWT",  "6MWT_Date"],
+                                             ["10MWT", "10MWT_Date"]])},
+         outputs=[SixMWT, TenMWT])
+```
+
+- With several outputs, the groups are paired with `outputs=` **by position**,
+  like a function's return values. Each run logs the pairing
+  (`SixMWT ← [6MWT, 6MWT_Date]; ...`), so check it once.
+- A group whose every value is blank at a location (missing, or an empty or
+  whitespace-only string) is not passed to the function. With several outputs
+  that output simply gets no record there, so sparse data stays sparse; with
+  one output its column is left empty. Partly blank groups are passed whole.
+- If the function raises on one group, only that group's output is skipped at
+  that location; the run reports it as a failure.
+- A column may be in more than one group (a warning says so).
+- In MATLAB, pass a cell array of string arrays for several outputs and a
+  `dictionary` for one output: `Walks().for_columns({["6MWT","6MWT_Date"],
+  ["10MWT","10MWT_Date"]})`.
+
 ## Variants with `EachOf`
 
 `EachOf(...)` declares alternatives for a parameter — each becomes a separate

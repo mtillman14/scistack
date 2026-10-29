@@ -169,7 +169,11 @@ For table-valued variables, indexing a class selects columns to feed into
 MyVar["col_a"]            # one column — the function receives an array
 MyVar[["col_a", "col_b"]] # a subset — the function receives a DataFrame
 MyVar.for_columns()       # run once per column, reassembled into one output
+MyVar.for_columns([["a", "a_date"], ["b", "b_date"]])  # columns passed together, one call per group
 ```
+
+Column groups are explained in
+[Columns that belong together](../guide/for_each.md#columns-that-belong-together).
 
 The same indexing also builds column filters (e.g. `MyVar["col_a"] != 0`) used
 in `where=` clauses — see [Filtering & Selection](../guide/filters.md).

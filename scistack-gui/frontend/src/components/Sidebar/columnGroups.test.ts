@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   addColumnToGroup,
+  describeOutputHandle,
   describeOverlaps,
   describePlan,
   groupsFromSelection,
@@ -71,4 +72,16 @@ test('describePlan and describeOverlaps word the backend answer', () => {
   assert.equal(describePlan(null, []), '')
   assert.equal(describeOverlaps(split), 'Shared by more than one group — each still receives it: d (in A, B)')
   assert.equal(describeOverlaps({ ...split, overlaps: {} }), '')
+})
+
+test('describeOutputHandle lists what each output receives', () => {
+  assert.equal(describeOutputHandle('SixMWT', undefined), 'SixMWT')
+  assert.equal(
+    describeOutputHandle('SixMWT', [{ name: 'SixMWT', columns: SIX }]),
+    'SixMWT\nfrom columns: 6MWT, 6MWT_Date',
+  )
+  assert.equal(
+    describeOutputHandle('Walks', [{ name: '6MWT', columns: SIX }, { name: '10MWT', columns: TEN }]),
+    'Walks\n6MWT ← 6MWT, 6MWT_Date\n10MWT ← 10MWT, 10MWT_Date',
+  )
 })

@@ -52,7 +52,10 @@ Frontend steps and what you should see:
    does. Check the pairing shown in step 3 matches what was saved: the
    picker pairs with the node's output handles in their drawn order.
 
-Not built: the per-output-edge tooltip listing each group's columns.
+9. Hover each output handle on the right of the function node. Split: the
+   tooltip reads `SixMWT` then `from columns: 6MWT, 6MWT_Date`. Combine: the
+   output's name, then one line per group (`6MWT ← 6MWT, 6MWT_Date`). A
+   grouping the picker shows in red adds nothing to the tooltip.
 
 ---
 

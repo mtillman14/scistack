@@ -236,7 +236,109 @@ Implementation: `_run_column_iteration` + `_expand_column_result` (Python,
 `test_iterate_duplicate_*`, `test_iterate_multirow_*`), and
 `scidb/tests/test_for_columns.py::TestForColumnsMultiOutput`.
 
+## Column groups (2026-10-28)
+
+Several columns passed to the function together (a score with its date).
+Plan and decision log: `.claude/plan-for-columns-groups.md`. User doc:
+`docs/guide/for_each.md` "Columns that belong together".
+
+```python
+Walks.for_columns({"6MWT": ["6MWT", "6MWT_Date"], "10MWT": [...]})  # outputs=[Obj2]       -> combine
+Walks.for_columns([["6MWT", "6MWT_Date"], ["10MWT", "10MWT_Date"]])  # outputs=[SixMWT, TenMWT] -> split
+```
+
+**Mode = number of outputs; no flag.** One output → COMBINE: each group's
+return becomes column(s) of it under the group's name (dict key; a flat
+column names itself; `<name>__<key>` for dict returns). Several outputs →
+SPLIT: group *i* saved as `outputs[i]`, by POSITION (like a multi-output
+return; names would duplicate `outputs=`). Errors: multi-column group
+without a name in combine; dict in split; count mismatch; `for_columns()`
+(every column) split across outputs (data order would pair them).
+Before groups, >1 output was an error, so nothing existing changed meaning.
+
+**One owner per rule:**
+
+| Rule | Owner |
+|---|---|
+| what a spec means (flat / list of lists / dict; do-nothing groups → flat) | `scifor.column_selection.parse_column_groups` (MATLAB port `ColumnSelection.parse_groups`) |
+| combine vs split, pairing, errors | `scifor.column_selection.resolve_column_groups` (MATLAB port in `+scifor/for_each.m`) |
+| "missing" for the no-data rule | `scifor.missing` (MATLAB `group_has_no_data`) |
+| wire form `[{"name"?, "columns"}]` (DB selector, GUI, bridge) | `scifor.column_selection.groups_to_wire` / `spec_from_wire` |
+| stored selection shape (`"groups"` only when grouped) | `scidb.intent.normalize_columns` / `selector_json`; `selection_spec` rebuilds the spec |
+| MATLAB literal for a spec | `scistack_gui.api.matlab_command.format_matlab_column_spec` |
+| GUI picker's answer | `scistack_gui.domain.column_selection.plan_groups` (RPC `plan_column_groups`) |
+
+`ColumnSelection.groups` is `None` when flat; `column_spec` returns the spec
+as written and is what every rebuild over new data passes (anything that
+rebuilt from `.columns` dropped the groups). Groups need `iterate=True` and
+refuse `excl_columns`. `to_key` / `selector_json` add groups ONLY when
+grouped, so flat identities are byte-identical (pinned by tests).
+
+**Per call:** a 1-column group arrives as today (`column_value`); a larger
+group as a DataFrame of its columns (as `MyVar[[...]]`); `as_table` adds the
+schema keys. `ColName()` / `{ColName}` = the group name (dict key in combine,
+the paired output's name in split).
+
+**No data → no output.** A group whose every value, every row, every column
+is missing (NaN/None/NaT/NA, `""`, whitespace; `"—"` is data) in EVERY
+iterate input is not called. Applies to plain `for_columns([...])` too (they
+are 1-column groups): an all-blank column at a location is no longer passed
+to the function. All groups empty → `NoDataError` (counted *no data*).
+- Split: the slot is `scifor.outputs.NoOutput("no_data")`; a raising group is
+  `NoOutput("failed", detail)` + WARN, other groups still save. Every slot
+  skipped → `NoDataError`, or `ColumnFunctionError` from the first error.
+- Combine: the group's column is left missing. `_combine_output_columns`
+  reindexes every row to every group's columns in group order; a group with
+  no data at ANY location takes the other groups' shape (scalars → `<name>`,
+  same dict keys → `<name>__<key>`; disagreeing → `<name>` + WARN). Combine
+  failures keep the old rule (the location fails).
+
+**NoOutput** (internal, never user-returned): scifor keeps it in the result
+table when `_keep_no_output=True` (scidb), else replaces with missing.
+`scidb._save_results` writes no record for it and `_report_no_output_skips`
+logs it; an output that saved nothing in the run gets an empty table
+(`DatabaseManager.ensure_variable_table`, `record_id` only, rebuilt by the
+first real save via `_check_column_set`) so SQL on its view works. scidb
+loads already answer "no records" from the record tables either way.
+
+**Fixed on the way:** several outputs that were all ≤1-row DataFrames were
+spread into one row and every output saved every column; several outputs are
+now never spread (`_results_to_output_dataframe`, `per_output`).
+
+**MATLAB:** a skipped split location is left OUT of that output's table; the
+bridge's `_merge_output_tables` turns the gap into `NoOutput("skipped")`
+(before, the outer merge left NaN, saved as a record). Combine columns are
+reindexed with a typed missing value. Not ported: `output_skips` in the
+summary struct (log lines only). A digit-leading column name (`6MWT`) is not a
+valid MATLAB table variable after the bridge; MATLAB tests use `Six`/`Ten`.
+
+**GUI:** a run is one `for_each` per target with ONE output; a splitting
+selection now runs once with every node output in handle order
+(`execution_service.run_output_types`, from the run request's
+`output_types`, the list the picker pairs with). Output handle tooltips:
+`graph_builder.mark_output_groups` attaches `outputGroups` (from
+`plan_groups`) on every graph build; `columnGroups.describeOutputHandle`
+words it. Open: a MATLAB node's canvas run orders its outputs by signature /
+history (`matlab_command_service`, ~715), not by handle order, so a split
+there could pair groups with the wrong outputs.
+
+Logging: `[for_columns] 'g' split into 2 output(s): SixMWT ← [...]; ...` /
+`combine → Obj2, N group(s): ...` (INFO, once per run; >10 groups elided);
+overlap WARN; `output X: no data × n — combos` / `for_columns group X: no
+data × n — ... (left missing in the row)`; `[save] X: skipped at n
+combination(s)` / `0 records this run (...); created empty table`.
+
+Tests: `scifor/tests/test_for_columns_groups.py`, `test_no_output.py`;
+`scidb/tests/test_for_columns_groups.py`, `test_no_output_save.py`,
+`test_multi_output_frames.py`; `scimatlab/tests/test_bridge_column_groups.py`,
+MATLAB `test_groups_*`; `scistack-gui/tests/test_column_groups_gui.py`,
+`frontend/.../columnGroups.test.ts`.
+
 ## Why not EachOf
+
+(Split mode does not undo this: it fans out to DIFFERENT output variables,
+one per group, not to variant records of one variable.)
+
 
 `EachOf` was considered but mismatches on two axes:
 1. It fans **out** into separately-saved variant records; `for_columns` fans
