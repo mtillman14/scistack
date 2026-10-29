@@ -7,6 +7,7 @@ table for both transports (``api/handlers.py``).
     DELETE /api/layout/{node_id}                delete_layout
     PUT    /api/layout/{node_id}/config         put_node_config
     PUT    /api/layout/{node_id}/arguments      set_shown_argument
+    PUT    /api/layout/{node_id}/outputs        set_output_ports
     GET    /api/notes                           get_notes
     PUT    /api/notes/{key}                     set_note
     GET    /api/parameters                      get_parameters
@@ -80,6 +81,14 @@ class ShownArgument(BaseModel):
     node_id: str
     argument: str
     shown: bool = True
+
+
+class OutputPorts(BaseModel):
+    node_id: str
+    #: Port names in return order; [] clears the declaration.
+    ports: list[str] = []
+    #: {old name: new name}, so the node's output edges follow a rename.
+    renames: dict[str, str] = {}
 
 
 class NoteUpdate(BaseModel):
@@ -189,6 +198,10 @@ def _put_node_config(db, req: NodeConfigUpdate) -> dict:
 
 def _set_shown_argument(db, req: ShownArgument) -> dict:
     return layout_service.set_shown_argument(db, req.node_id, req.argument, req.shown)
+
+
+def _set_output_ports(db, req: OutputPorts) -> dict:
+    return layout_service.set_output_ports(db, req.node_id, req.ports, req.renames)
 
 
 def _get_notes() -> dict:
@@ -348,6 +361,7 @@ LAYOUT_HANDLERS: tuple[Handler, ...] = (
     Handler("delete_layout", "/layout/{node_id}", NodeRef, _delete_layout, needs_db=False, http_method="DELETE", undoable=True, undo_label="remove node"),
     Handler("put_node_config", "/layout/{node_id}/config", NodeConfigUpdate, _put_node_config, http_method="PUT", undoable=True, undo_label="node settings"),
     Handler("set_shown_argument", "/layout/{node_id}/arguments", ShownArgument, _set_shown_argument, http_method="PUT", undoable=True, undo_label="show argument"),
+    Handler("set_output_ports", "/layout/{node_id}/outputs", OutputPorts, _set_output_ports, http_method="PUT", undoable=True, undo_label="output ports"),
     Handler("get_notes", "/notes", None, _get_notes, needs_db=False, http_method="GET"),
     Handler("set_note", "/notes/{key:path}", NoteUpdate, _set_note, needs_db=False, http_method="PUT", undoable=True, undo_label="edit note"),
     Handler("get_parameters", "/parameters", None, _get_parameters, needs_db=False, http_method="GET"),

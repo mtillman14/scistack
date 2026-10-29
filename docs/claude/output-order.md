@@ -64,3 +64,39 @@ output order [...]`, `[pipeline] matlab fn=… wrote … class-named handles`,
 
 Tests: `scidb/tests/test_output_order_recorded.py`,
 `scistack-gui/tests/test_output_order.py`.
+
+## Python output ports declared on the node (2026-10-28)
+
+Plan: `.claude/plan-python-output-ports.md`. Inputs come from the signature
+in both languages and MATLAB outputs from its signature; a Python function
+declares no outputs, so the user names them on the node: `outputPorts`
+(names in return order) in the node config, written by `set_output_ports`
+(`layout_service`, `PUT /api/layout/{node}/outputs`). Port *i* is return
+value *i*. Absent = automatic: one port per recorded output, named after
+its variable, or one unnamed default port (tooltip **output**).
+
+- **The edge owns a port's variable** (`sourceHandle = out__{port}`).
+  `set_output_ports` keeps it that way: it maps every port BEFORE the edit
+  (`execution_service.port_variables`), re-points the node's manual edges on
+  a rename (an edge from the default handle has no sourceHandle: matched by
+  target), writes an edge for each port that has a variable but no edge yet,
+  and deletes edges of removed ports. Clearing the list re-points edges to
+  their variables' handles. So a reorder never swaps variables.
+- **Mapping rule** (`output_order.declared_python_ports`): the port's edge,
+  then recorded port names (`_run_outputs.output_params`), then a variable
+  of the same name, then the newest recorded `outputs=` by position (only an
+  unedited list can reach this). It fills the SAME two maps a MATLAB
+  signature does (`matlab_output_order`, `matlab_param_to_class` in
+  `_build_graph`); `build_function_nodes` now branches on "has a declared
+  output order", not "is MATLAB".
+- **Canvas run** (`api/run.py`): `declared_output_classes` → one call with
+  every port's variable in port order, inside `scidb.intent.
+  run_output_names(ports)` so the run records the port names; an
+  unconnected port refuses the run (`UnconnectedOutputPortError`).
+- **3a:** when the newest recorded order lists the same variables in another
+  order, the node carries `outputOrderNote` (`declared_order_note`), shown in
+  the Outputs section; the declared order still wins for canvas runs.
+- UI: `FunctionSettingsPanel` `OutputPortsSection` (Python nodes only;
+  helpers `Sidebar/outputPorts.ts`). Tests:
+  `scistack-gui/tests/test_python_output_ports.py`,
+  `frontend/.../outputPorts.test.ts`.

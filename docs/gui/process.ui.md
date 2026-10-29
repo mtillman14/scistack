@@ -140,6 +140,7 @@ Click a node to see its settings in the sidebar.
 |---|---|
 | **Variants** | Every combination of parameter values this function runs with. Click **hide** to stop running one combination without deleting its results. |
 | **Inputs** | For an input that's a table, which of its columns the function receives. **Run once per column** calls the function for each column; **Group columns** then passes columns that belong together (a score and its date) as one group. |
+| **Outputs** | Python functions only: the values the function returns, in order. Rename a port, add more with **+ output**, reorder with ↑ ↓, and connect each port to the variable it saves to. (MATLAB functions take their outputs from the function's signature.) |
 | **Data Filters** | Conditions a record must meet to be used, such as `Rating > 0`. |
 | **Schema Selection** | Which schema locations the function runs at. Everything runs unless you leave some out. |
 | **Schema Level** | Which schema keys the function runs **once per**. See below. |

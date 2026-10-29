@@ -28,6 +28,7 @@ from pathlib import Path
 
 from scidb.foreach_config import RunOptions
 from scidb.provenance import constants_identity_key
+from scifor.failures import ActionableError
 
 from scistack_gui.ids import (
     FN_ID_PREFIX,
@@ -1525,6 +1526,68 @@ def run_output_types(
             )
             return outputs
     return [output_type]
+
+
+class UnconnectedOutputPortError(ActionableError, ValueError):
+    """A declared Python output port has no variable connected, so its
+    return value has nowhere to be saved (ports are positional)."""
+
+
+def port_variables(db, node_id: str, function_name: str, ports: "list[str]") -> "dict[str, str]":
+    """``{port: variable}`` for *ports* on one node, by the rule the canvas
+    draws with (``domain.output_order.declared_python_ports``: the port's
+    edge, a recorded name, a variable of the same name, then position).
+    Ports it cannot map are absent; no error here."""
+    from scistack_gui.domain.edge_view import effective_edges, run_scope
+    from scistack_gui.domain.output_order import (
+        declared_python_ports,
+        recorded_orders,
+        recorded_params,
+    )
+
+    view = effective_edges(db, run_scope(db, node_id), caller=f"port_variables({function_name})")
+    _ports, mapping_by_fn = declared_python_ports(
+        {node_id: {"outputPorts": list(ports)}},
+        view.manual_nodes,
+        set(),
+        {function_name: {node_id}},
+        view.drawn_list,
+        {},
+        recorded_orders(db, [function_name]),
+        recorded_params(db, [function_name]),
+    )
+    return mapping_by_fn.get(function_name) or {}
+
+
+def declared_output_classes(db, node_id: "str | None", function_name: str):
+    """``(ports, classes)`` for a Python node whose output ports are declared
+    on it (``outputPorts``), or ``None`` when they are not.
+
+    *classes* is each port's connected variable, in PORT order: the
+    ``outputs=`` of one canvas run, since port *i* is return value *i*. The
+    mapping is ``domain.output_order.declared_python_ports``', the same the
+    canvas draws with. A port with no variable refuses the run.
+    """
+    if not node_id:
+        return None
+    from scistack_gui import pipeline_store
+
+    ports = (pipeline_store.get_node_config(db, node_id) or {}).get("outputPorts") or []
+    if not ports:
+        return None
+    mapping = port_variables(db, node_id, function_name, ports)
+    missing = [p for p in ports if p not in mapping]
+    if missing:
+        raise UnconnectedOutputPortError(
+            f"{function_name}: output port(s) {missing} are not connected to a "
+            f"variable. Each port is one return value, in order, so every port "
+            f"needs a variable to save to: connect it, or remove the port."
+        )
+    classes = [mapping[p] for p in ports]
+    logger.info(
+        "[execution] %s: declared output ports %s save to %s", function_name, ports, classes
+    )
+    return ports, classes
 
 
 def _apply_pooling(spec, binding: dict):

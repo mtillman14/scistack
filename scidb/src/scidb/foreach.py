@@ -6279,6 +6279,7 @@ def _save_results(
     # ===========================================================================
     if graph_records:
         try:
+            from .intent import current_output_names as _current_output_names
             from .provenance_save import record_run
 
             active_db = db
@@ -6298,8 +6299,9 @@ def _save_results(
                 path_input_specs=state.path_input_specs,
                 output_types=[_output_type_label(o) for o in outputs],
                 # A MATLAB function's signature output names (the bridge's
-                # sentinel carries them); a Python function has none.
-                output_params=getattr(fn, "output_params", None),
+                # sentinel carries them), or a GUI run's declared Python output
+                # ports (scidb.intent.run_output_names); otherwise none.
+                output_params=getattr(fn, "output_params", None) or _current_output_names(),
             )
             Log.info(
                 f"[provenance] recorded run_id={run_id} for {len(graph_records)} "

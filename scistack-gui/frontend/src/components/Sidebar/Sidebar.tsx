@@ -47,6 +47,10 @@ interface FnNodeData {
   unusedIntent?: UnusedIntentMap
   // Output types, in handle order (FunctionNode draws them from this).
   output_types?: string[]
+  // Python output ports declared on the node; MATLAB marker; 3a note.
+  outputPorts?: string[]
+  language?: string
+  outputOrderNote?: string
 }
 
 interface ParameterNodeData {
@@ -199,6 +203,9 @@ export default function Sidebar() {
             inputParams={(selectedNode.data as FnNodeData).input_params ?? {}}
             columnSelections={(selectedNode.data as FnNodeData).columnSelections ?? {}}
             outputTypes={(selectedNode.data as FnNodeData).output_types ?? []}
+            outputPorts={(selectedNode.data as FnNodeData).outputPorts}
+            isMatlab={(selectedNode.data as FnNodeData).language === 'matlab'}
+            outputOrderNote={(selectedNode.data as FnNodeData).outputOrderNote}
             colNameInputs={(selectedNode.data as FnNodeData).colNameInputs ?? []}
             unusedIntent={(selectedNode.data as FnNodeData).unusedIntent}
           />

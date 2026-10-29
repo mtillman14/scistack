@@ -26,6 +26,7 @@ import {
   isInert,
 } from '../PlotStudio/locationSelection'
 import { colNamesAfterSelectionChange, hasIterateInput, withColName } from './colNameInputs'
+import { currentPorts, movePort, newPortName, renamePort } from './outputPorts'
 import {
   addColumnToGroup,
   describeOverlaps,
@@ -167,6 +168,12 @@ interface Props {
   // The node's output types, in the order its handles (and a run) list them;
   // split column groups pair with them by position.
   outputTypes?: string[]
+  // Python ports declared on the node (outputPorts); absent = automatic.
+  outputPorts?: string[]
+  // MATLAB nodes take their outputs from the signature: no Outputs section.
+  isMatlab?: boolean
+  // Set when the newest run listed the outputs in another order (3a).
+  outputOrderNote?: string
   // Parameters that receive the current for_columns column name (deferred
   // ColName()) — the `colname` intent aspect, blob key `colNameInputs`.
   colNameInputs: string[]
@@ -556,6 +563,68 @@ function GroupEditor({ groups, available, outputNames, onChange }: GroupEditorPr
 }
 
 /**
+ * A Python function node's output ports (.claude/plan-python-output-ports.md):
+ * one row per port, in return order. Inputs come from the signature; a
+ * Python function declares no outputs, so they are named here. Every edit
+ * saves the whole list (`set_output_ports`), seeded from the ports shown;
+ * a rename re-points the port's edges server-side, so its connection stays.
+ */
+function OutputPortsSection({ nodeId, ports, note }: { nodeId: string; ports: string[]; note?: string }) {
+  const [names, setNames] = useState(ports)
+  const [error, setError] = useState<string | null>(null)
+  const portsKey = ports.join('\u0001')
+  useEffect(() => {
+    setNames(ports)
+    // portsKey stands for the ports' content.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [portsKey])
+  const save = useCallback((next: string[], renames: Record<string, string> = {}) => {
+    setError(null)
+    console.info('[FunctionSettings] set_output_ports', nodeId, next, renames)
+    callBackend('set_output_ports', { node_id: nodeId, ports: next, renames })
+      .catch(err => {
+        setNames(ports)
+        setError(String((err as Error)?.message ?? err))
+      })
+  }, [nodeId, ports])
+  return (
+    <section style={styles.section}>
+      <div style={styles.sectionTitle}>Outputs</div>
+      <div style={styles.hint}>
+        Each port is one value the function returns, in order. Connect each
+        port to the variable it saves to.
+      </div>
+      {names.map((name, i) => (
+        <div key={i} style={styles.groupRow}>
+          <input
+            style={styles.groupName}
+            value={name}
+            title="The name of this return value"
+            onChange={e => setNames(names.map((n, k) => (k === i ? e.target.value : n)))}
+            onBlur={e => {
+              const r = renamePort(ports, i, e.target.value)
+              if (Object.keys(r.renames).length > 0) save(r.ports, r.renames)
+              else setNames(ports)
+            }}
+            onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+          />
+          <button type="button" style={styles.columnActionBtn} disabled={i === 0}
+            title="Move up" onClick={() => save(movePort(ports, i, -1))}>↑</button>
+          <button type="button" style={styles.columnActionBtn} disabled={i === ports.length - 1}
+            title="Move down" onClick={() => save(movePort(ports, i, 1))}>↓</button>
+          <button type="button" style={styles.columnActionBtn} disabled={ports.length === 1}
+            title="Remove this output" onClick={() => save(ports.filter((_, k) => k !== i))}>✕</button>
+        </div>
+      ))}
+      <button type="button" style={styles.columnActionBtn}
+        onClick={() => save([...ports, newPortName(ports)])}>+ output</button>
+      {note && <div style={styles.groupWarn}>{note}</div>}
+      {error && <div style={styles.groupError}>{error}</div>}
+    </section>
+  )
+}
+
+/**
  * "Stated here, not used by the last run." One line under a parameter whose
  * saved selection is not what the data reflects — the two facts and the
  * reason, never a silent chip. Wording per reason:
@@ -603,7 +672,7 @@ const unusedIntentBadgeStyle: React.CSSProperties = {
   marginRight: 4,
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, colNameInputs, unusedIntent, outputTypes = [] }: Props) {
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, colNameInputs, unusedIntent, outputTypes = [], outputPorts, isMatlab = false, outputOrderNote }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
@@ -962,6 +1031,15 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
           </>
         )}
       </section>
+
+      {/* ---- Outputs (Python only: MATLAB outputs come from the signature) ---- */}
+      {!isMatlab && (
+        <OutputPortsSection
+          nodeId={id}
+          ports={currentPorts(outputPorts, outputTypes)}
+          note={outputOrderNote}
+        />
+      )}
 
       {/* ---- Data Filters (where=) ---- */}
       <section style={styles.section}>

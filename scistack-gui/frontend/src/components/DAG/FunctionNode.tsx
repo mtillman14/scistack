@@ -707,7 +707,7 @@ function PipelineFunctionNode({ id, data }: Props) {
               title={describeOutputHandle(t, data.outputGroups?.[t])}
             />
           ))
-        : <Handle type="source" position={Position.Right} />
+        : <Handle type="source" position={Position.Right} title="output (rename or add outputs in the Outputs section)" />
       }
     </div>
   )
@@ -848,7 +848,7 @@ function VariantFunctionNode({
               title={describeOutputHandle(t, data.outputGroups?.[t])}
             />
           ))
-        : <Handle type="source" position={Position.Right} />
+        : <Handle type="source" position={Position.Right} title="output (rename or add outputs in the Outputs section)" />
       }
     </div>
   )

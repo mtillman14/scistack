@@ -11,6 +11,39 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzs. Python output ports: Outputs section — added 2026-10-28
+
+What changed: a Python function node's settings have an **Outputs**
+section (not on MATLAB nodes, whose outputs come from the signature). Each
+row is one return value, in order: rename it, ↑ ↓ to reorder, ✕ to remove,
+**+ output** to add. Each port connects to the variable it saves to. Doc:
+`docs/claude/output-order.md` "Python output ports".
+
+Backend steps:
+1. Restart the GUI (bundles rebuilt).
+2. `scistack.log` on each edit: `[layout_service] set_output_ports (...) ->
+   [...]; renames ... re-pointed N edge(s); variables before {...}; N edge(s)
+   written, N removed`. On a canvas run: `[execution] <fn>: declared output
+   ports [...] save to [...]`.
+
+Frontend steps and what you should see:
+1. A new Python function node: one output handle on the right, tooltip
+   **output (rename or add outputs in the Outputs section)**. The Outputs
+   section lists one row, **output**.
+2. Rename it to `mean`, press Enter: the handle's tooltip reads `mean`.
+   **+ output** adds `output_2`; connect each port to a variable.
+3. ↑ ↓ swap the rows: the handles swap, and each port KEEPS its variable
+   (hover the handles / check the edges).
+4. A Python function with script history (outputs=[TenMWT, SixMWT]): the
+   rows read TenMWT, SixMWT. Move SixMWT up: a yellow note says the last run
+   listed them as [TenMWT, SixMWT] and a run from here uses the order shown.
+5. Add a port and leave it unconnected, ▶ Run: the run refuses with
+   "output port(s) ['output_3'] are not connected to a variable".
+6. A bad name (`a b`) or a duplicate shows a red error under the rows and
+   nothing changes.
+
+---
+
 ## 0zzzzzzr. Output handles in outputs= order; canvas Run writes every output — added 2026-10-28
 
 What changed: a function node's output handles are drawn in the order its

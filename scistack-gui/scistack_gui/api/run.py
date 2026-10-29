@@ -381,6 +381,7 @@ def _run_in_thread(
     # Whether this function's runs wrote its outputs together (one call) or
     # separately (execution_service.run_output_types), from the run log.
     from scistack_gui.domain.output_order import recorded_orders
+    from scistack_gui.services.execution_service import UnconnectedOutputPortError
 
     recorded_output_order = recorded_orders(db, [function_name]).get(function_name)
 
@@ -561,14 +562,27 @@ def _run_in_thread(
                 # One output per call, except a for_columns selection that
                 # splits its groups across the node's outputs: then every
                 # output, in handle order (execution_service.run_output_types).
-                from scistack_gui.services.execution_service import run_output_types
+                from scistack_gui.services.execution_service import (
+                    declared_output_classes,
+                    run_output_types,
+                )
 
-                output_classes = [
-                    registry.get_variable_class(t)
-                    for t in run_output_types(
-                        inputs, node_output_types, v["output_type"], recorded_output_order
-                    )
-                ]
+                # Python ports declared on the node: one call, every port, in
+                # port order (port i = return value i).
+                declared = declared_output_classes(db, node_id, function_name)
+                if declared is not None:
+                    declared_ports, declared_classes = declared
+                    output_classes = [
+                        registry.get_variable_class(c) for c in declared_classes
+                    ]
+                else:
+                    declared_ports = None
+                    output_classes = [
+                        registry.get_variable_class(t)
+                        for t in run_output_types(
+                            inputs, node_output_types, v["output_type"], recorded_output_order
+                        )
+                    ]
                 # INFO: which outputs this call writes, and in which order, is
                 # what output order is about (plan-output-order-owner Stage 0).
                 logger.info(
@@ -580,7 +594,7 @@ def _run_in_thread(
                     node_output_types,
                     run_id,
                 )
-            except KeyError as e:
+            except (KeyError, UnconnectedOutputPortError) as e:
                 logger.error(
                     "[run_thread] Failed to resolve input/output types for target %d: %s (run_id=%s)",
                     idx,
@@ -692,9 +706,9 @@ def _run_in_thread(
                 # This run reads the intent store (rule 3): label it so the
                 # `_run` row says so, and a later script run of the same
                 # function can be told apart from it on the canvas.
-                from scidb.intent import ORIGIN_GUI, run_origin
+                from scidb.intent import ORIGIN_GUI, run_origin, run_output_names
 
-                with _RunLogRelay(), redirect_stdout(buf), run_origin(ORIGIN_GUI):
+                with _RunLogRelay(), redirect_stdout(buf), run_origin(ORIGIN_GUI), run_output_names(declared_ports):
                     for_each(
                         fn,
                         inputs=inputs,

@@ -1005,6 +1005,28 @@ def _build_graph(
                 matlab_param_to_class.get(fn, {}),
             )
 
+    # Python output ports declared on a node (outputPorts): drawn and wired
+    # exactly like a MATLAB signature's outputs, through the same two maps
+    # (domain.output_order.declared_python_ports; plan-python-output-ports).
+    from scistack_gui.domain.output_order import declared_python_ports
+
+    py_ports, py_port_to_class = declared_python_ports(
+        node_configs,
+        manual_nodes,
+        matlab_functions,
+        {
+            fn: {fn_node_id(f, c) for (f, c) in agg.fn_input_params if f == fn}
+            for fn in {f for (f, _c) in agg.fn_input_params}
+        },
+        manual_edges_for_fn_lookup,
+        existing_node_labels_pre,
+        recorded_output_orders,
+        recorded_params(db, {f for (f, _c) in agg.fn_input_params}),
+    )
+    for fn, ports in py_ports.items():
+        matlab_output_order[fn] = ports
+        matlab_param_to_class[fn] = py_port_to_class.get(fn, {})
+
     # --- Load sweeps (source-scanned — see docs/claude/code-discovery-categories.md).
     # "Delete" only hides the node (layout_service.delete_parameter) — the source
     # declaration is never touched — so this must filter by hidden_ids
@@ -1340,6 +1362,10 @@ def _build_graph(
                     resolved_output_types,
                     state_output_types,
                 )
+            elif fn_label in py_ports:
+                # Python ports declared on the node: drawn like a MATLAB
+                # signature (edges carry out__{port}).
+                resolved_output_types = list(py_ports[fn_label])
             if state_output_types:
                 # The colour of the step this node STATES: the run state of
                 # whichever node history attributes that wiring to, else red.
@@ -1588,6 +1614,21 @@ def _build_graph(
     grouped = gb.mark_output_groups(nodes)
     if grouped:
         logger.debug("[pipeline] %d node(s) carry for_columns output groups", grouped)
+
+    # Declared Python output ports vs the order the newest run recorded
+    # (user decision 3a: the declared order wins for canvas runs, and says so).
+    from scistack_gui.domain.output_order import declared_order_note
+
+    for n in nodes:
+        fn = (n.get("data") or {}).get("label")
+        if n.get("type") != "functionNode" or fn not in py_ports:
+            continue
+        note = declared_order_note(
+            py_ports[fn], py_port_to_class.get(fn, {}), recorded_output_orders.get(fn)
+        )
+        if note:
+            n["data"]["outputOrderNote"] = note
+            logger.info("[pipeline] %s: %s", fn, note)
 
     # Intent the last run did not use (decision A: a script run ignores the
     # GUI's statements) — one batched provenance query for every function

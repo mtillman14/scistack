@@ -7,6 +7,7 @@ Thin orchestration keeping protocol adapters from importing data access directly
 from __future__ import annotations
 
 import logging
+import re
 
 from scidb import BaseVariable
 from scifor.failures import ActionableError
@@ -862,6 +863,136 @@ def set_shown_argument(db, node_id: str, argument: str, shown: bool) -> dict:
     pipeline_store.update_node_config(db, node_id, {**config, "shownArguments": names})
     _notify_dag_updated("set_shown_argument")  # the node's ports change
     return {"ok": True, "shownArguments": names}
+
+
+_PORT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class OutputPortsError(ActionableError, ValueError):
+    """An output port list that cannot be saved (a bad or repeated name)."""
+
+
+def set_output_ports(db, node_id: str, ports: list, renames: "dict | None" = None) -> dict:
+    """Declare a Python function node's output ports: ``outputPorts`` (names
+    in return order) in its saved config, merged like ``shownArguments``.
+
+    A Python function cannot be read for its outputs, so the user names them
+    on the node (.claude/plan-python-output-ports.md); port *i* is return
+    value *i*. Which variable a port saves to stays its EDGE's: *renames*
+    (``{old: new}``) re-points the node's manual output edges from
+    ``out__{old}`` to ``out__{new}`` in the same call, so a rename keeps its
+    connection. An empty list clears the declaration (automatic again).
+    """
+    from scistack_gui import intent_store, pipeline_store
+    from scistack_gui.ids import new_manual_edge_id, out_handle, strip_placement, var_node_id
+
+    names = [str(p).strip() for p in ports or []]
+    bad = [p for p in names if not _PORT_NAME.match(p)]
+    if bad:
+        raise OutputPortsError(
+            f"Output port names must start with a letter or _ and use only "
+            f"letters, digits and _: {bad}"
+        )
+    repeated = sorted({p for p in names if names.count(p) > 1})
+    if repeated:
+        raise OutputPortsError(f"Two output ports cannot share a name: {repeated}")
+
+    # Which variable each port saves to BEFORE this edit (by the canvas's own
+    # rule), so the edit cannot change it: a port with only script history is
+    # otherwise mapped by position, and a reorder would swap its variables.
+    from scistack_gui.ids import parse_fn_node_id
+    from scistack_gui.services.execution_service import port_variables
+
+    config_before = pipeline_store.get_node_config(db, node_id)
+    parsed = parse_fn_node_id(strip_placement(node_id))
+    fn_name = parsed[0] if parsed else (
+        pipeline_store.get_manual_nodes(db).get(strip_placement(node_id)) or {}
+    ).get("label", "")
+    before = list(config_before.get("outputPorts") or []) or [
+        *(renames or {}).keys(),
+        *names,
+    ]
+    variables_before = port_variables(db, node_id, fn_name, before) if fn_name else {}
+    old_of = {new: old for old, new in (renames or {}).items()}
+
+    repointed = 0
+    for old, new in (renames or {}).items():
+        if not old or not new or old == new:
+            continue
+        for edge in pipeline_store.get_manual_edges(db):
+            if strip_placement(edge.get("source", "")) != strip_placement(node_id):
+                continue
+            handle = edge.get("sourceHandle")
+            # An edge drawn from the unnamed default handle may carry no
+            # sourceHandle; its port was named after its variable (the
+            # automatic ports), so match it by target.
+            if handle != out_handle(old) and not (
+                not handle and strip_placement(edge.get("target", "")) == var_node_id(old)
+            ):
+                continue
+            intent_store.write_manual_edge(db, {**edge, "sourceHandle": out_handle(new)})
+            repointed += 1
+
+    # The edge owns a port's variable from the first edit on: write one for
+    # each port that has a variable but no edge naming it yet; drop the edges
+    # of ports that were removed.
+    materialized = 0
+    removed = 0
+    node = strip_placement(node_id)
+    from_node = [
+        e for e in pipeline_store.get_manual_edges(db)
+        if strip_placement(e.get("source", "")) == node
+    ]
+    named = {e.get("sourceHandle") for e in from_node}
+    for p in names:
+        variable = variables_before.get(old_of.get(p, p))
+        if variable and out_handle(p) not in named:
+            intent_store.write_manual_edge(
+                db,
+                {
+                    "id": new_manual_edge_id(),
+                    "source": node_id,
+                    "target": var_node_id(variable),
+                    "sourceHandle": out_handle(p),
+                    "targetHandle": None,
+                },
+            )
+            materialized += 1
+    if not names:
+        # Back to automatic: the ports are named after their variables again,
+        # so each edge goes back to its variable's handle.
+        for e in from_node:
+            target = strip_placement(e.get("target", ""))
+            if target.startswith("var__") and e.get("sourceHandle") != out_handle(target[5:]):
+                intent_store.write_manual_edge(db, {**e, "sourceHandle": out_handle(target[5:])})
+                repointed += 1
+    kept = {out_handle(p) for p in names}
+    for e in from_node:
+        handle = e.get("sourceHandle")
+        if names and handle and handle.startswith("out__") and handle not in kept:
+            if not any(handle == out_handle(new) for new in old_of):
+                pipeline_store.delete_manual_edge(db, e["id"])
+                removed += 1
+
+    config = pipeline_store.get_node_config(db, node_id)
+    if names:
+        config = {**config, "outputPorts": names}
+    else:
+        config = {k: v for k, v in config.items() if k != "outputPorts"}
+    pipeline_store.update_node_config(db, node_id, config)
+    logger.info(
+        "[layout_service] set_output_ports (node_id=%r) -> %s; renames %s re-pointed "
+        "%d edge(s); variables before %s; %d edge(s) written, %d removed",
+        node_id,
+        names,
+        renames or {},
+        repointed,
+        variables_before,
+        materialized,
+        removed,
+    )
+    _notify_dag_updated("set_output_ports")  # the node's ports change
+    return {"ok": True, "outputPorts": names, "repointed": repointed}
 
 
 def hide_variant_combo(

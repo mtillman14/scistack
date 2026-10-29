@@ -869,6 +869,40 @@ class run_step:
         return False
 
 
+# The output NAMES of the run in progress, position for position with its
+# outputs= (a GUI run of a Python node whose ports are declared on the node,
+# .claude/plan-python-output-ports.md). Recorded on
+# ``_run_outputs.output_params`` like a MATLAB signature's names, so history
+# maps each named output to its variable by name. Ambient for the same reason
+# as the step: set by whoever starts the run, read where it is recorded.
+_current_output_names: _contextvars.ContextVar["list[str] | None"] = _contextvars.ContextVar(
+    "scidb_run_output_names", default=None
+)
+
+
+def current_output_names() -> "list[str] | None":
+    """The declared output names of the run in progress, or ``None``."""
+    return _current_output_names.get()
+
+
+class run_output_names:
+    """``with run_output_names(["mean", "peak"]): for_each(...)``: name the
+    outputs of every run started inside, in ``outputs=`` order."""
+
+    def __init__(self, names):
+        self.names = [str(n) for n in names or []] or None
+        self._token = None
+
+    def __enter__(self):
+        self._token = _current_output_names.set(self.names)
+        return self
+
+    def __exit__(self, *exc):
+        if self._token is not None:
+            _current_output_names.reset(self._token)
+        return False
+
+
 # ---------------------------------------------------------------------------
 # The stored shape (read contract)
 # ---------------------------------------------------------------------------

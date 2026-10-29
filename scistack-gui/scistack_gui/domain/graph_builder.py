@@ -1826,7 +1826,9 @@ def build_function_nodes(
         # MATLAB fns render handles in MATLAB-signature order using param names
         # (e.g. "time", "force_left"). Non-MATLAB fns use the class names directly.
         actual_outputs = fn_outputs.get(fkey, set())
-        if fn in matlab_functions and fn in (matlab_output_order or {}):
+        # A declared output order: a MATLAB signature, or Python ports declared
+        # on the node (domain.output_order.declared_python_ports).
+        if fn in (matlab_output_order or {}):
             declared = matlab_output_order.get(fn, [])
             p2c = (matlab_param_to_class or {}).get(fn, {})
             connected_classes = set(p2c.values()) | actual_outputs
@@ -3514,6 +3516,9 @@ _SAVED_CONFIG_KEYS = (
     # Optional arguments the user revealed with "+ argument" (a list of
     # names); port_visibility draws them even while nothing feeds them.
     "shownArguments",
+    # Python output ports declared on the node (a list of names, in return
+    # order); domain.output_order.declared_python_ports reads them.
+    "outputPorts",
 )
 
 

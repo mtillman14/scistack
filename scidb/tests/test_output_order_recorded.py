@@ -127,3 +127,16 @@ def test_python_runs_record_no_names_and_a_split_maps_none(db):
     finally:
         del split_like.output_params
     assert "split_like" not in recorded_output_params(db._duck, ["split_like"])
+
+
+def test_a_gui_run_records_its_declared_python_port_names(db):
+    """A canvas run of a Python node with declared output ports names its
+    outputs through scidb.intent.run_output_names (plan-python-output-ports)."""
+    from scidb.intent import run_output_names
+    from scidb.provenance_query import recorded_output_params
+
+    with run_output_names(["peak", "mean"]):
+        for_each(mean_and_max, inputs={"x": OrdIn}, outputs=[OrdB, OrdA], subject=[1, 2], db=db)
+    assert recorded_output_params(db._duck, ["mean_and_max"]) == {
+        "mean_and_max": {"peak": "OrdB", "mean": "OrdA"}
+    }
