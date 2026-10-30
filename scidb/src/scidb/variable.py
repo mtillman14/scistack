@@ -817,7 +817,10 @@ class BaseVariable(metaclass=VariableMeta):
             full_metadata = {**common_metadata, **row_metadata}
             data_items.append((data_list[i], full_metadata))
 
-        return _db.save_batch(cls, data_items, row_list_columns=row_lists)
+        # Only when something was combined: otherwise the call is unchanged.
+        if row_lists:
+            return _db.save_batch(cls, data_items, row_list_columns=row_lists)
+        return _db.save_batch(cls, data_items)
 
     @classmethod
     def head(cls, n: int = 5, db=None, **metadata) -> pd.DataFrame:

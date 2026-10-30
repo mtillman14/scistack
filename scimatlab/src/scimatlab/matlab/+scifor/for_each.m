@@ -3198,7 +3198,7 @@ function names = db_only_kwargs()
 %   parsers, so a new scidb-only option must be added here.
     names = ["save", "db", "introspect", "skip_computed", "schema_filter", ...
              "finalized", "glue", "parameter_names", "step", "pipeline", ...
-             "preload", "parallel"];
+             "on_duplicate", "preload", "parallel"];
 end
 
 

@@ -6085,12 +6085,15 @@ def _save_results(
         # and rejoin their record below, by position.
         edges_by_item = [_e for _d, _m, _e in items]
         items = [(_d, _m) for _d, _m, _e in items]
-        # The combined columns this batch stores as row lists.
+        # The combined columns this batch stores as row lists. Passed only
+        # when there are some, so a save that combined nothing makes exactly
+        # the call it always made (any save_batch stand-in keeps working).
         _row_lists = (
             [c for c in row_list_columns if c not in output_names]
             if save_path == "flatten"
             else [c for c in row_list_columns if c == output_names[output_idx]]
         )
+        _row_list_kw = {"row_list_columns": _row_lists} if _row_lists else {}
 
         Log.info(
             f"[batch_save] Saving {len(items)} record(s) for {_output_type_label(output_obj)} ({save_path} path)"
@@ -6107,7 +6110,7 @@ def _save_results(
                     else output_obj,
                     items,
                     profile=False,
-                    row_list_columns=_row_lists,
+                    **_row_list_kw,
                 )
             else:
                 from .database import get_database
@@ -6119,7 +6122,7 @@ def _save_results(
                     else output_obj,
                     items,
                     profile=False,
-                    row_list_columns=_row_lists,
+                    **_row_list_kw,
                 )
 
             save_elapsed = time.perf_counter() - save_t0

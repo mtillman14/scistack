@@ -30,6 +30,8 @@ DB_ONLY_KWARGS: frozenset[str] = frozenset(
         "parameter_names",
         "step",
         "pipeline",
+        # scidb.combine: two result rows at one location saved as one record.
+        "on_duplicate",
     }
 )
 
