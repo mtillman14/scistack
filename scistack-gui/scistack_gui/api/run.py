@@ -391,17 +391,23 @@ def _run_in_thread(
     opt_dry_run = opts.get("dry_run", False)
     opt_save = opts.get("save", True)
     opt_distribute = opts.get("distribute", False)
-    from scistack_gui.services.run_failures import RunFailures, on_error_from_config
+    from scistack_gui.services.run_failures import (
+        RunFailures,
+        on_duplicate_from_config,
+        on_error_from_config,
+    )
 
     opt_as_table = opts.get("as_table", False)
     opt_on_error = on_error_from_config(opts)
+    opt_on_duplicate = on_duplicate_from_config(opts)
     logger.debug(
-        "[run_thread] Run options: dry_run=%s, save=%s, distribute=%s, as_table=%s, on_error=%s (run_id=%s)",
+        "[run_thread] Run options: dry_run=%s, save=%s, distribute=%s, as_table=%s, on_error=%s, on_duplicate=%s (run_id=%s)",
         opt_dry_run,
         opt_save,
         opt_distribute,
         opt_as_table,
         opt_on_error,
+        opt_on_duplicate,
         run_id,
     )
 
@@ -720,6 +726,7 @@ def _run_in_thread(
                         where=where_arg,
                         skip_computed=False,
                         on_error=opt_on_error,
+                        on_duplicate=opt_on_duplicate,
                         glue=glue_arg,
                         parameter_names=parameter_names_arg,
                         step=step_arg,

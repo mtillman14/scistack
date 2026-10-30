@@ -72,6 +72,8 @@ before any write, as `ColumnSetChangedError` does).
   (a new project database: schema keys are fixed at creation).
 - The rows should be combined -> aggregate in the function before returning.
 - One row is a mistake -> remove it upstream (the CSV).
+- The rows belong to one location and should be kept as one record ->
+  `on_duplicate="combine"` (§6, added 2026-10-29).
 
 ## 5. How it surfaces
 
@@ -96,3 +98,67 @@ The two steps:
 Diagnostics: `save_batch(X): N item(s) -> L location(s), V variant group(s),
 … duplicate location(s)` (DEBUG, every batch) and the `[batch_save] …
 refusing the save: …` WARN with every collision.
+
+The popup has a third step since 2026-10-29: **Combine the rows**
+(`action: "combine_rows"`), button **Combine rows and run again**: the GUI
+saves `runOptions.on_duplicate = "combine"` on the node (`set_on_duplicate`)
+and re-runs it (`RERUN_NODE_EVENT`, frontend `runFailures.ts`).
+
+## 6. `on_duplicate="combine"` (built 2026-10-29)
+
+Opt-in (default `"error"` keeps §5). Plan:
+`.claude/plan-combine-duplicate-locations.md` (decisions table, scenarios).
+
+**What it does.** Before a table becomes save items, rows that share a
+location AND variant become one row. Per data column: all values equal
+(NaN == NaN) -> that one value; otherwise the list of EVERY row's value, in
+row order (position i is "row i" in every list column). Only scalar cells
+combine; a group holding an array / list / dict / table cell is left alone
+and the §5 check refuses it. A list column must hold one kind of value
+(numbers, bools or strings; datetimes not yet) -> else
+`scifor.CombineMixedTypesError` (has a remedy), nothing saved.
+
+**Owners (one each).**
+
+| Concept | Owner |
+|---|---|
+| The rule (group, collapse-or-list, kinds, `CombineReport.output_row`) | `scifor.combine.combine_duplicate_rows` |
+| Which columns keep rows apart: every column that is not a value column (schema keys, `__rid_*`, `__vsig_*`, constants) | `scidb.combine.combine_key_columns` |
+| `on_duplicate` values | `scidb.combine.validate_on_duplicate` |
+| Row-list storage, unwrap, lazy conversion | `sciduckdb.row_lists` |
+| A save meeting a row-list column | `DatabaseManager._reconcile_row_lists` |
+| GUI reader of the node option | `run_failures.on_duplicate_from_config` |
+
+**Where it runs.** `BaseVariable.save` (multi-column: before the per-row
+split; single column: in `save_from_dataframe`), `save_from_dataframe`,
+for_each `_save_results` (on the result table, BEFORE items are built: one
+combined row = one item, one invocation id, one graph record), MATLAB
+`save_batch_bridge` (`_combine_bridge_items`: items -> one table -> rule ->
+items; ids mapped back per input row with `output_row`). Each passes the
+list columns to `save_batch(row_list_columns=)`.
+
+**Storage: the `row_list` kind.** `{"python_type": "row_list",
+"elem_type": "DOUBLE"}`, stored `DOUBLE[]` / `BIGINT[]` / `BOOLEAN[]` /
+`VARCHAR[]`. A one-element cell loads as the plain value (`[7]` -> `7`),
+several as a Python list. **Lazy:** combine mode with no duplicates stores
+exactly what the default stores; the first save that needs a list in a
+column converts the stored column in place (`ALTER ... USING [col]`, plus
+the `_variables.dtype` update, one transaction), so old records load
+unchanged and keep their record ids. **Sticky:** a scalar saved into a
+row-list column later (either mode) is stored as `[v]`. A row list never
+shares a column with genuine arrays (`ColumnTypeChangedError`).
+
+**Readers.** Everything through `storage_to_python` unwraps (load,
+load_all, as_table, for_each inputs, CSV export, MATLAB). Plot Studio
+(`scistackplotdb.load_variable`) and the GUI default mini-plot read raw
+DuckDB cells: a row-list column is a 1-D measure there (every cell an
+array; collapse kinds take the per-location mean/median). Decision, logged
+at DEBUG per load.
+
+**Diagnostics.** scifor `combine_duplicate_rows: N row(s) -> M, ...` DEBUG
+and `[combine] combined K location(s) ...` WARN (each location, list vs
+one-value columns); `[combine] ... NOT combined` WARN per uncombinable
+group; scidb `on_duplicate=combine: <Type> ...` and `save_batch(<Type>):
+on_duplicate=combine row_list column(s) ...` DEBUG; `row_list: <table>.<col>
+-> DOUBLE[] (converted in place), N stored row(s) wrapped` INFO; on load
+`row_list column 'x': N cell(s) loaded as one value, M as a list` INFO.

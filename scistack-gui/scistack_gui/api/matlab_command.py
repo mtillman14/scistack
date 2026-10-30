@@ -2359,6 +2359,15 @@ def _format_run_option_pairs(
     if on_error != "continue":
         parts.append(f"'on_error', '{on_error}'")
         emitted[ON_ERROR_KEY] = on_error
+    from scistack_gui.services.run_failures import (
+        ON_DUPLICATE_KEY,
+        on_duplicate_from_config,
+    )
+
+    on_duplicate = on_duplicate_from_config(run_options)
+    if on_duplicate != "error":
+        parts.append(f"'on_duplicate', '{on_duplicate}'")
+        emitted[ON_DUPLICATE_KEY] = on_duplicate
 
     if emitted:
         logger.info(
@@ -2371,7 +2380,9 @@ def _format_run_option_pairs(
     # A key the caller asked about that produced no pair is either a default
     # (fine, and the common case) or a value this renderer does not understand
     # (not fine -- it would be dropped exactly the way distribute was).
-    unknown = sorted(set(run_options) - set(_RUN_OPTION_DEFAULTS) - {"on_error"})
+    unknown = sorted(
+        set(run_options) - set(_RUN_OPTION_DEFAULTS) - {"on_error", "on_duplicate"}
+    )
     if unknown:
         logger.warning(
             "generate_matlab_command: %s: run option(s) %s are not recognised "

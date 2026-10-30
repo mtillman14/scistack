@@ -11,6 +11,42 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzt. Combine duplicate rows (`on_duplicate="combine"`) — added 2026-10-29
+
+What changed: a table saved one record per row that has two rows for one
+location (a CSV with a subject twice) can now be COMBINED instead of refused.
+A column whose rows agree keeps one value; a column whose rows differ holds
+the list of every row's value. Opt-in: a **Combine duplicate rows** run
+option, and a third step **Combine the rows** in the duplicate-location
+popup. Doc: `docs/claude/duplicate-location-vs-stale.md` §6.
+
+Backend steps:
+1. Restart the GUI (bundles rebuilt).
+2. A CSV with columns `subject,days,ward` and rows `S1,5,A` / `S1,12,B` /
+   `S2,7,A`, read by a function with one PathInput, saving to one variable.
+3. `scistack.log` after the combined run: `[combine] combined 1 location(s)
+   with more than one row into one row each: subject=S1: 2 rows, list
+   ['days', 'ward'], one value []`; DEBUG `save_batch(<Var>): on_duplicate=
+   combine row_list column(s) ['days', 'ward'] -> ...`. If the variable
+   already held records: `[save] <Var>: column(s) days -> BIGINT[] ...
+   converted to row lists in place`.
+
+Frontend steps and what you should see:
+1. Run the node with defaults: the run fails, the **More than one row for
+   the same subject** popup opens. Under **How to fix it** there are now
+   THREE steps; the third, **Combine the rows**, has a **Combine rows and
+   run again** button.
+2. Click it: the popup closes, the node runs again and succeeds. The node's
+   settings now show **Combine duplicate rows** ticked (under Stop at first
+   error).
+3. The variable has 2 records; S1's `days` is `[5, 12]`, `ward` `["A", "B"]`;
+   S2 reads `7` / `"A"` (not one-element lists).
+4. Untick **Combine duplicate rows** and run: refused again (popup).
+5. Plot Studio on the variable: `days` is offered as a 1-D measure; a violin /
+   bar uses each subject's mean (S1 -> 8.5).
+6. Export the pipeline (Python and MATLAB): the call carries
+   `on_duplicate='combine'` / `'on_duplicate', 'combine'` while the box is ticked.
+
 ## 0zzzzzzs. Python output ports: Outputs section — added 2026-10-28
 
 What changed: a Python function node's settings have an **Outputs**

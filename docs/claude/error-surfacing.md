@@ -218,3 +218,11 @@ ActionableError.remedy ─ scifor.failures.remedy_of (walks __cause__/__context_
   `scistack-gui/tests/test_run_failures.py`,
   `scimatlab/tests/test_matlab_failure_record_shape.py`,
   `frontend/src/components/DAG/runFailures.test.ts` (`firstRemedy`).
+
+**Combine the rows (2026-10-29).** `DuplicateLocationError.remedy` has a
+third step, `action: "combine_rows"`: RemedyDialog's **Combine rows and run
+again** calls `set_on_duplicate` (node `runOptions.on_duplicate =
+"combine"`) and dispatches `RERUN_NODE_EVENT`; the FunctionNode re-runs
+with the option patched in. `scifor.CombineMixedTypesError` (a
+`UserValueError`) carries its own remedy (`kind: "combine_mixed_types"`).
+See `duplicate-location-vs-stale.md` §6.

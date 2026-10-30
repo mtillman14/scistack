@@ -46,7 +46,19 @@ export interface FailureGroup {
 export interface RemedyStep {
   title: string
   text: string
-  action?: 'reveal_function' | null
+  // 'combine_rows': set the node's on_duplicate run option to "combine"
+  // (backend set_on_duplicate) and run it again (RERUN_NODE_EVENT).
+  action?: 'reveal_function' | 'combine_rows' | null
+}
+
+/** Asks one FunctionNode to run again, optionally with run options patched
+ *  for that run (the node's saved options are changed separately). The node
+ *  owns its run; anything else (the RemedyDialog) only asks. */
+export const RERUN_NODE_EVENT = 'scistack:rerun-node'
+
+export interface RerunNodeDetail {
+  nodeId: string
+  runOptions?: Record<string, unknown>
 }
 
 export interface Remedy {

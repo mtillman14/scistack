@@ -23,6 +23,7 @@ Example:
 """
 
 from .colname import ColName
+from .combine import CombineMixedTypesError, CombineReport, combine_duplicate_rows
 from .column_selection import ColumnSelection, column_value
 from .discovery import (
     BENIGN_TOPLEVEL_CALLS,
@@ -107,6 +108,9 @@ __all__ = [
     "canonical_numeric_value",
     # Batch execution
     "for_each",
+    "combine_duplicate_rows",
+    "CombineReport",
+    "CombineMixedTypesError",
     "ColumnFunctionError",
     "ForColumnsError",
     "NoDataError",

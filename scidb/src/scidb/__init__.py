@@ -57,6 +57,7 @@ from .discover import (
     scan_project,
 )
 from .roles import FUNCTION_ROLES, function_role
+from .combine import ON_DUPLICATE_VALUES, validate_on_duplicate
 from .exceptions import (
     AmbiguousParamError,
     AmbiguousVersionError,
@@ -193,6 +194,8 @@ __all__ = [
     "exclude_schema",
     "include_schema",
     "list_exclusions",
+    "ON_DUPLICATE_VALUES",
+    "validate_on_duplicate",
     # Exceptions
     "SciStackError",
     "OutputSaveError",

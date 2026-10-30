@@ -281,6 +281,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     put_node_config:        { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/config`, method: 'PUT', body: true },
     set_shown_argument:     { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/arguments`, method: 'PUT', body: true },
     set_output_ports:       { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/outputs`, method: 'PUT', body: true },
+    set_on_duplicate:       { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/on-duplicate`, method: 'PUT', body: true },
     start_run:              { path: '/api/run', method: 'POST', body: true },
     get_schema_level:       { path: '/api/schema-level', method: 'POST', body: true },
     cancel_run:             { path: (p) => `/api/run/${encodeURIComponent(p.run_id as string)}/cancel`, method: 'POST' },

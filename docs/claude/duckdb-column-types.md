@@ -96,6 +96,16 @@ matching the `record_id`.
 
 ---
 
+## Row-list columns (`python_type: "row_list"`, 2026-10-29)
+
+A column of a variable whose table rows were combined (`on_duplicate=
+"combine"`) holds ONE VALUE PER SOURCE ROW: `{"python_type": "row_list",
+"elem_type": "DOUBLE"}`, stored as `<elem>[]`. Unlike `ndarray`, a
+one-element cell loads as the plain value, a scalar saved into it is stored
+as `[v]`, and a stored scalar column is converted in place the first time a
+save needs a list (old values wrapped, record ids unchanged). Owner:
+`sciduckdb/row_lists.py`; rule and readers: `duplicate-location-vs-stale.md` §6.
+
 ## for_each cases
 
 | Scenario                            | DuckDB rows per record | record_id |

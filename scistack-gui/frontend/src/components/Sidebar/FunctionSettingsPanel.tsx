@@ -80,6 +80,10 @@ export interface RunOptions {
   // Not identity: stops the run at the first failing combo. Read by the
   // backend's run_failures.on_error_from_config (one reader).
   on_error?: 'continue' | 'stop'
+  // Not identity: two result rows at one location become one record whose
+  // differing values are lists (scidb.combine). Read by the backend's
+  // run_failures.on_duplicate_from_config (one reader).
+  on_duplicate?: 'error' | 'combine'
 }
 
 export interface WhereFilter {
@@ -888,6 +892,10 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
     updateNodeData({ runOptions: { ...runOptions, on_error: stop ? 'stop' : 'continue' } })
   }, [runOptions, updateNodeData])
 
+  const setCombineDuplicates = useCallback((combine: boolean) => {
+    updateNodeData({ runOptions: { ...runOptions, on_duplicate: combine ? 'combine' : 'error' } })
+  }, [runOptions, updateNodeData])
+
   // --- Where filter management ---
   const addWhereFilter = useCallback(() => {
     const newFilter: WhereFilter = { variable: '', op: '==', value: '' }
@@ -1207,6 +1215,19 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
           <span style={styles.optionText}>Stop at first error</span>
           <span style={styles.optionHint}>
             Raise the first failing combo's error instead of skipping it (combos already done are saved)
+          </span>
+        </label>
+
+        <label style={styles.optionLabel}>
+          <input
+            type="checkbox"
+            checked={runOptions.on_duplicate === 'combine'}
+            onChange={e => setCombineDuplicates(e.target.checked)}
+            style={styles.checkbox}
+          />
+          <span style={styles.optionText}>Combine duplicate rows</span>
+          <span style={styles.optionHint}>
+            Rows at the same location become one record; a column whose rows differ holds a list of every row's value
           </span>
         </label>
 

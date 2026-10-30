@@ -865,6 +865,28 @@ def set_shown_argument(db, node_id: str, argument: str, shown: bool) -> dict:
     return {"ok": True, "shownArguments": names}
 
 
+def set_on_duplicate(db, node_id: str, value: str) -> dict:
+    """Set one function node's ``on_duplicate`` run option (``"error"`` |
+    ``"combine"``, scidb.combine): ``runOptions.on_duplicate`` in its saved
+    config, merged into the rest (``update_node_config`` replaces the whole
+    blob). The duplicate-location popup's "Combine the rows" button calls it
+    before re-running the node; ``run_failures.on_duplicate_from_config``
+    reads it."""
+    from scidb.combine import validate_on_duplicate
+
+    from scistack_gui import pipeline_store
+
+    validate_on_duplicate(value)
+    config = pipeline_store.get_node_config(db, node_id)
+    run_options = {**(config.get("runOptions") or {}), "on_duplicate": value}
+    logger.info(
+        "[layout_service] set_on_duplicate (node_id=%r) -> %r", node_id, value
+    )
+    pipeline_store.update_node_config(db, node_id, {**config, "runOptions": run_options})
+    _notify_dag_updated("set_on_duplicate")  # the settings panel shows it
+    return {"ok": True, "runOptions": run_options}
+
+
 _PORT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 

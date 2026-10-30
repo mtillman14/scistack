@@ -32,6 +32,16 @@ from .datetimes import (
     tz_companions,
     user_column_types,
 )
+from .row_lists import (
+    ROW_LIST_PTYPE,
+    RowListTypeError,
+    convert_column_to_row_list,
+    is_row_list_meta,
+    row_list_change,
+    row_list_column_type,
+    row_list_meta,
+    unwrap_row_list,
+)
 
 __all__ = [
     "SciDuck",
@@ -62,4 +72,12 @@ __all__ = [
     "tz_column_name",
     "tz_companions",
     "user_column_types",
+    "ROW_LIST_PTYPE",
+    "RowListTypeError",
+    "convert_column_to_row_list",
+    "is_row_list_meta",
+    "row_list_change",
+    "row_list_column_type",
+    "row_list_meta",
+    "unwrap_row_list",
 ]

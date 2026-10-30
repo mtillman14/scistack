@@ -42,6 +42,34 @@ classdef TestSpreadParity < matlab.unittest.TestCase
     end
 
     methods (Test)
+        function test_duplicate_subject_refused_by_default(testCase)
+            tbl = table;
+            tbl.A = [1; 2; 3];
+            testCase.verifyError(@() scidb.for_each( ...
+                @table_with_duplicate_subject, struct('x', tbl), ...
+                {ProcessedSignal()}), ?MException);
+        end
+
+        function test_duplicate_subject_combined_on_request(testCase)
+            % on_duplicate='combine' (Python scidb.combine): subject A's two
+            % rows become one record whose A holds both values in row order.
+            tbl = table;
+            tbl.A = [1; 2; 3];
+            scidb.for_each(@table_with_duplicate_subject, ...
+                struct('x', tbl), {ProcessedSignal()}, ...
+                'on_duplicate', 'combine');
+
+            all_results = ProcessedSignal().load();
+            testCase.verifyEqual(numel(all_results), 2, ...
+                'one record per subject');
+            a = ProcessedSignal().load('subject', "A").data.A;
+            if iscell(a), a = a{1}; end
+            testCase.verifyEqual(double(a(:))', [2 4], 'AbsTol', 1e-10);
+            b = ProcessedSignal().load('subject', "B").data.A;
+            if iscell(b), b = b{1}; end
+            testCase.verifyEqual(double(b), 6.0, 'AbsTol', 1e-10);
+        end
+
         function test_labelled_table_spreads_with_nothing_iterated(testCase)
             % The loadFunctionalOutcomes shape: every schema level
             % deselected (no schema kwargs at all), distribute off, and the

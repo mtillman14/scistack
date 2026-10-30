@@ -79,6 +79,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       no stored type gets this one, the same type is a
 %                       no-op, a different one is an error. Accepted so a
 %                       scifor.for_each call runs here unchanged.
+%       on_duplicate  - "error" (default) or "combine": what the save does
+%                       when the results hold two rows for one schema
+%                       location and variant. "error" refuses the save
+%                       (DuplicateLocationError); "combine" makes them one
+%                       record, a differing value becoming the list of every
+%                       row's value. Owner: Python scidb.combine.
 %       categorical   - If true, convert metadata columns of the RETURNED
 %                       table to categorical (scifor.categorize_metadata),
 %                       after saving. (default: false)
@@ -819,7 +825,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     try
         py_result_df = py.scimatlab.bridge.for_each_save( ...
             handle, py_result_dfs, pyargs('save', logical(do_save), ...
-                                          'introspect', logical(opts.introspect)));
+                                          'introspect', logical(opts.introspect), ...
+                                          'on_duplicate', opts.on_duplicate));
     catch save_err
         % A save refused on purpose (e.g. OutputSaveError around a
         % DuplicateLocationError) becomes a run-level failure group with its
@@ -1990,6 +1997,7 @@ function [meta_args, opts] = split_options(varargin)
     opts.where = [];
     opts.introspect = false;
     opts.on_error = 'continue';  % scifor owns it; validated there (Python)
+    opts.on_duplicate = 'error';  % scidb.combine owns it; validated there (Python)
     opts.skip_computed = false;
     opts.finalized = false;
     opts.categorical = false;   % scifor option; applied to the returned table
@@ -2069,6 +2077,10 @@ function [meta_args, opts] = split_options(varargin)
                 case "on_error"
                     opts.on_error = char(string(varargin{i+1}));
                     py.scifor.validate_on_error(opts.on_error);
+                    i = i + 2; continue;
+                case "on_duplicate"
+                    opts.on_duplicate = char(string(varargin{i+1}));
+                    py.scidb.validate_on_duplicate(opts.on_duplicate);
                     i = i + 2; continue;
                 case "where"
                     opts.where = varargin{i+1};

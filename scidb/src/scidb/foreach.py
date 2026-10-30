@@ -28,6 +28,7 @@ from scifor import output_column_name as _output_column_name
 from scifor.outputs import is_no_output as _is_no_output
 
 from . import glue as _glue
+from .combine import combine_for_save, validate_on_duplicate
 from .across_variants import AcrossVariants
 from .bindings import (
     COMBO_KEY,
@@ -241,6 +242,10 @@ class _ForEachState:
     # carried to record_run so each PathInput record stores WHERE the files
     # were. Descriptive, never identity (identity is the name, `to_key`).
     path_input_specs: Any = None  # dict[str, str] | None
+    # What the save does with two result rows at one location and variant
+    # (scidb.combine): "error" or "combine". Set by for_each / the MATLAB
+    # bridge's for_each_save; read only by _batch_save_outputs.
+    on_duplicate: str = "error"
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +270,7 @@ def for_each(
     schema_keys: "list[str] | None" = None,
     schema_key_types: "dict[str, str] | None" = None,
     on_error: str = "continue",
+    on_duplicate: str = "error",
     locations: "Any" = None,
     share_limits: "dict[str, list[str]] | None" = None,
     finalized: bool = False,
@@ -345,6 +351,13 @@ def for_each(
                     completed before the failure are SAVED, then the original
                     exception is re-raised (``scifor.stopped_run_of(exc)``
                     carries the record). See docs/claude/error-surfacing.md.
+        on_duplicate: ``"error"`` (default) or ``"combine"`` (scidb.combine).
+                    What the save does when the result table has two rows
+                    for one schema location and variant (a table loaded once
+                    and saved per row, with a subject twice). ``"error"``
+                    refuses the save (DuplicateLocationError); ``"combine"``
+                    makes them one record first, a differing value becoming
+                    the list of every row's value. Not identity-bearing.
         locations: Optional ``scifor.LocationFilter`` (or its mapping form)
                     naming which schema locations to run: ragged ``include``
                     prefixes plus a standing ``exclude_levels`` rule. Passed
@@ -408,6 +421,7 @@ def for_each(
         handle when the call was registered into a Pipeline instead of run.
     """
     validate_on_error(on_error)
+    validate_on_duplicate(on_duplicate)
 
     # --- Deferred pipeline registration. Must run before ANY other work —
     #     a registered call must have zero side effects, and the spec must
@@ -442,6 +456,7 @@ def for_each(
                 "schema_keys": schema_keys,
                 "schema_key_types": schema_key_types,
                 "on_error": on_error,
+                "on_duplicate": on_duplicate,
                 "share_limits": share_limits,
                 # Dropped from this list until 2026-09-23 (cleanup-audit F18):
                 # a step registered with a location selection replayed over
@@ -482,6 +497,7 @@ def for_each(
                     schema_keys=schema_keys,
                     schema_key_types=schema_key_types,
                     on_error=on_error,
+                    on_duplicate=on_duplicate,
                     locations=locations,
                     share_limits=share_limits,
                     finalized=finalized,
@@ -668,6 +684,7 @@ def for_each(
                 # that alternative saved its completed combos, and every
                 # earlier alternative was saved by its own call.
                 on_error=on_error,
+                on_duplicate=on_duplicate,
                 finalized=finalized,
                 _inject_combo_metadata=_inject_combo_metadata,
                 _pre_combo_hook=_pre_combo_hook,
@@ -791,6 +808,7 @@ def for_each(
         )
     if state is None:
         return None
+    state.on_duplicate = on_duplicate
 
     # --- Execute: wrap fn for per-combo needs, delegate the loop to scifor,
     #     log the authoritative run summary. ---
@@ -5748,6 +5766,31 @@ def _save_results(
     else:
         schema_keys_set = set(dataset_schema_keys_of(None))
 
+    # on_duplicate="combine": two result rows at one location AND variant (a
+    # table loaded once and saved per row, a subject twice) become one row
+    # BEFORE any item is built, so the combined row gets one record, one
+    # invocation id and one graph record. Value columns are the outputs, or
+    # the flatten path's data columns; every other column (schema keys,
+    # __rid_*, __vsig_*, constants) keeps rows apart (scidb.combine).
+    row_list_columns: list = []
+    if state.on_duplicate == "combine" and len(result_tbl) > 1:
+        _present = [o for o in output_names if o in result_tbl.columns]
+        _value_cols = list(_present)
+        if len(_present) < len(output_names):
+            _value_cols += [
+                c
+                for c in result_tbl.columns
+                if c not in output_names
+                and not str(c).startswith("__")
+                and c not in schema_keys_set
+            ]
+        result_tbl, row_list_columns = combine_for_save(
+            result_tbl,
+            _value_cols,
+            type_name="/".join(str(o) for o in output_names),
+            on_duplicate="combine",
+        )
+
     # Determine which columns are metadata (not output names)
     meta_cols = [c for c in result_tbl.columns if c not in output_names]
 
@@ -6042,6 +6085,12 @@ def _save_results(
         # and rejoin their record below, by position.
         edges_by_item = [_e for _d, _m, _e in items]
         items = [(_d, _m) for _d, _m, _e in items]
+        # The combined columns this batch stores as row lists.
+        _row_lists = (
+            [c for c in row_list_columns if c not in output_names]
+            if save_path == "flatten"
+            else [c for c in row_list_columns if c == output_names[output_idx]]
+        )
 
         Log.info(
             f"[batch_save] Saving {len(items)} record(s) for {_output_type_label(output_obj)} ({save_path} path)"
@@ -6058,6 +6107,7 @@ def _save_results(
                     else output_obj,
                     items,
                     profile=False,
+                    row_list_columns=_row_lists,
                 )
             else:
                 from .database import get_database
@@ -6069,6 +6119,7 @@ def _save_results(
                     else output_obj,
                     items,
                     profile=False,
+                    row_list_columns=_row_lists,
                 )
 
             save_elapsed = time.perf_counter() - save_t0

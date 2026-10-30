@@ -16,8 +16,8 @@ import type { SourceLocation } from '../SourceLocationDialog'
 import { useBackendMessage } from '../../hooks/useBackendMessage'
 import { useRunLog } from '../../context/RunLogContext'
 import { useNodeFailures } from '../../context/NodeFailuresContext'
-import { failedCount } from './runFailures'
-import type { SkipFailure } from './runFailures'
+import { failedCount, RERUN_NODE_EVENT } from './runFailures'
+import type { RerunNodeDetail, SkipFailure } from './runFailures'
 import { useScope } from '../../context/ScopeContext'
 import { useVariantSelection } from '../../context/VariantSelectionContext'
 import type { VariantSelectionValue } from '../../context/VariantSelectionContext'
@@ -67,7 +67,9 @@ interface FunctionNodeData {
   schemaLevel?: string[] | null
   // on_error: 'stop' halts at the first failing combo (not identity —
   // scistack_gui/services/run_failures.on_error_from_config reads it).
-  runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean; on_error?: 'continue' | 'stop' }
+  // on_duplicate: 'combine' makes two result rows at one location one record
+  // (scidb.combine; run_failures.on_duplicate_from_config reads it).
+  runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean; on_error?: 'continue' | 'stop'; on_duplicate?: 'error' | 'combine' }
   // param_name → which columns of its wired variable the function receives.
   // Display only here: editing lives in FunctionSettingsPanel's Inputs
   // section, which is also the only writer of the stored node config.
@@ -218,7 +220,10 @@ function PipelineFunctionNode({ id, data }: Props) {
     }
   }, [id, appendLine, finishRun, setRunMeta, updateProgress, comboFailed, runDone]))
 
-  const handleRun = useCallback(async () => {
+  // `runOptionsPatch`: options for THIS run on top of the node's own (the
+  // remedy popup's "Combine the rows" re-run, before the canvas has the
+  // newly saved option).
+  const runWith = useCallback(async (runOptionsPatch?: Record<string, unknown>) => {
     // A run that writes to a pinned variable asks first (keep / move / cancel).
     const decision = await pinGate({ node_ids: [id] })
     if (!decision.proceed) return
@@ -259,7 +264,9 @@ function PipelineFunctionNode({ id, data }: Props) {
         run_id: newRunId,
         schema_selection: data.schemaSelection ?? null,
         schema_level: data.schemaLevel ?? null,
-        run_options: data.runOptions ?? null,
+        run_options: runOptionsPatch
+          ? { ...(data.runOptions ?? {}), ...runOptionsPatch }
+          : (data.runOptions ?? null),
         where_filters: (wf && wf.length > 0) ? wf : null,
         // A hint only. The BACKEND decides whether this is a MATLAB run
         // (api/run.route_matlab_single_run asks matlab_registry), so a
@@ -279,6 +286,20 @@ function PipelineFunctionNode({ id, data }: Props) {
       setRunning(false)
     }
   }, [id, data, getNodes, getEdges, startRun, appendLine, finishRun, pinGate, runStarted])
+  const handleRun = useCallback(() => { void runWith() }, [runWith])
+
+  // Another component asks this node to run again (RERUN_NODE_EVENT).
+  useEffect(() => {
+    const onRerun = (e: Event) => {
+      const detail = (e as CustomEvent<RerunNodeDetail>).detail
+      if (!detail || detail.nodeId !== id) return
+      // eslint-disable-next-line no-console
+      console.debug(`[FunctionNode ${id}] re-run requested`, detail.runOptions ?? {})
+      void runWith(detail.runOptions)
+    }
+    window.addEventListener(RERUN_NODE_EVENT, onRerun)
+    return () => window.removeEventListener(RERUN_NODE_EVENT, onRerun)
+  }, [id, runWith])
 
   // Show (endpoint nodes only): draft-run this endpoint + ancestors via
   // the pipeline compiler — zero DB writes; rendered outputs arrive on the

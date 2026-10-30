@@ -290,6 +290,11 @@ classdef BaseVariable < dynamicprops
         %   Name-Value Arguments:
         %       db - Optional DatabaseManager to use instead of the global
         %            database (returned by scidb.configure_database).
+        %       on_duplicate - "error" (default) or "combine": what happens
+        %            when two rows share one location. "error" refuses the
+        %            save; "combine" makes them one record, a differing value
+        %            becoming the list of every row's value (Python
+        %            scidb.combine). Rows that were combined share an id.
         %       Any other name-value pairs are common metadata applied to
         %       every row (e.g. experiment="exp1").
         %
@@ -322,8 +327,9 @@ classdef BaseVariable < dynamicprops
                 return;
             end
 
-            % Separate db option from common metadata
+            % Separate db and on_duplicate options from common metadata
             [common_nv, db_val] = extract_db(varargin);
+            [common_nv, on_duplicate] = extract_on_duplicate(common_nv);
 
             % --- Convert data column to Python (numpy for numeric) ---
             data_col = tbl.(data_column);
@@ -459,7 +465,7 @@ classdef BaseVariable < dynamicprops
             % py_heights is py.None except when Strategy A (vertcat) was used.
             py_result = py.scimatlab.bridge.save_batch_bridge( ...
                 type_name, py_data, py_meta_keys, py_meta_cols, ...
-                py_common, py_db, py_heights);
+                py_common, py_db, py_heights, on_duplicate);
 
             % --- Convert result to MATLAB string array ---
             record_ids = splitlines(string(py_result));
@@ -1255,6 +1261,32 @@ function [metadata_args, version, as_table, db, where, categorical_flag, introsp
             metadata_args{end+1} = varargin{i};   %#ok<AGROW>
             metadata_args{end+1} = varargin{i+1};  %#ok<AGROW>
             i = i + 2;
+        end
+    end
+end
+
+
+function [remaining, on_duplicate] = extract_on_duplicate(args)
+%EXTRACT_ON_DUPLICATE  Extract the 'on_duplicate' option from name-value pairs.
+%   Returns the remaining pairs and the option ('error' if not given),
+%   validated by Python's scidb.combine (the one owner of its values).
+    on_duplicate = 'error';
+    remaining = {};
+    i = 1;
+    while i <= numel(args)
+        key = args{i};
+        if (ischar(key) || isstring(key)) && strcmpi(string(key), 'on_duplicate') && i < numel(args)
+            on_duplicate = char(string(args{i+1}));
+            py.scidb.validate_on_duplicate(on_duplicate);
+            i = i + 2;
+        else
+            remaining{end+1} = args{i};   %#ok<AGROW>
+            if i < numel(args)
+                remaining{end+1} = args{i+1}; %#ok<AGROW>
+                i = i + 2;
+            else
+                i = i + 1;
+            end
         end
     end
 end

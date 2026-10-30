@@ -97,6 +97,8 @@ The examples above cover the most common case, but real pipelines have real-worl
 
 - **Errors** — A combination whose function raises is skipped and reported, by default: one bad subject does not cost the rest their run. Each failure is recorded with the line in *your* code that raised (logged, and returned in the end-of-run summary). Pass `on_error="stop"` to stop at the first failure and get the original exception, as in a plain loop. The combinations that already finished are kept (see `scifor.stopped_run_of`). See [error surfacing](../docs/claude/error-surfacing.md).
 
+- **Combining duplicate rows** — `scifor.combine_duplicate_rows(df, key_columns)` makes a table one row per key combination (for example a subject listed twice for two hospital stays). In each other column, rows that agree keep that one value, and rows that differ become the list of every row's value, in row order. Only single values are combined. A column that would mix kinds of value (numbers and text) raises `CombineMixedTypesError`. Through SciDB this is `on_duplicate="combine"`, which decides the key columns and stores the lists. See [duplicate locations](../docs/claude/duplicate-location-vs-stale.md) §6.
+
 See the [API reference](../docs/api/for-each.md) and [batch processing guide](../docs/guide/for_each.md) for details on all of these.
 
 ## Relationship to SciDB

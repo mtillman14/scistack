@@ -382,6 +382,8 @@ def _generate_python_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
         # would (the preview and the export behave alike).
         if spec.options.get("on_error", "continue") != "continue":
             call += f", on_error={spec.options['on_error']!r}"
+        if spec.options.get("on_duplicate", "error") != "error":
+            call += f", on_duplicate={spec.options['on_duplicate']!r}"
         # The node's step name (Q6): a run of this script is attributed to
         # that node even if the script is later edited to wire it differently.
         if spec.options.get("step"):
@@ -542,7 +544,10 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
         derive_target_for_node,
     )
 
-    from scistack_gui.services.run_failures import on_error_from_config
+    from scistack_gui.services.run_failures import (
+        on_duplicate_from_config,
+        on_error_from_config,
+    )
     from scistack_gui.step_names import step_name_of
 
     pending_consts = ps.get_pending_constants(db)
@@ -578,6 +583,9 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
                             **target,
                             "step": step_name_of(db, node_id),
                             "on_error": on_error_from_config(
+                                (ps.get_node_config(db, node_id) or {}).get("runOptions")
+                            ),
+                            "on_duplicate": on_duplicate_from_config(
                                 (ps.get_node_config(db, node_id) or {}).get("runOptions")
                             ),
                         },
@@ -678,6 +686,8 @@ def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
             call += f", 'step', {_matlab_str(target['step'])}"
         if target.get("on_error", "continue") != "continue":
             call += f", 'on_error', {_matlab_str(target['on_error'])}"
+        if target.get("on_duplicate", "error") != "error":
+            call += f", 'on_duplicate', {_matlab_str(target['on_duplicate'])}"
         if iter_args:
             call += f", {iter_args}"
         call += ");"

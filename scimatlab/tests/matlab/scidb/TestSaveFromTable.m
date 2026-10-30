@@ -244,5 +244,62 @@ classdef TestSaveFromTable < matlab.unittest.TestCase
             testCase.verifyEqual(v.data, 7.0, 'AbsTol', 1e-10);
         end
 
+        % --- on_duplicate="combine" (plan-combine-duplicate-locations) ---
+
+        function test_duplicate_rows_refused_by_default(testCase)
+            tbl = table([1;1], [5.0;12.0], 'VariableNames', {'subject','MyVar'});
+            testCase.verifyError( ...
+                @() ScalarVar().save_from_table(tbl, "MyVar", "subject"), ...
+                ?MException);
+        end
+
+        function test_on_duplicate_combine_lists_values(testCase)
+            tbl = table([1;1;2], [5.0;12.0;7.0], ...
+                'VariableNames', {'subject','MyVar'});
+            ids = ScalarVar().save_from_table(tbl, "MyVar", "subject", ...
+                'on_duplicate', 'combine');
+            % one id per input row; combined rows share theirs
+            testCase.verifyEqual(numel(ids), 3);
+            testCase.verifyEqual(ids(1), ids(2));
+            testCase.verifyNotEqual(ids(1), ids(3));
+            v1 = ScalarVar().load('subject', 1);
+            testCase.verifyEqual(double(v1.data(:))', [5 12], 'AbsTol', 1e-10);
+            v2 = ScalarVar().load('subject', 2);
+            testCase.verifyEqual(v2.data, 7.0, 'AbsTol', 1e-10);
+        end
+
+        function test_on_duplicate_combine_through_save(testCase)
+            % save() auto-distributes a table to save_from_table; the
+            % option rides along with the other name-value pairs.
+            tbl = table([1;1], [5.0;12.0], 'VariableNames', {'subject','MyVar'});
+            ids = ScalarVar().save(tbl, 'on_duplicate', 'combine');
+            testCase.verifyEqual(numel(ids), 2);
+            v = ScalarVar().load('subject', 1);
+            testCase.verifyEqual(double(v.data(:))', [5 12], 'AbsTol', 1e-10);
+        end
+
+        function test_on_duplicate_d1_sequence(testCase)
+            % 7 alone (DOUBLE), then 7 and 8 combined (column converted in
+            % place), then 7 alone again (loads as a plain 7).
+            ScalarVar().save_from_table( ...
+                table(1, 7.0, 'VariableNames', {'subject','MyVar'}), "MyVar", "subject");
+            ScalarVar().save_from_table( ...
+                table([1;1], [7.0;8.0], 'VariableNames', {'subject','MyVar'}), ...
+                "MyVar", "subject", 'on_duplicate', 'combine');
+            v = ScalarVar().load('subject', 1);
+            testCase.verifyEqual(double(v.data(:))', [7 8], 'AbsTol', 1e-10);
+            ScalarVar().save_from_table( ...
+                table(1, 7.0, 'VariableNames', {'subject','MyVar'}), "MyVar", "subject");
+            v = ScalarVar().load('subject', 1);
+            testCase.verifyEqual(v.data, 7.0, 'AbsTol', 1e-10);
+        end
+
+        function test_on_duplicate_invalid_value(testCase)
+            tbl = table(1, 5.0, 'VariableNames', {'subject','MyVar'});
+            testCase.verifyError( ...
+                @() ScalarVar().save_from_table(tbl, "MyVar", "subject", ...
+                    'on_duplicate', 'merge'), ?MException);
+        end
+
     end
 end

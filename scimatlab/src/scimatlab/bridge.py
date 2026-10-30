@@ -1128,7 +1128,11 @@ def for_each_describe_loaded_input(val):
 
 
 def for_each_save(
-    handle, result_dataframes, save: bool = True, introspect: bool = False
+    handle,
+    result_dataframes,
+    save: bool = True,
+    introspect: bool = False,
+    on_duplicate: str = "error",
 ):
     """Bridge entry: run scidb.for_each's save phase.
 
@@ -1146,6 +1150,10 @@ def for_each_save(
     save : bool
         If False, run the save phase with ``save=False`` (schema restore
         still happens; no records are written).
+    on_duplicate : str
+        ``"error"`` (default) or ``"combine"``: what the save does with two
+        result rows at one location and variant (scidb.combine). Read by the
+        shared save path through ``state.on_duplicate``.
     introspect : bool
         If True, append introspection columns to the returned DataFrame
         (_record_id_*, _branch_params_*, _call_id, _config_keys, _where).
@@ -1170,6 +1178,9 @@ def for_each_save(
         )
 
     state = cached["state"]
+    from scidb.combine import validate_on_duplicate
+
+    state.on_duplicate = validate_on_duplicate(str(on_duplicate))
     inputs = cached["inputs"]
     outputs = cached["outputs"]
     db = cached["db"]
@@ -2171,6 +2182,7 @@ def save_batch_bridge(
     common_metadata=None,
     db=None,
     row_heights=None,
+    on_duplicate="error",
 ):
     """Bridge function for MATLAB save_from_table.
 
@@ -2198,6 +2210,11 @@ def save_batch_bridge(
         and row_heights[i] is the number of rows that belong to record i.
         Python splits it back into N per-record slices (zero-copy views).
         None = legacy per-row list mode (backward-compatible).
+    on_duplicate : str
+        ``"error"`` (default) or ``"combine"``: two rows at one location
+        become one record first (scidb.combine; the rule is
+        scifor.combine_duplicate_rows). The returned ids stay one per INPUT
+        row: rows that were combined share their record's id.
 
     Returns
     -------
@@ -2307,7 +2324,17 @@ def save_batch_bridge(
     # save_batch returns None in the slot of any record it skipped (schema-
     # incompatible). Emit an empty string for those so the newline-delimited
     # result stays row-aligned with the input on the MATLAB side.
-    _rids = _db.save_batch(cls, data_items)
+    from scidb.combine import validate_on_duplicate
+
+    validate_on_duplicate(str(on_duplicate))
+    if on_duplicate == "combine" and n > 1:
+        combined_items, output_row, row_lists = _combine_bridge_items(
+            data_items, type_name
+        )
+        _out_rids = _db.save_batch(cls, combined_items, row_list_columns=row_lists)
+        _rids = [_out_rids[j] for j in output_row]
+    else:
+        _rids = _db.save_batch(cls, data_items)
     result = "\n".join(r if isinstance(r, str) else "" for r in _rids)
 
     Log.info(
@@ -2315,6 +2342,99 @@ def save_batch_bridge(
         f"split={t_split:.3f}s, total={_time.perf_counter() - t_start:.3f}s"
     )
     return result
+
+
+#: Prefix that keeps a table row's data columns apart from its metadata keys
+#: while the bridge combines them as one table.
+_DATA_PREFIX = "__scimatlab_data__."
+_VALUE_COLUMN = "__scimatlab_value__"
+
+
+def _combine_bridge_items(data_items, type_name):
+    """``on_duplicate="combine"`` for save_from_table's per-row items.
+
+    The items become ONE table (metadata columns + data columns, or a value
+    column when every row's data is a single value), the scidb rule combines
+    it (scidb.combine.combine_table), and the table goes back to items.
+    Returns ``(items, output_row, row_list_columns)``: ``output_row[i]`` is
+    the combined item input row ``i`` went into.
+
+    Only table rows combine: when any row's data is an array, list, dict or
+    a table of more than one row, the items are returned unchanged and
+    save_batch's duplicate-location check decides.
+    """
+    import pandas as pd
+    import numpy as np
+    from scidb.combine import combine_table
+    from scidb.log import Log
+
+    datas = [d for d, _ in data_items]
+    identity = (data_items, list(range(len(data_items))), [])
+    if all(isinstance(d, pd.DataFrame) and len(d) == 1 for d in datas):
+        cols = list(datas[0].columns)
+        if any(list(d.columns) != cols for d in datas):
+            Log.info(
+                f"[bridge] save_batch_bridge({type_name}): on_duplicate=combine "
+                f"skipped - the rows' tables have different columns"
+            )
+            return identity
+        values = pd.concat(datas, ignore_index=True)
+        values.columns = [f"{_DATA_PREFIX}{c}" for c in cols]
+        scalar_mode = False
+    elif not any(
+        isinstance(d, (pd.DataFrame, np.ndarray, list, tuple, dict)) for d in datas
+    ):
+        values = pd.DataFrame({_VALUE_COLUMN: pd.Series(datas, dtype=object)})
+        values[_VALUE_COLUMN] = values[_VALUE_COLUMN].infer_objects()
+        scalar_mode = True
+    else:
+        Log.info(
+            f"[bridge] save_batch_bridge({type_name}): on_duplicate=combine "
+            f"skipped - rows hold arrays or multi-row tables, not single values"
+        )
+        return identity
+
+    meta = pd.DataFrame([m for _, m in data_items])
+    table = pd.concat([meta.reset_index(drop=True), values], axis=1)
+    value_cols = list(values.columns)
+    combined, report = combine_table(table, value_cols, type_name=type_name)
+    if combined is table:
+        return identity
+
+    # Every metadata column is a key, so a group's rows share their metadata:
+    # the first row's dict is the combined record's. A row that was not
+    # combined keeps its own item untouched (same content, same record id).
+    first_input: dict = {}
+    n_inputs: dict = {}
+    for i, j in enumerate(report.output_row):
+        first_input.setdefault(j, i)
+        n_inputs[j] = n_inputs.get(j, 0) + 1
+    items = []
+    for j in range(len(combined)):
+        first = first_input[j]
+        if n_inputs[j] == 1:
+            items.append(data_items[first])
+            continue
+        if scalar_mode:
+            d = combined[_VALUE_COLUMN].iloc[j]
+        else:
+            d = pd.DataFrame(
+                {
+                    c[len(_DATA_PREFIX):]: pd.Series([combined[c].iloc[j]], dtype=object)
+                    for c in value_cols
+                }
+            ).infer_objects()
+        items.append((d, dict(data_items[first][1])))
+    row_lists = [
+        _VALUE_COLUMN if scalar_mode else c[len(_DATA_PREFIX):]
+        for c in report.list_columns
+    ]
+    Log.debug(
+        f"[bridge] save_batch_bridge({type_name}): on_duplicate=combine "
+        f"{len(data_items)} row(s) -> {len(items)} record(s), row_list "
+        f"column(s) {row_lists}"
+    )
+    return items, list(report.output_row), row_lists
 
 
 # ---------------------------------------------------------------------------

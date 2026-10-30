@@ -11,11 +11,28 @@
 import { useState } from 'react'
 import { callBackend, isVSCodeMode } from '../api'
 import { useNodeFailures } from '../context/NodeFailuresContext'
-import type { RemedyStep } from './DAG/runFailures'
+import { RERUN_NODE_EVENT } from './DAG/runFailures'
+import type { RemedyStep, RerunNodeDetail } from './DAG/runFailures'
 import { dialog, dialogTitle, overlay } from './modalStyles'
 
-function StepCard({ step, fnName }: { step: RemedyStep; fnName: string }) {
+function StepCard({ step, fnName, nodeId, onDone }: {
+  step: RemedyStep; fnName: string; nodeId: string; onDone: () => void
+}) {
   const [note, setNote] = useState<string | null>(null)
+  // 'combine_rows': save on_duplicate="combine" on the node (so later runs
+  // and pipeline runs combine too), then ask the node to run again with it.
+  const combineRows = async () => {
+    // eslint-disable-next-line no-console
+    console.debug(`[remedy] action=combine_rows node=${nodeId} fn=${fnName}`)
+    try {
+      await callBackend('set_on_duplicate', { node_id: nodeId, value: 'combine' })
+      const detail: RerunNodeDetail = { nodeId, runOptions: { on_duplicate: 'combine' } }
+      window.dispatchEvent(new CustomEvent(RERUN_NODE_EVENT, { detail }))
+      onDone()
+    } catch (err) {
+      setNote(`Could not turn on combining for ${fnName}: ${String(err)}`)
+    }
+  }
   const openFunction = async () => {
     // eslint-disable-next-line no-console
     console.debug(`[remedy] action=reveal_function fn=${fnName}`)
@@ -44,6 +61,11 @@ function StepCard({ step, fnName }: { step: RemedyStep; fnName: string }) {
       {step.action === 'reveal_function' && fnName && (
         <button type="button" style={styles.button} onClick={openFunction}>
           Open {fnName}
+        </button>
+      )}
+      {step.action === 'combine_rows' && nodeId && (
+        <button type="button" style={styles.button} onClick={combineRows}>
+          Combine rows and run again
         </button>
       )}
       {note && <div style={styles.note}>{note}</div>}
@@ -88,7 +110,13 @@ export default function RemedyDialog() {
         {remedy.n_more > 0 && <div style={styles.note}>+{remedy.n_more} more location(s)</div>}
         <div style={styles.howTo}>How to fix it</div>
         {remedy.steps.map((step, i) => (
-          <StepCard key={i} step={step} fnName={target.group.fn_name} />
+          <StepCard
+            key={i}
+            step={step}
+            fnName={target.group.fn_name}
+            nodeId={target.nodeId}
+            onDone={closeRemedy}
+          />
         ))}
         <div style={styles.footer}>
           <button type="button" style={styles.button} onClick={showFailures}>Show failures</button>

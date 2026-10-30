@@ -6,6 +6,10 @@ One owner for the GUI's side of "what failed in this run":
   option (single-node Run, compiled pipeline, code export all call it). It is
   deliberately NOT part of ``scidb.RunOptions``: that value is
   identity-bearing, and stopping early never changes what a run computes.
+- :func:`on_duplicate_from_config` — the ONE reader of a node's
+  ``on_duplicate`` run option (``"error"`` | ``"combine"``, scidb.combine),
+  set by the duplicate-location popup's "Combine the rows" button. Not
+  identity either: same callers as ``on_error``.
 - :class:`RunFailures` — collects the failed groups of one run (no-data
   groups are dropped HERE, nowhere else), tags each with the canvas node it
   belongs to, and renders the console text. ``to_wire(node_ids)`` is what
@@ -25,6 +29,7 @@ from scifor.failures import FailureGroup, failure_from_exception, format_user_fr
 logger = logging.getLogger(__name__)
 
 ON_ERROR_KEY = "on_error"
+ON_DUPLICATE_KEY = "on_duplicate"
 _CONSOLE_COMBOS_MAX = 3
 
 
@@ -40,6 +45,22 @@ def on_error_from_config(run_options: "dict | None") -> str:
             value,
         )
         return "continue"
+
+
+def on_duplicate_from_config(run_options: "dict | None") -> str:
+    """``"error"`` | ``"combine"`` from a run-options blob; an unknown value
+    is logged and read as the default rather than failing the run."""
+    from scidb.combine import validate_on_duplicate
+
+    value = (run_options or {}).get(ON_DUPLICATE_KEY) or "error"
+    try:
+        return validate_on_duplicate(value)
+    except ValueError:
+        logger.warning(
+            "[run_failures] ignoring unknown on_duplicate=%r in run options; using 'error'",
+            value,
+        )
+        return "error"
 
 
 def _console_block(target: str, groups: "list[dict]", completed: "int | None") -> str:

@@ -36,7 +36,10 @@ from scistack_gui.ids import (
     fn_nodes_prefix,
     handle_name,
 )
-from scistack_gui.services.run_failures import on_error_from_config
+from scistack_gui.services.run_failures import (
+    on_duplicate_from_config,
+    on_error_from_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2343,6 +2346,9 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         step_on_error = on_error_from_config(
             (pipeline_store.get_node_config(db, node_id) or {}).get("runOptions")
         )
+        step_on_duplicate = on_duplicate_from_config(
+            (pipeline_store.get_node_config(db, node_id) or {}).get("runOptions")
+        )
         step_options = RunOptions.from_config(
             (pipeline_store.get_node_config(db, node_id) or {}).get("runOptions")
         )
@@ -2417,6 +2423,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
                 step=step_names.step_name_of(db, node_id),
                 # Not identity (scistack_gui.services.run_failures).
                 on_error=step_on_error,
+                on_duplicate=step_on_duplicate,
                 **schema_iterables,
             )
             # The run report echoes the tag, so a step's failures land on

@@ -303,7 +303,9 @@ class DuplicateLocationError(SciStackError):
             f"or session column, that tells the rows apart; schema keys are set "
             f"when a database is created, so this means a new project database) "
             f"or change the data (remove the extra row in the "
-            f"source file, or combine the rows in your function)."
+            f"source file, or combine the rows in your function), or save with "
+            f"on_duplicate=\"combine\" to make each location one record whose "
+            f"differing values are lists."
         )
 
     def _level(self) -> str:
@@ -358,6 +360,19 @@ class DuplicateLocationError(SciStackError):
                         "in your function before returning."
                     ),
                     "action": "reveal_function",
+                },
+                {
+                    "title": "Combine the rows",
+                    "text": (
+                        "If the rows belong to one location (for example two "
+                        "hospital stays of one subject), save them as one "
+                        "record: a column whose rows agree keeps that one "
+                        "value, and a column whose rows differ holds the list "
+                        "of every row's value, in row order. This turns on "
+                        "on_duplicate=\"combine\" for this function and runs "
+                        "it again."
+                    ),
+                    "action": "combine_rows",
                 },
             ],
         }

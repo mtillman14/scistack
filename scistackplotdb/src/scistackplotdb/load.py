@@ -447,6 +447,25 @@ def _key_text(value: Any) -> "str | None":
     return str(value)
 
 
+def _log_row_list_columns(db, variable: str, columns) -> None:
+    """Say which columns are row lists (sciduckdb.row_lists: rows combined by
+    ``on_duplicate="combine"``). This reader selects the stored cells as they
+    are, so EVERY cell of such a column is a 1-D array (``[7]``, ``[5, 12]``)
+    and the column is plotted as a 1-D measure (the collapse kinds take its
+    mean/median per location) - a decision recorded in
+    .claude/plan-combine-duplicate-locations.md §6, not an accident."""
+    from sciduckdb import is_row_list_meta
+
+    stored = (db.get_dtype_meta(variable) or {}).get("columns", {})
+    row_lists = [c for c in columns if is_row_list_meta(stored.get(c))]
+    if row_lists:
+        Log.debug(
+            "variable %r: row-list column(s) %s (combined rows) are read as "
+            "1-D arrays, one element per source row",
+            variable, row_lists, layer=LAYER,
+        )
+
+
 def load_variable(
     db, variable: str, *, with_variants: bool = True, include_data: bool = True
 ) -> VariableFrame:
@@ -471,6 +490,7 @@ def load_variable(
             keys = schema_keys(db)
             column_types = data_column_types_for(db, variable)
             columns = list(column_types)
+            _log_row_list_columns(db, variable, columns)
         if not columns:
             Log.warn("variable %r has no data columns", variable, layer=LAYER)
             return VariableFrame(name=variable, frame=pd.DataFrame())

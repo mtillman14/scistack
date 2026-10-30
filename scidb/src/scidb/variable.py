@@ -371,6 +371,7 @@ class BaseVariable(metaclass=VariableMeta):
         data: Any,
         index: Any | None = None,
         db=None,
+        on_duplicate: str = "error",
         **metadata,
     ) -> str:
         """
@@ -394,6 +395,11 @@ class BaseVariable(metaclass=VariableMeta):
             db: Optional DatabaseManager instance to use instead of the global
                 database. Allows one-shot operations against a specific database
                 without changing the global default.
+            on_duplicate: What an auto-distributed DataFrame does with two
+                rows at one schema location. ``"error"`` (default): the save
+                is refused (DuplicateLocationError). ``"combine"``: the rows
+                become one record; a column whose values differ holds the
+                list of every row's value (scifor.combine_duplicate_rows).
             **metadata: Addressing metadata (e.g., subject=1, trial=1). When
                 auto-distributing a DataFrame, these are applied as common
                 metadata to every row.
@@ -422,8 +428,10 @@ class BaseVariable(metaclass=VariableMeta):
             # Save to a specific database
             record_id = CleanData.save(data, db=aim2_db, subject=1, trial=1)
         """
+        from .combine import combine_for_save, validate_on_duplicate
         from .exceptions import ReservedMetadataKeyError
 
+        validate_on_duplicate(on_duplicate)
         # Validate metadata keys
         reserved_used = set(metadata.keys()) & cls._reserved_keys
         if reserved_used:
@@ -449,9 +457,16 @@ class BaseVariable(metaclass=VariableMeta):
                     )
                 if len(data_cols) == 1:
                     return cls.save_from_dataframe(
-                        data, data_cols[0], meta_cols, db=_db, **metadata
+                        data, data_cols[0], meta_cols, db=_db,
+                        on_duplicate=on_duplicate, **metadata
                     )
                 else:
+                    # Two rows at one location become one first (opt-in),
+                    # BEFORE the rows are split into one-row records.
+                    data, row_lists = combine_for_save(
+                        data, data_cols, type_name=cls.__name__,
+                        on_duplicate=on_duplicate,
+                    )
                     # Multiple data columns: save each row's sub-DataFrame as data
                     sub_df = data[data_cols].reset_index(drop=True)
                     aug = data[meta_cols].copy().reset_index(drop=True)
@@ -459,8 +474,16 @@ class BaseVariable(metaclass=VariableMeta):
                         sub_df.iloc[[i]].reset_index(drop=True)
                         for i in range(len(data))
                     ]
+                    if row_lists:
+                        # A row-list column is object dtype for every row;
+                        # a row with one value gets its own dtype back, so
+                        # its frame (and record id) is what it was before.
+                        aug["__scidb_row_data__"] = [
+                            f.infer_objects() for f in aug["__scidb_row_data__"]
+                        ]
                     return cls.save_from_dataframe(
-                        aug, "__scidb_row_data__", meta_cols, db=_db, **metadata
+                        aug, "__scidb_row_data__", meta_cols, db=_db,
+                        _row_list_columns=row_lists, **metadata
                     )
             # No schema-key columns in DataFrame → fall through and save as one record.
 
@@ -695,6 +718,8 @@ class BaseVariable(metaclass=VariableMeta):
         data_column: str,
         metadata_columns: list[str],
         db=None,
+        on_duplicate: str = "error",
+        _row_list_columns: "list | tuple" = (),
         **common_metadata,
     ) -> list[str]:
         """
@@ -710,6 +735,13 @@ class BaseVariable(metaclass=VariableMeta):
             db: Optional DatabaseManager instance to use instead of the global
                 database. Allows one-shot operations against a specific database
                 without changing the global default.
+            on_duplicate: ``"error"`` (default) refuses two different rows at
+                one location; ``"combine"`` makes them one record first, a
+                differing value becoming the list of every row's value
+                (scifor.combine_duplicate_rows). Columns other than
+                ``data_column`` keep rows apart.
+            _row_list_columns: (internal) columns of the row DataFrames that
+                ``BaseVariable.save`` already combined into row lists.
             **common_metadata: Additional metadata applied to all rows
 
         Returns:
@@ -729,8 +761,10 @@ class BaseVariable(metaclass=VariableMeta):
                 experiment="exp1"  # Applied to all rows
             )
         """
+        from .combine import combine_for_save, validate_on_duplicate
         from .exceptions import ReservedMetadataKeyError
 
+        validate_on_duplicate(on_duplicate)
         # Validate metadata keys
         all_keys = set(metadata_columns) | set(common_metadata.keys())
         reserved_used = all_keys & cls._reserved_keys
@@ -742,6 +776,12 @@ class BaseVariable(metaclass=VariableMeta):
         from .database import get_database
 
         _db = db or get_database()
+
+        # Two rows at one location become one first (opt-in).
+        df, row_lists = combine_for_save(
+            df, [data_column], type_name=cls.__name__, on_duplicate=on_duplicate
+        )
+        row_lists = list(_row_list_columns) + row_lists
 
         # Build data_items list: [(data_value, flat_metadata_dict), ...]
         # Extract columns as Python lists for fast iteration (avoids iterrows overhead)
@@ -777,7 +817,7 @@ class BaseVariable(metaclass=VariableMeta):
             full_metadata = {**common_metadata, **row_metadata}
             data_items.append((data_list[i], full_metadata))
 
-        return _db.save_batch(cls, data_items)
+        return _db.save_batch(cls, data_items, row_list_columns=row_lists)
 
     @classmethod
     def head(cls, n: int = 5, db=None, **metadata) -> pd.DataFrame:

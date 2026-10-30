@@ -88,7 +88,9 @@ def test_the_remedy_names_the_location_and_the_two_ways_out(db):
     ]
     assert remedy["n_more"] == 0
     # Schema keys are fixed at database creation: that step only explains.
-    assert [s["action"] for s in remedy["steps"]] == [None, "reveal_function"]
+    assert [s["action"] for s in remedy["steps"]] == [
+        None, "reveal_function", "combine_rows"
+    ]
     assert "new project database" in remedy["steps"][0]["text"]
 
 
