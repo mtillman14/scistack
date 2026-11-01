@@ -287,6 +287,27 @@ class TestConvertInPlace:
         )
         assert types[0][0] == "DOUBLE[]"
 
+    @pytest.mark.parametrize(
+        "ddb_type, value, elem", [("INTEGER", 7, "BIGINT"), ("FLOAT", 1.5, "DOUBLE")]
+    )
+    def test_narrow_stored_column_converts(self, ddb_type, value, elem):
+        """A stored INTEGER / FLOAT column (int32 / float32 data) becomes a
+        BIGINT[] / DOUBLE[] row list: a row list has no narrower elements."""
+        assert row_list_change(
+            {"python_type": "int"}, ddb_type, row_list_meta(elem), f"{elem}[]"
+        ) == ("convert", elem)
+        duck = _Duck()
+        duck._execute(f'CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" {ddb_type})')
+        duck._execute('INSERT INTO "T_data" VALUES (?, ?)', ["r", value])
+        convert_column_to_row_list(duck, "T_data", "c", elem)
+        (cell,) = duck._fetchall('SELECT "c" FROM "T_data"')[0]
+        assert unwrap_row_list(cell, row_list_meta(elem)) == value
+
+    def test_narrow_scalars_into_row_list_are_same(self):
+        assert row_list_change(
+            row_list_meta("BIGINT"), "BIGINT[]", {"python_type": "int"}, "INTEGER"
+        ) == ("same", "BIGINT")
+
     def test_failed_transaction_rolls_back(self):
         duck = _Duck()
         duck._execute('CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" DOUBLE)')

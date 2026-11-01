@@ -23,8 +23,6 @@ from sciduckdb import (
     storage_to_python_column,
     unflatten_dict,
     value_to_storage_row,
-)
-from sciduckdb import (
     convert_column_to_row_list,
     is_row_list_meta,
     row_list_change,

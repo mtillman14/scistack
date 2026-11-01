@@ -738,6 +738,81 @@ class HistogramOptions:
         )
 
 
+class CategoricalStat(str, Enum):
+    """What a text (categorical) measure is drawn as. ``categorical`` owns
+    which kinds read which (``categorical.mode_for_kind``); inert on every
+    numeric measure.
+
+    For all three, a COLLAPSED key is **pooled**, never averaged (user,
+    2026-11-01): its records are merged into one bucket.
+    """
+
+    #: How many records hold each level. No sample, so no error bar and no
+    #: "Show sample" — the bar IS the number of pooled records.
+    COUNT = "count"
+    #: The categorical equivalent of a mean: everything beneath the sample key
+    #: is pooled into one % per sample unit, and the mark is the mean of those
+    #: units ± the error band. "Show sample" draws the per-unit %s.
+    PROPORTION = "proportion"
+    #: The categories themselves, as positions on a category axis (strip,
+    #: spaghetti). Nothing is summarised.
+    VALUE = "value"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class CategoricalOptions:
+    """How a text measure is drawn (``scistackplot.categorical`` is the one
+    reader). Inert on every numeric measure, so a spec keeps it across a
+    switch of measure.
+
+    ``level`` draws one level's count or % only (``"fall"`` → "% fall"),
+    instead of one mark per level. Inert in VALUE mode.
+    """
+
+    stat: CategoricalStat = CategoricalStat.COUNT
+    level: str | None = None
+
+    def to_dict(self) -> dict:
+        return {"stat": str(self.stat), "level": self.level}
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> "CategoricalOptions":
+        raw = raw or {}
+        level = raw.get("level")
+        return cls(
+            stat=CategoricalStat(raw.get("stat", CategoricalStat.COUNT)),
+            level=None if level in (None, "") else str(level),
+        )
+
+
+@dataclass(frozen=True)
+class BarOptions:
+    """How a bar plot's coloured bars share one tick. Inert on every other
+    kind, and plan-irrelevant: stacking only moves bars that are already
+    computed.
+
+    ``stack`` piles the colour layer's bars on top of each other instead of
+    side by side — the 100% stacked bar when the measure is a text measure's
+    % per level. A stacked bar draws no error bar (a whisker in the middle of
+    a pile reads as the pile's), and the figure says so in a note. The
+    renderers stack with ``render.base.stack_offsets``, the one owner of the
+    arithmetic, which the y limits read too.
+    """
+
+    stack: bool = False
+
+    def to_dict(self) -> dict:
+        return {"stack": self.stack}
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> "BarOptions":
+        raw = raw or {}
+        return cls(stack=bool(raw.get("stack", False)))
+
+
 class FitBy(str, Enum):
     """Which points one regression line is fitted through."""
 
@@ -1383,6 +1458,14 @@ class PlotSpec:
     #: A regression's fit line and annotation (:class:`RegressionOptions`);
     #: inert on every other kind. Plan-irrelevant: fits run per figure.
     regression: RegressionOptions = field(default_factory=RegressionOptions)
+    #: How a text measure is drawn — count, proportion or the categories
+    #: themselves (:class:`CategoricalOptions`). Inert on a numeric measure.
+    #: NOT plan-irrelevant: the stat decides the derived table
+    #: (``categorical.apply_categorical``).
+    categorical: CategoricalOptions = field(default_factory=CategoricalOptions)
+    #: Stacked or side-by-side bars (:class:`BarOptions`); inert on every
+    #: other kind. Plan-irrelevant.
+    bar: BarOptions = field(default_factory=BarOptions)
     facet: FacetOptions = field(default_factory=FacetOptions)
     #: What the y axis spans, and what separates spans. See :class:`YAxis`.
     y_axis: YAxis = field(default_factory=YAxis)
@@ -1423,9 +1506,10 @@ class PlotSpec:
     location_filter: LocationFilter = field(default_factory=LocationFilter)
     #: Variables joined in as FACTORS rather than plotted — a subject-level
     #: ``Condition`` holding stim/sham, say, or one column of a wide
-    #: demographics table. They classify as CATEGORICAL and so are rightly
-    #: refused as measures; as factors they take a role like any other and give
-    #: you the grouping the data already records.
+    #: demographics table. They classify as CATEGORICAL; plotted themselves
+    #: they are counts or %s (``categorical``), but joined in here as factors
+    #: they take a role like any other and give you the grouping the data
+    #: already records.
     factor_variables: list[FactorVariable] = field(default_factory=list)
     #: Combines: factors derived by combining another factor's levels, each
     #: replacing its source while active (:class:`LevelGroup`).
@@ -1572,6 +1656,8 @@ class PlotSpec:
         raw["y_axis"] = self.y_axis.to_dict()
         raw["histogram"] = self.histogram.to_dict()
         raw["regression"] = self.regression.to_dict()
+        raw["categorical"] = self.categorical.to_dict()
+        raw["bar"] = self.bar.to_dict()
         raw["location_filter"] = self.location_filter.to_dict()
         raw["variant_sets"] = [s.to_dict() for s in self.variant_sets]
         raw["level_groups"] = [g.to_dict() for g in self.level_groups]
@@ -1619,6 +1705,8 @@ class PlotSpec:
             time_zone=str(raw.get("time_zone") or "local"),
             histogram=HistogramOptions.from_dict(raw.get("histogram")),
             regression=RegressionOptions.from_dict(raw.get("regression")),
+            categorical=CategoricalOptions.from_dict(raw.get("categorical")),
+            bar=BarOptions.from_dict(raw.get("bar")),
             facet=_facet_from_dict(raw.get("facet") or {}),
             y_axis=YAxis.from_dict(raw.get("y_axis") or {}),
             style=StyleOptions.from_dict(raw.get("style")),

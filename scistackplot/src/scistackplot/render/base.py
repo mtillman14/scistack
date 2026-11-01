@@ -211,6 +211,11 @@ class AxisText:
     #: edge to the title's right edge; x: their bottom to its top), measured
     #: from the axes edge when there are no labels; ``None`` without a title.
     title_gap_pt: float | None = None
+    #: The export's drawn axis range ``(low, high)``, x side only. The ticks
+    #: above are only right inside the range they were chosen for: one point
+    #: at x=0 got matplotlib's ±0.055 and ticks at ±0.04, which plotly's own
+    #: much wider autorange bunched into the middle of the axis (2026-10-30).
+    limits: tuple[float, float] | None = None
 
 
 def shows_y_labels(resolved: ResolvedPlot, row: int, col: int) -> bool:
@@ -566,6 +571,38 @@ def dash_levels(resolved: ResolvedPlot) -> list[str]:
         if column in panel.frame.columns:
             present.update(str(v) for v in panel.frame[column].dropna().unique())
     return [sid for sid in resolved.dash_styles if sid in present]
+
+
+#: The marker a line series with ONE point draws (``is_lone_point``). A
+#: polyline through one vertex has no length and so draws nothing: a subject
+#: with one source row was an empty figure (2026-10-30).
+LONE_POINT_MARKER = "o"
+#: Its size in points (matplotlib) — plotly's px are emitted from the same
+#: number, as the line widths are.
+LONE_POINT_MARKER_PT = 5.0
+
+
+def is_lone_point(values) -> bool:
+    """Whether a line series has exactly one non-missing point — the one rule
+    the matplotlib preview, the plotly preview and the exported code
+    (``lone_point_marker_code``, written the same way) share."""
+    ys = pd.to_numeric(pd.Series(np.asarray(values, dtype=object)), errors="coerce")
+    return int(ys.dropna().size) == 1
+
+
+def lone_point_marker_code(axes: str) -> list[str]:
+    """The same rule, as code for an exported figure: seaborn's line plot has
+    no per-series marker, so the lines it drew are fixed up afterwards.
+    ``axes`` is an expression for the axes (``"g.axes.flat"``)."""
+    return [
+        "# a line through ONE point draws nothing — give it a marker, as the preview does",
+        f"for _ax in {axes}:",
+        "    for _line in _ax.get_lines():",
+        '        _ys = pd.to_numeric(pd.Series(_line.get_ydata()), errors="coerce")',
+        "        if int(_ys.dropna().size) == 1:",
+        f"            _line.set_marker({LONE_POINT_MARKER!r})",
+        f"            _line.set_markersize({LONE_POINT_MARKER_PT})",
+    ]
 
 
 def dash_style(resolved: ResolvedPlot, rows: pd.DataFrame) -> str:

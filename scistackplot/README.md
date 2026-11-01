@@ -72,6 +72,7 @@ collapsed. That single rule produces both defaults and availability:
 | scalar | scatter, or a bar with no error bar | box / violin / bar + CI |
 | 1-D array | one line per leaf group | mean line + shaded error band |
 | 2-D | heatmap | mean heatmap |
+| text | count bar | proportion bar + error (see "Text measures") |
 
 "Average over trials, then show the spread across subjects" is
 `trial=COLLAPSE, subject=COLLAPSE`: trial averages within each subject
@@ -136,6 +137,42 @@ is ignored with a note. A difference comparison is drawn in hours, and a %
 change does not apply. Save data writes ISO times and names the zone in the
 header, and the exported code draws the same date ticks. See
 `docs/claude/plot-datetimes.md`.
+
+## Text measures
+
+A text (or True/False) column is plotted by rewriting it into numbers first
+(`scistackplot.categorical`), and the plot type decides how:
+
+| Plot type | What it draws | "Show sample" |
+|---|---|---|
+| Count bar (the default) | records per category | — (a count has no sample) |
+| Proportion bar + error | the mean of each unit's % ± the error band | each unit's % |
+| Count / proportion heatmap | categories × one grouping layer | — |
+| Strip of categories | every record at its category on a category axis | — |
+| Spaghetti of categories / of % per unit | one line per unit across x | — |
+
+```python
+from scistackplot import CategoricalOptions, CategoricalStat
+
+spec = PlotSpec(
+    measures=["Outcome"],
+    roles={"Level": Role.GROUP, "subject": Role.COLLAPSE, "trial": Role.COLLAPSE},
+    groups=["Level"], color="Level",            # one bar per category
+    kind=PlotKind.BAR,
+    categorical=CategoricalOptions(stat=CategoricalStat.PROPORTION),
+)
+```
+
+**Collapse means pool** for a text measure: a collapsed key's records merge
+into one bucket, never an average of averages. A count sums every collapsed
+key; a proportion pools everything beneath the sample key (the last
+collapsed one) into one % per unit, then draws the mean of the units.
+`Level` is the synthetic factor naming the categories; `CategoricalOptions.level`
+draws one category only. A filter on the measure keeps records by category;
+a range filter on it is refused. More than 50 distinct values is free text,
+refused with that reason. `BarOptions(stack=True)` stacks the coloured layer
+(any measure) — with a % per category on colour, the 100% stacked bar. See
+`docs/claude/categorical-measures.md`.
 
 ## Histograms and regressions
 

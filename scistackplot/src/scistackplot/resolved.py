@@ -60,6 +60,14 @@ SAMPLE_LINE = "__line"
 #: subject keeps its slot in every bracket. Empty when nothing splits the runs.
 RUN = "__run"
 Z = "__z"
+#: A GRID heatmap (two grouping layers, `reduce._grid_frame`): the factor
+#: names along x and down y, and their levels in drawn order, beside the
+#: matrix in `__z` (row i is GRID_ROWS[i], column j GRID_COLUMNS[j]). Absent
+#: on a 2-D measure's heatmap, whose axes are the matrix's own indices.
+GRID_COLUMNS = "__grid_columns"
+GRID_ROWS = "__grid_rows"
+GRID_COLUMN_FACTOR = "__grid_column_factor"
+GRID_ROW_FACTOR = "__grid_row_factor"
 #: A histogram bar's left and right edges along x (``bins.bin_table``), after
 #: any dodge, and the stack base its height starts from (0 unless stacked).
 #: ``__x`` is the bar's centre and ``__y`` its TOP (base + height), so the y
@@ -134,6 +142,10 @@ class Labels:
     #: name, for the legend's block of overlay levels.
     sample: str | None = None
     title: str | None = None
+    #: What a heatmap's colour scale is — the measure. Set for a GRID
+    #: heatmap (`reduce._grid_frame`), whose x and y titles name its two
+    #: grouping layers instead; empty otherwise.
+    z: str = ""
 
 
 @dataclass
@@ -337,6 +349,11 @@ class ResolvedPlot:
     #: measure, or a histogram of a datetime measure (its values are binned
     #: along x). None for a numeric or categorical x.
     temporal_x: Any = None
+    #: A text measure drawn as its categories (`categorical`, VALUE mode): the
+    #: y values are positions 0..n-1 and these are the category each one is,
+    #: in order. Every renderer labels the y ticks with them; None for a
+    #: numeric y. Set by `reduce._attach_categories`.
+    y_categories: list[str] | None = None
     #: HISTOGRAM only: the figure's bin edges (``bins.BinEdges``), decided
     #: once per figure from every panel's values so the panels compare, and
     #: restated by the generated code (``bins.EDGES_SOURCE``).
@@ -416,6 +433,7 @@ class ResolvedPlot:
             "series_offsets": dict(self.series_offsets),
             "dash_styles": dict(self.dash_styles),
             "temporal_x": self.temporal_x.to_dict() if self.temporal_x is not None else None,
+            "y_categories": list(self.y_categories) if self.y_categories is not None else None,
             "bins": self.bins.to_dict() if self.bins is not None else None,
             "sample": {
                 "shown": list(self.sample_shown),

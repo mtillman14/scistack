@@ -199,3 +199,47 @@ def test_output_row_identity_when_unchanged():
     df = pd.DataFrame({"subject": ["S01", "S02"], "x": [1.0, 2.0]})
     _, report = combine_duplicate_rows(df, ["subject"])
     assert report.output_row == [0, 1]
+
+
+def test_all_groups_uncombinable_returns_table_unchanged():
+    df = pd.DataFrame(
+        {
+            "subject": ["S01", "S01"],
+            "sig": [np.array([1.0, 2.0]), np.array([3.0])],
+        },
+        index=[10, 11],
+    )
+    out, report = combine_duplicate_rows(df, ["subject"])
+    assert out is df
+    assert report.combined == [] and len(report.uncombinable) == 1
+
+
+def test_genuine_list_cell_elsewhere_refuses_the_list_column():
+    """A list the table already held (one location's vector) is one
+    non-scalar cell, not a row list: its one-element form would load back as
+    a scalar, so the column cannot become a row list."""
+    df = pd.DataFrame(
+        {
+            "subject": ["S01", "S01", "S02"],
+            "x": pd.Series([5, 6, [7]], dtype=object),
+        }
+    )
+    with pytest.raises(CombineMixedTypesError) as info:
+        combine_duplicate_rows(df, ["subject"])
+    assert info.value.problems[0]["column"] == "x"
+    assert "other" in info.value.problems[0]["kinds"]
+
+
+def test_long_array_keys_with_same_repr_stay_apart():
+    """numpy elides a long array's repr; two different arrays sharing it are
+    still two keys."""
+    a = np.zeros(2000)
+    b = np.zeros(2000)
+    b[1000] = 1.0
+    assert repr(a) == repr(b)
+    cfg = np.empty(2, dtype=object)
+    cfg[0], cfg[1] = a, b
+    df = pd.DataFrame({"subject": ["S01", "S01"], "cfg": cfg, "x": [1.0, 2.0]})
+    out, report = combine_duplicate_rows(df, ["subject", "cfg"])
+    assert out is df
+    assert report.combined == []

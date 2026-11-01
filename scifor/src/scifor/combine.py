@@ -152,8 +152,14 @@ def _is_missing(value: Any) -> bool:
 
 
 def _key_token(value: Any) -> Any:
-    """A hashable stand-in for one key cell: NULLs are one token, an
-    unhashable value (a dict of bookkeeping, say) its repr."""
+    """A hashable stand-in for one key cell: NULLs are one token, an array
+    its dtype, shape and bytes (a long array's repr elides its middle, so two
+    different arrays could share it), any other unhashable value (a dict of
+    bookkeeping, say) its repr."""
+    import numpy as np
+
+    if isinstance(value, np.ndarray):
+        return ("__scifor_ndarray__", value.dtype.str, value.shape, value.tobytes())
     if _is_missing(value):
         return _MISSING
     try:
@@ -225,8 +231,9 @@ def combine_duplicate_rows(
     key does: grouping on fewer columns than the table has would drop the
     others' values. Returns
     ``(combined_df, CombineReport)``; a table without duplicate keys comes
-    back unchanged (the same object). The combined row takes the place of the
-    group's first row; the index is reset when anything was combined.
+    back unchanged (the same object), as does one whose every duplicate group
+    holds a non-scalar cell. The combined row takes the place of the group's
+    first row; the index is reset when anything was combined.
 
     Raises :class:`CombineMixedTypesError` before returning anything when a
     column that needs a list holds more than one kind of value.
@@ -264,6 +271,7 @@ def combine_duplicate_rows(
 
     # Decide every multi-row group: its combined cells, or "leave it".
     combined_cells: dict[int, dict] = {}  # first row -> {column: cell}
+    combined_lists: dict[int, set] = {}  # first row -> columns it made lists
     list_cols: set = set()
     collapsed_cols: set = set()
     first_list_key: dict = {}  # column -> key of one group that needed a list
@@ -302,6 +310,7 @@ def combine_duplicate_rows(
                 first_list_key.setdefault(c, key_of(idx[0]))
         collapsed_cols.update(g_collapsed)
         combined_cells[idx[0]] = cells
+        combined_lists[idx[0]] = set(g_lists)
         report.combined.append(
             {
                 "key": key_of(idx[0]),
@@ -310,6 +319,12 @@ def combine_duplicate_rows(
                 "collapsed_columns": g_collapsed,
             }
         )
+
+    if not combined_cells:
+        # Every duplicate group holds a non-scalar cell: nothing to combine,
+        # the table comes back as it was (scidb's duplicate check decides).
+        _log_uncombinable(report)
+        return df, report
 
     # Rows of combined groups other than the first are dropped (merged).
     merged_away = {
@@ -322,14 +337,20 @@ def combine_duplicate_rows(
 
     # A list column must hold one kind of value across the WHOLE table, the
     # single values of other locations included: they share its column type.
+    # Only a list THIS function made is looked into: a list the table already
+    # held is one non-scalar cell ("other"), so it cannot share a row-list
+    # column (its one-element form would load back as a scalar).
     problems = []
     for c in values:
         if c not in list_cols:
             continue
         kinds: set = set()
         for i in out_rows:
-            cell = combined_cells.get(i, {}).get(c, value_cells[c][i])
-            for v in cell if isinstance(cell, list) else [cell]:
+            if c in combined_lists.get(i, ()):
+                cell_values = combined_cells[i][c]
+            else:
+                cell_values = [combined_cells.get(i, {}).get(c, value_cells[c][i])]
+            for v in cell_values:
                 if not _is_missing(v):
                     kinds.add(_kind(v))
         if len(kinds) > 1 or "datetime" in kinds:
@@ -345,15 +366,15 @@ def combine_duplicate_rows(
     index = pd.RangeIndex(len(out_rows))
     for c in df.columns:
         if c in values:
-            cells = [combined_cells.get(i, {}).get(c, value_cells[c][i]) for i in out_rows]
+            column_cells = [combined_cells.get(i, {}).get(c, value_cells[c][i]) for i in out_rows]
         else:
             col = df[c].tolist()
-            cells = [col[i] for i in out_rows]
+            column_cells = [col[i] for i in out_rows]
         if c in list_cols:
-            columns[c] = _object_series(cells, index, c)
+            columns[c] = _object_series(column_cells, index, c)
         else:
             try:
-                columns[c] = pd.Series(cells, index=index, name=c, dtype=df[c].dtype)
+                columns[c] = pd.Series(column_cells, index=index, name=c, dtype=df[c].dtype)
             except (TypeError, ValueError):
                 columns[c] = _object_series(cells, index, c)
     out = pd.DataFrame(columns, index=index)[list(df.columns)]
@@ -383,6 +404,11 @@ def combine_duplicate_rows(
             + (f"; ... +{more} more" if more > 0 else ""),
             layer="scifor",
         )
+    _log_uncombinable(report)
+    return out, report
+
+
+def _log_uncombinable(report: CombineReport) -> None:
     for g in report.uncombinable:
         Log.warn(
             f"[combine] {_key_text(g['key'])}: {g['rows']} rows NOT combined - "
@@ -390,4 +416,3 @@ def combine_duplicate_rows(
             f"can be combined); the save will refuse this location",
             layer="scifor",
         )
-    return out, report

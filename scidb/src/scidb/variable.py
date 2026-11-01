@@ -470,17 +470,18 @@ class BaseVariable(metaclass=VariableMeta):
                     # Multiple data columns: save each row's sub-DataFrame as data
                     sub_df = data[data_cols].reset_index(drop=True)
                     aug = data[meta_cols].copy().reset_index(drop=True)
-                    aug["__scidb_row_data__"] = [
+                    row_frames = [
                         sub_df.iloc[[i]].reset_index(drop=True)
                         for i in range(len(data))
                     ]
-                    if row_lists:
-                        # A row-list column is object dtype for every row;
-                        # a row with one value gets its own dtype back, so
-                        # its frame (and record id) is what it was before.
-                        aug["__scidb_row_data__"] = [
-                            f.infer_objects() for f in aug["__scidb_row_data__"]
-                        ]
+                    # A row-list column is object dtype for every row; a row
+                    # with one value gets its own dtype back, so its frame
+                    # (and record id) is what it was before. Only those
+                    # columns: the others kept their dtype.
+                    for f in row_frames:
+                        for c in row_lists:
+                            f[c] = f[c].infer_objects()
+                    aug["__scidb_row_data__"] = row_frames
                     return cls.save_from_dataframe(
                         aug, "__scidb_row_data__", meta_cols, db=_db,
                         _row_list_columns=row_lists, **metadata

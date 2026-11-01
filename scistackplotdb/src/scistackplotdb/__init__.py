@@ -82,6 +82,7 @@ from .presets import (
     save_preset,
 )
 from .source import ScidbSource
+from .text_fields import TEXT_SUFFIX, base_variable, is_text_measure, text_measure_name
 from .variants import (
     branch_params_for,
     selection_for,
@@ -91,6 +92,11 @@ from .variants import (
 
 __all__ = [
     "ScidbSource",
+    # a wide variable's text fields as their own measure
+    "TEXT_SUFFIX",
+    "base_variable",
+    "is_text_measure",
+    "text_measure_name",
     # saved plots
     "save_plot",
     "list_saved_plots",

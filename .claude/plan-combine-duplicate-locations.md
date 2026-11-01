@@ -341,3 +341,20 @@ Known risks to check when running the tests:
   in `convert_column_to_row_list` alone (add/copy/drop/rename).
 - MATLAB conversion of a loaded list cell inside a table (TestSpreadParity
   combine test accepts cell or numeric).
+
+Review fixes (2026-10-29, after v0.1.65):
+- `row_list_change` maps every integer type to BIGINT and every float/decimal
+  to DOUBLE (`row_lists._elem_type`) before the scalar rules. Defensive only:
+  scidb never stores a scalar column as INTEGER/FLOAT (batch typing gives
+  BIGINT/DOUBLE, length-1 arrays unwrap to Python scalars), so no save path
+  reaches it today.
+- scifor's mixed-kind check looked inside a list the TABLE already held (one
+  location's vector), so it could share a row-list column and its `[v]` would
+  load as `v`. Only lists the combine made are looked into now; a genuine
+  list cell is kind "other" -> CombineMixedTypesError.
+- Array key cells are tokenised by dtype/shape/bytes (a long array's repr
+  elides its middle, so two different arrays could have merged).
+- Every duplicate group uncombinable -> the table comes back unchanged (same
+  object, index kept), not a re-indexed copy.
+- `BaseVariable.save` multi-column path: `infer_objects` only on the row-list
+  columns (it re-typed other object columns too).

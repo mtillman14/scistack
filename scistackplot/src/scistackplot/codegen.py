@@ -26,6 +26,12 @@ from scistacklog import Log
 
 from .aliases import DisplayText, check_distinct, display_text
 from .colors import mark_colors
+from .categorical import (
+    apply_categorical,
+    categorical_code,
+    categorical_mode,
+    pooled_reduction,
+)
 from .cell import cell_collapses, effective_shape
 from .compare import comparison_title, plan_comparison
 from .groups import active_level_groups, apply_level_groups, effective_mapping
@@ -42,6 +48,7 @@ from .reduce import (
     x_axis_title,
 )
 from .resolved import DASH_CYCLE
+from .rows import row_factor
 from .roles import (
     collapse_steps,
     complete_roles,
@@ -59,6 +66,7 @@ from .spec import (
     BAR_KINDS,
     CONTINUOUS_X_KINDS,
     SUMMARY_KINDS,
+    CategoricalStat,
     ErrorBand,
     FactorVariable,
     PlotKind,
@@ -69,6 +77,7 @@ from .spec import (
     value_spellings,
 )
 from .table import MISSING_LEVEL, LongTable
+from .stacking import stacks
 from .paper import PAPER, figure_rc_params, paper_axes_code, seaborn_err_kws
 from .textsize import ResolvedSizes, resolve_sizes
 from .temporal import (
@@ -216,6 +225,13 @@ def _generate_plot_function(
     name = function_name or default_function_name(spec)
     base = table
     table = apply_level_groups(spec, apply_variant_sets(spec, table))
+    # A text measure: the rewrite into numbers is EMITTED (its owner writes
+    # the code, `categorical.categorical_code`), and everything below reads
+    # the rewritten table — its `Level` factor, its scalar shape — as the
+    # preview does. The spec is kept as given: its filters on the measure are
+    # in the emitted block, and the plan calls below re-run the rewrite.
+    categorical_lines = categorical_code(spec, table)
+    _categorical_spec, table = apply_categorical(spec, table)
     # The collapse is NOT applied to `table` — the endpoint receives the frame
     # as the data holds it, so the reduction has to be EMITTED (`_preamble`),
     # exactly as the melt and the variant concat are. What the rest of codegen
@@ -247,7 +263,7 @@ def _generate_plot_function(
 
     body: list[str] = []
     body.extend(_variant_preamble(spec, table))
-    body.extend(_preamble(spec, table, roles, shape))
+    body.extend(_preamble(spec, table, roles, shape, categorical_lines))
     y_plan = _y_limit_plan(spec, base, table, roles)
     body.extend(_plot_call(spec, table, roles, shape, y_plan, base))
     y_dates = temporal is not None and not compared
@@ -573,8 +589,51 @@ def _factor_level_lines(table, factor: str) -> list[str]:
     return [f"df[{factor!r}] = df[{factor!r}].fillna({MISSING_LEVEL!r}).astype(str)"]
 
 
-def _preamble(spec, table, roles, shape) -> list[str]:
-    """Melt, filters, 1-D explosion, aggregation — the order resolve() uses."""
+def _row_split_lines(spec, table) -> list[str]:
+    """The ``Row`` split of combined rows, mirrored for the endpoint.
+
+    The interactive path splits row-list cells in ``ScidbSource`` through
+    ``rows.explode_row_lists``; the endpoint receives them from scidb as a
+    Python list (several rows) or the plain value (one row,
+    ``sciduckdb.unwrap_row_list``), so a list is the only cell to split.
+    Which fields, and the factor's name, come from the Row factor's origin
+    (``rows.row_factor``) — the resolved result, not re-derived."""
+    factor = row_factor(table)
+    if factor is None:
+        return []
+    origin = factor.origin or {}
+    fields = list(origin.get("fields") or [])
+    field_factor = origin.get("field_factor")
+    y, row = spec.y_measure, factor.name
+    split = (
+        f"df[{field_factor!r}].isin(_row_lists)"
+        if field_factor
+        else "[True] * len(df)"
+    )
+    return [
+        f"# {row}: one row per source row of the combined (\"combine rows\") "
+        f"field(s), numbered 1, 2, … in source order",
+        f"_row_lists = {fields!r}",
+        f"_cells = [list(_v) if _s and isinstance(_v, (list, tuple)) else [_v] "
+        f"for _v, _s in zip(df[{y!r}], {split})]",
+        f"df[{y!r}] = _cells",
+        f"df[{row!r}] = [[str(_i) for _i in range(1, len(_c) + 1)] for _c in _cells]",
+        f"df = df.explode([{y!r}, {row!r}], ignore_index=True)",
+        "try:",
+        f"    df[{y!r}] = pd.to_numeric(df[{y!r}]).astype(\"float64\")",
+        "except (TypeError, ValueError):",
+        "    pass  # not all numbers: left as they are, as the preview leaves them",
+        "",
+    ]
+
+
+def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> list[str]:
+    """Melt, filters, 1-D explosion, aggregation — the order resolve() uses.
+
+    ``categorical_lines`` (`categorical.categorical_code`) rewrite a text
+    measure into numbers after the locations and before the other filters,
+    where `reduce` applies `categorical.apply_categorical`; a filter on the
+    text measure itself is in them, so it is skipped below."""
     lines: list[str] = []
 
     # An x-y plot: the x variable joined onto every y row on the schema keys
@@ -669,6 +728,8 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             ]
         )
 
+    lines.extend(_row_split_lines(spec, table))
+
     # A datetime measure becomes wall-clock ms in the plot's time zone mode,
     # after the melt (which makes the column) and before anything filters or
     # averages it — where `reduce` applies `temporal.apply_temporal`.
@@ -723,9 +784,12 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     # `if _k in df.columns` guard is not defensive clutter: it is how a key the
     # frame lacks goes unconstrained, matching the interactive path exactly.
     lines.extend(_location_lines(spec))
+    lines.extend(categorical_lines)
 
     filter_lines: list[str] = []
     for flt in spec.filters:
+        if categorical_lines and flt.column == spec.y_measure:
+            continue  # a record filter on the text, emitted in the block above
         if flt.include is not None:
             filter_lines.append(f"df = df[df[{flt.column!r}].isin({list(flt.include)!r})]")
         if flt.exclude is not None:
@@ -822,15 +886,26 @@ def _preamble(spec, table, roles, shape) -> list[str]:
     compared = False
     # `final` is non-empty only for a spaghetti whose sample cannot be joined
     # across x (roles.spaghetti_sample_repeats): each line is its mean.
-    for key in [*steps.pre, *steps.final]:
+    #
+    # A text measure POOLS (`categorical.pooled_reduction`, which
+    # `reduce._collapse_levels` reads): every pre key in ONE groupby, summed
+    # for a count, averaged for a %.
+    reduction = pooled_reduction(spec, table)
+    passes: list[list[str]] = (
+        [list(steps.pre)] if reduction is not None and steps.pre else [[k] for k in steps.pre]
+    )
+    passes.extend([k] for k in steps.final)
+    for dropped in passes:
+        key = dropped[0]
         if comparison is not None and not compared and key in steps.final:
             lines.extend(
                 _compare_lines(comparison, spec, kept, shape, index_column, overlay_drawn)
             )
             compared = True
-        if key not in kept:
+        dropped = [name for name in dropped if name in kept]
+        if not dropped:
             continue
-        kept = [name for name in kept if name != key]
+        kept = [name for name in kept if name not in dropped]
         keep = list(kept)
         if shape is Shape.SERIES_1D:
             keep.append(index_column)
@@ -844,11 +919,16 @@ def _preamble(spec, table, roles, shape) -> list[str]:
             keep.append(_X_CONSTANT)
         measures = [spec.y_measure, *([spec.x_measure] if spec.x_measure else [])]
         within = f" within {', '.join(kept)}" if kept else ""
-        what = "each line's mean" if key in steps.final else "averaged away"
+        how = reduction or "mean"
+        what = (
+            ("summed — a count" if how == "sum" else "pooled — one % each")
+            if reduction is not None
+            else ("each line's mean" if key in steps.final else "averaged away")
+        )
         lines.extend(
             [
-                f"# collapse {key}{within} — {what}",
-                f"df = df.groupby({keep!r}, as_index=False)[{measures!r}].mean()",
+                f"# collapse {' x '.join(dropped)}{within} — {what}",
+                f"df = df.groupby({keep!r}, as_index=False)[{measures!r}].{how}()",
                 "",
             ]
         )
@@ -1142,7 +1222,9 @@ def _overlay_of(spec, table: LongTable, roles, shape):
     """``(OverlaySteps, OverlayJoin)`` for the export, or None — the same
     availability rule the figure path applies (``roles.overlay_unavailable``),
     so the export carries an overlay exactly when the preview did."""
-    if not spec.show_sample or overlay_unavailable(spec, roles, shape) is not None:
+    if not spec.show_sample or overlay_unavailable(
+        spec, roles, shape, categorical_mode(spec, table)
+    ) is not None:
         return None
     steps = overlay_steps(spec, roles, table)
     if steps is None:
@@ -1985,6 +2067,8 @@ def _plot_call(
 ) -> list[str]:
     if shape is Shape.MATRIX_2D:
         return _heatmap_call(spec, table)
+    if spec.kind is PlotKind.HEATMAP:
+        return _grid_heatmap_call(spec, table, roles)
 
     kind = spec.kind
     x = _x_expression(spec, table, roles, shape)
@@ -2050,7 +2134,8 @@ def _plot_call(
             args.append("dodge=False")
         if kind in BAR_KINDS:
             args.append(f"estimator={estimator}")
-            args.append(f"errorbar={errorbar}")
+            # Stacked bars draw no error bar (`stacking`), here as in the preview.
+            args.append(f"errorbar={'None' if stacks(spec) else errorbar}")
             # The export's error-bar ink and caps (paper.seaborn_err_kws);
             # seaborn's own are grey, thicker and capless.
             args.append(f"err_kws={seaborn_err_kws()!r}")
@@ -2194,6 +2279,17 @@ def _plot_call(
         *[f"    {arg}," for arg in args],
         ")",
     ]
+    if kind in BAR_KINDS and stacks(spec) and color:
+        lines.extend(_stack_lines(is_horizontal(kind)))
+    categories = _y_categories(spec, table)
+    if categories is not None:
+        # Category positions (a text measure's strip / spaghetti): every
+        # category a tick, named, half a slot of air at each end — the
+        # preview's axis (`reduce._attach_categories`).
+        lines.append(
+            f"g.set(yticks=list(range({len(categories)})), yticklabels={categories!r}, "
+            f"ylim=(-0.5, {len(categories) - 0.5!r}))"
+        )
     if kind is PlotKind.SPAGHETTI:
         # Positions back to level names, and the range a categorical axis
         # would have had — the same geometry the preview draws.
@@ -2201,6 +2297,13 @@ def _plot_call(
             "g.set(xticks=list(range(len(_order))), xticklabels=_order, "
             "xlim=(-0.5, len(_order) - 0.5))"
         )
+    if kind is PlotKind.LINE:
+        # Before anything else draws lines on the axes (fits, the sample
+        # overlay), so only seaborn's series are inspected — the ones
+        # `mpl._draw_lines` applies the same rule to.
+        from .render.base import lone_point_marker_code
+
+        lines.extend(lone_point_marker_code("g.axes.flat"))
     if kind is PlotKind.HISTOGRAM:
         lines.extend(_histogram_limit_lines(spec, y_plan))
     if kind is PlotKind.REGRESSION:
@@ -2224,7 +2327,9 @@ def _plot_call(
     compared = plan_comparison(spec, roles, table)
     y_label = style.y_label or comparison_title(
         compared,
-        aliases.text.name(spec.y_measure, spec.y_measure),
+        # The measure's display as the preview's default: a text measure
+        # rewritten into a count says "Count" (`categorical.measure_label`).
+        aliases.text.name(spec.y_measure, table.measure(spec.y_measure).display),
         aliases.text,
         table,
     )
@@ -2541,6 +2646,84 @@ def _heatmap_call(spec, table: LongTable) -> list[str]:
         *paper_axes_code("[ax]"),
         "return fig",
     ]
+
+
+def _stack_lines(horizontal: bool) -> list[str]:
+    """Stacked bars (`stacking`): seaborn draws the colour levels' bars on
+    one tick, overlapping (``dodge=False``), one container per level in hue
+    order; each is moved to start where the earlier ones end — positives up
+    from zero, negatives down, as `stacking.stack_bases` places them."""
+    start, size = ("x", "width") if horizontal else ("y", "height")
+    centre = "get_y() + _bar.get_height() / 2" if horizontal else "get_x() + _bar.get_width() / 2"
+    return [
+        "# stacked: each colour level's bar starts where the earlier ones end",
+        "for _ax in g.axes.flat:",
+        "    _ends = {}",
+        "    for _container in _ax.containers:",
+        "        for _bar in _container:",
+        f"            _value = _bar.get_{size}()",
+        "            if _value != _value:  # NaN: no bar",
+        "                continue",
+        f"            _slot = (round(_bar.{centre}, 6), _value >= 0)",
+        "            _base = _ends.get(_slot, 0.0)",
+        f"            _bar.set_{start}(_base)",
+        "            _ends[_slot] = _base + _value",
+        "    _ax.relim()",
+        "    _ax.autoscale_view()",
+    ]
+
+
+def _y_categories(spec, table: LongTable) -> list[str] | None:
+    """The category text a VALUE-mode text measure's y positions stand for
+    (`categorical`), or None — the preview's `ResolvedPlot.y_categories`."""
+    if spec.y_measure not in table.measure_names:
+        return None
+    info = table.measure(spec.y_measure)
+    if info.categorical is not CategoricalStat.VALUE:
+        return None
+    return [str(level) for level in info.levels]
+
+
+def _grid_heatmap_call(spec, table: LongTable, roles) -> list[str]:
+    """A GRID heatmap (`reduce._grid_frame`): the bar's statistic over the
+    sample rows of every (column, row) pair, one panel per level of the first
+    FACET, row 0 at the bottom — the preview's matrix, layout and labels."""
+    from .roles import grid_layers
+
+    columns, rows = grid_layers(spec, table, roles)
+    facets = [name for name, role in roles.items() if role is Role.FACET]
+    facet = facets[0] if facets else None
+    text = display_text(spec, table)
+    statistic = "median" if spec.aggregate.statistic is Statistic.MEDIAN else "mean"
+    z_label = spec.style.y_label or text.name(spec.y_measure, table.measure(spec.y_measure).display)
+    lines = [
+        *_in_order_lines(),
+        f"_panels = [(None, df)] if {facet!r} is None else "
+        f"[(_v, df[df[{facet!r}] == _v]) for _v in {_IN_ORDER}(df[{facet!r}], "
+        f"{_declared_levels(table, facet) if facet else []!r})]",
+        f"fig, axes = plt.subplots(1, len(_panels), figsize=({spec.style.width}, "
+        f"{spec.style.height}), squeeze=False)",
+        "for _ax, (_level, _part) in zip(axes[0], _panels):",
+        f"    _cols = {_IN_ORDER}(_part[{columns!r}], {_declared_levels(table, columns)!r})",
+        f"    _rows = {_IN_ORDER}(_part[{rows!r}], {_declared_levels(table, rows)!r})",
+        f"    _grid = (_part.groupby([{rows!r}, {columns!r}])[{spec.y_measure!r}]"
+        f".{statistic}().unstack({columns!r}).reindex(index=_rows, columns=_cols))",
+        '    _image = _ax.imshow(np.ma.masked_invalid(_grid.to_numpy(dtype=float)), '
+        'aspect="auto", origin="lower")',
+        f"    fig.colorbar(_image, ax=_ax).set_label({z_label!r})",
+        "    _ax.set_xticks(range(len(_cols)))",
+        "    _ax.set_xticklabels([str(v) for v in _cols])",
+        "    _ax.set_yticks(range(len(_rows)))",
+        "    _ax.set_yticklabels([str(v) for v in _rows])",
+        f"    _ax.set_xlabel({spec.style.x_label or text.name(columns, table.factor(columns).display)!r})",
+        f"    _ax.set_ylabel({text.name(rows, table.factor(rows).display)!r})",
+        "    if _level is not None:",
+        "        _ax.set_title(str(_level))",
+        *([f"fig.suptitle({spec.style.title!r})"] if spec.style.title else []),
+        *paper_axes_code("axes.flat"),
+        "return fig",
+    ]
+    return ["import numpy as np", "", *lines]
 
 
 def _bar_autoscale_lines(val: str = "y") -> list[str]:

@@ -47,6 +47,14 @@ from .capability import (
     variant_summary,
     why_unavailable,
 )
+from .categorical import (
+    LEVEL_FACTOR,
+    MAX_CATEGORY_LEVELS,
+    apply_categorical,
+    categorical_mode,
+    mode_for_kind,
+)
+from .stacking import stack_bases, stacks
 from .cell import apply_cell_collapse, cell_collapse_note, cell_collapses, effective_shape
 from .codegen import (
     default_function_name,
@@ -111,9 +119,13 @@ from .custom import (
 )
 from .diffbars import DifferenceBar, bars_for_panel, slot_endpoints
 from .panels import PanelOverride, override_for
+from .rows import ROW_FACTOR, element_values, explode_row_lists, row_factor, row_origin
 from .shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
 from .spec import (
+    BarOptions,
+    CategoricalOptions,
+    CategoricalStat,
     Aggregation,
     BinMode,
     CONTINUOUS_X_KINDS,
@@ -245,6 +257,16 @@ __all__ = [
     "CONTINUOUS_X_KINDS",
     "FitBy",
     "HistMultiple",
+    "BarOptions",
+    "CategoricalOptions",
+    "CategoricalStat",
+    "LEVEL_FACTOR",
+    "MAX_CATEGORY_LEVELS",
+    "apply_categorical",
+    "categorical_mode",
+    "mode_for_kind",
+    "stack_bases",
+    "stacks",
     "HistStat",
     "HistogramOptions",
     "RegressionOptions",
@@ -331,6 +353,11 @@ __all__ = [
     "FactorInfo",
     "MISSING_LEVEL",
     "MeasureInfo",
+    "ROW_FACTOR",
+    "element_values",
+    "explode_row_lists",
+    "row_factor",
+    "row_origin",
     "Shape",
     "classify_value",
     "classify_column",

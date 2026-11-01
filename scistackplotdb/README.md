@@ -64,6 +64,18 @@ validate(spec.with_roles(**{"scale.factor": Role.COLLAPSE}), table)
 # PlotSpec.variant_sets.
 ```
 
+**Text fields are their own measure.** One melted value column holds one
+shape, so a wide variable with numeric AND text fields is listed twice:
+`Gait` (its numeric fields, one `ColName` level each) and `Gait (text)` (its
+text fields), drawn as counts, %s or categories (`scistackplot`'s "Text
+measures"). A variable whose fields are all text is itself the text measure.
+`scistackplotdb.text_fields` owns the name (`base_variable("Gait (text)")`
+is `"Gait"`, which is what a generated endpoint's `for_each` reads):
+
+```python
+source.get_table(["Gait (text)"])   # Side, Outcome, ... melted under ColName
+```
+
 **A transport budget.** 1-D data across hundreds of trials is megabytes.
 `resolve(..., max_points=N)` downsamples for the interactive panel; export
 never does.

@@ -254,7 +254,7 @@ class NumpyReducer(PandasReducer):
         )
 
         measure = spec.y_measure
-        mode = ExtentMode.for_spec(spec, roles)
+        mode = ExtentMode.for_spec(spec, roles, table)
         if (
             not _nested_series(frame, table, measure)
             or not mode.reduces

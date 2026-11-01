@@ -119,6 +119,29 @@ def test_describe_opens_a_variable_with_a_usable_default_spec(populated_db):
     assert result["spec"]["kind"] in result["capabilities"]["available"]
 
 
+def test_describe_opens_a_text_variable_on_a_count_bar(populated_db):
+    """A text measure is plottable (2026-11-01, docs/claude/categorical-measures.md):
+    it opens on its count per category, with Count and Proportion tiles."""
+    from scidb import BaseVariable
+
+    class Mood(BaseVariable):
+        pass
+
+    for subj, sess, mood in [(1, "pre", "calm"), (1, "post", "tense"), (2, "pre", "calm"), (2, "post", "calm")]:
+        Mood.save(mood, subject=subj, session=sess)
+
+    result = plot_service.describe(populated_db, "Mood")
+
+    assert result["eligible"] is True
+    assert result["spec"]["kind"] == "bar"
+    assert result["spec"]["categorical"]["stat"] == "count"
+    tiles = {k.get("id"): k for k in result["capabilities"]["kinds"] if k.get("id")}
+    assert tiles["bar:count"]["selected"] is True
+    assert "bar:proportion" in tiles
+    assert result["capabilities"]["categorical"]["levels"] == ["calm", "tense"]
+    json.dumps(result)
+
+
 def test_describe_falls_back_to_the_first_plottable_measure(populated_db):
     """The palette command and the CSV entry point name no variable."""
     result = plot_service.describe(populated_db)

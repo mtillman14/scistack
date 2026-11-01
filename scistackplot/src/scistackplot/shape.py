@@ -59,6 +59,14 @@ def classify_value(value: Any) -> Shape:
     if isinstance(value, str):
         return Shape.CATEGORICAL
     if isinstance(value, np.ndarray):
+        if value.ndim == 1 and value.dtype.kind in "OUS":
+            # The same rule as a list below: a text array is not a series.
+            # Without it a VARCHAR[] column ("combine rows" of a text field,
+            # 2026-10-30) classified as 1-D, was melted in beside the numeric
+            # fields, and crashed the cell collapse casting 'Quadriplegia, …'
+            # to float.
+            first = next((v for v in value if v is not None), None)
+            return Shape.SERIES_1D if _is_number(first) else Shape.UNKNOWN
         if value.ndim == 1:
             return Shape.SERIES_1D if value.size else Shape.UNKNOWN
         if value.ndim == 2:
@@ -107,6 +115,30 @@ def classify_column(series: pd.Series) -> Shape:
 _SCAN_LIMIT = 20
 
 
+#: The shapes some plot kind can draw. CATEGORICAL is one since 2026-11-01:
+#: a text or boolean measure is drawn as counts, proportions or category
+#: positions (`categorical.apply_categorical`; docs/claude/categorical-measures.md).
+#: UNKNOWN (all-null, or a value nothing recognises) is the only shape refused.
+#: The shapes whose values are numbers. A CSV column of one of these is
+#: INFERRED to be a measure (`LongTable.from_frame`); a text column is
+#: inferred to be a factor, because in a flat sheet text is usually a
+#: grouping. A source that knows a text column is a measure says so explicitly.
+NUMERIC_SHAPES: frozenset[Shape] = frozenset(
+    {Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D}
+)
+
+PLOTTABLE_SHAPES: frozenset[Shape] = frozenset(
+    {Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D, Shape.CATEGORICAL}
+)
+
+
 def is_plottable(shape: Shape) -> bool:
-    """Whether any plot kind can render this shape."""
-    return shape in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D)
+    """Whether any plot kind can render this shape.
+
+    THE rule (CLAUDE.md NOTE 4): the catalog (`ScidbSource.describe`), the
+    table description (`LongTable.describe`), the field melt
+    (`ScidbSource._melt_fields`) and the panel's eligibility gate
+    (`plot_service`) all ask this, so none of them can disagree about what is
+    listed and what opens. `tests/test_plottable_owner.py` guards the copies.
+    """
+    return shape in PLOTTABLE_SHAPES

@@ -22,6 +22,9 @@ import pytest
 from scistackplot import (
     Aggregation,
     Alias,
+    BarOptions,
+    CategoricalOptions,
+    CategoricalStat,
     BinMode,
     CompareMode,
     FitBy,
@@ -100,6 +103,8 @@ def full_spec() -> PlotSpec:
             fit_by=FitBy.POOLED,
             stats_corner=StatsCorner.LOWER_RIGHT,
         ),
+        categorical=CategoricalOptions(stat=CategoricalStat.PROPORTION, level="fall"),
+        bar=BarOptions(stack=True),
         facet=FacetOptions(
             n_rows=2,
             n_cols=3,

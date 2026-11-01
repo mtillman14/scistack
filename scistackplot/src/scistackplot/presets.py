@@ -39,7 +39,14 @@ from scistacklog import Log
 
 from .panels import PanelOverride
 from .restore import NoteKind, Restored, RestoreNote, reconcile, restore_spec
-from .spec import HistogramOptions, PlotKind, PlotSpec, StyleOptions, YAxis
+from .spec import (
+    CategoricalOptions,
+    HistogramOptions,
+    PlotKind,
+    PlotSpec,
+    StyleOptions,
+    YAxis,
+)
 from .table import LongTable
 
 LAYER = "scistackplot"
@@ -103,6 +110,10 @@ FIELD_CLASSES: dict[str, FieldClass] = {
     "histogram.stat": _T,
     "histogram.multiple": _T,
     "regression": _T,
+    # The level name is the variable's own text, like a bin width.
+    "categorical.stat": _T,
+    "categorical.level": _V,
+    "bar": _T,
     "facet": _T,
     "y_axis.scope": _T,
     "y_axis.minimum": _V,
@@ -148,6 +159,7 @@ FIELD_CLASSES: dict[str, FieldClass] = {
 _SPLIT_BLOCKS: dict[str, type] = {
     "y_axis": YAxis,
     "histogram": HistogramOptions,
+    "categorical": CategoricalOptions,
     "style": StyleOptions,
     "panel_overrides[]": PanelOverride,
 }

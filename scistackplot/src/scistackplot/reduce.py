@@ -41,6 +41,10 @@ from .resolved import (
     COLOR,
     DASH,
     DASH_CYCLE,
+    GRID_COLUMN_FACTOR,
+    GRID_COLUMNS,
+    GRID_ROW_FACTOR,
+    GRID_ROWS,
     SAMPLE_COLOR,
     SAMPLE_LINE,
     RUN,
@@ -65,6 +69,7 @@ from .roles import (
     complete_roles,
     continuous_log_inert,
     fanout_keys,
+    grid_layers,
     grouping_layers,
     overlay_color,
     overlay_join,
@@ -101,6 +106,12 @@ from .panels import override_for, panel_key_text, unmatched
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
 from .groups import apply_level_groups
 from .cell import all_nan_warning, apply_cell_collapse, cell_collapse_note, cell_collapses
+from .categorical import (
+    CATEGORICAL_KINDS,
+    apply_categorical,
+    categorical_mode,
+    pooled_reduction,
+)
 from .temporal import LOG_REASON, apply_temporal, apply_temporal_x
 from .variants import apply_variant_sets, strip_answered_roles
 
@@ -164,6 +175,8 @@ _PLAN_IRRELEVANT_FIELDS = (
     # Binned and fitted per figure, over rows the plan already holds.
     "histogram",
     "regression",
+    # Stacking moves bars already computed (`render.base.stack_offsets`).
+    "bar",
 )
 
 #: How many plans are kept. Two: the pattern being served is narrow — the panel
@@ -204,6 +217,17 @@ def _plan_cache_key(spec: PlotSpec, table: LongTable) -> "tuple | None":
         # and a violin of the same 1-D measure — different frames, different
         # roles, different y limits — can never share one.
         collapsing = cell_collapses(spec, table)
+        # A text measure: the KIND decides what its numbers are (count, %,
+        # category positions), and the kind is dropped above as presentation
+        # — so the mode goes in the key, as the collapse decision does.
+        # A kind a text measure cannot take keys its own plan, so `validate`
+        # refuses it rather than a cached bar plan drawing it.
+        mode = categorical_mode(spec, table)
+        raw["__categorical_mode"] = (
+            "" if mode is None
+            else str(mode) if spec.kind in CATEGORICAL_KINDS
+            else f"{mode}!{spec.kind}"
+        )
         if not collapsing:
             # Only meaningful while collapsing; in the key unconditionally it
             # would invalidate a line's plan when the statistic dropdown moved.
@@ -386,6 +410,7 @@ def resolve(
             figure.fanout_notes = plan.notes
             figure.data_warnings = plan.data_warnings
             _attach_temporal(figure, plan)
+            _attach_categories(figure, plan)
         for position, figure in enumerate(figures):
             figure.difference_siblings = [
                 figures[other] for other in _difference_sibling_indices(plan, position)
@@ -608,7 +633,7 @@ def _with_y_limits(plan: "_Plan", spec: PlotSpec) -> "_Plan":
     """
     if spec.y_axis.is_manual:
         return replace(plan, y_limits={}) if plan.y_limits else plan
-    mode = ExtentMode.for_spec(plan.spec, plan.roles)
+    mode = ExtentMode.for_spec(plan.spec, plan.roles, plan.table)
     with _plan_cache_lock:
         found = plan.y_limits_by_mode.get(mode)
     if found is None:
@@ -632,9 +657,17 @@ def _with_y_limits(plan: "_Plan", spec: PlotSpec) -> "_Plan":
 
 def _compute_y_limits(plan: "_Plan") -> dict:
     """The whole fan-out's limits for `plan.spec`'s extent mode, off its frame."""
-    return reducer_for(plan.table).y_extents(
+    limits = reducer_for(plan.table).y_extents(
         plan.frame, plan.spec, plan.table, plan.y_scope, plan.roles
     )
+    categories = _category_positions(plan)
+    if categories:
+        # Category positions: every category in view, half a slot of air at
+        # each end, in every panel — the axis is the list of categories, not
+        # the extent of whichever ones a panel happens to hold.
+        span = (-0.5, len(categories) - 0.5)
+        limits = {key: span for key in limits} or {(): span}
+    return limits
 
 
 def _build_plan(spec: PlotSpec, table: LongTable) -> _Plan:
@@ -680,6 +713,14 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         # identical and mean entirely different things.
         collapsed_note = cell_collapse_note(spec, table)
         table = apply_cell_collapse(spec, table)
+    # The fifth derived table: a text measure becomes numbers — one-hot
+    # counts / proportions with a `Level` factor, or category positions
+    # (scistackplot.categorical). After the cell collapse (text is never
+    # 1-D) and before `validate` / `apply_filters`, so everything below sees
+    # a scalar measure. It also returns the SPEC: a filter on the text
+    # measure filters records here, before the rewrite, and is consumed.
+    with timer.phase("categorical"):
+        spec, table = apply_categorical(spec, table)
     # The fourth derived table: a datetime measure becomes wall-clock ms in
     # the spec's time zone mode (scistackplot.temporal). Before `validate` and
     # `apply_filters` for the same reasons as the collapse above, and before
@@ -789,7 +830,7 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
     )
     with timer.phase("y_limits"):
         if not spec.y_axis.is_manual:
-            mode = ExtentMode.for_spec(spec, roles)
+            mode = ExtentMode.for_spec(spec, roles, table)
             plan.y_limits = _compute_y_limits(plan)
             plan.y_limits_by_mode[mode] = plan.y_limits
     return plan
@@ -865,6 +906,7 @@ def resolve_one(
         figure.fanout_notes = plan.notes
         figure.data_warnings = plan.data_warnings
         _attach_temporal(figure, plan)
+        _attach_categories(figure, plan)
         siblings = _difference_sibling_indices(plan, position)
         if siblings:
             with timing.phase("difference_siblings", extra=f"{len(siblings)} figure(s)"):
@@ -1196,9 +1238,19 @@ def _collapse_levels(
 
     A step that finds its key already absent (filtered away, or a variable
     saved above that level) is a no-op, logged.
+
+    A **text measure** (``categorical.pooled_reduction``) always pools —
+    "Collapse means pool" for every text plot (user, 2026-11-01) — and sums
+    its 0/1 indicators for a count instead of averaging them. Decided HERE,
+    the one function every chain runs through, so the marks, the overlay,
+    the y limits and "Save data" cannot pool one way and draw another.
     """
     if not keys:
         return frame
+    reduction = pooled_reduction(spec, table)
+    if reduction is not None:
+        pooled = True
+    how = reduction or "mean"
     measures = [
         m for m in dict.fromkeys([*spec.measures, spec.x_measure]) if m and m in frame.columns
     ]
@@ -1219,18 +1271,19 @@ def _collapse_levels(
         if keep:
             frame = (
                 frame.groupby(keep, dropna=False, sort=False)[measures]
-                .mean()
+                .agg(how)
                 .reset_index()
             )
         else:
             # Everything collapses to a single value.
-            frame = frame[measures].mean().to_frame().T
+            frame = frame[measures].agg(how).to_frame().T
         Log.debug(
-            "collapse %s within %s: %d -> %d row(s)",
+            "collapse %s within %s: %d -> %d row(s)%s",
             " x ".join(dropped) + (" (pooled)" if pooled else ""),
             keep or "nothing",
             before,
             len(frame),
+            f" ({how} of a text measure's indicators)" if reduction else "",
             layer=LAYER,
         )
     return frame
@@ -1821,6 +1874,35 @@ def _build_figure(
         return resolved
 
 
+def _category_positions(plan: "_Plan") -> list[str] | None:
+    """The categories a VALUE-mode text measure's y positions stand for
+    (``categorical``), or None when the y axis is numeric."""
+    from .spec import CategoricalStat
+
+    info = plan.table.measure(plan.spec.y_measure)
+    if info.categorical is not CategoricalStat.VALUE:
+        return None
+    return [str(level) for level in info.levels]
+
+
+def _attach_categories(figure: ResolvedPlot, plan: "_Plan") -> None:
+    """A category y axis onto one figure: the category text each y position
+    stands for, read by every renderer for the tick labels. A log axis is
+    inert with the reason (a position is not a quantity)."""
+    categories = _category_positions(plan)
+    if categories is None:
+        return
+    figure.y_categories = categories
+    if figure.spec.style.log_y:
+        reason = "A log y axis does not apply to categories; drawn linear."
+        figure.spec = replace(figure.spec, style=replace(figure.spec.style, log_y=False))
+        figure.layout_notes = [*figure.layout_notes, reason]
+        Log.info("categorical: %s", reason, layer=LAYER)
+    Log.debug(
+        "categorical: y axis of %d categor(ies) %s", len(categories), categories[:8], layer=LAYER
+    )
+
+
 def _attach_temporal(figure: ResolvedPlot, plan: "_Plan") -> None:
     """A datetime y axis onto one figure (``plan.temporal``, decided by
     ``temporal.apply_temporal``): the axis the renderers draw, the zone in the
@@ -2019,7 +2101,7 @@ def _plan_overlay(
     """
     if not spec.show_sample or explode:
         return None
-    reason = overlay_unavailable(spec, roles, shape)
+    reason = overlay_unavailable(spec, roles, shape, categorical_mode(spec, table))
     if reason is not None:
         Log.debug("show_sample %s: no overlay — %s", spec.show_sample, reason, layer=LAYER)
         return None
@@ -2180,6 +2262,8 @@ def _panel_frame(
 
     if shape is Shape.MATRIX_2D:
         return reducer_for(table).matrix_mean(group, y_measure)
+    if spec.kind is PlotKind.HEATMAP:
+        return _grid_frame(group, spec, table)
 
     out = pd.DataFrame(index=group.index)
 
@@ -2335,6 +2419,50 @@ def _composed_key(
         ]
 
     return np.asarray(labels, dtype=object)[combined]
+
+
+def _grid_frame(group: pd.DataFrame, spec: PlotSpec, table: LongTable) -> pd.DataFrame:
+    """One row holding a GRID heatmap: the mark statistic of the sample rows
+    in every (column, row) cell of the two grouping layers
+    (`roles.grid_layers`), as a matrix, with the levels it is laid out by.
+
+    The statistic is the bar's (`aggregate.statistic`) over the same sample
+    rows, so a cell of a count heatmap is the count bar of that pair and a
+    cell of a % heatmap is the mean of its units' %s. A pair with no data is
+    NaN — drawn blank, never as 0, which would claim a measurement.
+    """
+    columns, rows = grid_layers(spec, table)
+    if columns is None or columns not in group.columns or rows not in group.columns:
+        return pd.DataFrame({Z: []})
+    values = coerce_numeric(group[spec.y_measure])
+    work = pd.DataFrame(
+        {"c": group[columns].values, "r": group[rows].values, "v": values.values}
+    ).dropna(subset=["v"])
+    if work.empty:
+        return pd.DataFrame({Z: []})
+    grouped = work.groupby(["r", "c"], sort=False)["v"]
+    cell = grouped.median() if spec.aggregate.statistic is Statistic.MEDIAN else grouped.mean()
+
+    def ordered(name: str, present) -> list:
+        return sorted(dict.fromkeys(present), key=lambda v: _level_rank(table, name, v))
+
+    column_levels = ordered(columns, work["c"].tolist())
+    row_levels = ordered(rows, work["r"].tolist())
+    matrix = cell.unstack("c").reindex(index=row_levels, columns=column_levels)
+    Log.debug(
+        "grid heatmap: %d x %d cell(s) (%s down, %s across) from %d row(s), %d empty",
+        len(row_levels), len(column_levels), rows, columns, len(work),
+        int(matrix.isna().to_numpy().sum()), layer=LAYER,
+    )
+    return pd.DataFrame(
+        {
+            Z: [matrix.to_numpy(dtype=float)],
+            GRID_COLUMNS: [column_levels],
+            GRID_ROWS: [row_levels],
+            GRID_COLUMN_FACTOR: [columns],
+            GRID_ROW_FACTOR: [rows],
+        }
+    )
 
 
 def _matrix_frame(group: pd.DataFrame, measure: str) -> pd.DataFrame:
@@ -2934,7 +3062,8 @@ def _encoding_for(
     has_series: bool = False,
     has_dash: bool = False,
 ) -> Encoding:
-    if shape is Shape.MATRIX_2D:
+    if shape is Shape.MATRIX_2D or kind is PlotKind.HEATMAP:
+        # A 2-D measure's matrix, or a grid heatmap's (`_grid_frame`).
         return Encoding(x=None, y=None, z=Z)
     # A band carries a series column whenever an uncoloured grouping layer
     # splits it (one band per leaf group); a line or spaghetti always does.
@@ -3023,6 +3152,16 @@ def _labels_for(
     def named(factor: str) -> str:
         return text.name(factor, table.factor(factor).display)
 
+    z_label = ""
+    if spec.kind is PlotKind.HEATMAP and table.shape_of(spec.y_measure) is not Shape.MATRIX_2D:
+        # A grid heatmap: its axes are its two grouping layers, and the
+        # measure is the colour scale.
+        columns, rows = grid_layers(spec, table)
+        if columns is not None and rows is not None:
+            z_label = y_label
+            x_label = style.x_label or named(columns)
+            y_label = named(rows)
+
     return Labels(
         x=x_label,
         y=y_label,
@@ -3031,6 +3170,7 @@ def _labels_for(
         dash=(" / ".join(named(name) for name in reversed(list(dash_layers))) or None),
         sample=named(sample_color) if sample_color else None,
         title=title,
+        z=z_label,
     )
 
 

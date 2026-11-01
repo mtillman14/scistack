@@ -48,7 +48,13 @@ def cell_array(value: Any) -> np.ndarray:
     if isinstance(value, np.ndarray):
         if value.ndim == 0:
             return np.empty(0)
-        return value.astype("float64", copy=False).ravel()
+        try:
+            return value.astype("float64", copy=False).ravel()
+        except (TypeError, ValueError):
+            # A text array (the list branch below has always done this). The
+            # caller counts and reports such cells; a raw numpy ValueError
+            # here failed the whole resolve (run 0c164454, 2026-10-30).
+            return np.empty(0)
     if isinstance(value, (list, tuple)):
         try:
             return np.asarray(value, dtype="float64").ravel()

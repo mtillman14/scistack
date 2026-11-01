@@ -31,6 +31,7 @@ from scistackplot.roles import fanout_keys
 from scistackplot.variants import defined_sets
 
 from .load import LATEST_COLUMN
+from .text_fields import base_variable
 
 LAYER = "scistackplotdb"
 
@@ -69,6 +70,9 @@ def generate_endpoint(
     ``input_variable`` is the scidb variable type supplying the data;
     ``x_variable`` is the optional second measure for an x–y scatter.
     """
+    # A text measure (`Gait (text)`) is its variable's text fields: the
+    # for_each input is the variable, and the plot function melts the fields.
+    input_variable = base_variable(input_variable)
     name = function_name or default_function_name(spec)
     # NOT spec.iterate_factors: the fan-out includes schema keys promoted
     # because a nested key iterates, and runs in schema order. The preview and

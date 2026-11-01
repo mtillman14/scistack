@@ -84,6 +84,10 @@ DESIGN_FIELDS: dict[str, SyncClass] = {
     # How a histogram bins and a regression fits: drawing, like the kind.
     "histogram": _P,
     "regression": _P,
+    # Count vs proportion changes the numbers each mark is; the chosen level
+    # is which numbers. Stacking only moves the bars.
+    "categorical": _D,
+    "bar": _P,
     "facet": _P,
     "y_axis": _P,
     "style": _P,
@@ -112,6 +116,7 @@ LABELS: dict[str, str] = {
     "aggregate.pooled": "Weight by N",
     "cell_statistic": "Cell statistic",
     "index_column": "Index column",
+    "categorical": "Count / proportion",
     "comparison": "Compare to reference",
     "time_zone": "Time zone",
     "filters": "Filters",

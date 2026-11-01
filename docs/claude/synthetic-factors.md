@@ -31,6 +31,22 @@ Existing ones:
 | `ColName` | the keys of a dict/struct variable | `ScidbSource._melt_fields` | `scistackplotdb.source.FIELD_FACTOR` |
 | `Variant` | the user's named variant rows | `variants.apply_variant_sets` | `variants.VARIANT_FACTOR` |
 | `Code:<fn>` | version ordinals of one function | `load.attach_variants` | `table.CODE_FACTOR_PREFIX` |
+| `Row` | source-row number of a "combine rows" cell (1, 2, …) | `ScidbSource._split_row_lists` → `rows.explode_row_lists` | `rows.ROW_FACTOR` |
+
+`Row` (2026-10-30, `.claude/plan-row-list-plots.md`) is melted at the source,
+because the storage decides it: a `row_list` column (`sciduckdb.row_lists`)
+holds one element per source row, and those elements are observations, not a
+1-D series. Facts to keep:
+- It is found by `origin["kind"] == "row_list"` (`rows.row_factor`), never by
+  name. Its origin carries the split fields, which is what codegen needs to
+  emit the same split (`codegen._row_split_lines`).
+- Its depth is one below the variable's own level, so the scalar default
+  groups it (one mark per source row) and iterates the rest.
+- Invariant 6 holds: with no cell of two or more rows there is no factor,
+  but `[v]` is still unwrapped to `v`.
+- It is view-only and is never saved. A save-side Row was rejected.
+- Not split yet: x-y plots and stacked variables. Both WARN and keep the old
+  1-D reading.
 
 `Code:<fn>` is a half-case worth noticing: it is a real column that scidb
 attaches, but the **prefix convention lives in `scistackplot`**, because naming

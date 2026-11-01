@@ -352,6 +352,23 @@ def test_a_raw_1d_plot_is_refused_with_the_reason(series):
     assert "1-D" in report["reason"]
 
 
+def test_an_unavailable_export_logs_why(series, caplog):
+    """The greyed-out button's reason must be in the log too — a log with no
+    save attempt otherwise cannot say whether the button was even enabled."""
+    import logging
+
+    spec = PlotSpec(
+        measures=["S"],
+        roles={"subject": Role.GROUP, "trial": Role.COLLAPSE},
+        groups=["subject"],
+        kind=PlotKind.BAND,
+    )
+    with caplog.at_level(logging.INFO, logger="scistackplot"):
+        capabilities(spec, series)
+    lines = [r.getMessage() for r in caplog.records if "[data-export]" in r.getMessage()]
+    assert any("unavailable for S" in line and "1-D" in line for line in lines), lines
+
+
 def test_a_1d_measure_drawn_as_a_scalar_kind_is_exported(series):
     """The cell collapse made it scalar: each record's cell statistic is what
     the box draws, and what is written."""

@@ -30,9 +30,16 @@ from ..paper import (
     plotly_error_style,
     plotly_layout_style,
 )
-from ..resolved import ResolvedPlot
+from ..resolved import (
+    GRID_COLUMN_FACTOR,
+    GRID_COLUMNS,
+    GRID_ROW_FACTOR,
+    GRID_ROWS,
+    ResolvedPlot,
+)
 from ..roles import overlay_in_legend
 from ..spec import BAR_KINDS, PlotKind, is_horizontal
+from ..stacking import stack_bases, stacks
 from ..diffbars import (
     LINE_PT,
     PanelFrame,
@@ -46,6 +53,8 @@ from ..textsize import sizes_for
 from ..weights import SAMPLE_EDGE_WIDTH, mark_weights_meta, sample_weight, spaghetti_weight
 from ..xaxis import LEAF_SEPARATOR
 from .base import (
+    LONE_POINT_MARKER_PT,
+    is_lone_point,
     MARK_OFFSET_GROUP,
     axis_sides,
     SAMPLE_ALPHA,
@@ -585,15 +594,34 @@ def _panel_traces(
 
     if kind is PlotKind.HEATMAP:
         matrix = np.asarray(frame[encoding.z].iloc[0], dtype=float)
-        return [
-            {
-                "type": "heatmap",
-                "z": matrix.tolist(),
-                "xaxis": x_axis.replace("x", "x"),
-                "yaxis": y_axis,
-                "colorscale": "Viridis",
-            }
-        ]
+        trace = {
+            "type": "heatmap",
+            # NaN (a grid pair with no data) is drawn blank, as in matplotlib.
+            "z": [[None if np.isnan(v) else float(v) for v in row] for row in matrix],
+            "xaxis": x_axis,
+            "yaxis": y_axis,
+            "colorscale": "Viridis",
+        }
+        if GRID_COLUMNS in frame.columns:
+            # A grid heatmap (`reduce._grid_frame`): the levels label the
+            # cells, row 0 at the bottom as matplotlib draws it.
+            text = resolved.text
+            columns, rows = frame[GRID_COLUMN_FACTOR].iloc[0], frame[GRID_ROW_FACTOR].iloc[0]
+            trace["x"] = [text.level(columns, v) for v in frame[GRID_COLUMNS].iloc[0]]
+            trace["y"] = [text.level(rows, v) for v in frame[GRID_ROWS].iloc[0]]
+            trace["colorbar"] = {"title": {"text": resolved.labels.z}}
+        return [trace]
+
+    # Stacked bars (`stacking`): one base per row, read per colour trace.
+    stacked = kind in BAR_KINDS and stacks(resolved.spec, kind)
+    stack_base = (
+        pd.Series(
+            stack_bases(frame, encoding.x, encoding.y, encoding.color, resolved.color_order),
+            index=frame.index,
+        )
+        if stacked
+        else None
+    )
 
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         color = palette_for(resolved, level, index)
@@ -674,7 +702,7 @@ def _panel_traces(
             traces.extend(_band_traces(subset, resolved, base, color))
         elif kind in BAR_KINDS:
             error = None
-            if encoding.has_error:
+            if encoding.has_error and not stacked:
                 centre = np.asarray(_values(subset[encoding.y]), dtype=float)
                 error = {
                     "type": "data",
@@ -709,6 +737,11 @@ def _panel_traces(
                     # the marker, so the error bars stay opaque as in matplotlib.
                     "marker": {"color": color, "opacity": fill_alpha(kind, resolved.spec.style)},
                     **({f"error_{values_key}": error} if error else {}),
+                    **(
+                        {"base": stack_base.loc[subset.index].to_numpy(dtype=float).tolist()}
+                        if stack_base is not None
+                        else {}
+                    ),
                     **hover,
                 }
             )
@@ -1107,14 +1140,23 @@ def _line_traces(subset, resolved, base, color) -> list[dict]:
     encoding = resolved.encoding
     traces = []
     for position, (series_id, rows) in enumerate(series_groups(subset, resolved)):
+        ys = _values(rows[encoding.y])
+        # A one-point series has no segment to draw (render.base.is_lone_point).
+        lone = is_lone_point(ys)
         traces.append(
             {
                 **base,
                 "showlegend": base["showlegend"] and position == 0,
                 "type": "scatter",
-                "mode": "lines",
+                "mode": "lines+markers" if lone else "lines",
+                **(
+                    # pt -> px at 96 dpi, the same marker as the matplotlib preview.
+                    {"marker": {"color": color, "size": LONE_POINT_MARKER_PT * 4 / 3}}
+                    if lone
+                    else {}
+                ),
                 "x": _values(rows[encoding.x]),
-                "y": _values(rows[encoding.y]),
+                "y": ys,
                 "line": {"color": color, "width": 1.5, "dash": dash_style(resolved, rows)},
                 "opacity": resolved.spec.style.alpha,
                 "hovertext": str(series_id) if series_id is not None else None,
@@ -1299,6 +1341,20 @@ def _add_axes(
         # plotly date axis reads as they are; the tick and hover formats come
         # from the same owner as the export's.
         **(resolved.temporal.plotly_axis() if resolved.temporal is not None else {}),
+        # Category positions (a text measure's strip / spaghetti): every
+        # category a tick, named — the same ticks matplotlib draws.
+        **(
+            {
+                "tickmode": "array",
+                "tickvals": list(range(len(resolved.y_categories))),
+                "ticktext": [
+                    resolved.text.level(resolved.spec.y_measure, c)
+                    for c in resolved.y_categories
+                ],
+            }
+            if resolved.y_categories is not None
+            else {}
+        ),
         # No automargin here, deliberately, even though the x axes use it: an
         # inner column's title is rotated text drawn into the column gap (which
         # `_frame` sizes for it), and plotly's automargin answers a crowded subplot axis by
@@ -1861,6 +1917,14 @@ def _apply_axis_text(layout: dict, resolved: ResolvedPlot, items, side: str) -> 
                 tickvals=list(item.values),
                 ticktext=[_html(t) for t in item.texts],
             )
+            # The range the ticks were chosen for, unless the preview pinned
+            # its own (base.AxisText.limits).
+            if (
+                item.limits is not None
+                and "range" not in axis
+                and axis.get("type") not in ("date", "log")
+            ):
+                axis["range"] = list(item.limits)
             ticks += 1
         title = axis.get("title")
         if item.title_gap_pt is not None and isinstance(title, dict) and title.get("text"):

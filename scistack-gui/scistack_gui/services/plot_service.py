@@ -403,13 +403,13 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
 
     with phase("load_table"):
         table = source.get_table([variable])
-    shape = table.shape_of(variable)
-    if not _plottable(shape):
+    reason = _ineligible_reason(table, variable)
+    if reason is not None:
         return {
             "catalog": catalog,
             "variable": variable,
             "eligible": False,
-            "reason": _ineligible_reason(shape, len(table.frame)),
+            "reason": reason,
             "table": table.describe(),
         }
 
@@ -495,22 +495,25 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
     }
 
 
-def _plottable(shape) -> bool:
-    from scistackplot import Shape
+def _ineligible_reason(table, variable: str) -> str | None:
+    """Why the panel cannot draw ``variable`` at all, or None. The shape rule
+    is `scistackplot.is_plottable` (the one owner); free text — a text
+    measure with too many distinct values to be categories — is
+    `scistackplot.categorical`'s."""
+    from scistackplot import is_plottable
+    from scistackplot.categorical import free_text_reason
 
-    return shape in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D)
-
-
-def _ineligible_reason(shape, row_count: int) -> str:
-    from scistackplot import Shape
-
-    if row_count == 0:
+    if len(table.frame) == 0:
         # The empty state the design doc insists on naming explicitly: a
         # variable whose pipeline has never run must say so, not draw blank axes.
         return "This variable has no records yet — run the pipeline first."
-    if shape is Shape.CATEGORICAL:
-        return "This variable holds text, which has no numeric axis to plot."
-    return f"Not plottable: values classify as {shape}."
+    shape = table.shape_of(variable)
+    if not is_plottable(shape):
+        return f"Not plottable: values classify as {shape}."
+    reason = free_text_reason(table, variable)
+    if reason is not None:
+        logger.info("[plot] describe(%s): refused as free text — %s", variable, reason)
+    return reason
 
 
 # ---------------------------------------------------------------------------

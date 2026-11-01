@@ -20,8 +20,16 @@ import pandas as pd
 from scistacklog import Log
 
 from ..figsize import aspect_name
-from ..resolved import MPL_DASHES, ResolvedPlot
+from ..resolved import (
+    GRID_COLUMN_FACTOR,
+    GRID_COLUMNS,
+    GRID_ROW_FACTOR,
+    GRID_ROWS,
+    MPL_DASHES,
+    ResolvedPlot,
+)
 from ..spec import BAR_KINDS, PlotKind, is_horizontal
+from ..stacking import stack_bases, stacks
 from ..table import natural_sort_key
 from ..paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
 from ..textsize import ResolvedSizes, sizes_for
@@ -39,6 +47,9 @@ from ..ticklabels import (
     label_block,
 )
 from .base import (
+    LONE_POINT_MARKER,
+    LONE_POINT_MARKER_PT,
+    is_lone_point,
     SAMPLE_ALPHA,
     SAMPLE_EDGE_COLOR,
     series_groups,
@@ -512,12 +523,18 @@ def _draw_lines(ax, frame, resolved) -> None:
         color = palette_for(resolved, level, index)
         for position, (_, line_rows) in enumerate(series_groups(subset, resolved)):
             positions, _ = x_positions(line_rows[resolved.encoding.x], resolved)
+            ys = line_rows[resolved.encoding.y].to_numpy(dtype=float)
+            lone = is_lone_point(ys)
+            if lone:
+                Log.debug("line series of one point: drawn as a marker", layer=LAYER)
             ax.plot(
                 positions,
-                line_rows[resolved.encoding.y].to_numpy(dtype=float),
+                ys,
                 color=color,
                 alpha=style.alpha,
                 linewidth=1.4,
+                marker=LONE_POINT_MARKER if lone else None,
+                markersize=LONE_POINT_MARKER_PT,
                 # An uncoloured grouping layer is told apart by dash style —
                 # the same style in every panel and colour (`dash_styles`).
                 linestyle=_linestyle(resolved, line_rows),
@@ -593,12 +610,25 @@ def _draw_bars(ax, frame, resolved) -> None:
     encoding = resolved.encoding
     width = mark_width()
     horizontal = is_horizontal(resolved.kind)
+    # Stacked (`stacking`): the colour levels share a tick and pile up; each
+    # bar starts where the one before it in colour order ends, and no error
+    # bar is drawn (the figure's note says so).
+    stacked = stacks(resolved.spec, resolved.kind)
+    bases = (
+        pd.Series(
+            stack_bases(frame, encoding.x, encoding.y, encoding.color, resolved.color_order),
+            index=frame.index,
+        )
+        if stacked
+        else None
+    )
 
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
         positions, ticks = x_positions(subset[encoding.x], resolved)
         centre = subset[encoding.y].to_numpy(dtype=float)
+        bottom = bases.loc[subset.index].to_numpy(dtype=float) if bases is not None else None
         error = None
-        if encoding.has_error:
+        if encoding.has_error and not stacked:
             low = subset[encoding.y_low].to_numpy(dtype=float)
             high = subset[encoding.y_high].to_numpy(dtype=float)
             error = np.vstack([centre - low, high - centre])
@@ -611,9 +641,9 @@ def _draw_bars(ax, frame, resolved) -> None:
             label=resolved.text.color_level(level) if level is not None else None,
         )
         if horizontal:
-            ax.barh(positions, centre, height=width, xerr=error, **style)
+            ax.barh(positions, centre, height=width, xerr=error, left=bottom, **style)
             continue
-        ax.bar(positions, centre, width=width, yerr=error, **style)
+        ax.bar(positions, centre, width=width, yerr=error, bottom=bottom, **style)
         if ticks is not None:
             ax.set_xticks(range(len(ticks)))
             ax.set_xticklabels([resolved.text.x_tick(t) for t in ticks])
@@ -800,9 +830,26 @@ def _sample_legend_handles(ax, resolved: ResolvedPlot) -> None:
 
 
 def _draw_heatmap(ax, frame, resolved) -> None:
-    matrix = frame[resolved.encoding.z].iloc[0]
-    image = ax.imshow(np.asarray(matrix, dtype=float), aspect="auto", origin="lower")
-    ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    if frame.empty:
+        return
+    matrix = np.asarray(frame[resolved.encoding.z].iloc[0], dtype=float)
+    grid = GRID_COLUMNS in frame.columns
+    # Row 0 at the bottom for both heatmaps, as plotly draws them and as the
+    # exported code draws them (`codegen._heatmap_call`), so the first level
+    # of a grid's rows sits by the x axis in every view.
+    image = ax.imshow(np.ma.masked_invalid(matrix), aspect="auto", origin="lower")
+    bar = ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    if not grid:
+        return
+    text = resolved.text
+    columns, rows = frame[GRID_COLUMN_FACTOR].iloc[0], frame[GRID_ROW_FACTOR].iloc[0]
+    ax.set_xticks(range(matrix.shape[1]))
+    ax.set_xticklabels([text.level(columns, v) for v in frame[GRID_COLUMNS].iloc[0]])
+    ax.set_yticks(range(matrix.shape[0]))
+    ax.set_yticklabels([text.level(rows, v) for v in frame[GRID_ROWS].iloc[0]])
+    # The axis titles are the two layers' names (`Labels`, set by reduce and
+    # applied with every other title); the scale says what the colour is.
+    bar.set_label(resolved.labels.z)
 
 
 def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_cell) -> None:
@@ -843,6 +890,18 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
                 # y holds wall-clock ms (temporal.py): ticks at round dates,
                 # labelled in the axis's format. The same source codegen emits.
                 apply_mpl_date_axis(ax.yaxis, resolved.temporal)
+            if resolved.y_categories is not None:
+                # Category positions (a text measure's strip / spaghetti):
+                # one tick per category, named, as plotly and codegen draw it.
+                ax.set_yticks(range(len(resolved.y_categories)))
+                ax.set_yticklabels(
+                    [
+                        resolved.text.level(resolved.spec.y_measure, c)
+                        for c in resolved.y_categories
+                    ]
+                    if leftmost
+                    else []
+                )
             if resolved.temporal_x is not None:
                 # A datetime x measure, or a histogram of a datetime: the same
                 # locator and format along x.
@@ -1746,7 +1805,19 @@ def _one_axis_text(fig, renderer, ax, side: str, axis, row: int, col: int, resol
             )
             distance = edge - box.y1
         gap = round(max(0.0, _pt(fig, distance)), 2)
-    return AxisText(side, row, col, values, texts if reason is None else None, gap), reason
+    limits = None
+    if side == "x" and ax.get_xscale() == "linear":
+        from matplotlib.dates import DateLocator
+
+        # A date axis's limits are matplotlib date numbers, which mean
+        # nothing on plotly's date axis; a log axis's range is in other units.
+        if not isinstance(axis.get_major_locator(), DateLocator):
+            low, high = ax.get_xlim()
+            limits = (float(low), float(high))
+    return (
+        AxisText(side, row, col, values, texts if reason is None else None, gap, limits),
+        reason,
+    )
 
 
 def _verify_x_ticks(fig, ticks: list[_XTicks], fit: LabelFit) -> None:

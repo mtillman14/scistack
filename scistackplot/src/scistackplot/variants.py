@@ -891,10 +891,18 @@ def stale_role_names(
     # In NEITHER table: a derived factor (a level group's `Phase`, the
     # `Variant` axis) exists only in `derived`, and must not be mistaken for
     # a missing one.
+    # Nor a factor the text-measure rewrite makes later (`categorical`'s
+    # `Level`, which the opening assignment of a text measure names): it is
+    # in neither table YET, and dropping its role would ungroup the categories.
+    from .categorical import synthetic_factor_names
+
+    pending = synthetic_factor_names(spec, derived)
     missing = [
         name
         for name in spec.roles
-        if not table.has_factor(name) and not derived.has_factor(name)
+        if not table.has_factor(name)
+        and not derived.has_factor(name)
+        and name not in pending
     ]
     return answered, missing
 

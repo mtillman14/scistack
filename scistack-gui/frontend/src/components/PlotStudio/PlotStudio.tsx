@@ -182,6 +182,8 @@ import {
   type LevelGroup,
 } from './combine'
 import { PLOT_THEMES, otherPlotTheme, plotThemeVars, screenFigure } from './plotTheme'
+import { blockedClickNotice, toolButtonStyle } from './toolButton'
+import { applyTile, isTileSelected, tileKey } from './kindTiles'
 import { setPlotTheme, usePlotTheme } from './usePlotTheme'
 import StatsLink from './StatsLink'
 import {
@@ -389,6 +391,12 @@ interface KindInfo {
    *  could land after the user had set a role, overwriting the one thing the
    *  rule promises not to touch. */
   assignment?: { roles: Record<string, Role>; groups: string[]; color: string | null } | null
+  /** A text measure's tiles (`capability.categorical_kind_entries`): two of one
+   *  kind are told apart by `id` ("bar:count" / "bar:proportion"), the click
+   *  applies `categorical`, and `selected` says which one the spec IS. */
+  id?: string
+  categorical?: { stat: string } | null
+  selected?: boolean
 }
 
 /** One variant factor as the picker renders it. Built entirely by
@@ -582,6 +590,19 @@ interface Capabilities {
   /** Chart > Histogram / Regression (capability.histogram_summary / regression_summary). */
   histogram?: HistogramCapability
   regression?: RegressionCapability
+  /** Chart > Categories: a text measure's mode, its categories and why it
+   *  cannot be drawn (`capability.categorical_summary`). */
+  categorical?: {
+    applies: boolean
+    mode?: string | null
+    stat?: string
+    level?: string | null
+    level_applies?: boolean
+    levels?: string[]
+    problem?: string | null
+  }
+  /** Chart > Bars: stacking and what it turns off (`capability.bar_summary`). */
+  bar?: { applies: boolean; stack: boolean; note: string | null }
   /** Data > X variable: the current x measure and whether it is a datetime. */
   x_measure?: { current: string | null; temporal: boolean }
   /** Whether any factor is collapsed, i.e. whether there is a sample. */
@@ -775,6 +796,11 @@ interface Spec {
   histogram?: HistogramOptions
   /** A regression's line and annotation (scistackplot.spec.RegressionOptions). */
   regression?: RegressionOptions
+  /** How a TEXT measure is drawn (scistackplot.spec.CategoricalOptions): its
+   *  count or %, and optionally one category only. Inert on a numeric one. */
+  categorical?: { stat?: string; level?: string | null }
+  /** Stacked bars (scistackplot.spec.BarOptions). */
+  bar?: { stack?: boolean }
   facet?: FacetOptions
   /* Which factors get their own y limits, plus manual overrides. */
   y_axis?: YAxis
@@ -853,7 +879,16 @@ function applyPickedLocation(spec: Spec, path: PathStep[], schemaKeys: string[])
 }
 
 interface DescribeResponse {
-  catalog: { measures: { name: string; shape: string; plottable: boolean }[] }
+  catalog: {
+    measures: {
+      name: string
+      shape: string
+      plottable: boolean
+      columns?: string[]
+      /** On a "Var (text)" entry: the variable whose text fields it holds. */
+      text_of?: string
+    }[]
+  }
   variable: string | null
   eligible?: boolean
   reason?: string | null
@@ -950,7 +985,7 @@ interface Props {
 }
 
 export default function PlotStudio({
-  variable,
+  variable: openedVariable,
   csvPath,
   embedded = false,
   initialLocation,
@@ -971,6 +1006,11 @@ export default function PlotStudio({
     () => (derivedBars.length ? { ...sourceParams, derived_bars: derivedBars } : sourceParams),
     [sourceParams, derivedBars]
   )
+  // The measure on screen: the one the panel was opened on, or the other half
+  // of a wide variable with text fields (`Gait` <-> `Gait (text)`, owned by
+  // `scistackplotdb.text_fields`; the catalog says which, `text_of`).
+  const [variable, setVariable] = useState(openedVariable)
+  useEffect(() => { setVariable(openedVariable) }, [openedVariable])
   const [describe, setDescribe] = useState<DescribeResponse | null>(null)
   // This panel's own undo stack (docs/claude/undo-redo.md): spec edits are
   // local steps; its project alias/colour writes and "Add to pipeline" are
@@ -1517,7 +1557,7 @@ export default function PlotStudio({
     setSpec(prev => (prev ? { ...prev, color: factor } : prev))
   }, [])
 
-  const setKind = useCallback((kind: string) => {
+  const setKind = useCallback((tile: KindInfo) => {
     // A kind change can also change what the measure IS: a scalar kind on a
     // 1-D variable collapses it, and the roles a 1-D variable opens with (every
     // key on "separate figures") leave no replicates, so box and violin would
@@ -1529,22 +1569,12 @@ export default function PlotStudio({
     // debounced echo, and a suggestion computed against an older spec could
     // overwrite a role the user has set since — the one thing the rule promises
     // never to do.
+    // A text measure's tile also carries its count / proportion stat
+    // (`kindTiles.applyTile`, which owns the merge).
     const reportIsForThisSpec = capsSpecRef.current === specKey
-    const suggested = reportIsForThisSpec
-      ? (capabilities?.kinds ?? []).find(info => info.kind === kind)?.assignment ?? null
-      : null
-    setSpec(prev =>
-      prev
-        ? {
-            ...prev,
-            kind,
-            ...(suggested
-              ? { roles: suggested.roles, groups: suggested.groups, color: suggested.color }
-              : {}),
-          }
-        : prev
-    )
-  }, [capabilities, specKey])
+    console.info('[Plot Studio] kind_set', tile.id ?? tile.kind, reportIsForThisSpec ? '(fresh report)' : '(stale report: roles kept)')
+    setSpec(prev => (prev ? applyTile(prev, tile, reportIsForThisSpec) : prev))
+  }, [specKey])
 
   /** Which of a plot_ function's inputs arrive as a table (`CustomPlot.as_table`):
    *  one checkbox per input, stored as the list, or `true` when all are on. */
@@ -1609,6 +1639,18 @@ export default function PlotStudio({
     setSpec(prev =>
       prev ? { ...prev, x_measure: name, kind: kindForXMeasure(prev.kind, name) } : prev
     )
+  }, [])
+
+  /** Chart > Categories: merge into `spec.categorical` (a text measure). */
+  const setCategorical = useCallback((patch: { stat?: string; level?: string | null }) => {
+    console.info('[Plot Studio] categorical_set', patch)
+    setSpec(prev => (prev ? { ...prev, categorical: { ...(prev.categorical ?? {}), ...patch } } : prev))
+  }, [])
+
+  /** Chart > Bars: stack the colour levels, or not. */
+  const setBarStack = useCallback((stack: boolean) => {
+    console.info('[Plot Studio] bar_stack_set', stack)
+    setSpec(prev => (prev ? { ...prev, bar: { ...(prev.bar ?? {}), stack } } : prev))
   }, [])
 
   /** Chart > Histogram: merge into `spec.histogram`. */
@@ -3175,6 +3217,34 @@ export default function PlotStudio({
               filterCount: (spec?.filters ?? []).length,
             })}
           >
+            {(() => {
+              // A wide variable with text AND other fields is two measures
+              // (the catalog's `text_of`): one link to the other half, so no
+              // field is out of reach from the panel.
+              const measures = describe?.catalog?.measures ?? []
+              const current = describe?.variable ?? variable
+              const textHalf = measures.find(m => m.text_of === current)
+              const numericHalf = measures.find(m => m.name === current)?.text_of
+              const other = textHalf?.name ?? numericHalf
+              if (!other || csvPath) return null
+              return (
+                <div style={styles.hint}>
+                  {textHalf
+                    ? `Its text fields (${(textHalf.columns ?? []).join(', ')}) are plotted as `
+                    : 'Its other fields are plotted as '}
+                  <button
+                    type="button"
+                    style={styles.linkButton}
+                    onClick={() => {
+                      console.info('[Plot Studio] switch_measure', current, '->', other)
+                      setVariable(other)
+                    }}
+                  >
+                    {other}
+                  </button>
+                </div>
+              )
+            })()}
             {hasVariants && (
               <Section
                 title="Variants"
@@ -3288,16 +3358,16 @@ export default function PlotStudio({
               <div style={styles.kindGrid}>
                 {(capabilities?.kinds ?? []).map(info => (
                   <label
-                    key={info.kind}
+                    key={tileKey(info)}
                     style={{ ...styles.kindRow, opacity: info.available ? 1 : 0.45 }}
                     title={info.reason ?? ''}
                   >
                     <input
                       type="radio"
                       name="plot-kind"
-                      checked={spec?.kind === info.kind}
+                      checked={isTileSelected(info, spec)}
                       disabled={!info.available}
-                      onChange={() => setKind(info.kind)}
+                      onChange={() => setKind(info)}
                       style={{ marginRight: 6 }}
                     />
                     {info.label ?? KIND_LABELS[info.kind] ?? info.kind}
@@ -3364,6 +3434,45 @@ export default function PlotStudio({
                 </>
               )}
             </Section>
+            {capabilities?.categorical?.applies && (
+              <Section
+                title="Categories"
+                hint="This variable holds text. Count bars count its records per category; proportion bars average each unit's % (the last collapsed key is the unit). Collapse POOLS records for text — nothing is averaged before the %."
+              >
+                {capabilities.categorical.problem && (
+                  <div style={styles.note}>{capabilities.categorical.problem}</div>
+                )}
+                {capabilities.categorical.level_applies && (
+                  <label style={styles.factorRow}>
+                    <span style={styles.factorName}>Show</span>
+                    <select
+                      value={spec?.categorical?.level ?? ''}
+                      onChange={e => setCategorical({ level: e.target.value || null })}
+                      style={styles.select}
+                    >
+                      <option value="">Every category</option>
+                      {(capabilities.categorical.levels ?? []).map(level => (
+                        <option key={level} value={level}>Only {level}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </Section>
+            )}
+            {capabilities?.bar?.applies && (
+              <Section title="Bars" hint="Stack the coloured layer's bars on one tick instead of one tick each — with a text measure's % on colour, the 100% stacked bar.">
+                <label style={styles.factorRow}>
+                  <input
+                    type="checkbox"
+                    checked={!!spec?.bar?.stack}
+                    onChange={e => setBarStack(e.target.checked)}
+                    style={{ marginRight: 6 }}
+                  />
+                  <span>Stack the colour levels</span>
+                </label>
+                {capabilities.bar.note && <div style={styles.hint}>{capabilities.bar.note}</div>}
+              </Section>
+            )}
             {spec?.kind === 'histogram' && (
               <Section
                 title="Histogram"
@@ -4354,7 +4463,7 @@ export default function PlotStudio({
         </label>
         <button
           type="button"
-          style={styles.toolButton}
+          style={toolButtonStyle(styles.toolButton, saving)}
           onClick={() => saveFigures('current')}
           // Same one-job-at-a-time rule as the button beside it: both are
           // background jobs now, and the progress readout follows one id.
@@ -4376,7 +4485,7 @@ export default function PlotStudio({
             dropdown (a clipboard takes PNG). */}
         <button
           type="button"
-          style={styles.toolButton}
+          style={toolButtonStyle(styles.toolButton, figures.length === 0)}
           onClick={copyFigure}
           disabled={figures.length === 0}
           title={
@@ -4393,7 +4502,7 @@ export default function PlotStudio({
         {figureCount > 1 && (
           <button
             type="button"
-            style={styles.toolButton}
+            style={toolButtonStyle(styles.toolButton, saving)}
             onClick={() => saveFigures('all')}
             // One job at a time. A second would write to the same files
             // from a second thread, and the progress readout can only
@@ -4410,13 +4519,30 @@ export default function PlotStudio({
           </button>
         )}
         {/* The rows the figure is drawn from, for statistics that must
-            match the plot. Disabled with the backend's reason for a raw
-            1-D / 2-D measure (scalar plots only). */}
+            match the plot. Unavailable, with the backend's reason, for a
+            raw 1-D / 2-D measure (scalar plots only). `aria-disabled`, not
+            `disabled`, for that case: a click then puts the reason in the
+            status line instead of doing nothing (toolButton.ts). */}
         <button
           type="button"
-          style={styles.toolButton}
-          onClick={openDataSave}
-          disabled={saving || !capabilities?.data_export?.available}
+          style={toolButtonStyle(
+            styles.toolButton,
+            saving || !capabilities?.data_export?.available
+          )}
+          onClick={() => {
+            const blocked = blockedClickNotice(
+              capabilities?.data_export?.available,
+              capabilities?.data_export?.reason
+            )
+            if (blocked) {
+              console.info('[Plot Studio] save_data blocked', { reason: blocked })
+              setNotice(`Save data: ${blocked}`)
+              return
+            }
+            openDataSave()
+          }}
+          disabled={saving}
+          aria-disabled={saving || !capabilities?.data_export?.available}
           title={
             saving
               ? 'A save is already running'
@@ -6443,6 +6569,17 @@ const styles: Record<string, React.CSSProperties> = {
   },
   checkLabel: { fontSize: 11, color: 'var(--ps-text-control)', lineHeight: 1.3 },
   hint: { fontSize: 10, color: 'var(--ps-text-faint)', marginBottom: 6, fontStyle: 'italic' },
+  /** Text that switches the panel to another measure — a link, not a button. */
+  linkButton: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    color: 'var(--ps-accent-text)',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    fontSize: 'inherit',
+    fontStyle: 'normal',
+  },
   refusedRow: {
     fontSize: 10, color: 'var(--ps-text-faint-slate)', marginBottom: 4, paddingLeft: 18,
     fontFamily: 'monospace',

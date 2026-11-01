@@ -25,7 +25,7 @@ from typing import Any, Iterable
 import pandas as pd
 from scistacklog import Log
 
-from .shape import Shape, classify_column
+from .shape import NUMERIC_SHAPES, Shape, classify_column, is_plottable
 from .spec import Alias
 from .temporal import has_temporal_values, is_temporal_column, level_labels
 
@@ -81,6 +81,33 @@ def natural_sort_key(value: Any) -> tuple:
         else:
             parts.append((1, chunk))
     return tuple(parts)
+
+
+def category_text(values: pd.Series) -> pd.Series:
+    """A text measure's cells as the text its categories are named by.
+
+    THE conversion (one owner): ``categorical`` one-hots and codes these,
+    :func:`category_levels` orders them, and codegen emits exactly these two
+    calls. A missing value is the level :data:`MISSING_LEVEL` — counted and
+    drawn like any other category, never dropped (a record whose outcome was
+    not recorded is still a record). ``True`` reads ``"True"``.
+    """
+    return values.astype(object).where(values.notna(), MISSING_LEVEL).astype(str)
+
+
+def category_levels(values: pd.Series, declared: Iterable[str] = ()) -> list[str]:
+    """A text measure's categories in display order: ``declared`` first (a
+    source's level order), then the rest by natural sort, MISSING_LEVEL last.
+    ``values`` are :func:`category_text` already."""
+    found = list(dict.fromkeys(values.tolist()))
+    declared = [str(level) for level in declared]
+    present = set(found)
+    ordered = [level for level in declared if level in present and level != MISSING_LEVEL]
+    rest = sorted(
+        (level for level in found if level not in set(ordered) and level != MISSING_LEVEL),
+        key=natural_sort_key,
+    )
+    return [*ordered, *rest, *([MISSING_LEVEL] if MISSING_LEVEL in present else [])]
 
 
 @dataclass
@@ -162,6 +189,16 @@ class MeasureInfo:
     #: its values into wall-clock ms; the flag stays, so capability,
     #: validation and the renderers know the axis is time.
     temporal: bool = False
+    #: A text measure's categories, in display order (the source's level
+    #: order, else natural sort; MISSING_LEVEL last). Empty for a numeric
+    #: measure. Read by `categorical` (one-hot levels, category positions),
+    #: the renderers (category tick text) and codegen, never re-sorted.
+    levels: list[str] = field(default_factory=list)
+    #: Set by `categorical.apply_categorical` once the text has been rewritten
+    #: into numbers: what the numbers are (a `spec.CategoricalStat`). None on
+    #: a raw text measure and on every numeric one. Typed loosely to keep
+    #: `table` below `spec` in the import graph.
+    categorical: Any = None
 
     @property
     def display(self) -> str:
@@ -370,7 +407,7 @@ class LongTable:
                 shape = classify_column(frame[column])
                 # A datetime column is a measure like a number (user,
                 # 2026-10-22); it can still be named a factor explicitly.
-                if shape in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D) or (
+                if shape in NUMERIC_SHAPES or (
                     is_temporal_column(frame[column])
                 ):
                     inferred_measures.append(column)
@@ -450,12 +487,22 @@ class LongTable:
         measure_infos = []
         for column in measures:
             temporal_measure = column in frame.columns and is_temporal_column(frame[column])
+            # A datetime is one value per row: scalar, by the same rules as a
+            # number (temporal.apply_temporal makes it one).
+            shape = Shape.SCALAR if temporal_measure else classify_column(frame[column])
             measure_infos.append(
                 MeasureInfo(
                     name=column,
-                    # A datetime is one value per row: scalar, by the same
-                    # rules as a number (temporal.apply_temporal makes it one).
-                    shape=Shape.SCALAR if temporal_measure else classify_column(frame[column]),
+                    shape=shape,
+                    # A text measure's categories, ordered once here — the
+                    # source's order when it declares one (`level_order`).
+                    levels=(
+                        category_levels(
+                            category_text(frame[column]), level_order.get(column, ())
+                        )
+                        if shape is Shape.CATEGORICAL
+                        else []
+                    ),
                     # A stacked table's value column is named after the primary
                     # variable but holds several; the label is how the axis says
                     # so without the column name lying about what is in it.
@@ -529,8 +576,10 @@ class LongTable:
                     "shape": str(m.shape),
                     "exploded": m.exploded,
                     "temporal": m.temporal,
-                    "plottable": m.shape
-                    in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D),
+                    "plottable": is_plottable(m.shape),
+                    # A text measure's categories (the Categories rail's
+                    # "one level" dropdown); empty for a numeric one.
+                    "levels": [str(level) for level in m.levels],
                 }
                 for m in self.measures
             ],

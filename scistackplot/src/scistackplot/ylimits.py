@@ -101,10 +101,23 @@ class ExtentMode:
     #: ``compare`` rewrites the sample. Part of the key, so toggling the
     #: comparison recomputes the limits without rebuilding the plan.
     compare: Any = None
+    #: Stacked bars (`stacking.stacks`): the drawn extent is each PILE — the
+    #: colour levels at one tick summed — not one bar, and no error band.
+    stack: bool = False
+    #: A text measure's mode (`categorical.categorical_mode`), when the
+    #: caller has the table to say: a count or category positions carry no
+    #: overlay, whatever `show_sample` names.
+    categorical: Any = None
 
     @classmethod
-    def for_spec(cls, spec: PlotSpec, roles: dict[str, Role]) -> "ExtentMode":
+    def for_spec(
+        cls, spec: PlotSpec, roles: dict[str, Role], table: "LongTable | None" = None
+    ) -> "ExtentMode":
+        from .categorical import categorical_mode
         from .roles import has_sample, overlay_unavailable
+        from .stacking import stacks
+
+        categorical = categorical_mode(spec, table) if table is not None else None
 
         sample = has_sample(roles)
         return cls(
@@ -124,7 +137,7 @@ class ExtentMode:
             overlay=(
                 tuple(spec.show_sample)
                 if spec.show_sample
-                and overlay_unavailable(spec, roles, Shape.SCALAR) is None
+                and overlay_unavailable(spec, roles, Shape.SCALAR, categorical) is None
                 else ()
             ),
             compare=(
@@ -132,6 +145,8 @@ class ExtentMode:
                 if spec.comparison is not None and spec.comparison.active
                 else None
             ),
+            stack=stacks(spec),
+            categorical=categorical,
         )
 
     @property
@@ -243,7 +258,7 @@ def limits_by_scope(
     if measure not in frame.columns or frame.empty:
         return {}
 
-    mode = ExtentMode.for_spec(spec, roles)
+    mode = ExtentMode.for_spec(spec, roles, table)
     present = [name for name in scope if name in frame.columns]
     # A 2-D measure never runs the collapse chain (its panel is `matrix_mean`,
     # which pools), so a collapsed factor on a heatmap leaves the raw extents
@@ -667,6 +682,20 @@ def _reduced_extents(
 
     grouped = working.groupby(grouping, dropna=False, sort=False)[measure]
     centre = grouped.median() if spec.aggregate.statistic is Statistic.MEDIAN else grouped.mean()
+    if mode.stack:
+        # Stacked bars (`stacking`): the drawn top is the PILE at each tick —
+        # the colour levels summed — and no error band is drawn.
+        from .roles import grouping_layers
+        from .stacking import stacked_bounds
+
+        color = grouping_layers(spec, table, roles).color
+        by = [name for name in grouping if name != color]
+        piles = stacked_bounds(centre, by if color in grouping else grouping)
+        Log.debug(
+            "y limits: %d stacked pile(s) over %s (colour %r)",
+            len(piles), by or "nothing", color, layer=LAYER,
+        )
+        return _union_extents(_fold(piles, scope, mode), overlay_extents)
     low, high = spread_bounds(grouped, centre, spec)
     # The centre line is drawn too, and a MEAN with an IQR band can sit outside
     # its own quartiles on skewed data — the band was covered, the line not.

@@ -92,13 +92,14 @@ def test_an_uneven_split_keeps_every_row(seeded):
     assert counts == {"stim": 8, "sham": 4}
 
 
-def test_a_categorical_variable_is_still_not_a_measure(seeded):
-    """Right as a factor, wrong as something to put on a numeric axis."""
+def test_a_categorical_variable_is_a_factor_and_a_measure(seeded):
+    """A grouping, and since 2026-11-01 also plottable: drawn as counts, %s
+    or categories (scistackplot.categorical), never on a numeric axis."""
     source = ScidbSource(seeded)
 
     assert source._shape_of("Condition") is Shape.CATEGORICAL
     catalog = {m["name"]: m for m in source.describe()["measures"]}
-    assert catalog["Condition"]["plottable"] is False
+    assert catalog["Condition"]["plottable"] is True
 
 
 def test_a_deeper_variable_cannot_group(seeded):
@@ -1122,8 +1123,9 @@ def test_own_column_rides_on_each_row(with_gait):
 
 
 def test_without_the_grouping_the_label_column_is_not_a_field(with_gait):
-    """Unchanged behaviour: a text column is not plottable, so it is dropped
-    from the melt rather than becoming a field with no numbers."""
+    """A text column does not melt with the numeric fields (one value column
+    holds one shape): it is the measure `Gait (text)` instead
+    (scistackplotdb.text_fields, 2026-11-01)."""
     table = ScidbSource(with_gait).get_table(["Gait"])
 
     assert "Side" not in table.frame.columns

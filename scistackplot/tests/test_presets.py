@@ -141,6 +141,10 @@ def test_variable_text_paths_are_the_ones_the_user_chose():
         "histogram.bin_width",
         "histogram.range_min",
         "histogram.range_max",
+        # The one category a text measure's plot shows ("Only fall") is that
+        # variable's own text: applied to another variable it would match
+        # nothing and draw nothing (2026-11-01, categorical-measures.md).
+        "categorical.level",
     }
 
 

@@ -49,7 +49,7 @@ import pandas as pd
 from scistacklog import Log
 
 from .series_stats import cell_array, cell_arrays, collapse_cells
-from .shape import Shape
+from .shape import Shape, classify_value
 from .spec import SCALAR_KINDS, PlotSpec, Statistic
 from .table import LongTable
 
@@ -155,10 +155,41 @@ def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
     )
 
 
+def _warn_non_numeric_cells(values: pd.Series, measure: str) -> None:
+    """WARN when cells of the measure hold text arrays: they collapse to
+    NaN gaps (``cell_array``), never to a crash, and the log says how many
+    and shows a few.
+
+    Uses ``shape.classify_value``, the one rule for "is this cell a series",
+    so this count and the melt's "not plottable" decision cannot disagree.
+    Only arrays with a non-numeric dtype are classified, so a numeric column
+    costs one dtype check per cell.
+    """
+    bad = [
+        v
+        for v in values
+        if isinstance(v, np.ndarray)
+        and v.dtype.kind in "OUS"
+        and v.size
+        and classify_value(v) is not Shape.SERIES_1D
+    ]
+    if bad:
+        examples = [str(v.ravel()[0])[:40] for v in bad[:3]]
+        Log.warn(
+            "%d cell(s) of %r hold non-numeric values and are drawn as gaps "
+            "(e.g. %s)",
+            len(bad),
+            measure,
+            examples,
+            layer=LAYER,
+        )
+
+
 def _collapse_cells(
     frame: pd.DataFrame, measure: str, statistic: Statistic
 ) -> tuple[pd.DataFrame, int, int]:
     """The normal path: one array per row becomes one float per row."""
+    _warn_non_numeric_cells(frame[measure], measure)
     arrays = cell_arrays(frame[measure])
     values = collapse_cells(arrays, statistic)
     out = frame.copy()

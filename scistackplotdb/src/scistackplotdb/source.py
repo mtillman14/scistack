@@ -21,9 +21,13 @@ from scistackplot import (
     Shape,
     classify_column,
     classify_value,
+    element_values,
+    explode_row_lists,
     is_plottable,
     natural_sort_key,
+    row_origin,
 )
+from scistackplot.categorical import MAX_CATEGORY_LEVELS
 from scistackplot.dedup import SingleFlight
 from scistackplot.framesize import format_extent, frame_extent
 from scistackplot.sources import BaseSource, UnknownMeasureError
@@ -36,6 +40,7 @@ from .load import (
     column_levels,
     data_column_types_for,
     data_columns_for,
+    field_shapes,
     is_container_type,
     load_variable,
     registered_variables,
@@ -44,6 +49,7 @@ from .load import (
     schema_keys,
     variable_levels,
 )
+from .text_fields import base_variable, is_text_measure, text_measure_name
 
 LAYER = "scistackplotdb"
 
@@ -59,7 +65,7 @@ FIELD_FACTOR = "ColName"
 #: unreadable and a facet per level is hundreds of empty panels. Not a hard
 #: limit — a spec naming such a column still works — only what
 #: :meth:`ScidbSource.groupable_report` will put in front of a user.
-MAX_GROUP_LEVELS = 50
+MAX_GROUP_LEVELS = MAX_CATEGORY_LEVELS  # one threshold: "are these categories?"
 
 
 def _as_levels(column):
@@ -112,6 +118,10 @@ class ScidbSource(BaseSource):
         # in `_frames` would hand a later plot a frame with no measure in it.
         self._variant_frames: dict[str, Any] = {}
         self._shapes: dict[str, Shape] = {}
+        # variable -> {field: Shape} for a multi-column variable, sampled once
+        # (`load.field_shapes`): which fields are text, for the catalog's
+        # "Var (text)" entry, without loading the variable.
+        self._field_shapes: dict[str, dict[str, Shape]] = {}
         self._levels: dict[str, list[str]] = {}
         # variable -> the content fingerprint its cached frames were built at.
         # Checked on every cache hit, because nothing tells this process when
@@ -160,19 +170,34 @@ class ScidbSource(BaseSource):
             measures = []
             for variable in registered_variables(self._db):
                 shape = self._shape_of(variable)
-                columns = data_columns_for(self._db, variable)
+                numeric, text = self._field_split(variable)
+                columns = numeric if text and numeric else data_columns_for(self._db, variable)
                 measures.append(
                     {
                         "name": variable,
                         "display": variable,
                         "shape": str(shape),
                         "exploded": False,
-                        "plottable": shape
-                        in (Shape.SCALAR, Shape.SERIES_1D, Shape.MATRIX_2D),
+                        "plottable": is_plottable(shape),
                         "columns": columns,
                         "levels": self._levels_of(variable),
                     }
                 )
+                if text and numeric:
+                    # A MIXED wide variable: its text fields are their own
+                    # measure (`text_fields`), so none is hidden.
+                    measures.append(
+                        {
+                            "name": text_measure_name(variable),
+                            "display": text_measure_name(variable),
+                            "shape": str(Shape.CATEGORICAL),
+                            "exploded": False,
+                            "plottable": True,
+                            "columns": text,
+                            "levels": self._levels_of(variable),
+                            "text_of": variable,
+                        }
+                    )
 
             factors = []
             for key in keys:
@@ -202,9 +227,46 @@ class ScidbSource(BaseSource):
             }
 
     def _shape_of(self, variable: str) -> Shape:
+        """What one cell of ``variable`` (a measure name) holds. A text
+        measure (`text_fields`) is categorical; a multi-column variable is
+        what its NUMERIC fields hold (the measure the melt makes of them),
+        and categorical only when every field is text."""
+        if is_text_measure(variable):
+            return Shape.CATEGORICAL
         if variable not in self._shapes:
-            self._shapes[variable] = classify_value(sample_value(self._db, variable))
+            numeric, text = self._field_split(variable)
+            if text and not numeric:
+                shape = Shape.CATEGORICAL
+            elif text:
+                shape = self._field_shapes[variable][numeric[0]]
+            else:
+                shape = classify_value(sample_value(self._db, variable))
+            self._shapes[variable] = shape
         return self._shapes[variable]
+
+    def _field_split(self, variable: str) -> tuple[list[str], list[str]]:
+        """``(other fields, text fields)`` of a MULTI-column variable, from
+        one sampled value per field (`load.field_shapes`), cached. A
+        single-column variable answers ``(its column, [])`` with no query —
+        its shape is `_shape_of`'s. Text fields are what `text_fields` lists
+        as ``Var (text)``."""
+        columns = data_columns_for(self._db, variable)
+        if len(columns) < 2:
+            return list(columns), []
+        if variable not in self._field_shapes:
+            self._field_shapes[variable] = field_shapes(self._db, variable)
+            shapes = self._field_shapes[variable]
+            text = [c for c, s in shapes.items() if s is Shape.CATEGORICAL]
+            if text:
+                Log.info(
+                    "variable %r: %d text field(s) %s of %d — listed as %r",
+                    variable, len(text), text[:8], len(shapes),
+                    text_measure_name(variable) if len(text) < len(shapes) else variable,
+                    layer=LAYER,
+                )
+        shapes = self._field_shapes[variable]
+        text = [c for c, s in shapes.items() if s is Shape.CATEGORICAL]
+        return [c for c in shapes if c not in set(text)], text
 
     def _levels_of(self, variable: str) -> list[str]:
         """Schema depth WITHOUT loading the variable — describe() asks for every
@@ -348,6 +410,7 @@ class ScidbSource(BaseSource):
         Cached and deduplicated like any other table, under its own key, so the
         picker opening twice costs one query.
         """
+        variable = base_variable(variable)  # a text measure loads its variable
         key = ("__variants__", variable)
         memo = self._current_table_cache()
         label = f"variant_table({variable})"
@@ -476,6 +539,7 @@ class ScidbSource(BaseSource):
         return False
 
     def _variable_frame(self, variable: str):
+        variable = base_variable(variable)  # a text measure loads its variable
         # Hit/miss at INFO: this cache is the difference between a request that
         # reads the whole variable and one that reads nothing, and a plot request
         # that returned in milliseconds is otherwise unattributable
@@ -569,8 +633,9 @@ class ScidbSource(BaseSource):
 
         factor_variables = list(factor_variables or [])
         known = registered_variables(self._db)
+        # A text measure (`Gait (text)`) loads its variable (`text_fields`).
         requested = [
-            *measures,
+            *(base_variable(name) for name in measures),
             *([x_measure] if x_measure else []),
             *(group.variable for group in factor_variables),
         ]
@@ -580,21 +645,46 @@ class ScidbSource(BaseSource):
             # callers (and the GUI) handle one kind of "no such measure".
             raise UnknownMeasureError(f"Unknown variable(s) {unknown}. Available: {known}")
 
+        text_measures = [name for name in [*measures, x_measure] if name and is_text_measure(name)]
+        if text_measures and (len(measures) > 1 or x_measure is not None):
+            raise ValueError(
+                f"{text_measures} hold a variable's TEXT fields, which plot on "
+                f"their own: they cannot stack with another variable or pair with "
+                f"an x measure."
+            )
         if len(measures) > 1:
             return self._stacked_table(measures, factor_variables)
 
-        primary = self._variable_frame(measures[0])
+        text_only = is_text_measure(measures[0])
+        primary = self._variable_frame(base_variable(measures[0]))
         own = self._own_column_groups(primary, factor_variables)
         field_columns: list[str] = []
+        row_column: str | None = None
+        row_info: dict | None = None
 
         if x_measure is None:
             if len(primary.data_columns) > 1:
                 frame, field_factor = self._melt_fields(
-                    primary, measures[0], carry=[group.column for group in own]
+                    primary,
+                    measures[0],
+                    carry=[group.column for group in own],
+                    text=text_only,
                 )
                 field_columns = [field_factor]
+                melted = set(frame[field_factor].unique())
+                row_fields = [c for c in primary.row_list_columns if c in melted]
             else:
                 frame = self._named_frame(primary, measures[0])
+                field_factor = None
+                row_fields = (
+                    [measures[0]]
+                    if primary.value_column in primary.row_list_columns
+                    else []
+                )
+            if row_fields:
+                frame, row_column, row_info = self._split_row_lists(
+                    primary.name, frame, measures[0], row_fields, field_factor
+                )
             levels = primary.levels
             variant_columns = list(primary.variant_columns)
             variant_axes = list(primary.variant_axes)
@@ -605,6 +695,22 @@ class ScidbSource(BaseSource):
         else:
             secondary = self._variable_frame(x_measure)
             pair = (measures[0], x_measure)
+            combined = [
+                name
+                for name, vf in zip(pair, (primary, secondary), strict=True)
+                if vf.row_list_columns
+            ]
+            if combined:
+                # Not split here: pairing one x per y row needs the two
+                # variables' rows to line up, and nothing says row i of one
+                # is row i of the other. Said, not silent.
+                Log.warn(
+                    "%s hold combined rows (row lists); an x-y plot reads "
+                    "them as 1-D arrays — plot each on its own to see one "
+                    "point per source row",
+                    combined,
+                    layer=LAYER,
+                )
             multi = [
                 name
                 for name, frame in zip(pair, (primary, secondary), strict=True)
@@ -661,6 +767,15 @@ class ScidbSource(BaseSource):
         # Keys: the attached factor names, in the order they were joined.
         factors.extend(group_depths)
         factors.extend(c for c in field_columns if c in frame.columns)
+        factor_origins = {axis["column"]: axis for axis in variant_axes}
+        factor_depths = dict(group_depths)
+        if row_column is not None and row_info is not None:
+            factors.append(row_column)
+            factor_origins[row_column] = row_info
+            # Pinned by every schema key the record sits under plus itself:
+            # one level below the variable's own, so the scalar default
+            # groups it (one mark per source row) and iterates the rest.
+            factor_depths[row_column] = len(levels) + 1
 
         level_order = {
             name: self._level_order(name, frame, is_field=name in field_columns)
@@ -677,10 +792,10 @@ class ScidbSource(BaseSource):
             name=measures[0],
             default_pin=default_pin,
             latest_column=latest_column,
-            factor_origins={axis["column"]: axis for axis in variant_axes},
+            factor_origins=factor_origins,
             # Where each joined grouping sits in the hierarchy, so a nested x
             # axis puts a subject-level grouping OUTSIDE the sessions inside it.
-            factor_depths=group_depths,
+            factor_depths=factor_depths,
             # The variable's own schema depth, outermost first — the nesting
             # that decides which keys a fan-out has to iterate together and in
             # which order (roles.fanout_keys).
@@ -1093,6 +1208,17 @@ class ScidbSource(BaseSource):
         ``spec.measures`` stop naming a real variable.
         """
         frames = [self._variable_frame(name) for name in measures]
+        combined = [f.name for f in frames if f.row_list_columns]
+        if combined:
+            # Splitting is per variable, and stacked variables share one
+            # value column; not done here yet. Said, not silent.
+            Log.warn(
+                "%s hold combined rows (row lists); stacked with other "
+                "variables they are read as 1-D arrays — plot each on its own "
+                "to see one point per source row",
+                combined,
+                layer=LAYER,
+            )
 
         # Dict/struct variables stack too, provided they carry the SAME fields:
         # RawEMG and FilteredEMG, both keyed by muscle, are the archetypal
@@ -1298,6 +1424,7 @@ class ScidbSource(BaseSource):
         offering a default for every groupable variable costs a handful of
         metadata queries rather than reading any of them.
         """
+        variable = base_variable(variable)  # a text measure loads its variable
         from scistackplot.variants import default_selection
 
         return default_selection(self.variant_table(variable))
@@ -1318,6 +1445,7 @@ class ScidbSource(BaseSource):
         Its own cache, never ``_frames``: a data-less frame stored there would
         be handed to a later plot as though it held the measure.
         """
+        variable = base_variable(variable)  # a text measure loads its variable
         # Same self-validation as the data frame: this cache is what served a
         # stale `variant_table` for a whole session after a re-run (2026-09-15).
         if (
@@ -1361,6 +1489,7 @@ class ScidbSource(BaseSource):
         *,
         fields: list[str] | None = None,
         carry: list[str] | None = None,
+        text: bool = False,
     ):
         """
         Turn a dict/struct variable's columns into ONE measure plus a field
@@ -1379,17 +1508,58 @@ class ScidbSource(BaseSource):
         of a ``Gait`` record — ``FactorVariable.is_own_column``): they stay on
         every melted row as id columns instead of becoming a field level or
         being dropped as unplottable.
+
+        ``text`` melts the TEXT fields instead (the measure `Gait (text)`,
+        `text_fields`). One melted column holds one shape, so a mixed variable
+        is two measures: by default its other fields, and its text fields
+        under the text name — said in the log, never dropped. A variable whose
+        fields are ALL text melts them by default (it has nothing else).
         """
         frame = variable_frame.frame
         carried = [c for c in (carry or []) if c in frame.columns]
         usable, skipped = [], []
+        texts: list[str] = []
+        row_lists = set(variable_frame.row_list_columns)
         for column in variable_frame.data_columns:
             if column in carried:
                 continue
-            if is_plottable(classify_column(frame[column])):
+            # A row list is classified by its ELEMENTS (it is split into rows
+            # after the melt): a VARCHAR row list is text and joins the text
+            # fields, instead of melting in as a "1-D" column.
+            values = (
+                element_values(frame[column]) if column in row_lists else frame[column]
+            )
+            shape = classify_column(values)
+            if shape is Shape.CATEGORICAL:
+                texts.append(column)
+            elif is_plottable(shape):
                 usable.append(column)
             else:
                 skipped.append(column)
+        if text or not usable:
+            # The text measure, or a variable that has only text fields.
+            if texts and usable:
+                Log.info(
+                    "variable %r: plotting its %d text field(s) %s; its other "
+                    "field(s) %s are the measure %r",
+                    variable_frame.name, len(texts), texts, usable,
+                    variable_frame.name, layer=LAYER,
+                )
+            usable = texts
+            if text and not texts:
+                raise ValueError(
+                    f"Variable {variable_frame.name!r} has no text fields "
+                    f"(columns: {variable_frame.data_columns}); plot "
+                    f"{variable_frame.name!r} itself."
+                )
+        elif texts:
+            # INFO, not a drop: they are reachable, under their own name.
+            Log.info(
+                "variable %r: %d text field(s) %s are plotted as %r, not with "
+                "the %d other field(s)",
+                variable_frame.name, len(texts), texts,
+                text_measure_name(variable_frame.name), len(usable), layer=LAYER,
+            )
         # Datetime fields melt into ONE value column with the rest, which is a
         # time axis only if every field is a datetime (scistackplot.temporal).
         # Beside numeric fields they would read as numbers (NaN), so they are
@@ -1458,6 +1628,51 @@ class ScidbSource(BaseSource):
         )
         return melted, field_factor
 
+    def _split_row_lists(
+        self,
+        variable: str,
+        frame,
+        measure: str,
+        row_fields: list[str],
+        field_factor: str | None,
+    ):
+        """``(frame, row column or None, its origin or None)`` — every
+        row-list cell split into one row per element (scistackplot.rows,
+        the one owner of the reshape; codegen mirrors it from the origin).
+
+        The Row factor is kept only when some cell held two or more rows: a
+        one-level factor is a constant (synthetic-factors.md invariant 6).
+        The cells are unwrapped either way, so ``[v]`` reads as ``v``."""
+        with Log.timer(
+            f"split_row_lists({variable})",
+            layer=LAYER,
+            extra=f"{len(row_fields)} field(s)",
+        ):
+            split = explode_row_lists(
+                frame, measure, row_fields, field_factor=field_factor
+            )
+        Log.info(
+            "split row-list field(s) %s of %r: %d cell(s), %d -> %d row(s), "
+            "at most %d per cell; %s",
+            row_fields,
+            variable,
+            split.cells,
+            split.rows_in,
+            split.rows_out,
+            split.max_rows,
+            f"factor {split.row_factor!r}"
+            if split.row_factor
+            else "no cell held two rows, so no Row factor",
+            layer=LAYER,
+        )
+        if split.row_factor is None:
+            return split.frame, None, None
+        return (
+            split.frame,
+            split.row_factor,
+            row_origin(row_fields, field_factor),
+        )
+
     def _named_frame(self, variable_frame, measure: str):
         """The variable's frame with its data column renamed to the measure."""
         return variable_frame.frame.rename(
@@ -1511,6 +1726,19 @@ class ScidbSource(BaseSource):
         cannot offer has to say **why** in place rather than be absent. "EMG is
         not clickable" with no reason is indistinguishable from a broken dialog.
         """
+        if is_text_measure(measure) or self._shape_of(measure) is Shape.CATEGORICAL:
+            # A text measure plots on its own (`_build_table` refuses a stack):
+            # counts of one variable's categories beside another's are not one
+            # axis. Every candidate says so.
+            reason = "a text measure is plotted on its own, not stacked"
+            return {
+                "offered": [],
+                "rejected": {
+                    name: reason
+                    for name in registered_variables(self._db)
+                    if name != base_variable(measure)
+                },
+            }
         own_shape = self._shape_of(measure)
         own_levels = self._levels_of(measure)
         own_columns = data_columns_for(self._db, measure)
@@ -1554,6 +1782,7 @@ class ScidbSource(BaseSource):
 
     def groupable_with(self, measure: str) -> list[FactorVariable]:
         """Groupings offered for ``measure``. See :meth:`groupable_report`."""
+        measure = base_variable(measure)  # a text measure groups as its variable
         return [
             FactorVariable(offer["variable"], offer["column"])
             for offer in self.groupable_report(measure)["offered"]
@@ -1591,6 +1820,7 @@ class ScidbSource(BaseSource):
         same question in one call — but it is the expensive form, and the GUI
         no longer opens a panel with it.
         """
+        measure = base_variable(measure)  # a text measure groups as its variable
         report = self.groupable_variables(measure)
         rejected: dict[str, str] = dict(report["rejected"])
         buckets: dict[str, list[dict]] = {
@@ -1650,6 +1880,7 @@ class ScidbSource(BaseSource):
         categorical groups lead — so the two cannot drift about what comes
         first.
         """
+        measure = base_variable(measure)  # a text measure groups as its variable
         own = self._levels_of(measure)
         offered: list[dict] = []
         rejected: dict[str, str] = {}
@@ -1799,6 +2030,7 @@ class ScidbSource(BaseSource):
         when ``variable`` IS the measure (its own ``Side`` column grouping it),
         a numeric column is a plotted field, not a numeric sheet column.
         """
+        measure = base_variable(measure)  # a text measure groups as its variable
         rejected: dict[str, str] = {}
         types = data_column_types_for(self._db, variable)
         # The plotted variable's own numeric columns are its FIELDS — what the
@@ -1826,6 +2058,7 @@ class ScidbSource(BaseSource):
         onto the analysis rows, where the measure's own fields are not
         carried.
         """
+        measure = base_variable(measure)  # a text measure groups as its variable
         found = self.groupable_variables(measure)
         offered, rejected = [], dict(found["rejected"])
         for entry in found["offered"]:
@@ -1843,6 +2076,7 @@ class ScidbSource(BaseSource):
         """Which COLUMNS of ``variable`` may be a covariate: the numeric ones
         (the mirror of :meth:`groupable_columns`, which offers the text
         ones). Same ``{"offered", "rejected"}`` shape, same type pre-filter."""
+        measure = base_variable(measure)  # a text measure groups as its variable
         rejected: dict[str, str] = {}
         offered: list[dict] = []
         types = data_column_types_for(self._db, variable)
@@ -1943,6 +2177,8 @@ class ScidbSource(BaseSource):
 
     def joinable_with(self, measure: str) -> list[str]:
         """Variables that can supply an x axis for ``measure``."""
+        if is_text_measure(measure) or self._shape_of(measure) is Shape.CATEGORICAL:
+            return []  # a text measure has no y values for an x axis to pair with
         own = self._levels_of(measure)
         result = []
         for candidate in registered_variables(self._db):
@@ -1968,6 +2204,7 @@ class ScidbSource(BaseSource):
             self._frames.clear()
             self._variant_frames.clear()
             self._shapes.clear()
+            self._field_shapes.clear()
             self._levels.clear()
             self._fingerprints.clear()
         else:
@@ -1977,6 +2214,7 @@ class ScidbSource(BaseSource):
             # holds the answer to.
             self._variant_frames.pop(variable, None)
             self._shapes.pop(variable, None)
+            self._field_shapes.pop(variable, None)
             self._levels.pop(variable, None)
             self._fingerprints.pop(variable, None)
         # Built tables are derived from those frames, so they are stale too —

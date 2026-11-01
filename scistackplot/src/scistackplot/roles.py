@@ -25,9 +25,25 @@ from dataclasses import dataclass, field, replace
 
 from scistacklog import Log
 
+from .categorical import (
+    LEVEL_FACTOR,
+    categorical_mode,
+    categorical_problem,
+    is_categorical_measure,
+)
 from .panels import y_titles_problem
 from .shape import Shape
-from .spec import BAR_KINDS, CONTINUOUS_X_KINDS, MAX_X_LAYERS, OVERLAY_KINDS, PlotKind, PlotSpec, Role
+from .stacking import stacks
+from .spec import (
+    BAR_KINDS,
+    CONTINUOUS_X_KINDS,
+    MAX_X_LAYERS,
+    OVERLAY_KINDS,
+    CategoricalStat,
+    PlotKind,
+    PlotSpec,
+    Role,
+)
 from .table import LongTable
 from .temporal import BAR_REASON, normalize_mode
 from .variants import VARIABLE_COLUMN, VARIANT_FACTOR
@@ -133,6 +149,11 @@ def default_assignment(
     measure = measure or (table.measure_names[0] if table.measures else None)
     if shape is None:
         shape = table.shape_of(measure) if measure else Shape.UNKNOWN
+    if shape is Shape.CATEGORICAL:
+        # A text measure opens on its count per category (user, 2026-11-01).
+        return categorical_assignment(
+            table, measure, PlotKind.BAR, CategoricalStat.COUNT
+        )
 
     roles: dict[str, Role] = {}
     groups: list[str] = []
@@ -167,6 +188,100 @@ def default_assignment(
             groups.append(own_level)
 
     return Assignment(roles=roles, groups=groups, color=color)
+
+
+def categorical_assignment(
+    table: LongTable,
+    measure: str | None,
+    kind: PlotKind,
+    stat: CategoricalStat,
+) -> Assignment:
+    """The assignment a TEXT measure opens with for ``kind`` (and ``stat``,
+    read through ``categorical.mode_for_kind``) — one click from any plot
+    type to a picture that means something. Collapse is POOL for a text
+    measure, so "every schema key collapsed" is "the whole dataset in one
+    bucket".
+
+    * **count / proportion bar** (the opening view, user 2026-11-01): one
+      coloured bar per category (:data:`LEVEL_FACTOR` grouped and
+      coloured), every schema key collapsed — for a proportion the
+      outermost (subject) is the sample, so each subject gives one %;
+    * **heatmap**: categories × the outermost key, the rest collapsed;
+    * **proportion spaghetti**: one line per outermost key across the next,
+      the categories as brackets, the rest collapsed;
+    * **strip of categories**: every key collapsed — every record drawn;
+    * **spaghetti of categories**: one line per outermost key across the
+      next and nothing collapsed (text cannot be averaged), the rest
+      separate figures.
+
+    Variants and struct fields are kept apart exactly as
+    :func:`default_assignment` keeps them.
+    """
+    from .categorical import mode_for_kind
+
+    mode = mode_for_kind(kind, stat)
+    roles: dict[str, Role] = {}
+    groups: list[str] = []
+    color: str | None = None
+    variants = [f for f in table.factors if f.is_variant and len(f.levels) > 1]
+    for factor in table.factors:
+        if factor.is_field:
+            roles[factor.name] = Role.FACET
+    if variants:
+        roles[variants[0].name] = Role.GROUP
+        groups.append(variants[0].name)
+        color = variants[0].name
+        for extra in variants[1:]:
+            roles[extra.name] = Role.FACET
+
+    depths = table.factor_depths
+    keys = sorted(
+        (f.name for f in _plain(table) if f.name != LEVEL_FACTOR),
+        key=lambda name: depths.get(name) if depths.get(name) is not None else math.inf,
+    )
+    # Outermost first: `keys[0]` is subject, `keys[1]` session.
+    if mode is CategoricalStat.VALUE:
+        if kind is PlotKind.SPAGHETTI and len(keys) >= 2:
+            lines, along = keys[0], keys[1]
+            for name in keys:
+                roles[name] = Role.ITERATE
+            roles[lines] = roles[along] = Role.GROUP
+            groups = [lines, along, *groups]
+        else:
+            for name in keys:
+                roles[name] = Role.COLLAPSE
+        return Assignment(roles=roles, groups=groups, color=color)
+
+    for name in keys:
+        roles[name] = Role.COLLAPSE
+    roles[LEVEL_FACTOR] = Role.GROUP
+    if kind is PlotKind.HEATMAP and keys:
+        roles[keys[0]] = Role.GROUP
+        groups = [LEVEL_FACTOR, keys[0], *groups]
+    elif kind is PlotKind.SPAGHETTI and len(keys) >= 2:
+        roles[keys[0]] = roles[keys[1]] = Role.GROUP
+        groups = [keys[0], keys[1], LEVEL_FACTOR, *groups]
+    else:
+        groups = [LEVEL_FACTOR, *groups]
+        color = color or LEVEL_FACTOR
+    return Assignment(roles=roles, groups=groups, color=color)
+
+
+def categorical_roles_for(
+    spec: PlotSpec, table: LongTable, kind: PlotKind, stat: CategoricalStat | None = None
+) -> Assignment | None:
+    """:func:`roles_for_kind` for a text measure: the assignment ``kind``
+    (at ``stat``, default the spec's) opens with, or None to keep the current
+    one. Re-defaults **only an untouched default** — the current assignment
+    equal to :func:`categorical_assignment` for the current kind and stat —
+    so a role the user set is never overwritten."""
+    measure = spec.y_measure
+    stat = stat or spec.categorical.stat
+    current = categorical_assignment(table, measure, spec.kind, spec.categorical.stat)
+    if Assignment(spec.roles, spec.groups, spec.color) != current:
+        return None
+    proposed = categorical_assignment(table, measure, kind, stat)
+    return None if proposed == current else proposed
 
 
 def default_roles(
@@ -496,6 +611,18 @@ def collapse_steps(
     order = collapse_order(roles, table)
     if not order:
         return CollapseSteps(pre=[], sample=[])
+    # A text measure: "Collapse" means POOL (user, 2026-11-01), and what the
+    # pooled rows are depends on the mode (`categorical`). A count has no
+    # sample — every collapsed key is summed into the bar. Category
+    # positions are drawn record by record — every collapsed key is the
+    # (pooled) sample, nothing reduced. A proportion keeps the ordinary
+    # split: everything beneath the sample key pools into one % per unit
+    # (`reduce._collapse_levels` pools it), and the units are the sample.
+    mode = categorical_mode(spec, table)
+    if mode is CategoricalStat.COUNT:
+        return CollapseSteps(pre=list(order), sample=[])
+    if mode is CategoricalStat.VALUE:
+        return CollapseSteps(pre=[], sample=list(order))
     if spec.aggregate.pooled:
         pre, sample = [], list(order)
     else:
@@ -523,7 +650,10 @@ def has_sample(roles: dict[str, Role]) -> bool:
 
 
 def overlay_unavailable(
-    spec: PlotSpec, roles: dict[str, Role], shape: Shape
+    spec: PlotSpec,
+    roles: dict[str, Role],
+    shape: Shape,
+    categorical: CategoricalStat | None = None,
 ) -> str | None:
     """Why this figure cannot carry a "Show sample" overlay, or None.
 
@@ -534,6 +664,21 @@ def overlay_unavailable(
     reason logged) and the capability report (which greys the section out
     with it), so the two can never disagree.
     """
+    # A text measure (`categorical`, the mode `categorical_mode` gives —
+    # passed in, since this function sees no table). Only a proportion has
+    # per-unit values to show; a count IS the pooled records.
+    if categorical is CategoricalStat.COUNT:
+        return (
+            "A count has no sample: every collapsed record is in the bar. Draw "
+            "a proportion to show one point per unit."
+        )
+    if categorical is CategoricalStat.VALUE:
+        return "Every record is already drawn as its own point."
+    if stacks(spec):
+        return (
+            "Stacked bars pile the colour levels on one tick, so a point could "
+            "not sit beside its own bar. Unstack the bars to show the sample."
+        )
     if spec.kind not in OVERLAY_KINDS:
         return (
             f"A {spec.kind} plot has no categorical mark to place sample points "
@@ -839,6 +984,10 @@ def grouping_layers(
 
     if shape is Shape.MATRIX_2D:
         return GroupingLayers(ticks=[], series=[], color=color)
+    if kind is PlotKind.HEATMAP:
+        # The grid heatmap: its two layers are the grid's axes (`grid_layers`),
+        # not ticks — nothing nests, nothing is painted by a level.
+        return GroupingLayers(ticks=[], series=[], color=None)
     # One polyline per sample level for the kinds that draw lines — see
     # UNIT_KINDS. Read off the one collapse chain, so a pooled spec draws one
     # line per (trial, subject) row, which is what its sample is.
@@ -867,7 +1016,28 @@ def grouping_layers(
         return GroupingLayers(
             ticks=list(reversed(rest)), series=list(lines), color=color, units=units
         )
+    if color is not None and stacks(spec, kind):
+        # Stacked bars (`stacking`): the coloured layer's levels share their
+        # parent's tick and pile up on it, so it is the one layer that is NOT
+        # a tick. Everything else about colour is unchanged.
+        ticks = [name for name in reversed(groups) if name != color]
+        return GroupingLayers(ticks=ticks, series=[], color=color, units=units)
     return GroupingLayers(ticks=list(reversed(groups)), series=[], color=color, units=units)
+
+
+def grid_layers(
+    spec: PlotSpec, table: LongTable, roles: dict[str, Role] | None = None
+) -> tuple[str | None, str | None]:
+    """``(columns, rows)`` of a grid heatmap — the OUTER grouping layer along
+    x, the inner one down y — or ``(None, None)`` without exactly two layers
+    (``kind_requirement`` says why). The one reading, shared by the panel
+    frame (``reduce._grid_frame``) and codegen."""
+    assignment = complete_assignment(spec, table)
+    groups = spec.ordered_groups(roles or assignment.roles, table.factor_depths)
+    if len(groups) != 2:
+        return None, None
+    inner, outer = groups
+    return outer, inner
 
 
 def tick_layers(
@@ -942,6 +1112,14 @@ def kind_requirement(
             "A histogram draws one histogram per level of ONE grouping layer "
             "(its colour); move the other layers to 'Separate panels' or "
             "'Separate figures'."
+        )
+    if kind is PlotKind.HEATMAP and shape is not Shape.MATRIX_2D and n_groups != 2:
+        # The grid heatmap (`reduce._grid_frame`): one cell per pair of the
+        # two layers — columns the outer, rows the inner — coloured by the
+        # mark's value.
+        return (
+            "A heatmap of one value per cell needs exactly two grouping "
+            "layers: the outer one runs along x, the inner one down y."
         )
     if kind is PlotKind.SPAGHETTI and n_groups < 2:
         return (
@@ -1101,6 +1279,11 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
     if problem is not None:
         raise RoleError(problem)
 
+    # --- a text measure (scistackplot.categorical) -----------------------
+    problem = categorical_problem(spec, table)
+    if problem is not None:
+        raise RoleError(problem)
+
     # --- roles name real factors ----------------------------------------
     unknown =[name for name in spec.roles if not table.has_factor(name)]
     if unknown:
@@ -1166,7 +1349,9 @@ def validate(spec: PlotSpec, table: LongTable) -> None:
     if spec.show_sample:
         from .cell import effective_shape  # the shape the FIGURE draws
 
-        reason = overlay_unavailable(spec, roles, effective_shape(spec, table))
+        reason = overlay_unavailable(
+            spec, roles, effective_shape(spec, table), categorical_mode(spec, table)
+        )
         if reason is not None:
             Log.debug("show_sample %s inert: %s", spec.show_sample, reason, layer=LAYER)
     # Same split for the overlay's own colour: a typo is refused, a key that
@@ -1264,6 +1449,8 @@ def roles_for_kind(
 
     if not spec.measures or spec.y_measure not in table.measure_names:
         return None
+    if is_categorical_measure(table, spec.y_measure) and spec.x_measure is None:
+        return categorical_roles_for(spec, table, kind)
 
     current = effective_shape(spec, table)
     proposed = effective_shape(replace(spec, kind=kind), table)

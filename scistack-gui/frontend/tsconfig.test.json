@@ -60,6 +60,8 @@
     "src/components/PlotStudio/presets.test.ts",
     "src/components/PlotStudio/continuousKinds.ts",
     "src/components/PlotStudio/continuousKinds.test.ts",
+    "src/components/PlotStudio/kindTiles.ts",
+    "src/components/PlotStudio/kindTiles.test.ts",
     "src/components/PlotStudio/textSizes.ts",
     "src/components/PlotStudio/textSizes.test.ts",
     "src/components/PlotStudio/aliasEdit.ts",

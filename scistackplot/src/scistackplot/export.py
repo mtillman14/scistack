@@ -47,7 +47,7 @@ from scistacklog import Log
 from .compare import plan_comparison, value_column
 from .roles import chain_cut, collapse_order, collapse_steps
 from .shape import Shape
-from .spec import LocationFilter, PlotSpec
+from .spec import CategoricalStat, LocationFilter, PlotSpec
 from .table import LongTable
 from .temporal import TemporalAxis, from_axis_ms, normalize_mode, zone_title
 
@@ -197,6 +197,16 @@ def data_export_options(
     shape = shape or table.shape_of(spec.y_measure)
     reason = data_unavailable(shape)
     if reason is not None:
+        # INFO: this is the panel's only explanation for a greyed-out
+        # "Save data (CSV)" button, so the log must be able to answer it too.
+        Log.info(
+            "[data-export] unavailable for %s (kind=%s, drawn shape=%s): %s",
+            spec.y_measure,
+            spec.kind,
+            shape,
+            reason,
+            layer=LAYER,
+        )
         return DataExportOptions(available=False, reason=reason)
 
     order = collapse_order(roles, table)
@@ -208,7 +218,7 @@ def data_export_options(
     # Compare to reference: the value columns are NAMED after what they hold
     # (`compare.value_column`), so a saved file cannot pass for raw data.
     comparison = plan_comparison(spec, roles, table)
-    suffix = _temporal_suffix(spec, table, comparison)
+    suffix = _temporal_suffix(spec, table, comparison) + _categorical_suffix(spec, table)
 
     def depth(key: str | None, averaged: list[str], label: str) -> DataDepth:
         columns = _columns(present, averaged, spec, table)
@@ -292,6 +302,14 @@ def data_export_options(
             )
         )
 
+    Log.debug(
+        "[data-export] available for %s (kind=%s): %d depth(s) %s",
+        spec.y_measure,
+        spec.kind,
+        len(depths),
+        [d.key for d in depths],
+        layer=LAYER,
+    )
     return DataExportOptions(
         available=True,
         depths=depths,
@@ -436,6 +454,19 @@ def plot_data(
                     "[plot-data] %s written as wall-clock datetimes in %s",
                     y, zone_title(plan.temporal.mode), layer=LAYER,
                 )
+            # A text measure drawn as its categories: written as the category
+            # text, not its axis position (`categorical`, VALUE mode).
+            categories = (
+                plan.table.measure(y).levels
+                if plan.table.measure(y).categorical is CategoricalStat.VALUE
+                else None
+            )
+            if categories and y in frame.columns:
+                codes = pd.to_numeric(frame[y], errors="coerce")
+                frame[y] = [
+                    "" if v != v else str(categories[int(v)]) for v in codes
+                ]
+                Log.info("[plot-data] %s written as its category text", y, layer=LAYER)
             # A datetime x measure, the same way.
             x = plan.spec.x_measure
             if plan.temporal_x is not None and x and x in frame.columns:
@@ -601,6 +632,18 @@ def _written(
         value_column(comparison, name) + suffix if name in values else name
         for name in columns
     ]
+
+
+def _categorical_suffix(spec: PlotSpec, table: LongTable) -> str:
+    """What a text measure's value column holds, said in its header
+    (`categorical.measure_label`): ``Outcome, Count``, ``Outcome, % of
+    records``. Nothing for a numeric measure or for category text."""
+    if spec.y_measure not in table.measure_names:
+        return ""
+    info = table.measure(spec.y_measure)
+    if info.categorical in (None, CategoricalStat.VALUE) or not info.label:
+        return ""
+    return f", {info.label}"
 
 
 def _temporal_suffix(spec: PlotSpec, table: LongTable, comparison) -> str:

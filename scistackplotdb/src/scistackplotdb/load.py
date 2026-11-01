@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from sciduckdb import merge_tz_columns, stored_tz_companions, tz_column_name
 from scistacklog import Log
-from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX
+from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, element_values
 from scistackplot.framesize import format_extent, frame_extent
 from scistackplot.shape import Shape, classify_value
 from scistackplot.table import natural_sort_key
@@ -97,6 +97,11 @@ class VariableFrame:
     #: Name of the per-row "this is my location's newest code version" flag, or
     #: None when the variable holds only one version. See :data:`LATEST_COLUMN`.
     latest_column: str | None = None
+    #: Data columns stored as ``row_list`` ("combine rows": one element per
+    #: source row, sciduckdb.row_lists). Their cells arrive as arrays; the
+    #: source splits them into rows with a ``Row`` factor
+    #: (scistackplot.rows), never plots them as 1-D series.
+    row_list_columns: list[str] = field(default_factory=list)
 
     @property
     def value_column(self) -> str:
@@ -286,7 +291,13 @@ def sample_value(db, variable: str) -> Any:
         f"AND t.\"{columns[0]}\" IS NOT NULL LIMIT 1",
         [variable],
     )
-    return row[0] if row else None
+    value = row[0] if row else None
+    # A row list's cell is its source rows, not a series: classify by one
+    # ELEMENT, the shape the source turns it into (rows + a Row factor).
+    if value is not None and _row_list_columns(db, variable, columns[:1]):
+        elements = element_values(pd.Series([value], dtype=object)).dropna()
+        value = elements.iloc[0] if len(elements) else None
+    return value
 
 
 def sample_column_value(db, variable: str, column: str) -> Any:
@@ -306,6 +317,36 @@ def sample_column_value(db, variable: str, column: str) -> Any:
         [variable],
     )
     return row[0] if row else None
+
+
+def field_shapes(db, variable: str) -> dict[str, Shape]:
+    """``{data column: Shape}`` for every field of a variable, from one sampled
+    value each — what the catalog needs to list a wide variable's TEXT fields
+    as their own measure (``source.text_measure_name``) without loading it.
+
+    By value, as :func:`sample_value` classifies (a row list by one ELEMENT).
+    A container-typed column is SERIES_1D from its type alone and never
+    sampled (:func:`is_container_type`: the EMG-trace cost), unless it is a
+    row list, whose type is a list but whose elements are the values.
+    The table load re-classifies every field by its values
+    (``ScidbSource._melt_fields``), which is the owner; this is the cheap
+    answer the catalog lists by, and it can only be wrong in the direction of
+    a "(text)" entry that then says it has no text fields.
+    """
+    types = data_column_types_for(db, variable)
+    row_lists = set(_row_list_columns(db, variable, list(types)))
+    shapes: dict[str, Shape] = {}
+    with Log.timer(f"field_shapes({variable})", layer=LAYER, extra=f"{len(types)} column(s)"):
+        for column, data_type in types.items():
+            if is_container_type(data_type) and column not in row_lists:
+                shapes[column] = Shape.SERIES_1D
+                continue
+            value = sample_column_value(db, variable, column)
+            if value is not None and column in row_lists:
+                elements = element_values(pd.Series([value], dtype=object)).dropna()
+                value = elements.iloc[0] if len(elements) else None
+            shapes[column] = classify_value(value)
+    return shapes
 
 
 def column_levels(db, variable: str, column: str, *, limit: int) -> list[str]:
@@ -447,23 +488,26 @@ def _key_text(value: Any) -> "str | None":
     return str(value)
 
 
-def _log_row_list_columns(db, variable: str, columns) -> None:
-    """Say which columns are row lists (sciduckdb.row_lists: rows combined by
+def _row_list_columns(db, variable: str, columns) -> list[str]:
+    """Which columns are row lists (sciduckdb.row_lists: rows combined by
     ``on_duplicate="combine"``). This reader selects the stored cells as they
-    are, so EVERY cell of such a column is a 1-D array (``[7]``, ``[5, 12]``)
-    and the column is plotted as a 1-D measure (the collapse kinds take its
-    mean/median per location) - a decision recorded in
-    .claude/plan-combine-duplicate-locations.md §6, not an accident."""
+    are, so EVERY cell of such a column is an array (``[7]``, ``[5, 12]``).
+    The source splits them into rows with a ``Row`` factor
+    (scistackplot.rows) — they are observations, not a 1-D series. This
+    replaced the "read as 1-D" decision of
+    .claude/plan-combine-duplicate-locations.md §6 on 2026-10-30
+    (.claude/plan-row-list-plots.md)."""
     from sciduckdb import is_row_list_meta
 
     stored = (db.get_dtype_meta(variable) or {}).get("columns", {})
     row_lists = [c for c in columns if is_row_list_meta(stored.get(c))]
     if row_lists:
         Log.debug(
-            "variable %r: row-list column(s) %s (combined rows) are read as "
-            "1-D arrays, one element per source row",
+            "variable %r: row-list column(s) %s (combined rows) — split into "
+            "one row per element by the source",
             variable, row_lists, layer=LAYER,
         )
+    return row_lists
 
 
 def load_variable(
@@ -490,7 +534,7 @@ def load_variable(
             keys = schema_keys(db)
             column_types = data_column_types_for(db, variable)
             columns = list(column_types)
-            _log_row_list_columns(db, variable, columns)
+            row_list_columns = _row_list_columns(db, variable, columns)
         if not columns:
             Log.warn("variable %r has no data columns", variable, layer=LAYER)
             return VariableFrame(name=variable, frame=pd.DataFrame())
@@ -597,6 +641,7 @@ def load_variable(
             variant_columns=variant_columns,
             variant_axes=variant_axes,
             latest_column=latest_column,
+            row_list_columns=[c for c in row_list_columns if c in columns],
         )
 
 

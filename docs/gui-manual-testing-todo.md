@@ -11,6 +11,53 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzu. Text (categorical) measures in Plot Studio — added 2026-11-01
+
+What changed: a variable holding text (or True/False) is plottable. It opens
+on a **Count bar** (one bar per category, height = number of records); every
+other plot type is a tile in **Plot type**. "Collapse" POOLS records for a
+text measure. A wide variable with numeric AND text fields is two measures:
+`Gait` (numeric fields) and `Gait (text)` (text fields) — no field is hidden.
+Bars can be stacked (any measure), and a two-layer **heatmap** exists for any
+scalar measure. Docs: `docs/claude/categorical-measures.md`; plan
+`.claude/plan-categorical-measures.md`.
+
+Backend steps:
+1. Restart the GUI (both bundles rebuilt).
+2. A project with a text variable (e.g. `Outcome.save("fall", subject=..., ...)`)
+   and a wide variable with a text column (a dict with numbers and a string).
+3. `scistack.log` on opening the text variable: `categorical 'Outcome' as
+   count: 2 categor(ies) one-hot as factor 'Level'; N record(s) -> M row(s)`.
+   On the wide variable: `variable 'Gait': 1 text field(s) ['Side'] ... are
+   plotted as 'Gait (text)'` (INFO — no longer a WARN "not plottable ... dropped").
+
+Frontend steps and what you should see:
+1. Open Plot Studio on the text variable: no "holds text" message. A bar per
+   category, coloured by category, y title **Count**.
+2. **Plot type** lists **Count bar**, **Proportion bar + error**, the two
+   horizontal ones, **Count heatmap**, **Proportion heatmap**, **Strip of
+   categories**, **Spaghetti of categories**, **Spaghetti of % per unit**;
+   box / violin / scatter are greyed with "A text measure is drawn as …".
+3. Click **Proportion bar + error**: y title **% of records**, error bars;
+   **Show sample** offers the collapsed keys and draws one point per subject.
+   On **Count bar**, Show sample is greyed: "A count has no sample …".
+4. **Chart > Categories > Show**: pick "Only fall" — one bar, y title "Count of
+   Outcome = fall".
+5. **Chart > Bars > Stack the colour levels** with a second grouping layer
+   (e.g. session): the categories pile on each session tick; on a proportion
+   the piles reach 100; no error bars, and the note says so.
+6. **Strip of categories**: the y axis is the category names, one point per
+   record.
+7. Open the wide variable (`Gait`): at the top of **Data**, "Its text fields
+   (Side) are plotted as **Gait (text)**" — click it: the panel switches to
+   the text fields; the link there goes back to `Gait`.
+8. **Export code** on a count bar: the generated function has a `# Outcome
+   holds text` block and a `groupby(...).sum()` — run it: same bars.
+9. **Save data**: the value column is headed `Outcome, Count` (or
+   `Outcome, % of records`).
+
+---
+
 ## 0zzzzzzt. Combine duplicate rows (`on_duplicate="combine"`) — added 2026-10-29
 
 What changed: a table saved one record per row that has two rows for one

@@ -231,6 +231,20 @@ def _base(ddb_type: str) -> str:
     return t
 
 
+def _elem_type(ddb_type: str) -> str:
+    """A scalar DuckDB type as a row list's element type: every integer type
+    is BIGINT and every float or decimal DOUBLE (the only numeric elements a
+    row list has), so a stored INTEGER or FLOAT column can still become one."""
+    from .sciduckdb import _FLOAT_DDB_TYPES, _INTEGER_DDB_TYPES
+
+    t = ddb_type.strip().upper()
+    if t in _INTEGER_DDB_TYPES:
+        return "BIGINT"
+    if t in _FLOAT_DDB_TYPES or t.startswith("DECIMAL"):
+        return "DOUBLE"
+    return t
+
+
 def row_list_change(
     stored_meta: "dict | None",
     stored_type: str,
@@ -266,8 +280,8 @@ def row_list_change(
         return ("refuse", f"this save's values are arrays ({in_type})")
     s_elem = (stored_meta or {}).get("elem_type") if s_rl else _base(stored_type)
     i_elem = (in_meta or {}).get("elem_type") if i_rl else _base(in_type)
-    s_elem = (s_elem or "DOUBLE").upper()
-    i_elem = (i_elem or "DOUBLE").upper()
+    s_elem = _elem_type(s_elem or "DOUBLE")
+    i_elem = _elem_type(i_elem or "DOUBLE")
     change = column_type_change(s_elem, i_elem)
     if change == "refuse":
         return ("refuse", f"{i_elem} values cannot go into a {s_elem} column")

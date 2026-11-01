@@ -17,6 +17,15 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from scistacklog import Log
+
+from .categorical import (
+    CATEGORICAL_KINDS,
+    categorical_mode,
+    categorical_problem,
+    free_text_reason,
+    mode_for_kind,
+)
 from .compare import comparison_summary
 from .roles import (
     layer_cap_reason,
@@ -38,7 +47,16 @@ from .roles import (
     sample_key,
 )
 from .shape import Shape
-from .spec import BAR_KINDS, BUILTIN_KINDS, MAX_X_LAYERS, SCALAR_KINDS, PlotKind, PlotSpec, Role
+from .spec import (
+    BAR_KINDS,
+    BUILTIN_KINDS,
+    MAX_X_LAYERS,
+    SCALAR_KINDS,
+    CategoricalStat,
+    PlotKind,
+    PlotSpec,
+    Role,
+)
 from .table import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, LongTable
 from .temporal import BAR_REASON, time_zone_summary
 
@@ -268,7 +286,22 @@ def available_plots(
         return kinds
 
     if shape is Shape.SCALAR:
-        return scalar_kinds()
+        # The grid heatmap (two grouping layers, one cell per pair) only for a
+        # measure that IS scalar: a 1-D measure's heatmap would have to say
+        # whether it collapses its cells, and `cell.cell_collapses` does not.
+        grid = kind_requirement(PlotKind.HEATMAP, shape, roles, n_groups) is None
+        return [*scalar_kinds(), *([PlotKind.HEATMAP] if grid else [])]
+
+    if shape is Shape.CATEGORICAL:
+        # A text measure (`categorical`): counts and %s as bars or a heatmap,
+        # or its categories as positions on a strip or a spaghetti. Whether a
+        # % has its sample is `categorical.categorical_problem`'s, judged
+        # per tile in `capabilities`.
+        return [
+            kind
+            for kind in CATEGORICAL_KINDS
+            if kind_requirement(kind, Shape.SCALAR, roles, n_groups) is None
+        ]
 
     return []
 
@@ -286,6 +319,7 @@ def default_plot(
     scalar → scatter, or box once there is a sample to distribute;
     1-D → one line per observation, or a mean line with a shaded error region
     once there is a sample; 2-D → heatmap.
+    A text measure → its count per category, as a bar (user, 2026-11-01).
     """
     kinds = available_plots(shape, roles, has_x_measure=has_x_measure, n_groups=n_groups)
     if not kinds:
@@ -340,6 +374,11 @@ def why_unavailable(
         return BAR_REASON
     if shape is Shape.MATRIX_2D:
         return "2-D measures render as a heatmap."
+    if shape is Shape.CATEGORICAL and kind not in CATEGORICAL_KINDS:
+        return (
+            "A text measure is drawn as a count or % (bar, horizontal bar, "
+            "heatmap) or as its categories (strip, spaghetti)."
+        )
     # Shape mismatches first: a scalar band is refused for being a band on a
     # scalar, not for lacking a sample it could never use.
     if kind is PlotKind.BAND and shape is not Shape.SERIES_1D:
@@ -361,6 +400,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     would be for the current role assignment.
     """
     from .cell import apply_cell_collapse, cell_collapses
+    from .categorical import apply_categorical
     from .export import data_export_options
     from .groups import apply_level_groups
     from .variants import apply_variant_sets, strip_answered_roles
@@ -381,10 +421,18 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     # BAND as soon as a violin was selected, stranding the user on the scalar
     # kinds with no way back (docs/claude/measure-shape-and-collapse.md).
     collapsed = apply_cell_collapse(spec, derived)
+    # A text measure is rewritten into numbers the same way resolve rewrites
+    # it (`categorical`), so the factors, roles and summaries below describe
+    # the figure — the `Level` factor included. `kind_spec` keeps the spec as
+    # the user holds it for the per-kind loop, which re-asks the rewrite per
+    # tile (a strip has no `Level`; its tile must still be able to offer one).
+    kind_spec = spec
+    spec, collapsed = apply_categorical(spec, collapsed)
     assignment = complete_assignment(spec, collapsed)
     roles = assignment.roles
     raw_shape = derived.shape_of(spec.y_measure)
     shape = collapsed.shape_of(spec.y_measure)
+    categorical = raw_shape is Shape.CATEGORICAL and spec.x_measure is None
     collapsing = cell_collapses(spec, derived)
     collapsible = raw_shape is Shape.SERIES_1D and spec.x_measure is None
     has_x_measure = spec.x_measure is not None
@@ -403,7 +451,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
     # assignment it brings with it closes that loop: clicking Violin both
     # collapses a factor and draws the distribution, in one click.
     entries = []
-    for kind in BUILTIN_KINDS:
+    for kind in BUILTIN_KINDS if not categorical else ():
         suggested = roles_for_kind(spec, derived, kind)
         kind_roles = suggested.roles if suggested else roles
         kind_groups = suggested.groups if suggested else assignment.groups
@@ -454,9 +502,13 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
                 "assignment": None if suggested is None else suggested.to_dict(),
             }
         )
+    if categorical:
+        entries = categorical_kind_entries(kind_spec, derived, roles, assignment.groups)
     # Derived from the entries rather than computed a second time: two lists
     # that could disagree about one kind is the bug, not the saving.
-    allowed = [PlotKind(entry["kind"]) for entry in entries if entry["available"]]
+    allowed = list(
+        dict.fromkeys(PlotKind(entry["kind"]) for entry in entries if entry["available"])
+    )
 
     return {
         # What the FIGURE is — scalar while a cell collapse is in effect. The
@@ -504,7 +556,10 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         "data_export": data_export_options(spec, roles, collapsed, shape).to_dict(),
         "default": str(
             default_plot(
-                shape, roles, has_x_measure=has_x_measure, n_groups=len(assignment.groups)
+                raw_shape if categorical else shape,
+                roles,
+                has_x_measure=has_x_measure,
+                n_groups=len(assignment.groups),
             )
             or ""
         ),
@@ -522,6 +577,11 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # continuous_kind_problem — the message validate refuses with).
         "histogram": histogram_summary(spec, derived),
         "regression": regression_summary(spec, derived),
+        # The Categories section (a text measure): its mode, its categories
+        # for the "one category" picker, and why it cannot be drawn at all.
+        "categorical": categorical_summary(kind_spec, derived),
+        # Bar options: stacking, and what stacking turns off.
+        "bar": bar_summary(spec),
         # The X variable picker's current state. Which variables it may offer
         # is the source's question (`DataSource.joinable_with`), answered by
         # the GUI's variable list, not by this one loaded table.
@@ -533,6 +593,131 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
                 and derived.measure(spec.x_measure).temporal
             ),
         },
+    }
+
+
+#: The plot-type tiles a TEXT measure is offered, in grid order: each a kind
+#: plus the stat it draws (``categorical.mode_for_kind``). Two bar types —
+#: "Count" (the pooled records, no sample) and "Proportion" (the mean of
+#: per-unit %s ± error, "Show sample" on) — are separate tiles (user,
+#: 2026-11-01), as are the heatmap and spaghetti forms.
+CATEGORICAL_TILES: tuple[tuple[PlotKind, CategoricalStat, str], ...] = (
+    (PlotKind.BAR, CategoricalStat.COUNT, "Count bar"),
+    (PlotKind.BAR, CategoricalStat.PROPORTION, "Proportion bar + error"),
+    (PlotKind.HBAR, CategoricalStat.COUNT, "Horizontal count bar"),
+    (PlotKind.HBAR, CategoricalStat.PROPORTION, "Horizontal proportion bar + error"),
+    (PlotKind.HEATMAP, CategoricalStat.COUNT, "Count heatmap"),
+    (PlotKind.HEATMAP, CategoricalStat.PROPORTION, "Proportion heatmap"),
+    (PlotKind.STRIP, CategoricalStat.VALUE, "Strip of categories"),
+    (PlotKind.SPAGHETTI, CategoricalStat.VALUE, "Spaghetti of categories"),
+    (PlotKind.SPAGHETTI, CategoricalStat.PROPORTION, "Spaghetti of % per unit"),
+)
+
+
+def categorical_kind_entries(
+    spec: PlotSpec,
+    table: LongTable,
+    roles: dict[str, Role],
+    groups: list[str],
+) -> list[dict]:
+    """The kind grid for a text measure: one entry per :data:`CATEGORICAL_TILES`
+    tile, then every other built-in kind, unavailable with its reason.
+
+    Each tile is judged, like every kind, against the assignment it would
+    open with (``roles.categorical_roles_for`` — only from an untouched
+    default) and carries it, plus the ``categorical`` patch its click
+    applies; ``selected`` says which tile the current spec IS, so the panel
+    never re-derives the kind→stat rule. ``table`` is the raw derived table
+    (before the text rewrite)."""
+    from .roles import categorical_roles_for
+
+    current = mode_for_kind(spec.kind, spec.categorical.stat)
+    free_text = free_text_reason(table, spec.y_measure)
+    entries: list[dict] = []
+    for kind, stat, label in CATEGORICAL_TILES:
+        candidate = replace(spec, kind=kind, categorical=replace(spec.categorical, stat=stat))
+        suggested = categorical_roles_for(spec, table, kind, stat)
+        if suggested is not None:
+            candidate = suggested.apply(candidate)
+        kind_roles = suggested.roles if suggested else roles
+        kind_groups = suggested.groups if suggested else groups
+        reason = free_text or why_unavailable(
+            kind, Shape.CATEGORICAL, kind_roles, n_groups=len(kind_groups)
+        ) or categorical_problem(candidate, table)
+        entries.append(
+            {
+                "kind": str(kind),
+                "id": f"{kind}:{stat}",
+                "label": label,
+                "available": reason is None,
+                "reason": reason,
+                "collapses": False,
+                "assignment": None if suggested is None else suggested.to_dict(),
+                "categorical": {"stat": str(stat)},
+                "selected": spec.kind is kind and current is mode_for_kind(kind, stat),
+            }
+        )
+    tiled = {kind for kind, _stat, _label in CATEGORICAL_TILES}
+    for kind in BUILTIN_KINDS:
+        if kind in tiled:
+            continue
+        entries.append(
+            {
+                "kind": str(kind),
+                "available": False,
+                "reason": why_unavailable(kind, Shape.CATEGORICAL, roles, n_groups=len(groups)),
+                "collapses": False,
+                "assignment": None,
+            }
+        )
+    Log.debug(
+        "categorical kinds for %r: %d of %d tile(s) available; current %s/%s",
+        spec.y_measure,
+        sum(1 for e in entries if e["available"]),
+        len(CATEGORICAL_TILES),
+        spec.kind,
+        current,
+        layer="scistackplot",
+    )
+    return entries
+
+
+def categorical_summary(spec: PlotSpec, table: LongTable) -> dict:
+    """The Categories section: whether the measure is text, what it is drawn
+    as, its categories (the "one category" picker) and why it cannot be
+    drawn at all (free text). ``table`` is the raw derived table."""
+    from .categorical import is_categorical_measure
+
+    applies = is_categorical_measure(table, spec.y_measure) and spec.x_measure is None
+    if not applies:
+        return {"applies": False}
+    info = table.measure(spec.y_measure)
+    mode = categorical_mode(spec, table)
+    return {
+        "applies": True,
+        "mode": str(mode) if mode else None,
+        "stat": str(spec.categorical.stat),
+        "level": spec.categorical.level,
+        # The one-category picker applies to a count or a %, not to positions.
+        "level_applies": mode is not CategoricalStat.VALUE,
+        "levels": [str(level) for level in info.levels],
+        "problem": free_text_reason(table, spec.y_measure),
+    }
+
+
+def bar_summary(spec: PlotSpec) -> dict:
+    """The bar options: whether they apply (a bar kind), whether the bars
+    stack, and what stacking turns off — said once here, shown in the panel."""
+    applies = spec.kind in BAR_KINDS
+    return {
+        "applies": applies,
+        "stack": spec.bar.stack,
+        "note": (
+            "Stacked bars pile the colour levels on one tick; no error bars, "
+            "no sample points."
+            if applies and spec.bar.stack
+            else None
+        ),
     }
 
 
@@ -587,7 +772,7 @@ def sample_overlay_summary(
     of a point's identity, which a deeper tick implies for every shallower
     key). ``ignored`` are ticked names that are not collapsed right now.
     """
-    reason = overlay_unavailable(spec, roles, shape)
+    reason = overlay_unavailable(spec, roles, shape, categorical_mode(spec, table))
     order = collapse_order(roles, table)
     steps = overlay_steps(spec, roles, table) if reason is None else None
     join = overlay_join(spec, roles, table, steps) if steps is not None else None
