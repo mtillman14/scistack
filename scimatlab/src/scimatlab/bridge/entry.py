@@ -8,6 +8,7 @@ batch cache) is module state here, keyed by an integer handle.
 """
 
 from .convert import is_datetime_value, split_flat_to_lists
+from .crossing import matlab_entry
 from .wire import (
     _locations_from_matlab,
     _make_matlab_fn_sentinel,
@@ -47,6 +48,7 @@ _for_each_state_cache: dict = {}
 _for_each_state_id_counter = 0
 
 
+@matlab_entry
 def for_each_prepare(
     fn_name: str,
     fn_hash: str,
@@ -669,6 +671,7 @@ def _merge_output_tables(dfs: list, output_names: list):
     return result.drop(columns=list(flags.values()))
 
 
+@matlab_entry
 def for_each_describe_loaded_input(val):
     """Describe one ``loaded_inputs`` value so MATLAB can rebuild the
     matching MATLAB-side scifor wrapper.
@@ -742,6 +745,7 @@ def for_each_describe_loaded_input(val):
     return {"kind": "raw", "value": val}
 
 
+@matlab_entry
 def for_each_save(
     handle,
     result_dataframes,
@@ -955,6 +959,7 @@ def run_failure_group_json(exc, fn_name: str) -> str:
     return json.dumps(group, default=str)
 
 
+@matlab_entry
 def normalize_stat_result(
     json_str: str,
     report_path: str = "",
@@ -1163,6 +1168,7 @@ def ensure_variable_classdefs(names, project_start=None) -> dict:
 
 
 
+@matlab_entry
 def save_batch_bridge(
     type_name,
     data_values,
@@ -1444,6 +1450,7 @@ def _cache_batch(data_list, py_vars_list):
     return bid
 
 
+@matlab_entry
 def get_batch_item(batch_id, index):
     """Return (data, py_var) for one element from a cached batch."""
     data_list, py_vars_list = _batch_cache[int(batch_id)]
@@ -1474,6 +1481,7 @@ def codec_storage_columns(type_name: str, db=None) -> list:
 
 
 
+@matlab_entry
 def get_batch_data_item(batch_id, index):
     """Return just the data for one element from a cached batch."""
     data_list, _ = _batch_cache[int(batch_id)]
@@ -1485,6 +1493,7 @@ def free_batch(batch_id):
     _batch_cache.pop(int(batch_id), None)
 
 
+@matlab_entry
 def wrap_batch_bridge(py_vars_list):
     """Extract all fields from a list of BaseVariables into bulk format.
 
@@ -1671,6 +1680,7 @@ def wrap_batch_bridge(py_vars_list):
     return result
 
 
+@matlab_entry
 def load_and_extract(py_class, metadata_dict, version_id="latest", db=None, where=None):
     """Load all matching variables and extract fields in bulk.
 
@@ -1720,6 +1730,7 @@ def load_and_extract(py_class, metadata_dict, version_id="latest", db=None, wher
     return wrap_batch_bridge(py_vars)
 
 
+@matlab_entry
 def to_csv_bridge(type_name, filename, **kwargs):
     """Export a variable to CSV on behalf of MATLAB ``BaseVariable.to_csv``.
 
@@ -1741,3 +1752,47 @@ def to_csv_bridge(type_name, filename, **kwargs):
     cls = get_surrogate_class(type_name)
     cls.to_csv(str(filename), **kwargs)
 
+
+
+# ---------------------------------------------------------------------------
+# Calls MATLAB used to make straight into scidb with a converted value.
+# They come through the bridge so the value arrives unboxed (.crossing): a
+# datetime scalar from to_python.m is a DatetimeCrossing, which scidb does
+# not know.
+# ---------------------------------------------------------------------------
+
+
+@matlab_entry
+def save_variable_bridge(db, py_class, data, **kwargs):
+    """``db.save_variable(py_class, data, **kwargs)`` for ``BaseVariable.save``
+    (MATLAB); ``db`` None means the configured database."""
+    from scidb.store.database import get_database
+
+    _db = db if db is not None else get_database()
+    return _db.save_variable(py_class, data, **kwargs)
+
+
+@matlab_entry
+def variable_filter(py_class, column, op, value):
+    """The filter ``MyVar == value`` / ``MyVar("col") < value`` builds in MATLAB:
+    a ``ColumnFilter`` when ``column`` is non-empty, else a ``VariableFilter``."""
+    from scidb.model.filters import ColumnFilter, VariableFilter
+
+    if column:
+        return ColumnFilter(py_class, str(column), str(op), value)
+    return VariableFilter(py_class, str(op), value)
+
+
+@matlab_entry
+def schema_key_filter(key, op, value):
+    """``scidb.schema_key(KEY) <op> VALUE`` (MATLAB ``SchemaKey``)."""
+    from scidb.model.filters import SchemaKeyCompareFilter
+
+    return SchemaKeyCompareFilter(str(key), str(op), value)
+
+
+@matlab_entry
+def variable_data(py_var):
+    """``py_var.data`` for ``BaseVariable.wrap_py_var`` (MATLAB); reading the
+    attribute in MATLAB would convert a datetime scalar unboxed."""
+    return py_var.data

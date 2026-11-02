@@ -259,12 +259,15 @@ classdef BaseVariable < dynamicprops
                 py_data = scidb.internal.to_python(data);
             end
 
+            % Through the bridge, not py_db.save_variable: a datetime scalar
+            % arrives from to_python boxed (scimatlab.bridge.crossing).
             if isempty(db_val)
-                py_db = py.scidb.store.database.get_database();
+                py_db = py.None;
             else
                 py_db = db_val;
             end
-            py_record_id = py_db.save_variable(py_class, py_data, pyargs(py_kwargs{:}));
+            py_record_id = py.scimatlab.bridge.save_variable_bridge( ...
+                py_db, py_class, py_data, pyargs(py_kwargs{:}));
             record_id = string(py_record_id);
 
 
@@ -829,10 +832,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '==', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, column, '==', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.model.filters.VariableFilter(py_class, '==', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, '', '==', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -851,10 +854,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '!=', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, column, '!=', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.model.filters.VariableFilter(py_class, '!=', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, '', '!=', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -869,10 +872,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '<', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, column, '<', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.model.filters.VariableFilter(py_class, '<', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, '', '<', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -887,10 +890,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '<=', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, column, '<=', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.model.filters.VariableFilter(py_class, '<=', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, '', '<=', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -905,10 +908,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '>', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, column, '>', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.model.filters.VariableFilter(py_class, '>', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, '', '>', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -923,10 +926,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '>=', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, column, '>=', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.model.filters.VariableFilter(py_class, '>=', py_val);
+                py_filter = py.scimatlab.bridge.variable_filter(py_class, '', '>=', py_val);
             end
             filt = scidb.Filter(py_filter);
         end        
@@ -983,7 +986,7 @@ classdef BaseVariable < dynamicprops
         %   set to the original Python BaseVariable shadow, so that provenance
         %   is preserved if it's passed to scidb.for_each or re-saved.
         % Usage: v = scidb.BaseVariable.wrap_py_var(py_var)
-            matlab_data = scidb.internal.from_python(py_var.data);
+            matlab_data = scidb.internal.from_python(py.scimatlab.bridge.variable_data(py_var));
             matlab_data = scidb.internal.try_stack_numeric(matlab_data);
             v = scidb.BaseVariable();
             v.data = matlab_data;

@@ -64,7 +64,7 @@ classdef SchemaKey
         %EQ  Filter where schema key equals value.
         %
         %   FILT = scidb.schema_key(KEY) == VALUE
-            py_filter = py.scidb.model.filters.SchemaKeyCompareFilter( ...
+            py_filter = py.scimatlab.bridge.schema_key_filter( ...
                 char(obj.key), '==', scidb.internal.to_python(value));
             filt = scidb.Filter(py_filter);
         end
@@ -73,7 +73,7 @@ classdef SchemaKey
         %NE  Filter where schema key does not equal value.
         %
         %   FILT = scidb.schema_key(KEY) ~= VALUE
-            py_filter = py.scidb.model.filters.SchemaKeyCompareFilter( ...
+            py_filter = py.scimatlab.bridge.schema_key_filter( ...
                 char(obj.key), '!=', scidb.internal.to_python(value));
             filt = scidb.Filter(py_filter);
         end
@@ -82,7 +82,7 @@ classdef SchemaKey
         %LT  Filter where schema key is less than value (numeric keys).
         %
         %   FILT = scidb.schema_key(KEY) < VALUE
-            py_filter = py.scidb.model.filters.SchemaKeyCompareFilter( ...
+            py_filter = py.scimatlab.bridge.schema_key_filter( ...
                 char(obj.key), '<', scidb.internal.to_python(value));
             filt = scidb.Filter(py_filter);
         end
@@ -91,7 +91,7 @@ classdef SchemaKey
         %LE  Filter where schema key is less than or equal to value.
         %
         %   FILT = scidb.schema_key(KEY) <= VALUE
-            py_filter = py.scidb.model.filters.SchemaKeyCompareFilter( ...
+            py_filter = py.scimatlab.bridge.schema_key_filter( ...
                 char(obj.key), '<=', scidb.internal.to_python(value));
             filt = scidb.Filter(py_filter);
         end
@@ -100,7 +100,7 @@ classdef SchemaKey
         %GT  Filter where schema key is greater than value (numeric keys).
         %
         %   FILT = scidb.schema_key(KEY) > VALUE
-            py_filter = py.scidb.model.filters.SchemaKeyCompareFilter( ...
+            py_filter = py.scimatlab.bridge.schema_key_filter( ...
                 char(obj.key), '>', scidb.internal.to_python(value));
             filt = scidb.Filter(py_filter);
         end
@@ -109,7 +109,7 @@ classdef SchemaKey
         %GE  Filter where schema key is greater than or equal to value.
         %
         %   FILT = scidb.schema_key(KEY) >= VALUE
-            py_filter = py.scidb.model.filters.SchemaKeyCompareFilter( ...
+            py_filter = py.scimatlab.bridge.schema_key_filter( ...
                 char(obj.key), '>=', scidb.internal.to_python(value));
             filt = scidb.Filter(py_filter);
         end

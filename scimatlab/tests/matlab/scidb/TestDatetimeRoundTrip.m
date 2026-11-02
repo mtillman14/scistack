@@ -136,5 +136,32 @@ classdef TestDatetimeRoundTrip < matlab.unittest.TestCase
             testCase.verifyEqual(string(row{1}), "2026-07-01 12:00:00");
             testCase.verifyEqual(string(row{2}), "Europe/Berlin");
         end
+
+        function test_scalar_crosses_boxed(testCase)
+            % R2024a converts a bare Python datetime returned to MATLAB:
+            % Europe/Berlin came back as +02:00 and NaT crashed MATLAB
+            % ("NULL pointer returned from Python"), 2026-11-02. A scalar
+            % crosses inside scimatlab.bridge.crossing.DatetimeCrossing.
+            d = datetime(2026, 7, 1, 14, 0, 0, 'TimeZone', 'Europe/Berlin');
+            p = scidb.internal.datetime_to_python(d, 'scalar');
+            testCase.verifyTrue(isa(p, 'py.scimatlab.bridge.crossing.DatetimeCrossing'), class(p));
+            r = scidb.internal.from_python(p);
+            testCase.verifyEqual(r.TimeZone, 'Europe/Berlin');
+            testCase.verifyEqual(r, d);
+        end
+
+        function test_nat_crosses_boxed(testCase)
+            p = scidb.internal.datetime_to_python(NaT, 'scalar');
+            testCase.verifyTrue(isa(p, 'py.scimatlab.bridge.crossing.DatetimeCrossing'), class(p));
+            testCase.verifyTrue(isnat(scidb.internal.from_python(p)));
+        end
+
+        function test_timedelta_crosses_boxed_as_duration(testCase)
+            t = cell(py.scimatlab.bridge.box_datetimes(py.datetime.timedelta(pyargs('seconds', 90.5))));
+            testCase.verifyTrue(isa(t{1}, 'py.scimatlab.bridge.crossing.DurationCrossing'), class(t{1}));
+            r = scidb.internal.from_python(t{1});
+            testCase.verifyClass(r, 'duration');
+            testCase.verifyEqual(seconds(r), 90.5);
+        end
     end
 end

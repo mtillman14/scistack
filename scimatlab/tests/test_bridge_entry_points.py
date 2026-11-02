@@ -13,7 +13,18 @@ from pathlib import Path
 import scimatlab.bridge as bridge
 
 _ROOT = Path(__file__).resolve().parents[1]
-_CALL = re.compile(r"py\.scimatlab\.bridge\.([A-Za-z_]+)")
+# The whole dotted path: an isa() check names a class by its defining
+# submodule (py.scimatlab.bridge.crossing.DatetimeCrossing).
+_CALL = re.compile(r"py\.scimatlab\.bridge\.([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+
+
+def _resolve(dotted: str):
+    obj = bridge
+    for part in dotted.split("."):
+        obj = getattr(obj, part, None)
+        if obj is None:
+            return None
+    return obj
 
 
 def _called_names() -> set[str]:
@@ -28,5 +39,5 @@ def test_matlab_calls_are_found():
 
 
 def test_every_matlab_call_resolves():
-    missing = sorted(n for n in _called_names() if not callable(getattr(bridge, n, None)))
+    missing = sorted(n for n in _called_names() if not callable(_resolve(n)))
     assert missing == [], f"py.scimatlab.bridge names with no export: {missing}"

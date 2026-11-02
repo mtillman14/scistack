@@ -7,6 +7,11 @@ and the small type probes MATLAB asks before converting (``is_dataframe``,
 ``is_datetime_value``, ``numpy_scalar_to_python``). No scidb concepts.
 """
 
+import sys
+
+from .crossing import matlab_entry
+
+
 def split_flat_to_lists(flat_array, lengths):
     """Split a flat numpy array into a list of Python lists by lengths.
 
@@ -238,12 +243,14 @@ def matlab_zone_label(tz) -> "str | None":
     return text
 
 
+@matlab_entry
 def datetimes_from_matlab(ns, nat, tz, kind="scalar"):
     """MATLAB datetimes -> pandas values.
 
     ``ns``: int64 ticks (ns from 1970-01-01; wall clock when ``tz`` is '',
     else the UTC instant), ``nat``: NaT mask, ``tz``: the array's TimeZone.
-    ``kind``: ``"scalar"`` -> one ``pd.Timestamp`` / ``pd.NaT``;
+    ``kind``: ``"scalar"`` -> one ``pd.Timestamp`` / ``pd.NaT`` (MATLAB receives
+    it boxed, :mod:`.crossing`);
     ``"column"`` -> a ``datetime64[ns(, zone)]`` Series (a table column);
     ``"list"`` -> a list of Timestamps (one record per element,
     ``save_from_table``'s data column).
@@ -277,6 +284,7 @@ def datetimes_from_matlab(ns, nat, tz, kind="scalar"):
     return series
 
 
+@matlab_entry
 def datetimes_to_matlab(obj) -> dict:
     """pandas / Python datetimes -> what MATLAB rebuilds a datetime array from.
 
@@ -330,6 +338,35 @@ def datetimes_to_matlab(obj) -> dict:
                       f"values hold {len(labels)} zones ({sorted(map(str, labels))}); "
                       f"a MATLAB datetime array has one")
     return result(ns, nat, next(iter(labels), None), scalar)
+
+
+@matlab_entry
+def durations_to_matlab(obj) -> dict:
+    """One timedelta scalar (``timedelta``, ``pd.Timedelta``,
+    ``np.timedelta64``, NaT) -> ``{"seconds": float, "nat": bool}`` for
+    ``+scidb/+internal/duration_from_python.m``. MATLAB's ``duration`` is a
+    double, so seconds as a float lose nothing it could hold. NaT ->
+    ``seconds`` NaN, ``nat`` True. MATLAB hands over the box
+    (``DurationCrossing``); :func:`matlab_entry` unboxes it."""
+    import datetime as _dt
+    import math
+
+    np = sys.modules.get("numpy")
+    value = obj
+    if np is not None and isinstance(value, np.timedelta64):
+        if np.isnat(value):
+            return {"seconds": math.nan, "nat": True}
+        return {"seconds": float(value / np.timedelta64(1, "ns")) / 1e9, "nat": False}
+    if value != value:  # pd.NaT (also a timedelta-NaT)
+        return {"seconds": math.nan, "nat": True}
+    if not isinstance(value, _dt.timedelta):
+        raise TypeError(f"durations_to_matlab: not a timedelta: {type(obj).__name__}")
+    pd = sys.modules.get("pandas")
+    if pd is not None and isinstance(value, pd.Timedelta):
+        seconds = pd.Timedelta(value).value / 1e9  # ns-exact
+    else:
+        seconds = value.total_seconds()
+    return {"seconds": float(seconds), "nat": False}
 
 
 def flatten_sequences(py_list):
@@ -542,3 +579,12 @@ def is_dataframe(obj) -> bool:
 
     return isinstance(obj, pd.DataFrame)
 
+
+
+@matlab_entry
+def boxed_tolist(obj) -> list:
+    """``obj.tolist()`` (an ndarray or Series) with its datetime/timedelta
+    elements boxed, for ``from_python.m``'s element-by-element paths:
+    MATLAB reads each element out of the list, and R2024a converts a bare
+    datetime as it does (:mod:`.crossing`)."""
+    return obj.tolist()

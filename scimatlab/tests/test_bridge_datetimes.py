@@ -29,6 +29,7 @@ import pytest
 from scicanonicalhash import canonical_hash
 from scidb.store.database import configure_database
 from scimatlab.bridge import (
+    DatetimeCrossing,
     datetimes_from_matlab,
     datetimes_to_matlab,
     is_datetime_value,
@@ -50,6 +51,14 @@ def db(tmp_path):
     yield db
     _scifor.set_schema([])
     db.close()
+
+
+def _from_matlab_scalar(ns, nat, tz):
+    """What MATLAB holds after datetime_to_python(..., 'scalar'): a box (R2024a
+    would convert a bare datetime, losing a named zone and crashing on NaT)."""
+    box = datetimes_from_matlab(ns, nat, tz, "scalar")
+    assert isinstance(box, DatetimeCrossing)
+    return box.value
 
 
 def _ticks(*texts, tz=None):
@@ -92,19 +101,19 @@ class TestZoneLabel:
 
 class TestFromMatlab:
     def test_unzoned_scalar_is_naive_wall_clock(self):
-        v = datetimes_from_matlab(_ticks("2026-07-01 12:00:00.000000007"), [False], "", "scalar")
+        v = _from_matlab_scalar(_ticks("2026-07-01 12:00:00.000000007"), [False], "")
         assert v == pd.Timestamp("2026-07-01 12:00:00.000000007")
         assert v.tzinfo is None and v.nanosecond == 7
 
     def test_zoned_scalar_keeps_its_zone(self):
         ticks = _ticks("2026-07-01 14:00", tz="Europe/Berlin")
-        v = datetimes_from_matlab(ticks, [False], "Europe/Berlin", "scalar")
+        v = _from_matlab_scalar(ticks, [False], "Europe/Berlin")
         assert v == pd.Timestamp("2026-07-01 14:00", tz="Europe/Berlin")
         assert str(v.tzinfo) == "Europe/Berlin"
 
     def test_nat_scalar(self):
-        assert datetimes_from_matlab(np.zeros(1, np.int64), [True], "", "scalar") is pd.NaT
-        assert datetimes_from_matlab(np.zeros(1, np.int64), [True], "UTC", "scalar") is pd.NaT
+        assert _from_matlab_scalar(np.zeros(1, np.int64), [True], "") is pd.NaT
+        assert _from_matlab_scalar(np.zeros(1, np.int64), [True], "UTC") is pd.NaT
 
     def test_column_is_a_datetime_series(self):
         s = datetimes_from_matlab(
@@ -116,17 +125,18 @@ class TestFromMatlab:
 
     def test_list_is_one_value_per_record(self):
         vals = datetimes_from_matlab(_ticks("2026-01-01", "2026-01-02"), [False, False], "", "list")
-        assert vals == [pd.Timestamp("2026-01-01"), pd.Timestamp("2026-01-02")]
+        assert all(isinstance(v, DatetimeCrossing) for v in vals)
+        assert [v.value for v in vals] == [pd.Timestamp("2026-01-01"), pd.Timestamp("2026-01-02")]
 
     def test_scalar_needs_one_value(self):
         with pytest.raises(ValueError):
-            datetimes_from_matlab(_ticks("2026-01-01", "2026-01-02"), [False, False], "", "scalar")
+            _from_matlab_scalar(_ticks("2026-01-01", "2026-01-02"), [False, False], "")
 
     def test_hash_matches_the_python_value(self):
         """A MATLAB save and a Python save of one value are one record."""
         berlin = pd.Timestamp("2026-07-01 14:00", tz="Europe/Berlin")
-        from_matlab = datetimes_from_matlab(
-            _ticks("2026-07-01 14:00", tz="Europe/Berlin"), [False], "Europe/Berlin", "scalar"
+        from_matlab = _from_matlab_scalar(
+            _ticks("2026-07-01 14:00", tz="Europe/Berlin"), [False], "Europe/Berlin"
         )
         assert canonical_hash(from_matlab) == canonical_hash(berlin)
 
@@ -177,7 +187,7 @@ class TestToMatlab:
             pd.NaT,
         ):
             ns, nat, tz = _matlab_rebuild(datetimes_to_matlab(v))
-            back = datetimes_from_matlab(ns, nat, tz, "scalar")
+            back = _from_matlab_scalar(ns, nat, tz)
             assert (back is pd.NaT) if v is pd.NaT else (back == v and str(back.tzinfo) == str(v.tzinfo))
 
 

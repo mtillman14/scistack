@@ -2,7 +2,8 @@ function data = datetime_from_python(py_obj)
 %DATETIME_FROM_PYTHON  pandas / Python datetime value(s) -> MATLAB datetime.
 %
 %   data = datetime_from_python(py_obj)
-%     py_obj: a datetime scalar (pd.Timestamp, NaT, datetime, np.datetime64)
+%     py_obj: a boxed datetime scalar (DatetimeCrossing, the only form a
+%             scalar reaches MATLAB in; scimatlab.bridge.crossing)
 %             -> a scalar datetime; a datetime64 Series -> an Nx1 datetime.
 %
 %   The one MATLAB owner of receiving a datetime from Python (the inverse

@@ -286,3 +286,62 @@ class TestReportNumericOnly:
         pi = PathInput("{subject}/data.mat", root_folder=str(session_tree), name="p")
         with pytest.raises(ValueError, match="report"):
             pi.load_with_captures({"subject": "sub1"}, report="alias")
+
+
+class TestDigitStringCanonical:
+    """A canonical that is all digits (``"01"``) with declared spellings is
+    BOTH a numeric key and an alias key in the fallback scan. The scan used
+    a digits-only group for it, which never matches the alias folder, so
+    ``load(session="01")`` returned the literal ``.../01/...`` path.
+    Found 2026-11-02 by MATLAB ``TestPathInput`` /
+    ``TestEntitiesAliases``, which pytest had not covered."""
+
+    ALIASES = {"session": {"01": ["Baseline"]}}
+
+    def test_load_resolves_the_alias_folder(self, tmp_path):
+        (tmp_path / "sub1" / "Baseline").mkdir(parents=True)
+        (tmp_path / "sub1" / "Baseline" / "data.mat").touch()
+        pi = PathInput("{subject}/{session}/data.mat", root_folder=str(tmp_path),
+                       aliases=self.ALIASES, name="p")
+        assert pi.load(subject="sub1", session="01") == (
+            tmp_path / "sub1" / "Baseline" / "data.mat"
+        ).resolve()
+
+    def test_one_key_two_spellings_folder_alias_filename_digits(self, tmp_path):
+        d = tmp_path / "Baseline" / "Xsens"
+        d.mkdir(parents=True)
+        (d / "S01_01.xlsx").touch()
+        pi = PathInput("{session}/Xsens/{subject}_{session}.xlsx", root_folder=str(tmp_path),
+                       aliases=self.ALIASES, name="xsens")
+        # Only the path is pinned: with {session} spelled twice, the capture
+        # map keeps the LAST occurrence ("01" here), so no resolution is
+        # reported. That is the existing rule for a twice-used key.
+        path, _ = pi.load_with_captures({"session": "01", "subject": "S01"})
+        assert path == (d / "S01_01.xlsx").resolve()
+
+    def test_a_padded_number_still_matches(self, tmp_path):
+        (tmp_path / "001").mkdir()
+        (tmp_path / "001" / "data.mat").touch()
+        pi = PathInput("{session}/data.mat", root_folder=str(tmp_path),
+                       aliases=self.ALIASES, name="p")
+        path, resolutions = pi.load_with_captures({"session": "01"}, report="numeric")
+        assert path == (tmp_path / "001" / "data.mat").resolve()
+        assert resolutions == {"session": "001"}
+
+    def test_an_alias_capture_is_no_numeric_bridge_and_teaches_no_width(self, tmp_path):
+        (tmp_path / "Baseline").mkdir()
+        (tmp_path / "Baseline" / "data.mat").touch()
+        pi = PathInput("{session}/data.mat", root_folder=str(tmp_path),
+                       aliases=self.ALIASES, name="p")
+        _, resolutions = pi.load_with_captures({"session": "01"}, report="numeric")
+        assert resolutions == {}
+        assert "session" not in pi._pad_width
+
+    def test_another_number_or_spelling_does_not_match(self, tmp_path):
+        for name in ("02", "FollowUp"):
+            (tmp_path / name).mkdir()
+            (tmp_path / name / "data.mat").touch()
+        pi = PathInput("{session}/data.mat", root_folder=str(tmp_path),
+                       aliases=self.ALIASES, name="p")
+        # Neither matches: the literal (missing) path comes back unchanged.
+        assert pi.load(session="01").parent.name == "01"

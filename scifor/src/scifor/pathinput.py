@@ -533,8 +533,9 @@ class PathInput:
             report: ``"all"`` (default) reports every bridged spelling;
                 ``"numeric"`` reports only numeric-equivalence bridges
                 (``1`` -> ``"001"``), leaving out alias bridges. This module
-                owns which kind a bridge was (numeric takes precedence over
-                an alias for the same key, see ``_fallback_segment_regex``),
+                owns which kind a bridge was (for a key that is both numeric
+                and aliased, a digits capture is numeric and a declared
+                spelling is an alias, see ``_fallback_segment_regex``),
                 so scidb's zero-padding policy asks for ``"numeric"`` rather
                 than guessing: an alias spelling is a DECLARED equivalence,
                 never an ambiguous one.
@@ -595,13 +596,14 @@ class PathInput:
             if len(matches) == 1:
                 path, bindings = matches[0]
                 for key, captured in bindings.items():
-                    if key in numeric_keys:
+                    # An alias spelling ("Baseline") teaches no pad width.
+                    if key in numeric_keys and captured.isdigit():
                         self._pad_width[key] = len(captured)
                 resolutions = {
                     k: cap
                     for k, cap in bindings.items()
                     if cap != str(metadata[k])
-                    and (report == "all" or k in numeric_keys)
+                    and (report == "all" or (k in numeric_keys and cap.isdigit()))
                 }
                 Log.debug(
                     "pathinput_fallback: matched %s (captures: %s, numeric "
@@ -609,7 +611,7 @@ class PathInput:
                     path,
                     bindings,
                     sorted(numeric_keys),
-                    sorted(k for k in alias_keys if k not in numeric_keys),
+                    sorted(alias_keys),
                     report,
                     layer="scifor",
                 )
@@ -729,9 +731,11 @@ class PathInput:
 
         Returns ``(regex, checks, has_fallback)`` where *checks* is a list of
         ``(group_name, key, kind, param)`` constraints — ``kind="numeric"``
-        with ``param`` the required int value, or ``kind="alias"`` with
+        with ``param`` the required int value, ``kind="alias"`` with
         ``param`` a ``(reverse_map, canonical)`` pair the captured text must
-        resolve to — or ``None`` when the segment cannot be Formatter-parsed
+        resolve to, or ``kind="numeric_or_alias"`` (a digit-string value
+        with declared spellings) with ``param`` ``(int, (reverse_map,
+        canonical))``: either an equal number or a declared spelling passes — or ``None`` when the segment cannot be Formatter-parsed
         (caller substitutes it literally, matching load()'s tolerance of
         regex-ish braces).
         """
@@ -748,7 +752,22 @@ class PathInput:
                 regex += re.escape(literal)
             if field_name is None:
                 continue
-            if field_name in numeric_keys:
+            if field_name in numeric_keys and field_name in alias_keys:
+                # A digit-string canonical with declared spellings ("01" ->
+                # "Baseline"): the on-disk text may be either a number of the
+                # same value OR a declared spelling. A digits-only group never
+                # matched the alias folder (MATLAB TestPathInput /
+                # TestEntitiesAliases, found 2026-11-02).
+                key_counts[field_name] = key_counts.get(field_name, 0) + 1
+                count = key_counts[field_name]
+                group = field_name if count == 1 else f"{field_name}_{count}"
+                regex += f"(?P<{group}>[^/\\\\]+)"
+                checks.append((
+                    group, field_name, "numeric_or_alias",
+                    (numeric_keys[field_name], alias_keys[field_name]),
+                ))
+                has_fallback = True
+            elif field_name in numeric_keys:
                 key_counts[field_name] = key_counts.get(field_name, 0) + 1
                 count = key_counts[field_name]
                 group = field_name if count == 1 else f"{field_name}_{count}"
@@ -856,6 +875,14 @@ class PathInput:
                     text = m.group(group)
                     if kind == "numeric":
                         if int(text) != param:
+                            ok = False
+                            break
+                    elif kind == "numeric_or_alias":
+                        number, (reverse_map, canonical) = param
+                        if not (
+                            (text.isdigit() and int(text) == number)
+                            or reverse_map.get(text) == canonical
+                        ):
                             ok = False
                             break
                     else:  # "alias"

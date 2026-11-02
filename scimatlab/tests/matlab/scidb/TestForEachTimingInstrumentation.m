@@ -71,7 +71,7 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
             % nukes it.  Uses a timestamp + test method name so successive
             % runs don't clobber.
             try
-                live_log = fullfile(testCase.test_dir, 'scistack.log');
+                live_log = char(scidb.Log.get_path());
                 if isfile(live_log) && ~isempty(testCase.log_archive_dir)
                     ts = char(datetime('now', 'Format', 'yyyyMMdd-HHmmss'));
                     archived = fullfile(testCase.log_archive_dir, ...
@@ -198,10 +198,10 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
                 'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
             testCase.verifyEqual(height(result), 1);
 
-            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scistack.log')), newline);
+            lines = strsplit(fileread(char(scidb.Log.get_path())), newline);
             hits = lines(contains(lines, '[timing] for_each_postsave:'));
             testCase.verifyNotEmpty(hits, ...
-                'no [timing] for_each_postsave line found in scistack.log');
+                'no [timing] for_each_postsave line found in scistack-debug.log');
 
             summary = hits{end};
             for label = {'from_python', 'flatten', 'type_restore', ...
@@ -234,10 +234,10 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
                 'as_table', true, ...
                 'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
 
-            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scistack.log')), newline);
+            lines = strsplit(fileread(char(scidb.Log.get_path())), newline);
             hits = lines(contains(lines, '[timing] for_each_postsave:'));
             testCase.verifyNotEmpty(hits, ...
-                'no [timing] for_each_postsave line found in scistack.log');
+                'no [timing] for_each_postsave line found in scistack-debug.log');
             testCase.verifyTrue(contains(hits{end}, 'from_python=0.000s'), ...
                 'statement call still spent time in from_python — gate not firing');
 
@@ -262,10 +262,10 @@ classdef TestForEachTimingInstrumentation < matlab.unittest.TestCase
                 'as_table', true, ...
                 'subject', 1, 'session', 1, 'speed', 1, 'trial', 1);
 
-            lines = strsplit(fileread(fullfile(testCase.test_dir, 'scistack.log')), newline);
+            lines = strsplit(fileread(char(scidb.Log.get_path())), newline);
             hits = lines(contains(lines, '[timing] for_each_result_transfer:'));
             testCase.verifyNotEmpty(hits, ...
-                'no [timing] for_each_result_transfer line found in scistack.log');
+                'no [timing] for_each_result_transfer line found in scistack-debug.log');
             summary = hits{end};
             testCase.verifyTrue(contains(summary, '1 output(s), TOTAL='), summary);
             testCase.verifyTrue(contains(summary, 'DummyOut '), summary);

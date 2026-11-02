@@ -130,7 +130,7 @@ crosses as **int64 ns from 1970-01-01** plus a NaT mask plus that TimeZone:
 
 | direction | MATLAB owner | Python owner |
 |---|---|---|
-| MATLAB -> Python | `+scidb/+internal/datetime_to_python.m` (`convertTo(..., 'epochtime', 'TicksPerSecond', 1e9)`: exact; `posixtime` is a double, ~0.2 us) | `scimatlab.bridge.datetimes_from_matlab(ns, nat, tz, kind)`: `scalar` -> Timestamp/NaT, `column` -> datetime64 Series, `list` -> one Timestamp per record |
+| MATLAB -> Python | `+scidb/+internal/datetime_to_python.m` (`convertTo(..., 'epochtime', 'TicksPerSecond', 1e9)`: exact; `posixtime` is a double, ~0.2 us) | `scimatlab.bridge.datetimes_from_matlab(ns, nat, tz, kind)`: `scalar` -> Timestamp/NaT **boxed**, `column` -> datetime64 Series, `list` -> one boxed Timestamp per record (see "R2024a converts bare datetimes" below) |
 | Python -> MATLAB | `+scidb/+internal/datetime_from_python.m` (`datetime(ns, 'ConvertFrom', 'epochtime', ...)`, then `.TimeZone = tz`) | `scimatlab.bridge.datetimes_to_matlab(obj)`: ticks as **raw `<i8` bytes** (`ns_bytes`), because a numeric array through `from_python` becomes double and ~1.8e18 ns is not exact in a double |
 
 - Ticks are the wall clock when unzoned, else the UTC instant (the epoch is
@@ -156,3 +156,51 @@ crosses as **int64 ns from 1970-01-01** plus a NaT mask plus that TimeZone:
 
 Tests: `scimatlab/tests/test_bridge_datetimes.py` (Python, no MATLAB) and
 `scimatlab/tests/matlab/scidb/TestDatetimeRoundTrip.m`.
+
+### R2024a converts bare datetimes: scalars cross boxed (2026-11-02)
+
+MATLAB R2024a (seen on Update 5) converts every Python `datetime` /
+`timedelta` it receives into a MATLAB `datetime` / `duration`. That covers a
+`py.` call's return value and an element read out of a py.list, py.tuple or
+py.dict.
+
+- The IANA zone is lost: `ZoneInfo('Europe/Berlin')` reaches Python again as
+  `datetime.timezone(+2h)`, so `TestDatetimeRoundTrip` read `+02:00`.
+- `pd.NaT` crashes MATLAB with "NULL pointer returned from Python", which ends
+  the whole test run.
+- Series, DataFrames and ndarrays are not converted. Their datetime columns
+  already cross as one buffer (`datetimes_to_matlab`).
+
+**Owner: `scimatlab.bridge.crossing`.**
+
+- A datetime/timedelta scalar crosses only inside `DatetimeCrossing` /
+  `DurationCrossing`, frozen dataclasses that MATLAB leaves alone.
+- MATLAB never reads `.value`. It hands the box back to Python
+  (`datetimes_to_matlab` / `durations_to_matlab`).
+- `@matlab_entry` decorates every bridge function MATLAB calls with data. It
+  unboxes the arguments (recursing into list/tuple/dict) and boxes the result.
+  It logs the counts at DEBUG (`[crossing] <fn>: unboxed N ..., boxed M ...`).
+
+Sites:
+
+- `from_python.m` handles both box classes first.
+- Its element-by-element paths read lists through `bridge.boxed_tolist`.
+- A MATLAB `datetime`/`duration` that still reaches `from_python` WARNs: some
+  path handed one over unboxed.
+- MATLAB calls that used to go straight to scidb with a converted value now go
+  through bridge entries:
+  - `BaseVariable.save` -> `save_variable_bridge`;
+  - `MyVar == v` -> `variable_filter`;
+  - `scidb.schema_key(k) == v` -> `schema_key_filter`;
+  - `wrap_py_var` -> `variable_data`.
+- Timedelta -> MATLAB: `duration_from_python.m`, seconds as a double, NaT ->
+  `seconds(NaN)`.
+- MATLAB `duration` -> Python is not handled by `to_python` (nothing sends one).
+
+Guards:
+
+- `scimatlab/tests/test_bridge_crossing.py`: box/unbox, the decorator on every
+  data-carrying entry point, and static checks that no `.m` reads `py_var.data`
+  or calls `.save_variable(` / the filter classes directly.
+- `TestDatetimeRoundTrip` (`test_scalar_crosses_boxed`, `test_nat_crosses_boxed`,
+  `test_timedelta_crosses_boxed_as_duration`).

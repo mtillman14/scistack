@@ -54,7 +54,7 @@ classdef TestSaveTimingInstrumentation < matlab.unittest.TestCase
     methods (TestMethodTeardown)
         function cleanup(testCase)
             try
-                live_log = fullfile(testCase.test_dir, 'scistack.log');
+                live_log = char(scidb.Log.get_path());
                 if isfile(live_log) && ~isempty(testCase.log_archive_dir)
                     ts = char(datetime('now', 'Format', 'yyyyMMdd-HHmmss'));
                     archived = fullfile(testCase.log_archive_dir, ...

@@ -2,9 +2,13 @@ function py_obj = datetime_to_python(dt, kind)
 %DATETIME_TO_PYTHON  MATLAB datetime -> pandas datetime value(s).
 %
 %   py_obj = datetime_to_python(dt, kind)
-%     kind = 'scalar'  one pd.Timestamp / pd.NaT        (dt must be scalar)
+%     kind = 'scalar'  one pd.Timestamp / pd.NaT, BOXED (dt must be scalar):
+%                      a py.scimatlab.bridge.crossing.DatetimeCrossing,
+%                      because R2024a converts a bare Python datetime
+%                      returned to MATLAB (named zone -> fixed offset,
+%                      NaT -> crash). Bridge entry points unbox it.
 %            'column'  a datetime64[ns(, zone)] Series  (a table column)
-%            'list'    a py.list of Timestamps          (one record per element)
+%            'list'    a py.list of boxed Timestamps    (one record per element)
 %
 %   The one MATLAB owner of sending a datetime to Python. Instants cross as
 %   int64 nanoseconds from 1970-01-01 -- convertTo 'epochtime' with 1e9

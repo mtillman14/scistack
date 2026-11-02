@@ -27,10 +27,29 @@ function data = from_python(py_obj)
             data = string(py_obj);
             return;
         end
+        % A datetime / duration MATLAB already converted (R2024a converts a
+        % bare Python datetime/timedelta on arrival). Reaching here means a
+        % bridge path handed one over unboxed, so a named zone may be a fixed
+        % offset now (scimatlab.bridge.crossing).
+        if isdatetime(py_obj) || isduration(py_obj)
+            scifor.Log.warn(['from_python: received a %s MATLAB already converted ' ...
+                '(an unboxed Python value; a named time zone may be a fixed offset now)'], ...
+                class(py_obj));
+            data = py_obj;
+            return;
+        end
     end
 
     if isa(py_obj, 'py.NoneType')
         data = [];
+
+    elseif isa(py_obj, 'py.scimatlab.bridge.crossing.DatetimeCrossing')
+        % A boxed datetime scalar (scimatlab.bridge.crossing): MATLAB R2024a
+        % converts a bare one, losing a named zone and crashing on NaT.
+        data = scidb.internal.datetime_from_python(py_obj);
+
+    elseif isa(py_obj, 'py.scimatlab.bridge.crossing.DurationCrossing')
+        data = scidb.internal.duration_from_python(py_obj);
 
     elseif isa(py_obj, 'py.numpy.ndarray')
         py_c = py.numpy.ascontiguousarray(py_obj);
@@ -55,7 +74,7 @@ function data = from_python(py_obj)
 
             % Convert to Python list to avoid libmwbuffer errors.
             try
-                py_list = py_c.tolist();
+                py_list = py.scimatlab.bridge.boxed_tolist(py_c);  % datetimes boxed (crossing)
                 scifor.Log.debug('from_python: tolist() succeeded, converting to MATLAB...');
             catch list_err
                 scifor.Log.err('from_python: tolist() failed: %s', list_err.message);
@@ -429,7 +448,7 @@ function data = convert_dataframe(py_obj)
         elseif dtype_str == "object"
             scifor.Log.debug('convert_dataframe: column %d "%s" - object branch', i, string(col_key));
             % Object column (e.g. dicts/structs, array columns) -> cell array via from_python
-            py_list = col.tolist();
+            py_list = py.scimatlab.bridge.boxed_tolist(col);  % datetimes boxed (crossing)
 
             % Try fast paths BEFORE converting to MATLAB cell array, in order of preference:
             % 1. Homogeneous DataFrames → concatenate & convert once

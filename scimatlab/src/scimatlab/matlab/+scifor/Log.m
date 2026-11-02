@@ -21,7 +21,7 @@ classdef Log
 %   with no members of its own: one class, two package names.
 %
 %   Name the Python class by its DEFINING module (py.scistacklog.Log), never
-%   a re-export such as py.scidb.model.log.Log: MATLAB resolves a static call
+%   a re-export (scidb's model.log.Log): MATLAB resolves a static call
 %   py.<module>.<Class>.<method> only when the class's __module__ matches the
 %   dotted path; for a re-export it falls back to constructor semantics and
 %   errors. Guarded by scimatlab/tests/test_matlab_py_class_dispatch.py.
@@ -77,21 +77,26 @@ classdef Log
         end
 
         function set_path(log_path)
-        %SET_PATH  Set the log file path for file output.
-        %   Called automatically by scidb.configure_database().
+        %SET_PATH  Set the debug log file path. configure_database does not call
+        %   this (it attaches both files via scidb.model.log.attach_log_file).
         %   Delegates to Python logging to unify log file location.
             py.scistacklog.Log.set_path(char(log_path));
-            % Cache in MATLAB for legacy compatibility
-            setappdata(0, 'scidb_log_path', char(log_path));
         end
 
         function p = get_path()
-        %GET_PATH  Get the current log file path (empty if not set).
-            if isappdata(0, 'scidb_log_path')
-                p = getappdata(0, 'scidb_log_path');
-            else
+        %GET_PATH  The debug log file (scistack-debug.log) Python writes, '' when
+        %   none is attached. Python owns the path: configure_database attaches
+        %   it through scidb.model.log.attach_log_file, never through set_path,
+        %   so a MATLAB-side cache was never filled (returned '' since the
+        %   run-journal split, 2026-10-27). The journal (scistack.log) holds
+        %   only run blocks; DEBUG/INFO detail lives in this file.
+            py_p = py.scistacklog.Log.get_path();
+            if isa(py_p, 'py.NoneType')
                 p = '';
+            else
+                p = char(py_p);
             end
+            scifor.Log.debug('Log.get_path: %s', p);
         end
 
         function debug(fmt, varargin)

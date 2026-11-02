@@ -5,6 +5,7 @@ Python owns the graph; MATLAB owns the execution of MATLAB steps, driving each
 through its two-pass ``scidb.for_each`` (``bridge.entry``).
 """
 
+from .crossing import matlab_entry
 from .wire import (
     _locations_from_matlab,
     _make_matlab_fn_sentinel,
@@ -40,6 +41,7 @@ def _cache_pipeline(pipe) -> int:
     return _pipeline_id_counter
 
 
+@matlab_entry
 def pipeline_create(name: str, db=None, activate: bool = True) -> int:
     """Create (and by default activate) a Pipeline; returns a cache handle."""
     from scidb.run.pipeline import Pipeline
@@ -58,6 +60,7 @@ def pipeline_create(name: str, db=None, activate: bool = True) -> int:
     return _cache_pipeline(pipe)
 
 
+@matlab_entry
 def pipeline_active_name() -> str:
     """Name of the ambient active pipeline, or '' — MATLAB for_each's
     cheap registration-seam check."""
@@ -67,10 +70,12 @@ def pipeline_active_name() -> str:
     return active.name if active is not None else ""
 
 
+@matlab_entry
 def pipeline_deactivate(handle: int) -> None:
     _pipeline_cache[int(handle)].deactivate()
 
 
+@matlab_entry
 def pipeline_register_step(
     handle: int,
     fn_name: str,
@@ -136,6 +141,7 @@ def pipeline_register_step(
     return len(pipe.steps) - 1
 
 
+@matlab_entry
 def pipeline_bind(handle: int, key_map=None, params=None, iterate=None) -> int:
     """Create a use-edge binding for the pipeline; returns a binding handle.
     Bind-time validation errors (unknown/ambiguous params) raise here."""
@@ -152,6 +158,7 @@ def pipeline_bind(handle: int, key_map=None, params=None, iterate=None) -> int:
     return _binding_id_counter
 
 
+@matlab_entry
 def pipeline_use(
     parent_handle: int, child_handle: int = 0, binding_handle: int = 0
 ) -> None:
@@ -164,6 +171,7 @@ def pipeline_use(
         parent.use(_pipeline_cache[int(child_handle)])
 
 
+@matlab_entry
 def pipeline_plan(handle: int, target_name: str = "") -> list:
     """plan() forwarder; MATLAB-friendly list of dicts (combos summarized
     to a count — full combo dicts don't convert usefully)."""
@@ -181,10 +189,12 @@ def pipeline_plan(handle: int, target_name: str = "") -> list:
     ]
 
 
+@matlab_entry
 def pipeline_endpoints(handle: int, include_used: bool = True) -> list:
     return _pipeline_cache[int(handle)].endpoints(include_used=include_used)
 
 
+@matlab_entry
 def pipeline_execution_order(
     handle: int,
     mode: str = "all",
@@ -240,6 +250,7 @@ def pipeline_execution_order(
     return {"run_handle": _pipeline_run_id_counter, "steps": descriptors}
 
 
+@matlab_entry
 def pipeline_run_python_step(run_handle: int, position: int):
     """Execute the run's POSITIONth step Python-side (mixed pipelines:
     Python-registered steps run in their home language while MATLAB
@@ -261,6 +272,7 @@ def pipeline_run_python_step(run_handle: int, position: int):
     return True
 
 
+@matlab_entry
 def pipeline_run_free(run_handle: int) -> None:
     """Release a finished run's cached state."""
     _pipeline_run_cache.pop(int(run_handle), None)

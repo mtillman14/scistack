@@ -155,3 +155,29 @@ def test_scidb_log_is_a_member_free_subclass_of_scifor_log():
     code = _strip_comments(src)
     assert "classdef Log < scifor.Log" in code
     assert "function" not in code and "properties" not in code
+
+
+def test_scifor_sources_never_mention_py_scidb():
+    """Mirror of MATLAB ``TestSciforNoScidbDependency``: no ``+scifor`` file
+    contains the text ``py.scidb``, comments included (MATLAB scifor must
+    run without scidb). A stage-1 comment in ``+scifor/Log.m`` quoting the
+    re-export path failed that MATLAB test on 2026-11-02; this catches it
+    without a MATLAB licence."""
+    offenders = [
+        p.name for p in sorted((_MATLAB_ROOTS[0] / "+scifor").glob("*.m"))
+        if "py.scidb" in p.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+
+
+def test_matlab_log_get_path_asks_python():
+    """``scifor.Log.get_path`` reads the debug-file path from
+    ``py.scistacklog.Log.get_path`` (the owner). Its old MATLAB-side cache was
+    filled only by ``set_path``, which ``configure_database`` never calls, so
+    it returned ``''`` and every MATLAB test reading the log errored."""
+    code = _strip_comments(
+        (_MATLAB_ROOTS[0] / "+scifor" / "Log.m").read_text(encoding="utf-8")
+    )
+    body = code.split("function p = get_path()", 1)[1].split("function ", 1)[0]
+    assert "py.scistacklog.Log.get_path()" in body
+    assert "scidb_log_path" not in code

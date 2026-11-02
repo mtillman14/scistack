@@ -9,6 +9,8 @@ here, from the module that owns it:
 * :mod:`.wire` — MATLAB specs rebuilt as Python wrappers, the function
   sentinel and :class:`MatlabFunctionIdentity`, variable surrogates;
 * :mod:`.convert` — value conversion (buffers, datetimes, nested values);
+* :mod:`.crossing` — datetime/timedelta scalars cross only boxed
+  (MATLAB R2024a converts them bare);
 * :mod:`.pipeline` — the Pipeline registry by handle.
 
 ``scimatlab/tests/test_bridge_entry_points.py`` holds this list to every
@@ -16,10 +18,12 @@ here, from the module that owns it:
 """
 
 from .convert import (
+    boxed_tolist,
     convert_nested_dicts_arrays_to_lists,
     convert_nested_dicts_to_json,
     datetimes_from_matlab,
     datetimes_to_matlab,
+    durations_to_matlab,
     flatten_sequences,
     is_dataframe,
     is_datetime_value,
@@ -28,6 +32,13 @@ from .convert import (
     numpy_scalar_to_python,
     split_df_to_dataframes,
     split_flat_to_lists,
+)
+from .crossing import (
+    DatetimeCrossing,
+    DurationCrossing,
+    box_datetimes,
+    matlab_entry,
+    unbox_datetimes,
 )
 from .entry import (
     _for_each_state_cache,
@@ -45,8 +56,12 @@ from .entry import (
     pathinput_project_root,
     run_failure_group_json,
     save_batch_bridge,
+    save_variable_bridge,
+    schema_key_filter,
     set_pathinput_project_root,
     to_csv_bridge,
+    variable_data,
+    variable_filter,
     wrap_batch_bridge,
 )
 from .pipeline import (
