@@ -61,11 +61,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .log import Log
+from .tables import VARIANT_TOMBSTONE
 
 if TYPE_CHECKING:
     from .database import DatabaseManager
 
-TOMBSTONE_TABLE = "_variant_tombstone"
+TOMBSTONE_TABLE = VARIANT_TOMBSTONE.name
 
 
 @dataclass
@@ -120,26 +121,12 @@ class DeleteResult:
 # ---------------------------------------------------------------------------
 
 
-def ensure_tombstone_table(duck) -> None:
-    duck.execute(f"""
-        CREATE TABLE IF NOT EXISTS {TOMBSTONE_TABLE} (
-            tombstone_id    VARCHAR PRIMARY KEY,
-            deleted_at      VARCHAR NOT NULL,
-            reason          VARCHAR NOT NULL,
-            targets_json    VARCHAR NOT NULL,
-            counts_json     VARCHAR NOT NULL,
-            record_ids_json VARCHAR NOT NULL
-        )
-    """)
-
-
 def write_tombstone(
     duck, reason: str, targets: list[dict], by_variable: dict, record_ids: list[str]
 ) -> Tombstone:
     """Write one tombstone row: the audit trail of every real delete (this
     module's variant delete and ``scidb.clear_data``'s clear). The caller
     holds the transaction."""
-    ensure_tombstone_table(duck)
     tomb = Tombstone(
         tombstone_id=uuid.uuid4().hex[:16],
         deleted_at=datetime.now().isoformat(),

@@ -70,6 +70,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       a per-key value list cannot say. Applied by the bridge
 %                       to the combos it hands this loop (same filter as
 %                       Python's for_each(locations=)).
+%       project_root  - Folder rootless PathInputs resolve against (default:
+%                       the pinned project root). Passed to Python prepare
+%                       and to the scifor.for_each loop.
 %       share_limits  - struct: input name -> string array of schema keys to
 %                       hold fixed; each group's [min max] is appended as a
 %                       trailing positional arg (declare `<input>_limits`
@@ -400,6 +403,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'parameter_names', py_parameter_names, ...
                'locations', py_locations, ...
                'schema_key_types', scifor.key_types_to_py(opts.schema_key_types), ...
+               'project_root', project_root_to_py(opts.project_root), ...
                'source_text', fn_source));
     scidb.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
 
@@ -715,6 +719,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     if ~isempty(fieldnames(opts.share_limits))
         scifor_opts{end+1} = 'share_limits';
         scifor_opts{end+1} = opts.share_limits;
+    end
+    if strlength(opts.project_root) > 0
+        scifor_opts{end+1} = 'project_root';
+        scifor_opts{end+1} = opts.project_root;
     end
 
     % --- Endpoint fn wrapping (MATLAB side of Step 1.55/1.56) ---
@@ -2020,6 +2028,7 @@ function [meta_args, opts] = split_options(varargin)
     % Schema location selection as JSON text ('' = none). See the help.
     opts.locations = '';
     opts.fn_name_override = '';
+    opts.project_root = "";
     opts.fn_hash_override = '';
     % Deferred pipeline registration: '' = ambient (register into the
     % active pipeline if any), 'none' = force eager, or a scidb.Pipeline
@@ -2133,6 +2142,9 @@ function [meta_args, opts] = split_options(varargin)
                     i = i + 2; continue;
                 case "locations"
                     opts.locations = varargin{i+1};
+                    i = i + 2; continue;
+                case "project_root"
+                    opts.project_root = string(varargin{i+1});
                     i = i + 2; continue;
                 case "pipeline"
                     opts.pipeline = varargin{i+1};
@@ -2319,5 +2331,15 @@ function spec = column_spec_from_wire(wire)
         spec = dictionary(names, cols);
     else
         spec = cols;
+    end
+end
+
+
+function py_root = project_root_to_py(root)
+%PROJECT_ROOT_TO_PY  project_root= as the bridge takes it ("" -> py.None).
+    if strlength(root) == 0
+        py_root = py.None;
+    else
+        py_root = char(root);
     end
 end

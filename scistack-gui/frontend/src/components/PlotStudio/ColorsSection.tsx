@@ -13,7 +13,7 @@
  * parses it, so the panel never does.
  * "↑ project" makes the plot's colour the project's (every plot then paints
  * it); "✕ project" removes the project's. Both go through the backend
- * (`plot_project_color_set` → scistack_gui.config, grammar scidb.colors'),
+ * (`plot_project_color_set` → scistack_gui.config, grammar scifor.project.colors'),
  * which refuses text that is not a colour.
  */
 

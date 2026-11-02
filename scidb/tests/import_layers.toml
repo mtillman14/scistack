@@ -1,6 +1,7 @@
 # scidb's internal layers (design review 04a "The six clusters", refactor B1).
 # Checked by test_import_layers.py through tools/import_layers.py.
-# Lower layers first; ["run", "project"] are peers until P3 moves project out.
+# Lower layers first. ["run", "project"] are peers: discover reads Pipelines and
+# run reads declared entities (the model-free half of project is scifor.project).
 package = "scidb"
 src = "../src"
 lazy_baseline = 517
@@ -11,9 +12,10 @@ api = [
     "scidb.variable", "scidb.variables.*", "scidb.parameter", "scidb.variant",
     "scidb.filters", "scidb.input_spec", "scidb.across_variants",
     "scidb.column_selection", "scidb.merge", "scidb.query", "scidb.exceptions",
-    "scidb.roles", "scidb.names", "scidb.lineage_save", "scidb.log",
+    "scidb.roles", "scidb.lineage_save", "scidb.log",
 ]
 store = [
+    "scidb.tables", "scidb.sciduck", "scidb.versioned_store",
     "scidb.database", "scidb.exclusions", "scidb.variant_pins",
     "scidb.variant_delete", "scidb.clear_data", "scidb.rename",
     "scidb.schema_types", "scidb.schema_values",
@@ -29,11 +31,10 @@ run = [
     "scidb.external_loop",
 ]
 project = [
-    "scidb.entities", "scidb.source_edit", "scidb.discover", "scidb.config_file",
-    "scidb.project", "scidb.aliases", "scidb.colors", "scidb.schema_order",
-    "scidb.bundle", "scidb.library", "scidb.table_copy", "scidb.environment",
-    "scidb.verify", "scidb.schema_map", "scidb.artifact_stamp",
-    "scidb.run_markers", "scidb.csv_export",
+    "scidb.project.*",
+    # Flat until P4 gives them a home: csv_export beside the store,
+    # artifact_stamp and run_markers beside foreach.
+    "scidb.artifact_stamp", "scidb.run_markers", "scidb.csv_export",
 ]
 inspect = ["scidb.inspect.*"]
 # The package's __init__ re-exports the user API; nothing inside may import it.

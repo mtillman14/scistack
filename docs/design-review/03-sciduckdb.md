@@ -201,6 +201,7 @@ tested.
 | D4 | Decide one schema owner: either sciduckdb owns all DDL (scidb declares tables, sciduckdb creates them), or sciduckdb owns none (scidb creates `_schema` too). The second is smaller. | weakness 3 |
 
 > **Done (2026-11-01, P2 stage 4):** D1 — `sciduckdb.py` split into `codec.py`, `connection.py` (`DuckConnection`) and `schema.py` (`SciDuck(DuckConnection)`). D2 — `execute`, `fetchall`, `fetchone`, `fetchdf`, `fetchdf_if_open`, `fetch_table`, `table_exists`, `bulk_insert`, `bulk_update`, `get_or_create_schema_id` are public and documented in the README; every hand-paired `_begin`/`_commit`/`_rollback` in source uses `transaction()`; `execute` returns `None` so a fetch outside the lock cannot be written.
+> **Done (2026-11-01, P3):** D4 option 2 — sciduckdb creates no tables. `SciDuck` (schema ids, variables, groups) moved to `scidb.sciduck`; every fixed table is a `scidb.tables.TableDecl` (`scidb/tests/test_table_registry.py`).
 
 > **Done (2026-11-01, e129c3bf):** D3 — `save`/`load`/`list_versions`/`delete` and their private helpers deleted. The codec round-trip tests now go through `tests/codec_roundtrip.py` (public codec functions in a real table). `_restore_types` became the public `restore_types`, so scidb no longer reaches into `_duck._restore_types`. README rewritten (codec, connection, schema ids). `_get_or_create_schema_id` stays: scidb calls it at 3 sites (promote in P2).
 

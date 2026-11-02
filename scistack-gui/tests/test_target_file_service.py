@@ -193,7 +193,7 @@ class TestCreateWritesToml:
     def test_create_into_a_file_without_a_final_newline(self, populated_db, tmp_path):
         """scistack.log 2026-10-17: creating `popcorn_path` glued it onto the
         last line of a hand-edited file and every declaration in it vanished."""
-        from scidb.entities import load
+        from scidb.project.entities import load
 
         from scistack_gui.services.path_input_service import create_path_input
 
@@ -226,7 +226,7 @@ class TestCreateWritesToml:
     def test_two_creates_land_in_one_valid_file(self, populated_db, tmp_path):
         """Each write re-parses the whole file, so a second create must not
         corrupt what the first wrote."""
-        from scidb.entities import load
+        from scidb.project.entities import load
 
         from scistack_gui.services.parameter_service import create_parameter
         from scistack_gui.services.path_input_service import create_path_input
@@ -351,8 +351,8 @@ class TestUpdateDeclaration:
         """Adding a second value changes the RHS from a scalar to an array --
         a change of form, but the identical splice a value edit performs, and
         no change of kind, node or history (D6)."""
-        from scidb.entities import render_parameter_value
-        from scidb.source_edit import render_parameter
+        from scifor.project.entities_file import render_parameter_value
+        from scifor.project.source_edit import render_parameter
 
         from scistack_gui.matlab.parser import render_matlab_parameter
         from scistack_gui.services.target_file_service import update_declaration
@@ -711,7 +711,7 @@ class TestRefreshCoversMatlab:
         _registry.load_from_config(config_mod.load_config(None, get_db_path()))
 
         # An empty template with a root renders {template = "", root_folder =
-        # "/d"}, which scidb.entities rejects as "missing a 'template' string".
+        # "/d"}, which scidb.project.entities rejects as "missing a 'template' string".
         result = update_declaration(
             "path_input",
             "RAW",

@@ -27,6 +27,8 @@ from scifor import ColName, ColumnSelection, EachOf, Fixed, Merge, require_alter
 from scifor import for_each as _scifor_for_each
 from scifor import stopped_run_of, validate_on_error
 from scifor.failures import journaled
+from scifor.foreach import bind_path_inputs
+from scifor.project.root import project_root as current_project_root
 from scifor import output_column_name as _output_column_name
 from scifor.outputs import is_no_output as _is_no_output
 
@@ -50,7 +52,7 @@ from .bindings import (
 from .exceptions import AmbiguousParamError, DatabaseNotConfiguredError
 from .database import database_or_none, dataset_schema_keys_of
 from .input_spec import find_pathinput, is_loadable, spec_name, type_name, variable_type
-from .entities import declared_spelling
+from .project.entities import declared_spelling
 from .parameter import check_path_input_names, declared_input_names, path_input_specs_of
 from .roles import endpoint_kind as _roles_endpoint_kind
 from scifor import schema_types as _scifor_schema_types
@@ -60,7 +62,7 @@ from .variant import match_bare_name
 from .filters import Filter
 from .foreach_config import ForEachConfig
 from .log import Log
-from .names import function_name as _function_name
+from scifor.project.names import function_name as _function_name
 from .per_combo import PerComboLoader, PerComboLoaderMerge
 from .pipeline import Pipeline as _Pipeline
 from .pipeline import Step, active_pipeline
@@ -245,6 +247,9 @@ class _ForEachState:
     # carried to record_run so each PathInput record stores WHERE the files
     # were. Descriptive, never identity (identity is the name, `to_key`).
     path_input_specs: Any = None  # dict[str, str] | None
+    # The folder rootless PathInputs resolve against, decided once in prepare
+    # (bound into `inputs`) and handed to scifor's loop so it does not re-decide.
+    project_root: "_Path | None" = None
     # What the save does with two result rows at one location and variant
     # (scidb.combine): "error" or "combine". Set by for_each / the MATLAB
     # bridge's for_each_save; read only by _batch_save_outputs.
@@ -276,6 +281,7 @@ def for_each(
     on_duplicate: str = "error",
     locations: "Any" = None,
     share_limits: "dict[str, list[str]] | None" = None,
+    project_root: "str | _Path | None" = None,
     finalized: bool = False,
     glue: "dict[str, Any] | None" = None,
     parameter_names: "dict[str, str] | None" = None,
@@ -372,6 +378,10 @@ def for_each(
                     per-key Cartesian narrowing applied while combos are
                     RESOLVED; ``locations`` can express what that cannot
                     (see docs/claude/location-filter-semantics.md).
+        project_root: The folder a PathInput without ``root_folder``
+                    resolves against; default the process-wide root
+                    (``scifor.project.root.project_root``). Passed through to
+                    ``scifor.for_each``. Resolution only, never identity.
         finalized: Endpoint (``plot_``/``stat_``) functions only. Default False
                     = DRAFT mode: nothing is written to the database — a
                     ``plot_`` figure is still rendered to its PathOutput path,
@@ -462,6 +472,7 @@ def for_each(
                 "on_error": on_error,
                 "on_duplicate": on_duplicate,
                 "share_limits": share_limits,
+                "project_root": project_root,
                 # Dropped from this list until 2026-09-23 (cleanup-audit F18):
                 # a step registered with a location selection replayed over
                 # every location.
@@ -504,6 +515,7 @@ def for_each(
                     on_duplicate=on_duplicate,
                     locations=locations,
                     share_limits=share_limits,
+                    project_root=project_root,
                     finalized=finalized,
                     glue=glue,
                     parameter_names=parameter_names,
@@ -684,6 +696,7 @@ def for_each(
                 introspect=introspect,
                 skip_computed=skip_computed,
                 share_limits=share_limits,
+                project_root=project_root,
                 # on_error="stop" in one alternative raises out of this loop;
                 # that alternative saved its completed combos, and every
                 # earlier alternative was saved by its own call.
@@ -807,6 +820,7 @@ def for_each(
             generates_file=_is_generates_file,
             endpoint_kind=_endpoint_kind,
             parameter_names=parameter_names,
+            project_root=project_root,
         )
     if state is None:
         return None
@@ -1094,6 +1108,7 @@ def _for_each_execute(
                 share_limits=share_limits,
                 locations=locations,
                 on_error=on_error,
+                project_root=state.project_root,
                 _all_combos=state.full_combos,
                 _progress_fn=_tracking_progress_fn,
                 _cancel_check=_cancel_check,
@@ -2257,6 +2272,7 @@ def _dry_run_preview(
     output_names: list,
     locations,
     cancel_check,
+    project_root: "_Path | None" = None,
 ) -> None:
     """Prepare stage (dry run only): convert inputs for display and let scifor
     print the iteration, over the SAME combos the real run would process
@@ -2277,6 +2293,7 @@ def _dry_run_preview(
         distribute=distribute,
         outputs=output_names,
         locations=locations,
+        project_root=project_root,
         _cancel_check=cancel_check,
         **scifor_kwargs,
     )
@@ -3574,6 +3591,7 @@ def _for_each_prepare(
     generates_file: bool = False,
     endpoint_kind: "str | None" = None,
     parameter_names: "dict[str, str] | None" = None,
+    project_root: "str | _Path | None" = None,
 ) -> "_ForEachState | None":
     """Run scidb.for_each's pre-loop work, as a sequence of named stages:
     :func:`_normalize_glue`, :func:`_resolve_iterables`,
@@ -3595,6 +3613,13 @@ def _for_each_prepare(
     # it (MATLAB passes a declared 6 as 6.0). Before anything below derives
     # identity, version keys or metadata from the inputs.
     inputs = declared_spelling(inputs, parameter_names)
+
+    # Where a rootless PathInput resolves, decided once for the whole call:
+    # the caller's root, else the process-wide one (the MATLAB bridge entry
+    # and a plain script reach here with None). Bound into the inputs, so
+    # discovery and per-combo resolution read it without a global.
+    root = _Path(project_root).resolve() if project_root is not None else current_project_root()
+    inputs = bind_path_inputs(inputs, root)
 
     # Glue chains: normalized and validated up front, constant-fed ones applied.
     glue_chains, deferred_glue_chains, inputs, constant_glue = _normalize_glue(
@@ -3648,6 +3673,7 @@ def _for_each_prepare(
             output_names=output_names,
             locations=locations,
             cancel_check=_cancel_check,
+            project_root=root,
         )
         return None
 
@@ -3740,6 +3766,7 @@ def _for_each_prepare(
         bindings=run_bindings,
         parameter_names=parameter_names or None,
         path_input_specs=path_input_specs_of(inputs) or None,
+        project_root=root,
     )
 
 

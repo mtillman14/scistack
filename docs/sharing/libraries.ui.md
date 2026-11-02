@@ -3,17 +3,17 @@
 <!-- Ground truth: scistack-gui Sidebar/ShareLibraryButton.tsx (⇪ Share /
      publish; no folder asked), services/library_authoring.py (share, publish,
      copy: check_new_name -> plan_library -> write_library -> switch_project;
-     refusals, collisions), scidb/library.py write_library (layout:
+     refusals, collisions), scidb/project/library.py write_library (layout:
      pyproject.toml, src/<lib>/, generated __init__.py re-exports,
      pipelines/*.json, entities file with [library] derived_from,
-     matlab/+<lib>/), scifor.discovery authored_library_dirs (libs/<name>/),
+     matlab/+<lib>/), scifor.project.discovery authored_library_dirs (libs/<name>/),
      scidb/rename.py rename_functions (results carried across a rename),
      library_cli.py (`scistack library create|copy|build`),
      Sidebar/LibrariesSection.tsx (+ / ✎ copy under a new name / × / 🔒 and ✏
      rows), services/library_service.py (seed, re-sync only for installed
      libraries, placing declares what is missing, tunables),
      Tunables/TunablesPanel.tsx + ProjectTunables.tsx, library_lock.py
-     (installed libraries read-only), scidb/bundle.py wheelhouse, design
+     (installed libraries read-only), scidb/project/bundle.py wheelhouse, design
      .claude/plan-library-fork-chain.md and docs/claude/portability.md
      "Reusing code". -->
 

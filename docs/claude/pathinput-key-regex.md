@@ -60,10 +60,10 @@ fully owned by Python.
 - **One pattern rule**: `scifor.key_regex_pattern_error(pattern)` — a
   non-empty string that compiles with NO capturing group (it would shift
   every named group after it; `(?:...)` is fine). Asked by the constructor,
-  `scidb.entities` (TOML) and `path_input_service.key_regex_error` (GUI save,
+  `scidb.project.entities` (TOML) and `path_input_service.key_regex_error` (GUI save,
   checked before the write so the sidebar shows the real reason).
 - **Entities TOML**: `key_regex = { subject = 'R2_\d{3}' }` on a PathInput
-  table or alternate arm. Written back by `scidb.entities._render_key_regex`
+  table or alternate arm. Written back by `scifor.project.entities_file._render_key_regex`
   as literal (single-quoted) strings, falling back to an escaped basic string
   for a pattern holding `'`.
 - **Carried everywhere `aliases` are**: `graph_builder.path_input_display`

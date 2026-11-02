@@ -424,7 +424,7 @@ def _key_map(root: Path) -> "dict[str, str | None] | None":
 def verify(db, *, root: "Path | str | None" = None, against: "Path | str | None" = None,
            rtol: float = DEFAULT_RTOL, atol: float = DEFAULT_ATOL) -> VerifyReport:
     """Compare *db*'s history with the exporter's. See the module docstring."""
-    from scifor.pathinput import project_root
+    from scifor.project.root import project_root
 
     t0 = time.monotonic()
     root = Path(root) if root is not None else project_root()

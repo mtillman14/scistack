@@ -61,6 +61,9 @@ import json
 import logging
 import uuid
 
+from scidb import tables
+from scidb.tables import TableDecl
+
 from scistack_gui.stores import library_lock as _library_lock
 from scistack_gui.ids import ROOT_SCOPE
 
@@ -134,17 +137,186 @@ GUARDED_WRITES: tuple[str, ...] = (
 )
 
 
+# The tables this module owns, declared through scidb (scidb.tables owns
+# every table of a project database; this module creates them on first use).
+tables.declare(
+    TableDecl(
+        "_pipeline_nodes",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_nodes (
+                node_id     VARCHAR PRIMARY KEY,
+                node_type   VARCHAR NOT NULL,
+                label       VARCHAR NOT NULL,
+                pipeline_id VARCHAR NOT NULL DEFAULT 'main'
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_node_config",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _node_config (
+                node_id VARCHAR PRIMARY KEY,
+                config  VARCHAR NOT NULL DEFAULT '{}'
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_builtin_functions",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_builtin_functions (
+                name     VARCHAR PRIMARY KEY,
+                language VARCHAR NOT NULL
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_parameter_value_groups",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_parameter_value_groups (
+                param_name    VARCHAR PRIMARY KEY,
+                kind          VARCHAR NOT NULL,
+                spec          VARCHAR NOT NULL DEFAULT '{}',
+                member_values VARCHAR NOT NULL DEFAULT '[]'
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_path_input_history",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_path_input_history (
+                name        VARCHAR NOT NULL,
+                template    VARCHAR NOT NULL,
+                root_folder VARCHAR NOT NULL DEFAULT '',
+                PRIMARY KEY (name, template, root_folder)
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_path_input_renames",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_path_input_renames (
+                old_name   VARCHAR NOT NULL,
+                new_name   VARCHAR NOT NULL,
+                renamed_at TIMESTAMP NOT NULL DEFAULT current_timestamp
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_hidden_ports",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_hidden_ports (
+                pipeline_id VARCHAR NOT NULL DEFAULT 'main',
+                direction   VARCHAR NOT NULL,
+                var_type    VARCHAR NOT NULL,
+                PRIMARY KEY (pipeline_id, direction, var_type)
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipelines",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipelines (
+                pipeline_id VARCHAR PRIMARY KEY,
+                name        VARCHAR NOT NULL,
+                hidden      BOOLEAN DEFAULT FALSE
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_uses",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_uses (
+                use_id             VARCHAR PRIMARY KEY,
+                parent_pipeline_id VARCHAR NOT NULL,
+                child_pipeline_id  VARCHAR NOT NULL,
+                binding_json       VARCHAR DEFAULT '{}'
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_hypotheses",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _hypotheses (
+                pipeline_id          VARCHAR PRIMARY KEY,
+                research_question    VARCHAR DEFAULT '',
+                hypothesis_statement VARCHAR DEFAULT '',
+                evidence_for         VARCHAR DEFAULT '[]',
+                evidence_against     VARCHAR DEFAULT '[]'
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_library_pipelines",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _library_pipelines (
+                pipeline_id     VARCHAR PRIMARY KEY,
+                library         VARCHAR NOT NULL,
+                pipeline_name   VARCHAR NOT NULL,
+                doc_pipeline_id VARCHAR NOT NULL,
+                definition_hash VARCHAR NOT NULL
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+
+
 def _ensure_tables(db) -> None:
     """Create pipeline tables if they don't already exist, each with its
     final schema (no migrations — see the module docstring)."""
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_nodes (
-            node_id     VARCHAR PRIMARY KEY,
-            node_type   VARCHAR NOT NULL,
-            label       VARCHAR NOT NULL,
-            pipeline_id VARCHAR NOT NULL DEFAULT 'main'
-        )
-    """)
+    tables.ensure(_duck(db), "_pipeline_nodes")
     # Node config (schemaSelection / schemaLevel / whereFilters / runOptions)
     # keyed by node_id, deliberately NOT a column on _pipeline_nodes.
     #
@@ -159,18 +331,8 @@ def _ensure_tables(db) -> None:
     #
     # A table with no lifecycle coupling to node placement has neither
     # problem. See docs/claude/gui-run-options-flow.md.
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _node_config (
-            node_id VARCHAR PRIMARY KEY,
-            config  VARCHAR NOT NULL DEFAULT '{}'
-        )
-    """)
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_builtin_functions (
-            name     VARCHAR PRIMARY KEY,
-            language VARCHAR NOT NULL
-        )
-    """)
+    tables.ensure(_duck(db), "_node_config")
+    tables.ensure(_duck(db), "_pipeline_builtin_functions")
     # Values written in one go by ParameterSettingsPanel's Generate section
     # ("Replace values"), as opposed to added one at a time ("Add value").
     # Purely a DISPLAY grouping: the set collapses to a single compact row,
@@ -198,14 +360,7 @@ def _ensure_tables(db) -> None:
     #
     # Not scoped by pipeline_id: what a Parameter's values ARE does not vary
     # by scope, the same reasoning as _pipeline_path_input_history below.
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_parameter_value_groups (
-            param_name    VARCHAR PRIMARY KEY,
-            kind          VARCHAR NOT NULL,
-            spec          VARCHAR NOT NULL DEFAULT '{}',
-            member_values VARCHAR NOT NULL DEFAULT '[]'
-        )
-    """)
+    tables.ensure(_duck(db), "_pipeline_parameter_value_groups")
     # Templates a PathInput has been declared with and the GUI has since
     # overwritten. Append-only, never deleted.
     #
@@ -230,14 +385,7 @@ def _ensure_tables(db) -> None:
     # of the primary key, and a NULL in a PK is both rejected by some engines
     # and never equal to itself, which would silently defeat the ON CONFLICT
     # dedup. Normalised in record_path_input_value/lookup_path_input_name.
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_path_input_history (
-            name        VARCHAR NOT NULL,
-            template    VARCHAR NOT NULL,
-            root_folder VARCHAR NOT NULL DEFAULT '',
-            PRIMARY KEY (name, template, root_folder)
-        )
-    """)
+    tables.ensure(_duck(db), "_pipeline_path_input_history")
     # PathInput renames — the NAME counterpart of the template history
     # above. Runs record the declared name they were given
     # (_invocation_input.declared_name, F38) and that recorded name wins over
@@ -246,43 +394,17 @@ def _ensure_tables(db) -> None:
     # the renamed one. Written from ONE place (layout_service.
     # rename_path_input); read through path_input_rename_index and resolved
     # only by graph_builder.resolve_renamed_path_input. Append-only.
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_path_input_renames (
-            old_name   VARCHAR NOT NULL,
-            new_name   VARCHAR NOT NULL,
-            renamed_at TIMESTAMP NOT NULL DEFAULT current_timestamp
-        )
-    """)
+    tables.ensure(_duck(db), "_pipeline_path_input_renames")
     # Hidden subpipeline ports (to-do #9) — a scope's exposed inputs/
     # outputs are computed automatically from wiring (see
     # domain.scope_filter.document_interface); this table is a per-scope
     # manual override suppressing one type's port, toggled by right-
     # clicking a variable node inside the subpipeline's own canvas.
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_hidden_ports (
-            pipeline_id VARCHAR NOT NULL DEFAULT 'main',
-            direction   VARCHAR NOT NULL,
-            var_type    VARCHAR NOT NULL,
-            PRIMARY KEY (pipeline_id, direction, var_type)
-        )
-    """)
+    tables.ensure(_duck(db), "_pipeline_hidden_ports")
 
     # --- Nested-pipeline scoping (GUI stage) ---
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipelines (
-            pipeline_id VARCHAR PRIMARY KEY,
-            name        VARCHAR NOT NULL,
-            hidden      BOOLEAN DEFAULT FALSE
-        )
-    """)
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_uses (
-            use_id             VARCHAR PRIMARY KEY,
-            parent_pipeline_id VARCHAR NOT NULL,
-            child_pipeline_id  VARCHAR NOT NULL,
-            binding_json       VARCHAR DEFAULT '{}'
-        )
-    """)
+    tables.ensure(_duck(db), "_pipelines")
+    tables.ensure(_duck(db), "_pipeline_uses")
     # The root scope always exists.
     _duck(db).execute(
         "INSERT INTO _pipelines (pipeline_id, name) VALUES (?, ?) "
@@ -291,15 +413,7 @@ def _ensure_tables(db) -> None:
     )
 
     # --- Hypothesis tabs (a hypothesis is a tagged top-level pipeline) ---
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _hypotheses (
-            pipeline_id          VARCHAR PRIMARY KEY,
-            research_question    VARCHAR DEFAULT '',
-            hypothesis_statement VARCHAR DEFAULT '',
-            evidence_for         VARCHAR DEFAULT '[]',
-            evidence_against     VARCHAR DEFAULT '[]'
-        )
-    """)
+    tables.ensure(_duck(db), "_hypotheses")
     # The root pipeline is the default hypothesis, tagged the same as any
     # other.
     _duck(db).execute(
@@ -308,15 +422,7 @@ def _ensure_tables(db) -> None:
     )
 
     # --- Library-owned pipelines (portability Stage 10) ---
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _library_pipelines (
-            pipeline_id     VARCHAR PRIMARY KEY,
-            library         VARCHAR NOT NULL,
-            pipeline_name   VARCHAR NOT NULL,
-            doc_pipeline_id VARCHAR NOT NULL,
-            definition_hash VARCHAR NOT NULL
-        )
-    """)
+    tables.ensure(_duck(db), "_library_pipelines")
 
     # The intent store (`_intent`): one table, one shape, for every
     # statement about runs. See docs/claude/intent-and-fact.md and

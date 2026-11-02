@@ -35,7 +35,7 @@ from typing import Any, Callable
 
 from scistacklog import Log
 
-from ._versioned import MAX_NAME_LENGTH, VersionedStore  # noqa: F401  (re-exported)
+from scidb.versioned_store import VersionedStore
 
 LAYER = "scistackplotdb"
 
@@ -124,7 +124,7 @@ class SavedPlot:
 # Table
 # ---------------------------------------------------------------------------
 
-#: The rules (names, versions, hiding, never deleting) live in `_versioned`,
+#: The rules (names, versions, hiding, never deleting) live in `scidb.versioned_store`,
 #: shared with presets so the two stores cannot drift apart.
 STORE = VersionedStore(
     table=TABLE,
@@ -133,6 +133,7 @@ STORE = VersionedStore(
     noun="saved plot",
     tag="saved_plot",
     error=SavedPlotError,
+    owner="scistackplotdb",
 )
 
 

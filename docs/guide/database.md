@@ -8,7 +8,7 @@
        first); get_provenance(...) -> {function_name, function_hash, inputs, constants}|None;
        has_lineage(record_id)->bool; find_by_lineage(invocation); distinct_schema_values(key);
        save/load/etc accept db= for one-shot ops;
-     scidb/src/scidb/discover.py: discover_module(module), scan_package(name), scan_project(root,*,
+     scidb/src/scidb/project/discover.py: discover_module(module), scan_package(name), scan_project(root,*,
        skip_dists, library_filter) -> DiscoveryResult (tooling/GUI introspection);
      scidb/src/scidb/exceptions.py: SciStackError + NotRegisteredError/NotFoundError/
        DatabaseNotConfiguredError/ReservedMetadataKeyError/AmbiguousVersionError/AmbiguousParamError.

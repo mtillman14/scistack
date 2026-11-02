@@ -27,10 +27,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from .tables import SCHEMA_OVERRIDES
+
 if TYPE_CHECKING:
     from .database import DatabaseManager
 
-_TABLE = "__scidb_schema_overrides"
+_TABLE = SCHEMA_OVERRIDES.name
 
 
 # ---------------------------------------------------------------------------
@@ -364,21 +366,6 @@ def include_schema_dict(
 ) -> None:
     """Dict-accepting entry point for MATLAB callers (wraps ``include_schema``)."""
     include_schema(reason=reason, db=db, **schema_keys)
-
-
-def ensure_overrides_table(db: DatabaseManager) -> None:
-    """Create ``__scidb_schema_overrides`` if it doesn't exist (idempotent)."""
-    schema_cols = ",\n            ".join(
-        f'"{k}" VARCHAR' for k in db.dataset_schema_keys
-    )
-    db._duck.execute(f"""
-        CREATE TABLE IF NOT EXISTS {_TABLE} (
-            {schema_cols},
-            status     BOOLEAN   NOT NULL,
-            reason     TEXT      NOT NULL,
-            changed_at TIMESTAMP NOT NULL
-        )
-    """)
 
 
 # ---------------------------------------------------------------------------

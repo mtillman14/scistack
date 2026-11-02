@@ -1,6 +1,6 @@
 /**
  * "✓ verify" — did your re-run reproduce the exporter's results?
- * (.claude/plan-portability.md Stage 9; scidb/verify.py.)
+ * (.claude/plan-portability.md Stage 9; scidb/project/verify.py.)
  *
  * Compares this project's history with the exporter's (the newest archived
  * history, or a .scistack bundle) and never runs anything. The backend

@@ -79,7 +79,7 @@ def _open(db_path, *, project, discover: bool, schema_keys):
 
 
 # ---------------------------------------------------------------------------
-# Whole-project bundles (scidb.bundle), composed for the terminal and the GUI
+# Whole-project bundles (scidb.project.bundle), composed for the terminal and the GUI
 # ---------------------------------------------------------------------------
 
 
@@ -101,8 +101,8 @@ def export_open_project(out_path: "Path | str", *, options=None, db=None) -> Pat
     :func:`export_project_bundle` (which opens first), the GUI's
     ``export_project_bundle`` handler calls it on the session's own,
     already-discovered project (and passes the handler's *db*)."""
-    from scidb.bundle import export_project
-    from scifor.pathinput import project_root
+    from scidb.project.bundle import export_project
+    from scifor.project.root import project_root
 
     from scistack_gui.runtime import db as gui_db
 
@@ -121,10 +121,10 @@ def export_project_bundle(db_path: "Path | str", out_path: "Path | str", *, opti
 
 
 def preview_bundle(bundle_path: "Path | str") -> dict:
-    """``scidb.bundle.preview`` with this installation's providers: what the
+    """``scidb.project.bundle.preview`` with this installation's providers: what the
     import dialogs show (exporter schema, PathInputs, sections, environment).
     Runs no code."""
-    from scidb.bundle import preview
+    from scidb.project.bundle import preview
 
     return preview(bundle_path, providers=bundle_providers())
 
@@ -142,8 +142,8 @@ def import_project_bundle(
     WITHOUT discovery (the bundle's code never runs here). *schema_keys*,
     *key_map* (exporter key -> yours, or None), *path_roots* (PathInput
     name -> your folder) and *import_history* as in
-    ``scidb.bundle.import_project``."""
-    from scidb.bundle import import_project
+    ``scidb.project.bundle.import_project``."""
+    from scidb.project.bundle import import_project
 
     root = Path(target_root)
 

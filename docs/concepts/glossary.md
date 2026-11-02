@@ -7,7 +7,7 @@
      scicanonicalhash/src/scicanonicalhash/functions.py (compute_function_hash);
      scidb/src/scidb/database.py (configure_database, content_hash/record_id, call_id);
      scidb/src/scidb/{foreach,state}.py (skip_computed, node state);
-     scidb/src/scidb/library.py + scistack_gui/services/library_authoring.py and
+     scidb/src/scidb/project/library.py + scistack_gui/services/library_authoring.py and
      library_service.py (Library, Step value, Tunables);
      and the tests cited in the sibling Concepts pages. Keep definitions consistent
      with those pages; do not introduce claims not backed by them. -->

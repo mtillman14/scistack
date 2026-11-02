@@ -61,6 +61,11 @@ function varargout = for_each(fn, inputs, varargin)
 %                       scidb.for_each takes it. Applied by Python's
 %                       scifor.filter_combo_indices, the one owner of the
 %                       rule. (default: none)
+%       project_root  - Folder a PathInput without root_folder resolves its
+%                       relative template against. Default: the pinned
+%                       project root (scifor.project.root), else the cwd.
+%                       Bound into each PathInput input once, here
+%                       (scifor.PathInput.bound_to), as Python does.
 %       schema_key_types - struct: key -> 'numeric' | 'string'. 'numeric':
 %                       every spelling of a number is one value ("001", 1),
 %                       explicit and discovered alike. 'string': spelling
@@ -126,6 +131,13 @@ function varargout = for_each(fn, inputs, varargin)
         scifor.Log.info(['discard_db_only_kwargs: ignored %s (scifor has no ' ...
             'database; these only take effect in scidb.for_each)'], ...
             strjoin(opts.discarded, ', '));
+    end
+
+    % Bind every PathInput input to the caller's root, once, before the
+    % EachOf recursion (which re-parses project_root= and binds its
+    % concrete alternatives the same way).
+    if strlength(opts.project_root) > 0
+        inputs = bind_path_inputs(inputs, opts.project_root);
     end
 
     dry_run = opts.dry_run;
@@ -2984,6 +2996,7 @@ function [meta_args, opts] = split_options(varargin)
                                      % names} for struct-valued records; see
                                      % extract_data
     opts.locations = '';   % JSON text; see the locations= doc above
+    opts.project_root = "";  % "" = the pinned root (see project_root= above)
     opts.discarded = {};    % "name=<value>" of each scidb-only option seen
     db_only = db_only_kwargs();
 
@@ -3038,6 +3051,10 @@ function [meta_args, opts] = split_options(varargin)
                     continue;
                 case "where"
                     opts.where = varargin{i+1};
+                    i = i + 2;
+                    continue;
+                case "project_root"
+                    opts.project_root = string(varargin{i+1});
                     i = i + 2;
                     continue;
                 case "outputs"
@@ -3938,4 +3955,24 @@ function result_tbl = vertcat_each_of_results(branch_results, fn_name)
         end
     end
     result_tbl = vertcat(branch_results{:});
+end
+
+
+% ---------------------------------------------------------------------------
+% project_root= (mirrors Python scifor.foreach.bind_path_inputs)
+% ---------------------------------------------------------------------------
+function inputs = bind_path_inputs(inputs, root)
+%BIND_PATH_INPUTS  Every bare or Fixed-wrapped PathInput input bound to ROOT.
+    names = fieldnames(inputs);
+    for p = 1:numel(names)
+        v = inputs.(names{p});
+        if isa(v, 'scifor.PathInput')
+            inputs.(names{p}) = v.bound_to(root);
+        elseif isa(v, 'scifor.Fixed') && isa(v.data, 'scifor.PathInput')
+            fm = v.fixed_metadata;
+            nv = reshape([fieldnames(fm)'; struct2cell(fm)'], 1, []);
+            inputs.(names{p}) = scifor.Fixed(v.data.bound_to(root), nv{:});
+        end
+    end
+    scifor.Log.debug('project_root: PathInput inputs bound to %s', char(root));
 end

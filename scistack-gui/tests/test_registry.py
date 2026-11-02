@@ -185,7 +185,7 @@ class TestScanModuleConstants:
         # Deliberately different from functions: a Constant doesn't
         # reliably expose __module__ (unknown attribute access proxies to
         # the wrapped value via __getattr__), so it's attributed wherever
-        # its name is exposed — mirrors scidb.discover.discover_module's
+        # its name is exposed — mirrors scidb.project.discover.discover_module's
         # same documented choice, not the functions' stricter filter.
         from scidb import Parameter
 
@@ -565,7 +565,7 @@ class TestDiscoveryProgressAndTiming:
 class TestLoadPackagesExcludesTestSubmodules:
     def test_tests_subpackage_excluded(self, tmp_path, monkeypatch, caplog):
         """A pip-installed package's tests/ subpackage must not leak its
-        functions into discovery -- mirrors scidb.discover.scan_package's
+        functions into discovery -- mirrors scidb.project.discover.scan_package's
         identical pkgutil.walk_packages exclusion."""
         import logging
         import sys
@@ -600,7 +600,7 @@ class TestLoadPackagesExcludesTestSubmodules:
         self, tmp_path, monkeypatch
     ):
         """Basic regression check: rebuilding _load_packages on
-        scifor.discovery.walk_package must not change what gets discovered
+        scifor.project.discovery.walk_package must not change what gets discovered
         for a normal (non-test) package."""
         import sys
 
@@ -647,7 +647,7 @@ class TestLoadPackagesExcludesTestSubmodules:
 # directories are on sys.path. Regression guard: a real project lost 6 of 13
 # modules to ModuleNotFoundError purely because of this, and the failures were
 # swallowed into the Discovered Code panel rather than raised.
-# See registry._load_file_modules and scifor.discovery.sibling_import_dirs.
+# See registry._load_file_modules and scifor.project.discovery.sibling_import_dirs.
 # ---------------------------------------------------------------------------
 
 
@@ -769,7 +769,7 @@ class TestSiblingImportsInLooseProjects:
 # from two unguarded plotting scripts before dying on a hardcoded output path.
 # Files with module-level work are now refused, not executed.
 # See registry._screen_for_side_effects and
-# scifor.discovery.find_top_level_side_effects.
+# scifor.project.discovery.find_top_level_side_effects.
 # ---------------------------------------------------------------------------
 
 
@@ -1202,13 +1202,13 @@ class TestRegisterFunctionPrecedence:
     def _root(monkeypatch, tmp_path):
         # What load_from_config does: record the config AND pin scifor's root,
         # which is what registry.get_project_root reads (one holder).
-        from scifor import pathinput
+        from scifor.project import root as project_root_module
 
         monkeypatch.setattr(
             registry, "_config", types.SimpleNamespace(project_root=tmp_path / "proj")
         )
         monkeypatch.setattr(
-            pathinput, "_project_root_override", (tmp_path / "proj").resolve()
+            project_root_module, "_project_root_override", (tmp_path / "proj").resolve()
         )
 
     def test_project_wins_regardless_of_registration_order(

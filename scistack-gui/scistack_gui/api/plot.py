@@ -784,13 +784,13 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
         _preset_history, http_errors=_BAD_REQUEST, undoable=False,
     ),
     # Writes scistack.toml, never the database: the project's display aliases
-    # (scidb.aliases). A refusal (packaged project, no config) is an
+    # (scifor.project.aliases). A refusal (packaged project, no config) is an
     # {ok: false, error} answer the Labels section shows, not an HTTP error.
     Handler(
         "plot_project_alias_set", "/plot/project-alias", ProjectAliasRequest,
         _project_alias_set, holds_db_lock=False, needs_db=False, undoable=True, undo_label="edit alias",
     ),
-    # The same for the project's mark colours (scidb.colors); the Colours
+    # The same for the project's mark colours (scifor.project.colors); the Colours
     # section shows a refusal (packaged project, no config, not a colour).
     Handler(
         "plot_project_color_set", "/plot/project-color", ProjectColorRequest,

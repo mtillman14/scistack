@@ -1,4 +1,4 @@
-"""scidb.schema_map: importing into another schema (portability Stage 6).
+"""scidb.project.schema_map: importing into another schema (portability Stage 6).
 
 One map, exporter key -> recipient key or None, and one renaming per shape a
 key can appear in. Values (levels like "S02") are never translated; a
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from scidb.schema_map import KeyMap, MapReport
+from scidb.project.schema_map import KeyMap, MapReport
 
 EXPORTER = ["subject", "session", "trial"]
 RECIPIENT = ["participant", "visit", "trial"]

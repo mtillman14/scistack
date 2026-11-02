@@ -264,7 +264,7 @@ class LongTable:
     reducer: Any = None
     #: Where the PROJECT's display aliases come from: a zero-argument callable
     #: returning ``{thing: {"name": …, "levels": {…}}}`` (the plain form
-    #: ``scidb.aliases`` produces), or None for a source with no project.
+    #: ``scifor.project.aliases`` produces), or None for a source with no project.
     #:
     #: A reader, not a snapshot, for two reasons. The aliases are live — an
     #: edit to scistack.toml must reach the next figure — while this table is
@@ -291,7 +291,7 @@ class LongTable:
             return {}
 
     #: Where the PROJECT's mark colours come from: a zero-argument callable
-    #: returning the plain form ``scidb.colors`` produces (``"default"`` ->
+    #: returning the plain form ``scifor.project.colors`` produces (``"default"`` ->
     #: colour text, ``thing`` -> ``{level: colour text}``), or None. A reader,
     #: not a snapshot, for the reasons :attr:`aliases_source` gives. Read
     #: through :meth:`project_colors`.
@@ -302,7 +302,7 @@ class LongTable:
         {level: colour text}})``. Colour TEXT — ``colors.merge`` parses it.
         Empty when the source has none or the read fails (a figure never fails
         over a colour). A string value is the setting, a table a thing — the
-        type rule of ``scidb.colors``."""
+        type rule of ``scifor.project.colors``."""
         if self.colors_source is None:
             return None, {}
         try:

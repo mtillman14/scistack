@@ -8,7 +8,7 @@ from typing import Any
 
 from scicanonicalhash import compute_function_hash, compute_function_hash_with_sources
 
-from .names import function_name
+from scifor.project.names import function_name
 
 
 def _compute_fn_hash(fn: Callable) -> str:

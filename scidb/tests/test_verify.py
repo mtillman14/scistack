@@ -1,4 +1,4 @@
-"""scidb.verify: your re-run vs the exporter's history (portability Stage 9).
+"""scidb.project.verify: your re-run vs the exporter's history (portability Stage 9).
 
 Each test: an exporter project runs a tiny pipeline (raw saves -> _triple),
 exports, the bundle is imported into a fresh project, the recipient re-runs
@@ -12,10 +12,10 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.bundle import ExportOptions, export_project, import_project
+from scidb.project.bundle import ExportOptions, export_project, import_project
 from scidb.database import clear_current_database, get_database
-from scidb.project import init_project
-from scidb.verify import VerifyError, verify
+from scidb.project.init import init_project
+from scidb.project.verify import VerifyError, verify
 
 SCHEMA = ["subject", "session"]
 RAW = {"S01": [1.0, 2.0], "S02": [3.0]}

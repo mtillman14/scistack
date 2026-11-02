@@ -1,4 +1,4 @@
-"""Display aliases: ``[aliases]`` in the project config (scidb.aliases).
+"""Display aliases: ``[aliases]`` in the project config (scifor.project.aliases).
 
 Stage 3 of ``.claude/plan-plot-text-sizes-and-aliases.md``. One entry per
 thing — ``name`` for what the thing reads as, a ``levels`` sub-table for its
@@ -17,7 +17,8 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 import scifor as _scifor
-from scidb import BaseVariable, aliases, configure_database, schema_order
+from scidb import BaseVariable, configure_database
+from scifor.project import aliases, schema_order
 
 SCHEMA = ["subject", "session"]
 

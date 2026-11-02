@@ -284,11 +284,21 @@ def test_every_mutating_handler_decides_undo():
     )
 
 
+def _gui_tables() -> set[str]:
+    """Every table the GUI writes: the ones it declares (owner scistack_gui in
+    scidb.tables, the one registry) plus `_intent`, which scidb declares and
+    the GUI writes."""
+    from scidb import tables
+    from scidb.intent import INTENT_TABLE
+
+    from scistack_gui.stores import intent_store, node_wiring, pipeline_store  # noqa: F401 - declare
+
+    return {d.name for d in tables.declared() if d.owner == "scistack_gui"} | {INTENT_TABLE}
+
+
 def test_every_gui_table_is_tracked():
-    created: set[str] = set()
-    for path in GUI_PKG.rglob("*.py"):
-        created |= set(re.findall(r"CREATE TABLE IF NOT EXISTS (\w+)", path.read_text()))
-    assert created, "the scan found no tables — the pattern is stale"
+    created = _gui_tables()
+    assert len(created) > 10, "the registry lists no GUI tables — the GUI stores were not imported"
     assert created == set(history.tracked_tables()) | set(history.UNTRACKED_TABLES), (
         "a GUI table must be listed in its module's UNDOABLE_TABLES "
         "(docs/claude/undo-redo.md)"

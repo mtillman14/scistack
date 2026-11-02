@@ -99,7 +99,7 @@ data/           variable tables (Parquet)      (opt-in)
 Open formats (Parquet, JSON, TOML) throughout, so a bundle can be read
 without SciStack.
 
-Built in Stage 4 (`scidb/bundle.py`): manifest, config, gui, plots. Sections
+Built in Stage 4 (`scidb/project/bundle.py`): manifest, config, gui, plots. Sections
 are providers the front end passes in (`headless.bundle_providers()`); the
 manifest lists only the sections actually written. env, code, history and
 data come in Stages 5 and 7.
@@ -240,11 +240,11 @@ Status as of 2026-10-08.
 | E9 | Parameters / Sweeps / PathInput values | 🔧 | Bundled by registry lookup. Replace with the entities file travelling in the wheel; check the `layout.json` constants palette as an owner. |
 | E10 | Project config | 🔧 | `scistack.toml` is the bundle's `config` section (scidb). Copied verbatim; absolute first-write seeds still need Stage 6. |
 | E11 | Code + entities file | ✅ | `bundle_section.CodeSection`: the files discovery loads (the config loader's list), `pyproject.toml`, the own package with its data; code from outside the root is listed, not copied (Stage 5). |
-| E12 | Wheel + resolved versions + environment | 🔧 | Environment ✅ (`scidb.bundle` env section: Python, platform, every distribution's version, MATLAB if already loaded; Stage 5). Wheels: Stage 10 (libraries only). |
-| E13 | Run history | ✅ | `history` section (default on): provenance tables + `_schema` + exclusions, variant pins, tombstones, via `scidb.table_copy` (DDL + Parquet) (Stage 7). |
+| E12 | Wheel + resolved versions + environment | 🔧 | Environment ✅ (`scidb.project.bundle` env section: Python, platform, every distribution's version, MATLAB if already loaded; Stage 5). Wheels: Stage 10 (libraries only). |
+| E13 | Run history | ✅ | `history` section (default on): provenance tables + `_schema` + exclusions, variant pins, tombstones, via `scidb.project.table_copy` (DDL + Parquet) (Stage 7). |
 | E14 | Derived variable data | ✅ | `data` section (opt-in, requires history): every variable table with its DDL and view, `_record_save`, variable metadata (Stage 7). |
 | E15 | Subset of locations | ❌ | Stage 9b: `ExportOptions.locations` (a `LocationFilter`), owner `scidb.subset`. Anonymizing was DROPPED (user, 2026-10-08): subject codes are normally pseudonyms already, real identifiers belong upstream of the raw files, data content would not be covered, and pseudonyms would defeat `verify`. |
-| E16 | Manifest, format version, `.scistack` archive | ✅ | `scidb/bundle.py`: manifest with per-file SHA-256, plain zip, `ExportOptions` as the one owner of defaults (Stage 4). |
+| E16 | Manifest, format version, `.scistack` archive | ✅ | `scidb/project/bundle.py`: manifest with per-file SHA-256, plain zip, `ExportOptions` as the one owner of defaults (Stage 4). |
 | E17 | Plain-script export | ✅ | `code_export_service.py`. |
 
 ## Import steps
@@ -255,9 +255,9 @@ Status as of 2026-10-08.
 | I1 | GUI button + CLI; new project or current project | ✅ | Whole project into a NEW project: `scistack import`, and the VS Code command *Import Project Bundle…*, which runs the same `bundle_cli` in its own process (Stage 8). Single pipeline into the current project: the GUI's JSON import. |
 | I2 | Check the format version | ✅ | Bundle (`read_bundle`, also hashes and unlisted files) and the single-pipeline document. |
 | I3 | Ask the user to trust the bundle's code | ✅ | Import itself runs no code. Trust is asked before the first thing that does: `--check-code` needs `--trust` or a yes; the extension's modal "Trust and Open" before opening the new project (Stage 8). |
-| I4 | Create the project folder (`init`) | ✅ | `scidb.project.init_project`, the one owner (Stage 1); `import_project` calls it after writing the bundle's config. |
-| I5 | Install the wheel + dependencies | ✅ | After trust, only what is missing, all or nothing after a full `pip --dry-run` check, rolled back on failure, never into a system Python; libraries from the bundle's wheelhouse first (`scidb.environment`, D-2026-10-09-1; Stage 10d). |
-| I6 | MATLAB paths for the installed `.m` files | ✅ | An installed library's `matlab/` folder (`scidb.library.matlab_dir`, found without running the package) joins `matlab_sources` and the MATLAB path; `+package` folders are walked and named `pkg.fn` (`matlab_parser.matlab_package_prefix` / `matlab_path_entry`) (Stage 10a). |
+| I4 | Create the project folder (`init`) | ✅ | `scidb.project.init.init_project`, the one owner (Stage 1); `import_project` calls it after writing the bundle's config. |
+| I5 | Install the wheel + dependencies | ✅ | After trust, only what is missing, all or nothing after a full `pip --dry-run` check, rolled back on failure, never into a system Python; libraries from the bundle's wheelhouse first (`scidb.project.environment`, D-2026-10-09-1; Stage 10d). |
+| I6 | MATLAB paths for the installed `.m` files | ✅ | An installed library's `matlab/` folder (`scidb.project.library.matlab_dir`, found without running the package) joins `matlab_sources` and the MATLAB path; `+package` folders are walked and named `pkg.fn` (`matlab_parser.matlab_package_prefix` / `matlab_path_entry`) (Stage 10a). |
 | I7 | PathInput roots | ✅ | `import_project(path_roots={name: folder})` rewrites each PathInput's `root_folder` in the new project's entities TOML; a root left as the exporter's, or given for an unknown name, is reported. PathInputs declared in Python source are not rewritten (Stage 6). |
 | I8 | Schema choice + key map | ✅ | `scidb/schema_map.KeyMap` (auto by name + overrides), applied by each section to its own data: config tables, PathInput templates, node levels and location selections, submodule bindings, saved plots; dropped/flagged references reported (Stage 6). |
 | I9 | Recreate pipelines (reuse an identical one, fork one that differs) | ✅ | `_resolve_pipeline`, keyed on `pipeline_id`. |

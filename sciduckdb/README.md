@@ -1,10 +1,11 @@
 # SciDuck
 
-The DuckDB layer under `scidb`. It owns three things: the **codec** that turns
-Python values into queryable DuckDB columns and back, a **locked connection**
-that is safe to share across threads, and the **`_schema` table** of
-schema-location ids. `scidb` owns everything else (records, provenance, which
-tables exist); application code reaches SciDuck only through `scidb`.
+The DuckDB layer under `scidb`. It owns two things: the **codec** that turns
+Python values into queryable DuckDB columns and back, and a **locked
+connection** that is safe to share across threads. It creates no tables:
+`scidb` owns every table of a project database (`scidb.tables`) and the
+schema-location ids (`scidb.sciduck.SciDuck`, moved out of sciduckdb in P3).
+Application code reaches the database only through `scidb`.
 
 All data, arrays included, is stored in queryable DuckDB types (LIST, nested
 LIST, JSON), so the database can be inspected with DBeaver or any
@@ -30,13 +31,13 @@ df = restore_types(df, dtype_meta)                   # Python types restored per
 
 ## Connection
 
-`SciDuck(path, dataset_schema=[...])` opens the file. Every statement runs
+`DuckConnection(path)` opens the file. Every statement runs
 under one lock, so a concurrent `close()` cannot land mid-statement. Group
 paired work with `with duck.transaction("label"):`; it is re-entrant on the
 owning thread and rolls back on any exception.
 
-The supported interface of a connection (`DuckConnection`, which `SciDuck`
-extends). Other packages call these and nothing with a leading underscore:
+The supported interface of a connection (`DuckConnection`, which scidb's
+`SciDuck` extends). Other packages call these and nothing with a leading underscore:
 
 | Method | Does |
 |---|---|
@@ -56,20 +57,12 @@ Every fetch holds the lock across execute *and* fetch. `execute` returns
 nothing so a result can never be fetched after the lock is released.
 
 Modules: `codec.py` (conversion functions), `connection.py`
-(`DuckConnection`), `schema.py` (`SciDuck`, `_schema`, groups),
-`datetimes.py`, `row_lists.py`. Import from `sciduckdb`, not from the modules.
+(`DuckConnection`), `datetimes.py`, `row_lists.py`. Import from `sciduckdb`, not from the modules.
 
 ## Schema ids
 
-`get_or_create_schema_id(level, keys)` resolves one location;
-`batch_get_or_create_schema_ids` maps schema locations
-(`{"subject": "S01", "session": "A"}`) to integer `schema_id`s in `_schema`,
-creating missing rows. A key left out is NULL in its row, so non-contiguous
-key subsets are distinct locations. All schema key values are stored as
-strings.
-
-Variables can also be organised into named groups (`add_to_group`,
-`get_group`, `list_groups`, `remove_from_group`).
+Moved to scidb (`scidb.sciduck.SciDuck`): `_schema`, `_variables` and
+`_variable_groups` are project tables like any other.
 
 ## Datetimes
 

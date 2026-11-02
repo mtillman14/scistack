@@ -23,7 +23,7 @@ export interface ImportChoices {
   importHistory: boolean;
 }
 
-/** `bundle-info --json`'s `info` (scidb.bundle.preview). */
+/** `bundle-info --json`'s `info` (scidb.project.bundle.preview). */
 export interface BundleInfo {
   path: string;
   package: string | null;
@@ -42,7 +42,7 @@ export interface BundleInfo {
   } | null;
 }
 
-/** `import --json`'s `report` (scidb.bundle.ImportReport.to_dict). */
+/** `import --json`'s `report` (scidb.project.bundle.ImportReport.to_dict). */
 export interface ImportReport {
   root: string;
   db_path: string;
@@ -166,7 +166,7 @@ export function formatImportReport(r: ImportReport): string {
   return out.join('\n');
 }
 
-/** `install --json`'s `install` (scidb.environment.InstallReport.to_dict). */
+/** `install --json`'s `install` (scidb.project.environment.InstallReport.to_dict). */
 export interface InstallResult {
   status: 'installed' | 'nothing' | 'stopped' | 'failed' | 'skipped';
   requirements: string[];

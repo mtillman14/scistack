@@ -25,7 +25,7 @@ never claims history or data it does not carry.
 **Import makes a NEW project.** Into an existing project would be merging
 (live collaboration, out of scope). The target folder may exist but must hold
 no config and no database. Order: config section written, then
-``scidb.project.init_project`` (fills in whatever the bundle did not carry),
+``scidb.project.init.init_project`` (fills in whatever the bundle did not carry),
 then the database is created through the front end's opener (the GUI's
 ``headless.open_for_import``, which never runs the bundle's code), then each
 provider imports.
@@ -64,7 +64,7 @@ PHASE_DATABASE = "database"
 HISTORY_SECTION = "history"
 DATA_SECTION = "data"
 #: Opt-in (``ExportOptions.include_wheelhouse``): a wheel of each library the
-#: project lists, so an import can install them offline (scidb.environment).
+#: project lists, so an import can install them offline (scidb.project.environment).
 WHEELHOUSE_SECTION = "wheelhouse"
 WHEELHOUSE_INDEX = "wheelhouse.json"
 
@@ -136,7 +136,7 @@ class ImportContext:
     db_path: Path
     schema_keys: list[str]
     manifest: dict
-    #: Exporter schema key -> recipient key (``scidb.schema_map.KeyMap``);
+    #: Exporter schema key -> recipient key (``scidb.project.schema_map.KeyMap``);
     #: identity when the schema was kept. Each section remaps its own data.
     key_map: Any = None
     #: Collects what each remap dropped or flagged (``schema_map.MapReport``).
@@ -194,7 +194,7 @@ def _sha256(data: bytes) -> str:
 
 
 def _scistack_version() -> str:
-    from . import __version__
+    from .. import __version__
 
     return __version__
 
@@ -205,7 +205,7 @@ def _scistack_version() -> str:
 
 
 def _config_section(root: Path) -> "dict[str, bytes]":
-    from scifor.discovery import project_config_at
+    from scifor.project.config import project_config_at
 
     config = project_config_at(root)
     if config is None:
@@ -252,7 +252,7 @@ def _library_distributions() -> dict:
     provides (it is on sys.path by other means)."""
     import importlib.metadata
 
-    from .names import library_packages
+    from scifor.project.names import library_packages
 
     try:
         mapping = importlib.metadata.packages_distributions()
@@ -273,13 +273,13 @@ def _library_distributions() -> dict:
 
 
 def _wheelhouse_section() -> "dict[str, bytes]":
-    """A wheel of every listed library (``scidb.environment.library_wheel``),
+    """A wheel of every listed library (``scidb.project.environment.library_wheel``),
     plus an index naming the ones that could not be built and why -- a
     missing wheel never fails the export."""
     import tempfile
 
     from .environment import library_wheel
-    from .names import library_packages
+    from scifor.project.names import library_packages
 
     files: dict[str, bytes] = {}
     built, missing = [], []
@@ -320,7 +320,7 @@ def check_environment(root: Path, env: dict) -> dict:
     Returns ``{"python": {"exported", "here"}, "missing": [...],
     "different": [{"name", "exported", "here"}], "install": "pip ..." | None,
     "missing_libraries": [...], "missing_requirements": [...]}``. The last is what
-    an install would add (``scidb.environment``): MISSING packages only, at the
+    an install would add (``scidb.project.environment``): MISSING packages only, at the
     exporter's version, libraries by their distribution name.
     Nothing is installed: SciStack does not manage environments.
     """
@@ -363,7 +363,7 @@ def check_environment(root: Path, env: dict) -> dict:
         pins.append(f"{name}=={then}" if then else name)
     # What an install would add: the MISSING ones only, at the exporter's
     # version when known (a version that differs is reported, never changed:
-    # scidb.environment). Libraries by their distribution name.
+    # scidb.project.environment). Libraries by their distribution name.
     missing_requirements = [
         f"{name}=={exported[name]}" if exported.get(name) else name for name in missing
     ]
@@ -425,7 +425,7 @@ def export_project(
 ) -> Path:
     """Write the project at *root* (whose database *db* the caller opened) to
     *out_path* (``.scistack`` appended when missing). Returns the path."""
-    from scifor.discovery import own_package_dir, read_project_name
+    from scifor.project.discovery import own_package_dir, read_project_name
 
     root = Path(root).resolve()
     options = options or ExportOptions()
@@ -578,7 +578,7 @@ def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
     absolute paths made relative, schema-keyed tables (``[schema_keys]``,
     ``[aliases]``, ``[colors]``) remapped. Unchanged -> the bytes verbatim
     (comments kept); changed -> through ``config_file`` (every key kept)."""
-    from . import config_file
+    from scifor.project import config_file
 
     section = _toml_loads(data.decode("utf-8"))
     new = json.loads(json.dumps(section, default=str))
@@ -617,9 +617,9 @@ def _declared_path_inputs(root: Path) -> "tuple[Path, str, dict[str, list[dict]]
     (one dict per arm; ``aliases`` is ``{}`` when the arm has none), or
     ``None`` when the project has no entities file. The one
     reader both the import rewrite and :func:`preview` use."""
-    from scifor.discovery import project_config_at, read_scistack_section
+    from scifor.project.config import project_config_at, read_scistack_section
 
-    from .entities import PATH_INPUTS, resolve_entities_path
+    from scifor.project.entities_file import PATH_INPUTS, resolve_entities_path
 
     config = project_config_at(root)
     path = resolve_entities_path(root, read_scistack_section(config)) if config else None
@@ -650,7 +650,7 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
     ``root_folder`` is reported, as is a root given for an unknown name.
     PathInputs declared in Python source cannot be rewritten here and keep
     their templates."""
-    from .entities import PATH_INPUTS, render_path_input_value, upsert_entry
+    from scifor.project.entities_file import PATH_INPUTS, render_path_input_value, upsert_entry
 
     out = {"rewritten": [], "roots_unchanged": [], "unknown_roots": []}
     found = _declared_path_inputs(root)
@@ -785,7 +785,7 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
     return False
 
 
-#: What an import records about where the project came from (scidb.verify
+#: What an import records about where the project came from (scidb.project.verify
 #: reads the key map from it, with or without an archived history).
 IMPORT_RECORD = "import.json"
 
@@ -808,7 +808,7 @@ def _write_import_record(root: Path, bundle_path, manifest: dict, keys: list[str
 
 
 def _default_open_db(db_path: Path, schema_keys: list[str]):
-    from . import configure_database
+    from .. import configure_database
 
     return configure_database(db_path, schema_keys)
 
@@ -832,9 +832,9 @@ def import_project(
     bundle carries but no provider was given for is reported, not dropped
     silently.
     """
-    from scifor.discovery import config_path_at
+    from scifor.project.config import config_path_at
 
-    from .project import init_project
+    from .init import init_project
 
     bundle = read_bundle(bundle_path)
     manifest = bundle.manifest
@@ -903,7 +903,7 @@ def import_project(
 
     if ENV_FILE in env_files:
         # Kept with the project: the install (after trust, a separate step:
-        # scidb.environment.install_project_requirements) reads it from here.
+        # scidb.project.environment.install_project_requirements) reads it from here.
         state = root / STATE_DIR
         state.mkdir(parents=True, exist_ok=True)
         (state / ENVIRONMENT_FILE).write_bytes(env_files[ENV_FILE])
@@ -979,7 +979,7 @@ def preview(
     command show this dict."""
     import tempfile
 
-    from scifor.discovery import config_path_at
+    from scifor.project.config import config_path_at
 
     from .schema_map import KeyMap, MapReport
 

@@ -51,7 +51,7 @@ def open_or_create_project(
     project (portability Stage 3): applying a canvas needs only the database
     and the layout file, and an imported bundle's code must not run before
     the user has trusted it. The project root is still resolved and pinned
-    (``scifor.pathinput.set_project_root``), as discovery would have done.
+    (``scifor.project.root.set_project_root``), as discovery would have done.
 
     If ``schema_keys`` is given and ``db_path`` does not exist yet, the
     database is created with those schema keys. Otherwise ``db_path`` must
@@ -133,7 +133,7 @@ def open_or_create_project(
     loaded_config = None
 
     if not discover:
-        from scifor.pathinput import set_project_root
+        from scifor.project.root import set_project_root
 
         from scistack_gui.project.config import resolve_project_root
 

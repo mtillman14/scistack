@@ -145,7 +145,7 @@ def test_setup_phase_timings_reach_the_file(tmp_path):
     assert "database_manager=" in log_text
     assert "register_types=" in log_text
     assert "duck_open=" in log_text
-    assert "ensure_provenance_tables=" in log_text
+    assert "[tables] ensured" in log_text
 
 
 def test_configure_database_keeps_an_already_attached_sink(tmp_path):

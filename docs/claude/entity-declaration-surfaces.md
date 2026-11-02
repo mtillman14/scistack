@@ -52,7 +52,7 @@ declaration. A fresh stub declares nothing and is inert.
 ```
 declaration on disk
    │
-   ├─ .toml ──► scidb.entities.load() ──► registry._load_entities_file
+   ├─ .toml ──► scidb.project.entities.load() ──► registry._load_entities_file
    ├─ .py   ──► import ──► BaseVariable.__init_subclass__
    └─ .m    ──► matlab_registry ──► scimatlab.bridge.register_matlab_variable
    │                                        (creates a Python surrogate class)
@@ -156,7 +156,7 @@ concluded "nothing to create" — and `config.load_config`, which did **not**
 have the fallback, then reported `entities_file=None`, so the registry never
 opened the file. Its Variables/Parameters/PathInputs were live for scidb and
 MATLAB and invisible in the GUI. Both sides now go through
-`scidb.entities.resolve_entities_path`; there is one rule.
+`scifor.project.entities_file.resolve_entities_path`; there is one rule.
 
 ## Who decides that a variable type is unusable
 

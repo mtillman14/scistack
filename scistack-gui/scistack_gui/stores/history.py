@@ -37,6 +37,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from scidb import tables
+from scidb.tables import TableDecl
+
 logger = logging.getLogger(__name__)
 
 #: How many change records are kept; the oldest are forgotten first.
@@ -207,21 +210,34 @@ PORTABILITY: dict[str, str] = {AUDIT_TABLE: "history"}
 _loaded_for: "str | None" = None
 
 
+# The tables this module owns, declared through scidb (scidb.tables owns
+# every table of a project database; this module creates them on first use).
+tables.declare(
+    TableDecl(
+        "_canvas_change",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _canvas_change (
+                change_id   VARCHAR PRIMARY KEY,
+                seq         BIGINT NOT NULL,
+                created_at  DOUBLE NOT NULL,
+                updated_at  DOUBLE NOT NULL,
+                label       VARCHAR NOT NULL,
+                method      VARCHAR NOT NULL,
+                state       VARCHAR NOT NULL,
+                summary     VARCHAR NOT NULL,
+                record_json VARCHAR NOT NULL
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+
+
 def ensure_tables(db) -> None:
     """Create ``_canvas_change`` if absent (from ``pipeline_store._ensure_tables``)."""
-    db._duck.execute("""
-        CREATE TABLE IF NOT EXISTS _canvas_change (
-            change_id   VARCHAR PRIMARY KEY,
-            seq         BIGINT NOT NULL,
-            created_at  DOUBLE NOT NULL,
-            updated_at  DOUBLE NOT NULL,
-            label       VARCHAR NOT NULL,
-            method      VARCHAR NOT NULL,
-            state       VARCHAR NOT NULL,
-            summary     VARCHAR NOT NULL,
-            record_json VARCHAR NOT NULL
-        )
-    """)
+    tables.ensure(db._duck, "_canvas_change")
 
 
 def _enc(value):

@@ -23,8 +23,8 @@ from scidb import (
     configure_database,
     exclude_schema,
     include_schema,
-    schema_order,
 )
+from scifor.project import schema_order
 from scidb.inventory import (
     ALL_LEVELS,
     absent_locations,

@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 
 from scistacklog import Log
-from scistackplotdb.bundle_section import _remap_row
 
 from .saved import PRESET_STORE, STORE
 
@@ -36,7 +35,7 @@ class StatsSection:
             if filename in files:
                 rows = json.loads(files[filename].decode("utf-8"))
                 if key_map is not None and not key_map.is_identity:
-                    rows = [_remap_row(row, store, key_map, ctx.map_report) for row in rows]
+                    rows = [store.remap_row(row, key_map, ctx.map_report) for row in rows]
                 report[store.table] = store.load_rows(ctx.db, rows)
         Log.info("[bundle_section] stats import: %s", report, layer=LAYER)
         return report

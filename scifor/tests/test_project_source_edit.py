@@ -1,4 +1,4 @@
-"""Tests for scidb.source_edit — locating and rewriting entity declarations.
+"""Tests for scifor.project.source_edit — locating and rewriting entity declarations.
 
 Stage 1 of .claude/plan-gui-entity-editing-26-08-24.md. Everything here is
 pure string/AST work; no files, no registry, no GUI.
@@ -8,7 +8,7 @@ import ast
 
 import pytest
 
-from scidb.source_edit import (
+from scifor.project.source_edit import (
     Span,
     find_binding_span,
     line_number,

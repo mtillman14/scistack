@@ -259,9 +259,9 @@ def test_generated_scripts_pass_the_project_root():
     """The GUI must not emit a bare ``scidb.entities();`` — MATLAB would
     resolve the project from its own cwd."""
     src = (
-        _root / "scistack-gui" / "scistack_gui" / "api" / "matlab_command.py"
+        _root / "scistack-gui" / "scistack_gui" / "services" / "matlab_command_format.py"
     ).read_text(encoding="utf-8")
 
     assert "scidb.entities('{" in src, (
-        "generated MATLAB no longer passes the project root to scidb.entities"
+        "generated MATLAB no longer passes the project root to scidb.project.entities"
     )

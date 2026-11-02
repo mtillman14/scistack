@@ -28,7 +28,7 @@ from tests.test_bundle_project import _build_source, _export
 def pinned_root(tmp_path):
     """scifor's project root = tmp_path, as a GUI session pins it on load
     (the export reads the project's files from there)."""
-    from scifor.pathinput import clear_project_root, set_project_root
+    from scifor.project.root import clear_project_root, set_project_root
 
     set_project_root(tmp_path)
     yield tmp_path
@@ -97,7 +97,7 @@ def _files_under(root: Path) -> dict:
 
 
 def test_export_flags_default_to_export_options():
-    from scidb.bundle import ExportOptions
+    from scidb.project.bundle import ExportOptions
 
     args = _parser().parse_args(["export"])
     defaults = ExportOptions()
@@ -109,7 +109,7 @@ def test_export_flags_default_to_export_options():
 
 
 def test_import_history_defaults_to_import_projects_default():
-    from scidb.bundle import import_project
+    from scidb.project.bundle import import_project
 
     default = inspect.signature(import_project).parameters["import_history"].default
     assert _parser().parse_args(["import", "b.scistack"]).import_history is default

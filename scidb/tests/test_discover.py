@@ -1,4 +1,4 @@
-"""Unit tests for ``scidb.discover`` — the project / library scanner."""
+"""Unit tests for ``scidb.project.discover`` — the project / library scanner."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from scidb.discover import (
+from scidb.project.discover import (
     DiscoveryResult,
     scan_project,
 )
@@ -89,7 +89,7 @@ class TestSharedPredicates:
 
     def test_is_parameter(self):
         from scidb import Parameter
-        from scidb.discover import is_parameter
+        from scidb.project.discover import is_parameter
 
         assert is_parameter(Parameter(1))
         assert is_parameter(Parameter(1, 2))
@@ -97,20 +97,20 @@ class TestSharedPredicates:
 
     def test_is_path_input_direct(self):
         from scidb import PathInput
-        from scidb.discover import is_path_input
+        from scidb.project.discover import is_path_input
 
         assert is_path_input(PathInput("{s}.mat", name="{s}.mat"))
         assert not is_path_input(1)
 
     def test_is_path_input_each_of_of_path_inputs(self):
         from scidb import EachOf, PathInput
-        from scidb.discover import is_path_input
+        from scidb.project.discover import is_path_input
 
         assert is_path_input(EachOf(PathInput("{s}.mat", name="{s}.mat"), PathInput("{t}.mat", name="{s}.mat")))
 
     def test_is_path_input_each_of_of_plain_values_is_not(self):
         from scidb import EachOf
-        from scidb.discover import is_path_input
+        from scidb.project.discover import is_path_input
 
         assert not is_path_input(EachOf(1, 2, 3))
 
@@ -120,7 +120,7 @@ class TestSharedPredicates:
         a Parameter declared with no value yet is. Without the explicit
         non-empty check it registers as a PathInput."""
         from scidb import EachOf, Parameter
-        from scidb.discover import is_parameter, is_path_input
+        from scidb.project.discover import is_parameter, is_path_input
 
         assert not is_path_input(EachOf())
         assert not is_path_input(Parameter())
@@ -538,27 +538,27 @@ class TestConfiguredLibraries:
 # ---------------------------------------------------------------------------
 class TestModuleExportsProperties:
     def test_is_empty_when_no_exports(self):
-        from scidb.discover import ModuleExports
+        from scidb.project.discover import ModuleExports
 
         exports = ModuleExports(module_name="test")
         assert exports.is_empty
         assert exports.total_count == 0
 
     def test_is_empty_false_with_variable(self):
-        from scidb.discover import ModuleExports
+        from scidb.project.discover import ModuleExports
 
         exports = ModuleExports(module_name="test", variables=[object])
         assert not exports.is_empty
         assert exports.total_count == 1
 
     def test_is_empty_false_with_function(self):
-        from scidb.discover import ModuleExports
+        from scidb.project.discover import ModuleExports
 
         exports = ModuleExports(module_name="test", functions=[object])
         assert not exports.is_empty
 
     def test_is_empty_false_with_parameter(self):
-        from scidb.discover import ModuleExports
+        from scidb.project.discover import ModuleExports
 
         from scidb import Parameter
 
@@ -569,7 +569,7 @@ class TestModuleExportsProperties:
 
     def test_is_empty_false_with_path_input(self):
         from scidb import PathInput
-        from scidb.discover import ModuleExports
+        from scidb.project.discover import ModuleExports
 
         pi = PathInput("{subject}.mat", name="{subject}.mat")
         exports = ModuleExports(module_name="test", path_inputs=[("X", pi)])
@@ -578,7 +578,7 @@ class TestModuleExportsProperties:
 
     def test_is_empty_false_with_multi_value_parameter(self):
         from scidb import Parameter
-        from scidb.discover import ModuleExports
+        from scidb.project.discover import ModuleExports
 
         exports = ModuleExports(
             module_name="test", parameters=[("X", Parameter(1, 2))]
@@ -587,7 +587,7 @@ class TestModuleExportsProperties:
         assert exports.total_count == 1
 
     def test_total_count_mixed(self):
-        from scidb.discover import ModuleExports
+        from scidb.project.discover import ModuleExports
 
         from scidb import Parameter, PathInput
 
@@ -607,7 +607,7 @@ class TestModuleExportsProperties:
 # ---------------------------------------------------------------------------
 class TestPackageResultProperties:
     def test_counts_across_modules(self):
-        from scidb.discover import ModuleExports, PackageResult
+        from scidb.project.discover import ModuleExports, PackageResult
 
         from scidb import Parameter, PathInput
 
@@ -625,7 +625,7 @@ class TestPackageResultProperties:
         assert result.path_input_count == 1
 
     def test_is_empty_all_empty_modules(self):
-        from scidb.discover import ModuleExports, PackageResult
+        from scidb.project.discover import ModuleExports, PackageResult
 
         m1 = ModuleExports(module_name="a")
         m2 = ModuleExports(module_name="b")
@@ -633,13 +633,13 @@ class TestPackageResultProperties:
         assert result.is_empty
 
     def test_is_empty_no_modules(self):
-        from scidb.discover import PackageResult
+        from scidb.project.discover import PackageResult
 
         result = PackageResult(name="test")
         assert result.is_empty
 
     def test_is_empty_false_if_any_module_has_exports(self):
-        from scidb.discover import ModuleExports, PackageResult
+        from scidb.project.discover import ModuleExports, PackageResult
 
         m1 = ModuleExports(module_name="a")
         m2 = ModuleExports(module_name="b", variables=[object])
@@ -652,7 +652,7 @@ class TestPackageResultProperties:
 # ---------------------------------------------------------------------------
 class TestDiscoveryResultNonEmptyLibraries:
     def test_filters_empty_libraries(self):
-        from scidb.discover import ModuleExports, PackageResult
+        from scidb.project.discover import ModuleExports, PackageResult
 
         empty_pkg = PackageResult(
             name="empty_lib", modules=[ModuleExports(module_name="e")]
@@ -670,7 +670,7 @@ class TestDiscoveryResultNonEmptyLibraries:
         assert "empty_lib" not in non_empty
 
     def test_all_empty_returns_empty_dict(self):
-        from scidb.discover import ModuleExports, PackageResult
+        from scidb.project.discover import ModuleExports, PackageResult
 
         empty1 = PackageResult(name="a", modules=[ModuleExports(module_name="a")])
         empty2 = PackageResult(name="b", modules=[ModuleExports(module_name="b")])
@@ -682,7 +682,7 @@ class TestDiscoveryResultNonEmptyLibraries:
 
 
 # ---------------------------------------------------------------------------
-# PathInsert/purge_module moved to scifor.discovery -- see
+# PathInsert/purge_module moved to scifor.project.discovery -- see
 # scifor/tests/test_discovery.py for their direct unit tests.
 # ---------------------------------------------------------------------------
 
@@ -798,10 +798,10 @@ class TestBaseVariableNotCollected:
 # ---------------------------------------------------------------------------
 # scan_package / scan_project: test-only content excluded from discovery
 #
-# is_test_path/is_test_modname themselves moved to scifor.discovery (the
+# is_test_path/is_test_modname themselves moved to scifor.project.discovery (the
 # generic, scidb-unaware walking harness) -- see scifor/tests/test_discovery.py
 # for their direct unit tests. These tests exercise the end-to-end behavior
-# through scan_project, which now delegates its walking to scifor.discovery.
+# through scan_project, which now delegates its walking to scifor.project.discovery.
 # ---------------------------------------------------------------------------
 class TestExcludesTestOnlyContent:
     def test_tests_subpackage_excluded_from_scan_project(self, project_factory):

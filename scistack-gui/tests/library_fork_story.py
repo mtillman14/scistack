@@ -21,7 +21,7 @@ have fails exactly as it would on the recipient's machine.
 
 Where libraries live (decision R1): a library a project AUTHORS -- made by
 ⇪ Share or ✎ Make my own copy -- is the folder ``<project>/libs/<name>/``,
-with the one layout ``scidb.library.create_library`` writes. "Installing"
+with the one layout ``scidb.project.library.create_library`` writes. "Installing"
 someone's library here means putting ``<their project>/libs/<name>/src`` on
 ``PYTHONPATH`` (what ``pip install -e`` does for imports).
 

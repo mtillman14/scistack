@@ -61,6 +61,9 @@ import logging
 import uuid
 from datetime import datetime
 
+from scidb import tables
+from scidb.tables import TableDecl
+
 from scistack_gui.ids import (
     FN_ID_PREFIX,
     ROOT_SCOPE,
@@ -91,23 +94,52 @@ UNDOABLE_TABLES: tuple[str, ...] = ("_node_wiring",)
 PORTABILITY: dict[str, str] = {"_node_wiring": "history", "_adopted": "history"}
 
 
+# The tables this module owns, declared through scidb (scidb.tables owns
+# every table of a project database; this module creates them on first use).
+tables.declare(
+    TableDecl(
+        "_node_wiring",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _node_wiring (
+                node_id    VARCHAR NOT NULL,
+                wiring_id  VARCHAR NOT NULL,
+                run_id     VARCHAR,
+                first_seen VARCHAR NOT NULL DEFAULT '',
+                last_seen  VARCHAR NOT NULL DEFAULT '',
+                scope      VARCHAR NOT NULL DEFAULT 'main',
+                PRIMARY KEY (node_id, wiring_id)
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_adopted",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _adopted (
+                subject    VARCHAR PRIMARY KEY,
+                node_id    VARCHAR NOT NULL DEFAULT '',
+                scope      VARCHAR NOT NULL DEFAULT 'main',
+                adopted_at VARCHAR NOT NULL DEFAULT ''
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+
+
 def ensure_tables(db) -> None:
     """Create ``_node_wiring`` if absent.
 
     Called from ``pipeline_store._ensure_tables``, so every path that touches
     the GUI database gets it — exactly like ``_intent``.
     """
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _node_wiring (
-            node_id    VARCHAR NOT NULL,
-            wiring_id  VARCHAR NOT NULL,
-            run_id     VARCHAR,
-            first_seen VARCHAR NOT NULL DEFAULT '',
-            last_seen  VARCHAR NOT NULL DEFAULT '',
-            scope      VARCHAR NOT NULL DEFAULT 'main',
-            PRIMARY KEY (node_id, wiring_id)
-        )
-    """)
+    tables.ensure(_duck(db), "_node_wiring")
 
 
 # ---------------------------------------------------------------------------
@@ -454,14 +486,7 @@ ADOPTED_TABLE = "_adopted"
 
 def ensure_adopted_table(db) -> None:
     """Create ``_adopted`` if absent (from ``pipeline_store._ensure_tables``)."""
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _adopted (
-            subject    VARCHAR PRIMARY KEY,
-            node_id    VARCHAR NOT NULL DEFAULT '',
-            scope      VARCHAR NOT NULL DEFAULT 'main',
-            adopted_at VARCHAR NOT NULL DEFAULT ''
-        )
-    """)
+    tables.ensure(_duck(db), "_adopted")
 
 
 def adopted_subjects(db) -> set[str]:

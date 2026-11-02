@@ -268,7 +268,7 @@ class TestCli:
 
 def test_module_names_its_own_tables():
     """The classification is read from bundle.py, not restated."""
-    from scidb.bundle import HISTORY_TABLES
+    from scidb.project.bundle import HISTORY_TABLES
 
     assert set(CLEARED_TABLES) - {"_record_save"} <= set(HISTORY_TABLES)
     assert clear_mod.KEPT_BY_CLEAR.keys() <= set(HISTORY_TABLES)

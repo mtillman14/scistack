@@ -247,6 +247,19 @@ classdef PathInput < handle
             end
         end
 
+        function bound = bound_to(obj, root)
+        %BOUND_TO  A copy that resolves relative templates against ROOT.
+        %
+        %   PI2 = PI.bound_to(ROOT)
+        %
+        %   What scifor.for_each(..., project_root=ROOT) does to each
+        %   PathInput input. Identity (name, spec) is unchanged; only where
+        %   a relative template resolves. Python's PathInput.bound_to is the
+        %   one implementation.
+            bound = scifor.PathInput.from_spec(string(obj.py_obj.to_spec()));
+            bound.py_obj = obj.py_obj.bound_to(char(root));
+        end
+
         function keys = placeholder_keys(obj)
         %PLACEHOLDER_KEYS  Return cell array of unique placeholder keys in the template.
             py_keys = obj.py_obj.placeholder_keys();

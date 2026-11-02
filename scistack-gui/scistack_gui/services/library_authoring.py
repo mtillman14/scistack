@@ -4,8 +4,8 @@ Libraries a project AUTHORS: Share as library, publish, Make my own copy
 
 A library the project makes (⇪ Share a submodule) or copies (✎ Make my own
 copy, under a new name) lives in ``<project>/libs/<name>/``
-(``scifor.discovery.authored_library_dirs``) with the one layout
-``scidb.library.write_library`` writes; the project then USES it (listed
+(``scifor.project.discovery.authored_library_dirs``) with the one layout
+``scidb.project.library.write_library`` writes; the project then USES it (listed
 under ``packages``, one copy), and its pipelines stay editable here: the
 project's canvas is the working copy, ``pipelines/*.json`` is what ⇪ Share
 publishes.
@@ -37,6 +37,8 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from scifor.project import names as project_names
 
 logger = logging.getLogger(__name__)
 
@@ -103,14 +105,14 @@ def install_hint(folder: Path) -> str:
 
 
 def _project_root() -> Path:
-    from scifor.pathinput import project_root
+    from scifor.project.root import project_root
 
     return Path(project_root())
 
 
 def library_folder(name: str, root: "Path | None" = None) -> Path:
     """Where library *name* lives when this project authors it (O1)."""
-    from scifor.discovery import AUTHORED_LIBRARIES_DIR
+    from scifor.project.discovery import AUTHORED_LIBRARIES_DIR
 
     return (root or _project_root()) / AUTHORED_LIBRARIES_DIR / name
 
@@ -126,7 +128,7 @@ def check_new_name(name: str, root: "Path | None" = None) -> Path:
     It must be a valid import name, not already importable here (it would
     shadow, or be shadowed by, that package), and its folder
     ``libs/<name>/`` must be free."""
-    from scidb.project import validate_project_name
+    from scidb.project.init import validate_project_name
 
     name = (name or "").strip()
     validate_project_name(name)
@@ -148,7 +150,7 @@ def share_defaults(db, pipeline_id: str) -> dict:
     """What the Share dialog shows before the user confirms: the suggested
     name, where the library will be written, and whether this is a publish
     (the pipeline already belongs to a library the project authors)."""
-    from scidb.names import authored_libraries
+    from scifor.project.names import authored_libraries
 
     from scistack_gui.stores import pipeline_store as ps
 
@@ -226,7 +228,7 @@ def _is_project_file(path: "str | None", root: Path) -> bool:
     """A file of the project's OWN code: under the project folder, outside
     any installed location and outside the libraries it authors (those are
     libraries, ``libs/<name>/``)."""
-    from scifor.discovery import AUTHORED_LIBRARIES_DIR
+    from scifor.project.discovery import AUTHORED_LIBRARIES_DIR
 
     if not path:
         return False
@@ -272,7 +274,7 @@ class _PythonCode:
     text with imports rewritten (``code_rewrite``, O8)."""
 
     def __init__(self, lib: str, root: Path):
-        from scifor.discovery import own_package_dir
+        from scifor.project.discovery import own_package_dir
 
         self.lib = lib
         self.root = root
@@ -477,7 +479,7 @@ def _strip_locations(snap) -> None:
 def _library_functions(lib: str) -> dict[str, str]:
     """``{label: where}`` of every function library *lib* already has here
     (Python from the registry, MATLAB from its ``+lib`` folder)."""
-    from scidb.names import library_of
+    from scifor.project.names import library_of
 
     from scistack_gui.matlab import registry as matlab_registry
 
@@ -498,8 +500,8 @@ def _library_functions(lib: str) -> dict[str, str]:
 def _plan_from_canvas(db, pipeline_id: str, lib: str, existing: str) -> LibraryPlan:
     """Share (``existing="create"``) or publish (``"update"``): the canvas of
     *pipeline_id* and everything it places, plus the project code it runs."""
-    from scidb.library import make_document
-    from scidb.names import library_of
+    from scidb.project.library import make_document
+    from scifor.project.names import library_of
 
     from scistack_gui.matlab import registry as matlab_registry
 
@@ -668,8 +670,8 @@ def _plan_from_package(db, old: str, new: str) -> LibraryPlan:
     """Make my own copy: library *old*'s package, renamed *new*."""
     import importlib.resources
 
-    from scidb.entities import DEFAULT_ENTITIES_FILENAME
-    from scidb.library import (
+    from scifor.project.entities_file import DEFAULT_ENTITIES_FILENAME
+    from scidb.project.library import (
         MATLAB_DIR,
         PIPELINES_DIR,
         _requirement_name,
@@ -678,7 +680,7 @@ def _plan_from_package(db, old: str, new: str) -> LibraryPlan:
         read_library,
         reexports_of,
     )
-    from scidb.names import library_packages
+    from scifor.project.names import library_packages
 
     from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.project.code_rewrite import rewrite_imports
@@ -763,7 +765,7 @@ def plan_library(db, *, name: str, pipeline_id: "str | None" = None,
     """THE plan of one action (O7): a share or publish of *pipeline_id* as
     *name*, or a copy of library *copy_of* as *name*. Refuses (raises
     :class:`AuthoringRefused`) before anything is written."""
-    from scidb.names import authored_libraries
+    from scifor.project.names import authored_libraries
 
     from scistack_gui.stores import pipeline_store as ps
 
@@ -929,9 +931,9 @@ def switch_project(db, plan: LibraryPlan, report: AuthoringReport) -> None:
     registries, own its pipelines with the SAME ids, carry the results of
     every renamed function (R2, ``scidb.rename_functions``) and relabel the
     canvas."""
-    from scidb import names, rename_functions
-    from scidb.library import definition_hash
-    from scifor.discovery import ensure_authored_libraries_importable
+    from scidb import rename_functions
+    from scidb.project.library import definition_hash
+    from scifor.project.discovery import ensure_authored_libraries_importable
 
     from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.project.config import add_package, remove_package
@@ -945,7 +947,7 @@ def switch_project(db, plan: LibraryPlan, report: AuthoringReport) -> None:
     add_package(db_path, plan.library, project=root)
     added = ensure_authored_libraries_importable(root)
     importlib.invalidate_caches()
-    names.clear_cache()
+    project_names.clear_cache()
     reload_registries_from_disk(db_path)
 
     hashes = {d["name"]: definition_hash(d) for d in plan.documents}
@@ -983,7 +985,7 @@ def switch_project(db, plan: LibraryPlan, report: AuthoringReport) -> None:
 
 
 def _run(db, plan: LibraryPlan) -> AuthoringReport:
-    from scidb.library import write_library
+    from scidb.project.library import write_library
 
     report = plan.report()
     written = write_library(

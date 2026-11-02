@@ -1,5 +1,6 @@
 """Path template input for for_each."""
 
+import copy
 import json
 import os
 import re
@@ -8,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from scistacklog import Log
+
+from .project.root import project_root
 
 #: ``{directory: (mtime_ns, sorted entries)}`` — directory listings shared by
 #: every PathInput in the process.
@@ -205,110 +208,6 @@ def _numeric_like(value: Any) -> bool:
     return False
 
 
-_project_root_override: Path | None = None
-
-
-def set_project_root(root: "str | Path | None") -> "Path | None":
-    """Pin the directory a *rootless* PathInput resolves against.
-
-    A ``PathInput`` with no ``root_folder`` resolves relative paths against
-    :func:`project_root`, which is the **cwd** unless pinned.  That is right
-    for a script run from its project folder and wrong for every embedded
-    interpreter: MATLAB's cwd is wherever the user's MATLAB happens to be
-    sitting (for a generated command, a temp script directory), so the cwd
-    names the wrong folder.
-
-    Callers that already know which project they are running — ``scidb.entities``
-    over the MATLAB bridge, the GUI's generated command preamble — set it here
-    once, and every rootless PathInput in the process resolves against it.
-
-    This deliberately changes *resolution only*.  ``root_folder`` stays ``None``
-    and ``to_key()`` is untouched, so the recorded identity of a PathInput is
-    the same no matter where it ran.  Writing the project root into
-    ``root_folder`` instead is what produced ``__unresolved__`` ghost nodes in
-    the GUI (a run recorded under a key its own declaration does not have) and
-    would bake a machine-specific absolute path into portable history.
-
-    Passing ``None`` clears the override.  Returns the resolved override.
-    """
-    global _project_root_override
-    _project_root_override = Path(root).resolve() if root is not None else None
-    Log.info("[pathinput] project root override set to %s", _project_root_override)
-    return _project_root_override
-
-
-def get_project_root() -> "Path | None":
-    """The pinned project root, or ``None`` when :func:`project_root` falls
-    back to the cwd.  See :func:`set_project_root`."""
-    return _project_root_override
-
-
-def enter_project_root() -> Path:
-    """Make the pinned project root the process's working directory.
-
-    Every execution starts from the project root, so a user function that
-    opens a relative path finds it in the same place no matter who launched
-    the run.  Called at the start of each run rather than once at startup:
-    a user function is free to ``os.chdir`` and the next run must not
-    inherit that.  The process stays there afterwards (there is no
-    "previous" directory worth restoring in a server process), matching the
-    generated MATLAB script, whose ``cd`` also sticks.
-
-    With no pin, :func:`project_root` *is* the cwd, so nothing moves.  A
-    pinned root that is not a directory is logged and left alone rather
-    than failing the run -- resolution against it would fail loudly anyway.
-    Returns the working directory the run starts in.
-    """
-    root = _project_root_override
-    try:
-        before = Path.cwd().resolve()
-    except FileNotFoundError:
-        # The old cwd was deleted out from under the process.
-        before = None
-    if root is None:
-        Log.info("[pathinput] working directory %s (no project root pinned)", before)
-        return before if before is not None else Path.cwd()
-    if not root.is_dir():
-        Log.warn(
-            "[pathinput] project root %s is not a directory -- run starts in %s",
-            root,
-            before,
-        )
-        return before if before is not None else Path.cwd()
-    if before != root:
-        os.chdir(root)
-        Log.info("[pathinput] working directory %s -> %s (project root)", before, root)
-    else:
-        Log.info("[pathinput] working directory %s (project root)", root)
-    return root
-
-
-def clear_project_root() -> None:
-    """Drop the pinned project root (tests, and any caller switching projects
-    inside one process)."""
-    set_project_root(None)
-
-
-def project_root() -> Path:
-    """**The** project root: the pinned root, else the working directory.
-
-    The one owner of "which directory is this project?" for every layer --
-    PathInput resolution here, config lookup in ``scidb.entities`` and
-    ``scidb.schema_order``, MATLAB stub placement. The GUI decides its root
-    (``scistack_gui.project.config.resolve_project_root``) and pins it here, so a GUI
-    run resolves exactly where the canvas matched.
-
-    It deliberately does NOT walk up looking for ``pyproject.toml`` or
-    ``scistack.toml``. That walk made a stray config in a parent folder, or
-    an unrelated ``pyproject.toml`` beneath the project, silently decide
-    where every rootless PathInput resolved -- and each layer walked by a
-    different rule, so they could disagree.
-    """
-    if _project_root_override is not None:
-        return _project_root_override
-    return Path.cwd().resolve()
-
-
 class PathInput:
     """
     Resolve a path template using iteration metadata.
@@ -323,8 +222,10 @@ class PathInput:
                       "{subject}/trial_{trial}.mat"
         root_folder: Optional root directory.  If provided, paths are
                     resolved relative to it.  If None and the template is
-                    a relative path, :func:`project_root` is used (the
-                    pinned root, else the current working directory).
+                    a relative path, the root it was bound to
+                    (:meth:`bound_to`, what ``for_each(project_root=)``
+                    does) is used, else :func:`project_root` (the pinned
+                    root, else the current working directory).
         aliases: Optional ``{key: {canonical: [spelling, ...]}}`` map so a
                 schema key can have multiple on-disk spellings that all mean
                 one canonical value, e.g.
@@ -383,6 +284,10 @@ class PathInput:
         # Numeric-fallback caches (see load()): learned zero-pad width per
         # placeholder key, and per-directory listings validated by mtime.
         self._pad_width: dict[str, int] = {}
+        # The root a relative template resolves against when this object was
+        # bound to one (bound_to); None falls back to the process-wide
+        # scifor.project.root.project_root(). Resolution only: never identity.
+        self._project_root: "Path | None" = None
         # Listing-cache counters, reported by discover(): how many directories
         # a walk actually read from disk vs. served from a still-valid listing.
         # The cache ITSELF is module-level (`_DIR_CACHE`) — see there.
@@ -469,6 +374,34 @@ class PathInput:
         if not spellings:
             return pattern
         return "(?:" + "|".join([pattern, *(re.escape(s) for s in spellings)]) + ")"
+
+    def bound_to(self, root: "str | Path | None") -> "PathInput":
+        """A copy that resolves relative templates against *root* instead of
+        the process-wide project root; ``self`` when *root* is None.
+
+        How a caller that knows its project (``for_each(project_root=...)``)
+        says so without pinning a global: two copies bound to two roots
+        resolve independently in one process. Identity is untouched --
+        ``to_key()``/``to_spec()`` are the same as the original's, and
+        ``root_folder`` (an absolute template base, part of the spec) still
+        wins over the bound root.
+        """
+        if root is None:
+            return self
+        clone = copy.copy(self)
+        clone._project_root = Path(root).resolve()
+        # Learned zero-pad widths describe the files under ONE root.
+        clone._pad_width = dict(self._pad_width)
+        Log.debug(
+            "[pathinput] %r bound to project root %s", self.name, clone._project_root,
+            layer="scifor",
+        )
+        return clone
+
+    def _base_root(self) -> Path:
+        """Where a relative template resolves: the bound root, else
+        ``scifor.project.root.project_root()``."""
+        return self._project_root if self._project_root is not None else project_root()
 
     def to_key(self) -> str:
         """The IDENTITY of this PathInput: its name, as a JSON string.
@@ -711,7 +644,7 @@ class PathInput:
             dir_path = self.root_folder / dir_part if dir_part else self.root_folder
         else:
             dir_path = (
-                project_root() / dir_part if dir_part else project_root()
+                self._base_root() / dir_part if dir_part else self._base_root()
             )
         dir_path = dir_path.resolve()
 
@@ -740,7 +673,7 @@ class PathInput:
         if self.root_folder is not None:
             return (self.root_folder / resolved_path).resolve()
         if not resolved_path.is_absolute():
-            return (project_root() / resolved_path).resolve()
+            return (self._base_root() / resolved_path).resolve()
         return resolved_path.resolve()
 
     def _padded_literal(
@@ -783,7 +716,7 @@ class PathInput:
             return Path(segments[0] + "/"), segments[1:]
         if self.root_folder is not None:
             return self.root_folder, segments
-        return project_root(), segments
+        return self._base_root(), segments
 
     def _fallback_segment_regex(
         self,

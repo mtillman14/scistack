@@ -14,7 +14,7 @@ import pytest
 
 from sciduckdb import (
     DatetimeStorageError,
-    SciDuck,
+    DuckConnection,
     column_type_change,
     infer_data_columns,
     merge_tz_columns,
@@ -34,7 +34,7 @@ from .codec_roundtrip import fetch, store
 
 @pytest.fixture
 def duck():
-    db = SciDuck(":memory:", dataset_schema=["subject"])
+    db = DuckConnection(":memory:")
     yield db
     db.close()
 

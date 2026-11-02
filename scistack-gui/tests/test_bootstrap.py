@@ -202,9 +202,9 @@ class TestCreateProjectEagerEntitiesFile:
         )
         assert resp.status_code == 200
 
-        # Creating a database runs scidb.project.init_project: the project
+        # Creating a database runs scidb.project.init.init_project: the project
         # becomes a package and its entities file lives inside it.
-        from scidb.project import package_name_for
+        from scidb.project.init import package_name_for
 
         pkg = package_name_for(tmp_path)
         assert (tmp_path / "pyproject.toml").exists()
@@ -257,7 +257,7 @@ class TestCreateProjectEagerEntitiesFile:
             },
         )
         assert resp.status_code == 200
-        from scidb.project import package_name_for
+        from scidb.project.init import package_name_for
 
         pkg = package_name_for(tmp_path)
         assert (tmp_path / "scistack.toml").exists()
@@ -350,7 +350,7 @@ class TestCreateProjectEagerEntitiesFile:
         assert resp.status_code == 200
         # The existing pyproject names no project, so init leaves it alone and
         # derives the package from the folder; the entities file goes inside it.
-        from scidb.project import package_name_for
+        from scidb.project.init import package_name_for
 
         pkg = package_name_for(tmp_path)
         assert (tmp_path / "src" / pkg / "scistack_entities.toml").exists()
@@ -381,7 +381,7 @@ class TestCreateProjectEagerEntitiesFile:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-        from scidb.project import package_name_for
+        from scidb.project.init import package_name_for
 
         entities_file = (
             tmp_path / "src" / package_name_for(tmp_path) / "scistack_entities.toml"

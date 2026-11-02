@@ -1222,7 +1222,7 @@ class Alias:
     """What one thing reads as in a figure: its own name, and its levels'.
 
     The same shape as one ``[aliases.<thing>]`` entry of the project config,
-    whose grammar ``scidb.aliases`` owns; a plot's own entries
+    whose grammar ``scifor.project.aliases`` owns; a plot's own entries
     (``PlotSpec.aliases``) override the project's. ``name``
     renames the thing where the figure says what it IS (axis and legend
     titles); ``levels`` maps a level's TEXT (``"01"`` stays ``"01"``) to what

@@ -111,7 +111,7 @@ class Mutator:
         Discovers the schema keys from the database itself (like
         Inspector.open) and maps lock contention to DatabaseLockedError.
         """
-        from sciduckdb import schema_keys_from_db
+        from ..sciduck import schema_keys_from_db
 
         from ..database import DatabaseManager
 

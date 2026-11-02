@@ -1,4 +1,4 @@
-"""scidb.bundle: the .scistack format, with a fake section provider.
+"""scidb.project.bundle: the .scistack format, with a fake section provider.
 
 The format's own promises: one owner of the export defaults, a manifest that
 lists exactly what is in the zip with hashes, a reader that refuses a
@@ -16,9 +16,10 @@ import numpy as np
 import pytest
 
 import scifor as _scifor
-from scidb import BaseVariable, bundle, for_each, table_copy
-from scidb.bundle import BundleError, ExportOptions, export_project, import_project, read_bundle
-from scidb.project import init_project
+from scidb import BaseVariable, for_each
+from scidb.project import bundle, table_copy
+from scidb.project.bundle import BundleError, ExportOptions, export_project, import_project, read_bundle
+from scidb.project.init import init_project
 
 SCHEMA = ["subject", "session"]
 
@@ -595,7 +596,7 @@ def test_the_import_report_is_json(project, tmp_path):
 def test_import_into_a_new_folder_inside_another_project(project, tmp_path):
     """The target does not exist yet; its config lives INSIDE it, so the
     exporter-side project around it (here: the source project itself) does
-    not make the import refuse (scifor.discovery.config_path_at)."""
+    not make the import refuse (scifor.project.config.config_path_at)."""
     root, _ = project
     out = _export(project, tmp_path)
     report = import_project(out, root / "nested_copy")
@@ -610,7 +611,8 @@ def test_import_into_a_new_folder_inside_another_project(project, tmp_path):
 
 
 def test_a_wheelhouse_travels_and_the_environment_is_kept(project, tmp_path, monkeypatch):
-    from scidb import environment, names
+    from scidb.project import environment
+    from scifor.project import names
 
     def fake_wheel(package, out_dir):
         if package == "brokenlib":

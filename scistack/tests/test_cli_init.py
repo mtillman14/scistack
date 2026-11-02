@@ -1,4 +1,4 @@
-"""``scistack init``: a thin front end over scidb.project.init_project.
+"""``scistack init``: a thin front end over scidb.project.init.init_project.
 
 Layout rules are tested where they live (scidb/tests/test_project_init.py);
 here only the CLI's own behaviour: arguments, exit codes, output, and the

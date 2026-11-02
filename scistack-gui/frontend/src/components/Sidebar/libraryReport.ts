@@ -57,7 +57,7 @@ export function suggestCopyName(library: string): string {
   return `${library}_mine`
 }
 
-/** The same rule the backend applies first (scidb.project.validate_project_name):
+/** The same rule the backend applies first (scidb.project.init.validate_project_name):
  *  a Python identifier, lower-case by convention. */
 export function isLibraryName(name: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name.trim())

@@ -22,7 +22,7 @@ from scimatlab.stubs import (
 
 @pytest.fixture(autouse=True)
 def _clear_entities_cache():
-    """``entities_path`` reads through ``scidb.entities``' mtime cache."""
+    """``entities_path`` reads through ``scidb.project.entities``' mtime cache."""
     from scidb import entities
 
     entities.clear_cache()

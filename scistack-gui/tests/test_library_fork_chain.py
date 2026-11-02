@@ -18,7 +18,7 @@ Why it fails today
 Make my own copy puts the code in ``src/<pkg>/<lib>/`` but keeps the names
 ``<lib>.fn`` (``copied_libraries``): half project code, half library.
 ``share_as_library`` then reads those functions as another installed
-library's (``scidb.names.library_of``), leaves their code out and lists the
+library's (``scifor.project.names.library_of``), leaves their code out and lists the
 old library as a dependency.
 
 Decisions these tests pin

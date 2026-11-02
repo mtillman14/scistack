@@ -14,7 +14,6 @@ import pandas as pd
 
 from scicanonicalhash import canonical_hash, frame_path_counts, generate_record_id
 from sciduckdb import (
-    SciDuck,
     bulk_df_to_storage_rows,
     column_type_change,
     dataframe_to_storage_rows,
@@ -49,6 +48,7 @@ from .exceptions import (
 )
 from .log import Log
 from .parameter import parameter_node_name
+from .sciduck import SciDuck
 from .schema_values import (
     canonical_numeric_value,
     from_schema_str,
@@ -838,7 +838,7 @@ def configure_database(
     # script must close the database at the end to hand the write lock back
     # to the GUI, so nothing is reused), and it was measured at ~170ms
     # against a database on a network share. The breakdown says whether that
-    # is the DuckDB open itself or the idempotent CREATE TABLE IF NOT EXISTS
+    # is the DuckDB open itself or the idempotent DDL (scidb.tables)
     # round trips re-run each time.
     with Log.timer(
         "configure_database", extra=Path(dataset_db_path).name
@@ -1310,11 +1310,13 @@ class DatabaseManager:
         self.read_only = bool(read_only)
         self._registered_types: dict[str, type[BaseVariable]] = {}
 
-        # Initialize SciDuck backend for data storage and lineage (all in
-        # DuckDB). Timed per phase: this runs on every MATLAB invocation (see
-        # configure_database), and "opening the file" and "re-running the
-        # idempotent DDL" have very different fixes when the database lives on
-        # a network share.
+        # Open the SciDuck backend: connect, create any missing table
+        # (scidb.tables.ensure_core, idempotent; none on a read-only open),
+        # then check the schema columns. Timed: this runs on every MATLAB
+        # invocation (see configure_database), and "opening the file" and
+        # "re-running the idempotent DDL" have very different fixes when the
+        # database lives on a network share -- the DDL's own time is the
+        # `[tables] ensured ... in N ms` line inside `duck_open`.
         with Log.timer(
             "DatabaseManager.__init__", extra=self.dataset_db_path.name
         ) as timer:
@@ -1326,29 +1328,6 @@ class DatabaseManager:
                 )
                 self._duck.add_rollback_listener(self._forget_uncommitted_caches)
 
-            # Create metadata tables for type registration (in DuckDB).
-            # Skipped on read-only connections: the tables must already exist,
-            # and DuckDB rejects DDL (even CREATE TABLE IF NOT EXISTS) in
-            # read-only mode.
-            if not self.read_only:
-                with timer.phase("ensure_meta_tables"):
-                    self._ensure_meta_tables()
-                with timer.phase("ensure_record_save_table"):
-                    self._ensure_record_save_table()
-                with timer.phase("ensure_schema_overrides_table"):
-                    self._ensure_schema_overrides_table()
-                with timer.phase("ensure_provenance_tables"):
-                    self._ensure_provenance_tables()
-                with timer.phase("ensure_variant_pin_table"):
-                    from .variant_pins import ensure_variant_pin_table
-
-                    ensure_variant_pin_table(self._duck)
-                with timer.phase("ensure_variant_tombstone_table"):
-                    from .variant_delete import ensure_tombstone_table
-
-                    ensure_tombstone_table(self._duck)
-                with timer.phase("ensure_schema_key_type_table"):
-                    schema_types.ensure_table(self._duck)
             with timer.phase("schema_key_types"):
                 self._refresh_schema_key_types()
                 if declared_key_types:
@@ -1437,52 +1416,6 @@ class DatabaseManager:
             else:
                 out[key] = canonical_numeric_value(key, value)
         return out
-
-    def _ensure_meta_tables(self):
-        """Create internal metadata tables for type registration."""
-        # Registered types table (remains in DuckDB for data type discovery)
-        # Note: Only type_name is unique (PRIMARY KEY). table_name is not unique
-        # to avoid DuckDB's ON CONFLICT ambiguity with multiple unique constraints.
-        self._duck.execute("""
-            CREATE TABLE IF NOT EXISTS _registered_types (
-                type_name VARCHAR PRIMARY KEY,
-                table_name VARCHAR NOT NULL,
-                schema_version INTEGER NOT NULL,
-                registered_at TIMESTAMP DEFAULT current_timestamp
-            )
-        """)
-
-    def _ensure_record_save_table(self):
-        """Create ``_record_save`` — the append-only **save-event audit log**.
-
-        One row per save event ``(record_id, timestamp)``; there is no other
-        per-event payload. Everything else about a record (its type/variable_name,
-        schema_id, content_hash, schema_version, and the mutable ``excluded`` flag)
-        lives on the content-addressed ``_record`` entity row and is obtained by
-        joining on ``record_id``. The only thing this table uniquely provides is
-        **per-save recency** for the "latest" variant collapse (``_record`` is
-        inserted ``ON CONFLICT DO NOTHING`` so its ``created_at`` is frozen at the
-        first save and cannot track re-saves).
-        """
-        self._duck.execute("""
-            CREATE TABLE IF NOT EXISTS _record_save (
-                record_id VARCHAR NOT NULL,
-                timestamp VARCHAR NOT NULL,
-                PRIMARY KEY (record_id, timestamp)
-            )
-        """)
-
-    def _ensure_schema_overrides_table(self):
-        """Create __scidb_schema_overrides for persistent schema-level exclusions."""
-        from .exclusions import ensure_overrides_table
-
-        ensure_overrides_table(self)
-
-    def _ensure_provenance_tables(self):
-        """Create the seven bipartite provenance tables (see scidb.provenance)."""
-        from .provenance import ensure_provenance_tables
-
-        ensure_provenance_tables(self._duck)
 
     def _check_duplicate_locations(
         self, type_name: str, data_items: "list[tuple[Any, dict]]"
@@ -2895,7 +2828,7 @@ class DatabaseManager:
     def dataset_schema_key_order(self) -> dict[str, list[str]]:
         """``{schema key: [levels]}`` from the project's ``[schema_keys]``, LIVE.
 
-        Read through :func:`scidb.schema_order.project_level_order` on every
+        Read through :func:`scifor.project.schema_order.project_level_order` on every
         access rather than once at open: this used to be a snapshot, so an
         edit to scistack.toml changed no table and no figure until the GUI (or
         the session) was restarted. The reader caches the config's location
@@ -2906,7 +2839,7 @@ class DatabaseManager:
         dataset's keys, so a typo is reported when it is written, not just
         when the database opens.
         """
-        from . import schema_order as _schema_order
+        from scifor.project import schema_order as _schema_order
 
         order = _schema_order.project_level_order()
         if order is not self._validated_key_order:
@@ -2950,12 +2883,12 @@ class DatabaseManager:
         ``[aliases]``, LIVE — the display names every plot starts from.
 
         Same discipline as :attr:`dataset_schema_key_order`: read through
-        :func:`scidb.aliases.project_aliases` on every access (a ``stat``, the
+        :func:`scifor.project.aliases.project_aliases` on every access (a ``stat``, the
         parse is cached on mtime), and validated against this dataset's schema
         keys and variables each time the content CHANGES, so a typo is
         reported when it is written. Display only: nothing in scidb reads it.
         """
-        from . import aliases as _aliases
+        from scifor.project import aliases as _aliases
 
         table = _aliases.project_aliases()
         if table is not getattr(self, "_validated_aliases", None):
@@ -2979,10 +2912,10 @@ class DatabaseManager:
         ``[colors]``, LIVE — the mark colours every plot starts from.
 
         The discipline of :attr:`dataset_aliases`: read through
-        :func:`scidb.colors.project_colors` on every access, validated when
+        :func:`scifor.project.colors.project_colors` on every access, validated when
         the content CHANGES. Display only: nothing in scidb reads it.
         """
-        from . import colors as _colors
+        from scifor.project import colors as _colors
 
         table = _colors.project_colors()
         if table is not getattr(self, "_validated_colors", None):
@@ -3031,7 +2964,7 @@ class DatabaseManager:
             # not alphabetical, and no amount of value inspection can work that
             # out. Undeclared levels rank after every declared one and then
             # sort among themselves by the rules below — which is also what
-            # every other consumer of the declaration does (scidb.schema_order).
+            # every other consumer of the declaration does (scifor.project.schema_order).
             declared = key_order.get(key)
             if declared:
                 df[temp_col_name] = _declared_rank_column(col, declared)
@@ -5807,7 +5740,7 @@ class DatabaseManager:
 
     def transaction(self, label: str = ""):
         """One transaction around the block (re-entrant; see
-        :meth:`sciduckdb.SciDuck.transaction`). Saves inside it commit
+        :meth:`sciduckdb.DuckConnection.transaction`). Saves inside it commit
         together or not at all."""
         return self._duck.transaction(label)
 
@@ -5838,7 +5771,7 @@ class DatabaseManager:
         levels — so it decides the iteration order, and therefore the row
         order of every table ``for_each`` hands back, and the GUI's level lists.
         """
-        from .schema_order import order_levels
+        from scifor.project.schema_order import order_levels
 
         return order_levels(
             key,

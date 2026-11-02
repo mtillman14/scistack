@@ -7,7 +7,7 @@ the same layout (plan ``.claude/plan-portability.md`` Stage 1c)::
 
     my_study/
     ├── pyproject.toml                      # packaging only: name, deps, build
-    ├── scistack.toml                       # THE config (scidb.config_file)
+    ├── scistack.toml                       # THE config (scifor.project.config_file)
     ├── .gitignore
     └── src/my_study/
         ├── __init__.py
@@ -52,7 +52,7 @@ def package_name_for(root: "Path | str") -> str:
     ``[project].name`` when it has one (``-`` read as ``_``), else the folder
     name made into a valid identifier (``"Gait Study 2"`` -> ``gait_study_2``,
     ``"2024 data"`` -> ``project_2024_data``)."""
-    from scifor.discovery import read_project_name
+    from scifor.project.discovery import read_project_name
 
     declared = read_project_name(Path(root))
     if declared:
@@ -145,14 +145,14 @@ def init_project(
 
     *name* is the package name (default :func:`package_name_for`).
     *entities_file* is where to put a new entities file, relative to *root*
-    or absolute (default: inside the package, ``scidb.entities.
+    or absolute (default: inside the package, ``scidb.project.entities.
     default_entities_relpath``); it applies only when the project does not
     already name one.
     """
-    from scifor.discovery import config_path_at, project_config_at, read_scistack_section
+    from scifor.project.config import config_path_at, project_config_at, read_scistack_section
 
-    from . import config_file
-    from .entities import (
+    from scifor.project import config_file
+    from scifor.project.entities_file import (
         default_entities_relpath,
         initial_text,
         is_entities_opt_out,
@@ -171,7 +171,7 @@ def init_project(
     had_pyproject = pyproject.exists()
     _create(pyproject, _PYPROJECT.format(name=package), report)
     if had_pyproject:
-        from scifor.discovery import read_project_name
+        from scifor.project.discovery import read_project_name
 
         declared = read_project_name(root)
         if declared and declared.replace("-", "_").lower() != package:
@@ -202,7 +202,7 @@ def init_project(
 
     # A declared entities_file wins even when the file is missing (then the
     # file the project already names is created); with no key, an existing
-    # conventional file is adopted (scidb.entities.resolve_entities_path).
+    # conventional file is adopted (scifor.project.entities_file.resolve_entities_path).
     existing = resolve_entities_path(root, section) if section is not None else None
     if existing is not None:
         target = existing
@@ -231,7 +231,7 @@ def init_project(
         report.created.append(config_path_at(root))
     elif not section.get("entities_file") and existing is None:
         # Fill in the one missing key; every other key survives the write
-        # (scidb.config_file), so nothing the user set changes.
+        # (scifor.project.config_file), so nothing the user set changes.
         config_file.write(config, {**section, "entities_file": recorded})
         Log.info(f"[project] init: added entities_file = {recorded!r} to {config}")
     else:

@@ -228,7 +228,7 @@ class LocationFilter:
         an ``include`` prefix that mentions one is dropped whole (its later
         steps only mean something under it), an ``exclude_levels`` entry is
         dropped. What an import does for a schema key the recipient's schema
-        has no counterpart for (``scidb.schema_map.KeyMap``)."""
+        has no counterpart for (``scidb.project.schema_map.KeyMap``)."""
         gone = set(keys)
         if not gone:
             return self

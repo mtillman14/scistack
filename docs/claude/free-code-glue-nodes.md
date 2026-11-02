@@ -58,7 +58,7 @@ role** is a first-class classification:
 | `glue` | `glue_` |
 
 **The classifier lives in `scidb`, not the GUI**:
-`scidb.discover.function_role(name)`. These prefixes already drive execution
+`scidb.project.discover.function_role(name)`. These prefixes already drive execution
 behaviour inside scidb, so the GUI must not hold a second copy of the strings.
 It also collapses the three existing hardcoded `startswith("plot_")` /
 `startswith("stat_")` sites into one call, so a fifth role later touches one
@@ -479,6 +479,6 @@ trap in `code-discovery-categories.md`.
 - `function-input-resolution.md` — the edges-only binding rule glue inherits.
 - `entity-editability-model.md` — the confinement rule this feature amends.
 - `code-discovery-categories.md` — how the six existing kinds are discovered;
-  glue would be a seventh, classified by name prefix in `scidb.discover`.
+  glue would be a seventh, classified by name prefix in `scidb.project.discover`.
 - `matlab-run-database-ownership.md`, `matlab-path-resolution.md` — the MATLAB
   execution constraints behind the language rule in §1.

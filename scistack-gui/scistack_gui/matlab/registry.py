@@ -228,7 +228,7 @@ def load_from_config(config: SciStackConfig) -> dict:
     # or variable 'X'" in the middle of a for_each, so the destination
     # falls back to ``scimatlab.stubs.variable_stub_dir``.
     if config.entities_file is not None:
-        from scidb.entities import load as _load_entities
+        from scidb.project.entities import load as _load_entities
 
         materialize_variable_stubs(
             list(_load_entities(config.entities_file).variables),
@@ -393,7 +393,7 @@ def load_entities_script(path: Path) -> None:
         return
 
     # Last binding of a name wins, matching how a MATLAB script actually
-    # executes (and scidb.source_edit.find_binding_span on the Python side).
+    # executes (and scifor.project.source_edit.find_binding_span on the Python side).
     latest = {b.name: b for b in bindings}
 
     # Plain `name = 'literal'` helper bindings, so a template assembled from a

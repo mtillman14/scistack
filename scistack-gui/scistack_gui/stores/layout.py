@@ -24,6 +24,9 @@ import threading
 import time
 from contextlib import contextmanager
 
+from scidb import tables
+from scidb.tables import TableDecl
+
 from scistack_gui.stores import pipeline_store
 from scistack_gui.stores import library_lock as _library_lock
 from scistack_gui.ids import ROOT_SCOPE
@@ -87,32 +90,63 @@ def _layout_write(operation: str):
         _layout_lock.release()
 
 
+# The tables this module owns, declared through scidb (scidb.tables owns
+# every table of a project database; this module creates them on first use).
+tables.declare(
+    TableDecl(
+        "_pipeline_node_positions",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_node_positions (
+                pipeline_id VARCHAR NOT NULL,
+                node_id     VARCHAR NOT NULL,
+                x           DOUBLE NOT NULL,
+                y           DOUBLE NOT NULL,
+                PRIMARY KEY (pipeline_id, node_id)
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_palette_parameters",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_palette_parameters (
+                name VARCHAR PRIMARY KEY,
+                seq  INTEGER NOT NULL
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+tables.declare(
+    TableDecl(
+        "_pipeline_notes",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS _pipeline_notes (
+                note_key VARCHAR PRIMARY KEY,
+                text     VARCHAR NOT NULL
+            )
+            """,
+        ),
+        owner="scistack_gui",
+    )
+)
+
+
 def ensure_tables(db) -> None:
     """Create this module's tables if absent. Called from
     ``pipeline_store._ensure_tables``, so every path that touches the GUI
     database gets them, like ``_intent`` and ``_node_wiring``."""
     duck = db._duck
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_node_positions (
-            pipeline_id VARCHAR NOT NULL,
-            node_id     VARCHAR NOT NULL,
-            x           DOUBLE NOT NULL,
-            y           DOUBLE NOT NULL,
-            PRIMARY KEY (pipeline_id, node_id)
-        )
-    """)
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_palette_parameters (
-            name VARCHAR PRIMARY KEY,
-            seq  INTEGER NOT NULL
-        )
-    """)
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _pipeline_notes (
-            note_key VARCHAR PRIMARY KEY,
-            text     VARCHAR NOT NULL
-        )
-    """)
+    tables.ensure(duck, "_pipeline_node_positions")
+    tables.ensure(duck, "_pipeline_palette_parameters")
+    tables.ensure(duck, "_pipeline_notes")
 
 
 def _duck():

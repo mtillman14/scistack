@@ -457,6 +457,7 @@ def for_each_prepare(
     parameter_names=None,
     source_text=None,
     schema_key_types=None,
+    project_root=None,
 ):
     """Bridge entry: run scidb.for_each's prepare phase in Python.
 
@@ -496,6 +497,10 @@ def for_each_prepare(
         Applied to ``full_combos`` before they cross to MATLAB, because
         ``+scifor/for_each.m`` runs the loop and never sees Python's
         ``scifor.for_each(locations=)``.
+    project_root : str or None
+        ``for_each(project_root=)``: the folder rootless PathInputs resolve
+        against. None: the root this process pinned
+        (:func:`set_pathinput_project_root`).
     schema_filter : dict[str, list] or None
         ``{schema_key: [values]}`` overrides. A key also in schema_keys (or,
         if schema_keys is None, any schema key) gets these values instead of
@@ -608,7 +613,7 @@ def for_each_prepare(
     # number as a double, so a declared 6 arrives as 6.0. The skip hook below
     # predicts identities from these inputs, so the declared spelling must be
     # in place before it is built, not only inside prepare. One owner:
-    # scidb.entities.declared_spelling.
+    # scidb.project.entities.declared_spelling.
     merged_parameter_names = _parameter_names_from_matlab(parameter_names)
     inputs = external_loop.declared_spelling(inputs, merged_parameter_names)
 
@@ -729,6 +734,7 @@ def for_each_prepare(
                 glue_language="matlab",
                 # So the preview counts the combos the real run will do.
                 locations=locations,
+                project_root=project_root,
             )
         except Exception:
             raise
@@ -796,6 +802,7 @@ def for_each_prepare(
         metadata_iterables=meta,
         glue=glue_arg,
         glue_language="matlab",
+        project_root=project_root,
         # The save happens in a SECOND RPC, which reads this off the cached
         # state rather than being told again — one fact, one place.
         endpoint_kind=endpoint_kind or None,
@@ -1370,7 +1377,7 @@ def pathinput_project_root() -> str:
     """Return ``scifor.project_root()`` (the pinned root, else the cwd) as a
     string, so MATLAB reads the one owner of the project root rather than
     deriving its own."""
-    from scifor.pathinput import project_root
+    from scifor.project.root import project_root
 
     return str(project_root())
 
@@ -1394,10 +1401,10 @@ def set_pathinput_project_root(root) -> str:
     GUI used to rewrite ``root_folder`` here instead, which made a run
     recorded from the GUI un-matchable against its own declaration and grew
     an ``__unresolved__`` ghost node on the canvas; see
-    ``scifor.pathinput.set_project_root``.
+    ``scifor.project.root.set_project_root``.
     """
     from scidb.log import Log
-    from scifor.pathinput import set_project_root
+    from scifor.project.root import set_project_root
 
     resolved = set_project_root(str(root) if root is not None else None)
     Log.info(
@@ -1431,7 +1438,7 @@ def load_entities(project_start=None) -> dict:
 
     from scidb import entities
     from scidb.log import Log
-    from scifor.pathinput import project_root
+    from scifor.project.root import project_root
 
     result = entities.load_for_project(project_start)
 

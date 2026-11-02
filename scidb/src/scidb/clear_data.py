@@ -13,7 +13,7 @@ Two steps, like ``variant_delete``:
    a tombstone, releases every active pin and commits. Any failure rolls the
    whole thing back.
 
-**Which tables** is decided by ONE classification: ``scidb.bundle``'s
+**Which tables** is decided by ONE classification: ``scidb.project.bundle``'s
 ``HISTORY_TABLES`` / ``INTENT_TABLES`` (what travels as history vs. intent)
 plus :data:`KEPT_BY_CLEAR` here (history a clear deliberately keeps). The
 guard test ``test_every_scidb_table_is_classified`` fails when a new scidb
@@ -48,7 +48,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .bundle import HISTORY_TABLES, INTENT_TABLES
+from .project.bundle import HISTORY_TABLES, INTENT_TABLES
 from .log import Log
 
 if TYPE_CHECKING:
@@ -79,6 +79,7 @@ KEPT_TABLES: dict[str, str] = {
     "_variables": "variable registrations and dtype metadata",
     "_variable_groups": "variable groups (declarations)",
     "_schema_key_type": "schema key types (declarations)",
+    "_intent": "statements about runs (what the canvas asks for): intent, not results",
 }
 
 #: Tables whose presence means the GUI has a canvas on this database.

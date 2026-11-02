@@ -316,7 +316,7 @@ def test_a_failing_table_loader_opens_unreconciled_with_a_note(db):
 
 
 # ---------------------------------------------------------------------------
-# Project bundles (scidb.bundle "plots" section): copied row for row
+# Project bundles (scidb.project.bundle "plots" section): copied row for row
 # ---------------------------------------------------------------------------
 
 
@@ -356,7 +356,7 @@ def test_a_saved_plot_moves_into_another_schema(db, tmp_path):
     from types import SimpleNamespace
 
     from scidb import configure_database
-    from scidb.schema_map import KeyMap, MapReport
+    from scidb.project.schema_map import KeyMap, MapReport
 
     from scistackplotdb.bundle_section import PlotsSection
 

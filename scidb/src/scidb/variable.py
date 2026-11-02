@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 from .log import Log
-from .names import library_of
+from scifor.project.names import library_of
 
 if TYPE_CHECKING:
     from .column_selection import ColumnSelection
@@ -1034,7 +1034,7 @@ def same_definition(a: type, b: type) -> bool:
 
 def _preferred_definition(existing: type, new: type) -> "tuple[type, type]":
     """``(kept, rejected)`` for two conflicting definitions: the project's
-    own over a library's (``scidb.names.library_of``), else the newer."""
+    own over a library's (``scifor.project.names.library_of``), else the newer."""
     if library_of(new) and not library_of(existing):
         return existing, new
     return new, existing

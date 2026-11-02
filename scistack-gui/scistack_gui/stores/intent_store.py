@@ -44,7 +44,9 @@ import json
 import logging
 from datetime import datetime
 
+from scidb import tables
 from scidb.intent import (
+    INTENT_TABLE,
     ASPECT_COLNAME,
     ASPECT_COLUMNS,
     ASPECT_CONSTANTS,
@@ -92,24 +94,13 @@ PORTABILITY: dict[str, str] = {"_intent": "canvas"}
 
 
 def ensure_tables(db) -> None:
-    """Create ``_intent`` if absent.
+    """Make sure ``_intent`` exists. It is scidb's table (``scidb.tables``,
+    created on every writable open), so this is a no-op on any database
+    scidb opened; it keeps the GUI's precondition in one call.
 
-    Called from ``pipeline_store._ensure_tables`` so every path that touches
-    the GUI database gets it, exactly like the tables it replaces.
+    Called from ``pipeline_store._ensure_tables``.
     """
-    _duck(db).execute("""
-        CREATE TABLE IF NOT EXISTS _intent (
-            subject_kind VARCHAR NOT NULL,
-            subject_ref  VARCHAR NOT NULL,
-            scope        VARCHAR NOT NULL DEFAULT 'global',
-            aspect       VARCHAR NOT NULL,
-            aspect_key   VARCHAR NOT NULL DEFAULT '',
-            value_json   VARCHAR NOT NULL DEFAULT 'null',
-            origin       VARCHAR NOT NULL DEFAULT 'store',
-            stated_at    VARCHAR NOT NULL DEFAULT '',
-            PRIMARY KEY (subject_kind, subject_ref, scope, aspect, aspect_key)
-        )
-    """)
+    tables.ensure(_duck(db), INTENT_TABLE)
 
 
 # ---------------------------------------------------------------------------

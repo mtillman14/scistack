@@ -1,6 +1,6 @@
 """Store one value through the sciduckdb codec in a real DuckDB table, read it back.
 
-The codec is SciDuck's public surface (``infer_data_columns``,
+The codec is sciduckdb's public surface (``infer_data_columns``,
 ``value_to_storage_row`` / ``dataframe_to_storage_rows``, ``merge_tz_columns``,
 ``restore_types``, ``storage_to_python``, ``unflatten_dict``); scidb's save and
 load compose the same functions, and ``fetch`` mirrors scidb's load branch by
@@ -10,13 +10,12 @@ exist once DuckDB has stored the value.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pandas as pd
 
 from sciduckdb import (
-    SciDuck,
+    DuckConnection,
     dataframe_to_storage_rows,
     infer_data_columns,
     is_datetime_meta,
@@ -29,8 +28,8 @@ from sciduckdb import (
 )
 
 
-def store(duck: SciDuck, table: str, value: Any) -> dict:
-    """Create ``table`` for ``value``, insert it, register it in ``_variables``.
+def store(duck: DuckConnection, table: str, value: Any) -> dict:
+    """Create ``table`` for ``value`` and insert it.
 
     Returns the ``dtype_meta`` that :func:`fetch` needs.
     """
@@ -46,15 +45,10 @@ def store(duck: SciDuck, table: str, value: Any) -> dict:
         rows = [value_to_storage_row(value, dtype_meta)]
     for row in rows:
         duck.execute(insert, row)
-    duck.execute(
-        "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
-        "VALUES (?, ?, ?, '')",
-        [table, duck.dataset_schema[-1], json.dumps(dtype_meta)],
-    )
     return dtype_meta
 
 
-def fetch(duck: SciDuck, table: str, dtype_meta: dict) -> Any:
+def fetch(duck: DuckConnection, table: str, dtype_meta: dict) -> Any:
     """Read the value :func:`store` wrote, restored to its Python types."""
     select = ", ".join(f'"{c}"' for c in storage_column_names(dtype_meta))
     df = duck.fetchdf(f'SELECT {select} FROM "{table}"')
@@ -83,11 +77,11 @@ def fetch(duck: SciDuck, table: str, dtype_meta: dict) -> Any:
     return result
 
 
-def roundtrip(duck: SciDuck, table: str, value: Any) -> Any:
+def roundtrip(duck: DuckConnection, table: str, value: Any) -> Any:
     return fetch(duck, table, store(duck, table, value))
 
 
-def column_types(duck: SciDuck, table: str) -> dict:
+def column_types(duck: DuckConnection, table: str) -> dict:
     """``{column: DuckDB type}`` of ``table``."""
     rows = duck.fetchall(
         "SELECT column_name, data_type FROM information_schema.columns "

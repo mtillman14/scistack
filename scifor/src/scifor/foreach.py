@@ -10,9 +10,11 @@ summary with failure reasons); DEBUG carries per-iteration detail
 via print() — it is the requested result, not logging.
 """
 
+import copy
 import time
 from collections.abc import Callable
 from itertools import product
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from scistacklog import Log
@@ -55,6 +57,7 @@ from .merge import Merge
 from .outputs import NoOutput, discard_db_only_kwargs, is_no_output, output_column_name
 from .pathinput import PathInput
 from .pathoutput import PathOutput
+from .project.root import project_root as current_project_root
 from .schema import expand_schema_keys, get_schema
 from .schema_types import (
     canonicalize_combos,
@@ -157,6 +160,7 @@ def for_each(
     schema_keys: "list[str] | None" = None,
     schema_key_types: "dict[str, str] | None" = None,
     on_error: str = "continue",
+    project_root: "str | Path | None" = None,
     _all_combos: list[dict] | None = None,
     _log_fn: "Callable[[str], None] | None" = None,
     _progress_fn: "Callable[[dict], None] | None" = None,
@@ -233,6 +237,10 @@ def for_each(
                     (``scifor.stopped_run_of(exc)``). ``NoDataError`` (a combo
                     with no data) never stops a run. See
                     docs/claude/error-surfacing.md.
+        project_root: The folder a PathInput without ``root_folder``
+                    resolves its relative template against. Default: the
+                    process-wide root (``scifor.project.root.project_root``:
+                    the pinned root, else the cwd), read once here.
         _all_combos: Pre-built list of metadata dicts; skips itertools.product().
                      Used by DB wrappers that pre-filter schema combinations.
         _log_fn: Deprecated — ignored. scifor now logs through the
@@ -284,6 +292,13 @@ def for_each(
     metadata_iterables = discard_db_only_kwargs(metadata_iterables)
     key_types = validate_key_types(schema_key_types)
     validate_on_error(on_error)
+    # The one place a rootless PathInput learns where it resolves: the
+    # caller's root, else the process-wide one, decided once at entry and
+    # bound into the inputs (PathInput.bound_to) -- not read again per combo.
+    project_root = (
+        Path(project_root).resolve() if project_root is not None else current_project_root()
+    )
+    inputs = bind_path_inputs(inputs, project_root)
 
     # Step -1: EachOf expansion — must be first, before any other logic.
     # Each alternative becomes an independent recursive for_each() call;
@@ -332,6 +347,7 @@ def for_each(
                     schema_keys=schema_keys,
                     schema_key_types=schema_key_types,
                     on_error=on_error,
+                    project_root=project_root,
                     _progress_fn=_progress_fn,
                     _cancel_check=_cancel_check,
                     _path_input_resolver=_path_input_resolver,
@@ -1401,6 +1417,33 @@ def _exact_string_key_resolver(key_types: dict):
         return path
 
     return resolve
+
+
+def bind_path_inputs(inputs: dict, root: Path) -> dict:
+    """*inputs* with every PathInput -- bare, under ``Fixed``, or an ``EachOf``
+    alternative -- replaced by a copy bound to *root* (``PathInput.bound_to``).
+
+    Identity is unchanged (``to_key`` is the name), so version keys, call ids
+    and the skip gate see exactly what the caller passed. Shared by scifor's
+    and scidb's ``for_each`` so both bind the same shapes.
+    """
+
+    def bind(value: Any) -> Any:
+        if isinstance(value, PathInput):
+            return value.bound_to(root)
+        if isinstance(value, Fixed) and isinstance(value.data, PathInput):
+            clone = copy.copy(value)
+            clone.data = value.data.bound_to(root)
+            return clone
+        if isinstance(value, EachOf) and any(
+            isinstance(a, (PathInput, Fixed)) for a in value.alternatives
+        ):
+            clone = copy.copy(value)
+            clone.alternatives = [bind(a) for a in value.alternatives]
+            return clone
+        return value
+
+    return {name: bind(value) for name, value in inputs.items()}
 
 
 def _resolve_path_inputs(kwargs: dict, metadata: dict, resolver=None) -> dict:

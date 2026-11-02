@@ -31,7 +31,7 @@ from typing import Any
 
 from scistacklog import Log
 
-from ._versioned import VersionedStore
+from scidb.versioned_store import VersionedStore
 
 LAYER = "scistackplotdb"
 
@@ -51,6 +51,7 @@ STORE = VersionedStore(
     noun="shared design",
     tag="design",
     error=DesignError,
+    owner="scistackplotdb",
 )
 
 

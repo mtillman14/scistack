@@ -253,7 +253,7 @@ class TestBulkInsertProvenance:
 
     def test_record_entities_use_bulk_insert(self, db, monkeypatch):
         """save_batch's _record insert must go through bulk_insert, not per-row."""
-        from sciduckdb import SciDuck
+        from scidb.sciduck import SciDuck
 
         tables = []
         orig = SciDuck.bulk_insert
@@ -281,7 +281,7 @@ class TestBulkInsertProvenance:
 
     def test_no_per_row_executemany_in_provenance(self, db, monkeypatch):
         """No provenance table may be written via con.executemany (the slow path)."""
-        from sciduckdb import SciDuck
+        from scidb.sciduck import SciDuck
 
         offenders = []
         orig = SciDuck._executemany

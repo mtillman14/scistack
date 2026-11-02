@@ -67,7 +67,7 @@ both policy checks ask for that. scifor owns the classification.
 | MATLAB JSON text | `aliases='{"session": {"01": ["Baseline"]}}'`: any canonical; this is what generated code emits |
 | `scistack_entities.toml` | `X = { template = "...", aliases = { session = { BL = ["Baseline"], "01" = "Pre" } } }` |
 
-TOML details (owner `scidb.entities`, `_parse_path_input_aliases` and
+TOML details (owner `scidb.project.entities`, `_parse_path_input_aliases` and
 `_render_aliases`):
 - Aliases live per arm. In an alternates array, each table carries its own.
 - A lone spelling may be a bare string; it is normalized to a list.
@@ -87,7 +87,7 @@ they're in the dict:
 | Sidebar edit (`update_path_input`: TOML, `.py`, `.m` renderers) | `path_input_service` → `render_path_input_value` / `source_edit.render_path_input` / `matlab_parser.render_matlab_path_input` |
 | Deep copy | `layout_service.deep_copy_path_input` (now copies alternates too) |
 | Portability import | `portability_service` → `create_path_input(..., aliases)` |
-| Bundle import rewrite (key map renames alias keys like placeholders) | `scidb.bundle._rewrite_path_inputs` / `_rename_alias_keys` |
+| Bundle import rewrite (key map renames alias keys like placeholders) | `scidb.project.bundle._rewrite_path_inputs` / `_rename_alias_keys` |
 | MATLAB run command | `matlab_command_service._declared_path_input` → `matlab_command_format._format_path_input_arm` |
 | MATLAB aliases argument text | `matlab_parser.render_matlab_aliases` (JSON char, never a struct) |
 | MATLAB `scidb.entities()` | `scimatlab.bridge.load_entities` sends `aliases_json` → `+scidb/entities.m` |

@@ -2,8 +2,8 @@
 Library pipelines on the canvas: seed, lock, re-sync (portability Stage 10,
 D-2026-10-08-10; ``.claude/plan-portability.md``).
 
-A library the project lists (``scidb.names.library_packages``) may ship
-pipeline documents (``scidb.library``: a canvas plus the pipelines it
+A library the project lists (``scifor.project.names.library_packages``) may ship
+pipeline documents (``scidb.project.library``: a canvas plus the pipelines it
 spans). Each is seeded into the canvas tables as LIBRARY-OWNED pipelines:
 
 * ids are DERIVED (``ids.library_pipeline_id`` / ``library_node_id`` /
@@ -35,8 +35,8 @@ def sync_libraries(db) -> dict:
     """Seed or re-sync every listed library's pipelines. Returns
     ``{"seeded": [...], "resynced": [...], "unchanged": [...],
     "orphaned": [...], "errors": [...]}`` (entries ``"lib/pipeline"``)."""
-    from scidb.library import read_library
-    from scidb.names import library_packages
+    from scidb.project.library import read_library
+    from scifor.project.names import library_packages
 
     from scistack_gui.stores import pipeline_store as ps
 
@@ -112,7 +112,7 @@ def _sync_one(db, lp) -> str:
     from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.services import canvas_snapshot
 
-    from scidb.names import authored_libraries
+    from scifor.project.names import authored_libraries
 
     doc = lp.document
     local = local_pipeline_ids(db, lp.library, doc)
@@ -183,8 +183,8 @@ def list_libraries(db) -> list[dict]:
     and anything wrong with it. ``[{"library", "schema_keys", "matlab",
     "authored", "derived_from", "pipelines": [{"name", "pipeline_id",
     "seeded"}], "errors"}]``."""
-    from scidb.library import read_library
-    from scidb.names import authored_libraries, library_packages
+    from scidb.project.library import read_library
+    from scifor.project.names import authored_libraries, library_packages
 
     from scistack_gui.stores import pipeline_store as ps
 
@@ -224,11 +224,11 @@ def list_libraries(db) -> list[dict]:
 def suggest_key_map(db, pipeline_id: str) -> dict:
     """For placing library pipeline *pipeline_id*: the library's schema keys,
     the project's, and the suggested binding ``key_map`` (library key ->
-    project key) from ``scidb.schema_map.KeyMap.auto`` -- the Stage 6 owner
+    project key) from ``scidb.project.schema_map.KeyMap.auto`` -- the Stage 6 owner
     of matching two schemas. A library that declares no schema keys needs
     no map."""
-    from scidb.library import read_library
-    from scidb.schema_map import KeyMap
+    from scidb.project.library import read_library
+    from scidb.project.schema_map import KeyMap
 
     from scistack_gui.stores import pipeline_store as ps
 
@@ -282,7 +282,7 @@ def placement_check(db, pipeline_id: str) -> dict:
     PathInputs it uses that this project does not declare, with the
     library's DEFAULTS (portability Stage 10b: the project declares its own;
     runs resolve those nodes by name in the project's registry)."""
-    from scidb.library import read_library
+    from scidb.project.library import read_library
 
     from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import path_input_display
@@ -468,7 +468,7 @@ def tunables(db, use_id: str) -> dict:
       ``"<fn label>.<input>"``), with this placement's value (its binding,
       O21) or a Parameter it was pointed at (E5);
     * ``key_map``: this placement's schema-key mapping."""
-    from scidb.library import read_library
+    from scidb.project.library import read_library
 
     from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.project import registry

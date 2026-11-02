@@ -29,7 +29,7 @@ from typing import Literal
 
 from .input_spec import find_pathinput
 from .log import Log
-from .names import function_name
+from scifor.project.names import function_name
 from .schema_values import schema_str
 
 logger = logging.getLogger(__name__)

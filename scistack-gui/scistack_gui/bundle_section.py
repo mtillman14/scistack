@@ -1,5 +1,5 @@
 """
-The ``gui`` section of a project bundle (``scidb.bundle``): every pipeline's
+The ``gui`` section of a project bundle (``scidb.project.bundle``): every pipeline's
 canvas, plus the project-wide GUI state they depend on.
 
 Shares its parts with the single-pipeline export (one owner each):
@@ -20,6 +20,9 @@ from __future__ import annotations
 
 import json
 import logging
+
+from scifor.project.config import CONFIG_FILENAME
+from scifor.project.discovery import own_package_dir
 
 logger = logging.getLogger(__name__)
 
@@ -173,12 +176,11 @@ class CodeSection:
     """
 
     name = "code"
-    phase = "files"  # scidb.bundle.PHASE_FILES
+    phase = "files"  # scidb.project.bundle.PHASE_FILES
 
     def export(self, ctx) -> "dict[str, bytes]":
         from pathlib import Path
 
-        from scifor.discovery import CONFIG_FILENAME, own_package_dir
 
         from scistack_gui.project.config import load_config
 
@@ -272,7 +274,7 @@ def _verbatim_export(db) -> "dict[str, bytes]":
     meaningful where the run history goes live too: history-derived nodes
     keep their ids, ``_node_wiring`` keeps them attached to their history,
     and hidden edges hide connections that exist."""
-    from scidb import table_copy
+    from scidb.project import table_copy
 
     from scistack_gui.services.canvas_snapshot import table_portability
 
@@ -285,7 +287,7 @@ def _verbatim_export(db) -> "dict[str, bytes]":
 
 
 def _verbatim_import(db, files: "dict[str, bytes]") -> dict:
-    from scidb import table_copy
+    from scidb.project import table_copy
 
     tables = {
         rel[len(VERBATIM_PREFIX):]: blob

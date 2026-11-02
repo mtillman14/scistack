@@ -3,10 +3,10 @@
 <!-- Code variant of sharing/libraries.ui.md. Ground truth:
      scistack-gui/scistack_gui/library_cli.py (`scistack library
      list|add|remove|create|copy|build`, --project/--json before the
-     subcommand, --db), scidb/library.py (layout, read_library,
+     subcommand, --db), scidb/project/library.py (layout, read_library,
      write_library/create_library, [library] derived_from),
-     scifor.discovery authored_library_dirs (libs/<name>/src/<name>/) and
-     ensure_authored_libraries_importable, scidb.names.library_of (recorded
+     scifor.project.discovery authored_library_dirs (libs/<name>/src/<name>/) and
+     ensure_authored_libraries_importable, scifor.project.names.library_of (recorded
      names lib.fn), scidb/rename.py rename_functions + foreach_config.
      function_hash_for, scidb/pipeline.py Pipeline.bind (params "fn.param" step
      values, _default_input_names), services/library_authoring.py (copy:

@@ -10,17 +10,17 @@ A SciStack project has two configuration files, both plain text in [TOML](https:
 Both are created for you by `scistack init` or when the GUI creates a database (see [Create New Project](create-new-project.md)). Both are read by Python, MATLAB and the GUI alike, and both are safe to edit by hand: SciStack re-reads them on every scan, with no restart needed. Commit them to version control along with your code.
 
 <!-- Ground truth (verified 2026-10-18):
-     scistack.toml: name/location scifor.discovery.CONFIG_FILENAME/config_path_at;
-     the ONE writer scidb/config_file.py (TOP_LEVEL_ORDER, MATLAB_ORDER, TABLE_ORDER);
+     scistack.toml: name/location scifor.project.config.CONFIG_FILENAME/config_path_at;
+     the ONE writer scifor/project/config_file.py (TOP_LEVEL_ORDER, MATLAB_ORDER, TABLE_ORDER);
      GUI reader scistack_gui/config.py load_config; db -> scidb/inspect/cli.py
-     _config_db; packages -> scidb/discover.py _configured_packages + scidb/names.py
-     library_packages; authored libraries libs/<name>/ -> scifor.discovery.authored_library_dirs
-     + scidb.names.authored_libraries; glue_dir default src/scistack_glue (config.set_glue_dir);
-     [schema_keys] scidb.schema_order; [aliases] scidb.aliases; [colors] scidb.colors;
+     _config_db; packages -> scidb/project/discover.py _configured_packages + scifor/project/names.py
+     library_packages; authored libraries libs/<name>/ -> scifor.project.discovery.authored_library_dirs
+     + scifor.project.names.authored_libraries; glue_dir default src/scistack_glue (config.set_glue_dir);
+     [schema_keys] scifor.project.schema_order; [aliases] scifor.project.aliases; [colors] scifor.project.colors;
      [matlab] variable_dir also scimatlab/stubs.py (default scistack_matlab_variables
-     beside the entities file). Entities: scidb/entities.py (grammar, [library] table,
+     beside the entities file). Entities: scifor/project/entities_file.py (grammar, [library] table,
      empty-array parameter, list of path_inputs = alternatives), resolution
-     scidb.entities.resolve_entities_path, default location default_entities_relpath.
+     scifor.project.entities_file.resolve_entities_path, default location default_entities_relpath.
      Internal notes: docs/claude/config-file-formats.md, entities-toml-format.md. -->
 
 ## TOML in two minutes
@@ -114,7 +114,7 @@ Which [entities file](#scistack_entitiestoml) this project uses. How SciStack de
 2. If it's set to `""` (empty), the project has **no** entities file, even if one exists at the default location.
 3. Otherwise, `src/scistack_entities.toml` is used if it exists.
 
-**Used by:** `scidb.entities` in Python, `scidb.entities()` in MATLAB, and the GUI. **Written by:** `scistack init`, and the GUI when it creates the file (the first time you create a variable, parameter or file input on the canvas). New files go inside your project's package (`src/<name>/scistack_entities.toml`) so they ship with it; without a package, at `src/scistack_entities.toml`.
+**Used by:** `scidb.project.entities` in Python, `scidb.entities()` in MATLAB, and the GUI. **Written by:** `scistack init`, and the GUI when it creates the file (the first time you create a variable, parameter or file input on the canvas). New files go inside your project's package (`src/<name>/scistack_entities.toml`) so they ship with it; without a package, at `src/scistack_entities.toml`.
 
 #### `glue_dir`
 

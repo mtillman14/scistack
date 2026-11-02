@@ -1,24 +1,20 @@
 # Upward imports allowed today. This list may only shrink:
 # delete a line when its import is gone. Format: src -> dst  # reason
 # Owner: tools/import_layers.py
-scidb.bundle -> scidb  # reads __version__ and configure_database from the facade
-scidb.clear_data -> scidb.bundle  # bundle owns the HISTORY/INTENT table lists (T2: DDL owner, P3)
+scidb.project.bundle -> scidb  # reads __version__ and configure_database from the facade
+scidb.clear_data -> scidb.project.bundle  # bundle owns the HISTORY/INTENT table lists (T2: DDL owner, P3)
 scidb.clear_data -> scidb.provenance  # INTERNAL_RECORD_TYPES lives in provenance
 scidb.column_selection -> scidb.csv_export  # ColumnSelection.to_csv convenience
-scidb.database -> scidb.aliases  # DatabaseManager serves display config (B2: ProjectDisplay)
 scidb.database -> scidb.bindings  # variant_signature for variant listing (B2: VariantIndex)
-scidb.database -> scidb.colors  # DatabaseManager serves display config (B2: ProjectDisplay)
 scidb.database -> scidb.inspect.api  # DatabaseManager convenience returns an Inspector
 scidb.database -> scidb.pipeline  # save/for_each check the active Pipeline (B5)
 scidb.database -> scidb.provenance  # path-input spec and call-site output parsing (B2)
 scidb.database -> scidb.provenance_query  # provenance pass-throughs and record lookup (B2, Q1)
 scidb.database -> scidb.provenance_save  # direct save records its provenance (W2)
-scidb.database -> scidb.schema_order  # DatabaseManager serves display config (B2: ProjectDisplay)
 scidb.filters -> scidb.schema_values  # schema_str encoding for filter SQL; owner sits in store
 scidb.locations -> scidb.foreach_config  # function_hash_for (staleness needs the function identity recipe)
 scidb.locations -> scidb.inspect.graph  # core uses inspect.graph helpers (_stored_function_hashes, parse_path_input)
 scidb.merge -> scidb.csv_export  # Merge.to_csv convenience
-scidb.names -> scidb.schema_order  # locate_config; config lookup moves to scifor.project (P3)
 scidb.provenance -> scidb.bindings  # Binding type for id recipes; bindings belongs below provenance
 scidb.provenance_query -> scidb.bindings  # variant signatures; bindings belongs below provenance
 scidb.provenance_query -> scidb.foreach_config  # CallSite/RunOptions types for wiring queries

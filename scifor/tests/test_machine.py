@@ -1,4 +1,4 @@
-"""Machine-specific path roots (``scifor.machine``).
+"""Machine-specific path roots (``scifor.project.machine``).
 
 ``{rto}/LabMembers/...`` in a shared scistack.toml resolves through each
 machine's ``~/.scistack/machine.toml``. Before, an absolute path was right on
@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from scifor import machine
-from scifor.discovery import normalize_config_separators, resolve_config_path
+from scifor.project import machine
+from scifor.project.config import normalize_config_separators, resolve_config_path
 
 
 @pytest.fixture

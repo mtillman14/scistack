@@ -154,7 +154,7 @@ else goes through a natural sort so zero-padded IDs land as
 `01, 02, … 10` instead of `01, 10, 02`.
 
 A project that declares its levels (`[schema_keys]` in scistack.toml, read by
-`scidb.schema_order`) wins over both: declared levels first, in that order,
+`scifor.project.schema_order`) wins over both: declared levels first, in that order,
 the rest after them by the rule above. The declaration is read live, and a
 change drops the source's built tables, so an edit shows on the next plot
 request. Exported seaborn code states every order it relies on (`order=`,

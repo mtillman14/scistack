@@ -1,4 +1,4 @@
-"""Machine-specific roots in the GUI's config handling (``scifor.machine``).
+"""Machine-specific roots in the GUI's config handling (``scifor.project.machine``).
 
 scistack.log 2026-10-19: a Linux path in the shared scistack.toml, read on
 Windows as ``y:\\home\\mtillman\\mnt\\rto\\...``, was a "File does not exist"
@@ -15,9 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from scifor import machine
+from scifor.project import machine
+from scifor.project.config import load_config_file
 from scistack_gui.project import startup
-from scistack_gui.project.config import _normalize, add_path, load_config, remove_path, tomllib
+from scistack_gui.project.config import _normalize, add_path, load_config, remove_path
 
 
 def _roots(path: Path, roots: dict[str, str]) -> None:
@@ -99,20 +100,17 @@ def test_add_path_records_the_root_form(tmp_path, _pin_machine_file):
     db_path.write_text("")
 
     written = add_path(db_path, repo)
-    with open(written, "rb") as f:
-        data = tomllib.load(f)
+    data = load_config_file(written)
     assert data["modules"] == ["{rto}/LabMembers/repo"]
     assert data["matlab"]["sources"] == ["{rto}/LabMembers/repo"]
 
     # Same directory again: recognised through the root, not duplicated.
     add_path(db_path, repo)
-    with open(written, "rb") as f:
-        assert tomllib.load(f)["modules"] == ["{rto}/LabMembers/repo"]
+    assert load_config_file(written)["modules"] == ["{rto}/LabMembers/repo"]
 
     # And removable by its absolute path.
     remove_path(db_path, repo)
-    with open(written, "rb") as f:
-        assert tomllib.load(f)["modules"] == []
+    assert load_config_file(written)["modules"] == []
 
 
 def test_add_path_outside_every_root_stays_absolute(tmp_path, _pin_machine_file):
@@ -124,8 +122,7 @@ def test_add_path_outside_every_root_stays_absolute(tmp_path, _pin_machine_file)
     db_path.write_text("")
 
     written = add_path(db_path, repo)
-    with open(written, "rb") as f:
-        assert tomllib.load(f)["modules"] == [str(_normalize(repo))]
+    assert load_config_file(written)["modules"] == [str(_normalize(repo))]
 
 
 def test_the_paths_popup_gets_the_full_path_of_a_rooted_entry(tmp_path, _pin_machine_file):
@@ -159,10 +156,9 @@ def test_remove_matches_an_unmapped_entry_as_written(tmp_path):
     db_path.write_text("")
 
     written = remove_path(db_path, "{gone}/x")
-    with open(written, "rb") as f:
-        data = tomllib.load(f)
+    data = load_config_file(written)
     assert data["modules"] == ["keep"]
-    # scidb.config_file omits an emptied [matlab] table entirely.
+    # scifor.project.config_file omits an emptied [matlab] table entirely.
     assert data.get("matlab", {}).get("sources", []) == []
 
 
@@ -175,5 +171,4 @@ def test_remove_matches_a_mapped_entry_as_written(tmp_path, _pin_machine_file):
     db_path.write_text("")
 
     written = remove_path(db_path, "{rto}/repo")
-    with open(written, "rb") as f:
-        assert tomllib.load(f)["modules"] == []
+    assert load_config_file(written)["modules"] == []

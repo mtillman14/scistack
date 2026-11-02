@@ -373,6 +373,8 @@ Availability, defaults and refusals come from `capability.py` and
 | G9 | Archive or rewrite `scistack-gui-backend-internals.md` from this document. | backend weakness 7 |
 
 > **Done (2026-11-01, P2 stages 5-6):** G1 — logic moved out of `api/` unchanged: `services/graph_service.py` (from `api/pipeline.py`), `services/run_service.py` (`api/run.py`), `services/project_service.py`, `services/variable_service.py`, `services/matlab_command_format.py` (all of `api/matlab_command.py`), `ws_hub.py` (`api/ws.py`); only `app.py`/`server.py` import `api/`. G2 — `stores/`, `matlab/`, `project/`, `runtime/`; `ids`, `bootstrap`, `headless`, `app` stay top level (their measured layers differ from the proposal). `scistack-gui/tests/test_import_layers.py` enforces core → runtime → stores → project/matlab → domain → services → setup → api → entry, 14 allow-listed pairs.
+> **Done (2026-11-01, P3):** G3 — `scifor.project.config.read_project_config` returns typed `ProjectConfig`/`MatlabSection`; the GUI's `load_config` only expands entries into files. No `tomllib` in the GUI (`test_config_reader_owner.py`), none outside scifor.project repo-wide except a listed allow-list (`scifor/tests/test_toml_reader_owner.py`).
+> **Done (2026-11-01, P3):** G4 — `_intent` is declared by scidb (`scidb.tables.INTENT`) and created on every writable open; the GUI's 17 other tables are `TableDecl`s with owner `scistack_gui`, created on first use through `tables.ensure`.
 
 **Order.** G1 + G2 are mechanical moves that make every later change smaller.
 G7 is independent and is the largest maintainability win on the frontend.

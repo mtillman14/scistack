@@ -1,4 +1,4 @@
-"""scidb.project.init_project: the one owner of creating a SciStack project.
+"""scidb.project.init.init_project: the one owner of creating a SciStack project.
 
 The properties that matter: it builds a buildable package whose entities file
 lives inside it, it only ever CREATES (an existing file is never rewritten),
@@ -14,7 +14,7 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
-from scidb.project import (
+from scidb.project.init import (
     init_project,
     package_name_for,
     validate_project_name,
@@ -93,7 +93,7 @@ class TestFreshProject:
         assert config["matlab"]["sources"] == ["."]
 
     def test_entities_file_is_the_scidb_initial_text(self, tmp_path):
-        from scidb.entities import initial_text
+        from scifor.project.entities_file import initial_text
 
         report = init_project(tmp_path / "gait")
         assert report.entities_file.read_text() == initial_text()
@@ -214,8 +214,8 @@ class TestOnlyCreates:
 
 def test_the_package_is_discovered_once_not_as_loose_files_too(tmp_path):
     """The seeded modules = ["."] covers src/<pkg>/; the package itself is
-    the owner of those files (scifor.discovery.own_package_dir)."""
-    from scifor.discovery import own_package_dir
+    the owner of those files (scifor.project.discovery.own_package_dir)."""
+    from scifor.project.discovery import own_package_dir
 
     root = tmp_path / "gait"
     init_project(root)

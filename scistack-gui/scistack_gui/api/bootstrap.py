@@ -57,8 +57,8 @@ class CreateProjectRequest(BaseModel):
     the database goes, which is typically a datasets directory. See
     ``config.resolve_project_root``. ``None`` (blank in the wizard) means the
     default, inside the project's package
-    (``scidb.entities.default_entities_relpath``). Creating a database always
-    sets the project up (``scidb.project.init_project``, 2026-10-08); to have
+    (``scifor.project.entities_file.default_entities_relpath``). Creating a database always
+    sets the project up (``scidb.project.init.init_project``, 2026-10-08); to have
     no entities file, clear it in the Paths popup afterwards."""
 
 

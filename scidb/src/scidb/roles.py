@@ -3,7 +3,7 @@
 A LEAF (stdlib only), because the role is asked for everywhere: the
 endpoint policy in ``foreach``, ``Pipeline.endpoints()``, the inspector's
 report, and the GUI's sidebar filter. Until 2026-09-20 it lived in
-``scidb.discover``, which imports ``pipeline`` and ``variable`` at the top,
+``scidb.project.discover``, which imports ``pipeline`` and ``variable`` at the top,
 so every one of those callers imported it INSIDE a function to dodge the
 cycle — a role lookup was the single most common reason for a lazy import
 in the package. Stage 3 of ``.claude/plan-architecture-2026-09-20.md``.

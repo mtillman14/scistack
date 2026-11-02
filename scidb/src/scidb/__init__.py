@@ -54,7 +54,7 @@ from .artifact_stamp import read_artifact_stamp, stamp_artifact
 from .column_selection import ColumnSelection
 from .parameter import Parameter
 from .database import configure_database, get_database
-from .discover import (
+from .project.discover import (
     DiscoveryResult,
     ModuleError,
     ModuleExports,
@@ -116,12 +116,8 @@ from .variant import Variant, branch_param
 # BaseVariable subclasses and Parameters, so it must come after both exist,
 # and `from scidb import entities; entities.WINDOW` needs the module object
 # itself -- attribute access on it is what resolves a declared name.
-from . import entities  # noqa: E402
+from .project import entities  # noqa: E402
 from . import intent  # noqa: E402
-from . import schema_order  # noqa: E402
-from . import aliases  # noqa: E402
-from . import colors  # noqa: E402
-from . import names  # noqa: E402
 
 # The release tag owns the version (hatch-vcs writes it into the installed
 # metadata); "0.0.0" marks a source tree that was never installed.
@@ -139,19 +135,12 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb",
     "scidb.inspect",
     # Internals consumers import today; remove an entry once nothing needs it
-    "scidb.aliases",
     "scidb.across_variants",
     "scidb.bindings",
-    "scidb.bundle",
     "scidb.clear_data",
-    "scidb.colors",
     "scidb.column_selection",
     "scidb.combine",
-    "scidb.config_file",
     "scidb.database",
-    "scidb.discover",
-    "scidb.entities",
-    "scidb.environment",
     "scidb.exceptions",
     "scidb.exclusions",
     "scidb.external_loop",
@@ -164,29 +153,33 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.inspect.variant_cards",
     "scidb.intent",
     "scidb.inventory",
-    "scidb.library",
     "scidb.locations",
     "scidb.log",
-    "scidb.names",
     "scidb.parameter",
     "scidb.per_combo",
     "scidb.pipeline",
-    "scidb.project",
     "scidb.provenance",
     "scidb.provenance_query",
     "scidb.roles",
     "scidb.run_markers",
     "scidb.schema_level",
-    "scidb.schema_map",
-    "scidb.schema_order",
-    "scidb.source_edit",
     "scidb.state",
-    "scidb.table_copy",
+    "scidb.tables",
     "scidb.variable",
     "scidb.variant",
     "scidb.variant_pins",
-    "scidb.verify",
+    "scidb.versioned_store",
     "scidb.wirings",
+    # Project runtime, model-bound (the model-free half is scifor.project)
+    "scidb.project.bundle",
+    "scidb.project.discover",
+    "scidb.project.entities",
+    "scidb.project.environment",
+    "scidb.project.init",
+    "scidb.project.library",
+    "scidb.project.schema_map",
+    "scidb.project.table_copy",
+    "scidb.project.verify",
 )
 
 __all__ = [

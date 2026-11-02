@@ -9,6 +9,7 @@ import pytest
 # Ensure the local package is importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from scifor.project.config import load_config_file
 from scistack_gui.project.config import (
     SciStackConfig,
     _normalize,
@@ -22,7 +23,6 @@ from scistack_gui.project.config import (
     set_project_alias,
     set_project_color,
     set_project_root_hint,
-    tomllib,
 )
 
 
@@ -858,8 +858,7 @@ def test_folder_scan_matlab_addpath_derived_from_sources(tmp_path):
 
 
 def _read_raw_section(toml_path: Path) -> dict:
-    with open(toml_path, "rb") as f:
-        return tomllib.load(f)
+    return load_config_file(toml_path)
 
 
 def test_add_path_creates_scistack_toml_when_none_exists(tmp_path):
@@ -1058,7 +1057,7 @@ def test_remove_path_ignores_a_pyproject(tmp_path):
 # load_config's entities_file -- one answer, scidb's
 #
 # This used to read the `entities_file` key here and stop, missing
-# scidb.entities' conventional-path fallback. A project holding a
+# scidb.project.entities' conventional-path fallback. A project holding a
 # src/scistack_entities.toml with no key had its entities read by scidb and
 # by MATLAB and NEVER loaded into the GUI registry, so nothing it declared
 # showed up in the GUI -- the reported "entities aren't populated when I
@@ -1906,11 +1905,11 @@ def test_glue_dir_files_are_not_duplicated_when_also_in_modules(tmp_path):
 
 
 def test_add_path_preserves_a_hand_authored_schema_keys_table(tmp_path):
-    """``[schema_keys]`` is read by scidb.schema_order and written by nobody.
+    """``[schema_keys]`` is read by scifor.project.schema_order and written by nobody.
 
     The Paths popup rewrites the whole file from the fields it knows, so a
     level order the user typed would be DELETED by an unrelated '+' click —
-    the exact failure `scidb.config_file`'s docstring says must not
+    the exact failure `scifor.project.config_file`'s docstring says must not
     happen, one table later.
     """
     db_path = tmp_path / "proj.duckdb"
@@ -1941,7 +1940,7 @@ def test_add_path_preserves_a_hand_authored_schema_keys_table(tmp_path):
 def test_every_gui_config_write_keeps_keys_it_does_not_know(tmp_path):
     """scistack.toml is the only config file (2026-10-08), so a key the GUI
     has no field for (the scidb CLI's ``db``, anything a user adds) must
-    survive every GUI write -- each writer goes through scidb.config_file
+    survive every GUI write -- each writer goes through scifor.project.config_file
     with the whole section."""
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -1995,7 +1994,7 @@ def test_a_preserved_schema_keys_table_is_rendered_last(tmp_path):
 
 
 def test_add_path_preserves_a_hand_authored_aliases_table(tmp_path):
-    """``[aliases]`` (scidb.aliases) must survive the Paths popup's whole-file
+    """``[aliases]`` (scifor.project.aliases) must survive the Paths popup's whole-file
     rewrite exactly as ``[schema_keys]`` does, including a quoted
     ``"Var.Column"`` entry, zero-padded level keys, and the inline ``levels``
     form — which comes back as a sub-table, the one form the writer emits."""
@@ -2100,7 +2099,7 @@ def test_set_project_alias_sets_and_clears_names_and_levels(tmp_path):
 def test_a_new_alias_is_read_back_at_once(tmp_path):
     """The reader caches on mtime; the writer forgets that parse, so a figure
     drawn in the same filesystem tick still sees the edit."""
-    from scidb import aliases
+    from scifor.project import aliases
 
     db_path, toml_file = _alias_project(tmp_path)
     assert aliases.aliases_in(toml_file)["session"] == {"name": "Session"}
@@ -2130,7 +2129,7 @@ def test_set_project_alias_never_creates_a_config(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Project mark colours: [colors] (scidb.colors), .claude/plan-custom-mark-colors.md
+# Project mark colours: [colors] (scifor.project.colors), .claude/plan-custom-mark-colors.md
 # ---------------------------------------------------------------------------
 
 
@@ -2186,7 +2185,7 @@ def test_colours_survive_every_other_write(tmp_path):
 
 
 def test_a_new_colour_is_read_back_at_once(tmp_path):
-    from scidb import colors
+    from scifor.project import colors
 
     db_path, toml_file = _color_project(tmp_path)
     assert colors.colors_in(toml_file) == {}

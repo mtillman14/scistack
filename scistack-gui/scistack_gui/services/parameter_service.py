@@ -12,7 +12,7 @@ docs/claude/code-discovery-categories.md), so "create from the GUI" means
 appending a real declaration to the configured ``variable_file`` and
 refreshing the registry — never writing a bare name to layout.json.
 
-The declaration text is rendered by ``scidb.source_edit.render_parameter``
+The declaration text is rendered by ``scifor.project.source_edit.render_parameter``
 (Python) / ``matlab_parser.render_matlab_parameter`` (MATLAB), which own the
 declaration grammar. :func:`update_parameter` rewrites an existing
 declaration in place through ``target_file_service.update_declaration``,
@@ -89,7 +89,7 @@ def create_parameter(
     )
 
     if is_toml_target(target_file):
-        from scidb.entities import render_parameter_value
+        from scifor.project.entities_file import render_parameter_value
 
         if description:
             # The TOML format has no home for it (plan D4). Say so rather
@@ -109,7 +109,7 @@ def create_parameter(
             rendered=render_parameter_value(values),
         )
     else:
-        from scidb.source_edit import render_parameter
+        from scifor.project.source_edit import render_parameter
 
         line = f"\n{name} = {render_parameter(values, description)}\n"
         err = append_and_refresh(line, target_file)
@@ -147,8 +147,8 @@ def update_parameter(
     generated set leaves the set intact — it only drops one that has stopped
     describing what source declares (see :func:`_record_value_group`).
     """
-    from scidb.entities import render_parameter_value
-    from scidb.source_edit import render_parameter
+    from scifor.project.entities_file import render_parameter_value
+    from scifor.project.source_edit import render_parameter
 
     from scistack_gui.matlab.parser import render_matlab_parameter
     from scistack_gui.services.target_file_service import update_declaration

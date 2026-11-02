@@ -3,7 +3,7 @@
 Two related pieces live here:
 
 1. **The ``@scistack`` marker** — tags a plain Python function so scistack
-   pays attention to it: :mod:`scidb.discover` collects tagged functions
+   pays attention to it: :mod:`scidb.project.discover` collects tagged functions
    (GUI step-palette discovery), and :func:`scidb.for_each` reads the
    per-function ``generates_file`` option. The marker does **not** wrap the
    function or change its return value.
@@ -50,7 +50,7 @@ from typing import Any
 from scifor.locations import LocationFilter
 
 from .log import Log
-from .names import function_name
+from scifor.project.names import function_name
 from .roles import endpoint_kind
 
 # Attribute names stamped onto a tagged function.

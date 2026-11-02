@@ -221,8 +221,8 @@ owners or no owner, **bug class present**.
 
 | concept | owner | consumers | rival / gap | status |
 |---|---|---|---|---|
-| Project root | `scifor.pathinput.project_root()` (pin, else cwd; D-2026-09-23-1) | GUI registry (pins), MATLAB `load_entities`, PathInput | GUI `locate_config_at` counts a bare `pyproject.toml` as config; scifor's doesn't (open in the decision) | ⚠️ |
-| Entities file path | `scidb.entities.resolve_entities_path` | GUI bootstrap, MATLAB | memory says `server.py` duplicates the bootstrap startup inline; *to verify* | ⚠️ |
+| Project root | `scifor.project.root.project_root()` (pin, else cwd; D-2026-09-23-1) | GUI registry (pins), MATLAB `load_entities`, PathInput | GUI `locate_config_at` counts a bare `pyproject.toml` as config; scifor's doesn't (open in the decision) | ⚠️ |
+| Entities file path | `scifor.project.entities_file.resolve_entities_path` | GUI bootstrap, MATLAB | memory says `server.py` duplicates the bootstrap startup inline; *to verify* | ⚠️ |
 | Entity editability | `target_file_service.entity_editability` | sidebar panels | — | ✅ |
 | Dataset schema keys | `DatabaseManager.dataset_schema_keys` | foreach, loaders | **mirrored** into the `scifor.set_schema()` global in 3 places (`database.py:744`, `foreach.py:5664`, `:5677`); readers fall back to the global and swallow errors (§1.6) | ⚠️ |
 | Current database | `scidb.database._local` / `get_database()` | 60 call sites | scidb-net and scistack read the private `_local` | ⚠️ |
@@ -237,7 +237,7 @@ owners or no owner, **bug class present**.
 | Current wiring of a node | `edge_resolver.ResolvedWiring.bindings` (one dict, three views) | execution, MATLAB command, call_id | — | ✅ |
 | Manual edges vs history | `graph_builder.manual_input_overrides` (rule: visible edges outrank history) | build_edges, execution | **B1 breaks the rule**: a history constant edge supersedes the manual Parameter edge because the two have different source ids | ❌ |
 | **Column-selection shape** | `scidb.intent.normalize_columns` / `same_columns` | GUI chip, `provenance_save.compute_input_selectors`, `mark_unused_intent` | "every column" is **symbolic** in intent (`{columns: [], iterate: true}`) but **resolved** in the recorded selector. `same_columns` compares literally, so every all-columns `for_columns` is flagged "not reflected by its last run" (seen 14:45:56). **B2** | ❌ |
-| Entity values (Parameter values etc.) | the entities TOML via `scidb.entities` (only writable surface) | GUI panels, MATLAB | — | ✅ |
+| Entity values (Parameter values etc.) | the entities TOML via `scidb.project.entities` (only writable surface) | GUI panels, MATLAB | — | ✅ |
 
 ### 2.4 Execution
 

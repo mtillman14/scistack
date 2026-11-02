@@ -24,8 +24,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
 from scidb import BaseVariable, EachOf, Parameter, PathInput
-from scidb.discover import is_parameter, is_path_input
-from scifor.discovery import (
+from scidb.project.discover import is_parameter, is_path_input
+from scifor.project.entities_file import DEFAULT_ENTITIES_FILENAME
+from scifor.project.discovery import (
     PathInsert,
     PathInsertAll,
     find_top_level_side_effects,
@@ -257,12 +258,12 @@ def load_from_config(
     # for every layer. Pinning here is what makes an in-process run resolve
     # a rootless PathInput -- and scidb read [schema_keys] -- at the same
     # folder graph_builder matched against, instead of at the server's cwd.
-    from scifor.pathinput import set_project_root
+    from scifor.project.root import set_project_root
 
     set_project_root(config.project_root)
     # Which packages are LIBRARIES (their functions are named `pkg.fn`) is
     # read from this config; forget the previous project's answer.
-    from scidb import names as _names
+    from scifor.project import names as _names
 
     _names.clear_cache()
 
@@ -296,7 +297,7 @@ def load_from_config(
     if src_dir.is_dir():
         # A packaged project's own code (auto-folded into config.packages
         # by config.load_config) is only importable by name if src/ is on
-        # sys.path -- mirrors scidb.discover.scan_project's precondition.
+        # sys.path -- mirrors scidb.project.discover.scan_project's precondition.
         # Idempotent/no-op for projects already pip install -e'd.
         with PathInsert(str(src_dir.resolve())):
             _load_packages(config.packages)
@@ -408,7 +409,7 @@ def _screen_for_side_effects(path: Path) -> str | None:
 SLOW_IMPORT_WARN_S = 5.0
 """Importing a file that only defines things takes well under a second. Past
 this, its top-level code is almost certainly doing work the side-effect
-screen did not catch (see ``scifor.discovery.find_top_level_side_effects``).
+screen did not catch (see ``scifor.project.discovery.find_top_level_side_effects``).
 The extension kills a startup that sends no progress for 60 s."""
 
 
@@ -497,9 +498,9 @@ def _load_packages(names: list[str]) -> None:
     """Import each named package and walk its submodules for functions.
 
     Walking mechanics (pkgutil, import-error capture, test-module exclusion)
-    are shared with scidb.discover.scan_package via scifor.discovery.walk_package;
+    are shared with scidb.project.discover.scan_package via scifor.project.discovery.walk_package;
     this function only supplies the "what to do with a successfully imported
-    module" callback (mutate the flat registry dicts, unlike scidb.discover's
+    module" callback (mutate the flat registry dicts, unlike scidb.project.discover's
     pure per-module scanner).
     """
     logger.debug("[registry] Importing %d packages", len(names))
@@ -508,7 +509,7 @@ def _load_packages(names: list[str]) -> None:
             "[registry] Processing package %d/%d: %s", pkg_idx + 1, len(names), pkg_name
         )
 
-        from scidb.names import library_packages
+        from scifor.project.names import library_packages
 
         is_library = pkg_name.split(".")[0] in library_packages()
 
@@ -570,7 +571,7 @@ def _load_library_entities(pkg_name: str) -> None:
     import importlib.resources
 
     from scidb import BaseVariable
-    from scidb.entities import DEFAULT_ENTITIES_FILENAME, load
+    from scidb.project.entities import load
 
     try:
         candidate = importlib.resources.files(pkg_name) / DEFAULT_ENTITIES_FILENAME
@@ -711,11 +712,11 @@ def _scan_module_functions(module, *, source: str) -> None:
     comparing ``__module__``. Without this, internal scistack helpers
     re-exported into a user file leak into the GUI's discovered-functions
     list as if they were pipeline steps. Mirrors the same filter already
-    used by :func:`scidb.discover.discover_module`.
+    used by :func:`scidb.project.discover.discover_module`.
     """
     module_name = getattr(module, "__name__", None)
     logger.debug("[registry] Scanning module for functions: %s", source)
-    from scidb.names import function_name, library_of
+    from scifor.project.names import function_name, library_of
 
     discovered = []
     skipped_reexports = []
@@ -727,7 +728,7 @@ def _scan_module_functions(module, *, source: str) -> None:
         if getattr(obj, "__module__", None) != module_name:
             skipped_reexports.append(name)
             continue
-        # THE recorded name (scidb.names): a library's function is `pkg.fn`,
+        # THE recorded name (scifor.project.names): a library's function is `pkg.fn`,
         # the project's own code keeps its name, so a script run and a GUI
         # run of the same function record the same name.
         key = function_name(obj) if library_of(obj) else name
@@ -753,13 +754,13 @@ def _is_library_source(source: "str | None") -> bool:
     """Whether a declaration *source* is an installed LIBRARY (a package the
     project lists, or an entry point) rather than the project itself. The
     project's own package is scanned as ``package:...`` too, so the package
-    name is checked against ``scidb.names.library_packages``."""
+    name is checked against ``scifor.project.names.library_packages``."""
     if not source:
         return False
     if source.startswith("entrypoint:"):
         return True
     if source.startswith("package:"):
-        from scidb.names import library_packages
+        from scifor.project.names import library_packages
 
         top = source[len("package:"):].split(":")[0].split(".")[0]
         return top in library_packages()
@@ -990,7 +991,7 @@ def reload_entities_file() -> "str | None":
 def _load_entities_file(path: Path) -> None:
     """Register everything the TOML entities file declares.
 
-    The read half of ``scidb.entities`` -- the format's owner does the
+    The read half of ``scidb.project.entities`` -- the format's owner does the
     parsing and construction, this only registers the results and records
     per-entry failures the way a failed module load is recorded, so a bad
     declaration shows up in the GUI's load-errors panel instead of
@@ -1002,7 +1003,7 @@ def _load_entities_file(path: Path) -> None:
     Their *source* is recorded here, though -- that is what lets a later
     reload withdraw them again (:func:`_unregister_tracked_variables`).
     """
-    from scidb.entities import load
+    from scidb.project.entities import load
 
     logger.info("[registry] Loading entities file: %s", path)
     result = load(path)
@@ -1037,7 +1038,7 @@ def _scan_module_parameters(module, *, source: str) -> None:
     ``getattr(const, "__module__", None)`` would silently return the
     *wrapped value's* ``__module__`` if it happens to have one, which is
     meaningless here). This mirrors the same documented tradeoff already
-    made by :func:`scidb.discover.discover_module` — a Parameter imported
+    made by :func:`scidb.project.discover.discover_module` — a Parameter imported
     into multiple scanned modules can appear attributed to more than one
     of them, on purpose.
     """
@@ -1078,7 +1079,7 @@ def get_parameters_registry() -> dict[str, Parameter]:
 
     Used by ``services/project_service.py``'s registry-backed "Discovered Code" panel
     for loose-script/folder-scan projects — the equivalent of what
-    ``scidb.discover.scan_project`` already provides for packaged projects.
+    ``scidb.project.discover.scan_project`` already provides for packaged projects.
     """
     return dict(_parameters)
 
@@ -1187,7 +1188,7 @@ def get_project_root() -> "Path | None":
     Reads scifor's pinned root, the one holder, which :func:`load_from_config`
     set from ``config.project_root`` -- so it can never disagree with where
     a run resolves."""
-    from scifor.pathinput import get_project_root as _pinned
+    from scifor.project.root import get_project_root as _pinned
 
     return _pinned() if _config is not None else None
 

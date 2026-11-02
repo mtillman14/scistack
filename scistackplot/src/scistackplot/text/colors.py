@@ -5,7 +5,7 @@ text grammar and of the plot-over-project merge.
 Three layers, first match wins, per level of the factor a mark is painted by:
 
 1. the plot's own (:attr:`PlotSpec.colors`, stored with the saved plot);
-2. the project's (``[colors]`` in the project config; ``scidb.colors`` owns
+2. the project's (``[colors]`` in the project config; ``scifor.project.colors`` owns
    that TOML grammar and a table carries a live reader of it,
    :meth:`LongTable.project_colors`);
 3. the palette (``render.base.palette_for``), at the level's DECLARED

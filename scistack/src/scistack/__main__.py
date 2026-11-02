@@ -11,7 +11,7 @@ Usage:
     scistack verify [--against X] # = scidb verify: your re-run vs the exporter's history
     scistack db <command> ...      # alias for the ``scidb`` CLI
 
-``init`` is a thin front end over ``scidb.project.init_project``, the one
+``init`` is a thin front end over ``scidb.project.init.init_project``, the one
 owner of "make this folder a SciStack project" (the GUI calls the same
 function when it creates a database). It only creates what is missing, so it
 is safe to run in an existing folder and to run twice.
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
-    from scidb.project import init_project
+    from scidb.project.init import init_project
 
     try:
         report = init_project(args.path, name=args.name)

@@ -337,7 +337,7 @@ class Inspector:
         against read-only opens), so lock contention is mapped to
         DatabaseLockedError with a plain-language message.
         """
-        from sciduckdb import schema_keys_from_db
+        from ..sciduck import schema_keys_from_db
 
         from ..database import DatabaseManager
         from .mutate import lock_errors_mapped

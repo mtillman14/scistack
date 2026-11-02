@@ -232,7 +232,7 @@ class TestExportRoundTrip:
     def test_edited_value_reaches_the_exported_script(self, populated_db, tmp_path):
         """"Eject to a standalone script" must stay truthful after an edit —
         the export recomputes from the same declarations the GUI edits."""
-        from scidb.source_edit import render_parameter
+        from scifor.project.source_edit import render_parameter
 
         # The export path serialises resolved values via repr(); asserting on
         # the renderer + a re-scan proves the edited object is what an export
@@ -286,7 +286,7 @@ class TestMatlabEntitiesRoundTrip:
         return f
 
     def test_parameter_value_rewrite(self, tmp_path):
-        from scidb.source_edit import splice
+        from scifor.project.source_edit import splice
 
         from scistack_gui.matlab.parser import (
             binding_parameter_literal,
@@ -317,7 +317,7 @@ class TestMatlabEntitiesRoundTrip:
         assert "other = 1;" in f.read_text()
 
     def test_path_input_rewrite(self, tmp_path):
-        from scidb.source_edit import splice
+        from scifor.project.source_edit import splice
 
         from scistack_gui.matlab.parser import (
             binding_path_input_literal,
@@ -345,7 +345,7 @@ class TestMatlabEntitiesRoundTrip:
     def test_registry_reads_back_the_rewritten_file(self, tmp_path):
         """The full MATLAB loop: rewrite, then load through matlab_registry
         and confirm the GUI-visible object matches."""
-        from scidb.source_edit import splice
+        from scifor.project.source_edit import splice
 
         from scistack_gui.matlab import registry as matlab_registry
 

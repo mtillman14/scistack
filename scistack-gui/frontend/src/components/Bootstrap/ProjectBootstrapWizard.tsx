@@ -28,7 +28,7 @@
  * database's own directory for .py/.m files. Nothing needs to be typed in
  * up front; "Refresh Code" in the header re-scans later once files exist.
  *
- * Creating a database runs scidb.project.init_project (via POST
+ * Creating a database runs scidb.project.init.init_project (via POST
  * /api/bootstrap/create): the folder becomes a SciStack project -- a package
  * with pyproject.toml, src/<name>/, scistack.toml and the entities file. The
  * optional "Entities file" field overrides where that file goes; blank means

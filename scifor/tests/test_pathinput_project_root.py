@@ -17,8 +17,8 @@ same wherever it ran. Rewriting ``root_folder`` instead is what grew
 import os
 
 import pytest
-from scifor.pathinput import (
-    PathInput,
+from scifor.pathinput import PathInput
+from scifor.project.root import (
     clear_project_root,
     enter_project_root,
     get_project_root,
@@ -166,7 +166,7 @@ class TestNoWalkingUp:
         assert project_root() == bare.resolve()
 
     def test_config_lookup_never_leaves_the_root(self, tmp_path):
-        from scifor.discovery import project_config_at
+        from scifor.project.config import project_config_at
 
         (tmp_path / "scistack.toml").write_text("modules = []\n")
         child = tmp_path / "child"

@@ -4,7 +4,7 @@ What every level and name READS AS in a figure — the ONE owner.
 Two layers of display aliases, first match wins:
 
 1. the plot's own (:attr:`PlotSpec.aliases`, stored with the saved plot);
-2. the project's (``[aliases]`` in the project config; ``scidb.aliases`` owns
+2. the project's (``[aliases]`` in the project config; ``scifor.project.aliases`` owns
    that grammar and a table carries a live reader of it,
    :meth:`LongTable.project_aliases`);
 

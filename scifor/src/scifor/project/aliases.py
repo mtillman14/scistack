@@ -31,13 +31,13 @@ A plot may override any entry (``PlotSpec.aliases``, scistackplot); the merge
 and the application are ``scistackplot.text.aliases``'. This module reads, checks
 and writes the project layer — see docs/claude/plot-text-and-labels.md.
 
-Why scidb owns it
------------------
-The names it keys on are scidb's (schema keys, variables), it lives in the same
+Why scifor.project owns it
+--------------------------
+It is a grammar over the config file (no database), it lives in the same
 config ``[schema_keys]`` does, and it is read the same way: live, through
-:func:`scidb.schema_order.locate_config`, content cached on the file's mtime —
+:func:`scifor.project.schema_order.locate_config`, content cached on the file's mtime —
 an edit reaches the next figure with no restart. ``scistackplot`` must work
-without scidb, so it never reads the file; ``scistackplotdb`` hands it the
+without a project, so it never reads the file; ``scistackplotdb`` hands it the
 parsed table. The GUI's whole-file writer calls :func:`render_aliases_table`
 rather than knowing the grammar itself.
 """
@@ -48,9 +48,10 @@ import re
 from pathlib import Path
 from typing import Any, Iterable, TypedDict
 
-from scifor.discovery import read_scistack_section
+from scistacklog import Log
 
-from .log import Log
+from .config import read_scistack_section
+
 
 #: TOML table holding the declarations, in both config formats.
 SECTION = "aliases"
@@ -179,7 +180,7 @@ def project_aliases() -> AliasTable:
     """The aliases for THIS process's project, read live.
 
     The same config ``[schema_keys]`` comes from
-    (:func:`scidb.schema_order.locate_config`: the pinned project root, else
+    (:func:`scifor.project.schema_order.locate_config`: the pinned project root, else
     the working directory), so the two can never be read from different files.
     Cheap: the location is cached for ``LOCATE_TTL`` and the parse on mtime.
     """

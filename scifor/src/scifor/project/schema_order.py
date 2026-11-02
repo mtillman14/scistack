@@ -28,9 +28,10 @@ must stay ``"01"`` rather than becoming ``1`` (docs/claude/schema-key-types.md);
 a key declared ``numeric`` is canonicalized long before it reaches here, so the
 two never fight.
 
-Why scidb owns it
------------------
-Schema keys are scidb's concept, and the consumers span three layers — row
+Why scifor.project owns it
+--------------------------
+It is a grammar over the config file, with no database in it, and the
+consumers span three layers — row
 order in ``database._sort_by_schema_keys``, for_each iteration through
 ``DatabaseManager.distinct_schema_values``, factor levels in
 ``scistackplotdb.source``, the exported seaborn code, the GUI's level lists
@@ -38,7 +39,7 @@ order in ``database._sort_by_schema_keys``, for_each iteration through
 :func:`project_level_order` on every use rather than keeping a copy, so an
 edit to the file needs no restart. One reader here means one
 answer everywhere (CLAUDE.md NOTE 3), reading the project config through
-``scifor.discovery``, which is the pure parser every layer already shares.
+``scifor.project.discovery``, the pure parser every layer already shares.
 """
 
 from __future__ import annotations
@@ -46,9 +47,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from scifor.discovery import project_config_at, read_scistack_section
+from scistacklog import Log
 
-from .log import Log
+from .config import project_config_at, read_scistack_section
+
 
 #: TOML table holding the declarations, in both config formats.
 SECTION = "schema_keys"
@@ -95,7 +97,7 @@ def declared_level_order(start: "Path | str | None" = None) -> dict[str, list[st
     nothing valid in it — in which case every caller keeps the ordering it had.
     """
     if start is None:
-        from scifor.pathinput import project_root
+        from .root import project_root
 
         start = project_root()
     config = project_config_at(Path(start))
@@ -155,7 +157,7 @@ def _root() -> tuple[str, Path]:
     generated command or the GUI pinned, else the working directory. There
     is no other place to look: a config above the root, or next to the
     database file, is not this project's."""
-    from scifor.pathinput import get_project_root, project_root
+    from .root import get_project_root, project_root
 
     label = "pinned project root" if get_project_root() is not None else "working directory"
     return label, project_root()

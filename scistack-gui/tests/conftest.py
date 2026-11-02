@@ -395,14 +395,14 @@ def fn_min_state_across_call_sites(nodes, label: str) -> str | None:
 
 @pytest.fixture(autouse=True)
 def _pin_machine_file(tmp_path_factory, monkeypatch):
-    """Point ``scifor.machine`` at a per-test machine.toml.
+    """Point ``scifor.project.machine`` at a per-test machine.toml.
 
     The startup path check (``startup.check_machine_config_paths``) reads,
     and on first use CREATES, ``~/.scistack/machine.toml``. Unpinned, the
     suite would write the developer's real home folder and read their real
     roots.
     """
-    from scifor import machine
+    from scifor.project import machine
 
     path = tmp_path_factory.mktemp("machine") / "machine.toml"
     monkeypatch.setenv(machine.MACHINE_FILE_ENV, str(path))

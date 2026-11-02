@@ -519,7 +519,7 @@ class TestParseMatlabEntitiesScript:
     def test_expression_span_enables_a_form_change(self, tmp_path):
         """The RHS span covers the constructor too, so Constant -> Sweep is
         the same splice as a value edit (D4)."""
-        from scidb.source_edit import splice
+        from scifor.project.source_edit import splice
 
         from scistack_gui.matlab.parser import (
             parse_matlab_entities_script,
@@ -3603,7 +3603,7 @@ class TestMatlabFunctionPrecedence:
 
         from scistack_gui.matlab import registry as matlab_registry
 
-        from scifor import pathinput
+        from scifor.project import root as project_root_module
         from scistack_gui.project import registry
 
         # What the load path does: both registries get the config, and
@@ -3612,7 +3612,7 @@ class TestMatlabFunctionPrecedence:
         config = types.SimpleNamespace(project_root=root)
         monkeypatch.setattr(matlab_registry, "_config", config)
         monkeypatch.setattr(registry, "_config", config)
-        monkeypatch.setattr(pathinput, "_project_root_override", root.resolve())
+        monkeypatch.setattr(project_root_module, "_project_root_override", root.resolve())
 
     def test_project_wins_regardless_of_scan_order(self, monkeypatch, tmp_path):
         from scistack_gui.matlab import registry as matlab_registry

@@ -6,7 +6,7 @@ finds it and for_each can read its ``generates_file`` option.
 
 import types
 
-from scidb.discover import discover_module
+from scidb.project.discover import discover_module
 from scidb.pipeline import (
     GENERATES_FILE_ATTR,
     SCISTACK_FLAG,

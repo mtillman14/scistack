@@ -93,9 +93,9 @@ def test_load_from_config_forwards_progress_to_module_imports(tmp_path, monkeypa
     monkeypatch.setattr(registry, "_load_entry_points", lambda: None)
     # load_from_config pins scifor's project root globally; keep it out of
     # other tests.
-    import scifor.pathinput
+    import scifor.project.root
 
-    monkeypatch.setattr(scifor.pathinput, "set_project_root", lambda root: None)
+    monkeypatch.setattr(scifor.project.root, "set_project_root", lambda root: None)
 
     class _Cfg:
         project_root = tmp_path

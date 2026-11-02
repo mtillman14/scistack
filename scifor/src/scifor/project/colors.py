@@ -24,13 +24,13 @@ READS as, a colour is how it is PAINTED — two concepts, two owners.
 
 This module reads, checks the SHAPE of, and writes the project layer. A
 colour's text is kept as text: what a colour may be written as is
-``scistackplot.text.colors.parse_color``'s (scidb cannot import scistackplot), and
+``scistackplot.text.colors.parse_color``'s (scifor cannot import scistackplot), and
 the GUI's writer canonicalises through it before calling
 :func:`render_colors_table`. The merge with a plot's own pins and the
 painting are scistackplot's. See docs/claude/plot-colors.md.
 
 Read like ``[aliases]``: live, through
-:func:`scidb.schema_order.locate_config`, content cached on the file's mtime.
+:func:`scifor.project.schema_order.locate_config`, content cached on the file's mtime.
 """
 
 from __future__ import annotations
@@ -38,10 +38,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
-from scifor.discovery import read_scistack_section
+from scistacklog import Log
 
 from .aliases import SYNTHETIC_NAMES, _toml_key, _toml_str
-from .log import Log
+from .config import read_scistack_section
 
 #: TOML table holding the declarations, in both config formats.
 SECTION = "colors"

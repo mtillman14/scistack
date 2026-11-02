@@ -11,11 +11,15 @@ rules (docs/claude/saved-plots.md, docs/claude/plot-presets.md):
   racing saves cannot claim the same one.
 * **Nothing is ever deleted** (feedback_never_delete_mark_hidden): "remove"
   sets ``hidden`` on every version.
-* **Reads never create the table.** Writes call :meth:`ensure_table`.
+* **Reads never create the table.** Writes call :meth:`ensure_table`. The
+  table is declared in ``scidb.tables`` when the store is constructed, with
+  the declaring package as its owner.
 * All reads go through ``fetchall``/``fetchone`` (the fetch-locking guard).
 
-This module owns those rules once, so the two stores cannot drift apart
-(CLAUDE.md NOTE 4). A store with a *scope column* (saved plots: ``variable``)
+This module owns those rules once, so the stores cannot drift apart
+(CLAUDE.md NOTE 4). It lives in scidb, the owner of the project database's
+tables (D3), so scistackplotdb and scistackstatsdb both use it through a
+public module (design review 06, PD2). A store with a *scope column* (saved plots: ``variable``)
 keeps names unique per scope; a store without one (presets) keeps them unique
 across the project. Callers turn the raw rows this returns into their own
 info objects.
@@ -31,7 +35,8 @@ from typing import Any, Callable
 
 from scistacklog import Log
 
-LAYER = "scistackplotdb"
+from . import tables
+from .tables import TableDecl
 
 #: Longest name accepted. A name is a list label, not a description.
 MAX_NAME_LENGTH = 120
@@ -56,23 +61,36 @@ class VersionedStore:
     tag: str
     #: The error every refusal raises.
     error: type[Exception]
+    #: The package that declares the store: its table's owner and log layer.
+    owner: str
+
+    def __post_init__(self) -> None:
+        scope = f"{self.scope_column} VARCHAR NOT NULL," if self.scope_column else ""
+        tables.declare(
+            TableDecl(
+                self.table,
+                (
+                    f"""
+                    CREATE TABLE IF NOT EXISTS {self.table} (
+                        {self.id_column} VARCHAR NOT NULL,
+                        {scope}
+                        name          VARCHAR NOT NULL,
+                        version       INTEGER NOT NULL,
+                        saved_at      VARCHAR NOT NULL,
+                        hidden        BOOLEAN NOT NULL DEFAULT FALSE,
+                        envelope_json VARCHAR NOT NULL,
+                        PRIMARY KEY ({self.id_column}, version)
+                    )
+                    """,
+                ),
+                owner=self.owner,
+            )
+        )
 
     # ---- table ----------------------------------------------------------
 
     def ensure_table(self, db) -> None:
-        scope = f"{self.scope_column} VARCHAR NOT NULL," if self.scope_column else ""
-        db._duck.execute(f"""
-            CREATE TABLE IF NOT EXISTS {self.table} (
-                {self.id_column} VARCHAR NOT NULL,
-                {scope}
-                name          VARCHAR NOT NULL,
-                version       INTEGER NOT NULL,
-                saved_at      VARCHAR NOT NULL,
-                hidden        BOOLEAN NOT NULL DEFAULT FALSE,
-                envelope_json VARCHAR NOT NULL,
-                PRIMARY KEY ({self.id_column}, version)
-            )
-        """)
+        tables.ensure(db._duck, self.table)
 
     def table_exists(self, db) -> bool:
         row = db._duck.fetchone(
@@ -141,7 +159,7 @@ class VersionedStore:
                 self.describe(scope, name),
                 self.noun,
                 current[0][:8],
-                layer=LAYER,
+                layer=self.owner,
             )
             raise on_clash(current)
         item_id = current[0] if current else uuid.uuid4().hex
@@ -169,7 +187,7 @@ class VersionedStore:
             f"new {self.noun}" if current is None else f"{self.noun} {item_id[:8]}",
             len(text),
             envelope.get("format"),
-            layer=LAYER,
+            layer=self.owner,
         )
         return row, current is None
 
@@ -189,7 +207,7 @@ class VersionedStore:
             self.describe(row[1], row[2]),
             new_name,
             item_id[:8],
-            layer=LAYER,
+            layer=self.owner,
         )
         return self.latest(db, item_id)
 
@@ -211,7 +229,7 @@ class VersionedStore:
             "hid" if hidden else "unhid",
             self.describe(row[1], row[2]),
             item_id[:8],
-            layer=LAYER,
+            layer=self.owner,
         )
         return self.latest(db, item_id)
 
@@ -258,7 +276,7 @@ class VersionedStore:
             len(rows),
             self.noun,
             " (hidden included)" if include_hidden else "",
-            layer=LAYER,
+            layer=self.owner,
         )
         return list(rows)
 
@@ -340,7 +358,7 @@ class VersionedStore:
             envelope = json.loads(text)
         except (TypeError, ValueError) as exc:
             Log.warn("[%s] %s: stored envelope is not JSON (%s)", self.tag, label, exc,
-                     layer=LAYER)
+                     layer=self.owner)
             return {}
         if not isinstance(envelope, dict):
             Log.warn(
@@ -348,7 +366,7 @@ class VersionedStore:
                 self.tag,
                 label,
                 type(envelope).__name__,
-                layer=LAYER,
+                layer=self.owner,
             )
             return {}
         return envelope
@@ -369,7 +387,7 @@ class VersionedStore:
         rows = db._duck.fetchall(
             f"SELECT {', '.join(cols)} FROM {self.table} ORDER BY {self.id_column}, version"
         )
-        Log.info("[%s] dump_rows: %d row(s)", self.tag, len(rows), layer=LAYER)
+        Log.info("[%s] dump_rows: %d row(s)", self.tag, len(rows), layer=self.owner)
         return [dict(zip(cols, row)) for row in rows]
 
     def load_rows(self, db, rows: list[dict]) -> int:
@@ -388,5 +406,17 @@ class VersionedStore:
             )
         after = db._duck.fetchone(f"SELECT count(*) FROM {self.table}")[0]
         Log.info("[%s] load_rows: %d of %d row(s) inserted", self.tag, after - before,
-                 len(rows), layer=LAYER)
+                 len(rows), layer=self.owner)
         return after - before
+
+    def remap_row(self, row: dict, key_map, map_report) -> dict:
+        """A dumped row (:meth:`dump_rows`) carried into another schema
+        (portability Stage 6). An envelope names schema keys in many fields,
+        so every string EQUAL to an exporter key is renamed
+        (``scidb.project.schema_map.KeyMap.exact_strings``) and the item is
+        flagged for review: a value that merely equals a key name cannot be
+        told apart from a reference to it."""
+        envelope = json.loads(row["envelope_json"])
+        where = f"{self.noun} {row.get('name')!r}"
+        mapped = key_map.exact_strings(envelope, where, map_report)
+        return {**row, "envelope_json": json.dumps(mapped)}

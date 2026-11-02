@@ -3,7 +3,7 @@ Opening a project must leave it with somewhere to declare entities.
 
 Regression cover for the 2026-09-01 report: ``config.add_path`` created a
 ``scistack.toml`` with no ``entities_file`` key, and
-``scidb.entities.entities_path`` only falls back to the conventional
+``scifor.project.entities_file.entities_path`` only falls back to the conventional
 ``src/scistack_entities.toml`` when it already exists. The project therefore
 had no writable declaration surface at all -- the log's summary line read
 ``entities_file=None (writable)`` -- so a variable placed on the canvas
@@ -255,7 +255,7 @@ class TestPreExistingEntitiesFileIsPopulated:
     reach the GUI.
 
     It did not, because two layers disagreed about where the entities file
-    is. ``scidb.entities`` falls back to the conventional
+    is. ``scidb.project.entities`` falls back to the conventional
     ``src/scistack_entities.toml`` when no ``entities_file`` key is set;
     ``scistack_gui.project.config.load_config`` did not, and the registry follows the
     GUI's answer. So ``ensure_project_files`` asked scidb, was told the
@@ -375,7 +375,7 @@ class TestEveryEntryPointInitializesTheProject:
     @pytest.mark.parametrize("module_name", ["server", "bootstrap"])
     def test_passes_create_new_so_creating_a_database_runs_init(self, module_name):
         """2026-10-08: creating a database from either entry point runs
-        scidb.project.init_project; the flag is the only thing that says so."""
+        scidb.project.init.init_project; the flag is the only thing that says so."""
         import ast
         import importlib
         import inspect
@@ -404,12 +404,12 @@ def _tree_bytes(root):
 
 class TestCreatingADatabaseRunsInit:
     """The GUI and ``scistack init`` share one owner of the project layout
-    (scidb.project.init_project), so they cannot produce different trees."""
+    (scidb.project.init.init_project), so they cannot produce different trees."""
 
     def test_create_new_produces_exactly_what_init_project_produces(
         self, tmp_path, tmp_path_factory
     ):
-        from scidb.project import init_project
+        from scidb.project.init import init_project
 
         result = ensure_project_files(tmp_path / "study.duckdb", create_new=True)
         assert not result.warnings
@@ -429,7 +429,7 @@ class TestCreatingADatabaseRunsInit:
         assert not any((tmp_path / "src").glob("*/__init__.py"))
 
     def test_create_new_entities_file_is_inside_the_package(self, tmp_path):
-        from scidb.project import package_name_for
+        from scidb.project.init import package_name_for
 
         result = ensure_project_files(tmp_path / "study.duckdb", create_new=True)
 

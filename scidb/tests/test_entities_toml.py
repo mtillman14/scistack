@@ -1,9 +1,12 @@
 """
-The TOML entities file: parsing, construction, per-entry error isolation,
-and the write half (span location + splice).
+The TOML entities file end to end: text -> parse (scifor.project.entities_file)
+-> materialized scidb objects (scidb.project.entities), per-entry error isolation,
+and edits that must still load. Pure grammar tests (rendering, spans,
+``add_variable``, ``checked_text``, parse results) live in
+``scifor/tests/test_project_entities_file.py``.
 
 Ground truth for ``.claude/plan-entities-toml-26-08-31.md`` Stage 1 and for
-the format documented in ``scidb/src/scidb/entities.py``. The properties
+the format documented in ``scifor/src/scifor/project/entities_file.py``. The properties
 these lock down, in order of how much would silently break without them:
 
 1. **Values are never re-parsed** -- ``"01"`` stays ``"01"``
@@ -22,6 +25,7 @@ import textwrap
 import pytest
 
 from scidb import entities
+from scifor.project import entities_file
 from scidb.parameter import Parameter
 from scidb.variable import BaseVariable
 from scifor import EachOf, PathInput
@@ -84,7 +88,7 @@ class TestLoad:
         assert param.values == []
 
     def test_empty_parameter_round_trips(self, tmp_path):
-        rendered = entities.render_parameter_value([])
+        rendered = entities_file.render_parameter_value([])
         assert rendered == "[]"
         path = write(tmp_path, f"""
             [parameters]
@@ -280,95 +284,6 @@ class TestErrorIsolation:
         assert "invalid TOML" in result.errors[0].message
 
 
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
-
-
-class TestRender:
-    @pytest.mark.parametrize(
-        "value,expected",
-        [
-            (1000, "1000"),
-            (True, "true"),
-            (False, "false"),
-            ("01", '"01"'),
-            ("with \"quotes\"", '"with \\"quotes\\""'),
-            (r"C:\data", '"C:\\\\data"'),
-            ([1, "a"], '[1, "a"]'),
-            ({"fld1": 1}, "{ fld1 = 1 }"),
-        ],
-    )
-    def test_render_value(self, value, expected):
-        assert entities.render_value(value) == expected
-
-    def test_bool_is_not_written_as_int(self):
-        """bool IS an int in Python; writing True as 1 would read back as a
-        different type."""
-        assert entities.render_value(True) == "true"
-
-    def test_none_is_refused(self):
-        with pytest.raises(ValueError, match="no TOML representation|no null"):
-            entities.render_value(None)
-
-    def test_single_parameter_value_renders_as_a_scalar(self):
-        assert entities.render_parameter_value([1000]) == "1000"
-
-    def test_multiple_parameter_values_render_as_an_array(self):
-        assert entities.render_parameter_value([10, 20]) == "[10, 20]"
-
-    def test_path_input_without_root_is_a_bare_string(self):
-        assert entities.render_path_input_value("a/{s}.csv") == '"a/{s}.csv"'
-
-    def test_path_input_with_root_is_a_table(self):
-        assert entities.render_path_input_value("a.csv", "/data") == (
-            '{ template = "a.csv", root_folder = "/data" }'
-        )
-
-    def test_alternates_render_as_an_array(self):
-        rendered = entities.render_path_input_value(
-            "a.csv", None, [{"template": "b.csv", "root_folder": "/d"}]
-        )
-        assert rendered == '["a.csv", { template = "b.csv", root_folder = "/d" }]'
-
-
-# ---------------------------------------------------------------------------
-# Locating and writing
-# ---------------------------------------------------------------------------
-
-
-class TestSpans:
-    def test_finds_a_simple_value(self):
-        text = "[parameters]\nA = 1000\n"
-        span = entities.find_entry_span(text, "parameters", "A")
-
-        assert text[span.start : span.end] == "1000"
-
-    def test_span_excludes_a_trailing_comment(self):
-        text = "[parameters]\nA = 1000  # the rate\n"
-        span = entities.find_entry_span(text, "parameters", "A")
-
-        assert text[span.start : span.end] == "1000"
-
-    def test_span_covers_a_multi_line_array(self):
-        text = "[parameters]\nA = [\n    1,\n    2,\n]\nB = 3\n"
-        span = entities.find_entry_span(text, "parameters", "A")
-
-        assert text[span.start : span.end] == "[\n    1,\n    2,\n]"
-
-    def test_same_name_in_two_sections_is_not_confused(self):
-        text = "[parameters]\nA = 1\n\n[path_inputs]\nA = \"x.csv\"\n"
-
-        p = entities.find_entry_span(text, "parameters", "A")
-        pi = entities.find_entry_span(text, "path_inputs", "A")
-
-        assert text[p.start : p.end] == "1"
-        assert text[pi.start : pi.end] == '"x.csv"'
-
-    def test_missing_entry_is_none(self):
-        assert entities.find_entry_span("[parameters]\n", "parameters", "A") is None
-
-
 class TestUpsert:
     def test_replacing_a_value_preserves_everything_else(self):
         text = textwrap.dedent("""\
@@ -377,7 +292,7 @@ class TestUpsert:
             A = 1  # and me
             B = 2
             """)
-        updated = entities.upsert_entry(text, "parameters", "A", "5")
+        updated = entities_file.upsert_entry(text, "parameters", "A", "5")
 
         assert updated == textwrap.dedent("""\
             # keep me
@@ -388,7 +303,7 @@ class TestUpsert:
 
     def test_new_entry_lands_at_the_end_of_its_section(self):
         text = "[parameters]\nA = 1\n\n[path_inputs]\nP = \"x.csv\"\n"
-        updated = entities.upsert_entry(text, "parameters", "B", "2")
+        updated = entities_file.upsert_entry(text, "parameters", "B", "2")
 
         assert updated == "[parameters]\nA = 1\nB = 2\n\n[path_inputs]\nP = \"x.csv\"\n"
 
@@ -397,29 +312,29 @@ class TestUpsert:
         no newline got the new entry glued on -- `P = "x.csv"Q = ""` -- and
         the whole file stopped parsing ("line 12, column 79")."""
         text = 'variables = []\n\n[path_inputs]\nP = "x.csv"'
-        updated = entities.upsert_entry(text, "path_inputs", "Q", '""')
+        updated = entities_file.upsert_entry(text, "path_inputs", "Q", '""')
 
         assert updated == 'variables = []\n\n[path_inputs]\nP = "x.csv"\nQ = ""\n'
-        assert entities.tomllib.loads(updated)["path_inputs"] == {"P": "x.csv", "Q": ""}
+        assert entities_file.tomllib.loads(updated)["path_inputs"] == {"P": "x.csv", "Q": ""}
 
     def test_section_is_created_when_absent(self):
         text = 'variables = ["A"]\n'
-        updated = entities.upsert_entry(text, "parameters", "B", "2")
+        updated = entities_file.upsert_entry(text, "parameters", "B", "2")
 
         assert updated == 'variables = ["A"]\n\n[parameters]\nB = 2\n'
 
     def test_round_trip_through_the_loader(self, tmp_path):
-        text = entities.initial_text()
-        text = entities.upsert_entry(
-            text, "parameters", "WINDOW", entities.render_parameter_value([10, 20])
+        text = entities_file.initial_text()
+        text = entities_file.upsert_entry(
+            text, "parameters", "WINDOW", entities_file.render_parameter_value([10, 20])
         )
-        text = entities.upsert_entry(
+        text = entities_file.upsert_entry(
             text,
             "path_inputs",
             "RAW",
-            entities.render_path_input_value("{s}/raw.csv", "/data"),
+            entities_file.render_path_input_value("{s}/raw.csv", "/data"),
         )
-        text = entities.add_variable(text, "StepLength")
+        text = entities_file.add_variable(text, "StepLength")
         path = tmp_path / "scistack_entities.toml"
         path.write_text(text, encoding="utf-8")
 
@@ -434,42 +349,11 @@ class TestUpsert:
         """Adding a value changes the form but not the entry -- the whole
         RHS is rewritten in place (entity-editability-model.md D6)."""
         text = "[parameters]\nA = 10\n"
-        updated = entities.upsert_entry(
-            text, "parameters", "A", entities.render_parameter_value([10, 20])
+        updated = entities_file.upsert_entry(
+            text, "parameters", "A", entities_file.render_parameter_value([10, 20])
         )
 
         assert updated == "[parameters]\nA = [10, 20]\n"
-
-
-class TestAddVariable:
-    def test_appends_to_a_multi_line_array_keeping_comments(self):
-        text = 'variables = [\n    "A",  # first\n]\n'
-        updated = entities.add_variable(text, "B")
-
-        assert updated == 'variables = [\n    "A",  # first\n    "B",\n]\n'
-
-    def test_single_line_array_is_rewritten_multi_line(self):
-        text = 'variables = ["A"]\n'
-        updated = entities.add_variable(text, "B")
-
-        assert updated == 'variables = [\n    "A",\n    "B",\n]\n'
-
-    def test_empty_array(self):
-        text = "variables = []\n\n[parameters]\n"
-        updated = entities.add_variable(text, "A")
-
-        assert updated == 'variables = [\n    "A",\n]\n\n[parameters]\n'
-
-    def test_already_declared_is_a_no_op(self):
-        text = 'variables = ["A"]\n'
-        assert entities.add_variable(text, "A") == text
-
-    def test_missing_key_is_added_above_the_first_section(self):
-        """Below a section header TOML would bind it to that table."""
-        text = "[parameters]\nA = 1\n"
-        updated = entities.add_variable(text, "X")
-
-        assert updated == 'variables = [\n    "X",\n]\n\n[parameters]\nA = 1\n'
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +375,7 @@ class TestProjectResolution:
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "things.toml").write_text("[parameters]\nA = 1\n")
 
-        assert entities.entities_path(tmp_path) == tmp_path / "src" / "things.toml"
+        assert entities_file.entities_path(tmp_path) == tmp_path / "src" / "things.toml"
 
     def test_conventional_path_used_when_key_absent_and_file_exists(self, tmp_path):
         (tmp_path / "scistack.toml").write_text("modules = []\n", encoding="utf-8")
@@ -499,17 +383,17 @@ class TestProjectResolution:
         conventional = tmp_path / "src" / "scistack_entities.toml"
         conventional.write_text("[parameters]\nA = 1\n", encoding="utf-8")
 
-        assert entities.entities_path(tmp_path) == conventional
+        assert entities_file.entities_path(tmp_path) == conventional
 
     def test_no_guessing_when_the_conventional_file_is_absent(self, tmp_path):
         """Guessing a path that doesn't exist would report a missing-file
         error against a file the user never asked for."""
         (tmp_path / "scistack.toml").write_text("modules = []\n", encoding="utf-8")
 
-        assert entities.entities_path(tmp_path) is None
+        assert entities_file.entities_path(tmp_path) is None
 
     def test_no_config_at_all(self, tmp_path):
-        assert entities.entities_path(tmp_path) is None
+        assert entities_file.entities_path(tmp_path) is None
 
     def test_empty_key_is_an_explicit_opt_out(self, tmp_path):
         """``entities_file = ""`` must NOT fall through to the conventional
@@ -523,7 +407,7 @@ class TestProjectResolution:
             "[parameters]\nA = 1\n", encoding="utf-8"
         )
 
-        assert entities.entities_path(tmp_path) is None
+        assert entities_file.entities_path(tmp_path) is None
         assert entities.load_for_project(tmp_path).parameters == {}
 
 
@@ -532,20 +416,20 @@ class TestResolveEntitiesPath:
     config and parsed its section (``scistack_gui.project.config.load_config``)."""
 
     def test_declared_key_wins_and_resolves_against_the_root(self, tmp_path):
-        resolved = entities.resolve_entities_path(
+        resolved = entities_file.resolve_entities_path(
             tmp_path, {"entities_file": "src/things.toml"}
         )
 
         assert resolved == tmp_path / "src" / "things.toml"
 
     def test_conventional_fallback_only_when_the_file_exists(self, tmp_path):
-        assert entities.resolve_entities_path(tmp_path, {}) is None
+        assert entities_file.resolve_entities_path(tmp_path, {}) is None
 
         (tmp_path / "src").mkdir()
         conventional = tmp_path / "src" / "scistack_entities.toml"
         conventional.write_text("[parameters]\nA = 1\n", encoding="utf-8")
 
-        assert entities.resolve_entities_path(tmp_path, {}) == conventional
+        assert entities_file.resolve_entities_path(tmp_path, {}) == conventional
 
     def test_empty_key_opts_out_even_when_the_file_exists(self, tmp_path):
         (tmp_path / "src").mkdir()
@@ -553,10 +437,10 @@ class TestResolveEntitiesPath:
             "[parameters]\nA = 1\n", encoding="utf-8"
         )
 
-        assert entities.resolve_entities_path(tmp_path, {"entities_file": ""}) is None
+        assert entities_file.resolve_entities_path(tmp_path, {"entities_file": ""}) is None
 
     def test_missing_section_is_treated_as_empty(self, tmp_path):
-        assert entities.resolve_entities_path(tmp_path, None) is None
+        assert entities_file.resolve_entities_path(tmp_path, None) is None
 
     @pytest.mark.skipif(os.sep == "\\", reason="POSIX-only reinterpretation")
     def test_a_windows_written_key_still_finds_the_file(self, tmp_path):
@@ -568,7 +452,7 @@ class TestResolveEntitiesPath:
         real = tmp_path / "src" / "scistack_entities.toml"
         real.write_text("[parameters]\nA = 1\n", encoding="utf-8")
 
-        resolved = entities.resolve_entities_path(
+        resolved = entities_file.resolve_entities_path(
             tmp_path, {"entities_file": "src\\scistack_entities.toml"}
         )
 
@@ -576,10 +460,10 @@ class TestResolveEntitiesPath:
         assert resolved.parent == tmp_path / "src"
 
     def test_opt_out_predicate_distinguishes_cleared_from_unset(self, tmp_path):
-        assert entities.is_entities_opt_out({"entities_file": ""}) is True
-        assert entities.is_entities_opt_out({}) is False
-        assert entities.is_entities_opt_out(None) is False
-        assert entities.is_entities_opt_out({"entities_file": "e.toml"}) is False
+        assert entities_file.is_entities_opt_out({"entities_file": ""}) is True
+        assert entities_file.is_entities_opt_out({}) is False
+        assert entities_file.is_entities_opt_out(None) is False
+        assert entities_file.is_entities_opt_out({"entities_file": "e.toml"}) is False
 
     def test_load_for_project_reads_through_the_config(self, tmp_path):
         (tmp_path / "scistack.toml").write_text(
@@ -640,14 +524,14 @@ class TestRenameEntry:
             OTHER = "b.csv"
         """)
 
-        out = entities.rename_entry(text, "path_inputs", "RAW", "RAW_EMG")
+        out = entities_file.rename_entry(text, "path_inputs", "RAW", "RAW_EMG")
 
         assert out == text.replace("RAW = ", "RAW_EMG = ", 1)
 
     def test_renamed_entry_parses_under_the_new_name(self, tmp_path):
         path = tmp_path / "e.toml"
         path.write_text(
-            entities.rename_entry('[path_inputs]\nRAW = "a.csv"\n', "path_inputs", "RAW", "NEW"),
+            entities_file.rename_entry('[path_inputs]\nRAW = "a.csv"\n', "path_inputs", "RAW", "NEW"),
             encoding="utf-8",
         )
 
@@ -659,14 +543,14 @@ class TestRenameEntry:
     def test_quoted_key_is_replaced_whole(self):
         text = '[path_inputs]\n"RAW" = "a.csv"\n'
 
-        assert entities.rename_entry(text, "path_inputs", "RAW", "NEW") == (
+        assert entities_file.rename_entry(text, "path_inputs", "RAW", "NEW") == (
             '[path_inputs]\nNEW = "a.csv"\n'
         )
 
     def test_same_name_in_another_section_is_untouched(self):
         text = '[parameters]\nX = 1\n\n[path_inputs]\nRAW = "a.csv"\n'
 
-        out = entities.rename_entry(text, "path_inputs", "RAW", "NEW")
+        out = entities_file.rename_entry(text, "path_inputs", "RAW", "NEW")
 
         assert "X = 1" in out and 'NEW = "a.csv"' in out
 
@@ -674,46 +558,23 @@ class TestRenameEntry:
         text = 'variables = ["Taken"]\n\n[path_inputs]\nRAW = "a.csv"\n'
 
         with pytest.raises(ValueError, match="already declared"):
-            entities.rename_entry(text, "path_inputs", "RAW", "Taken")
+            entities_file.rename_entry(text, "path_inputs", "RAW", "Taken")
 
     def test_invalid_name_is_refused(self):
         with pytest.raises(ValueError, match="not a valid name"):
-            entities.rename_entry('[path_inputs]\nRAW = "a"\n', "path_inputs", "RAW", "1bad")
+            entities_file.rename_entry('[path_inputs]\nRAW = "a"\n', "path_inputs", "RAW", "1bad")
 
     def test_missing_entry_is_refused(self):
         with pytest.raises(ValueError, match="No entry 'RAW'"):
-            entities.rename_entry("[path_inputs]\n", "path_inputs", "RAW", "NEW")
+            entities_file.rename_entry("[path_inputs]\n", "path_inputs", "RAW", "NEW")
 
     def test_value_spans_are_unchanged_by_the_key_scan(self):
         """find_entry_span is served by the same scanner now -- its value
         span must be exactly what it was."""
         text = "[parameters]\nA = [\n    1,\n]  # c\n"
-        span = entities.find_entry_span(text, "parameters", "A")
+        span = entities_file.find_entry_span(text, "parameters", "A")
 
         assert text[span.start : span.end] == "[\n    1,\n]"
-
-
-class TestCheckedText:
-    """The gate every GUI write of the entities file passes before disk."""
-
-    def test_valid_text_is_returned_unchanged(self):
-        text = '[path_inputs]\nP = "x.csv"\n'
-        assert entities.checked_text(text) is text
-
-    def test_invalid_text_is_refused_and_the_line_is_logged(self, caplog):
-        text = '[path_inputs]\nP = "x.csv"Q = ""\n'
-        with caplog.at_level("ERROR", logger="scidb"):
-            with pytest.raises(ValueError, match="nothing was written"):
-                entities.checked_text(text, "ents.toml")
-
-        assert "refusing to write ents.toml" in caplog.text
-        assert 'P = "x.csv"Q = ""' in caplog.text
-
-    def test_error_line_is_read_from_the_message_when_lineno_is_absent(self):
-        # Python 3.11-3.13 tomllib and tomli 2.0 (3.10) set no `lineno`.
-        exc = ValueError("Expected newline (at line 7, column 12)")
-        assert entities._decode_error_line(exc) == 7
-        assert entities._decode_error_line(ValueError("no location")) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -780,7 +641,7 @@ class TestPathInputAliases:
         assert message in result.errors[0].message
 
     def test_render_aliases(self):
-        assert entities.render_path_input_value(
+        assert entities_file.render_path_input_value(
             "{session}/d.csv", aliases={"session": {"BL": ["Baseline"], "01": ["Pre"], "1. X": ["Y"]}}
         ) == (
             '{ template = "{session}/d.csv", aliases = { session = '
@@ -788,7 +649,7 @@ class TestPathInputAliases:
         )
 
     def test_render_alternate_aliases(self):
-        rendered = entities.render_path_input_value(
+        rendered = entities_file.render_path_input_value(
             "a/{s}.csv",
             None,
             [{"template": "b/{s}.csv", "root_folder": None, "aliases": {"s": {"A": ["a"]}}}],
@@ -797,7 +658,7 @@ class TestPathInputAliases:
 
     def test_render_then_load_round_trips(self, tmp_path):
         aliases = {"session": {"BL": ["Baseline", "1. Baseline"], "01": ["Pre"]}}
-        rendered = entities.render_path_input_value(
+        rendered = entities_file.render_path_input_value(
             "{session}/Xsens/{subject}_{session}.xlsx", "/data", aliases=aliases
         )
         path = write(tmp_path, f"[path_inputs]\nXSENS = {rendered}\n")
@@ -858,12 +719,12 @@ class TestPathInputKeyRegex:
         assert message in result.errors[0].message
 
     def test_render_uses_literal_strings(self):
-        assert entities.render_path_input_value(
+        assert entities_file.render_path_input_value(
             "{subject}.csv", key_regex={"subject": r"R2_\d{3}"}
         ) == r"""{ template = "{subject}.csv", key_regex = { subject = 'R2_\d{3}' } }"""
 
     def test_pattern_with_a_quote_falls_back_to_a_basic_string(self, tmp_path):
-        rendered = entities.render_path_input_value(
+        rendered = entities_file.render_path_input_value(
             "{s}.csv", key_regex={"s": r"it's\d"}
         )
         path = write(tmp_path, f"[path_inputs]\nX = {rendered}\n")
@@ -873,7 +734,7 @@ class TestPathInputKeyRegex:
     def test_render_then_load_round_trips_with_aliases(self, tmp_path):
         aliases = {"session": {"01": ["Baseline"]}}
         key_regex = {"subject": r"R2_\d{3}", "session": r"\d{2}"}
-        rendered = entities.render_path_input_value(
+        rendered = entities_file.render_path_input_value(
             "{subject}/{subject}_{session}.xlsx", None, None, aliases, key_regex
         )
         path = write(tmp_path, f"[path_inputs]\nX = {rendered}\n")

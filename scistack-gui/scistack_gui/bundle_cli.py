@@ -11,7 +11,7 @@ already holds its own). ``scistack/__main__.py`` mounts the same parsers
 through :func:`add_bundle_subparsers`, so there is one implementation.
 
 Every flag's default is read from its owner, never restated:
-``scidb.bundle.ExportOptions`` for export and ``import_project``'s signature
+``scidb.project.bundle.ExportOptions`` for export and ``import_project``'s signature
 for ``--history``. The work itself is ``headless``'s compositions.
 
 With ``--json``, the result is printed to stdout as ONE line of JSON, last
@@ -44,7 +44,7 @@ EXPORT_FLAGS = {
 def export_choices() -> list[dict]:
     """``[{"name", "flag", "label", "default"}]`` for each offered option,
     each default read from ``ExportOptions``."""
-    from scidb.bundle import ExportOptions
+    from scidb.project.bundle import ExportOptions
 
     defaults = ExportOptions()
     return [
@@ -58,7 +58,7 @@ class BundleCLIError(Exception):
 
 
 def _import_history_default() -> bool:
-    from scidb.bundle import import_project
+    from scidb.project.bundle import import_project
 
     return inspect.signature(import_project).parameters["import_history"].default
 
@@ -70,7 +70,7 @@ def _on_off(value: bool) -> str:
 def add_bundle_subparsers(sub: argparse._SubParsersAction) -> None:
     """Add ``export``, ``import`` and ``bundle-info`` to a subparsers group
     (the ``scistack`` CLI's, or this module's own ``main``)."""
-    from scidb.bundle import EXTENSION
+    from scidb.project.bundle import EXTENSION
 
     export =sub.add_parser(
         "export",
@@ -188,7 +188,7 @@ def add_bundle_subparsers(sub: argparse._SubParsersAction) -> None:
 
 def dispatch(args: argparse.Namespace) -> int:
     """Run a parsed bundle command; 0 on success, 1 on a reported error."""
-    from scidb.bundle import BundleError
+    from scidb.project.bundle import BundleError
     from scistacklog import Log
 
     console_level = Log.get_level("console")
@@ -235,7 +235,7 @@ def _parse_pairs(pairs: list[str], what: str, *, empty_is_none: bool) -> dict:
 
 
 def _cmd_export(args: argparse.Namespace) -> dict:
-    from scidb.bundle import EXTENSION, ExportOptions
+    from scidb.project.bundle import EXTENSION, ExportOptions
     from scidb.inspect.cli import CLIError, resolve_db_path
 
     from scistack_gui.headless import export_project_bundle
@@ -273,7 +273,7 @@ def _confirm_trust(bundle: Path) -> bool:
 
 
 def _cmd_import(args: argparse.Namespace) -> dict:
-    from scidb.bundle import read_bundle
+    from scidb.project.bundle import read_bundle
 
     from scistack_gui.headless import check_code, import_project_bundle
 
@@ -298,7 +298,7 @@ def _cmd_import(args: argparse.Namespace) -> dict:
     )
     installed = None
     if args.trust and not args.no_install:
-        from scidb.environment import install_project_requirements
+        from scidb.project.environment import install_project_requirements
 
         installed = install_project_requirements(report.root).to_dict()
     checked = check_code(report.db_path, project=report.root) if args.check_code else None
@@ -327,7 +327,7 @@ def _print_install(installed: "dict | None", root, *, trusted: bool) -> None:
 
 
 def _cmd_install(args: argparse.Namespace) -> dict:
-    from scidb.environment import install_project_requirements
+    from scidb.project.environment import install_project_requirements
 
     root = (args.project or Path.cwd()).resolve()
     if not args.yes and not _confirm_trust_install(root):

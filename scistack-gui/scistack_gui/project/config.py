@@ -1,7 +1,7 @@
 """
 Parse the project configuration from scistack.toml, the only config file
 (2026-10-08: pyproject.toml is packaging metadata and is never read as config;
-see scifor.discovery.CONFIG_FILENAME).
+see scifor.project.config.CONFIG_FILENAME).
 
 Supports multi-source pipeline discovery: explicit .py modules,
 pip-installed packages, auto-discovered entry-point plugins, and
@@ -12,31 +12,26 @@ import glob as _glob
 import logging
 import os
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from scifor.discovery import (
-    CONFIG_FILENAME,
+from scifor.project.discovery import (
     authored_library_dirs,
-    config_path_at,
     ensure_authored_libraries_importable,
     is_test_path,
     own_package_dir,
+)
+from scifor.project.config import (
+    CONFIG_FILENAME,
+    config_path_at,
+    load_config_file,
+    read_project_config,
 )
 
 from scistack_gui.stores import history
 # NOTE: nothing walks upward for a config any more, here or in scidb. The GUI
 # DECIDES the root (resolve_project_root); registry.load_from_config pins it
 # into scifor.project_root, the one holder every layer reads.
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        import tomli as tomllib  # type: ignore[no-redef]
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +47,8 @@ def _config_path(project_root: Path, raw) -> Path:
 
     Every raw config value goes through here rather than
     ``_normalize(project_root / raw)`` so that separator handling lives in
-    exactly one place -- ``scifor.discovery.resolve_config_path``, which the
-    non-GUI readers (``scidb.entities``) use too. A config written on
+    exactly one place -- ``scifor.project.config.resolve_config_path``, which the
+    non-GUI readers (``scidb.project.entities``) use too. A config written on
     Windows records ``src\\scistack_entities.toml``; joined naively on macOS
     that names a backslashed FILE in the project root, which is how classdef
     stubs ended up in the root instead of beside the entities file. A
@@ -61,7 +56,7 @@ def _config_path(project_root: Path, raw) -> Path:
     all and is left alone to fail as a missing path, with a warning, rather
     than being glued onto the project root.
     """
-    from scifor.discovery import resolve_config_path
+    from scifor.project.config import resolve_config_path
 
     return _normalize(resolve_config_path(project_root, str(raw)))
 
@@ -74,7 +69,7 @@ def _skip_unresolvable(entry: str, label: str) -> bool:
     once (startup.check_machine_config_paths). They used to be a "File does
     not exist" load error on every refresh (22x in scistack.log 2026-10-19).
     """
-    from scifor.machine import unresolvable_here
+    from scifor.project.machine import unresolvable_here
 
     reason = unresolvable_here(str(entry))
     if reason is None:
@@ -87,7 +82,7 @@ def _config_pattern(entry: str) -> str:
     """A glob pattern read from the config, with separators this platform
     understands. The Path form goes through :func:`_config_path`; a glob is
     expanded as text, so it needs the string half of the same rule."""
-    from scifor.discovery import normalize_config_separators
+    from scifor.project.config import normalize_config_separators
 
     return normalize_config_separators(entry)
 
@@ -234,7 +229,7 @@ class SciStackConfig:
     read-only, the same contract that has always applied to a declaration
     outside the designated entities file
     (docs/claude/entity-editability-model.md). Its format is owned by
-    ``scidb.entities``."""
+    ``scidb.project.entities``."""
 
     glue_dir: Path | None = None
     """Directory GUI-created **glue nodes** are written into (default
@@ -305,7 +300,7 @@ class SciStackConfig:
 
     The MATLAB counterpart of ``variable_file``, and demoted for the same
     reason: ``entities_file`` (TOML) is language-neutral, so both languages
-    now write to one file and read it through ``scidb.entities``. Existing
+    now write to one file and read it through ``scidb.project.entities``. Existing
     scripts keep being parsed and shown (``matlab_registry.load_entities_script``);
     the GUI just never writes one."""
 
@@ -412,19 +407,17 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     # below locate a library by find_spec (plan-library-fork-chain O1).
     ensure_authored_libraries_importable(project_root)
 
+    # What each key MEANS (types, defaults) is scifor.project.config's; this
+    # function turns those entries into the files the registry discovers.
     logger.info("[config] Loading TOML file")
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-
+    project = read_project_config(toml_path)
     # The whole file is the config (an empty one is all defaults).
-    section = data
+    section = dict(project.section)
     logger.debug("[config] Config keys: %s", list(section.keys()))
 
     # --- modules ---
     logger.info("[config] Processing modules list")
-    raw_modules = section.get("modules", [])
-    if not isinstance(raw_modules, list):
-        raise ValueError("scistack.toml: modules must be a list of file paths.")
+    raw_modules = list(project.modules)
     logger.debug("[config] Found %d module entries in config", len(raw_modules))
     modules: list[Path] = []
     for entry_idx, entry in enumerate(raw_modules):
@@ -501,7 +494,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     # and resolve_entities_path for the full rule, including the `""`
     # opt-out that clear_entities_file writes.
     logger.info("[config] Processing entities_file")
-    from scidb.entities import resolve_entities_path
+    from scifor.project.entities_file import resolve_entities_path
 
     entities_file: Path | None = resolve_entities_path(project_root, section)
     if entities_file is None:
@@ -531,7 +524,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     # --- variable_file (legacy .py declarations, read-only) ---
     logger.info("[config] Processing variable_file")
     variable_file: Path | None = None
-    raw_vf = section.get("variable_file")
+    raw_vf = project.variable_file
     if raw_vf is not None:
         variable_file = _config_path(project_root, raw_vf)
         # Folded into modules so its declarations are still discovered even
@@ -556,36 +549,25 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
 
     # --- packages ---
     logger.info("[config] Processing packages list")
-    packages = section.get("packages", [])
-    if not isinstance(packages, list):
-        raise ValueError("scistack.toml: packages must be a list of package names.")
+    packages = list(project.packages)
     logger.debug("[config] Found %d packages: %s", len(packages), packages)
 
     library_packages = list(packages)  # as listed: the project's libraries
     packages = _with_own_package(project_root, packages)
 
     # --- auto_discover ---
-    logger.info("[config] Processing auto_discover setting")
-    auto_discover = section.get("auto_discover", True)
-    if not isinstance(auto_discover, bool):
-        raise ValueError("scistack.toml: auto_discover must be true or false.")
+    auto_discover = project.auto_discover
     logger.debug("[config] auto_discover = %s", auto_discover)
 
     # --- MATLAB section ([matlab] in scistack.toml) ---
     logger.info("[config] Processing MATLAB configuration")
-    matlab_section = section.get("matlab", {})
-    if matlab_section:
-        logger.debug(
-            "[config] Found MATLAB section with keys: %s", list(matlab_section.keys())
-        )
-    else:
-        logger.debug("[config] No MATLAB section found")
+    matlab_section = project.matlab
 
     matlab_functions = _resolve_glob_paths(
-        project_root, matlab_section.get("functions", []), "matlab.functions"
+        project_root, list(matlab_section.functions), "matlab.functions"
     )
     matlab_variables = _resolve_glob_paths(
-        project_root, matlab_section.get("variables", []), "matlab.variables"
+        project_root, list(matlab_section.variables), "matlab.variables"
     )
     # Unified, unclassified .m paths -- same auto-classify-per-file behavior
     # as folder-scan mode's matlab_sources (see classify_matlab_file), just
@@ -593,11 +575,11 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
     # GUI-added directory work for MATLAB without the user having to
     # declare "functions" vs. "variables" up front.
     matlab_sources = _resolve_glob_paths(
-        project_root, matlab_section.get("sources", []), "matlab.sources"
+        project_root, list(matlab_section.sources), "matlab.sources"
     )
     matlab_sources += _library_matlab_sources(project_root, library_packages)
     matlab_variable_dir: Path | None = None
-    raw_mvd = matlab_section.get("variable_dir")
+    raw_mvd = matlab_section.variable_dir
     if raw_mvd is not None:
         matlab_variable_dir = _config_path(project_root, raw_mvd)
         logger.debug("[config] matlab_variable_dir set to: %s", matlab_variable_dir)
@@ -605,7 +587,7 @@ def load_config(project_path: Path | None, db_path: Path) -> SciStackConfig:
         logger.debug("[config] No matlab_variable_dir configured")
 
     matlab_entities_file: Path | None = None
-    raw_mef = matlab_section.get("entities_file")
+    raw_mef = matlab_section.entities_file
     if raw_mef is not None:
         matlab_entities_file = _config_path(project_root, raw_mef)
         logger.info(
@@ -874,7 +856,7 @@ def locate_config_at(root: Path) -> Path | None:
     config file lives there by definition. Walking is what let the reader
     and the writer disagree — see :func:`resolve_project_root`.
 
-    The location is ``scifor.discovery.config_path_at`` (its one owner).
+    The location is ``scifor.project.config.config_path_at`` (its one owner).
     Existence only, not parseability, unlike scifor's ``project_config_at``:
     the GUI loads it next and must report a parse error, not treat a broken
     file as "no config".
@@ -908,7 +890,7 @@ def resolve_project_root(project_path: "Path | None", db_path: Path) -> Path:
        project outright.
     2. ``--project-root``, i.e. the VS Code workspace folder.
     3. The current working directory (browser/CLI, where the user launched
-       from). ``scidb.entities`` already resolves this way.
+       from). ``scidb.project.entities`` already resolves this way.
     4. The database's own directory, with a warning.
 
     Deliberately does NOT search upward for a config file. A stray
@@ -1034,7 +1016,7 @@ def _walk_source_files(root: Path, suffix: str, *, matlab: bool = False) -> list
 
 
 def _own_package_dir(project_root: Path) -> "tuple[str, Path] | None":
-    """``scifor.discovery.own_package_dir`` (the one owner), logged."""
+    """``scifor.project.discovery.own_package_dir`` (the one owner), logged."""
     own = own_package_dir(project_root)
     logger.debug("[config] own package of %s: %s", project_root, own)
     return own
@@ -1049,7 +1031,7 @@ def _without_own_package_files(project_root: Path, files: list, what: str) -> li
     a ``modules`` entry that covers it (``"."``, which ``scidb.project`` seeds).
 
     The libraries the project AUTHORS (``libs/<name>/``,
-    ``scifor.discovery.authored_library_dirs``) are packages too, loaded by
+    ``scifor.project.discovery.authored_library_dirs``) are packages too, loaded by
     name when listed: never as loose files.
     """
     packaged = [(name, folder) for name, folder in authored_library_dirs(project_root)]
@@ -1071,12 +1053,12 @@ def _without_own_package_files(project_root: Path, files: list, what: str) -> li
 
 def _library_matlab_sources(project_root: Path, libraries: list) -> list[Path]:
     """The ``.m`` files every listed library ships in its ``matlab/``
-    folder (``scidb.library.matlab_dir``, located without running the
+    folder (``scidb.project.library.matlab_dir``, located without running the
     package). They join ``matlab_sources``, so they are classified,
     registered (functions in ``+<lib>/`` named ``lib.fn``) and put on the
     MATLAB path (``matlab_parser.matlab_path_entry``: the ``matlab/``
     folder itself) exactly like the project's own. Import step I6."""
-    from scidb.library import matlab_dir
+    from scidb.project.library import matlab_dir
 
     own = _own_package_dir(project_root)
     found: list[Path] = []
@@ -1185,25 +1167,20 @@ def _portable_relpath(rel: Path) -> str:
     root rather than ``src/x.toml``. Windows accepts ``/`` natively, so
     POSIX form is correct on both. Readers additionally tolerate the
     backslashed form already committed to existing configs -- see
-    ``scifor.discovery.resolve_config_path``.
+    ``scifor.project.config.resolve_config_path``.
     """
     return rel.as_posix()
 
 
 def _write_config(path: Path, section: dict) -> Path:
     """Write the WHOLE config *section* to *path* through scidb's one
-    renderer (``scidb.config_file``: every key survives, including ones this
+    renderer (``scifor.project.config_file``: every key survives, including ones this
     module does not know), after telling undo (``history``) the file is about
     to change. The only way this module writes scistack.toml."""
-    from scidb import config_file
+    from scifor.project import config_file
 
     history.note_write(path)
     return config_file.write(path, section)
-
-
-def _load_raw_scistack_section(toml_path: Path) -> dict:
-    with open(toml_path, "rb") as f:
-        return tomllib.load(f)
 
 
 def _resolve_raw_entry(entry: str, project_root: Path) -> Path:
@@ -1233,13 +1210,13 @@ def describe_managed_paths(db_path: Path) -> dict:
     ~/.scistack/machine.toml), or why it names nothing here -- the popup
     shows the full path, not the raw ``{rto}/...`` (user request 2026-10-19).
     """
-    from scifor.machine import root_name, unresolvable_here
+    from scifor.project.machine import root_name, unresolvable_here
 
     project_root = resolve_project_root(None, db_path)
     toml_path = locate_config_at(project_root)
     managed_paths: list[str] = []
     if toml_path is not None:
-        section = _load_raw_scistack_section(toml_path)
+        section = load_config_file(toml_path)
         managed_paths = list(section.get("modules", []))
     details = []
     for entry in managed_paths:
@@ -1298,7 +1275,7 @@ def add_path(db_path: Path, new_path: Path) -> Path:
         )
     else:
         target_path = toml_path
-        section = _load_raw_scistack_section(toml_path)
+        section = load_config_file(toml_path)
 
     raw_modules = list(section.get("modules", []))
     matlab_section = dict(section.get("matlab", {}))
@@ -1310,7 +1287,7 @@ def add_path(db_path: Path, new_path: Path) -> Path:
     normalized_new = _normalize(new_path)
     # Under a machine root (~/.scistack/machine.toml), record `{root}/rest`
     # so the shared config resolves on every machine that maps the root.
-    from scifor.machine import portable_form
+    from scifor.project.machine import portable_form
 
     portable = portable_form(normalized_new)
     new_str = portable if portable is not None else str(normalized_new)
@@ -1365,7 +1342,7 @@ _PACKAGE_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)
 
 def add_package(db_path: "Path | None", name: str, *, project: "Path | None" = None) -> Path:
     """List *name* under ``packages`` in scistack.toml (making it a library
-    of this project: ``scidb.names.library_packages``), creating the file if
+    of this project: ``scifor.project.names.library_packages``), creating the file if
     needed. Its import name, not its distribution name. Installing it is the
     user's (SciStack never installs). Returns the file written. *project*
     names the project folder outright (the terminal); otherwise it is
@@ -1375,7 +1352,7 @@ def add_package(db_path: "Path | None", name: str, *, project: "Path | None" = N
         raise ValueError(f"{name!r} is not a Python import name (e.g. gait_tools)")
     project_root = resolve_project_root(project, db_path)
     toml_path = locate_config_at(project_root) or project_root / "scistack.toml"
-    section = _load_raw_scistack_section(toml_path) if toml_path.is_file() else {}
+    section = load_config_file(toml_path) if toml_path.is_file() else {}
     packages = list(section.get("packages", []))
     if name in packages:
         logger.info("[config] add_package: %s already listed in %s", name, toml_path)
@@ -1395,7 +1372,7 @@ def remove_package(db_path: "Path | None", name: str, *, project: "Path | None" 
     toml_path = locate_config_at(project_root)
     if toml_path is None:
         raise FileNotFoundError(f"No scistack.toml at {project_root}; nothing to remove.")
-    section = _load_raw_scistack_section(toml_path)
+    section = load_config_file(toml_path)
     packages = list(section.get("packages", []))
     if name not in packages:
         raise ValueError(f"{name} is not listed under packages in {toml_path}")
@@ -1421,7 +1398,7 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
             f"No scistack.toml at {project_root}; nothing to remove."
         )
 
-    section = _load_raw_scistack_section(toml_path)
+    section = load_config_file(toml_path)
     project_root = toml_path.parent
     # The entry exactly as written also matches: an entry with an unmapped
     # `{root}` names no directory here, and the popup sends it as written.
@@ -1435,7 +1412,7 @@ def remove_path(db_path: Path, path_to_remove: Path) -> Path:
         # drive also removes the UNC-spelled entry for the same directory
         # (and vice versa) instead of leaving a duplicate behind (see
         # _same_path). An unresolvable entry has no identity here.
-        from scifor.machine import unresolvable_here
+        from scifor.project.machine import unresolvable_here
 
         if unresolvable_here(str(entry)):
             return False
@@ -1564,7 +1541,7 @@ def set_entities_file(
     scistack.toml.
 
     If *file_path* is ``None``, defaults to
-    ``scidb.entities.default_entities_relpath`` under the project root
+    ``scifor.project.entities_file.default_entities_relpath`` under the project root
     (inside the project's package when it is one, else
     ``src/scistack_entities.toml``), where *project root* is
     :func:`resolve_project_root`'s answer -- **not** the database's own
@@ -1574,7 +1551,7 @@ def set_entities_file(
     ``"src/scistack_entities.toml"`` without knowing where the root will
     land; an absolute one is used as-is.
 
-    The file is created with :func:`scidb.entities.initial_text` if it does
+    The file is created with :func:`scifor.project.entities_file.initial_text` if it does
     not exist -- including its empty ``variables = []`` key, which has to be
     above the first section header and is fiddly to add correctly later. An
     existing file's contents are never touched. Unlike the ``.py`` entities
@@ -1594,7 +1571,7 @@ def set_entities_file(
         )
     else:
         target_path = toml_path
-        section = _load_raw_scistack_section(toml_path)
+        section = load_config_file(toml_path)
 
     raw_modules = list(section.get("modules", []))
     matlab_section = dict(section.get("matlab", {}))
@@ -1608,7 +1585,7 @@ def set_entities_file(
     # scidb owns both the default location and the file's initial contents
     # -- it owns the format (CLAUDE.md NOTE 3), so the GUI never hard-codes
     # either.
-    from scidb.entities import default_entities_relpath, initial_text
+    from scifor.project.entities_file import default_entities_relpath, initial_text
 
     if file_path is not None:
         raw_target = Path(file_path)
@@ -1698,7 +1675,7 @@ def _set_code_dir(
         logger.info("[config] %s: no config found, will create %s", op, target_path)
     else:
         target_path = toml_path
-        section = _load_raw_scistack_section(toml_path)
+        section = load_config_file(toml_path)
 
     raw_modules = list(section.get("modules", []))
     matlab_section = dict(section.get("matlab", {}))
@@ -1761,7 +1738,7 @@ def clear_entities_file(db_path: Path) -> Path:
 
     Written as ``entities_file = ""``, an explicit opt-out, rather than by
     deleting the key: with the key simply gone,
-    ``scidb.entities.resolve_entities_path`` falls back to the conventional
+    ``scifor.project.entities_file.resolve_entities_path`` falls back to the conventional
     ``src/scistack_entities.toml``, so clearing a file at that (default,
     overwhelmingly common) location would be a silent no-op. The empty
     string is also honoured by scidb and MATLAB, which the key-deletion form
@@ -1776,7 +1753,7 @@ def clear_entities_file(db_path: Path) -> Path:
             f"No scistack.toml at {project_root}; nothing to clear."
         )
 
-    section = _load_raw_scistack_section(toml_path)
+    section = load_config_file(toml_path)
     _write_config(
         toml_path,
         {
@@ -1810,14 +1787,14 @@ def set_project_alias(
 
     ``name=`` sets (text) or clears (None/"") the thing's own name;
     ``level=`` + ``alias=`` sets or clears one level's alias. The edit itself
-    is ``scidb.aliases.with_alias`` and the TOML text is
-    ``scidb.aliases.render_aliases_table``, through this module's whole-file
+    is ``scifor.project.aliases.with_alias`` and the TOML text is
+    ``scifor.project.aliases.render_aliases_table``, through this module's whole-file
     writer (``_write_config``), so everything else in the file comes
     back as it was. A project with no config file is refused rather than given
     one (creating the first file switches discovery modes — ``add_path``'s
     job, not an alias's).
     """
-    from scidb import aliases as _aliases
+    from scifor.project import aliases as _aliases
 
     logger.info(
         "[config] set_project_alias: thing=%r name=%s level=%r alias=%r",
@@ -1834,7 +1811,7 @@ def set_project_alias(
             "a project config; set this one for the plot instead."
         )
 
-    section = _load_raw_scistack_section(toml_path)
+    section = load_config_file(toml_path)
     edit = {} if name is _UNCHANGED else {"name": name or None}
     table = _aliases.with_alias(section.get("aliases"), thing, level=level, alias=alias, **edit)
     _write_config(
@@ -1871,11 +1848,11 @@ def set_project_color(
     owner of what a colour may be written as) BEFORE the write, so the file
     only ever holds ``#rrggbb`` from here, and a bad one is refused
     (``ColorError``, a ValueError) with nothing written. The edit is
-    ``scidb.colors.with_color`` and the text ``scidb.colors.render_colors_table``,
+    ``scifor.project.colors.with_color`` and the text ``scifor.project.colors.render_colors_table``,
     through the whole-file writer. The refusal of
     :func:`set_project_alias` applies: no new config.
     """
-    from scidb import colors as _colors
+    from scifor.project import colors as _colors
     from scistackplot.text.colors import parse_color
 
     logger.info(
@@ -1893,7 +1870,7 @@ def set_project_color(
             "a project config; set this one for the plot instead."
         )
 
-    section = _load_raw_scistack_section(toml_path)
+    section = load_config_file(toml_path)
     table = _colors.with_color(section.get("colors"), thing, level=level, color=canonical)
     _write_config(
         toml_path,

@@ -6,7 +6,7 @@ It takes about 30 minutes. You only do it once per computer.
 
 <!-- Ground truth: requires-python = ">=3.10" in every package's pyproject.toml;
      CI tests 3.10, 3.12 and 3.13 (.github/workflows). Extension ids from the
-     VS Code Marketplace. scistack init's .gitignore (scidb/project.py
+     VS Code Marketplace. scistack init's .gitignore (scidb/project/init.py
      _GITIGNORE) lists .venv/ and venv/ (test_project_init.py guards it). -->
 
 ## What you'll set up

@@ -13,7 +13,8 @@ import numpy as np
 import pytest
 
 import scifor as _scifor
-from scidb import BaseVariable, configure_database, for_each, names, rename_functions
+from scidb import BaseVariable, configure_database, for_each, rename_functions
+from scifor.project import names
 from scidb.foreach_config import function_hash_for
 
 CALLS: list[str] = []
@@ -21,9 +22,9 @@ CALLS: list[str] = []
 
 @pytest.fixture
 def db(tmp_path):
-    from scifor.pathinput import clear_project_root, set_project_root
+    from scifor.project.root import clear_project_root, set_project_root
 
-    from scidb import schema_order
+    from scifor.project import schema_order
 
     (tmp_path / "scistack.toml").write_text('modules = []\npackages = ["fakelib"]\n')
     set_project_root(tmp_path)

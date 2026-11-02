@@ -17,7 +17,7 @@ Two jobs:
    side in place. This module owns the *policy* around that: which file may
    be written, whether it has changed underneath us, atomic replacement,
    re-scan verification, and rollback. The *grammar* -- locating the span
-   and rendering the replacement -- belongs to ``scidb.source_edit``
+   and rendering the replacement -- belongs to ``scifor.project.source_edit``
    (Python) and ``scistack_gui.matlab.parser`` (MATLAB).
 
 Writes are confined to the configured entities file (``variable_file`` for
@@ -59,7 +59,7 @@ def validate_entity_name(name: str) -> "str | None":
 
 def is_toml_target(path: "Path | None") -> bool:
     """Whether *path* is a TOML entities file, and so uses
-    ``scidb.entities``' grammar rather than Python's.
+    ``scidb.project.entities``' grammar rather than Python's.
 
     Dispatch is by suffix because two target shapes genuinely coexist: a
     config-mode project writes ``entities_file`` (``.toml``), while legacy
@@ -74,7 +74,7 @@ def is_toml_target(path: "Path | None") -> bool:
 TOML_SECTIONS = {"parameter": "parameters", "path_input": "path_inputs"}
 """Entity kind -> the ``[section]`` it lives in. Variables are not here:
 they are a value-less top-level array, written by
-:func:`scidb.entities.add_variable`."""
+:func:`scifor.project.entities_file.add_variable`."""
 
 
 def write_entity(
@@ -93,7 +93,7 @@ def write_entity(
 
     Returns an error dict, or ``None`` on success.
     """
-    from scidb.entities import initial_text, upsert_entry
+    from scifor.project.entities_file import initial_text, upsert_entry
 
     try:
         text = target_file.read_text(encoding="utf-8") if target_file.exists() else initial_text()
@@ -117,7 +117,7 @@ def write_entity(
 
 def write_variable(target_file: Path, name: str) -> "dict | None":
     """Add *name* to the TOML entities file's ``variables`` array."""
-    from scidb.entities import add_variable, initial_text
+    from scifor.project.entities_file import add_variable, initial_text
 
     try:
         text = target_file.read_text(encoding="utf-8") if target_file.exists() else initial_text()
@@ -316,7 +316,7 @@ def _editable_targets() -> "tuple[Path | None, Path | None]":
 def _location_of(kind: str, name: str, source: str) -> dict:
     """``{file, line}`` for a read-only declaration, so the UI can say
     exactly where to go instead of a generic "edit it in source" hint."""
-    from scidb.source_edit import find_binding_span, line_number
+    from scifor.project.source_edit import find_binding_span, line_number
 
     path = Path(source)
     payload = {"file": source, "line": None}
@@ -326,7 +326,7 @@ def _location_of(kind: str, name: str, source: str) -> dict:
         return payload
 
     if path.suffix == ".toml":
-        from scidb.entities import find_entry_span
+        from scifor.project.entities_file import find_entry_span
 
         section = TOML_SECTIONS.get(kind)
         span = find_entry_span(text, section, name) if section else None
@@ -433,7 +433,7 @@ def update_declaration(
     - the write or the post-write verification failed, in which case the
       original bytes are restored.
     """
-    from scidb.source_edit import find_binding_span, splice
+    from scifor.project.source_edit import find_binding_span, splice
 
     editability = entity_editability(kind, name)
     if editability["reason"] == "unknown":
@@ -483,7 +483,7 @@ def update_declaration(
         }
 
     if is_toml:
-        from scidb.entities import find_entry_span
+        from scifor.project.entities_file import find_entry_span
 
         section = TOML_SECTIONS.get(kind)
         span = find_entry_span(original, section, name) if section else None
@@ -592,7 +592,7 @@ def rename_declaration(kind: str, old: str, new: str) -> dict:
     (node ids, edges, run attribution) is the caller's --
     ``layout_service.rename_path_input``.
     """
-    from scidb.entities import rename_entry
+    from scifor.project.entities_file import rename_entry
 
     new = (new or "").strip()
     err = validate_entity_name(new)
@@ -805,13 +805,13 @@ def _atomic_write(path: Path, text: str, *, check: bool = True) -> None:
     crash mid-write can never leave a half-written entities file (which the
     scanner would then fail to parse, taking every entity in it down).
 
-    A TOML target is first passed through :func:`scidb.entities.checked_text`
+    A TOML target is first passed through :func:`scifor.project.entities_file.checked_text`
     (``ValueError`` when the new text would not parse; nothing is written).
     ``check=False`` is for rollbacks only: restoring the original bytes must
     never be refused.
     """
     if check and is_toml_target(path):
-        from scidb.entities import checked_text
+        from scifor.project.entities_file import checked_text
 
         checked_text(text, path)
     history.note_write(path)
@@ -956,7 +956,7 @@ def _verify_failure_reason(name: str) -> str:
     The bare "may be invalid" message this replaces was the only thing the
     user saw for a write that was then rolled back -- so the evidence for
     *why* was destroyed along with the file. Load errors are recorded per
-    source by both registries (``entities.EntityError.describe`` carries the
+    source by both registries (``scifor.project.entities_file.EntityError.describe`` carries the
     entry name and line), so anything mentioning this name is the real
     reason and belongs in front of the user.
     """

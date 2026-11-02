@@ -671,7 +671,7 @@ export default function PipelineDAG() {
       }
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY })
       // A LIBRARY pipeline is written in the library's own schema: place it
-      // through the key map the backend suggests (scidb.schema_map.KeyMap,
+      // through the key map the backend suggests (scidb.project.schema_map.KeyMap,
       // the Stage 6 owner), stored as the placement's binding.
       const bindingFor = async (): Promise<Record<string, unknown> | null> => {
         if (!library) return null

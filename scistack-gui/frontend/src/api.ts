@@ -424,7 +424,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     stats_formula_check:    { path: '/api/stats/formula/check', method: 'POST', body: true },
     stats_formula_apply:    { path: '/api/stats/formula/apply', method: 'POST', body: true },
     plot_preset_history:    { path: '/api/plot/presets/history', method: 'POST', body: true },
-    // One edit to the project's [aliases] in scistack.toml (scidb.aliases).
+    // One edit to the project's [aliases] in scistack.toml (scifor.project.aliases).
     plot_project_alias_set: { path: '/api/plot/project-alias', method: 'POST', body: true },
     plot_project_color_set: { path: '/api/plot/project-color', method: 'POST', body: true },
     // An error boundary's report — see components/ClientErrorBoundary.tsx.

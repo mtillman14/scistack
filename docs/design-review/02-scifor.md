@@ -218,6 +218,8 @@ of group C living in the wrong package.
 | R4  | Make the project root an explicit argument of `PathInput` resolution (with the global as a default only at the outermost entry point).                                      | weakness 3                                                            |
 | R5  | Generate or test MATLAB parity from R1's phase boundaries (golden-file tests per phase).                                                                                    | weakness 5 (partly)                                                   |
 
+> **Done (2026-11-01, P3):** R3′ — no new package: `scifor.project` (root, machine, discovery, config, config_file, aliases, colors, schema_order, names, source_edit, entities_file); the engine may import it, it imports no engine module (`scifor/tests/test_import_layers.py`).
+> **Done (2026-11-01, P3):** R4 — `PathInput.bound_to(root)`; `for_each(project_root=...)` in scifor and scidb decides the root once at entry and binds it into the inputs; the global pin is only the default (`scifor/tests/test_pathinput_explicit_root.py`).
 R1 and R3 are independent and each is mechanical. R1 is the one that would
 most reduce the cost of future iteration features.
 

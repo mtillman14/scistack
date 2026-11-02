@@ -2934,7 +2934,7 @@ def test_invalidate_drops_the_kept_resolve(populated_db, monkeypatch):
 
 def test_a_project_alias_write_answers_ok_and_drops_the_kept_resolve(tmp_path, monkeypatch):
     import scistack_gui.runtime.db as gui_db
-    from scidb import aliases
+    from scifor.project import aliases
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -2968,7 +2968,7 @@ def test_a_refused_project_alias_is_an_answer_not_an_error(tmp_path, monkeypatch
 
 def test_a_project_color_write_answers_ok_and_drops_the_kept_resolve(tmp_path, monkeypatch):
     import scistack_gui.runtime.db as gui_db
-    from scidb import colors
+    from scifor.project import colors
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")

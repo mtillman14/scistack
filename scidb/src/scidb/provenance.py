@@ -1,4 +1,7 @@
-"""Bipartite provenance model — identity helpers and schema.
+"""Bipartite provenance model — identity helpers and writes.
+
+The tables are declared in ``scidb.tables`` (the one owner of the project
+database's DDL); this module computes ids and writes rows.
 
 This module implements the storage-side primitives for the simplified
 provenance system described in ``docs/claude/lineage-simplification.md``.
@@ -62,7 +65,6 @@ __all__ = [
     "normalize_as_table",
     "constant_value_repr",
     "constant_value_type",
-    "ensure_provenance_tables",
     "insert_record_entity",
     "insert_function_sources",
     "insert_record_entities",
@@ -200,7 +202,7 @@ def compute_invocation_id(
             apart (docs/claude/iteration-level-identity.md). Folded in whenever
             it is not None. ``None`` is only for activities that have no level
             (glue hops, the synthetic ``__save__``).
-        function_name: The RECORDED name (``scidb.names.function_name``, the
+        function_name: The RECORDED name (``scifor.project.names.function_name``, the
             ``__fn`` version key). Identity-bearing (2026-10-23,
             plan-library-fork-chain R2): the same code recorded under two
             names -- ``filter_emg`` and, after Share as library,
@@ -465,8 +467,10 @@ def insert_record_entities(duck, rows: list[tuple]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Schema
+# Function source (the tables themselves are declared in scidb.tables)
 # ---------------------------------------------------------------------------
+
+
 def insert_function_sources(
     duck, function_hash: str, units: dict, entry_name: str | None = None
 ) -> int:
@@ -500,227 +504,6 @@ def insert_function_sources(
         entry_name,
     )
     return len(rows)
-
-
-def ensure_provenance_tables(duck) -> None:
-    """Create the bipartite provenance tables if absent.
-
-    ``duck`` is a ``SciDuck`` instance (exposes ``execute``). Tables:
-
-    Identity/data: ``_record``, ``_constant``, ``_invocation``,
-    ``_invocation_input``, ``_invocation_output``.
-    Code: ``_function_source``.
-    Audit: ``_run``, ``_run_invocation``.
-
-    See §4 of the design doc for the rationale (bipartite vs. flat edge table).
-    """
-    logger.debug("ensure_provenance_tables: creating bipartite provenance schema")
-
-    # Entities: variables AND constants. Variables have a schema_id + a type
-    # (class name) and their data lives in the per-type "<Type>_data" tables.
-    # Constants have schema_id NULL, type '__constant__', value in _constant.
-    # Content-addressed and immutable → ONE row, ON CONFLICT DO NOTHING.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _record (
-            record_id      VARCHAR PRIMARY KEY,
-            created_at     VARCHAR NOT NULL,
-            type           VARCHAR NOT NULL,
-            schema_id      INTEGER,
-            content_hash   VARCHAR,
-            schema_version INTEGER,
-            excluded       BOOLEAN DEFAULT FALSE
-        )
-    """)
-
-    # Constant values (parallel to a variable's "<Type>_data" table).
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _constant (
-            record_id    VARCHAR PRIMARY KEY,
-            value_repr   VARCHAR,
-            value_type   VARCHAR,
-            content_hash VARCHAR
-        )
-    """)
-
-    # Activities: one row per UNIQUE function call (content-addressed).
-    # as_table/distribute are identity-bearing and stored as queryable columns.
-    # where is NOT here — it is batch-level (see _run).
-    #
-    # ``for_columns``: which params ran once per column. Purely DESCRIPTIVE —
-    # derived from the edges' selectors and NOT folded into invocation_id (the
-    # selector already is, so adding it would count the same fact twice). It
-    # exists so a run-option query does not have to parse selector JSON.
-    #
-    # ``across_variants``: which params pooled every variant group into the
-    # one call. NOT derivable from the edges (a pooled call and a one-group
-    # split call write the same edges), so it is the stored fact the call id
-    # and the expected-invocation predictor rebuild from; it IS folded into
-    # invocation_id (only when non-empty).
-    #
-    # ``iteration_level``: the schema keys the call ITERATED (``[]`` = one
-    # call; NULL for glue hops and ``__save__``). Folded into invocation_id
-    # (2026-10-01) because nothing else records it: a PathInput-only loader run
-    # per subject and run once write identical edges. Stored so the run-option
-    # label, the predictor and the skip gate can rebuild it
-    # (docs/claude/iteration-level-identity.md).
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _invocation (
-            invocation_id VARCHAR PRIMARY KEY,
-            function_name VARCHAR NOT NULL,
-            function_hash VARCHAR NOT NULL,
-            as_table      VARCHAR[],
-            distribute    BOOLEAN DEFAULT FALSE,
-            for_columns   VARCHAR[],
-            across_variants VARCHAR[],
-            iteration_level VARCHAR[]
-        )
-    """)
-
-    # The code behind a ``function_hash``. Purely additive: the hash is already
-    # the key, so nothing about identity changes and an absent row means only
-    # "not captured", never "different code".
-    #
-    # One row per *unit*, not per function, because the Python hash is recursive
-    # over user-defined callees (``scicanonicalhash.functions._hash_source``): a helper's
-    # body is part of what the hash identifies, so the entry point alone would
-    # not reconstitute the hashed code. ``is_entry`` marks the function the hash
-    # is named for; the rest are its closure.
-    #
-    # Deliberately NOT content-addressed with a separate unit table. A shared
-    # helper is therefore stored once per calling hash rather than once
-    # globally, which is duplication — but source is kilobytes, the dedup would
-    # cost a second table and a join on every read, and nothing in the read path
-    # is hot. Revisit only if a real database shows the size mattering.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _function_source (
-            function_hash VARCHAR NOT NULL,
-            unit_name     VARCHAR NOT NULL,
-            unit_source   VARCHAR NOT NULL,
-            is_entry      BOOLEAN NOT NULL DEFAULT FALSE,
-            PRIMARY KEY (function_hash, unit_name)
-        )
-    """)
-
-    # What was fed into a call, and the argument slot it filled. ``selector``
-    # qualifies wrappers that change which data is consumed without changing the
-    # record (ColumnSelection: JSON like {"columns": [...]}); NULL otherwise.
-    # It is folded into invocation_id so different selections don't collide.
-    #
-    # ``declared_name`` names the declared Parameter that filled a CONSTANT's
-    # slot when it differs from, or is merely unknown from, ``param_name``
-    # (a Parameter declared ``gaitrite_config`` feeding ``gaitRiteConfig``).
-    # Descriptive only, NOT part of invocation_id: the value is the identity,
-    # the name is what the canvas calls it. NULL = not recorded (older rows,
-    # a bare value in a script); readers fall back to ``param_name``.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _invocation_input (
-            invocation_id   VARCHAR NOT NULL,
-            param_name      VARCHAR NOT NULL,
-            input_record_id VARCHAR NOT NULL,
-            selector        VARCHAR,
-            declared_name   VARCHAR,
-            PRIMARY KEY (invocation_id, param_name, input_record_id)
-        )
-    """)
-
-    # What a call produced. Multiple rows for multi-output functions.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _invocation_output (
-            invocation_id    VARCHAR NOT NULL,
-            output_num       INTEGER NOT NULL,
-            output_record_id VARCHAR NOT NULL,
-            PRIMARY KEY (invocation_id, output_num)
-        )
-    """)
-
-    # Audit log: one row per for_each EXECUTION (fresh row every run, even when
-    # it reproduces existing invocations). Captures when/where (never who: docs/claude/decisions.md, no user identity).
-    # ``origin`` on _run — which surfaces the run read (rule 3 of
-    # docs/claude/intent-and-fact.md): ``gui`` / ``script`` / ``replay``. NULL
-    # is treated by every consumer as "unknown", never as any origin.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _run (
-            run_id        VARCHAR PRIMARY KEY,
-            timestamp     VARCHAR NOT NULL,
-            function_name VARCHAR NOT NULL,
-            where_clause  VARCHAR,
-            origin        VARCHAR
-        )
-    """)
-
-    # The step name a run was given (`for_each(..., step="filter")`), when it
-    # was given one. Its own table rather than a `_run` column: an existing
-    # database gains it on open, with no migration (beta rule). Not identity.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _run_step (
-            run_id VARCHAR PRIMARY KEY,
-            step   VARCHAR NOT NULL
-        )
-    """)
-
-    # The output variable types a run wrote, in its ``outputs=`` ORDER (the
-    # function's return order; a for_columns split's group pairing). Its own
-    # table like `_run_step`: an existing database gains it on open. NOT
-    # identity, and per RUN rather than per invocation: outputs are not part
-    # of invocation_id, so a re-run listing them in another order reuses the
-    # invocations and only a run row can say what that run's order was.
-    # `_invocation_output.output_num` cannot answer this: slots append across
-    # runs and a distributed run's slot is the slice index
-    # (.claude/plan-output-order-owner.md). Reader:
-    # provenance_query.recorded_output_orders.
-    #
-    # ``output_params``: a MATLAB run's signature output NAMES at run time,
-    # position for position with ``outputs`` (``function [time, force] = f``
-    # wrote ``[Time, Force]``). Maps each output name to the variable it saved
-    # to, which survives a later reordering of the signature; NULL for Python
-    # (its functions declare no outputs). Added the same day as the table, so
-    # an ADD COLUMN IF NOT EXISTS keeps a store opened in between working.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _run_outputs (
-            run_id        VARCHAR PRIMARY KEY,
-            outputs       VARCHAR[] NOT NULL,
-            output_params VARCHAR[]
-        )
-    """)
-    duck.execute(
-        "ALTER TABLE _run_outputs ADD COLUMN IF NOT EXISTS output_params VARCHAR[]"
-    )
-
-    # Many-to-many: which invocations a run (re)produced.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _run_invocation (
-            run_id        VARCHAR NOT NULL,
-            invocation_id VARCHAR NOT NULL,
-            PRIMARY KEY (run_id, invocation_id)
-        )
-    """)
-
-    # A function RENAMED (Share as library / Make my own copy:
-    # ``scidb.rename.rename_functions``, plan-library-fork-chain R2). The
-    # recorded name is identity, so after a rename the old name's records are
-    # a different variant from the new name's; this fact is what makes the
-    # old name's records saved before ``renamed_at`` stale for "current"
-    # (``provenance_query.renamed_superseded_records``) -- kept, never latest.
-    duck.execute("""
-        CREATE TABLE IF NOT EXISTS _function_rename (
-            old_name   VARCHAR NOT NULL,
-            new_name   VARCHAR NOT NULL,
-            renamed_at VARCHAR NOT NULL,
-            PRIMARY KEY (old_name, new_name, renamed_at)
-        )
-    """)
-
-    # Indexes for upward/downward traversal (the recursive CTEs in §6/§8 join
-    # output_record_id → invocation_id → input_record_id repeatedly).
-    duck.execute(
-        "CREATE INDEX IF NOT EXISTS idx_inv_output_rid "
-        "ON _invocation_output (output_record_id)"
-    )
-    duck.execute(
-        "CREATE INDEX IF NOT EXISTS idx_inv_input_inv "
-        "ON _invocation_input (invocation_id)"
-    )
-    logger.debug("ensure_provenance_tables: done")
 
 
 # ---------------------------------------------------------------------------

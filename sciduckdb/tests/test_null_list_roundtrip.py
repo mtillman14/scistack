@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from sciduckdb import SciDuck
+from sciduckdb import DuckConnection
 from sciduckdb.codec import (
     storage_to_python,
     count_nan_array_elements,
@@ -27,7 +27,7 @@ from .codec_roundtrip import fetch, store
 
 @pytest.fixture
 def duck():
-    db = SciDuck(":memory:", dataset_schema=["subject", "trial"])
+    db = DuckConnection(":memory:")
     yield db
     db.close()
 

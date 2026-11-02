@@ -2,11 +2,11 @@
 
 <!-- Ground truth: scistack-gui ProjectExportButton.tsx (⇩ export project;
      choices from bundle_cli.export_choices / EXPORT_FLAGS, defaults from
-     scidb.bundle.ExportOptions), extension command scistack.importProjectBundle
+     scidb.project.bundle.ExportOptions), extension command scistack.importProjectBundle
      (extension/src/bundleImport.ts: folder, schema, key map, PathInput roots,
-     history, "Trust, Install and Open" / "Trust and Open"; scidb/schema_map.py),
-     VerifyButton.tsx (✓ verify, compares only), scidb/bundle.py,
-     scidb/environment.py, design docs/claude/portability.md. -->
+     history, "Trust, Install and Open" / "Trust and Open"; scidb/project/schema_map.py),
+     VerifyButton.tsx (✓ verify, compares only), scidb/project/bundle.py,
+     scidb/project/environment.py, design docs/claude/portability.md. -->
 
 A whole project (its code, settings, every hypothesis, saved plots and run history) can be exported as one `.scistack` file and imported on another computer. Use it to hand a project to a labmate, move to a new machine, or publish an analysis so others can reproduce it.
 

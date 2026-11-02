@@ -16,8 +16,8 @@ from __future__ import annotations
 import os
 
 import pytest
-from scidb import schema_order
-from scifor.pathinput import clear_project_root
+from scifor.project import schema_order
+from scifor.project.root import clear_project_root
 from scistackplot import PlotKind, PlotSpec, Role, render_plotly, resolve
 from scistackplotdb import ScidbSource
 

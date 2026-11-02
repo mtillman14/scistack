@@ -14,7 +14,7 @@ one class, one registry, one canvas node type, one sidebar tab. See
 
 | Category | How it's found | Python source | MATLAB source |
 |---|---|---|---|
-| **Functions** | Scan source files/packages | `registry.py` / `scidb/discover.py` | `matlab_registry.py` + `matlab_parser.py` (regex) |
+| **Functions** | Scan source files/packages | `registry.py` / `scidb/project/discover.py` | `matlab_registry.py` + `matlab_parser.py` (regex) |
 | **Variables** | Scan source files/packages | `BaseVariable` subclass (metaclass auto-register) | `classdef ... < ...BaseVariable` (regex) |
 | **Parameters** | Scan source files/packages | top-level `scidb.Parameter(...)` binding (one or many values; IS an `EachOf`) | `scidb.Parameter(...)` in the entities script (regex) |
 | **PathInputs** | Scan source files/packages | top-level `scidb.PathInput(...)` binding | top-level binding in the entities script (regex) |
@@ -50,7 +50,7 @@ Two separate scanners exist, used in different contexts:
   No `@scistack` decorator is required in this path — any bare top-level
   callable qualifies.
 
-- **`scidb/src/scidb/discover.py`** (`scan_project`) — used for packaged
+- **`scidb/src/scidb/project/discover.py`** (`scan_project`) — used for packaged
   projects (walks `src/{project}/` + the `packages` its scistack.toml lists;
   never a lockfile since 2026-10-08). Here a
   function must be explicitly tagged `@scistack` (`is_scistack_function`,
@@ -471,7 +471,7 @@ a test file (e.g. `modules = ["tests/test_foo.py"]`) is still excluded.
 
 **Shared predicate lives in `scidb`** (the core layer scistack-gui already
 depends on), not duplicated per package:
-- `scidb.discover.is_test_path(path)` / `is_test_modname(modname)` — the
+- `scidb.project.discover.is_test_path(path)` / `is_test_modname(modname)` — the
   directory + Python-filename-convention check. Applied in
   `discover.py:scan_package`'s `pkgutil.walk_packages` loop (skips a test
   submodule before import) and reused by `scistack_gui/project/registry.py`'s
@@ -507,7 +507,7 @@ runs every module-level statement. A script with its analysis at the top level
 therefore does that analysis during discovery. It writes files relative to the
 server's cwd, takes time, and can exhaust the extension's startup window.
 
-**Owner:** `scifor.discovery.find_top_level_side_effects`. The GUI's
+**Owner:** `scifor.project.discovery.find_top_level_side_effects`. The GUI's
 `registry._screen_for_side_effects` is only a consumer: a file with any
 finding is refused (recorded as a load error, shown in Paths → Discovered
 Code) and never imported.

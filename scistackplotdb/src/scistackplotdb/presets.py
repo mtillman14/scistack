@@ -16,7 +16,7 @@ is, once). Apply it to another variable and the figure is drawn the same way::
     )
 
 Storage follows the saved-plot rules exactly, through the same
-:class:`~scistackplotdb._versioned.VersionedStore`: one append-only table,
+:class:`~scidb.versioned_store.VersionedStore`: one append-only table,
 ``_plot_preset``; the id is the identity and the name a label (unique across
 the project); re-saving a visible name appends a version; "remove" hides,
 nothing is ever deleted; save is strict, open salvages, and the stored copy
@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from scistacklog import Log
 
-from ._versioned import VersionedStore
+from scidb.versioned_store import VersionedStore
 
 LAYER = "scistackplotdb"
 
@@ -117,6 +117,7 @@ STORE = VersionedStore(
     noun="preset",
     tag="preset",
     error=PresetError,
+    owner="scistackplotdb",
 )
 
 

@@ -292,7 +292,7 @@ class BaseSource:
         """The live reader of this source's PROJECT display aliases, or None.
 
         None here: a CSV or a DataFrame has no project. ``ScidbSource``
-        returns one that reads the project's ``[aliases]`` (``scidb.aliases``)
+        returns one that reads the project's ``[aliases]`` (``scifor.project.aliases``)
         on every call. Deliberately NOT part of :meth:`_cache_generation`:
         aliases are display only, so editing one must not drop a built table.
         """
@@ -300,7 +300,7 @@ class BaseSource:
 
     def _colors_source(self) -> "Callable[[], dict] | None":
         """The live reader of this source's PROJECT mark colours, or None —
-        :meth:`_aliases_source`'s twin for ``[colors]`` (``scidb.colors``).
+        :meth:`_aliases_source`'s twin for ``[colors]`` (``scifor.project.colors``).
         Not part of :meth:`_cache_generation` either: colours are display
         only."""
         return None

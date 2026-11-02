@@ -1,4 +1,4 @@
-"""scidb.config_file: the one renderer/writer of scistack.toml.
+"""scifor.project.config_file: the one renderer/writer of scistack.toml.
 
 Every writer (init, every GUI edit) hands it the WHOLE config, so the
 properties that matter are: what was read comes back after a write, keys it
@@ -17,7 +17,7 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
-from scidb import config_file
+from scifor.project import config_file
 
 
 def _round_trip(section: dict) -> dict:

@@ -2488,7 +2488,7 @@ Backend setup (until Stage 10b can generate one):
   `[library]` / `schema_keys = ["subject"]`), and
   `pipelines/preprocessing.json`.
 - For the JSON, export a submodule with today's pipeline JSON export, or ask
-  Claude for a snippet that writes one with `scidb.library.make_document`.
+  Claude for a snippet that writes one with `scidb.project.library.make_document`.
 - Run `pip install -e libsrc` (or put `libsrc` on PYTHONPATH).
 
 1. **Add:** Submodules → Libraries → **+** → `gaitlib`. The library
@@ -2878,7 +2878,7 @@ and a `[matlab_watch] ... verdict=` other than `done`.
 ## 0zzu. A MATLAB run records a declared Parameter value as declared — added 2026-10-01
 
 **What changed:** MATLAB passes a declared `formulaNum = 6` as `6.0`. scidb now
-records the declared `6` (`scidb.entities.declared_spelling`). Before, history said
+records the declared `6` (`scidb.project.entities.declared_spelling`). Before, history said
 `6.0` and the node showed two "6" rows.
 
 **Backend:** restart the GUI and MATLAB so the new scidb/scimatlab code loads.
@@ -5912,6 +5912,34 @@ its own, and skip-computed still checks globally. Plan:
 4. Edit a node's config in the duplicate. The original should be unaffected.
 5. Select a few nodes, then **Extract** them to a submodule. The boundary edges
    should still render and the submodule's ports should be correct.
+
+---
+
+## P3 homes: project runtime moved, scidb owns the DDL — added 2026-11-01
+
+**What changed:** `scistack.toml` is now read only by `scifor.project.config`
+(the GUI turns its typed sections into files); the entities file is parsed by
+`scifor.project.entities_file` and materialized by `scidb.project.entities`;
+every fixed table of the project database is declared in `scidb.tables`
+(sciduckdb creates none; `_intent` is created by scidb on open). Plan:
+`.claude/plan-tidy-p3-homes.md`.
+
+**Discovery unchanged (aim2 example project)**
+1. Reinstall first (`./dev-install.sh`), then open the aim2 example project.
+2. The canvas, sidebar Variables/Parameters/PathInputs and MATLAB functions
+   should be exactly what they were before the update. The log should show
+   one `[config] read .../scistack.toml: N module entr(ies), ...` line per load.
+3. Edit a Parameter value and a PathInput template in the GUI; both should
+   write back to `scistack_entities.toml` and re-appear after a refresh.
+4. Paths popup: add and remove a path; `scistack.toml` keeps every other key.
+
+**An existing database opens as before**
+1. Open a project database created before this update.
+2. It should open with no error and no missing history. The debug log should
+   show `[tables] ensured 21 tables from 1 owner(s) in N ms` (every statement
+   is `IF NOT EXISTS`, so nothing changes in the file).
+3. Save a plot, a plot preset and a stats table, then export and import the
+   project bundle; all three should arrive in the new project.
 
 ---
 

@@ -220,7 +220,7 @@ def set_project_alias(
     """Write one PROJECT display alias (``[aliases]`` in scistack.toml).
 
     The write is ``scistack_gui.project.config.set_project_alias`` (the one writer of
-    the file; the grammar is ``scidb.aliases``'). No table is dropped: a
+    the file; the grammar is ``scifor.project.aliases``'). No table is dropped: a
     built table reads the project's aliases live
     (``LongTable.aliases_source``), so the next resolve shows the edit. Only
     the kept resolve used for resize re-renders is forgotten, because it

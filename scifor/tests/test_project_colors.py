@@ -1,4 +1,4 @@
-"""Mark colours: ``[colors]`` in the project config (scidb.colors).
+"""Mark colours: ``[colors]`` in the project config (scifor.project.colors).
 
 Stage 2 of ``.claude/plan-custom-mark-colors.md``. A string directly under
 ``[colors]`` is a setting (only ``default``); a table is a thing, keyed by
@@ -10,7 +10,7 @@ import logging
 
 import pytest
 
-from scidb import colors, schema_order
+from scifor.project import colors, schema_order
 
 EXAMPLE = """
 [colors]

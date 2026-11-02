@@ -44,26 +44,26 @@ default = "#333333"           # a STRING under [colors] is a setting (only `defa
 ```
 
 The string-vs-table type rule means a variable called `default` is a thing,
-never the setting. The normalised form (`scidb.colors.ColorTable`) has the
+never the setting. The normalised form (`scifor.project.colors.ColorTable`) has the
 same flat shape as the TOML. `default_of` / `things_of` split it, and so does
 `LongTable.project_colors` on the scistackplot side.
 
 **Why this is separate from `[aliases]`** (user decision): an alias is what
 a thing READS as, and a colour is how it is PAINTED. They are two concepts,
 so they have two owners (CLAUDE.md NOTE 4). They share only the lookup keys
-(below) and the TOML string escaping (`scidb.aliases._toml_str/_toml_key`).
+(below) and the TOML string escaping (`scifor.project.aliases._toml_str/_toml_key`).
 
 ## Owners
 
 | Concept | Owner |
 |---|---|
-| `[colors]` TOML grammar (read, shape-check, render, one-edit) | `scidb.colors` (`normalize`, `colors_in`, `project_colors`, `render_colors_table`, `with_color`, `validate`) |
+| `[colors]` TOML grammar (read, shape-check, render, one-edit) | `scifor.project.colors` (`normalize`, `colors_in`, `project_colors`, `render_colors_table`, `with_color`, `validate`) |
 | What colour TEXT may be (`#rgb`, `#rrggbb`, `rrggbb`, `rgb(r,g,b)`, matplotlib names) → canonical `#rrggbb` | `scistackplot.text.colors.parse_color` |
 | Plot-over-project merge, with origins | `scistackplot.text.colors.merge` / `mark_colors` → `MarkColors` |
 | Factor → lookup keys (a grouping column `Sex` finds `Demographics.Sex` first) | `scistackplot.text.aliases.lookup_keys` (shared with the aliases) |
 | The colour a mark is DRAWN in | `render.base.palette_for` / `sample_palette_for`, which read `resolved.colors` first |
 | What the GUI's Colours section lists | `render.base.colorable` → `layout.meta.colorable` |
-| Writing the project layer | `scistack_gui.project.config.set_project_color`: it canonicalises through `parse_color`, then calls `scidb.colors.with_color` and the whole-file writer |
+| Writing the project layer | `scistack_gui.project.config.set_project_color`: it canonicalises through `parse_color`, then calls `scifor.project.colors.with_color` and the whole-file writer |
 
 scidb cannot import scistackplot, so the project layer arrives as TEXT and is
 parsed at merge time. A bad value gets a WARN and is dropped, and the figure
@@ -169,7 +169,7 @@ which is node-tested.
 
 - `scistackplot/tests/test_parse_color.py`
 - `scistackplot/tests/test_mark_colors.py`
-- `scidb/tests/test_colors_config.py`
+- `scifor/tests/test_project_colors.py`
 - `scistack-gui/tests/test_config.py` (`set_project_color` block)
 - `scistack-gui/tests/test_plot_service.py` (last two tests)
 - `scistack-gui/frontend/src/components/PlotStudio/colorEdit.test.ts`

@@ -45,7 +45,7 @@ interface Registry {
   sidebar_functions?: string[]
   /**
    * {function name -> 'process' | 'plot' | 'stat' | 'glue'} from
-   * scidb.discover.function_role. The classifier deliberately lives in
+   * scidb.project.discover.function_role. The classifier deliberately lives in
    * scidb — the prefixes already drive execution behaviour there, so the GUI
    * must not hold a second copy of the strings (CLAUDE.md NOTE 3). The
    * dropdown below is pure display and belongs here; what a role IS does not.

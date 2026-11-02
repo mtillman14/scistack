@@ -26,13 +26,13 @@ import threading
 
 import pytest
 
-from sciduckdb import SciDuck
+from sciduckdb import DuckConnection
 
 
 @pytest.fixture
 def duck():
-    """A fresh in-memory SciDuck."""
-    db = SciDuck(":memory:", dataset_schema=["subject", "session"])
+    """A fresh in-memory DuckConnection."""
+    db = DuckConnection(":memory:")
     yield db
     db.close()
 

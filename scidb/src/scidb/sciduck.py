@@ -1,8 +1,10 @@
-"""The ``_schema`` table of schema-location ids, plus ``_variables`` and groups.
+"""SciDuck: a ``DuckConnection`` bound to one dataset schema.
 
-``SciDuck`` is a ``DuckConnection`` that creates (or, read-only, validates)
-these tables for one dataset schema and maps schema locations to integer
-``schema_id``s.
+Maps schema locations to integer ``schema_id``s (``_schema``) and keeps the
+variable list and groups (``_variables``, ``_variable_groups``). Moved here
+from sciduckdb (D4): sciduckdb is the codec and the connection and creates
+no tables; every fixed table of a project database, these three included,
+is declared in ``scidb.tables`` and created on a writable open.
 """
 
 from pathlib import Path
@@ -10,8 +12,10 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from .codec import _schema_str
-from .connection import DuckConnection
+from sciduckdb import DuckConnection
+
+from . import tables
+from .schema_values import schema_str
 
 
 def schema_keys_from_db(db_path: str | Path) -> list[str]:
@@ -61,6 +65,10 @@ class SciDuck(DuckConnection):
         Ordered hierarchy, e.g. ["subject", "session", "trial"].
     read_only : bool
         Open read-only. No DDL is executed (the database must already exist).
+
+    Opening writable runs ``connect -> scidb.tables.ensure_core -> validate``:
+    the tables exist before the schema columns are checked against
+    *dataset_schema*.
     """
 
     def __init__(
@@ -70,59 +78,22 @@ class SciDuck(DuckConnection):
         super().__init__(db_path, read_only=read_only)
         if self.read_only:
             self._validate_schema_columns()
-        else:
-            self._init_metadata_tables()
-
-    # ------------------------------------------------------------------
-    # Metadata table creation
-    # ------------------------------------------------------------------
-
-    def _init_metadata_tables(self):
-        # --- _schema ---
-        schema_cols = ", ".join(f'"{s}" VARCHAR' for s in self.dataset_schema)
-        self.execute(f"""
-            CREATE TABLE IF NOT EXISTS _schema (
-                schema_id INTEGER PRIMARY KEY,
-                schema_level VARCHAR NOT NULL,
-                {schema_cols}
-            )
-        """)
-        # Create a sequence for schema_id if it doesn't exist
-        try:
-            self.execute("CREATE SEQUENCE IF NOT EXISTS _schema_id_seq START 1")
-        except Exception:
-            pass  # sequence already exists
-
-        # --- _variables ---
-        self.execute("""
-            CREATE TABLE IF NOT EXISTS _variables (
-                variable_name VARCHAR PRIMARY KEY,
-                schema_level VARCHAR NOT NULL,
-                dtype VARCHAR,
-                created_at TIMESTAMP DEFAULT current_timestamp,
-                description VARCHAR DEFAULT ''
-            )
-        """)
-
-        # --- _variable_groups ---
-        self.execute("""
-            CREATE TABLE IF NOT EXISTS _variable_groups (
-                group_name VARCHAR NOT NULL,
-                variable_name VARCHAR NOT NULL,
-                PRIMARY KEY (group_name, variable_name)
-            )
-        """)
-
-        # Validate schema consistency if _schema already has data
+            return
+        tables.ensure_core(self, self.dataset_schema)
+        # An existing _schema with rows was written for some schema; an empty
+        # one (just created) has nothing to disagree with yet.
         if self.fetchall("SELECT COUNT(*) FROM _schema")[0][0] > 0:
             self._validate_schema_columns()
+
+    # ------------------------------------------------------------------
+    # Schema validation
+    # ------------------------------------------------------------------
 
     def _validate_schema_columns(self):
         """Check that the existing _schema columns match dataset_schema.
 
-        Read-only companion to _init_metadata_tables: runs the same
-        consistency check without any DDL, so it is safe on a read-only
-        connection (where the tables must already exist).
+        Runs no DDL, so it is safe on a read-only connection (where the
+        tables must already exist).
         """
         if not self.table_exists("_schema"):
             if self.read_only:
@@ -159,7 +130,7 @@ class SciDuck(DuckConnection):
         params = [schema_level]
         for col in key_cols:
             conditions.append(f'"{col}" = ?')
-            params.append(_schema_str(key_values[col]))
+            params.append(schema_str(key_values[col]))
         # Columns above the level that should be NULL are implicit —
         # but to be safe, also require NULLs for levels below.
         for col in self.dataset_schema:
@@ -181,7 +152,7 @@ class SciDuck(DuckConnection):
         col_names = ["schema_id", "schema_level"] + key_cols
         placeholders = ", ".join(["?"] * len(col_names))
         col_str = ", ".join(f'"{c}"' for c in col_names)
-        values = [new_id, schema_level] + [_schema_str(key_values[c]) for c in key_cols]
+        values = [new_id, schema_level] + [schema_str(key_values[c]) for c in key_cols]
         self.execute(
             f"INSERT INTO _schema ({col_str}) VALUES ({placeholders})", values
         )
@@ -240,14 +211,14 @@ class SciDuck(DuckConnection):
             for row in rows:
                 sid = row[0]
                 row_key = tuple(
-                    _schema_str(v) if v is not None else "" for v in row[1:]
+                    schema_str(v) if v is not None else "" for v in row[1:]
                 )
                 existing_lookup[row_key] = sid
 
             # Match entries against existing rows
             missing = []  # [(combo_key, key_values), ...]
             for combo_key, key_values in entries:
-                match_key = tuple(_schema_str(key_values.get(c, "")) for c in key_cols)
+                match_key = tuple(schema_str(key_values.get(c, "")) for c in key_cols)
                 if match_key in existing_lookup:
                     result[combo_key] = existing_lookup[match_key]
                 else:
@@ -267,7 +238,7 @@ class SciDuck(DuckConnection):
                 for idx, (combo_key, key_values, _) in enumerate(missing):
                     new_id = first_id + idx
                     row = [new_id, schema_level] + [
-                        _schema_str(key_values[c]) for c in key_cols
+                        schema_str(key_values[c]) for c in key_cols
                     ]
                     insert_rows.append(row)
                     result[combo_key] = new_id

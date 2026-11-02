@@ -10,7 +10,7 @@
  * "↑ project" makes a plot alias the project's (every plot then reads it);
  * "✕ project" removes a project alias. Both go through the backend
  * (`plot_project_alias_set` → scistack_gui.config, whose grammar is
- * scidb.aliases'), never written here.
+ * scifor.project.aliases'), never written here.
  *
  * The rows come from Python (`layout.meta.labelable`): the measure and every
  * factor the figure draws as text. The panel never works out which.

@@ -1,4 +1,4 @@
-"""scidb.environment: install what an imported project lacks -- all or
+"""scidb.project.environment: install what an imported project lacks -- all or
 nothing, after a full check (portability Stage 10d, user decisions
 2026-10-09). pip is never really run here: ``_pip`` is the one seam."""
 
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from scidb import environment
+from scidb.project import environment
 
 
 class FakePip:

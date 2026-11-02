@@ -1,4 +1,4 @@
-"""Unit tests for scifor.discovery -- the generic package-walking harness."""
+"""Unit tests for scifor.project.discovery -- the generic package-walking harness."""
 
 from __future__ import annotations
 
@@ -8,20 +8,19 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from scifor.discovery import (
+from scifor.project.discovery import (
     PathInsert,
     PathInsertAll,
     find_top_level_side_effects,
     headless_matplotlib,
     is_test_modname,
     is_test_path,
-    is_windows_absolute,
     purge_module,
     read_project_name,
-    resolve_config_path,
     sibling_import_dirs,
     walk_package,
 )
+from scifor.project.config import is_windows_absolute, resolve_config_path
 
 
 @pytest.fixture
@@ -181,7 +180,7 @@ class TestScistackTomlIsTheOnlyConfig:
     pyproject.toml is packaging metadata and never a config source."""
 
     def test_config_path_is_scistack_toml_at_the_root(self, tmp_path):
-        from scifor.discovery import CONFIG_FILENAME, config_path_at
+        from scifor.project.config import CONFIG_FILENAME, config_path_at
 
         assert CONFIG_FILENAME == "scistack.toml"
         assert config_path_at(tmp_path) == tmp_path / "scistack.toml"
@@ -191,7 +190,7 @@ class TestScistackTomlIsTheOnlyConfig:
         assert config_path_at(f) == tmp_path / "scistack.toml"
 
     def test_tool_scistack_in_pyproject_is_never_config(self, tmp_path):
-        from scifor.discovery import project_config_at
+        from scifor.project.config import project_config_at
 
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "x"\n\n[tool.scistack]\nmodules = ["a.py"]\n'
@@ -200,7 +199,7 @@ class TestScistackTomlIsTheOnlyConfig:
 
     def test_scistack_toml_is_used_beside_a_pyproject(self, tmp_path):
         """No precedence rule: a pyproject.toml next to it changes nothing."""
-        from scifor.discovery import project_config_at, read_scistack_section
+        from scifor.project.config import project_config_at, read_scistack_section
 
         (tmp_path / "pyproject.toml").write_text(
             '[project]\nname = "x"\n\n[tool.scistack]\nmodules = ["wrong.py"]\n'
@@ -211,7 +210,7 @@ class TestScistackTomlIsTheOnlyConfig:
         assert read_scistack_section(config) == {"modules": ["right.py"]}
 
     def test_empty_file_is_a_config_and_garbage_is_not(self, tmp_path):
-        from scifor.discovery import project_config_at, read_scistack_section
+        from scifor.project.config import project_config_at, read_scistack_section
 
         cfg = tmp_path / "scistack.toml"
         cfg.write_text("")
@@ -787,7 +786,7 @@ def test_config_path_at_a_folder_that_does_not_exist_yet(tmp_path):
     its parent -- even when the parent is itself a project (a bundle import
     or `scistack init` into a new subfolder). An existing file still means
     its folder."""
-    from scifor.discovery import CONFIG_FILENAME, config_path_at
+    from scifor.project.config import CONFIG_FILENAME, config_path_at
 
     (tmp_path / CONFIG_FILENAME).write_text("")
     new = tmp_path / "copy"

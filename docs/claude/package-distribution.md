@@ -142,8 +142,8 @@ someone doing a real `pip install` of one package.
   level without declaring it gets it via `scistack-db`. Correct until the day
   `scistack-db` drops pandas.
 - **A test-only dependency propping up a runtime import.** Six modules do a hard
-  `tomllib` → `tomli` fallback (`scifor/discovery.py:37`, `scidb/discover.py:52`,
-  `scidb/entities.py:90`,
+  `tomllib` → `tomli` fallback (`scifor/project/discovery.py:37`, `scidb/project/discover.py:52`,
+  `scidb/project/entities.py:90`,
   `scistack/uv_wrapper.py:48`, `scistack_gui/project/config.py:33`). `tomllib` is 3.11+,
   CI's floor is 3.10, and no package declares `tomli` at runtime. CI passes
   because `pytest-cov` → `coverage` → `tomli; python_full_version<="3.11.0a6"`.

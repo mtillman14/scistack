@@ -434,7 +434,7 @@ a log line from the command generator when a script is about to call
 `Type()` that neither a classdef nor a declaration accounts for.
 
 Note the GUI reads `entities_file` **only** from the explicit config key,
-while `scidb.entities.entities_path` also accepts the conventional
+while `scifor.project.entities_file.entities_path` also accepts the conventional
 `src/scistack_entities.toml` when it exists. A project relying on the
 convention without the key still runs (MATLAB self-heals at run time), but
 its declarations do not appear in the GUI.

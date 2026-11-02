@@ -245,7 +245,7 @@ key" or "a variable" to find it. `levels` must be a sub-table, not keys
 beside `name`: a flat table would be ambiguous for a level literally called
 `name`. An earlier draft split by kind (`[aliases.variables]`,
 `[aliases.schema_keys]`, `[aliases.levels.X]`); that only disambiguated a
-variable and a schema key with the same name, which `scidb.aliases` now
+variable and a schema key with the same name, which `scifor.project.aliases` now
 WARNs about instead.
 
 ### What a label may and may not do
@@ -272,9 +272,9 @@ WARNs about instead.
 
 | Concept | Owner | Consumers |
 |---|---|---|
-| The `[aliases]` grammar: read, render, validate | `scidb.aliases` | `ScidbSource`, the GUI config writer |
-| Which config file | `scidb.schema_order.locate_config` (reused) | `scidb.aliases.project_aliases` |
-| Writing `scistack.toml` | `scistack_gui.project.config._render_scistack_toml` (whole-file rewrite; carries `[aliases]` and `[schema_keys]`, `[aliases]` text from `scidb.aliases.render_aliases_table`) | Paths popup, `plot_project_alias_set` (via `scidb.aliases.with_alias`) |
+| The `[aliases]` grammar: read, render, validate | `scifor.project.aliases` | `ScidbSource`, the GUI config writer |
+| Which config file | `scifor.project.schema_order.locate_config` (reused) | `scifor.project.aliases.project_aliases` |
+| Writing `scistack.toml` | `scistack_gui.project.config._render_scistack_toml` (whole-file rewrite; carries `[aliases]` and `[schema_keys]`, `[aliases]` text from `scifor.project.aliases.render_aliases_table`) | Paths popup, `plot_project_alias_set` (via `scifor.project.aliases.with_alias`) |
 | Project aliases → plotting | `ScidbSource._aliases_source` → `LongTable.aliases_source` (a live READER, set once at build) → `LongTable.project_aliases()` | `scistackplot.text.aliases.display_text` |
 | Merge order + level/name text | `scistackplot.text.aliases` (`display_text` → `DisplayText`, on `ResolvedPlot.text`) | `reduce._build_figure`, both renderers, `x_axis_title` (and so codegen) |
 | The labelable factors and levels shown in the GUI | `layout.meta.labelable` (Python) | the Plot Studio Labels section |
@@ -384,7 +384,7 @@ plot's copy; "✕ project" removes the project's.
 
 The write path: `plot_project_alias_set` → `plot_service.set_project_alias`
 → `scistack_gui.project.config.set_project_alias`, which uses the one whole-file
-writer and `scidb.aliases.with_alias` / `render_aliases_table`, then
+writer and `scifor.project.aliases.with_alias` / `render_aliases_table`, then
 forgets the mtime-cached parse. A pyproject.toml project and a project with
 no config are refused as `{ok: false, error}` answers. The panel then
 re-resolves the unchanged spec (`refreshResolve`), because nothing else

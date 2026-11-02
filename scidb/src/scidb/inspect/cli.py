@@ -46,10 +46,10 @@ def _config_db(start: Path) -> str | None:
     """``db = "…"`` from the project's ``scistack.toml`` at *start*.
 
     The config file and its location have one owner
-    (``scifor.discovery.project_config_at``): the root itself, never a parent
+    (``scifor.project.config.project_config_at``): the root itself, never a parent
     folder, and never a ``pyproject.toml`` (packaging only, 2026-10-08).
     """
-    from scifor.discovery import project_config_at, read_scistack_section
+    from scifor.project.config import project_config_at, read_scistack_section
 
     config = project_config_at(start)
     if config is None:
@@ -183,10 +183,10 @@ def _emit_json(result) -> None:
 
 
 def _cmd_verify(insp: Inspector, args) -> None:
-    """Compare this database's history with the exporter's (scidb.verify).
+    """Compare this database's history with the exporter's (scidb.project.verify).
     Exit code 0 when everything reproduced (within tolerance), 2 when
     anything differs, did not run, or is not comparable."""
-    from scidb.verify import verify
+    from scidb.project.verify import verify
 
     root = Path(args.project) if args.project else Path(str(insp._db.dataset_db_path)).parent
     report = verify(insp._db, root=root, against=args.against, rtol=args.rtol, atol=args.atol)
@@ -855,7 +855,7 @@ def _add_commands(
     )
     p.set_defaults(_handler=_cmd_status)
 
-    from scidb.verify import DEFAULT_ATOL, DEFAULT_RTOL
+    from scidb.project.verify import DEFAULT_ATOL, DEFAULT_RTOL
 
     p = sub.add_parser(
         "verify",

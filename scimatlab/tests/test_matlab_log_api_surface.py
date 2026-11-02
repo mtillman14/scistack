@@ -131,7 +131,7 @@ def test_every_log_call_site_resolves():
 def test_generated_matlab_error_handlers_use_err():
     """Pin the exact regression: GUI-generated catch blocks must call Log.err."""
     src = (
-        _root / "scistack-gui" / "scistack_gui" / "api" / "matlab_command.py"
+        _root / "scistack-gui" / "scistack_gui" / "services" / "matlab_command_format.py"
     ).read_text(encoding="utf-8")
     assert "scidb.Log.err(" in src, "generated MATLAB should log failures via Log.err"
     assert "scidb.Log.error(" not in src, (

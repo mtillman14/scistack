@@ -474,7 +474,7 @@ titles). `levels` is used wherever a value appears: ticks, brackets,
 legend entries, panel titles and figure titles.
 
 A scidb-backed table also carries the project's aliases (`[aliases]` in
-`scistack.toml`, read live through `scidb.aliases`). The plot's own entries
+`scistack.toml`, read live through `scifor.project.aliases`). The plot's own entries
 override them field by field, and `""` shows the raw text again.
 
 Only the text changes. Filters, facet layout rules, the level order and
@@ -504,7 +504,7 @@ name. `scistackplot.text.colors.parse_color` is the one reader, and it
 canonicalises every colour to `#rrggbb`.
 
 A scidb-backed table also carries the project's `[colors]` (read live
-through `scidb.colors`). The plot's pins override them level by level.
+through `scifor.project.colors`). The plot's pins override them level by level.
 
 A level you don't pin keeps its palette colour at its declared position, so
 pinning one level never moves another's.

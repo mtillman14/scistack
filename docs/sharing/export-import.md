@@ -1,11 +1,11 @@
 # Export & Import Projects
 
 <!-- Ground truth: scistack-gui/scistack_gui/bundle_cli.py (export / import /
-     bundle-info / install; EXPORT_FLAGS), scidb/bundle.py (ExportOptions:
+     bundle-info / install; EXPORT_FLAGS), scidb/project/bundle.py (ExportOptions:
      history on, data off, wheelhouse off; check_environment reads pyproject
-     [project] dependencies), scidb/environment.py (install_project_requirements:
+     [project] dependencies), scidb/project/environment.py (install_project_requirements:
      only declared deps that are missing, at the exporter's versions),
-     scidb/project.py (_PYPROJECT template), design docs/claude/portability.md. -->
+     scidb/project/init.py (_PYPROJECT template), design docs/claude/portability.md. -->
 
 A whole project (its code, settings, pipelines and run history) can be exported as one `.scistack` file and imported on another computer. Use it to hand a project to a labmate, move to a new machine, or publish an analysis so others can reproduce it.
 

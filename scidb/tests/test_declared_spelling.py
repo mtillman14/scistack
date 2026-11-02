@@ -5,7 +5,7 @@ entities file, and MATLAB passed it as ``6.0`` (MATLAB has no integers).
 History recorded ``"6.0"`` and the declaration said ``"6"``, so the canvas drew
 two "6" rows. ``constants_identity_key`` is repr-based, so a Python run of the
 same declared 6 would also have been a different variant.
-The owner is ``scidb.entities.declared_spelling``.
+The owner is ``scidb.project.entities.declared_spelling``.
 """
 
 import numpy as np
@@ -13,7 +13,7 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, Parameter, configure_database, entities, for_each
-from scidb.entities import declared_spelling
+from scidb.project.entities import declared_spelling
 from scifor.each_of import EachOf
 
 SCHEMA = ["subject"]

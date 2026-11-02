@@ -248,6 +248,7 @@ the variant display rule, exclusions, and the sciduckdb codec pieces.*
 | PD1 | scidb grows the bulk long-frame read that plotting needs (`RecordStore.long_frame(type, include_data=…)` from 04c Q2), with plot-at-scale's performance as its acceptance test. `load_variable` becomes a call. | the parallel read path |
 | PD2 | Move `VersionedStore` into scidb (`scidb.store.versioned`) as the one owner of "named, versioned, hideable rows". scistackplotdb and scistackstatsdb declare their tables through it. | private cross-package import; scattered DDL |
 
+> **Done (2026-11-01, P3):** PD2 — `scidb.versioned_store.VersionedStore` (module name per the flat layout until P4), declares its table through `scidb.tables`; `remap_row` is a store method, so statsdb no longer imports plotdb's private helper.
 ---
 
 ## csv-stats, scistackstats, scistackstatsdb

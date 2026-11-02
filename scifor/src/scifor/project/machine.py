@@ -14,7 +14,7 @@ machine says what ``name`` means in a file OUTSIDE the repo::
     rto = "Y:/"
 
 This module is the one owner of that file and of the ``{name}`` grammar.
-``scifor.discovery.resolve_config_path`` / ``normalize_config_separators``
+``scifor.project.config.resolve_config_path`` / ``normalize_config_separators``
 expand through :func:`expand_roots`, so every config reader gets it; config
 WRITERS record :func:`portable_form`; the GUI's startup notice and its
 config loops ask :func:`unresolvable_here` which entries to skip and why.

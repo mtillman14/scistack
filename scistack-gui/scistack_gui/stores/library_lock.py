@@ -8,7 +8,7 @@ the project would be silently overwritten on the next upgrade. Instead, an
 edit is refused with :class:`LibraryPipelineReadOnly`, whose message says
 which library owns it and that "Make my own copy" makes it editable.
 
-A library the project AUTHORS (``scidb.names.authored_libraries``: made here
+A library the project AUTHORS (``scifor.project.names.authored_libraries``: made here
 by Share as library or Make my own copy, ``libs/<name>/``) is not locked:
 its canvas is the working copy, never re-synced, and ⇪ Share publishes it
 (plan-library-fork-chain B5/B6).
@@ -115,9 +115,9 @@ def check_scope(db, pipeline_id: "str | None", what: str) -> None:
     if owner is None:
         return
     # B5: a library this project AUTHORS is edited here -- its canvas is the
-    # working copy and ⇪ Share publishes it (scidb.names.authored_libraries,
+    # working copy and ⇪ Share publishes it (scifor.project.names.authored_libraries,
     # the one answer; nothing stored).
-    from scidb.names import authored_libraries
+    from scifor.project.names import authored_libraries
 
     if owner["library"] in authored_libraries():
         return

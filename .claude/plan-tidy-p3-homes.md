@@ -212,4 +212,65 @@ scistackstatsdb 2, GUI 18. scidb also reads the GUI-created `_intent`.
 4. User runs `scifor`, `scidb` and `scimatlab`.
 
 ## Progress
-- (none yet)
+- 2026-11-01: stages 1-7 written in one session, awaiting the user's test run.
+  Nothing committed. Python was not run; pyright (repo sources on
+  extraPaths) reports no unresolved import in any package's src or tests.
+  - Stage 1: `scifor/project/{root,machine,discovery}.py`. Log prefix of the
+    root functions kept as `[pathinput]` (the manual-test doc greps it).
+  - Stage 2: config_file, aliases, colors, schema_order, names, source_edit
+    moved; their pure tests are `scifor/tests/test_project_{config_file,
+    source_edit,colors}.py`. They still log on the `scidb` layer (Log's
+    default), so existing caplog filters hold. scistackplotdb now depends on
+    scifor directly (pyproject + override-versions-of).
+  - Stage 3: `scifor.project.entities_file` returns `DeclaredEntities`
+    (deviation: not named `EntitiesFile`, which stays scidb's materialized
+    result). The mtime cache stays in scidb: it caches the materialized
+    classes, which must be one class per process. A declaration only PathInput
+    refuses is rejected at materialize, appended after the parse errors.
+    New: `scifor/tests/test_project_entities_file.py`,
+    `scidb/tests/test_entities_seam.py`.
+  - Stage 4: `scifor.project.config` (locate/read moved out of discovery;
+    `read_project_config` -> `ProjectConfig`, `load_config_file` strict read).
+    Deviation: expanding a `modules` dir/glob into files stays in the GUI
+    (code discovery, with its test-file and noise-dir rules). Guards:
+    `scifor/tests/test_toml_reader_owner.py`, GUI
+    `tests/test_config_reader_owner.py`.
+  - Stage 5: `scidb/project/` = entities, discover, init (was project.py),
+    library, bundle, environment, verify, table_copy, schema_map.
+    `from scidb import entities` still works (facade). CLIs NOT moved (user
+    decision): every command needs the GUI runtime; recorded under U1 in 08.
+  - Stage 6 (full D3/D4, user decision): `scidb/tables.py` (TableDecl,
+    declare, declared, ensure, ensure_core). Deviations: scidb's own 21
+    tables are declared in tables.py itself (deterministic, one list) and
+    `ensure_core` creates only owner "scidb" tables on open; other owners'
+    tables keep "created on first write, never by a read" via
+    `tables.ensure`. No copy_in_bundle / cleared_by_clear_data flags: step 7
+    (driving bundle/clear_data from the registry) not done; bundle and
+    clear_data keep their own lists. `SciDuck` moved to `scidb.sciduck`
+    (uses `schema_values.schema_str`, dropping sciduckdb's `_schema_str`
+    use); `test_sciduck.py` split into sciduckdb `test_codec_storage.py`
+    and scidb `test_sciduck.py`. `VersionedStore` -> `scidb.versioned_store`
+    (`owner` field, `remap_row` method).
+  - Stage 7: `PathInput.bound_to(root)` + `scifor.foreach.bind_path_inputs`;
+    `project_root=` on both `for_each`s, threaded through scidb's prepare
+    state and the dry-run preview, recorded in Pipeline step options.
+  - User to run (one package per invocation): scifor, scidb, sciduckdb,
+    scimatlab, scistack-gui, scistackplotdb, scistackstatsdb, scistack,
+    tools. Reinstall first (`./dev-install.sh`): packages and modules moved.
+- 2026-11-01, first test run: 8 failures, all fixed (not yet re-run).
+  - MATLAB parity: `project_root=` added to `+scifor/for_each.m` (binds
+    PathInput / Fixed(PathInput) inputs via new `scifor.PathInput.bound_to`),
+    `+scidb/for_each.m` (forwards to Python prepare and the MATLAB loop) and
+    `bridge.for_each_prepare`.
+  - scimatlab api-surface tests read `api/matlab_command.py`, moved to
+    `services/matlab_command_format.py` in P2 (pre-existing, from P2).
+  - `clear_data.KEPT_TABLES` gains `_intent` (now created by scidb on open).
+  - test_inspect_phase5 patched `sciduckdb.schema_keys_from_db`; now
+    `scidb.sciduck.schema_keys_from_db`.
+  - GUI test_history / test_portability grepped GUI source for
+    `CREATE TABLE`; they now read the registry (owner `scistack_gui` +
+    `_intent`).
+  - GUI lazy imports 1380 > 1377: the stage 2-4 splits turned 3 lazy
+    imports into 6; hoisted 4 scifor.project imports to module top
+    (bundle_section, project/registry, services/library_authoring), so the
+    count should be about 1376.

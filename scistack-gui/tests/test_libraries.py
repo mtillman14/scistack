@@ -1,6 +1,6 @@
 """Library pipelines on the canvas: seed, lock, re-sync (portability Stage 10a).
 
-A library ships a pipeline as a document (``scidb.library``). Listing the
+A library ships a pipeline as a document (``scidb.project.library``). Listing the
 library seeds it as a LIBRARY-OWNED pipeline (``services/library_service``):
 derived ids, not a tab, read-only during user edits (``library_lock``), and
 re-synced in place when the library changes. Placements of it on the
@@ -42,7 +42,7 @@ def _source_canvas(db) -> str:
 
 
 def _document(db, pid: str, name: str = "preprocessing") -> dict:
-    from scidb.library import make_document
+    from scidb.project.library import make_document
 
     from scistack_gui.services import canvas_snapshot
 
@@ -51,7 +51,7 @@ def _document(db, pid: str, name: str = "preprocessing") -> dict:
 
 
 def _write_library(root: Path, docs: dict, *, schema_keys=None, matlab: bool = False) -> Path:
-    from scidb.library import document_bytes
+    from scidb.project.library import document_bytes
 
     pkg = root / LIB
     (pkg / "pipelines").mkdir(parents=True, exist_ok=True)
@@ -76,8 +76,8 @@ def library(client, tmp_path, monkeypatch):
     """A library LIB on sys.path, listed in the project's scistack.toml,
     shipping the source canvas as 'preprocessing'. Yields
     ``(lib_root, document, source_pid)``."""
-    from scidb import names
-    from scifor.pathinput import clear_project_root, set_project_root
+    from scifor.project import names
+    from scifor.project.root import clear_project_root, set_project_root
 
     from scistack_gui.project.config import add_package
 
@@ -92,7 +92,7 @@ def library(client, tmp_path, monkeypatch):
     add_package(None, LIB, project=tmp_path)
     names.clear_cache()
     yield lib_root, doc, src
-    from scidb import schema_order
+    from scifor.project import schema_order
 
     sys.modules.pop(LIB, None)
     names.clear_cache()
@@ -387,7 +387,7 @@ def test_a_librarys_matlab_functions_are_discovered_and_on_the_path(library, tmp
 
 
 def test_a_bundle_carries_library_pipelines_by_reference(library, tmp_path):
-    from scidb.bundle import export_project
+    from scidb.project.bundle import export_project
 
     from scistack_gui.headless import bundle_providers, import_project_bundle
     from scistack_gui.services.library_service import sync_libraries

@@ -1,7 +1,7 @@
 """A whole project through a .scistack bundle (portability Stage 4).
 
 Export: the GUI section (every visible pipeline's canvas + global GUI state)
-and the plots section, through scidb.bundle. Import: a NEW project, opened
+and the plots section, through scidb.project.bundle. Import: a NEW project, opened
 without discovery, with every pipeline keeping its id -- the root canvas
 ``main`` filled, never forked into "main (imported)".
 """
@@ -53,7 +53,7 @@ def _build_source(client):
 
 
 def _export(tmp_path):
-    from scidb.bundle import export_project
+    from scidb.project.bundle import export_project
 
     from scistack_gui.headless import bundle_providers
 
@@ -238,7 +238,7 @@ def test_a_canvas_lands_in_the_recipients_schema(client, tmp_path):
 
 
 def test_with_data_the_canvas_is_identical_down_to_node_ids(client, tmp_path):
-    from scidb.bundle import ExportOptions, export_project
+    from scidb.project.bundle import ExportOptions, export_project
 
     from scistack_gui.headless import bundle_providers, import_project_bundle
     from scistack_gui.services.pipeline_service import get_pipeline_graph

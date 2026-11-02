@@ -39,11 +39,12 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .log import Log
+from .tables import VARIANT_PIN
 
 if TYPE_CHECKING:
     from .database import DatabaseManager
 
-TABLE = "_variant_pin"
+TABLE = VARIANT_PIN.name
 
 
 @dataclass
@@ -65,21 +66,6 @@ class VariantPin:
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
-
-
-def ensure_variant_pin_table(duck) -> None:
-    """Create ``_variant_pin`` if missing (idempotent; skipped read-only)."""
-    duck.execute(f"""
-        CREATE TABLE IF NOT EXISTS {TABLE} (
-            pin_id         VARCHAR PRIMARY KEY,
-            variable       VARCHAR NOT NULL,
-            selection_json VARCHAR NOT NULL,
-            reason         VARCHAR NOT NULL,
-            pinned_at      VARCHAR NOT NULL,
-            released_at    VARCHAR,
-            release_reason VARCHAR
-        )
-    """)
 
 
 def _row_to_pin(row) -> VariantPin:

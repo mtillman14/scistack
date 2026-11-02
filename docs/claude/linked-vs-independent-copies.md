@@ -9,7 +9,7 @@ global regardless of how a pipeline got onto a canvas.
 ## The three sizes
 
 ```
-Project            .scistack bundle (scidb/bundle.py; GUI ⇩ export project)
+Project            .scistack bundle (scidb/project/bundle.py; GUI ⇩ export project)
 └── Hypothesis     a pipeline tagged in _hypotheses (a tab)
     └── Submodule  a pipeline placed via _pipeline_uses (child_pipeline_id)
 ```
@@ -28,9 +28,9 @@ decides tab vs Submodules list. Sharing one moves the same document shape.
 | Import, id known locally, identical content (recursive `canvas_snapshot.signature`) | local pipeline REUSED (unhidden) | n/a | `_resolve_pipeline` |
 | Import, id known locally, content differs | FORK: fresh id, "(imported)" name suffix; local untouched | no | `_resolve_pipeline` |
 | Import, globals (Parameter/PathInput/Sweep) by name | local REUSED; missing PathInput/Sweep materialised into source | n/a | `portability_service` |
-| Import `.scistack` | always a NEW project, code copied into `src/<pkg>/` | no | `scidb.bundle.import_project` |
+| Import `.scistack` | always a NEW project, code copied into `src/<pkg>/` | no | `scidb.project.bundle.import_project` |
 | Library pipeline (🔒, installed) | seeded with ids from existing `_library_pipelines` rows, else DERIVED (`local_pipeline_ids`, O11); re-synced when the document's `definition_hash` changes; project placements + bindings untouched | yes, follows installed version | `library_service.sync_libraries` |
-| Library pipeline (✏, AUTHORED: `libs/<name>/`, `scidb.names.authored_libraries`) | the canvas is the working copy; NEVER re-synced from its files (O12); editable (`library_lock` skips it) | no: the files are output, written by ⇪ publish | `library_authoring.share` (publish) |
+| Library pipeline (✏, AUTHORED: `libs/<name>/`, `scifor.project.names.authored_libraries`) | the canvas is the working copy; NEVER re-synced from its files (O12); editable (`library_lock` skips it) | no: the files are output, written by ⇪ publish | `library_authoring.share` (publish) |
 | Edit inside a library pipeline | refused (`LibraryPipelineReadOnly`) during a user edit only | — | `library_lock` |
 | ⇪ Share a submodule | library written to `libs/<name>/`; project lists it; its pipelines OWNED by it with the SAME ids; canvas relabelled `fn` -> `name.fn`; results carried (`scidb.rename_functions`) where the code hash is unchanged | the project now uses its own library | `library_authoring.share` |
 | ✎ Make my own copy | NEW name: library written to `libs/<new>/` (same layout, `derived_from`), old unlisted, ALL placements re-owned (same ids), labels `old.fn` -> `new.fn`, results carried | unlinked, all-or-nothing per library | `library_authoring.copy` |

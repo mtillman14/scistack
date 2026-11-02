@@ -347,12 +347,12 @@ def _generate_python_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
     finally:
         _discard_compiled(built)
 
-    from scidb.names import function_name, library_of
+    from scifor.project.names import function_name, library_of
 
     lines = [_py_header(db), ""]
     # A library's function is called through its package (`preprocessing.
     # filter_emg`): the script then records the same qualified name a GUI run
-    # records (scidb.names), and needs that package imported.
+    # records (scifor.project.names), and needs that package imported.
     libraries = sorted({lib for spec in steps if (lib := library_of(spec.fn))})
     if libraries:
         lines += [f"import {lib}" for lib in libraries] + [""]

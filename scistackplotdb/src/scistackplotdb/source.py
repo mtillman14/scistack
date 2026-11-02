@@ -383,7 +383,7 @@ class ScidbSource(BaseSource):
         # of vanishing. scidb owns the declaration; this only applies it.
         order = getattr(self._db, "dataset_schema_key_order", None) or {}
         if order.get(key):
-            from scidb.schema_order import order_levels
+            from scifor.project.schema_order import order_levels
 
             ordered = order_levels(key, unique, declared=order, fallback=default)
         else:

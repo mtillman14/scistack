@@ -31,7 +31,7 @@ from .foreach import _endpoint_policy as endpoint_policy
 from .foreach import _for_each_prepare as prepare
 from .foreach import _for_each_save_resolved as save_resolved
 from .foreach import _resolve_for_columns as resolve_for_columns
-from .entities import declared_spelling
+from .project.entities import declared_spelling
 from .parameter import declared_input_names
 
 __all__ = [

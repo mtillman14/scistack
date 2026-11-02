@@ -12,7 +12,7 @@ exports of each module:
 The scan imports modules for real — it never parses source text — so the
 objects returned are the live runtime instances the GUI can execute against.
 The generic package-walking mechanics (importing, per-module error capture,
-test-file exclusion, sys.path management) live in ``scifor.discovery`` —
+test-file exclusion, sys.path management) live in ``scifor.project.discovery`` —
 this module only supplies the scidb-specific classifier (``discover_module``)
 that knows what a BaseVariable/Constant/PathInput/Sweep/``@scistack``
 function actually is.
@@ -22,7 +22,7 @@ the scan never aborts on a single bad module.
 
 Typical use::
 
-    from scidb.discover import scan_project
+    from scidb.project.discover import scan_project
     result = scan_project(Path("/path/to/my-study"))
 
     for mod in result.project_code.modules:
@@ -41,12 +41,12 @@ from types import ModuleType
 from typing import Any
 
 from scifor import EachOf, PathInput
-from scifor.discovery import PathInsert, purge_module, read_project_name, walk_package
+from scifor.project.discovery import PathInsert, purge_module, read_project_name, walk_package
 
-from .parameter import Parameter, path_input_declaration
-from .pipeline import is_scistack_function
-from .roles import FunctionRole, function_role
-from .variable import BaseVariable
+from ..parameter import Parameter, path_input_declaration
+from ..pipeline import is_scistack_function
+from ..roles import FunctionRole, function_role
+from ..variable import BaseVariable
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +290,7 @@ def _configured_packages(project_root: Path) -> list[str]:
     or ``[]``. The same list the GUI registry loads, so the two never
     disagree about which libraries a project uses. Never a lockfile: SciStack
     does not depend on uv (2026-10-08)."""
-    from scifor.discovery import project_config_at, read_scistack_section
+    from scifor.project.config import project_config_at, read_scistack_section
 
     config = project_config_at(project_root)
     if config is None:
@@ -346,8 +346,8 @@ def scan_project(project_root: Path) -> DiscoveryResult:
 
     # --- Libraries: scistack.toml `packages` ---
     # The ones the project authors (libs/<name>/) are importable without an
-    # install, as in the GUI (scifor.discovery, O1 of plan-library-fork-chain).
-    from scifor.discovery import ensure_authored_libraries_importable
+    # install, as in the GUI (scifor.project.discovery, O1 of plan-library-fork-chain).
+    from scifor.project.discovery import ensure_authored_libraries_importable
 
     ensure_authored_libraries_importable(project_root)
     libraries: dict[str, PackageResult] = {}

@@ -121,7 +121,7 @@ class TestGetProjectCode:
         """Closing proof for the packaged-mode display/execution gap: a
         function shown in the Discovered Code panel must also be resolvable
         via registry.get_function -- previously this branch called
-        scidb.discover.scan_project directly, which never populated the
+        scidb.project.discover.scan_project directly, which never populated the
         registry execution_service.py actually reads at run time, so a
         displayed function could raise KeyError here."""
         from scistack_gui.project import registry

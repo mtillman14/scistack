@@ -25,7 +25,7 @@ There were two owners of "is this the same value".
 value equals a declared value but is spelled differently, the declared value
 is what gets recorded.
 
-Owner: `scidb.entities.declared_spelling(inputs, parameter_names, declared=None)`.
+Owner: `scidb.project.entities.declared_spelling(inputs, parameter_names, declared=None)`.
 - `declared` defaults to `entities.load_for_project().parameters`, the only
   place a MATLAB project declares Parameters.
 - An identical spelling (same `repr`) is left alone, so the call is idempotent.

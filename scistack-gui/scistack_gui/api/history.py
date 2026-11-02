@@ -66,7 +66,7 @@ def _reload_after_restore(files: list[str]) -> None:
     drop stale bytecode and the mtime-keyed config caches (two writes in one
     filesystem tick read as one version), re-read the config, reload both
     registries."""
-    from scidb import aliases, colors
+    from scifor.project import aliases, colors
 
     from scistack_gui.services.project_service import reload_config_and_rescan
     from scistack_gui.services import plot_service

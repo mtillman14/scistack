@@ -51,7 +51,7 @@ def test_open_for_import_imports_no_code(tmp_path):
 
 
 def test_open_for_import_pins_the_project_root(tmp_path):
-    from scifor.pathinput import get_project_root
+    from scifor.project.root import get_project_root
 
     from scistack_gui.headless import open_for_import
 

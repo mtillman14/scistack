@@ -6,7 +6,7 @@ declare anything into it: a ``scistack.toml`` at the project root, an
 ``entities_file`` key in it, and the TOML entities file that key names.
 Nothing used to guarantee any of them. ``config.add_path`` created a
 ``scistack.toml`` with no ``entities_file`` key, and
-``scidb.entities.entities_path`` only falls back to the conventional
+``scifor.project.entities_file.entities_path`` only falls back to the conventional
 ``src/scistack_entities.toml`` *if that file already exists* -- so a project
 could run for a whole session with no writable declaration surface at all,
 which is what produced ``Unrecognized function or variable 'Raw_EMG'``: the
@@ -99,7 +99,7 @@ def ensure_project_files(
     """Ensure scistack.toml and the TOML entities file exist. Idempotent.
 
     *create_new* (a database is being CREATED, from either GUI entry point)
-    first runs ``scidb.project.init_project`` -- the one owner of "make this
+    first runs ``scidb.project.init.init_project`` -- the one owner of "make this
     folder a SciStack project", shared with ``scistack init`` -- which makes
     the project a package (pyproject.toml, src/<pkg>/) with its entities file
     inside it. Opening an existing database never does: it must not turn a
@@ -110,7 +110,7 @@ def ensure_project_files(
 
     *entities_file* is where to put one **if the project has none** -- the
     creation wizard's "Entities file" field, relative to the project root;
-    ``None`` means ``scidb.entities.default_entities_relpath`` (inside the
+    ``None`` means ``scifor.project.entities_file.default_entities_relpath`` (inside the
     project's package when it is one). A project
     that already declares one keeps it, and the request is reported rather
     than applied: creating a database must never silently re-point an
@@ -132,7 +132,7 @@ def ensure_project_files(
     result.project_root = project_root
 
     if create_new:
-        from scidb.project import init_project
+        from scidb.project.init import init_project
 
         try:
             report = init_project(project_root, entities_file=entities_file)
@@ -154,8 +154,8 @@ def ensure_project_files(
     # Already fully set up: don't rewrite scistack.toml just to put back what
     # it already says. set_entities_file re-renders the whole file, which
     # would bump its mtime on every open and churn the user's git status.
-    from scidb.entities import entities_path, is_entities_opt_out
-    from scifor.discovery import read_scistack_section
+    from scifor.project.entities_file import entities_path, is_entities_opt_out
+    from scifor.project.config import read_scistack_section
 
     # read_scistack_section, not the GUI's own reader: it swallows a parse
     # error into None, and an unparseable config must not turn "should I

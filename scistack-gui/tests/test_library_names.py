@@ -3,7 +3,7 @@
 A real package on disk (``fakelib``), listed under ``packages`` in the
 project's scistack.toml:
 
-* its functions register as ``fakelib.<fn>`` (scidb.names), the project's own
+* its functions register as ``fakelib.<fn>`` (scifor.project.names), the project's own
   stay bare, and two libraries with the same function name do not collide;
 * its Parameters and PathInputs (in source or in its entities TOML) stay out
   of the project's names;
@@ -49,7 +49,8 @@ def _write_library(root, name: str, *, fn: str = "filter_emg"):
 
 @pytest.fixture
 def project_with_libraries(tmp_path, monkeypatch):
-    from scidb import BaseVariable, names, schema_order
+    from scidb import BaseVariable
+    from scifor.project import names, schema_order
 
     libs = tmp_path / "site"
     _write_library(libs, "fakelib")

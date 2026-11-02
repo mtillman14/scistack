@@ -17,7 +17,7 @@ impossible in the user's packaging file, where a writer bug would break
 inside a wheel, so installing one project into another never brings a second
 config either way.
 
-The location has one owner: `scifor.discovery.CONFIG_FILENAME` /
+The location has one owner: `scifor.project.config.CONFIG_FILENAME` /
 `config_path_at(root)`. scidb (`project_config_at`), the scidb CLI and the
 GUI (`config.locate_config_at`) all go through it.
 
@@ -99,9 +99,9 @@ load and returned by `describe_managed_paths` (`project_root`,
 `config_path`), so the Paths popup can show which folder it settled on.
 
 **No layer walks upward any more (2026-09-23, D-2026-09-23-1).** The upward
-walk `scifor.discovery.find_project_config` is gone; scidb, scimatlab and
+walk `scifor.project.discovery.find_project_config` is gone; scidb, scimatlab and
 PathInput resolution read `scifor.project_root()` (the pinned root, else the
-cwd) and look for the config AT it with `scifor.discovery.project_config_at`.
+cwd) and look for the config AT it with `scifor.project.config.project_config_at`.
 The GUI decides its root here and `registry.load_from_config` pins it into
 scifor, so every layer in the GUI process sees the same folder.
 
@@ -140,7 +140,7 @@ Values are matched as text, so `"01"` stays `"01"` — which spelling is identit
 is `schema_key_types`' decision (`docs/claude/schema-key-types.md`), never this
 table's.
 
-One reader owns it, `scidb.schema_order`. Nothing keeps a copy: a
+One reader owns it, `scifor.project.schema_order`. Nothing keeps a copy: a
 `DatabaseManager`'s `dataset_schema_key_order` is a **property** that asks
 `schema_order.project_level_order` on every access, so an edit to
 scistack.toml reaches the next table and the next figure without a restart. (It
@@ -200,7 +200,7 @@ levels = { "F" = "Female", "M" = "Male" }
 - **Display only.** Nothing in scidb reads it to decide anything.
   Plotting shows the aliases, and each plot may override them
   (`PlotSpec.aliases`).
-- **Owner:** `scidb.aliases` owns the grammar. It is read live, through
+- **Owner:** `scifor.project.aliases` owns the grammar. It is read live, through
   `DatabaseManager.dataset_aliases`, from the same config `[schema_keys]`
   comes from (`schema_order.locate_config`). The parse is cached on mtime.
   WARNs cover unknown names, a schema key and a variable that share a name,
@@ -209,7 +209,7 @@ levels = { "F" = "Female", "M" = "Male" }
 - **Unlike `[schema_keys]`, it is NOT part of `ScidbSource._cache_generation`.**
   An edit rebuilds no table. Each table carries a live reader instead.
 - **The GUI round-trips it** through `_render_scistack_toml(aliases=)`, whose
-  `[aliases]` text comes from `scidb.aliases.render_aliases_table`. Inline
+  `[aliases]` text comes from `scifor.project.aliases.render_aliases_table`. Inline
   `levels = {…}` comes back as a `[….levels]` sub-table.
 - **Diagnosing:** `grep "\[aliases\]" scistack.log` shows what was read
   (`session (name, 2 level(s))`) and any warnings.
@@ -232,7 +232,7 @@ default = "#333333"               # the one colour of a figure with no colour la
   (`PlotSpec.colors`, `style.mark_color`).
 - **The type rule.** A STRING directly under `[colors]` is a setting (only
   `default`). A TABLE is a thing.
-- **Owner:** `scidb.colors` owns the shape. It is read live through
+- **Owner:** `scifor.project.colors` owns the shape. It is read live through
   `DatabaseManager.dataset_colors`, from the same config as `[schema_keys]`
   and `[aliases]`, and mtime-cached.
   - Colour TEXT is kept as written. `scistackplot.text.colors.parse_color`
@@ -327,7 +327,7 @@ A config file is committed and shared: the same project gets opened on
 Windows and on macOS. Both halves of that have to be handled, and both used
 to be wrong (fixed 2026-09-10).
 
-**Reading** — `scifor.discovery.resolve_config_path(root, raw)` is the single
+**Reading** — `scifor.project.config.resolve_config_path(root, raw)` is the single
 place a raw config string becomes a `Path`. Backslash is treated as a
 separator whenever the host is not Windows, because on POSIX `\` is a legal
 *filename* character: `entities_file = "src\scistack_entities.toml"` written
@@ -339,7 +339,7 @@ it — MATLAB classdef stubs sit beside the entities file, so they went to
 `<root>/src/scistack_matlab_variables`. That was the visible symptom.
 
 `scistack_gui.project.config` routes every read through `_config_path` (Path form) or
-`_config_pattern` (glob patterns, expanded as text); `scidb.entities`
+`_config_pattern` (glob patterns, expanded as text); `scidb.project.entities`
 resolution goes through the same scifor function. Nothing joins a raw string
 onto the project root directly.
 
@@ -377,10 +377,10 @@ machine_id = "6f1c..."      # generated on first use; logged, nothing else
 rto = "Y:/"                  # on the Linux box: "/home/mtillman/mnt/rto"
 ```
 
-- **Owner:** `scifor/machine.py` owns the grammar and the file: `machine_config`,
+- **Owner:** `scifor/project/machine.py` owns the grammar and the file: `machine_config`,
   `expand_roots`, `unresolvable_here`, and `portable_form`.
   `resolve_config_path` and `normalize_config_separators` call `expand_roots`
-  first, so every config reader gets it, including `scidb.entities`.
+  first, so every config reader gets it, including `scidb.project.entities`.
 - **Grammar:** `{name}` only at the very start of a value; `name` matches
   `[A-Za-z_][A-Za-z0-9_-]*`. Anything else is an ordinary path.
 - **The file:** it is created (with a `machine_id`) the first time a startup
@@ -399,10 +399,11 @@ rto = "Y:/"                  # on the Linux box: "/home/mtillman/mnt/rto"
 
 ## Implementation
 
-- **Parser**: `scistack_gui/project/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_config_path()`; file name and location: `scifor/discovery.py` `CONFIG_FILENAME`, `config_path_at()`
-- **Cross-platform path reading**: `scifor/discovery.py` — `resolve_config_path()`, `normalize_config_separators()`, `is_windows_absolute()`
-- **Machine roots** (one owner): `scifor/machine.py`; startup notice `scistack_gui/project/startup.py` — `check_machine_config_paths()` via `check_config_paths()`
-- **Project creation** (one owner): `scidb/project.py` — `init_project()`, called by `scistack init` and, on database creation, by the GUI's `ensure_project_files(create_new=True)`
+- **Reader + section meaning** (one owner): `scifor/project/config.py` — `read_project_config()` -> typed `ProjectConfig`/`MatlabSection`, `load_config_file()` (strict), `read_scistack_section()` (lenient), `project_config_at()`. Guarded by `scifor/tests/test_toml_reader_owner.py`.
+- **Discovery from those sections**: `scistack_gui/project/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_config_path()`; file name and location: `scifor/project/config.py` `CONFIG_FILENAME`, `config_path_at()`
+- **Cross-platform path reading**: `scifor/project/config.py` — `resolve_config_path()`, `normalize_config_separators()`, `is_windows_absolute()`
+- **Machine roots** (one owner): `scifor/project/machine.py`; startup notice `scistack_gui/project/startup.py` — `check_machine_config_paths()` via `check_config_paths()`
+- **Project creation** (one owner): `scidb/project/init.py` — `init_project()`, called by `scistack init` and, on database creation, by the GUI's `ensure_project_files(create_new=True)`
 - **Config/entities-file creation on open**: `scistack_gui/services/project_init_service.py` — `ensure_project_files()`, called from `bootstrap.open_or_create_project()` and `server.py`
-- **Writing scistack.toml** (one owner): `scidb/config_file.py` — `render()`, `write()`; every key survives a write
+- **Writing scistack.toml** (one owner): `scifor/project/config_file.py` — `render()`, `write()`; every key survives a write
 - **VS Code server argv**: `extension/src/serverArgs.ts` — `buildServerArgs()`; never passes `--module`/`--project`, so the project root is always `--project-root` (the workspace folder)

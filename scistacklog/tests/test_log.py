@@ -211,7 +211,7 @@ def test_child_module_loggers_are_covered(tmp_path):
     tagged with the layer — this is how sciduckdb/scicanonicalhash/etc. log."""
     log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
-    logging.getLogger("scidb.discover").info("module-level record")
+    logging.getLogger("scidb.project.discover").info("module-level record")
     logging.getLogger("scicanonicalhash.functions").info("hash note")
     content = log_file.read_text(encoding="utf-8")
     assert "[scidb] module-level record" in content

@@ -73,9 +73,9 @@ def variable_stub_dir(project_start: "Path | str | None" = None) -> "Path | None
     ``SciStackConfig.has_matlab``, so defaulting it would make every
     Python-only project with an entities file load the MATLAB registry.
     """
-    from scidb.entities import entities_path
-    from scifor.discovery import project_config_at, read_scistack_section
-    from scifor.pathinput import project_root
+    from scifor.project.entities_file import entities_path
+    from scifor.project.config import project_config_at, read_scistack_section
+    from scifor.project.root import project_root
 
     start = Path(project_start) if project_start is not None else project_root()
 
@@ -102,7 +102,7 @@ def legacy_stub_dir(project_start: "Path | str | None" = None) -> "Path | None":
     when the directory actually exists, so a caller can say "this is inert
     now" without inventing a folder that was never there.
     """
-    from scidb.entities import entities_path
+    from scifor.project.entities_file import entities_path
 
     start = Path(project_start) if project_start is not None else Path.cwd()
     entities = entities_path(start)
@@ -206,7 +206,7 @@ def write_variable_classdefs(
         Path(target_dir) if target_dir is not None else variable_stub_dir(project_start)
     )
     if resolved is None:
-        from scifor.pathinput import project_root
+        from scifor.project.root import project_root
 
         looked_at = project_start if project_start is not None else project_root()
         message = (

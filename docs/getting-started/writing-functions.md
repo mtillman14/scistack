@@ -8,7 +8,7 @@ Everything here applies to both the code and GUI workflows: the GUI calls the sa
      Nx1 -> (N,1) array, multi-column -> data-only DataFrame; as_table keeps
      schema columns; tuple returns = several outputs, foreach.py ~L1019);
      scidb/src/scidb/roles.py (plot_/stat_/glue_ prefixes; stat_ defaults to
-     as_table); scifor.discovery.find_top_level_side_effects + registry
+     as_table); scifor.project.discovery.find_top_level_side_effects + registry
      _screen_for_side_effects (files with top-level work are skipped);
      scidb variable.py (as_table data column named after the variable class);
      custom storage: scidb/tests/test_custom_serialization.py (Python),

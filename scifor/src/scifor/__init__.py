@@ -25,7 +25,7 @@ Example:
 from .colname import ColName
 from .combine import CombineMixedTypesError, CombineReport, combine_duplicate_rows
 from .column_selection import ColumnSelection, column_value
-from .discovery import (
+from .project.discovery import (
     BENIGN_TOPLEVEL_CALLS,
     ModuleWalkError,
     PathInsert,
@@ -73,6 +73,8 @@ from .pathinput import (
     clear_listing_cache,
     key_regex_is_digit_only,
     key_regex_pattern_error,
+)
+from .project.root import (
     clear_project_root,
     enter_project_root,
     get_project_root,

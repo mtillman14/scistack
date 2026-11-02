@@ -6,7 +6,7 @@ switch the project to it, through the same service the GUI calls).
 
 The same owners as the GUI's Libraries list: ``config.add_package`` /
 ``remove_package`` (the ``packages`` list in scistack.toml) and
-``scidb.library.read_library`` (what a library offers). Like the bundle
+``scidb.project.library.read_library`` (what a library offers). Like the bundle
 commands (``bundle_cli``), they live in the GUI package and ``scistack``
 mounts them. Nothing is installed: a listed package that is not importable
 is reported with what to do.
@@ -59,7 +59,7 @@ def add_library_subparsers(sub: argparse._SubParsersAction) -> None:
 
 
 def _listed(project: Path) -> list[str]:
-    from scifor.discovery import project_config_at, read_scistack_section
+    from scifor.project.config import project_config_at, read_scistack_section
 
     config = project_config_at(project)
     section = read_scistack_section(config) if config else {}
@@ -67,11 +67,11 @@ def _listed(project: Path) -> list[str]:
 
 
 def _describe(project: Path) -> list[dict]:
-    """The list rows. ``authored`` is derived the way ``scidb.names.
+    """The list rows. ``authored`` is derived the way ``scifor.project.names.
     authored_libraries`` derives it (listed, and its folder is
     ``libs/<name>/``); this command does not open the project."""
-    from scidb.library import read_library
-    from scifor.discovery import authored_library_dirs, ensure_authored_libraries_importable
+    from scidb.project.library import read_library
+    from scifor.project.discovery import authored_library_dirs, ensure_authored_libraries_importable
 
     ensure_authored_libraries_importable(project)
     authored = {n for n, _ in authored_library_dirs(project)}
@@ -153,7 +153,7 @@ def dispatch(args: argparse.Namespace) -> int:
     project = (args.project or Path.cwd()).resolve()
     cmd = getattr(args, "library_command", None) or "list"
     if cmd == "build":
-        from scidb.environment import build_wheel
+        from scidb.project.environment import build_wheel
 
         try:
             wheel = build_wheel(args.folder, args.out or (args.folder / "dist"))

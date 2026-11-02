@@ -28,7 +28,7 @@ location, the newer save wins (same-invocation-latest).
 
 | Concept | Owner |
 |---|---|
-| TOML list → `EachOf(PathInput, …)` | `scidb.entities` (`_build_path_input_arms`) |
+| TOML list → `EachOf(PathInput, …)` | `scidb.project.entities` (`_build_path_input_arms`) |
 | Registry object → display dict `{template, root_folder, alternate_templates}` | `scistack_gui.domain.graph_builder.path_input_display` |
 | Display dict → the MATLAB command's PathInput dict | `matlab_command_service._declared_path_input` |
 | Which PathInputs a MATLAB command binds (history + edges) | `matlab_command_service.resolve_path_input_params` (single-node AND pipeline routes) |

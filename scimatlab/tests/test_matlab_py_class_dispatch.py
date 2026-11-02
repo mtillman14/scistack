@@ -13,7 +13,7 @@ back to constructor semantics, and fails at runtime with::
 That is exactly what broke ``scidb.Log`` when the ``Log`` implementation moved
 out of ``scidb/log.py`` into the ``scistacklog`` package: ``scidb.log`` became a
 re-export shim, so ``py.scidb.log.Log.info(...)`` in ``+scidb/Log.m`` started
-raising on the first MATLAB-originated log line of every run (``scidb.entities``
+raising on the first MATLAB-originated log line of every run (``scidb.project.entities``
 in the reported case). ``+scifor/Log.m`` was migrated to ``py.scistacklog.Log``
 at the time; ``+scidb/Log.m`` was not.
 

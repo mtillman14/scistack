@@ -84,7 +84,7 @@ warning). Nothing about applying depends on it.
 
 The rules (the id is the identity and the name a label; re-saving a name
 appends a version; remove = hide; reads never create the table) are the
-**same object** as for saved plots: `scistackplotdb/_versioned.py:
+**same object** as for saved plots: `scidb/versioned_store.py:
 VersionedStore`, with `scope_column=None` (names are unique across the
 project) where saved plots use `scope_column="variable"`.
 

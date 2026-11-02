@@ -414,7 +414,7 @@ class TestNoValues:
         """is_path_input asks whether EVERY alternative is a PathInput, and
         all([]) is True -- so without an explicit non-empty check an unvalued
         Parameter registers as a PathInput."""
-        from scidb.discover import is_parameter, is_path_input
+        from scidb.project.discover import is_parameter, is_path_input
 
         assert is_parameter(Parameter()) is True
         assert is_path_input(Parameter()) is False

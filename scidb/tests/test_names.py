@@ -15,16 +15,17 @@ import numpy as np
 import pytest
 
 import scifor as _scifor
-from scidb import BaseVariable, configure_database, for_each, names
+from scidb import BaseVariable, configure_database, for_each
+from scifor.project import names
 from scidb.variable import same_definition
 
 
 @pytest.fixture
 def project(tmp_path):
     """A project whose scistack.toml lists `fakelib` as a library."""
-    from scifor.pathinput import clear_project_root, set_project_root
+    from scifor.project.root import clear_project_root, set_project_root
 
-    from scidb import schema_order
+    from scifor.project import schema_order
 
     (tmp_path / "scistack.toml").write_text('modules = []\npackages = ["fakelib"]\n')
     set_project_root(tmp_path)
@@ -127,7 +128,7 @@ class TestVariableMerge:
             return None
 
         defined = _var("MergeE", "my_analysis", project[1], to_db=to_db)
-        _var("MergeE", "scidb.entities", project[1], _declared_only=True)
+        _var("MergeE", "scidb.project.entities", project[1], _declared_only=True)
         assert BaseVariable._all_subclasses["MergeE"] is defined
         assert "MergeE" not in BaseVariable.definition_conflicts()
 
@@ -142,9 +143,9 @@ def test_an_authored_library_is_a_library_like_any_other(tmp_path):
     """plan-library-fork-chain R1: a library the project made lives in
     libs/<name>/, is listed under packages, and is named <name>.fn; whether
     it is AUTHORED is derived from the folder (names.authored_libraries)."""
-    from scifor.pathinput import clear_project_root, set_project_root
+    from scifor.project.root import clear_project_root, set_project_root
 
-    from scidb import schema_order
+    from scifor.project import schema_order
 
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "myproj"\nversion = "0.1.0"\n')
     (tmp_path / "src" / "myproj").mkdir(parents=True)

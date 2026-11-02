@@ -31,7 +31,7 @@ Usage::
     Log.error("save failed", layer="scidb", exc_info=True)
 
 Every emit goes through a stdlib logger named after the layer (``scidb``,
-``scifor``, …), so existing module loggers such as ``scidb.discover`` or
+``scifor``, …), so existing module loggers such as ``scidb.project.discover`` or
 ``scicanonicalhash.functions`` are covered automatically as children. Level
 filtering happens on the two handlers, never on the loggers: records always
 propagate to the root logger, so pytest's ``caplog`` captures them

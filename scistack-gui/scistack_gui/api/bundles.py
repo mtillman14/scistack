@@ -4,13 +4,13 @@ Whole-project bundles from the GUI (``.claude/plan-portability.md`` Stage 8)
 
     GET    /api/bundles/export-options   get_export_options
     POST   /api/bundles/export           export_project_bundle
-    POST   /api/bundles/verify           verify_reproduction -- your re-run vs the exporter (scidb.verify)
+    POST   /api/bundles/verify           verify_reproduction -- your re-run vs the exporter (scidb.project.verify)
 
 Export writes the session's OWN, already-open project through
 ``headless.export_open_project`` -- the same composition ``scistack export``
 reaches after opening -- so the GUI and the terminal write the same bundle.
 The offered options and their defaults come from
-``bundle_cli.export_choices`` (defaults from ``scidb.bundle.ExportOptions``).
+``bundle_cli.export_choices`` (defaults from ``scidb.project.bundle.ExportOptions``).
 
 Import is not here: it makes a NEW project, whose database this session's
 process must not open beside its own. The VS Code extension's "Import
@@ -41,7 +41,7 @@ class ExportBundle(BaseModel):
 
 def _get_export_options() -> dict:
     """The export dialog's checkboxes and a suggested file name."""
-    from scidb.bundle import EXTENSION
+    from scidb.project.bundle import EXTENSION
 
     from scistack_gui.bundle_cli import export_choices
     from scistack_gui.runtime.db import get_db_path
@@ -54,7 +54,7 @@ def _get_export_options() -> dict:
 
 
 def _export_project_bundle(db, req: ExportBundle) -> dict:
-    from scidb.bundle import ExportOptions
+    from scidb.project.bundle import ExportOptions
 
     from scistack_gui.bundle_cli import EXPORT_FLAGS
     from scistack_gui.headless import export_open_project
@@ -81,8 +81,8 @@ class VerifyRequest(BaseModel):
 def _verify(db, req: VerifyRequest) -> dict:
     """Read-only, in the session's own process: a separate process cannot
     open the database this session holds."""
-    from scidb.verify import DEFAULT_ATOL, DEFAULT_RTOL, verify
-    from scifor.pathinput import project_root
+    from scidb.project.verify import DEFAULT_ATOL, DEFAULT_RTOL, verify
+    from scifor.project.root import project_root
 
     report = verify(
         db,

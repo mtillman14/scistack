@@ -160,7 +160,7 @@ def test_matlab_calls_are_qualified_but_declarations_and_comments_are_not(projec
 
 
 def test_the_document_uses_lib_labels_and_no_locations(project):
-    from scidb.library import read_document
+    from scidb.project.library import read_document
 
     _share(project)
     doc = read_document((_lib(project) / "src" / LIB / "pipelines" / "emg.json").read_bytes(), "emg")
@@ -229,7 +229,7 @@ def test_the_project_switches_to_its_library(project):
 
 def test_sync_never_overwrites_the_working_copy(project):
     """B6: an unpublished canvas edit survives a re-sync; publishing writes it."""
-    from scidb.library import read_document
+    from scidb.project.library import read_document
 
     from scistack_gui.stores import library_lock
     from scistack_gui.services.library_authoring import share
@@ -282,7 +282,7 @@ def test_make_own_copy_renames_and_switches_every_placement(project):
     except ModuleNotFoundError:  # pragma: no cover
         import tomli as tomllib
 
-    from scidb.names import function_name
+    from scifor.project.names import function_name
 
     from scistack_gui.matlab import registry as matlab_registry
 

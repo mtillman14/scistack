@@ -93,7 +93,7 @@ def check_windows_config_paths(config) -> "StartupError | None":
     and on macOS reads the same ``modules``/``entities_file`` values. Written
     with backslashes, those values do not error on POSIX -- ``\\`` is a legal
     filename character, so they quietly name the wrong thing.
-    ``scifor.discovery.resolve_config_path`` now reads them correctly, but a
+    ``scifor.project.config.resolve_config_path`` now reads them correctly, but a
     *relative* one has usually already caused a file to be created at the
     literal path (a ``src\\scistack_entities.toml`` in the project root), and
     an *absolute* one (``Y:\\LabMembers\\...``) cannot be salvaged here at
@@ -102,7 +102,7 @@ def check_windows_config_paths(config) -> "StartupError | None":
     Non-blocking: everything still opens, and the affected paths are named
     rather than guessed at.
     """
-    from scifor.discovery import is_windows_absolute, read_scistack_section
+    from scifor.project.config import is_windows_absolute, read_scistack_section
 
     from scistack_gui.project.config import locate_config_at
 
@@ -155,10 +155,10 @@ def check_machine_config_paths(config) -> "StartupError | None":
     loops skip these (config._skip_unresolvable) instead of recording a
     "File does not exist" load error on every refresh; this is the one
     place they are reported. Non-blocking. The owner of "why" is
-    ``scifor.machine.unresolvable_here``.
+    ``scifor.project.machine.unresolvable_here``.
     """
-    from scifor.discovery import read_scistack_section
-    from scifor.machine import machine_config, unresolvable_here
+    from scifor.project.config import read_scistack_section
+    from scifor.project.machine import machine_config, unresolvable_here
 
     from scistack_gui.project.config import locate_config_at
 

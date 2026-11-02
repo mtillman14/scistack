@@ -1,4 +1,4 @@
-"""scidb.library and the entities [library] table (portability Stage 10a).
+"""scidb.project.library and the entities [library] table (portability Stage 10a).
 
 A library ships pipeline documents and declares its schema vocabulary; this
 layer reads both from an installed package without constructing its
@@ -13,8 +13,10 @@ import sys
 
 import pytest
 
-from scidb import entities, library
-from scidb.library import (
+from scidb import entities
+from scidb.project import library
+from scifor.project import entities_file
+from scidb.project.library import (
     DOCUMENT_FORMAT,
     LibraryError,
     definition_hash,
@@ -47,10 +49,10 @@ def package(tmp_path, monkeypatch):
 
 
 def test_library_schema_keys_parse():
-    assert entities.parse_library_table({"library": {"schema_keys": ["subject", "trial"]}}) == (
+    assert entities_file.parse_library_table({"library": {"schema_keys": ["subject", "trial"]}}) == (
         ["subject", "trial"], [],
     )
-    assert entities.parse_library_table({}) == (None, [])
+    assert entities_file.parse_library_table({}) == (None, [])
 
 
 @pytest.mark.parametrize("table, message", [
@@ -60,7 +62,7 @@ def test_library_schema_keys_parse():
     ({"schema_key": ["a"]}, "unknown key"),
 ])
 def test_a_bad_library_table_is_an_error(table, message):
-    keys, errors = entities.parse_library_table({"library": table})
+    keys, errors = entities_file.parse_library_table({"library": table})
     assert any(message in e for e in errors)
 
 
@@ -147,9 +149,9 @@ def test_a_config_write_is_seen_by_the_next_read(tmp_path):
     read back in the same request (the GUI's 'add library', then seeding)
     must not see the stale "no config here" schema_order cached a moment
     earlier."""
-    from scifor.pathinput import clear_project_root, set_project_root
+    from scifor.project.root import clear_project_root, set_project_root
 
-    from scidb import config_file, names, schema_order
+    from scifor.project import config_file, names, schema_order
 
     set_project_root(tmp_path)
     try:
@@ -169,7 +171,7 @@ def test_a_config_write_is_seen_by_the_next_read(tmp_path):
 
 
 def test_create_library_writes_the_layout_and_reads_back(tmp_path, monkeypatch):
-    from scidb.library import create_library
+    from scidb.project.library import create_library
 
     dest = tmp_path / "newlib"
     report = create_library(
@@ -213,7 +215,7 @@ def test_the_library_entities_file_parses_with_the_project_grammar(tmp_path):
 
 
 def test_create_library_refuses(tmp_path):
-    from scidb.library import create_library
+    from scidb.project.library import create_library
 
     full = tmp_path / "full"
     full.mkdir()
@@ -232,7 +234,7 @@ def test_create_library_refuses(tmp_path):
 
 
 def test_update_mode_adds_code_merges_declarations_and_keeps_edits(tmp_path):
-    from scidb.library import write_library
+    from scidb.project.library import write_library
 
     dest = tmp_path / "lib"
     write_library(
@@ -259,7 +261,7 @@ def test_update_mode_adds_code_merges_declarations_and_keeps_edits(tmp_path):
 
 
 def test_update_mode_refuses_replacing_a_file(tmp_path):
-    from scidb.library import write_library
+    from scidb.project.library import write_library
 
     dest = tmp_path / "lib"
     write_library(dest, "scidb_upd_lib2", files={"steps.py": b"a = 1\n"}, documents=[])
@@ -272,7 +274,7 @@ def test_update_mode_refuses_replacing_a_file(tmp_path):
 
 
 def test_derived_from_parses_and_reads_back(tmp_path, monkeypatch):
-    from scidb.library import write_library
+    from scidb.project.library import write_library
 
     dest = tmp_path / "lib"
     write_library(dest, "scidb_derived_lib", files={}, documents=[],

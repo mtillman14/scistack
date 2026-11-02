@@ -296,13 +296,13 @@ def _run_scan(*, force_refresh: bool = False) -> None:
     ``config.packages`` by ``scistack_gui/project/config.py``'s ``load_config``,
     so it flows through ``registry.load_from_config`` -> ``_load_packages``
     like any other configured package — previously this branch called
-    ``scidb.discover.scan_project`` directly, which never touched the
+    ``scidb.project.discover.scan_project`` directly, which never touched the
     registry, so a function shown here could raise ``KeyError`` at actual
     run time. See docs/claude/code-discovery-categories.md.
 
     Note: packaged projects no longer show a separate uv.lock-derived
     "libraries" section here (``scan_project``'s library-scanning half is
-    unused by the GUI now, kept only as a standalone ``scidb.discover``
+    unused by the GUI now, kept only as a standalone ``scidb.project.discover``
     API feature) — ``libraries`` is always empty in the returned result.
     """
     global _last_result
@@ -350,7 +350,7 @@ def _refresh_registries() -> None:
 
 
 def _build_registry_backed_result(root: Path):
-    """Build a ``scidb.discover.DiscoveryResult`` from ``registry``/
+    """Build a ``scidb.project.discover.DiscoveryResult`` from ``registry``/
     ``matlab_registry`` state — the single source of truth for both
     packaged and loose-script/folder-scan projects. Reuses scidb's own
     result dataclasses so the existing ``_serialise_*`` helpers (and the
@@ -375,8 +375,8 @@ def _build_registry_backed_result(root: Path):
     where there is no pyproject.toml to read).
     """
     from scidb import BaseVariable
-    from scidb.discover import DiscoveryResult, ModuleError, ModuleExports, PackageResult
-    from scifor.discovery import read_project_name
+    from scidb.project.discover import DiscoveryResult, ModuleError, ModuleExports, PackageResult
+    from scifor.project.discovery import read_project_name
     from scistack_gui.matlab import registry as matlab_registry
     from scistack_gui.project import registry
 

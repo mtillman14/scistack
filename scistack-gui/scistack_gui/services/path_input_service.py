@@ -8,7 +8,7 @@ Sweep are source-scanned (see docs/claude/code-discovery-categories.md), so
 ``variable_file`` and refreshing the registry — never writing to
 layout.json.
 
-The declaration text itself is rendered by ``scidb.source_edit``
+The declaration text itself is rendered by ``scifor.project.source_edit``
 (``render_path_input``/``render_parameter``), which owns the declaration
 grammar, so creation and the eventual in-place editing can never drift
 apart in what they write. There is no "update" counterpart here yet —
@@ -89,7 +89,7 @@ def create_path_input(
     )
 
     if is_toml_target(target_file):
-        from scidb.entities import render_path_input_value
+        from scifor.project.entities_file import render_path_input_value
 
         err = write_entity(
             target_file,
@@ -100,7 +100,7 @@ def create_path_input(
             ),
         )
     else:
-        from scidb.source_edit import render_path_input
+        from scifor.project.source_edit import render_path_input
 
         rendered = render_path_input(
             template,
@@ -135,7 +135,7 @@ def update_path_input(
     keeps that non-destructive.
 
     An empty template is refused here rather than written: it renders as a
-    declaration ``scidb.entities`` rejects ("missing a 'template' string"),
+    declaration ``scidb.project.entities`` rejects ("missing a 'template' string"),
     so the write would go through, fail verification, and be rolled back --
     telling the user their edit "no longer resolves" when the real problem
     is a blank field. Editing only the root folder of a PathInput whose
@@ -161,8 +161,8 @@ def update_path_input(
         logger.info("[path_input_service] Refusing to update %r: %s", name, err)
         return {"ok": False, "error": err}
 
-    from scidb.entities import render_path_input_value
-    from scidb.source_edit import render_path_input
+    from scifor.project.entities_file import render_path_input_value
+    from scifor.project.source_edit import render_path_input
 
     from scistack_gui.matlab.parser import render_matlab_path_input
     from scistack_gui.services.target_file_service import update_declaration

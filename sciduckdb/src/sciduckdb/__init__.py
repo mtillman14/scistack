@@ -1,12 +1,12 @@
-"""SciDuck: the codec, the locked connection, and the `_schema` table.
+"""sciduckdb: the codec and the locked connection. It creates no tables.
 
 Modules: `codec` (values <-> DuckDB columns), `connection` (`DuckConnection`),
-`schema` (`SciDuck`, schema ids), `datetimes`, `row_lists`. This file is the
+`datetimes`, `row_lists`. The tables of a project database, `_schema`
+included, are scidb's (`scidb.tables`, `scidb.sciduck.SciDuck`). This file is the
 facade; import from `sciduckdb`, not from the modules.
 """
 
 from .connection import DuckConnection, TransactionRolledBackError
-from .schema import SciDuck, schema_keys_from_db
 from .codec import (
     bulk_df_to_storage_rows,
     column_type_change,
@@ -46,9 +46,7 @@ from .row_lists import (
 
 __all__ = [
     "DuckConnection",
-    "SciDuck",
     "TransactionRolledBackError",
-    "schema_keys_from_db",
     "array_from_storage",
     "count_null_list_elements",
     "count_nan_array_elements",

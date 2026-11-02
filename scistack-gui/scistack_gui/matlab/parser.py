@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from scidb.source_edit import Span
+from scifor.project.source_edit import Span
 from scimatlab.source_hash import hash_source_bytes, matlab_output_names
 
 logger = logging.getLogger(__name__)
@@ -156,7 +156,7 @@ def matlab_package_prefix(path: "Path | str") -> str:
     The one owner of a MATLAB function's qualified name. It is what MATLAB
     itself calls the function (``func2str(@a.b.f)`` is ``"a.b.f"``, the name
     scimatlab records a run under), and it matches the Python rule for a
-    library function (``lib.fn``, ``scidb.names``): a SciStack library's
+    library function (``lib.fn``, ``scifor.project.names``): a SciStack library's
     MATLAB code lives in ``matlab/+<lib>/`` (portability Stage 10)."""
     parts = []
     for parent in Path(path).parents:
@@ -678,7 +678,7 @@ def parse_matlab_entities_script(path: Path) -> "list[MatlabBinding]":
 
     Later bindings of the same name are returned too; callers wanting
     "what the script ends up holding" should take the last (matching
-    ``scidb.source_edit.find_binding_span``'s last-binding-wins rule).
+    ``scifor.project.source_edit.find_binding_span``'s last-binding-wins rule).
     """
     text = read_source_text(path)
     if text is None:
@@ -751,7 +751,7 @@ def _parse_named_arg(token: str) -> "tuple[str, str] | None":
 
 
 # ---------------------------------------------------------------------------
-# Rendering MATLAB declarations — the counterpart of scidb.source_edit's
+# Rendering MATLAB declarations — the counterpart of scifor.project.source_edit's
 # render_* for the entities script. Kept here, next to the parser that reads
 # them back, so the two can never disagree about the grammar.
 # ---------------------------------------------------------------------------
@@ -798,7 +798,7 @@ def render_matlab_path_input(
 ) -> str:
     """``scidb.PathInput('{s}/x.csv', root_folder='/d', name='X')``, or an
     ``scidb.EachOf(...)`` of them when *alternates* is given — the same
-    shape :func:`scidb.source_edit.render_path_input` produces for Python.
+    shape :func:`scifor.project.source_edit.render_path_input` produces for Python.
     *aliases* and *key_regex* belong to the primary template; each alternate
     carries its own."""
     calls = [_matlab_path_input_call(template, root_folder, name, aliases, key_regex)]
@@ -865,7 +865,7 @@ def find_entities_binding(path: Path, name: str) -> "MatlabBinding | None":
     ``None``.
 
     Last-wins matches how a MATLAB script actually executes, and mirrors
-    :func:`scidb.source_edit.find_binding_span`'s rule for Python.
+    :func:`scifor.project.source_edit.find_binding_span`'s rule for Python.
     """
     found = None
     for binding in parse_matlab_entities_script(path):

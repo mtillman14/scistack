@@ -104,6 +104,11 @@ class SchemaKeyTypeChangeError(SciStackError, ValueError):
         self.impact = impact
 
 
+class TableDeclarationError(SciStackError):
+    """Raised when a project-database table is declared twice, differently,
+    or ensured without a declaration (``scidb.tables``)."""
+
+
 class DatabaseLockedError(SciStackError):
     """Raised when the database file is locked by another session.
 

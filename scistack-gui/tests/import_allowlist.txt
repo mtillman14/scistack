@@ -1,7 +1,7 @@
 # Upward imports allowed today. This list may only shrink:
 # delete a line when its import is gone. Format: src -> dst  # reason
 # Owner: tools/import_layers.py
-scistack_gui.api.bundles -> scistack_gui.bundle_cli  # export flag table lives in the CLI module (bundle CLI moves to scidb.project in P3)
+scistack_gui.api.bundles -> scistack_gui.bundle_cli  # export flag table lives in the CLI module (the CLIs stay in the GUI: every command needs the GUI runtime; P3 U1 note)
 scistack_gui.domain.edge_view -> scistack_gui.services.graph_service  # fn_arguments: the one signature reader tests patch for both graph and edge view
 scistack_gui.headless -> scistack_gui.bundle_section  # bundle section list (CLI-era module; moves with the bundle CLIs in P3)
 scistack_gui.matlab.registry -> scistack_gui.services.target_file_service  # record_source_hash after a scan; hash bookkeeping belongs below services

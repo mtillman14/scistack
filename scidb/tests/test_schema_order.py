@@ -14,7 +14,8 @@ import numpy as np
 import pytest
 
 import scifor as _scifor
-from scidb import BaseVariable, configure_database, schema_order
+from scidb import BaseVariable, configure_database
+from scifor.project import schema_order
 
 SCHEMA = ["subject", "session"]
 
@@ -263,14 +264,14 @@ class TestLocatingTheProject:
 
     @pytest.fixture(autouse=True)
     def _unpin(self):
-        from scifor.pathinput import clear_project_root
+        from scifor.project.root import clear_project_root
 
         clear_project_root()
         yield
         clear_project_root()
 
     def test_the_pinned_project_root_wins_over_the_cwd(self, tmp_path, monkeypatch):
-        from scifor.pathinput import set_project_root
+        from scifor.project.root import set_project_root
 
         pinned = tmp_path / "pinned"
         elsewhere = tmp_path / "elsewhere"
@@ -407,7 +408,7 @@ class TestNewConfigMidSession:
     is found once that window passes, not on the very next call."""
 
     def test_a_new_config_is_found_after_the_ttl(self, tmp_path, monkeypatch):
-        from scifor.pathinput import clear_project_root
+        from scifor.project.root import clear_project_root
 
         clear_project_root()
         monkeypatch.chdir(tmp_path)

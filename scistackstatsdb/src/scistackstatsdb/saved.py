@@ -1,7 +1,7 @@
 """Saved StatStudio tables and stats presets, kept in the project database.
 
-Both use scistackplotdb's :class:`~scistackplotdb._versioned.VersionedStore`,
-the owner of the saved-plot rules (S20). So a saved stats table behaves like
+Both use :class:`scidb.versioned_store.VersionedStore`, the owner of the
+saved-plot rules (S20). So a saved stats table behaves like
 a saved plot:
 
 - the id is the identity, the name a label, unique across the project;
@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from scistacklog import Log
-from scistackplotdb._versioned import VersionedStore
+from scidb.versioned_store import VersionedStore
 
 from scistackstats import StatsSpec, StatsSpecError
 from scistackstats.restore import restore_stats_spec, stats_settings, with_stats_settings
@@ -50,10 +50,12 @@ class SavedStatsExists(SavedStatsError):
 STORE = VersionedStore(
     table="_stats_spec", id_column="stats_id", scope_column=None,
     noun="saved stats table", tag="saved-stats", error=SavedStatsError,
+    owner="scistackstatsdb",
 )
 PRESET_STORE = VersionedStore(
     table="_stats_preset", id_column="preset_id", scope_column=None,
     noun="stats preset", tag="stats-preset", error=SavedStatsError,
+    owner="scistackstatsdb",
 )
 
 

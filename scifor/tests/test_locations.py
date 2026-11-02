@@ -352,7 +352,7 @@ class TestThroughForEach:
 
 def test_without_keys_drops_whole_prefixes_and_exclusions():
     """An import into a schema with no counterpart for a key removes every
-    part of a selection that names it (scidb.schema_map.KeyMap.locations)."""
+    part of a selection that names it (scidb.project.schema_map.KeyMap.locations)."""
     lf = LocationFilter.build(
         include=[[("subject", "S01"), ("session", "BL")], [("trial", "1")]],
         exclude_levels={"session": ["FU"], "trial": ["3"]},

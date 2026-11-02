@@ -210,10 +210,10 @@ Pass `within=["group"]` to check each study arm separately, so a subject is not 
 
 | Module / file | What it holds |
 |---|---|
-| `scidb.entities` (`src/scistack_entities.toml`) | Declared variables, `[parameters]` and `[path_inputs]`, shared by Python, MATLAB and the GUI. `entities.WINDOW` resolves a declared name. |
-| `scidb.schema_order` (`[schema_keys]` in `scistack.toml`) | The display order of each key's levels, e.g. `BL, POST, FU`. |
-| `scidb.aliases` (`[aliases]`) | Display names for keys, levels and variables. |
-| `scidb.colors` (`[colors]`) | Fixed colours per level in plots. |
+| `scidb.project.entities` (`src/scistack_entities.toml`) | Declared variables, `[parameters]` and `[path_inputs]`, shared by Python, MATLAB and the GUI. `entities.WINDOW` resolves a declared name. |
+| `scifor.project.schema_order` (`[schema_keys]` in `scistack.toml`) | The display order of each key's levels, e.g. `BL, POST, FU`. |
+| `scifor.project.aliases` (`[aliases]`) | Display names for keys, levels and variables. |
+| `scifor.project.colors` (`[colors]`) | Fixed colours per level in plots. |
 | `scan_project(root)`, `scan_package(name)`, `discover_module(mod)` | Find the variables, parameters and functions a project defines without running its pipelines. |
 
 ## Glue

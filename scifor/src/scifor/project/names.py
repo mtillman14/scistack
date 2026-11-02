@@ -19,7 +19,7 @@ functions. So every recording site and the GUI registry ask
 **Which packages are libraries -- opt-in, never guessed.** A package is a
 library when the project lists it under ``packages`` in ``scistack.toml`` or
 it advertises a ``scistack.plugins`` entry point, and it is not the
-project's own package (``scifor.discovery.own_package_dir``). "Anything
+project's own package (``scifor.project.discovery.own_package_dir``). "Anything
 installed" would be wrong: stubs and wrappers built inside SciStack's own
 packages (a MATLAB proxy, ``state.py``'s stub) carry the user function's
 name and SciStack's module.
@@ -41,10 +41,11 @@ import importlib.metadata
 import inspect
 import time
 
-from scifor.discovery import authored_library_dirs, own_package_dir, read_scistack_section
-from scifor.pathinput import project_root
 from scistacklog import Log
 
+from .discovery import authored_library_dirs, own_package_dir
+from .config import read_scistack_section
+from .root import project_root
 from .schema_order import locate_config
 
 ENTRY_POINT_GROUP = "scistack.plugins"
@@ -103,7 +104,7 @@ def library_packages() -> frozenset[str]:
 def authored_libraries() -> frozenset[str]:
     """The libraries of THIS project (:func:`library_packages`) that it
     AUTHORS: those whose folder is ``<root>/libs/<name>/``
-    (``scifor.discovery.authored_library_dirs``). Derived from the two
+    (``scifor.project.discovery.authored_library_dirs``). Derived from the two
     owners every time -- no stored flag, no second list. Their pipelines are
     editable here (``scistack_gui.stores.library_lock``) and never re-synced over
     the canvas (``library_service.sync_libraries``)."""

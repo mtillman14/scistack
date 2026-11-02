@@ -1,4 +1,4 @@
-"""SciDuck.transaction: one re-entrant transaction per connection.
+"""DuckConnection.transaction: one re-entrant transaction per connection.
 
 Guards the for_each save (plan-tidy P0, decision D9): save_batch and
 record_run each open a level of their own inside the call's one
@@ -9,12 +9,12 @@ the whole transaction.
 
 import pytest
 
-from sciduckdb import SciDuck, TransactionRolledBackError
+from sciduckdb import DuckConnection, TransactionRolledBackError
 
 
 @pytest.fixture
 def duck():
-    db = SciDuck(":memory:", dataset_schema=["subject"])
+    db = DuckConnection(":memory:")
     db.execute("CREATE TABLE t (x INTEGER)")
     yield db
     db.close()

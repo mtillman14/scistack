@@ -53,6 +53,8 @@ from typing import Any, Iterable, Mapping
 
 from scifor.column_selection import groups_to_wire, spec_from_wire
 
+from .tables import INTENT
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -906,13 +908,15 @@ class run_output_names:
 # ---------------------------------------------------------------------------
 # The stored shape (read contract)
 # ---------------------------------------------------------------------------
-# The intent STORE is GUI-owned (scistack_gui.stores.intent_store creates and writes
-# it), but its ROW SHAPE is this module's: the columns are Statement's
-# fields. Naming them here is what lets scidb's own inspector read the table
-# back without importing the GUI — a store that scidb could not read would
+# The GUI writes most statements (scistack_gui.stores.intent_store), but the
+# table is scidb's: declared in scidb.tables (created on every writable open,
+# so scidb never reads a table only the GUI creates -- design review 07, G4),
+# and its ROW SHAPE is this module's: the columns are Statement's fields.
+# Naming them here is what lets scidb's own inspector read the table back
+# without importing the GUI — a store that scidb could not read would
 # make "why does the data not reflect the canvas" unanswerable from the CLI.
 
-INTENT_TABLE = "_intent"
+INTENT_TABLE = INTENT.name
 INTENT_COLUMNS = (
     "subject_kind",
     "subject_ref",

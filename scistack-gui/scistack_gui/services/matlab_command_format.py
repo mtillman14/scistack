@@ -220,7 +220,7 @@ def _entities_script_lines(
     make a name silently undefined at the point the generated command uses
     it.
 
-    ``project_root`` is passed to ``scidb.entities`` explicitly. Without it
+    ``project_root`` is passed to ``scidb.project.entities`` explicitly. Without it
     MATLAB resolves the project by walking up from its own **cwd**, which is
     wherever the user's MATLAB happens to be sitting — outside the project
     that finds no config at all, and every declared Parameter/PathInput is
@@ -317,7 +317,7 @@ def _project_root_lines(
     The generated script therefore states the project explicitly. This is
     emitted for every command that knows its project root, not only ones with
     an entities file, so the guarantee never depends on unrelated config.
-    ``scidb.entities`` pins the same thing for hand-written scripts (see
+    ``scidb.project.entities`` pins the same thing for hand-written scripts (see
     ``scimatlab.bridge.set_pathinput_project_root``); pinning twice is
     idempotent.
 
@@ -400,7 +400,7 @@ def _unresolvable_var_types(var_types) -> list[str]:
     entities_file = getattr(config, "entities_file", None)
     if entities_file is not None:
         try:
-            from scidb.entities import load as _load_entities
+            from scidb.project.entities import load as _load_entities
 
             known |= set(_load_entities(entities_file).variables)
         except Exception as e:
@@ -1920,7 +1920,7 @@ def _format_path_input(pi: dict) -> str:
     the user's own MATLAB script.
 
     Resolution is now pinned separately by ``_project_root_lines`` (see
-    ``scifor.pathinput.set_project_root``), which leaves identity alone.
+    ``scifor.project.root.set_project_root``), which leaves identity alone.
 
     With ``alternate_templates`` the result is
     ``scifor.EachOf(scifor.PathInput(primary), scifor.PathInput(alt), ...)``

@@ -12,7 +12,7 @@ function/variable), `portability.md` (export/import).
 ## Creating a project
 
 There is one owner of "make this folder a SciStack project":
-`scidb.project.init_project`. Both entry points call it.
+`scidb.project.init.init_project`. Both entry points call it.
 
 - **Terminal:** `scistack init [PATH] [--name NAME] [--schema-keys subject session ...]`.
   `PATH` defaults to the current directory. `--schema-keys` also creates
@@ -52,12 +52,12 @@ my_study/
   project can be built into a wheel and shared.
 - **`scistack.toml`** is the only config file. The GUI writes it (Paths
   popup, entities file, glue dir, aliases, colors) through
-  `scidb.config_file`, which keeps every key, including ones it does not
+  `scifor.project.config_file`, which keeps every key, including ones it does not
   know. `init` seeds `modules = ["."]` and `[matlab] sources = ["."]` (the
   project root, as a relative path so the file is portable).
 - **The entities file lives inside the package** so it is package data and
   ships with the code that uses it. Its default location has one owner,
-  `scidb.entities.default_entities_relpath`.
+  `scifor.project.entities_file.default_entities_relpath`.
 
 ## How code is discovered
 
@@ -76,7 +76,7 @@ The GUI's loader is `scistack_gui.project.config.load_config`.
 5. **No `scistack.toml` at all**: the project root is folder-scanned for
    `.py`/`.m` files (the own package is still loaded as a package).
 
-`scidb.discover.scan_project` (headless) uses the same two sources: the
+`scidb.project.discover.scan_project` (headless) uses the same two sources: the
 project's own package and the `packages` list. It never reads a lockfile.
 
 ## MATLAB

@@ -42,11 +42,12 @@ from .exceptions import (
 )
 from .log import Log
 from .schema_values import VALID_SCHEMA_KEY_TYPES, canonical_numeric_value, schema_str
+from .tables import SCHEMA_KEY_TYPE
 
 if TYPE_CHECKING:
     from .database import DatabaseManager
 
-TABLE = "_schema_key_type"
+TABLE = SCHEMA_KEY_TYPE.name
 
 #: Values shown per list in error messages and log lines.
 _PREVIEW = 5
@@ -57,24 +58,12 @@ _PREVIEW = 5
 # ---------------------------------------------------------------------------
 
 
-def ensure_table(duck) -> None:
-    """Create ``_schema_key_type`` if missing (idempotent; skipped read-only)."""
-    duck.execute(f"""
-        CREATE TABLE IF NOT EXISTS {TABLE} (
-            key         VARCHAR NOT NULL,
-            key_type    VARCHAR,
-            declared_at VARCHAR NOT NULL,
-            source      VARCHAR NOT NULL
-        )
-    """)
-
-
 def read_types(duck) -> dict[str, str]:
     """The current declaration ``{key: "numeric" | "string"}``.
 
     The newest row per key wins; a NULL ``key_type`` (cleared) leaves the key
     out. ``{}`` when the table does not exist yet — a database created before
-    2026-10-21 opened read-only, where :func:`ensure_table` cannot run.
+    2026-10-21 opened read-only, where no DDL runs.
     """
     if not duck.table_exists(TABLE):
         return {}

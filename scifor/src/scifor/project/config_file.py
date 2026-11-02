@@ -3,8 +3,8 @@ The project config file, ``scistack.toml``: one renderer, one writer.
 
 ``scistack.toml`` is the only project config file (decision 2026-10-08;
 ``docs/claude/config-file-formats.md``). Its NAME and LOCATION are owned by
-``scifor.discovery`` (``CONFIG_FILENAME``, ``config_path_at``); its TEXT is
-owned here. Every writer -- ``scidb.project.init_project`` and each GUI edit
+``scifor.project.discovery`` (``CONFIG_FILENAME``, ``config_path_at``); its TEXT is
+owned here. Every writer -- ``scidb.project.init.init_project`` and each GUI edit
 (Paths popup, entities file, glue dir, aliases, colors) -- loads the whole
 file as a dict, changes the keys it owns, and hands the whole dict to
 :func:`write`. Nothing builds config text anywhere else.
@@ -152,7 +152,7 @@ def render(section: dict) -> str:
     if matlab_lines:
         lines += ["", "[matlab]", *matlab_lines]
 
-    # Hand-authored level order (scidb.schema_order reads it, nothing writes it).
+    # Hand-authored level order (scifor.project.schema_order reads it, nothing writes it).
     schema_keys = section.get("schema_keys")
     if schema_keys:
         lines += ["", "[schema_keys]"]

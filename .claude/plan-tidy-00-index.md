@@ -153,7 +153,7 @@ If a decision is changed, edit the affected plan's stage before starting it.
 | P2 | 4 | ☑ 2026-11-01 | 98d19e97 |
 | P2 | 5–6 | ☑ 2026-11-01 | (this commit) |
 | P2 | 7 | ☑ 2026-11-01 | (this commit) |
-| P3 | 1–7 | ☐ | |
+| P3 | 1–7 | written 2026-11-01, awaiting test run (CLI move declined: U1) | |
 | P4 | 1–10 | ☐ | |
 | P5 | 1–6 | ☐ | |
 

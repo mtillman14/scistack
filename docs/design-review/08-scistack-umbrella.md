@@ -93,3 +93,4 @@ flowchart TB
 | U4 | Document `scistack` as the CLI and `scidb` as an alias for its database commands. | weakness 4 |
 
 > **Done (2026-11-01, e129c3bf):** U2 — taps (`scistack.user_config`) deleted (D7). U3 — stray `src/scistack/` removed.
+> **Done (2026-11-01, P3):** U1 — deliberately NOT done (user decision): every bundle/library command needs the GUI runtime (open with discovery to build the canvas, canvas import, check_code, library share/copy, the GUI's config writers), so moving them into scidb would only hide a GUI dependency behind a plugin hook. They stay in scistack-gui; `scistack` keeps mounting them.

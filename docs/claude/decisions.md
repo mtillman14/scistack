@@ -164,7 +164,7 @@ on their own copy of the raw files reproduces the exporter's results, and
 where it first stops doing so.
 
 **Decision (user: compare only; tolerance when data travels).**
-- `scidb.verify` compares the live history with the exporter's: the newest
+- `scidb.project.verify` compares the live history with the exporter's: the newest
   archive, or a bundle file. The exporter's side is loaded into a separate
   in-memory DuckDB.
 - Records match by a STRUCTURAL key: type, schema_version, location
@@ -206,7 +206,7 @@ installing into someone's environment can break it.
   was new).
 - Never into a system Python.
 - The import itself never depends on the install.
-- One owner: `scidb.environment`; every pip call goes through `_pip`.
+- One owner: `scidb.project.environment`; every pip call goes through `_pip`.
 
 **Consequences.** Supersedes "nothing is installed automatically"
 (Stages 5 and 8). A recipient whose environment already has a dependency at
@@ -225,7 +225,7 @@ parts of the same library.
 source goes to `src/<pkg>/<lib>/` (MATLAB: its `+<lib>/` folder into the
 project's MATLAB sources), EVERY placement of that library switches to the
 copy, and the library leaves `packages`. Function names stay `lib.fn`
-(`copied_libraries` in scistack.toml tells `scidb.names`; MATLAB keeps
+(`copied_libraries` in scistack.toml tells `scifor.project.names`; MATLAB keeps
 the name natively through the `+<lib>` folder), so history stays current.
 
 **Consequences.** One source per name, never two `lib.fn`s side by side.
@@ -243,7 +243,7 @@ anything.
 **Decision (user: seed/lock/re-sync over rendering live from source; MATLAB
 in scope).**
 - A library ships each shared pipeline as `<lib>/pipelines/<name>.json`, a
-  `canvas_snapshot` document (`scidb.library` owns the format). It is
+  `canvas_snapshot` document (`scidb.project.library` owns the format). It is
   language-neutral. MATLAB functions live in `<lib>/matlab/+<lib>/` and
   are named `lib.fn` natively (`func2str`).
 - The document is seeded into the canvas tables as LIBRARY-OWNED
@@ -298,7 +298,7 @@ states would show "done" for things that cannot be loaded.
 
 **Decision (user).** The live database only ever holds history together
 with its data. History + data + same schema: both loaded verbatim
-(`scidb.table_copy`: DDL from DuckDB's catalog + Parquet rows + views, so
+(`scidb.project.table_copy`: DDL from DuckDB's catalog + Parquet rows + views, so
 primary keys and views survive), and the GUI tables travel verbatim too
 (node ids, `_node_wiring`, hides, layout file). Otherwise the history is
 archived under `.scistack/archive/<export time>/` for audit and
@@ -345,7 +345,7 @@ same thing.
 
 **Decision (user, 2026-10-08).**
 - A function from a LIBRARY is recorded as `pkg.fn`; the project's own code
-  is bare. One owner, `scidb.names.function_name`, used by every recording
+  is bare. One owner, `scifor.project.names.function_name`, used by every recording
   site (call site, run, node state, pipeline steps), the GUI registry and
   code export, so a script and a GUI run record the same name. A library is
   OPT-IN: listed under `packages` or advertising a `scistack.plugins` entry
@@ -377,7 +377,7 @@ from the terminal and from the GUI. Its parts are owned by three packages
 (scidb: config, later history/data/code; scistack-gui: canvases;
 scistackplotdb: saved plots), and scidb must not import the other two.
 
-**Decision.** `scidb/bundle.py` owns the format: a plain zip named
+**Decision.** `scidb/project/bundle.py` owns the format: a plain zip named
 `.scistack`, a manifest with a per-file SHA-256 that the reader checks (a
 changed, missing or unlisted file is refused), `ExportOptions` as the one
 owner of the defaults. Sections are provider objects (`name`, `export`,
@@ -424,18 +424,18 @@ snapshot. Saved plots, presets and variant pins are not in the GUI snapshot
 GUI's `ensure_project_files` (`scistack.toml` and an entities file). The user
 does not want SciStack managing environments.
 
-**Decision.** `scidb.project.init_project` is the one owner. `scistack init`
+**Decision.** `scidb.project.init.init_project` is the one owner. `scistack init`
 and GUI database creation (`ensure_project_files(create_new=True)`, both entry
 points) call it. It only creates what is missing: a buildable
 `pyproject.toml`, `src/<pkg>/__init__.py`, the entities file inside the
-package (`scidb.entities.default_entities_relpath`), `.gitignore`, and
+package (`scifor.project.entities_file.default_entities_relpath`), `.gitignore`, and
 `scistack.toml` seeded with `"."`. Opening a database never scaffolds a
 package. uv is gone: `scistack/uv_wrapper.py`, the GUI's lockfile check, and
 `scan_project` reading `uv.lock` (it reads `scistack.toml` `packages`).
 
 **Consequences.** The browser wizard's "Entities file" field is optional
 (blank = inside the package); creation can no longer opt out of an entities
-file (clear it in Paths afterwards). `scifor.discovery.own_package_dir` is the
+file (clear it in Paths afterwards). `scifor.project.discovery.own_package_dir` is the
 one answer to "is this project a package".
 
 ---
@@ -451,8 +451,8 @@ edit the user's packaging file) vs. `scistack.toml` (GUI-owned).
 **Decision (user, option A).** `scistack.toml` only. `pyproject.toml` is
 packaging: only `[project].name` is read; `[tool.scistack]` is ignored; the
 GUI never edits it. The name and location have one owner
-(`scifor.discovery.CONFIG_FILENAME` / `config_path_at`), and so does the text
-(`scidb.config_file.render`/`write`). Every writer passes the whole config,
+(`scifor.project.config.CONFIG_FILENAME` / `config_path_at`), and so does the text
+(`scifor.project.config_file.render`/`write`). Every writer passes the whole config,
 so keys the writer does not know (e.g. the scidb CLI's `db`) survive.
 
 **Consequences.** Packaged projects are now GUI-editable (the read-only Paths
@@ -533,7 +533,7 @@ the named/versioned/hidden storage rules.
   template setting (user, D3). Project database only (user, D1).
 - Apply = `restore_spec` + `reconcile` + kind fallback via `capabilities`.
   There is no preset-specific drift code.
-- `scistackplotdb._versioned.VersionedStore` owns the storage rules for
+- `scidb.versioned_store.VersionedStore` owns the storage rules for
   both `_saved_plot` and `_plot_preset`. `saved.py` was moved onto it with
   its API unchanged.
 
@@ -624,7 +624,7 @@ the GUI.
   - `[colors] default` is the single mark colour.
   - A string under `[colors]` is a setting and a table is a thing.
   
-  The TOML grammar is owned by `scidb.colors`. The colour text grammar is
+  The TOML grammar is owned by `scifor.project.colors`. The colour text grammar is
   owned by `scistackplot.text.colors.parse_color` alone, canonicalised to
   `#rrggbb`.
 - **Drawing.** `render.base.palette_for` / `sample_palette_for` stay the ONE
@@ -654,7 +654,7 @@ of text.
 - **Where aliases live.** There are two layers.
   - The project: `[aliases]` in the project config, one entry per thing
     (`name`, plus a `levels` sub-table). Its grammar is owned by
-    `scidb.aliases`, and it is read live.
+    `scifor.project.aliases`, and it is read live.
   - The plot: `PlotSpec.aliases`, stored with the saved plot, which
     overrides the project field by field.
   - There is no per-plot .toml file, because it would be a second owner of
@@ -722,9 +722,9 @@ naming the old key; the user accepted this over writing upgraders. Adding a
 **Context.** Five places answered "which directory is this project?":
 - `scifor.pathinput._find_project_root` walked up from the cwd to ANY
   `pyproject.toml`/`scistack.toml`.
-- `scifor.discovery.find_project_config` walked up to a config that carried
-  a scistack section. `scidb.entities.project_root` used it.
-- `scidb.schema_order.locate_config` checked the pinned root, then the cwd,
+- `scifor.project.discovery.find_project_config` walked up to a config that carried
+  a scistack section. `scidb.project.entities.project_root` used it.
+- `scifor.project.schema_order.locate_config` checked the pinned root, then the cwd,
   then the database's folder.
 - The GUI's `config.resolve_project_root` used the folder the user opened and
   did no walk.
@@ -737,7 +737,7 @@ GUI's own root.
 **Decision.** There is one owner, `scifor.project_root()`. It returns the root
 pinned with `set_project_root`, else the cwd. **Nothing walks up to a config
 file.** A project's config is the one AT that root
-(`scifor.discovery.project_config_at`), so a config next to the database is no
+(`scifor.project.config.project_config_at`), so a config next to the database is no
 longer a fallback either.
 - **GUI:** it decides its root (`resolve_project_root`) and pins it in
   `registry.load_from_config`. `registry.get_project_root()` reads the pin.

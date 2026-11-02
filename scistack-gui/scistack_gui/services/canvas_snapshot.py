@@ -489,7 +489,7 @@ def table_portability() -> dict[str, str]:
 
 def remap_schema_keys(snap: CanvasSnapshot, key_map, report) -> CanvasSnapshot:
     """*snap* with every schema key renamed through *key_map*
-    (``scidb.schema_map.KeyMap``) -- a pure function over the data, applied
+    (``scidb.project.schema_map.KeyMap``) -- a pure function over the data, applied
     before :func:`apply`, so the canvas lands in the recipient's schema.
 
     Two places name schema keys: a node's location statement (its stated

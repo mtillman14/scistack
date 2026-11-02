@@ -122,16 +122,25 @@ path from MATLAB-only projects, so it is a user decision, not a silent one.
 
 ## Where the code lives
 
-**`scidb/src/scidb/entities.py` owns the grammar** — scidb defines
-`BaseVariable`, `Parameter` and (re-exported) `PathInput`, so it is the
-layer that knows what a declaration of one means (CLAUDE.md NOTE 3). It is
-the exact counterpart of `scidb.source_edit` for the Python form.
+The file has two halves (P3 stage 3, 2026-11-01):
+
+- **`scifor/src/scifor/project/entities_file.py` owns the grammar**: locate,
+  parse into frozen dataclasses (`DeclaredEntities`, `DeclaredVariable`,
+  `DeclaredParameter`, `DeclaredPathInput` of `PathInputArm`s), scan spans,
+  render and edit the text. Model-free, the counterpart of
+  `scifor.project.source_edit` for the Python form.
+- **`scidb/src/scidb/project/entities.py` materializes** a `DeclaredEntities` into
+  `BaseVariable` subclasses, `Parameter` and `PathInput`/`EachOf` objects
+  (`materialize`), caches them per file mtime (`load_for_project`), serves
+  `entities.NAME` attribute access and `declared_spelling`. A declaration
+  only `PathInput` refuses (alias key not in the template, bad `key_regex`)
+  is rejected here, per entry, with its line.
 
 Read half:
 - `load(path) -> EntitiesFile` — parse, validate, construct.
 - `entities_path()` / `load_for_project()` — resolve the file from the
   project config (mtime-cached) found AT `scifor.project_root()` (the pinned
-  root, else the cwd) by `scifor.discovery.project_config_at` -- no upward
+  root, else the cwd) by `scifor.project.config.project_config_at` -- no upward
   walk (D-2026-09-23-1). The GUI pins its root into scifor, so the GUI and a
   plain script read the same config for the same folder.
 - `resolve_entities_path(root, section)` — the resolution **rule**, split
