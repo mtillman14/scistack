@@ -79,10 +79,10 @@ def test_single_output_and_unknown_functions(db):
 
 def test_the_table_is_part_of_the_run_log():
     from scidb.project.bundle import HISTORY_TABLES
-    from scidb.clear_data import KEPT_BY_CLEAR
+    from scidb.clear_data import KEPT_TABLES
 
     assert "_run_outputs" in HISTORY_TABLES
-    assert "_run_outputs" in KEPT_BY_CLEAR
+    assert "_run_outputs" in KEPT_TABLES
 
 
 # --- MATLAB output NAMES (_run_outputs.output_params) --------------------------

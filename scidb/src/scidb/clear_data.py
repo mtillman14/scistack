@@ -13,11 +13,12 @@ Two steps, like ``variant_delete``:
    a tombstone, releases every active pin and commits. Any failure rolls the
    whole thing back.
 
-**Which tables** is decided by ONE classification: ``scidb.project.bundle``'s
-``HISTORY_TABLES`` / ``INTENT_TABLES`` (what travels as history vs. intent)
-plus :data:`KEPT_BY_CLEAR` here (history a clear deliberately keeps). The
-guard test ``test_every_scidb_table_is_classified`` fails when a new scidb
-table is in neither :data:`CLEARED_TABLES` nor :data:`KEPT_TABLES`.
+**Which tables** is decided by ONE classification, on each table's
+``scidb.tables.TableDecl`` (``cleared=True``, or ``kept_reason``), where the
+table is declared. :data:`CLEARED_TABLES` and :data:`KEPT_TABLES` are read
+from it, and ``tables.declare`` refuses a scidb table with neither. The guard
+test ``test_every_scidb_table_is_classified`` fails when a table a used
+database holds is in neither list.
 
 Emptied: every variable's data rows (the tables and their views stay, and an
 empty table takes a new column set on the next save:
@@ -48,39 +49,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .project.bundle import HISTORY_TABLES, INTENT_TABLES
+from . import tables as table_registry
 from .log import Log
 
 if TYPE_CHECKING:
     from .database import DatabaseManager
     from .variant_delete import Tombstone
 
-#: History a clear keeps, and why (the rest of ``HISTORY_TABLES`` minus the
-#: intent tables is emptied).
-KEPT_BY_CLEAR: dict[str, str] = {
-    "_run": "the run log: that a run happened, when, and its origin (user decision 2026-10-21)",
-    "_run_step": "part of the run log: the step name a run was given (for_each(step=...))",
-    "_run_outputs": "part of the run log: the order a run listed its outputs (outputs=)",
-    "_schema": "location interning; a re-save after the clear reuses the same schema ids",
-    "_variant_pin": "audit trail; active pins are RELEASED, rows kept",
-    "_variant_tombstone": "the audit trail of every real delete, this clear included",
-}
+#: Emptied by a clear, besides every variable's own data table
+#: (``TableDecl.cleared``).
+CLEARED_TABLES: tuple[str, ...] = table_registry.cleared_tables()
 
-#: Emptied by a clear, besides every variable's own data table.
-CLEARED_TABLES: tuple[str, ...] = tuple(
-    t for t in HISTORY_TABLES if t not in INTENT_TABLES and t not in KEPT_BY_CLEAR
-) + ("_record_save",)
-
-#: Every other scidb/sciduckdb table, and why a clear leaves it alone.
-KEPT_TABLES: dict[str, str] = {
-    **KEPT_BY_CLEAR,
-    **{t: "dataset intent: governs a re-run" for t in INTENT_TABLES},
-    "_registered_types": "variable registrations (which classes exist)",
-    "_variables": "variable registrations and dtype metadata",
-    "_variable_groups": "variable groups (declarations)",
-    "_schema_key_type": "schema key types (declarations)",
-    "_intent": "statements about runs (what the canvas asks for): intent, not results",
-}
+#: Every other scidb table, and why a clear leaves it alone
+#: (``TableDecl.kept_reason``). Other owners' tables (GUI, saved plots and
+#: stats) are not scidb's and are never touched.
+KEPT_TABLES: dict[str, str] = table_registry.kept_tables()
 
 #: Tables whose presence means the GUI has a canvas on this database.
 CANVAS_TABLES: tuple[str, ...] = ("_pipelines", "_pipeline_nodes")

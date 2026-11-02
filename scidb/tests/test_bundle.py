@@ -484,7 +484,7 @@ def test_history_without_data_is_archived_not_loaded(project, tmp_path):
     target = report_db(report)
     assert _count(target, "_record") == 0  # the live database stays consistent
     # Dataset intent governs a re-run, so the exclusion is live.
-    assert hist["intent_loaded"] == ["__scidb_schema_overrides"]
+    assert set(hist["intent_loaded"]) == {"__scidb_schema_overrides", "_schema_key_type"}
     assert _count(target, "__scidb_schema_overrides") >= 1
     target.close()
 
@@ -518,6 +518,8 @@ def test_data_is_not_imported_into_another_schema(project, tmp_path):
     assert "schema changed" in hist["data"]
     assert hist["intent_loaded"] == []  # its keys are the exporter's
     assert hist["archived"]
+    assert any("dataset rules NOT applied" in w and "another schema" in w
+               and "1 schema exclusion" in w for w in report.warnings), report.warnings
     report_db(report).close()
 
 
@@ -534,6 +536,91 @@ def test_history_can_be_declined_at_import(project, tmp_path):
     assert report.sections["history"]["archived"] is None
     assert not (tmp_path / "copy" / ".scistack" / "archive").exists()
     assert any("opted out" in w for w in report.warnings)
+    report_db(report).close()
+
+
+# --- Dataset intent: schema key types travel; what cannot is warned about ----
+
+
+def _numeric_session(project):
+    """Declare ``session`` numeric before any save, then the usual history."""
+    project[1].set_schema_key_type("session", "numeric")
+    return _with_history(project)
+
+
+def test_schema_key_types_go_live_with_an_archived_history(project, tmp_path):
+    """Key types define stored identity ("1" vs "001"), so they are dataset
+    intent: live even when the history is only archived."""
+    root, db = _numeric_session(project)
+    out = _export(project, tmp_path)
+    db.close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    assert "_schema_key_type" in report.sections["history"]["intent_loaded"]
+    target = report_db(report)
+    # The open database's cache sees them, not only the table.
+    assert target.dataset_schema_key_types == {"session": "numeric"}
+    assert not any("NOT applied" in w for w in report.warnings), report.warnings
+    target.close()
+
+
+def test_schema_key_types_go_live_with_a_live_history(project, tmp_path):
+    root, db = _numeric_session(project)
+    out = _export(project, tmp_path, options=ExportOptions(include_data=True))
+    db.close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    assert report.sections["history"]["live"] is True
+    target = report_db(report)
+    assert target.dataset_schema_key_types == {"session": "numeric"}
+    target.close()
+
+
+def test_the_manifest_counts_the_dataset_intent(project, tmp_path):
+    root, db = _numeric_session(project)
+    out = _export(project, tmp_path)
+    manifest = read_bundle(out).manifest
+    assert manifest["intent_rows"]["__scidb_schema_overrides"] >= 1
+    assert manifest["intent_rows"]["_schema_key_type"] >= 1
+
+
+def test_export_without_history_warns_at_import(project, tmp_path):
+    root, db = _numeric_session(project)
+    out = _export(project, tmp_path, options=ExportOptions(include_history=False))
+    db.close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    msgs = [w for w in report.warnings if "dataset rules NOT applied" in w]
+    assert len(msgs) == 1, report.warnings
+    assert "exported without its run history" in msgs[0]
+    assert "schema exclusion" in msgs[0] and "schema key type" in msgs[0]
+    assert "set_schema_key_type" in msgs[0]  # says how to put them back
+    report_db(report).close()
+
+
+def test_declined_history_warns_about_the_dataset_rules(project, tmp_path):
+    _numeric_session(project)
+    out = _export(project, tmp_path)
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy", import_history=False)
+
+    assert any("dataset rules NOT applied" in w and "declined at import" in w
+               for w in report.warnings), report.warnings
+    report_db(report).close()
+
+
+def test_no_dataset_rules_means_no_warning(project, tmp_path):
+    """A project with no exclusions or key types has nothing to lose."""
+    out = _export(project, tmp_path, options=ExportOptions(include_history=False))
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    assert not any("NOT applied" in w for w in report.warnings), report.warnings
     report_db(report).close()
 
 

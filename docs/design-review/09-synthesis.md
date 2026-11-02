@@ -112,6 +112,13 @@ Consequence: one place lists every table. Bundles (`table_copy`) and
 `clear_data` can then be driven from that list instead of from knowledge
 spread around the repo.
 
+> **Done (2026-11-01, P3 stage 6 step 7):** each scidb `TableDecl` carries
+> `bundle` (history / intent / data / none) and `cleared` or `kept_reason`;
+> `bundle.HISTORY_TABLES`, `INTENT_TABLES`, the data section's fixed tables,
+> and `clear_data.CLEARED_TABLES` / `KEPT_TABLES` are read from
+> `scidb.tables`. `declare` refuses a scidb table that is neither cleared nor
+> kept with a reason.
+
 ### T3. The real interfaces are private
 
 | Boundary | Measured | Doc |

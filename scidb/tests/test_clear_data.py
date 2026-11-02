@@ -219,8 +219,8 @@ class TestClassification:
         }
         unclassified = sorted(tables - data_tables - set(CLEARED_TABLES) - set(KEPT_TABLES))
         assert unclassified == [], (
-            "classify each table in scidb/clear_data.py (CLEARED via bundle "
-            "HISTORY_TABLES, or KEPT_TABLES with a reason)"
+            "classify each table where it is declared, in scidb/tables.py "
+            "(TableDecl cleared=True, or kept_reason=...)"
         )
 
     def test_kept_and_cleared_do_not_overlap(self):
@@ -266,9 +266,10 @@ class TestCli:
         assert "GUI canvas" in captured.err
 
 
-def test_module_names_its_own_tables():
-    """The classification is read from bundle.py, not restated."""
-    from scidb.project.bundle import HISTORY_TABLES
+def test_module_reads_the_table_registry():
+    """The classification is read from scidb.tables, not restated."""
+    from scidb import tables
 
-    assert set(CLEARED_TABLES) - {"_record_save"} <= set(HISTORY_TABLES)
-    assert clear_mod.KEPT_BY_CLEAR.keys() <= set(HISTORY_TABLES)
+    assert clear_mod.CLEARED_TABLES == tables.cleared_tables()
+    assert clear_mod.KEPT_TABLES == tables.kept_tables()
+    assert all(KEPT_TABLES.values()), "every kept table says why"

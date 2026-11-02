@@ -19,6 +19,15 @@ Every statement is ``CREATE ... IF NOT EXISTS`` (or another idempotent
 form), so opening an existing database runs them as no-ops. Read-only
 connections run none: DuckDB refuses DDL there and the tables already exist.
 
+Classifying them (plan P3 stage 6 step 7): each scidb table also says which
+bundle section carries its rows (history, intent, data, or none) and whether
+``clear_data`` empties it or keeps it, and why. The bundle's and the clear's
+table lists are read from here (:func:`history_tables`,
+:func:`intent_tables`, :func:`data_tables`, :func:`cleared_tables`,
+:func:`kept_tables`), so a new table is classified once, where it is
+declared, and :func:`declare` refuses one that is neither cleared nor kept
+with a reason.
+
 Guard: ``tests/test_table_registry.py`` fails on a ``CREATE TABLE`` anywhere
 else in scidb, sciduckdb, scistackplotdb, scistackstatsdb or the GUI.
 """
@@ -38,14 +47,43 @@ from .exceptions import TableDeclarationError
 Statement = str | Callable[[Sequence[str]], str]
 
 
+#: ``TableDecl.bundle``: the rows travel in a bundle's history section.
+BUNDLE_HISTORY = "history"
+#: ``TableDecl.bundle``: history rows that are dataset INTENT, not facts.
+#: They govern a re-run, so they go live in the new project even when the
+#: rest of the history is only archived.
+BUNDLE_INTENT = "intent"
+#: ``TableDecl.bundle``: the rows travel in a bundle's (opt-in) data section,
+#: beside every variable's ``<Type>_data`` table.
+BUNDLE_DATA = "data"
+
+#: The owner whose tables carry a bundle/clear classification. Every other
+#: owner's rows travel in its own bundle section and a clear never touches
+#: them, so a flag there would be silently ignored, and it is refused.
+CORE_OWNER = "scidb"
+
+
 @dataclass(frozen=True)
 class TableDecl:
-    """One fixed table: its name, the statements that create it, and who
-    declared it (a package name, for logs)."""
+    """One fixed table: its name, the statements that create it, who
+    declared it (a package name, for logs), and, for scidb's own tables,
+    what a bundle and ``clear_data`` do with its rows.
+
+    This is THE classification of scidb's tables. ``scidb.project.bundle``
+    (``HISTORY_TABLES`` / ``INTENT_TABLES``) and ``scidb.clear_data``
+    (``CLEARED_TABLES`` / ``KEPT_TABLES``) are read from it via
+    :func:`history_tables`, :func:`intent_tables`, :func:`cleared_tables`
+    and :func:`kept_tables`, never restated."""
 
     name: str
     statements: tuple[Statement, ...]
     owner: str
+    #: :data:`BUNDLE_HISTORY`, :data:`BUNDLE_INTENT`, :data:`BUNDLE_DATA`, or None (no bundle carries it).
+    bundle: str | None = None
+    #: ``clear_data`` empties the table.
+    cleared: bool = False
+    #: Why ``clear_data`` leaves the table alone (scidb tables not cleared).
+    kept_reason: str = ""
 
     def sql(self, schema_keys: Sequence[str]) -> list[str]:
         """The statements to run, with schema-keyed ones rendered."""
@@ -62,7 +100,10 @@ _LOGGED: set[tuple[int, str]] = set()
 def declare(decl: TableDecl) -> TableDecl:
     """Register *decl*. Declaring the same table again is a no-op; declaring
     a different one under a taken name raises :class:`TableDeclarationError`
-    (two owners for one table is the bug this registry exists to stop)."""
+    (two owners for one table is the bug this registry exists to stop).
+    A classification that contradicts itself is refused too (see
+    :func:`_check_classification`)."""
+    _check_classification(decl)
     existing = _DECLS.get(decl.name)
     if existing is not None:
         if existing == decl:
@@ -76,9 +117,65 @@ def declare(decl: TableDecl) -> TableDecl:
     return decl
 
 
+def _check_classification(decl: TableDecl) -> None:
+    """A scidb table is either emptied by a clear or kept with a reason,
+    never both or neither; another owner's table carries no flags."""
+    if decl.bundle not in (None, BUNDLE_HISTORY, BUNDLE_INTENT, BUNDLE_DATA):
+        raise TableDeclarationError(
+            f"Table {decl.name!r}: bundle={decl.bundle!r}; expected "
+            f"{BUNDLE_HISTORY!r}, {BUNDLE_INTENT!r}, {BUNDLE_DATA!r} or None"
+        )
+    if decl.owner != CORE_OWNER:
+        if decl.bundle is not None or decl.cleared or decl.kept_reason:
+            raise TableDeclarationError(
+                f"Table {decl.name!r} (owner {decl.owner}): only {CORE_OWNER}'s "
+                f"tables are classified for bundles and clear_data; this "
+                f"owner's rows travel in its own bundle section and a clear "
+                f"never touches them"
+            )
+        return
+    if decl.cleared == bool(decl.kept_reason):
+        raise TableDeclarationError(
+            f"Table {decl.name!r}: a scidb table is either cleared=True or "
+            f"kept with a kept_reason, exactly one "
+            f"(cleared={decl.cleared}, kept_reason={decl.kept_reason!r})"
+        )
+
+
 def declared() -> list[TableDecl]:
     """Every declared table, in declaration order."""
     return list(_DECLS.values())
+
+
+def _core_decls() -> list[TableDecl]:
+    return [d for d in _DECLS.values() if d.owner == CORE_OWNER]
+
+
+def history_tables() -> tuple[str, ...]:
+    """scidb tables a bundle's history section carries (intent included),
+    in declaration order."""
+    return tuple(d.name for d in _core_decls() if d.bundle in (BUNDLE_HISTORY, BUNDLE_INTENT))
+
+
+def intent_tables() -> tuple[str, ...]:
+    """History tables that go live even when the history is archived."""
+    return tuple(d.name for d in _core_decls() if d.bundle == BUNDLE_INTENT)
+
+
+def data_tables() -> tuple[str, ...]:
+    """scidb tables a bundle's data section carries, besides the dynamic
+    ``<Type>_data`` tables."""
+    return tuple(d.name for d in _core_decls() if d.bundle == BUNDLE_DATA)
+
+
+def cleared_tables() -> tuple[str, ...]:
+    """scidb tables ``clear_data`` empties (besides every ``<Type>_data``)."""
+    return tuple(d.name for d in _core_decls() if d.cleared)
+
+
+def kept_tables() -> dict[str, str]:
+    """``{table: reason}``: scidb tables ``clear_data`` leaves alone."""
+    return {d.name: d.kept_reason for d in _core_decls() if not d.cleared}
 
 
 def ensure(duck, *names: str, schema_keys: Sequence[str] = ()) -> int:
@@ -122,8 +219,27 @@ def _run(duck, decls: Iterable[TableDecl], schema_keys: Sequence[str]) -> int:
     return count
 
 
-def _core(name: str, *statements: Statement) -> TableDecl:
-    return declare(TableDecl(name=name, statements=tuple(statements), owner="scidb"))
+def _core(
+    name: str,
+    *statements: Statement,
+    bundle: str | None = None,
+    cleared: bool = False,
+    kept: str = "",
+) -> TableDecl:
+    return declare(
+        TableDecl(
+            name=name,
+            statements=tuple(statements),
+            owner=CORE_OWNER,
+            bundle=bundle,
+            cleared=cleared,
+            kept_reason=kept,
+        )
+    )
+
+
+#: The run log a clear keeps (user decision 2026-10-21).
+_RUN_LOG = "the run log: that a run happened, when, and its origin (user decision 2026-10-21)"
 
 
 def _schema_columns(schema_keys: Sequence[str]) -> str:
@@ -144,6 +260,7 @@ SCHEMA = _core(
     )
     """,
     "CREATE SEQUENCE IF NOT EXISTS _schema_id_seq START 1",
+    bundle=BUNDLE_HISTORY, kept="location interning; a re-save after the clear reuses the same schema ids",
 )
 
 _core(
@@ -157,6 +274,7 @@ _core(
         description VARCHAR DEFAULT ''
     )
     """,
+    bundle=BUNDLE_DATA, kept="variable registrations and dtype metadata",
 )
 
 _core(
@@ -168,6 +286,7 @@ _core(
         PRIMARY KEY (group_name, variable_name)
     )
     """,
+    bundle=BUNDLE_DATA, kept="variable groups (declarations)",
 )
 
 # ---------------------------------------------------------------------------
@@ -186,6 +305,7 @@ _core(
         registered_at TIMESTAMP DEFAULT current_timestamp
     )
     """,
+    bundle=BUNDLE_DATA, kept="variable registrations (which classes exist)",
 )
 
 # The append-only save-event audit log: one row per save event
@@ -203,6 +323,7 @@ _core(
         PRIMARY KEY (record_id, timestamp)
     )
     """,
+    bundle=BUNDLE_DATA, cleared=True,
 )
 
 # Persistent schema-level exclusions (scidb.exclusions), one column per key.
@@ -216,6 +337,7 @@ SCHEMA_OVERRIDES = _core(
         changed_at TIMESTAMP NOT NULL
     )
     """,
+    bundle=BUNDLE_INTENT, kept="dataset intent: governs a re-run",
 )
 
 # ---------------------------------------------------------------------------
@@ -240,6 +362,7 @@ _core(
         excluded       BOOLEAN DEFAULT FALSE
     )
     """,
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # Constant values (parallel to a variable's "<Type>_data" table).
@@ -253,6 +376,7 @@ _core(
         content_hash VARCHAR
     )
     """,
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # Activities: one row per UNIQUE function call (content-addressed).
@@ -290,6 +414,7 @@ _core(
         iteration_level VARCHAR[]
     )
     """,
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # The code behind a ``function_hash``. Purely additive: the hash is already
@@ -318,6 +443,7 @@ _core(
         PRIMARY KEY (function_hash, unit_name)
     )
     """,
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # What was fed into a call, and the argument slot it filled. ``selector``
@@ -344,6 +470,7 @@ _core(
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_inv_input_inv ON _invocation_input (invocation_id)",
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # What a call produced. Multiple rows for multi-output functions.
@@ -360,6 +487,7 @@ _core(
     # Indexes for upward/downward traversal: the recursive CTEs join
     # output_record_id -> invocation_id -> input_record_id repeatedly.
     "CREATE INDEX IF NOT EXISTS idx_inv_output_rid ON _invocation_output (output_record_id)",
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # Audit log: one row per for_each EXECUTION (fresh row every run, even when
@@ -378,6 +506,7 @@ _core(
         origin        VARCHAR
     )
     """,
+    bundle=BUNDLE_HISTORY, kept=_RUN_LOG,
 )
 
 # The step name a run was given (`for_each(..., step="filter")`), when it
@@ -391,6 +520,7 @@ _core(
         step   VARCHAR NOT NULL
     )
     """,
+    bundle=BUNDLE_HISTORY, kept="part of the run log: the step name a run was given (for_each(step=...))",
 )
 
 # The output variable types a run wrote, in its ``outputs=`` ORDER (the
@@ -420,6 +550,7 @@ _core(
     )
     """,
     "ALTER TABLE _run_outputs ADD COLUMN IF NOT EXISTS output_params VARCHAR[]",
+    bundle=BUNDLE_HISTORY, kept="part of the run log: the order a run listed its outputs (outputs=)",
 )
 
 # Many-to-many: which invocations a run (re)produced.
@@ -432,6 +563,7 @@ _core(
         PRIMARY KEY (run_id, invocation_id)
     )
     """,
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # A function RENAMED (Share as library / Make my own copy:
@@ -450,6 +582,7 @@ _core(
         PRIMARY KEY (old_name, new_name, renamed_at)
     )
     """,
+    bundle=BUNDLE_HISTORY, cleared=True,
 )
 
 # ---------------------------------------------------------------------------
@@ -469,6 +602,7 @@ VARIANT_PIN = _core(
         release_reason VARCHAR
     )
     """,
+    bundle=BUNDLE_HISTORY, kept="audit trail; active pins are RELEASED, rows kept",
 )
 
 VARIANT_TOMBSTONE = _core(
@@ -483,8 +617,13 @@ VARIANT_TOMBSTONE = _core(
         record_ids_json VARCHAR NOT NULL
     )
     """,
+    bundle=BUNDLE_HISTORY, kept="the audit trail of every real delete, this clear included",
 )
 
+# Schema key types are dataset INTENT (user decision 2026-11-01): the type
+# defines stored identity ("1" vs "001"), so an imported project needs them
+# live even when the history is only archived. They ride in the history
+# section for now; plan-dataset-intent-section.md gives them their own.
 SCHEMA_KEY_TYPE = _core(
     "_schema_key_type",
     """
@@ -495,6 +634,7 @@ SCHEMA_KEY_TYPE = _core(
         source      VARCHAR NOT NULL
     )
     """,
+    bundle=BUNDLE_INTENT, kept="schema key types (declarations)",
 )
 
 # Statements about runs (scidb.intent; docs/claude/intent-and-fact.md). The
@@ -515,4 +655,5 @@ INTENT = _core(
         PRIMARY KEY (subject_kind, subject_ref, scope, aspect, aspect_key)
     )
     """,
+    kept="statements about runs (what the canvas asks for): intent, not results",
 )

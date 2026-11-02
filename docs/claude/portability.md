@@ -161,7 +161,7 @@ exist that cannot be loaded, and some views would show nodes as done. So:
 | Bundle carries | Schema | Result |
 |---|---|---|
 | history + data | kept | both loaded LIVE, verbatim; the GUI tables and layout file are copied verbatim too, so the canvas is identical down to node ids |
-| history only (the default) | kept | history ARCHIVED read-only under `.scistack/archive/<export time>/` (the bundle's Parquet files + README) for audit and `scistack verify`; exclusions go live (they govern a re-run); the canvas starts "not run" |
+| history only (the default) | kept | history ARCHIVED read-only under `.scistack/archive/<export time>/` (the bundle's Parquet files + README) for audit and `scistack verify`; exclusions and schema key types go live (they govern a re-run); the canvas starts "not run" |
 | history (+ data) | changed | history archived; data not imported; nothing schema-keyed goes live |
 
 Data without history is refused at export. A re-run never skips because of
@@ -241,7 +241,7 @@ Status as of 2026-10-08.
 | E10 | Project config | 🔧 | `scistack.toml` is the bundle's `config` section (scidb). Copied verbatim; absolute first-write seeds still need Stage 6. |
 | E11 | Code + entities file | ✅ | `bundle_section.CodeSection`: the files discovery loads (the config loader's list), `pyproject.toml`, the own package with its data; code from outside the root is listed, not copied (Stage 5). |
 | E12 | Wheel + resolved versions + environment | 🔧 | Environment ✅ (`scidb.project.bundle` env section: Python, platform, every distribution's version, MATLAB if already loaded; Stage 5). Wheels: Stage 10 (libraries only). |
-| E13 | Run history | ✅ | `history` section (default on): provenance tables + `_schema` + exclusions, variant pins, tombstones, via `scidb.project.table_copy` (DDL + Parquet) (Stage 7). |
+| E13 | Run history | ✅ | `history` section (default on): provenance tables + `_schema` + dataset intent (exclusions, schema key types; `scidb.tables` `BUNDLE_INTENT`), variant pins, tombstones, via `scidb.project.table_copy` (DDL + Parquet) (Stage 7). |
 | E14 | Derived variable data | ✅ | `data` section (opt-in, requires history): every variable table with its DDL and view, `_record_save`, variable metadata (Stage 7). |
 | E15 | Subset of locations | ❌ | Stage 9b: `ExportOptions.locations` (a `LocationFilter`), owner `scidb.subset`. Anonymizing was DROPPED (user, 2026-10-08): subject codes are normally pseudonyms already, real identifiers belong upstream of the raw files, data content would not be covered, and pseudonyms would defeat `verify`. |
 | E16 | Manifest, format version, `.scistack` archive | ✅ | `scidb/project/bundle.py`: manifest with per-file SHA-256, plain zip, `ExportOptions` as the one owner of defaults (Stage 4). |
@@ -265,7 +265,7 @@ Status as of 2026-10-08.
 | I11 | Mint edge IDs | ✅ | `ids.new_manual_edge_id` (a drawn edge's stored id is allocated; `connection_id` derives the connection's id for matching, a different concept). |
 | I12 | Restore the rest of the GUI state, with schema keys remapped | ✅ | `canvas_snapshot.apply` + `remap_schema_keys` (Stages 2, 6). |
 | I13 | Add missing PathInputs/Sweeps to the recipient's source | ✅ | Becomes unnecessary for new projects (the entities file arrives in the wheel); still needed when importing into an existing project. |
-| I14 | Restore history / data | ✅ | History + data + same schema: loaded live, verbatim, and the GUI tables verbatim too. History without data, or another schema: archived under `.scistack/archive/<export time>/`; exclusions still go live when the schema was kept. `import_history=False` declines it (Stage 7). |
+| I14 | Restore history / data | ✅ | History + data + same schema: loaded live, verbatim, and the GUI tables verbatim too. History without data, or another schema: archived under `.scistack/archive/<export time>/`; exclusions and schema key types still go live when the schema was kept. `import_history=False` declines it (Stage 7). Dataset intent that does not go live (no history exported, history declined, another schema) is an import WARNING naming what was left behind and how to re-declare it (manifest `intent_rows`, 2026-11-01); `.claude/plan-dataset-intent-section.md` makes it always travel. |
 | I15 | Check that every canvas node's code is found | ✅ | The import itself runs no code (`discovered=False`): it reports the check as not done (`unresolved_labels=None`) and defers PathInput/Sweep materialisation (`deferred`). After trust, `headless.check_code` (`scistack import --check-code`) lists every canvas node whose code is missing; the GUI checks on open (Stage 8). |
 | I16 | Same function identity from a wheel and from loose files | ✅ | Moot for a bundle import: the code stays source in `src/<pkg>/`, the exporter's own layout. Revisit for libraries (Stage 10). |
 | I17 | Reproduction check | ✅ | Stage 9a: `scidb verify` / `scistack verify` COMPARES (never runs code) the recipient's live history after their own run with the exporter's archived history, matched by a content-free structural key; reports reproduced / differs at source / differs downstream / code changed / not run / new. |

@@ -45,6 +45,8 @@ from typing import Any, Callable, Protocol
 
 from scistacklog import Log
 
+from .. import tables as table_registry
+
 #: Bumped on any incompatible change; a mismatch is refused (beta: no migration).
 FORMAT_VERSION = 1
 
@@ -70,28 +72,68 @@ WHEELHOUSE_INDEX = "wheelhouse.json"
 
 #: What ran, when, with what: the provenance graph and its schema rows, plus
 #: the dataset intent that refers to them (exclusions, variant pins,
-#: deletion tombstones). Never who (D-2026-10-08-1).
-HISTORY_TABLES = (
-    "_schema",
-    "_record",
-    "_constant",
-    "_invocation",
-    "_function_source",
-    "_invocation_input",
-    "_invocation_output",
-    "_run",
-    "_run_invocation",
-    "_run_step",
-    "_run_outputs",
-    "_function_rename",
-    "_variant_pin",
-    "_variant_tombstone",
-    "__scidb_schema_overrides",
-)
+#: deletion tombstones). Never who (D-2026-10-08-1). Read from the table
+#: registry (``TableDecl.bundle``), which owns the classification.
+HISTORY_TABLES: tuple[str, ...] = table_registry.history_tables()
 
 #: Rows that are dataset INTENT rather than facts: they govern a re-run, so
 #: they go live even when the rest of the history is only archived.
-INTENT_TABLES = ("__scidb_schema_overrides",)
+INTENT_TABLES: tuple[str, ...] = table_registry.intent_tables()
+
+#: What a warning calls each dataset-intent table (a user reads it), and how
+#: to put it back by hand. A table missing here falls back to its name.
+_INTENT_LABELS: dict[str, tuple[str, str]] = {
+    "__scidb_schema_overrides": ("schema exclusion(s)", "re-exclude them (scidb.exclusions.exclude_schema)"),
+    "_schema_key_type": (
+        "schema key type declaration(s)",
+        "re-declare them (db.set_schema_key_type, or the Numeric box on the PathInput)",
+    ),
+}
+
+
+def _intent_rows(duck) -> dict[str, int]:
+    """``{table: rows}`` of the dataset-intent tables that hold any. The
+    manifest records it, so an import that cannot apply them says exactly
+    what was left behind."""
+    out: dict[str, int] = {}
+    for table in INTENT_TABLES:
+        if duck.table_exists(table):
+            n = int(duck.fetchone(f'SELECT count(*) FROM "{table}"')[0])
+            if n:
+                out[table] = n
+    return out
+
+
+def _intent_not_applied(manifest: dict, why: str) -> "str | None":
+    """The import warning for dataset intent that did not go live, or None
+    when the exporter had none. Never silent (feedback: never drop data
+    silently); an older bundle without the count gets the general warning."""
+    rows = manifest.get("intent_rows")
+    if rows is not None and not rows:
+        return None
+    if rows is None:
+        what = "its dataset rules (schema exclusions, schema key types), if it had any"
+        fix = "re-declare them in this project"
+    else:
+        what = ", ".join(f"{n} {_INTENT_LABELS.get(t, (t, ''))[0]}" for t, n in sorted(rows.items()))
+        fix = "; ".join(_INTENT_LABELS.get(t, (t, f"restore {t} by hand"))[1] for t in sorted(rows))
+    return f"dataset rules NOT applied: {what}, because {why}. To keep them, {fix}"
+
+
+def _warn_intent(report, manifest: dict, why: str) -> None:
+    warning = _intent_not_applied(manifest, why)
+    if warning is not None:
+        report.warnings.append(warning)
+        Log.warn(f"[bundle] {warning}")
+
+
+def _refresh_intent(db) -> None:
+    """Loaded key types must reach the open database's cache, or this process
+    keeps saving with none until its next reopen."""
+    refresh = getattr(db, "_refresh_schema_key_types", None)
+    if refresh is not None:
+        refresh()
+        Log.info(f"[bundle] schema key types now {getattr(db, 'dataset_schema_key_types', {})}")
 
 #: Where an archived (not loaded) history lands in the new project.
 ARCHIVE_DIR = ".scistack/archive"
@@ -396,8 +438,9 @@ def check_environment(root: Path, env: dict) -> dict:
 
 def _data_tables(duck) -> list[str]:
     """The derived data: every variable's table (``_registered_types``), the
-    save events, and the variable metadata tables."""
-    tables = ["_registered_types", "_variables", "_variable_groups", "_record_save"]
+    save events, and the variable metadata tables (``TableDecl.bundle ==
+    BUNDLE_DATA`` in the table registry)."""
+    tables = list(table_registry.data_tables())
     try:
         tables += [r[0] for r in duck.fetchall("SELECT table_name FROM _registered_types")]
     except Exception as e:  # no variable was ever saved
@@ -448,8 +491,14 @@ def export_project(
     }
     from . import table_copy
 
+    intent_rows = _intent_rows(db._duck)
     if options.include_history:
         sections[HISTORY_SECTION] = table_copy.dump(db._duck, list(HISTORY_TABLES))
+    elif intent_rows:
+        Log.warn(
+            f"[bundle] export without history: dataset rules {intent_rows} do not "
+            f"travel (they ride in the history section); the import will warn"
+        )
     if options.include_data:
         sections[DATA_SECTION] = table_copy.dump(
             db._duck, _data_tables(db._duck), _views(db._duck)
@@ -476,6 +525,8 @@ def export_project(
             "root": root.as_posix(),
         },
         "options": options.to_dict(),
+        #: Dataset-intent rows the exporter held, for the import's warnings.
+        "intent_rows": intent_rows,
         "sections": {
             name: {"files": {rel: _sha256(data) for rel, data in sorted(files.items())}}
             for name, files in sections.items()
@@ -721,10 +772,14 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
     * history without data (the default bundle), or into another schema ->
       the history is ARCHIVED under ``.scistack/archive/<export time>/`` as
       the bundle's own Parquet files, for audit and ``scistack verify``;
-      its dataset intent (``INTENT_TABLES``: exclusions) still goes live
-      when the schema was kept, because it governs a re-run;
+      its dataset intent (``INTENT_TABLES``: exclusions, schema key types)
+      still goes live when the schema was kept, because it governs a re-run;
     * data into another schema -> not imported (it describes a dataset with
       a different shape), reported.
+
+    Dataset intent that does not go live (no history in the bundle, history
+    declined, another schema) is a WARNING naming what was left behind
+    (:func:`_intent_not_applied`), never silent.
     """
     from . import table_copy
 
@@ -732,16 +787,19 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
     data = bundle.sections.get(DATA_SECTION)
     out: dict = {"live": False, "archived": None, "intent_loaded": [], "data": None}
     if history is None and data is None:
+        _warn_intent(report, manifest, "the project was exported without its run history")
         return False
     if not import_history:
         out["data"] = "not imported (history opted out)" if data else None
         report.sections[HISTORY_SECTION] = out
         report.warnings.append("the bundle's run history was not imported (opted out)")
+        _warn_intent(report, manifest, "the run history was declined at import")
         return False
 
     if data is not None and history is not None and kmap.is_identity:
         out["history"] = table_copy.load(db._duck, history)
         out["data"] = table_copy.load(db._duck, data)
+        _refresh_intent(db)
         out["live"] = True
         report.sections[HISTORY_SECTION] = out
         Log.info("[bundle] history and data loaded live (verbatim)")
@@ -780,6 +838,13 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
                 }
                 table_copy.load(db._duck, subset)
                 out["intent_loaded"] = intent
+                _refresh_intent(db)
+        else:
+            _warn_intent(
+                report, manifest,
+                f"the project was imported into another schema ({kmap.describe()}) "
+                f"and the rules name the exporter's keys",
+            )
         Log.info(f"[bundle] history archived at {archive}; intent loaded {out['intent_loaded']}")
     report.sections[HISTORY_SECTION] = out
     return False

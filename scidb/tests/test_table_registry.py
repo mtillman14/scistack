@@ -109,3 +109,86 @@ def test_ensure_of_an_undeclared_table_is_refused(tmp_path):
             tables.ensure(duck, "_never_declared")
     finally:
         duck.close()
+
+
+# --- Classification: bundle sections and clear_data (P3 stage 6 step 7) ------
+
+#: The classification as it stood when bundle.py and clear_data.py still kept
+#: their own lists, plus schema key types (2026-11-01). Pinned so a change
+#: is on purpose.
+_HISTORY = {
+    "_schema", "_record", "_constant", "_invocation", "_function_source",
+    "_invocation_input", "_invocation_output", "_run", "_run_invocation",
+    "_run_step", "_run_outputs", "_function_rename", "_variant_pin",
+    "_variant_tombstone", "__scidb_schema_overrides",
+    "_schema_key_type",  # dataset intent since 2026-11-01 (was in no section)
+}
+_INTENT = {"__scidb_schema_overrides", "_schema_key_type"}
+_DATA = {"_registered_types", "_variables", "_variable_groups", "_record_save"}
+_CLEARED = {
+    "_record", "_constant", "_invocation", "_function_source",
+    "_invocation_input", "_invocation_output", "_run_invocation",
+    "_function_rename", "_record_save",
+}
+
+
+def test_classification_is_unchanged():
+    assert set(tables.history_tables()) == _HISTORY
+    assert set(tables.intent_tables()) == _INTENT
+    assert set(tables.data_tables()) == _DATA
+    assert set(tables.cleared_tables()) == _CLEARED
+    core = {d.name for d in tables.declared() if d.owner == tables.CORE_OWNER}
+    assert set(tables.kept_tables()) == core - _CLEARED
+
+
+def test_section_constants_do_not_shadow_table_decls():
+    """``tables.INTENT`` is the ``_intent`` declaration; a section constant
+    under that name was overwritten by it and emptied ``intent_tables()``."""
+    assert tables.INTENT.name == "_intent"
+    assert tables.BUNDLE_INTENT == "intent"
+    assert tables.intent_tables() == ("__scidb_schema_overrides", "_schema_key_type")
+
+
+def test_every_scidb_table_is_cleared_xor_kept_with_a_reason():
+    for d in tables.declared():
+        if d.owner == tables.CORE_OWNER:
+            assert d.cleared != bool(d.kept_reason), d.name
+
+
+def test_bundle_and_clear_read_the_registry():
+    from scidb import clear_data
+    from scidb.project import bundle
+
+    assert bundle.HISTORY_TABLES == tables.history_tables()
+    assert bundle.INTENT_TABLES == tables.intent_tables()
+    assert clear_data.CLEARED_TABLES == tables.cleared_tables()
+    assert clear_data.KEPT_TABLES == tables.kept_tables()
+    for name in ("HISTORY_TABLES", "INTENT_TABLES", "CLEARED_TABLES", "KEPT_TABLES"):
+        for path in ("scidb/src/scidb/project/bundle.py", "scidb/src/scidb/clear_data.py"):
+            text = (REPO / path).read_text(encoding="utf-8")
+            assert not re.search(rf"^{name}\b[^=]*= *[\(\{{\[]", text, re.M), (
+                f"{path} restates {name}; read it from scidb.tables"
+            )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},  # neither cleared nor kept
+        {"cleared": True, "kept_reason": "both"},
+        {"bundle": "archive", "kept_reason": "x"},  # unknown section
+    ],
+)
+def test_contradictory_scidb_classification_is_refused(kwargs):
+    with pytest.raises(TableDeclarationError):
+        tables.declare(tables.TableDecl("_probe_cls", ("SELECT 1",), owner="scidb", **kwargs))
+    assert "_probe_cls" not in {d.name for d in tables.declared()}
+
+
+def test_other_owners_carry_no_classification():
+    with pytest.raises(TableDeclarationError):
+        tables.declare(
+            tables.TableDecl("_probe_gui", ("SELECT 1",), owner="scistack_gui", cleared=True)
+        )
+    tables.declare(tables.TableDecl("_probe_gui_ok", ("SELECT 1",), owner="scistack_gui"))
+    assert "_probe_gui_ok" not in tables.kept_tables()

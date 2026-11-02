@@ -244,9 +244,7 @@ scistackstatsdb 2, GUI 18. scidb also reads the GUI-created `_intent`.
     tables are declared in tables.py itself (deterministic, one list) and
     `ensure_core` creates only owner "scidb" tables on open; other owners'
     tables keep "created on first write, never by a read" via
-    `tables.ensure`. No copy_in_bundle / cleared_by_clear_data flags: step 7
-    (driving bundle/clear_data from the registry) not done; bundle and
-    clear_data keep their own lists. `SciDuck` moved to `scidb.sciduck`
+    `tables.ensure`. Step 7 done in a follow-up (below). `SciDuck` moved to `scidb.sciduck`
     (uses `schema_values.schema_str`, dropping sciduckdb's `_schema_str`
     use); `test_sciduck.py` split into sciduckdb `test_codec_storage.py`
     and scidb `test_sciduck.py`. `VersionedStore` -> `scidb.versioned_store`
@@ -275,3 +273,26 @@ scistackstatsdb 2, GUI 18. scidb also reads the GUI-created `_intent`.
     (bundle_section, project/registry, services/library_authoring), so the
     count should be about 1376.
 - 2026-11-01: user re-ran all packages, all pass. Committed as 51116d07.
+- 2026-11-01, stage 6 step 7 (follow-up to 51116d07): `TableDecl` gains
+  `bundle` (`BUNDLE_HISTORY` / `BUNDLE_INTENT` / `BUNDLE_DATA` / None),
+  `cleared`, `kept_reason`. Deviation: three sections, not one
+  `copy_in_bundle` flag. The bundle also had a data-section list
+  (`_data_tables`), and intent rows travel in history but go live on an
+  archived import. Classification only on owner `scidb`; other owners'
+  flags are refused (nothing reads them). `bundle.HISTORY_TABLES` /
+  `INTENT_TABLES` / `_data_tables` and `clear_data.CLEARED_TABLES` /
+  `KEPT_TABLES` are read from `tables.*_tables()`. `KEPT_BY_CLEAR` removed
+  (beta). Allowlist line `clear_data -> project.bundle` deleted (import
+  gone). Pinned old classification in `test_table_registry.py`. Behaviour
+  unchanged except history dump order (now declaration order).
+  Not carried by any bundle section today: `_schema_key_type`, `_intent`
+  (pre-existing; flagged to the user).
+  Stage 5 CLI move remains declined (U1).
+- 2026-11-01, dataset intent (user decision, "option 1 + warnings"):
+  `_schema_key_type` is `BUNDLE_INTENT` (it was in no bundle section; an
+  import lost numeric key declarations). Export records `intent_rows` in
+  the manifest. Import warns ("dataset rules NOT applied: …, because …")
+  when intent does not go live: no history exported, history declined, or
+  another schema. It refreshes the open db's key-type cache after loading.
+  Always-on intent section with key remap: `.claude/plan-dataset-intent-section.md`
+  (later, not part of P3).
