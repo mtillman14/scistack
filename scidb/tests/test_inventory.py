@@ -7,7 +7,7 @@ The rules under test:
   ``_schema`` rows at EVERY level;
 * a deeper row counts for its projection onto the chosen keys, and a row NULL
   at a chosen key fills nothing;
-* ``excluded`` (owner ``scidb.exclusions.exclusion_status``) wins over
+* ``excluded`` (owner ``scidb.store.exclusions.exclusion_status``) wins over
   ``present``;
 * the two views and the CSV layout come from one owner (``inventory_table``).
 """
@@ -25,7 +25,7 @@ from scidb import (
     include_schema,
 )
 from scifor.project import schema_order
-from scidb.inventory import (
+from scidb.provenance.inventory import (
     ALL_LEVELS,
     absent_locations,
     EXCLUDED,

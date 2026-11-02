@@ -1,0 +1,4908 @@
+{
+  "$defs": {
+    "AddRequest": {
+      "properties": {
+        "finalized": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "function_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "title": "AddRequest",
+      "type": "object"
+    },
+    "BindingUpdate": {
+      "properties": {
+        "binding": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "use_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "use_id",
+        "binding"
+      ],
+      "title": "BindingUpdate",
+      "type": "object"
+    },
+    "CanvasRefreshRequest": {
+      "description": "One applied canvas refresh (frontend components/DAG/canvasRefreshLog.ts).",
+      "properties": {
+        "dropped": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "edges": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "folded": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "get_layout_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "get_pipeline_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nodes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "settled": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "superseded_by": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "trigger": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "CanvasRefreshRequest",
+      "type": "object"
+    },
+    "ChangeRef": {
+      "properties": {
+        "change_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "change_id"
+      ],
+      "title": "ChangeRef",
+      "type": "object"
+    },
+    "ClearDataRequest": {
+      "properties": {
+        "backup": {
+          "default": false,
+          "type": "boolean"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "reason": {
+          "default": "cleared from the GUI",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fingerprint"
+      ],
+      "title": "ClearDataRequest",
+      "type": "object"
+    },
+    "ClientBuildRequest": {
+      "description": "A webview's bundle build (frontend/src/bundleBuild.ts), plus what the\nVS Code host added (extension/src/webviewBuild.ts) \u2014 absent in the\nstandalone browser build.",
+      "properties": {
+        "built_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "extension_mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "extension_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "extension_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "verdict_detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "view": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ClientBuildRequest",
+      "type": "object"
+    },
+    "ClientErrorRequest": {
+      "properties": {
+        "component_stack": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        },
+        "stack": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "where": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "webview"
+        }
+      },
+      "title": "ClientErrorRequest",
+      "type": "object"
+    },
+    "ClientTimingRequest": {
+      "description": "One timed webview step (frontend PlotStudio/figureStepTiming.ts).",
+      "properties": {
+        "clicks": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "draw_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "figure_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "queued_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "round_trip_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "total_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "where": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "webview"
+        }
+      },
+      "title": "ClientTimingRequest",
+      "type": "object"
+    },
+    "ColumnGroupsPlanRequest": {
+      "properties": {
+        "output_names": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "selection": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ColumnGroupsPlanRequest",
+      "type": "object"
+    },
+    "ComputeRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "title": "ComputeRequest",
+      "type": "object"
+    },
+    "CopyRequest": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "new_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "new_name"
+      ],
+      "title": "CopyRequest",
+      "type": "object"
+    },
+    "CreateBuiltinFunctionRequest": {
+      "properties": {
+        "language": {
+          "type": "string"
+        },
+        "reference": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "language",
+        "reference"
+      ],
+      "title": "CreateBuiltinFunctionRequest",
+      "type": "object"
+    },
+    "CreateFunctionRequest": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "params": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CreateFunctionRequest",
+      "type": "object"
+    },
+    "CreateGlueRequest": {
+      "properties": {
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "python"
+        },
+        "name": {
+          "type": "string"
+        },
+        "param": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "value"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "CreateGlueRequest",
+      "type": "object"
+    },
+    "CreateVariableRequest": {
+      "properties": {
+        "docstring": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "python"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        }
+      },
+      "title": "CreateVariableRequest",
+      "type": "object"
+    },
+    "DeclareRequirements": {
+      "properties": {
+        "names": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pipeline_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_id"
+      ],
+      "title": "DeclareRequirements",
+      "type": "object"
+    },
+    "DeletePlanRequest": {
+      "properties": {
+        "card_id": {
+          "default": "",
+          "type": "string"
+        },
+        "record_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "remove_parameter_values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ParameterValue"
+          },
+          "type": "array"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "DeletePlanRequest",
+      "type": "object"
+    },
+    "DeleteRequest": {
+      "properties": {
+        "card_id": {
+          "default": "",
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "record_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "remove_parameter_values": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ParameterValue"
+          },
+          "type": "array"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "reason",
+        "fingerprint"
+      ],
+      "title": "DeleteRequest",
+      "type": "object"
+    },
+    "DescribeFunctionRequest": {
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "refresh": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "DescribeFunctionRequest",
+      "type": "object"
+    },
+    "DescribeRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "refresh": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
+        "variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "DescribeRequest",
+      "type": "object"
+    },
+    "DesignRequest": {
+      "description": "A linked figure + table's shared design (scistackplotdb.designs).",
+      "properties": {
+        "plot_id": {
+          "type": "string"
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "plot_id",
+        "spec"
+      ],
+      "title": "DesignRequest",
+      "type": "object"
+    },
+    "EdgeCreate": {
+      "properties": {
+        "edge_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target": {
+          "type": "string"
+        },
+        "target_handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "edge_id",
+        "source",
+        "target"
+      ],
+      "title": "EdgeCreate",
+      "type": "object"
+    },
+    "EdgeDelete": {
+      "properties": {
+        "edge_id": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        },
+        "source_handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        },
+        "target_handle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "edge_id"
+      ],
+      "title": "EdgeDelete",
+      "type": "object"
+    },
+    "EdgeInScope": {
+      "properties": {
+        "edge_id": {
+          "type": "string"
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "main"
+        }
+      },
+      "required": [
+        "edge_id"
+      ],
+      "title": "EdgeInScope",
+      "type": "object"
+    },
+    "EntityRef": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "parameter",
+            "path_input"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "EntityRef",
+      "type": "object"
+    },
+    "ExportBundle": {
+      "properties": {
+        "options": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "boolean"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "out_path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "out_path"
+      ],
+      "title": "ExportBundle",
+      "type": "object"
+    },
+    "ExportInventory": {
+      "properties": {
+        "collapse": {
+          "default": true,
+          "type": "boolean"
+        },
+        "keys": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "missing_only": {
+          "default": true,
+          "type": "boolean"
+        },
+        "out_path": {
+          "type": "string"
+        },
+        "within": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "out_path"
+      ],
+      "title": "ExportInventory",
+      "type": "object"
+    },
+    "ExtractToSubmodule": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "node_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pipeline_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_id",
+        "node_ids",
+        "name"
+      ],
+      "title": "ExtractToSubmodule",
+      "type": "object"
+    },
+    "FormulaRequest": {
+      "properties": {
+        "analysis_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "covariates": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "title": "FormulaRequest",
+      "type": "object"
+    },
+    "FunctionCodeRef": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "FunctionCodeRef",
+      "type": "object"
+    },
+    "FunctionRef": {
+      "properties": {
+        "function_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "function_name"
+      ],
+      "title": "FunctionRef",
+      "type": "object"
+    },
+    "GlueColumnsQuery": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        }
+      },
+      "title": "GlueColumnsQuery",
+      "type": "object"
+    },
+    "GlueName": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "GlueName",
+      "type": "object"
+    },
+    "GroupingColumnsRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "group_variable": {
+          "type": "string"
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "group_variable"
+      ],
+      "title": "GroupingColumnsRequest",
+      "type": "object"
+    },
+    "GroupingDefaultVariantRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "group_variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "group_variable"
+      ],
+      "title": "GroupingDefaultVariantRequest",
+      "type": "object"
+    },
+    "GroupingGraphRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "GroupingGraphRequest",
+      "type": "object"
+    },
+    "GuideLogRequest": {
+      "description": "One wizard event from the webview (StatStudio/Guided), for scistack.log.",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "event": {
+          "type": "string"
+        },
+        "step": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "event"
+      ],
+      "title": "GuideLogRequest",
+      "type": "object"
+    },
+    "HiddenEdgesQuery": {
+      "properties": {
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "HiddenEdgesQuery",
+      "type": "object"
+    },
+    "HideComboRequest": {
+      "properties": {
+        "function_name": {
+          "type": "string"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variant_key": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "function_name",
+        "variant_key"
+      ],
+      "title": "HideComboRequest",
+      "type": "object"
+    },
+    "HypothesisUpdate": {
+      "properties": {
+        "evidence_against": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "evidence_for": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hypothesis_statement": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pipeline_id": {
+          "type": "string"
+        },
+        "research_question": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "pipeline_id"
+      ],
+      "title": "HypothesisUpdate",
+      "type": "object"
+    },
+    "ImportPipeline": {
+      "properties": {
+        "document": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "document"
+      ],
+      "title": "ImportPipeline",
+      "type": "object"
+    },
+    "InventoryRequest": {
+      "properties": {
+        "collapse": {
+          "default": true,
+          "type": "boolean"
+        },
+        "keys": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "default": 5000,
+          "type": "integer"
+        },
+        "missing_only": {
+          "default": true,
+          "type": "boolean"
+        },
+        "within": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "InventoryRequest",
+      "type": "object"
+    },
+    "InventoryRow": {
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "row": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns",
+        "row"
+      ],
+      "title": "InventoryRow",
+      "type": "object"
+    },
+    "InventoryRowChange": {
+      "properties": {
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "row": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "columns",
+        "row",
+        "reason"
+      ],
+      "title": "InventoryRowChange",
+      "type": "object"
+    },
+    "LibraryName": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "LibraryName",
+      "type": "object"
+    },
+    "LibraryPipelineRef": {
+      "properties": {
+        "pipeline_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_id"
+      ],
+      "title": "LibraryPipelineRef",
+      "type": "object"
+    },
+    "LinkedRequest": {
+      "properties": {
+        "plot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plot_id"
+      ],
+      "title": "LinkedRequest",
+      "type": "object"
+    },
+    "LocationTreeRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "problems_only": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
+        "selection": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "LocationTreeRequest",
+      "type": "object"
+    },
+    "MatlabCommandRequest": {
+      "additionalProperties": true,
+      "description": "The command generators read the raw request dict (``params``) as the\nsingle-run/pipeline-run requests do \u2014 every field the picker sends is\nforwarded. Declared open so the model does not have to repeat them.",
+      "properties": {
+        "function_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "MatlabCommandRequest",
+      "type": "object"
+    },
+    "MatlabTerminalRunRequest": {
+      "description": "A run the host handed to the MathWorks terminal, for us to watch.\n\nThe host cannot see the run end \u2014 that is the whole problem \u2014 so it\ntells us the run_id and we watch the markers and the database lock. See\n``scistack_gui.matlab.run_watch``.",
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "MatlabTerminalRunRequest",
+      "type": "object"
+    },
+    "NamedInScope": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "main"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "NamedInScope",
+      "type": "object"
+    },
+    "NodeConfigUpdate": {
+      "properties": {
+        "config": {
+          "additionalProperties": true,
+          "default": {},
+          "type": "object"
+        },
+        "node_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "NodeConfigUpdate",
+      "type": "object"
+    },
+    "NodeLocationTreeRequest": {
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "problems_only": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "NodeLocationTreeRequest",
+      "type": "object"
+    },
+    "NodeRef": {
+      "properties": {
+        "node_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "NodeRef",
+      "type": "object"
+    },
+    "NoteUpdate": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "text"
+      ],
+      "title": "NoteUpdate",
+      "type": "object"
+    },
+    "OnDuplicate": {
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "value"
+      ],
+      "title": "OnDuplicate",
+      "type": "object"
+    },
+    "OpenRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stat_function": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stats_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "OpenRequest",
+      "type": "object"
+    },
+    "OutputPorts": {
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "ports": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "renames": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "OutputPorts",
+      "type": "object"
+    },
+    "OverlayForPlotRequest": {
+      "properties": {
+        "plot_id": {
+          "type": "string"
+        },
+        "plot_spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "plot_id",
+        "plot_spec"
+      ],
+      "title": "OverlayForPlotRequest",
+      "type": "object"
+    },
+    "PairRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plot_spec": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "stats_spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "stats_spec",
+        "plot_spec"
+      ],
+      "title": "PairRequest",
+      "type": "object"
+    },
+    "ParameterCreate": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ParameterCreate",
+      "type": "object"
+    },
+    "ParameterGroupChecked": {
+      "properties": {
+        "checked": {
+          "default": true,
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "main"
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ParameterGroupChecked",
+      "type": "object"
+    },
+    "ParameterName": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ParameterName",
+      "type": "object"
+    },
+    "ParameterUpdate": {
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        },
+        "group": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "type": "string"
+        },
+        "values": {
+          "default": [],
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              }
+            ]
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ParameterUpdate",
+      "type": "object"
+    },
+    "ParameterValue": {
+      "properties": {
+        "parameter": {
+          "type": "string"
+        },
+        "value": {
+          "default": null
+        }
+      },
+      "required": [
+        "parameter"
+      ],
+      "title": "ParameterValue",
+      "type": "object"
+    },
+    "ParameterValueInScope": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "main"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "ParameterValueInScope",
+      "type": "object"
+    },
+    "PasteNodes": {
+      "properties": {
+        "node_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "pipeline_id": {
+          "type": "string"
+        },
+        "source_pipeline_id": {
+          "type": "string"
+        },
+        "x": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0.0
+        },
+        "y": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0.0
+        }
+      },
+      "required": [
+        "pipeline_id",
+        "source_pipeline_id",
+        "node_ids"
+      ],
+      "title": "PasteNodes",
+      "type": "object"
+    },
+    "PathBody": {
+      "properties": {
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        }
+      },
+      "title": "PathBody",
+      "type": "object"
+    },
+    "PathInputCreate": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "root_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "template": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PathInputCreate",
+      "type": "object"
+    },
+    "PathInputRename": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "new_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "new_name"
+      ],
+      "title": "PathInputRename",
+      "type": "object"
+    },
+    "PathInputUpdate": {
+      "properties": {
+        "aliases": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "additionalProperties": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "alternate_templates": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "key_regex": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "type": "string"
+        },
+        "root_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "template": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "template"
+      ],
+      "title": "PathInputUpdate",
+      "type": "object"
+    },
+    "PendingValue": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "title": "PendingValue",
+      "type": "object"
+    },
+    "PinRequest": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "selection": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "selection",
+        "reason"
+      ],
+      "title": "PinRequest",
+      "type": "object"
+    },
+    "PipelineCreate": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PipelineCreate",
+      "type": "object"
+    },
+    "PipelinePlanQuery": {
+      "properties": {
+        "pipeline_id": {
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        }
+      },
+      "required": [
+        "pipeline_id"
+      ],
+      "title": "PipelinePlanQuery",
+      "type": "object"
+    },
+    "PipelineQuery": {
+      "properties": {
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "main"
+        },
+        "run_states": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "title": "PipelineQuery",
+      "type": "object"
+    },
+    "PipelineRef": {
+      "properties": {
+        "pipeline_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_id"
+      ],
+      "title": "PipelineRef",
+      "type": "object"
+    },
+    "PipelineRename": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "pipeline_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_id",
+        "name"
+      ],
+      "title": "PipelineRename",
+      "type": "object"
+    },
+    "PipelineRunRequest": {
+      "properties": {
+        "finalized": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "all"
+        },
+        "pipeline_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "skip_computed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": ""
+        }
+      },
+      "required": [
+        "pipeline_id"
+      ],
+      "title": "PipelineRunRequest",
+      "type": "object"
+    },
+    "PortDirection": {
+      "properties": {
+        "direction": {
+          "type": "string"
+        },
+        "pipeline_id": {
+          "type": "string"
+        },
+        "var_type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_id",
+        "direction",
+        "var_type"
+      ],
+      "title": "PortDirection",
+      "type": "object"
+    },
+    "PositionUpdate": {
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "node_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "main"
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "node_id",
+        "x",
+        "y"
+      ],
+      "title": "PositionUpdate",
+      "type": "object"
+    },
+    "PresetApplyRequest": {
+      "properties": {
+        "preset_id": {
+          "type": "string"
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "preset_id",
+        "spec"
+      ],
+      "title": "PresetApplyRequest",
+      "type": "object"
+    },
+    "PresetHideRequest": {
+      "properties": {
+        "hidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "preset_id": {
+          "type": "string"
+        },
+        "shape": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "preset_id"
+      ],
+      "title": "PresetHideRequest",
+      "type": "object"
+    },
+    "PresetHistoryRequest": {
+      "properties": {
+        "preset_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "preset_id"
+      ],
+      "title": "PresetHistoryRequest",
+      "type": "object"
+    },
+    "PresetIdRequest": {
+      "properties": {
+        "hidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "preset_id": {
+          "type": "string"
+        },
+        "spec": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "preset_id"
+      ],
+      "title": "PresetIdRequest",
+      "type": "object"
+    },
+    "PresetListRequest": {
+      "properties": {
+        "shape": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "PresetListRequest",
+      "type": "object"
+    },
+    "PresetRenameRequest": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "preset_id": {
+          "type": "string"
+        },
+        "shape": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "preset_id",
+        "name"
+      ],
+      "title": "PresetRenameRequest",
+      "type": "object"
+    },
+    "ProjectAliasRequest": {
+      "description": "One edit to the project's ``[aliases]`` (scistack.toml).",
+      "properties": {
+        "alias": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "level": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "set_name": {
+          "default": false,
+          "type": "boolean"
+        },
+        "thing": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thing"
+      ],
+      "title": "ProjectAliasRequest",
+      "type": "object"
+    },
+    "ProjectColorRequest": {
+      "description": "One edit to the project's ``[colors]`` (scistack.toml).",
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "level": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "thing": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ProjectColorRequest",
+      "type": "object"
+    },
+    "RecentQuery": {
+      "properties": {
+        "limit": {
+          "default": 200,
+          "type": "integer"
+        },
+        "surface": {
+          "default": "page",
+          "type": "string"
+        }
+      },
+      "title": "RecentQuery",
+      "type": "object"
+    },
+    "ReleaseRequest": {
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "reason"
+      ],
+      "title": "ReleaseRequest",
+      "type": "object"
+    },
+    "RunConflictRequest": {
+      "properties": {
+        "function_names": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "node_ids": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "RunConflictRequest",
+      "type": "object"
+    },
+    "RunRef": {
+      "properties": {
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id"
+      ],
+      "title": "RunRef",
+      "type": "object"
+    },
+    "RunRequest": {
+      "properties": {
+        "function_name": {
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_types": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_options": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_level": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "schema_selection": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variants": {
+          "default": [],
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "where_filters": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/WhereFilterSpec"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "function_name"
+      ],
+      "title": "RunRequest",
+      "type": "object"
+    },
+    "SaveFunctionCodeRequest": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "title": "SaveFunctionCodeRequest",
+      "type": "object"
+    },
+    "SaveGlueRequest": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "title": "SaveGlueRequest",
+      "type": "object"
+    },
+    "SaveRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "depth": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "derived_bars": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "dpi": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 200
+        },
+        "fields_as_columns": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "figure_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "image_format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "job_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "type": "string"
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "what": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "image"
+        }
+      },
+      "required": [
+        "spec",
+        "path"
+      ],
+      "title": "SaveRequest",
+      "type": "object"
+    },
+    "SavedFollowLatestRequest": {
+      "properties": {
+        "plot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plot_id"
+      ],
+      "title": "SavedFollowLatestRequest",
+      "type": "object"
+    },
+    "SavedHideRequest": {
+      "properties": {
+        "hidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "plot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plot_id"
+      ],
+      "title": "SavedHideRequest",
+      "type": "object"
+    },
+    "SavedHistoryRequest": {
+      "properties": {
+        "plot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plot_id"
+      ],
+      "title": "SavedHistoryRequest",
+      "type": "object"
+    },
+    "SavedIdRequest": {
+      "properties": {
+        "hidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stats_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "stats_id"
+      ],
+      "title": "SavedIdRequest",
+      "type": "object"
+    },
+    "SavedListRequest": {
+      "properties": {
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "SavedListRequest",
+      "type": "object"
+    },
+    "SavedOpenRequest": {
+      "properties": {
+        "plot_id": {
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "plot_id"
+      ],
+      "title": "SavedOpenRequest",
+      "type": "object"
+    },
+    "SavedRenameRequest": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "plot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "plot_id",
+        "name"
+      ],
+      "title": "SavedRenameRequest",
+      "type": "object"
+    },
+    "SchemaKeyTypeQuery": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "key_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "SchemaKeyTypeQuery",
+      "type": "object"
+    },
+    "SchemaKeyTypeUpdate": {
+      "properties": {
+        "confirm_respelling": {
+          "default": false,
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "key_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "SchemaKeyTypeUpdate",
+      "type": "object"
+    },
+    "SchemaLevelRequest": {
+      "description": "What the settings panel asks: the level a Run of this node would use,\ngiven its current (possibly unsaved) stated value.",
+      "properties": {
+        "function_name": {
+          "type": "string"
+        },
+        "node_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stated": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "function_name"
+      ],
+      "title": "SchemaLevelRequest",
+      "type": "object"
+    },
+    "ScopeQuery": {
+      "properties": {
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "main"
+        }
+      },
+      "title": "ScopeQuery",
+      "type": "object"
+    },
+    "ShareRequest": {
+      "properties": {
+        "name": {
+          "default": "",
+          "type": "string"
+        },
+        "pipeline_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "pipeline_id"
+      ],
+      "title": "ShareRequest",
+      "type": "object"
+    },
+    "ShownArgument": {
+      "properties": {
+        "argument": {
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        },
+        "shown": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "node_id",
+        "argument"
+      ],
+      "title": "ShownArgument",
+      "type": "object"
+    },
+    "SidecarRunRequest": {
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "warnings": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "command",
+        "run_id"
+      ],
+      "title": "SidecarRunRequest",
+      "type": "object"
+    },
+    "SpecRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "derived_bars": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "figure_index": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_points": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "reuse_resolved": {
+          "default": false,
+          "type": "boolean"
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "title": "SpecRequest",
+      "type": "object"
+    },
+    "StepValuePromote": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "parameter": {
+          "type": "string"
+        },
+        "use_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "use_id",
+        "key",
+        "parameter"
+      ],
+      "title": "StepValuePromote",
+      "type": "object"
+    },
+    "StepValueSet": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "use_id": {
+          "type": "string"
+        },
+        "value": {
+          "default": null
+        }
+      },
+      "required": [
+        "use_id",
+        "key"
+      ],
+      "title": "StepValueSet",
+      "type": "object"
+    },
+    "StudioOpenRequest": {
+      "description": "Which studio opened, and from which entry point (studio-unification\nStage 0): so scistack.log says which ways in people actually use.",
+      "properties": {
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kind": {
+          "type": "string"
+        },
+        "opened_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "StudioOpenRequest",
+      "type": "object"
+    },
+    "UseCreate": {
+      "properties": {
+        "binding": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "child_pipeline_id": {
+          "type": "string"
+        },
+        "parent_pipeline_id": {
+          "type": "string"
+        },
+        "x": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0.0
+        },
+        "y": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 0.0
+        }
+      },
+      "required": [
+        "parent_pipeline_id",
+        "child_pipeline_id"
+      ],
+      "title": "UseCreate",
+      "type": "object"
+    },
+    "UseRef": {
+      "properties": {
+        "use_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "use_id"
+      ],
+      "title": "UseRef",
+      "type": "object"
+    },
+    "VariableColumnsQuery": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "VariableColumnsQuery",
+      "type": "object"
+    },
+    "VariableName": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "VariableName",
+      "type": "object"
+    },
+    "VariableRef": {
+      "properties": {
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "VariableRef",
+      "type": "object"
+    },
+    "VariantGraphRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "functions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "VariantGraphRequest",
+      "type": "object"
+    },
+    "VariantSetsRequest": {
+      "properties": {
+        "variable": {
+          "type": "string"
+        },
+        "variant_sets": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "VariantSetsRequest",
+      "type": "object"
+    },
+    "VerifyRequest": {
+      "properties": {
+        "against": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "atol": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rtol": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "VerifyRequest",
+      "type": "object"
+    },
+    "WhereFilterSpec": {
+      "properties": {
+        "op": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "op",
+        "value"
+      ],
+      "title": "WhereFilterSpec",
+      "type": "object"
+    },
+    "scistack_gui__api__artifacts__FunctionName": {
+      "properties": {
+        "fn_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "fn_name"
+      ],
+      "title": "FunctionName",
+      "type": "object"
+    },
+    "scistack_gui__api__pipeline__FunctionName": {
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "FunctionName",
+      "type": "object"
+    },
+    "scistack_gui__api__plot__ExportRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "derived_bars": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "finalized": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "function_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path_template": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "title": "ExportRequest",
+      "type": "object"
+    },
+    "scistack_gui__api__plot__PresetSaveRequest": {
+      "properties": {
+        "current_preset_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "made_on_shape": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "type": "string"
+        },
+        "overwrite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "title": "PresetSaveRequest",
+      "type": "object"
+    },
+    "scistack_gui__api__plot__SavedSaveRequest": {
+      "properties": {
+        "current_plot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "type": "string"
+        },
+        "overwrite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "variable": {
+          "type": "string"
+        },
+        "view": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "variable",
+        "name",
+        "spec"
+      ],
+      "title": "SavedSaveRequest",
+      "type": "object"
+    },
+    "scistack_gui__api__stats__ExportRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fmt": {
+          "type": "string"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "which": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "spec",
+        "fmt",
+        "which"
+      ],
+      "title": "ExportRequest",
+      "type": "object"
+    },
+    "scistack_gui__api__stats__PresetSaveRequest": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "title": "PresetSaveRequest",
+      "type": "object"
+    },
+    "scistack_gui__api__stats__SavedSaveRequest": {
+      "properties": {
+        "current_stats_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "type": "string"
+        },
+        "overwrite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": true
+        },
+        "spec": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "required": [
+        "name",
+        "spec"
+      ],
+      "title": "SavedSaveRequest",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "GENERATED from scistack_gui.api.wire_schema.api_json_schema. The request params of every GUI backend method, by method name.",
+  "properties": {
+    "add_library": {
+      "$ref": "#/$defs/LibraryName"
+    },
+    "add_pipeline_use": {
+      "$ref": "#/$defs/UseCreate"
+    },
+    "add_project_path": {
+      "$ref": "#/$defs/PathBody"
+    },
+    "cancel_run": {
+      "$ref": "#/$defs/RunRef"
+    },
+    "clear_data": {
+      "$ref": "#/$defs/ClearDataRequest"
+    },
+    "create_builtin_function": {
+      "$ref": "#/$defs/CreateBuiltinFunctionRequest"
+    },
+    "create_function": {
+      "$ref": "#/$defs/CreateFunctionRequest"
+    },
+    "create_glue": {
+      "$ref": "#/$defs/CreateGlueRequest"
+    },
+    "create_hypothesis": {
+      "$ref": "#/$defs/PipelineCreate"
+    },
+    "create_parameter": {
+      "$ref": "#/$defs/ParameterCreate"
+    },
+    "create_path_input": {
+      "$ref": "#/$defs/PathInputCreate"
+    },
+    "create_pipeline": {
+      "$ref": "#/$defs/PipelineCreate"
+    },
+    "create_variable": {
+      "$ref": "#/$defs/CreateVariableRequest"
+    },
+    "declare_library_requirements": {
+      "$ref": "#/$defs/DeclareRequirements"
+    },
+    "deep_copy_path_input": {
+      "$ref": "#/$defs/NodeRef"
+    },
+    "delete_edge": {
+      "$ref": "#/$defs/EdgeDelete"
+    },
+    "delete_glue": {
+      "$ref": "#/$defs/GlueName"
+    },
+    "delete_hypothesis": {
+      "$ref": "#/$defs/PipelineRef"
+    },
+    "delete_layout": {
+      "$ref": "#/$defs/NodeRef"
+    },
+    "delete_parameter": {
+      "$ref": "#/$defs/NamedInScope"
+    },
+    "delete_path_input": {
+      "$ref": "#/$defs/NamedInScope"
+    },
+    "delete_pending_constant": {
+      "$ref": "#/$defs/PendingValue"
+    },
+    "delete_pipeline": {
+      "$ref": "#/$defs/PipelineRef"
+    },
+    "delete_variant": {
+      "$ref": "#/$defs/DeleteRequest"
+    },
+    "delete_variant_plan": {
+      "$ref": "#/$defs/DeletePlanRequest"
+    },
+    "design_apply": {
+      "$ref": "#/$defs/DesignRequest"
+    },
+    "design_update": {
+      "$ref": "#/$defs/DesignRequest"
+    },
+    "duplicate_hypothesis": {
+      "$ref": "#/$defs/PipelineRename"
+    },
+    "duplicate_pipeline": {
+      "$ref": "#/$defs/PipelineRename"
+    },
+    "exclude_schema_combo": {
+      "$ref": "#/$defs/InventoryRowChange"
+    },
+    "export_pipeline": {
+      "$ref": "#/$defs/PipelineRef"
+    },
+    "export_pipeline_code": {
+      "$ref": "#/$defs/PipelineRef"
+    },
+    "export_project_bundle": {
+      "$ref": "#/$defs/ExportBundle"
+    },
+    "export_schema_inventory": {
+      "$ref": "#/$defs/ExportInventory"
+    },
+    "extract_to_submodule": {
+      "$ref": "#/$defs/ExtractToSubmodule"
+    },
+    "force_cancel_run": {
+      "$ref": "#/$defs/RunRef"
+    },
+    "generate_matlab_command": {
+      "$ref": "#/$defs/MatlabCommandRequest"
+    },
+    "generate_matlab_pipeline_command": {
+      "$ref": "#/$defs/MatlabCommandRequest"
+    },
+    "get_endpoint_artifacts": {
+      "$ref": "#/$defs/scistack_gui__api__artifacts__FunctionName"
+    },
+    "get_entity_editability": {
+      "$ref": "#/$defs/EntityRef"
+    },
+    "get_function_code": {
+      "$ref": "#/$defs/FunctionCodeRef"
+    },
+    "get_function_doc": {
+      "$ref": "#/$defs/scistack_gui__api__pipeline__FunctionName"
+    },
+    "get_function_params": {
+      "$ref": "#/$defs/scistack_gui__api__pipeline__FunctionName"
+    },
+    "get_function_source": {
+      "$ref": "#/$defs/scistack_gui__api__pipeline__FunctionName"
+    },
+    "get_glue": {
+      "$ref": "#/$defs/GlueName"
+    },
+    "get_glue_columns": {
+      "$ref": "#/$defs/GlueColumnsQuery"
+    },
+    "get_hidden_edges": {
+      "$ref": "#/$defs/HiddenEdgesQuery"
+    },
+    "get_hidden_ports": {
+      "$ref": "#/$defs/PipelineRef"
+    },
+    "get_layout": {
+      "$ref": "#/$defs/ScopeQuery"
+    },
+    "get_pipeline": {
+      "$ref": "#/$defs/PipelineQuery"
+    },
+    "get_pipeline_interface": {
+      "$ref": "#/$defs/PipelineRef"
+    },
+    "get_pipeline_plan": {
+      "$ref": "#/$defs/PipelinePlanQuery"
+    },
+    "get_schema_level": {
+      "$ref": "#/$defs/SchemaLevelRequest"
+    },
+    "get_variable_columns": {
+      "$ref": "#/$defs/VariableColumnsQuery"
+    },
+    "get_variable_plot_data": {
+      "$ref": "#/$defs/VariableName"
+    },
+    "get_variable_records": {
+      "$ref": "#/$defs/VariableName"
+    },
+    "hide_combo": {
+      "$ref": "#/$defs/HideComboRequest"
+    },
+    "hide_parameter_value": {
+      "$ref": "#/$defs/ParameterValueInScope"
+    },
+    "hide_port": {
+      "$ref": "#/$defs/PortDirection"
+    },
+    "history_recent": {
+      "$ref": "#/$defs/RecentQuery"
+    },
+    "history_redo": {
+      "$ref": "#/$defs/ChangeRef"
+    },
+    "history_undo": {
+      "$ref": "#/$defs/ChangeRef"
+    },
+    "import_pipeline": {
+      "$ref": "#/$defs/ImportPipeline"
+    },
+    "include_schema_combo": {
+      "$ref": "#/$defs/InventoryRowChange"
+    },
+    "inventory_row_override": {
+      "$ref": "#/$defs/InventoryRow"
+    },
+    "library_placement_check": {
+      "$ref": "#/$defs/LibraryPipelineRef"
+    },
+    "list_hidden_combos": {
+      "$ref": "#/$defs/FunctionRef"
+    },
+    "list_hidden_parameter_values": {
+      "$ref": "#/$defs/ScopeQuery"
+    },
+    "make_library_copy": {
+      "$ref": "#/$defs/CopyRequest"
+    },
+    "node_location_tree": {
+      "$ref": "#/$defs/NodeLocationTreeRequest"
+    },
+    "paste_nodes": {
+      "$ref": "#/$defs/PasteNodes"
+    },
+    "pin_newest_variant": {
+      "$ref": "#/$defs/ReleaseRequest"
+    },
+    "pin_variant": {
+      "$ref": "#/$defs/PinRequest"
+    },
+    "placement_tunables": {
+      "$ref": "#/$defs/UseRef"
+    },
+    "plan_column_groups": {
+      "$ref": "#/$defs/ColumnGroupsPlanRequest"
+    },
+    "plot_add_to_pipeline": {
+      "$ref": "#/$defs/scistack_gui__api__plot__ExportRequest"
+    },
+    "plot_capabilities": {
+      "$ref": "#/$defs/SpecRequest"
+    },
+    "plot_describe": {
+      "$ref": "#/$defs/DescribeRequest"
+    },
+    "plot_describe_function": {
+      "$ref": "#/$defs/DescribeFunctionRequest"
+    },
+    "plot_export": {
+      "$ref": "#/$defs/scistack_gui__api__plot__ExportRequest"
+    },
+    "plot_grouping_columns": {
+      "$ref": "#/$defs/GroupingColumnsRequest"
+    },
+    "plot_grouping_default_variant": {
+      "$ref": "#/$defs/GroupingDefaultVariantRequest"
+    },
+    "plot_grouping_graph": {
+      "$ref": "#/$defs/GroupingGraphRequest"
+    },
+    "plot_location_tree": {
+      "$ref": "#/$defs/LocationTreeRequest"
+    },
+    "plot_preset_apply": {
+      "$ref": "#/$defs/PresetApplyRequest"
+    },
+    "plot_preset_hide": {
+      "$ref": "#/$defs/PresetHideRequest"
+    },
+    "plot_preset_history": {
+      "$ref": "#/$defs/PresetHistoryRequest"
+    },
+    "plot_preset_list": {
+      "$ref": "#/$defs/PresetListRequest"
+    },
+    "plot_preset_rename": {
+      "$ref": "#/$defs/PresetRenameRequest"
+    },
+    "plot_preset_save": {
+      "$ref": "#/$defs/scistack_gui__api__plot__PresetSaveRequest"
+    },
+    "plot_project_alias_set": {
+      "$ref": "#/$defs/ProjectAliasRequest"
+    },
+    "plot_project_color_set": {
+      "$ref": "#/$defs/ProjectColorRequest"
+    },
+    "plot_resolve": {
+      "$ref": "#/$defs/SpecRequest"
+    },
+    "plot_save_start": {
+      "$ref": "#/$defs/SaveRequest"
+    },
+    "plot_saved_follow_latest": {
+      "$ref": "#/$defs/SavedFollowLatestRequest"
+    },
+    "plot_saved_hide": {
+      "$ref": "#/$defs/SavedHideRequest"
+    },
+    "plot_saved_history": {
+      "$ref": "#/$defs/SavedHistoryRequest"
+    },
+    "plot_saved_list": {
+      "$ref": "#/$defs/SavedListRequest"
+    },
+    "plot_saved_open": {
+      "$ref": "#/$defs/SavedOpenRequest"
+    },
+    "plot_saved_rename": {
+      "$ref": "#/$defs/SavedRenameRequest"
+    },
+    "plot_saved_save": {
+      "$ref": "#/$defs/scistack_gui__api__plot__SavedSaveRequest"
+    },
+    "plot_variant_graph": {
+      "$ref": "#/$defs/VariantGraphRequest"
+    },
+    "plot_variant_sets_save": {
+      "$ref": "#/$defs/VariantSetsRequest"
+    },
+    "promote_step_value": {
+      "$ref": "#/$defs/StepValuePromote"
+    },
+    "put_edge": {
+      "$ref": "#/$defs/EdgeCreate"
+    },
+    "put_layout": {
+      "$ref": "#/$defs/PositionUpdate"
+    },
+    "put_node_config": {
+      "$ref": "#/$defs/NodeConfigUpdate"
+    },
+    "put_pending_constant": {
+      "$ref": "#/$defs/PendingValue"
+    },
+    "refresh_parameter_source": {
+      "$ref": "#/$defs/ParameterName"
+    },
+    "release_pin": {
+      "$ref": "#/$defs/ReleaseRequest"
+    },
+    "remove_library": {
+      "$ref": "#/$defs/LibraryName"
+    },
+    "remove_pipeline_use": {
+      "$ref": "#/$defs/UseRef"
+    },
+    "remove_project_path": {
+      "$ref": "#/$defs/PathBody"
+    },
+    "rename_path_input": {
+      "$ref": "#/$defs/PathInputRename"
+    },
+    "rename_pipeline": {
+      "$ref": "#/$defs/PipelineRename"
+    },
+    "report_canvas_refresh": {
+      "$ref": "#/$defs/CanvasRefreshRequest"
+    },
+    "report_client_build": {
+      "$ref": "#/$defs/ClientBuildRequest"
+    },
+    "report_client_error": {
+      "$ref": "#/$defs/ClientErrorRequest"
+    },
+    "report_client_timing": {
+      "$ref": "#/$defs/ClientTimingRequest"
+    },
+    "report_studio_open": {
+      "$ref": "#/$defs/StudioOpenRequest"
+    },
+    "run_pin_conflicts": {
+      "$ref": "#/$defs/RunConflictRequest"
+    },
+    "save_function_code": {
+      "$ref": "#/$defs/SaveFunctionCodeRequest"
+    },
+    "save_glue": {
+      "$ref": "#/$defs/SaveGlueRequest"
+    },
+    "schema_inventory": {
+      "$ref": "#/$defs/InventoryRequest"
+    },
+    "schema_key_type_impact": {
+      "$ref": "#/$defs/SchemaKeyTypeQuery"
+    },
+    "set_entities_file": {
+      "$ref": "#/$defs/PathBody"
+    },
+    "set_note": {
+      "$ref": "#/$defs/NoteUpdate"
+    },
+    "set_on_duplicate": {
+      "$ref": "#/$defs/OnDuplicate"
+    },
+    "set_output_ports": {
+      "$ref": "#/$defs/OutputPorts"
+    },
+    "set_parameter_group_checked": {
+      "$ref": "#/$defs/ParameterGroupChecked"
+    },
+    "set_schema_key_type": {
+      "$ref": "#/$defs/SchemaKeyTypeUpdate"
+    },
+    "set_shown_argument": {
+      "$ref": "#/$defs/ShownArgument"
+    },
+    "set_step_value": {
+      "$ref": "#/$defs/StepValueSet"
+    },
+    "share_as_library": {
+      "$ref": "#/$defs/ShareRequest"
+    },
+    "share_library_defaults": {
+      "$ref": "#/$defs/LibraryPipelineRef"
+    },
+    "start_matlab_sidecar_run": {
+      "$ref": "#/$defs/SidecarRunRequest"
+    },
+    "start_pipeline_run": {
+      "$ref": "#/$defs/PipelineRunRequest"
+    },
+    "start_run": {
+      "$ref": "#/$defs/RunRequest"
+    },
+    "stats_add_to_pipeline": {
+      "$ref": "#/$defs/AddRequest"
+    },
+    "stats_compute": {
+      "$ref": "#/$defs/ComputeRequest"
+    },
+    "stats_export": {
+      "$ref": "#/$defs/scistack_gui__api__stats__ExportRequest"
+    },
+    "stats_export_code": {
+      "$ref": "#/$defs/ComputeRequest"
+    },
+    "stats_formula_apply": {
+      "$ref": "#/$defs/FormulaRequest"
+    },
+    "stats_formula_check": {
+      "$ref": "#/$defs/FormulaRequest"
+    },
+    "stats_guide_log": {
+      "$ref": "#/$defs/GuideLogRequest"
+    },
+    "stats_linked": {
+      "$ref": "#/$defs/LinkedRequest"
+    },
+    "stats_open": {
+      "$ref": "#/$defs/OpenRequest"
+    },
+    "stats_overlay_bars": {
+      "$ref": "#/$defs/PairRequest"
+    },
+    "stats_overlay_for_plot": {
+      "$ref": "#/$defs/OverlayForPlotRequest"
+    },
+    "stats_plot_guide": {
+      "$ref": "#/$defs/ComputeRequest"
+    },
+    "stats_preset_apply": {
+      "$ref": "#/$defs/PresetIdRequest"
+    },
+    "stats_preset_hide": {
+      "$ref": "#/$defs/PresetIdRequest"
+    },
+    "stats_preset_rename": {
+      "$ref": "#/$defs/PresetIdRequest"
+    },
+    "stats_preset_save": {
+      "$ref": "#/$defs/scistack_gui__api__stats__PresetSaveRequest"
+    },
+    "stats_preview": {
+      "$ref": "#/$defs/ComputeRequest"
+    },
+    "stats_saved_hide": {
+      "$ref": "#/$defs/SavedIdRequest"
+    },
+    "stats_saved_history": {
+      "$ref": "#/$defs/SavedIdRequest"
+    },
+    "stats_saved_rename": {
+      "$ref": "#/$defs/SavedIdRequest"
+    },
+    "stats_saved_save": {
+      "$ref": "#/$defs/scistack_gui__api__stats__SavedSaveRequest"
+    },
+    "stop_watching_matlab_run": {
+      "$ref": "#/$defs/RunRef"
+    },
+    "unhide_combo": {
+      "$ref": "#/$defs/NodeRef"
+    },
+    "unhide_edge": {
+      "$ref": "#/$defs/EdgeInScope"
+    },
+    "unhide_parameter_value": {
+      "$ref": "#/$defs/ParameterValueInScope"
+    },
+    "unhide_pipeline": {
+      "$ref": "#/$defs/PipelineRef"
+    },
+    "unhide_port": {
+      "$ref": "#/$defs/PortDirection"
+    },
+    "update_hypothesis": {
+      "$ref": "#/$defs/HypothesisUpdate"
+    },
+    "update_parameter": {
+      "$ref": "#/$defs/ParameterUpdate"
+    },
+    "update_path_input": {
+      "$ref": "#/$defs/PathInputUpdate"
+    },
+    "update_use_binding": {
+      "$ref": "#/$defs/BindingUpdate"
+    },
+    "variable_variants": {
+      "$ref": "#/$defs/VariableRef"
+    },
+    "verify_reproduction": {
+      "$ref": "#/$defs/VerifyRequest"
+    },
+    "watch_matlab_terminal_run": {
+      "$ref": "#/$defs/MatlabTerminalRunRequest"
+    }
+  },
+  "required": [
+    "add_library",
+    "add_pipeline_use",
+    "add_project_path",
+    "cancel_run",
+    "clear_data",
+    "create_builtin_function",
+    "create_function",
+    "create_glue",
+    "create_hypothesis",
+    "create_parameter",
+    "create_path_input",
+    "create_pipeline",
+    "create_variable",
+    "declare_library_requirements",
+    "deep_copy_path_input",
+    "delete_edge",
+    "delete_glue",
+    "delete_hypothesis",
+    "delete_layout",
+    "delete_parameter",
+    "delete_path_input",
+    "delete_pending_constant",
+    "delete_pipeline",
+    "delete_variant",
+    "delete_variant_plan",
+    "design_apply",
+    "design_update",
+    "duplicate_hypothesis",
+    "duplicate_pipeline",
+    "exclude_schema_combo",
+    "export_pipeline",
+    "export_pipeline_code",
+    "export_project_bundle",
+    "export_schema_inventory",
+    "extract_to_submodule",
+    "force_cancel_run",
+    "generate_matlab_command",
+    "generate_matlab_pipeline_command",
+    "get_endpoint_artifacts",
+    "get_entity_editability",
+    "get_function_code",
+    "get_function_doc",
+    "get_function_params",
+    "get_function_source",
+    "get_glue",
+    "get_glue_columns",
+    "get_hidden_edges",
+    "get_hidden_ports",
+    "get_layout",
+    "get_pipeline",
+    "get_pipeline_interface",
+    "get_pipeline_plan",
+    "get_schema_level",
+    "get_variable_columns",
+    "get_variable_plot_data",
+    "get_variable_records",
+    "hide_combo",
+    "hide_parameter_value",
+    "hide_port",
+    "history_recent",
+    "history_redo",
+    "history_undo",
+    "import_pipeline",
+    "include_schema_combo",
+    "inventory_row_override",
+    "library_placement_check",
+    "list_hidden_combos",
+    "list_hidden_parameter_values",
+    "make_library_copy",
+    "node_location_tree",
+    "paste_nodes",
+    "pin_newest_variant",
+    "pin_variant",
+    "placement_tunables",
+    "plan_column_groups",
+    "plot_add_to_pipeline",
+    "plot_capabilities",
+    "plot_describe",
+    "plot_describe_function",
+    "plot_export",
+    "plot_grouping_columns",
+    "plot_grouping_default_variant",
+    "plot_grouping_graph",
+    "plot_location_tree",
+    "plot_preset_apply",
+    "plot_preset_hide",
+    "plot_preset_history",
+    "plot_preset_list",
+    "plot_preset_rename",
+    "plot_preset_save",
+    "plot_project_alias_set",
+    "plot_project_color_set",
+    "plot_resolve",
+    "plot_save_start",
+    "plot_saved_follow_latest",
+    "plot_saved_hide",
+    "plot_saved_history",
+    "plot_saved_list",
+    "plot_saved_open",
+    "plot_saved_rename",
+    "plot_saved_save",
+    "plot_variant_graph",
+    "plot_variant_sets_save",
+    "promote_step_value",
+    "put_edge",
+    "put_layout",
+    "put_node_config",
+    "put_pending_constant",
+    "refresh_parameter_source",
+    "release_pin",
+    "remove_library",
+    "remove_pipeline_use",
+    "remove_project_path",
+    "rename_path_input",
+    "rename_pipeline",
+    "report_canvas_refresh",
+    "report_client_build",
+    "report_client_error",
+    "report_client_timing",
+    "report_studio_open",
+    "run_pin_conflicts",
+    "save_function_code",
+    "save_glue",
+    "schema_inventory",
+    "schema_key_type_impact",
+    "set_entities_file",
+    "set_note",
+    "set_on_duplicate",
+    "set_output_ports",
+    "set_parameter_group_checked",
+    "set_schema_key_type",
+    "set_shown_argument",
+    "set_step_value",
+    "share_as_library",
+    "share_library_defaults",
+    "start_matlab_sidecar_run",
+    "start_pipeline_run",
+    "start_run",
+    "stats_add_to_pipeline",
+    "stats_compute",
+    "stats_export",
+    "stats_export_code",
+    "stats_formula_apply",
+    "stats_formula_check",
+    "stats_guide_log",
+    "stats_linked",
+    "stats_open",
+    "stats_overlay_bars",
+    "stats_overlay_for_plot",
+    "stats_plot_guide",
+    "stats_preset_apply",
+    "stats_preset_hide",
+    "stats_preset_rename",
+    "stats_preset_save",
+    "stats_preview",
+    "stats_saved_hide",
+    "stats_saved_history",
+    "stats_saved_rename",
+    "stats_saved_save",
+    "stop_watching_matlab_run",
+    "unhide_combo",
+    "unhide_edge",
+    "unhide_parameter_value",
+    "unhide_pipeline",
+    "unhide_port",
+    "update_hypothesis",
+    "update_parameter",
+    "update_path_input",
+    "update_use_binding",
+    "variable_variants",
+    "verify_reproduction",
+    "watch_matlab_terminal_run"
+  ],
+  "title": "ApiParams",
+  "type": "object"
+}

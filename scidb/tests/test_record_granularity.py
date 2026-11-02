@@ -1,6 +1,6 @@
 """One record per schema combination, unless the data says otherwise.
 
-Found by reading examples/vo2max/scidb.log: wiring
+Found by reading examples/vo2max/scidb.model.log: wiring
 ``PathInput -> pandas.read_csv -> cpet_data_raw`` over 4 CSV files saved
 **1364** records — 322 + 372 + 304 + 366, i.e. one record per CSV ROW, each
 holding a 1x2 DataFrame. All 322 records from one file shared the same

@@ -79,7 +79,7 @@ class TestDiscoverAndSeedPipelines:
         assert filtered_a_id in target_ids
 
     def test_discarded_from_scidb_bookkeeping_after_seeding(self, populated_db):
-        from scidb.pipeline import _all_pipelines
+        from scidb.run.pipeline import _all_pipelines
 
         db = populated_db
         pipe = Pipeline("p1")

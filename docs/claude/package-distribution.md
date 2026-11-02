@@ -168,7 +168,7 @@ failed at startup for every fresh install.
 The real floor is **3.10**, for a reason unrelated to policy: many modules use
 PEP 604 unions (`str | None`) in `def` signatures without
 `from __future__ import annotations`, and those annotations evaluate at
-definition time. `scifor/pathinput.py:55`, `scidb/database.py:163`
+definition time. `scifor/pathinput.py:55`, `scidb/store/database.py:163`
 and roughly a dozen others raise on 3.9 at import.
 
 Everything except the `requires-python` field already agrees on 3.10:

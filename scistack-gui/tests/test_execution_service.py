@@ -194,7 +194,7 @@ class TestDbHistoryPathInputBinding:
             "get_aggregated_variants",
             lambda *a, **k: {
                 # Spec-keyed, each call site with the parameter it fills
-                # (scidb.database.aggregate_pipeline_variants, F37).
+                # (scidb.store.database.aggregate_pipeline_variants, F37).
                 "path_inputs": {
                     "spec": {
                         "template": template,
@@ -305,7 +305,7 @@ class TestGraduatedPathInputNodeIsRunnable:
     matched nothing, and the GUI reported "No pipeline history or output
     connections found for 'pandas.read_csv'. Connect it to an output variable
     node first." for a green, fully wired, already-run node
-    (examples/vo2max/scidb.log, run_id=sx6lpngy).
+    (examples/vo2max/scidb.model.log, run_id=sx6lpngy).
 
     Only PathInput-fed pipelines were affected: with variable-only inputs
     both views already agreed, which is why nothing caught it.

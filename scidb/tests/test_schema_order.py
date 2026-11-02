@@ -194,7 +194,7 @@ class TestRowOrder:
     def test_the_location_tree_draws_in_the_declared_order(self, db):
         """The picker's tree is a display surface like any other — it must not
         read BL, FU, POST beside an axis reading BL, POST, FU."""
-        from scidb.locations import location_states
+        from scidb.provenance.locations import location_states
 
         tree = location_states(Ordered, db=db)
         subject = tree.roots[0]

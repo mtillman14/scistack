@@ -129,7 +129,7 @@ def _archive_sections(folder: Path) -> "dict[str, bytes]":
 
 def _exporter_side(root: Path, against: "Path | None", tmp: Path) -> "tuple[_Side, str, bool]":
     """``(side, description, has_data)``."""
-    from .bundle import ARCHIVE_DIR, DATA_SECTION, HISTORY_SECTION, read_bundle
+    from scidb.project.bundle import ARCHIVE_DIR, DATA_SECTION, HISTORY_SECTION, read_bundle
 
     if against is None:
         archives = sorted((root / ARCHIVE_DIR).glob("*/tables.json")) if (root / ARCHIVE_DIR).is_dir() else []
@@ -411,8 +411,8 @@ class VerifyReport:
 
 
 def _key_map(root: Path) -> "dict[str, str | None] | None":
-    from .bundle import IMPORT_RECORD
-    from .environment import STATE_DIR
+    from scidb.project.bundle import IMPORT_RECORD
+    from scidb.project.environment import STATE_DIR
 
     path = root / STATE_DIR / IMPORT_RECORD
     if not path.is_file():

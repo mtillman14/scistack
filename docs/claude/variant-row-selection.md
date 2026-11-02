@@ -83,7 +83,7 @@ to "current", which is the whole point of freezing.
 - **Save** (`scistackplotdb.saved.save_plot`): for every row with
   `follow_latest=False`, the function hashes of the rows actually drawn go
   into the envelope as `frozen_code[i] = {fn: [hash, …]}`, read from
-  `scidb.provenance_query.code_versions_batch`. It uses hashes, not ordinals,
+  `scidb.provenance.query.code_versions_batch`. It uses hashes, not ordinals,
   because ordinals renumber after a Variants-popup Delete. This works even
   when only one version exists, which is the usual case at save time.
 - **Open** (`load_saved_plot` -> `thaw_code`): hashes become ordinals through

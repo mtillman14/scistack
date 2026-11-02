@@ -158,7 +158,7 @@ def test_log_file_is_attached_before_any_discovery():
             calls.setdefault(_call_name(node), []).append(node.lineno)
 
     assert "attach_log_file" in calls, (
-        "server.main must call scidb.log.attach_log_file so the file sink is "
+        "server.main must call scidb.model.log.attach_log_file so the file sink is "
         "open before discovery — see this module's docstring."
     )
     attach_line = min(calls["attach_log_file"])

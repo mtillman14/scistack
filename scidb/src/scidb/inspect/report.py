@@ -24,8 +24,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..roles import ROLE_PREFIX, function_role
-from ..log import Log
+from scidb.model.roles import ROLE_PREFIX, function_role
+from scidb.model.log import Log
 
 # Embedded images above this size fall back to file links (keeps index.html
 # manageable; the artifact copy still lands in artifacts/).
@@ -91,7 +91,7 @@ def collect_report(
     Latest-per-variant by default (the same collapse ``records()`` uses);
     ``all_versions=True`` includes superseded records.
     """
-    from .. import provenance_query
+    from scidb.provenance import query as provenance_query
 
     db = inspector._db
     duck = inspector._duck
@@ -183,7 +183,7 @@ def collect_report(
     bp_map = provenance_query.branch_params_batch(duck, rids)
     values = _stored_values(inspector, entries)
 
-    from ..artifact_stamp import read_artifact_stamp
+    from scidb.artifact_stamp import read_artifact_stamp
 
     for rid, fn_name, type_name, ts, schema in entries:
         value = values.get(rid)

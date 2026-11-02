@@ -309,7 +309,7 @@ def apply(
     pipeline's re-sync must write the same ids every time:
     ``ids.library_node_id`` / ``ids.library_use_id``).
     """
-    from scidb.intent import SURFACE_STORE, Statement
+    from scidb.provenance.intent import SURFACE_STORE, Statement
 
     from scistack_gui import ids
     from scistack_gui.stores import intent_store
@@ -500,7 +500,7 @@ def remap_schema_keys(snap: CanvasSnapshot, key_map, report) -> CanvasSnapshot:
     """
     from dataclasses import replace
 
-    from scidb.intent import ASPECT_SCHEMA_LOCATION
+    from scidb.provenance.intent import ASPECT_SCHEMA_LOCATION
 
     if key_map is None or key_map.is_identity:
         return snap

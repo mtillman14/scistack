@@ -1,4 +1,4 @@
-"""Tests for ``scidb.intent`` — the intent/fact vocabulary and resolver.
+"""Tests for ``scidb.provenance.intent`` — the intent/fact vocabulary and resolver.
 
 Pure: no database, no GUI. See ``docs/claude/intent-and-fact.md`` for the
 five rules these pin, and ``.claude/plan-intent-and-fact.md`` Stage 1.
@@ -7,7 +7,7 @@ The two halves:
 
 * the ``columns`` aspect normalizer, which is now the ONE owner of the
   selection shape (the GUI and ``provenance_save`` both route through it);
-* :func:`scidb.intent.resolve`, which implements "nearest scope wins within a
+* :func:`scidb.provenance.intent.resolve`, which implements "nearest scope wins within a
   surface, then surfaces in origin order, then history as the floor".
 """
 
@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from scidb.intent import (
+from scidb.provenance.intent import (
     ASPECT_COLNAME,
     ASPECT_COLUMNS,
     ASPECT_RUN_OPTIONS,
@@ -360,7 +360,7 @@ class _Duck:
 def test_a_missing_intent_table_reads_as_nothing_stated():
     import duckdb
 
-    from scidb.intent import fetch_intent_rows, load_statements_sql
+    from scidb.provenance.intent import fetch_intent_rows, load_statements_sql
 
     missing = duckdb.CatalogException("Catalog Error: Table with name _intent does not exist!")
     assert fetch_intent_rows(_Duck(missing), "SELECT 1") == []
@@ -372,7 +372,7 @@ def test_a_locked_or_broken_store_raises_instead_of_reading_empty():
     while it lasted, because every error read as an empty store."""
     import duckdb
 
-    from scidb.intent import fetch_intent_rows, load_statements_sql
+    from scidb.provenance.intent import fetch_intent_rows, load_statements_sql
 
     locked = duckdb.IOException("IO Error: Could not set lock on file")
     with pytest.raises(duckdb.IOException):

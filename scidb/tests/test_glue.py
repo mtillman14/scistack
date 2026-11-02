@@ -1,6 +1,6 @@
 """
 Tests for glue nodes — transient in-memory reshaping between a variable and
-the function consuming it (``scidb.glue``, Stage 1).
+the function consuming it (``scidb.run.glue``, Stage 1).
 
 Design: ``docs/claude/free-code-glue-nodes.md``.
 
@@ -41,7 +41,7 @@ from scidb import (
     for_each,
 )
 from scifor import EachOf
-from scidb.glue import (
+from scidb.run.glue import (
     apply_glue_chain,
     bulk_chain,
     chain_hash,
@@ -801,7 +801,7 @@ class TestConstantGlue:
         """An ``EachOf`` of variable CLASSES is a multi-type input, not a
         Parameter. Its data is loaded, so its glue belongs at the fusion point
         — the constant predicates must not claim it."""
-        from scidb.glue import is_constant_axis, is_constant_input
+        from scidb.run.glue import is_constant_axis, is_constant_input
 
         # Plain values: constants.
         assert is_constant_input(7)
@@ -823,7 +823,7 @@ class TestConstantGlue:
         """The MATLAB bridge calls prepare directly, with no Step 1 in front
         of it, so an unexpanded Parameter can arrive. Gluing the EachOf object
         would hand the user's code the axis instead of a value."""
-        from scidb.glue import apply_constant_glue, split_constant_chains
+        from scidb.run.glue import apply_constant_glue, split_constant_chains
 
         inputs = {"factor": Parameter(1, 2)}
         chains = normalize_glue({"factor": _spec(glue_double_factor)})

@@ -15,7 +15,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from scidb.database import DatabaseManager
+from scidb.store.database import DatabaseManager
 
 from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.runtime.db import get_db

@@ -13,7 +13,7 @@ import pytest
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
 from scidb.project.bundle import ExportOptions, export_project, import_project
-from scidb.database import clear_current_database, get_database
+from scidb.store.database import clear_current_database, get_database
 from scidb.project.init import init_project
 from scidb.project.verify import VerifyError, verify
 

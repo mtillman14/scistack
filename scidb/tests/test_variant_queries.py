@@ -711,7 +711,7 @@ def test_same_named_pathinput_params_with_different_templates_stay_apart():
     second function whose PathInput parameter shared the name but not the
     template was filed under the FIRST one's template (and so resolved to the
     first declared PathInput on the canvas)."""
-    from scidb.database import aggregate_pipeline_variants
+    from scidb.store.database import aggregate_pipeline_variants
 
     def row(fn, template):
         return {

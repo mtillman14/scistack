@@ -15,7 +15,7 @@ matplotlib.use("Agg")  # tests must never open a window
 import numpy as np
 import pytest
 from scidb import BaseVariable, configure_database
-from scidb.database import _local
+from scidb.store.database import _local
 
 SCHEMA = ["subject", "session", "trial"]
 SUBJECTS = [f"{n:02d}" for n in range(1, 4)]

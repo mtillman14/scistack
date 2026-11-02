@@ -137,13 +137,13 @@ class TestSaveBatch:
             assert MarkerTraj.load(subject="S01", trial=str(i)).data == _traj(i)
 
     def test_converts_every_item_then_one_insert(self, db, monkeypatch):
-        real = db._insert_columnar_frames
+        real = db.record_store.insert_columnar_frames
 
         def spy(table_name, frames):
             Trajectory_Calls.events.append(f"insert:{len(frames)}")
             return real(table_name, frames)
 
-        monkeypatch.setattr(db, "_insert_columnar_frames", spy)
+        monkeypatch.setattr(db.record_store, "insert_columnar_frames", spy)
         items = [(_traj(i), {"subject": "S01", "trial": str(i)}) for i in range(5)]
         db.save_batch(MarkerTraj, items)
         assert Trajectory_Calls.events == ["to_db"] * 5 + ["insert:5"]
@@ -251,7 +251,7 @@ class BaselineTable(BaseVariable):
 class TestFixedTableInputRecordsItsEdge:
     """A Fixed pin on a table-valued record matched its ROWS: one 2-row
     record was reported as "matches 2 records, not one" and its input edge
-    was dropped (scidb.foreach rid tracking counts records now)."""
+    was dropped (scidb.run.foreach rid tracking counts records now)."""
 
     def test_fixed_pin_on_multi_row_record_records_an_edge(self, db):
         from scifor import Fixed

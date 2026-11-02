@@ -1,4 +1,4 @@
-"""`scidb.bindings` — the typed spine for record ids (Stage 2a).
+"""`scidb.run.bindings` — the typed spine for record ids (Stage 2a).
 
 Pure: no database. The load-bearing assertion is that a `Binding` hashes
 into `compute_invocation_id` as the same bytes the tuple it replaces did;
@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from scidb.bindings import (
+from scidb.run.bindings import (
     COMBO_KEY,
     EMPTY_SIGNATURE,
     RECORD_ID_COLUMN,
@@ -26,7 +26,7 @@ from scidb.bindings import (
     signature_conflicts_with,
     variant_signature,
 )
-from scidb.provenance import compute_invocation_id
+from scidb.provenance.graph import compute_invocation_id
 
 
 class TestSpelling:
@@ -36,7 +36,7 @@ class TestSpelling:
         reserved, so nothing else has a prefix to parse."""
         assert RECORD_ID_COLUMN == "__record_id"
         assert COMBO_KEY == "__combo"
-        import scidb.bindings as m
+        import scidb.run.bindings as m
 
         assert not [n for n in dir(m) if "rid_column" in n or "vsig" in n.lower()]
 
@@ -293,7 +293,7 @@ class TestInputSpecUnwrap:
         return Wide, Variant, AcrossVariants, Fixed
 
     def test_every_wrapper_peels_in_any_order(self):
-        from scidb.input_spec import type_name
+        from scidb.model.input_spec import type_name
 
         Wide, Variant, AcrossVariants, Fixed = self._types()
         for spec in (
@@ -310,7 +310,7 @@ class TestInputSpecUnwrap:
     def test_a_non_variable_has_no_type(self):
         from scifor import PathInput
 
-        from scidb.input_spec import type_name, variable_type
+        from scidb.model.input_spec import type_name, variable_type
 
         assert type_name(20) is None
         assert type_name("hello") is None
@@ -319,7 +319,7 @@ class TestInputSpecUnwrap:
     def test_find_wrapper_reaches_a_selection_under_any_wrapper(self):
         from scifor import ColumnSelection, Fixed
 
-        from scidb.input_spec import find_wrapper
+        from scidb.model.input_spec import find_wrapper
 
         Wide, Variant, AcrossVariants, _Fixed = self._types()
         for spec in (
@@ -333,7 +333,7 @@ class TestInputSpecUnwrap:
         assert find_wrapper(Variant(Wide, low_hz=20), ColumnSelection) is None
 
     def test_wrappers_of_reports_the_stack(self):
-        from scidb.input_spec import wrappers_of
+        from scidb.model.input_spec import wrappers_of
 
         Wide, Variant, AcrossVariants, Fixed = self._types()
         assert set(wrappers_of(Variant(Fixed(Wide, subject="01"), low_hz=20))) == {

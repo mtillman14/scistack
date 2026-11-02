@@ -6,11 +6,11 @@
        lineage_fcn(fn) / lineage_fcn(fn, unpack_output=True);
      scilineage/tests/test_core.py, test_lineage.py (LineageFcnResult.data; extract_lineage ->
        function_name/function_hash[64 SHA-256]/inputs/constants; get_upstream_lineage; manual());
-     scidb/src/scidb/variable.py:271 (BaseVariable.save does NOT record lineage for a
+     scidb/src/scidb/model/variable.py:271 (BaseVariable.save does NOT record lineage for a
        LineageFcnResult — "use scihist.for_each or scihist save helpers");
      scihist/src/scihist/foreach.py:753 save(variable_class, data, db=None, **metadata)
        (records lineage); scihist.configure_database wires the cache backend;
-     scidb/src/scidb/database.py: get_provenance(...) -> {function_name, function_hash, inputs,
+     scidb/src/scidb/store/database.py: get_provenance(...) -> {function_name, function_hash, inputs,
        constants}|None; get_provenance_by_schema(**schema_keys) -> dicts with output_record_id/
        output_type/function_name/function_hash/inputs/constants; get_pipeline_structure() ->
        function_name/function_hash/output_type/input_types; has_lineage(record_id).

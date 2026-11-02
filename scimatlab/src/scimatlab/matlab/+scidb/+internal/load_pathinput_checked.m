@@ -3,7 +3,7 @@ function filepath = load_pathinput_checked(pi_obj, meta_nv, key_types, schema_ke
 %
 %   FILEPATH = load_pathinput_checked(PI, META_NV, KEY_TYPES, SCHEMA_KEYS)
 %
-%   MATLAB mirror of Python scidb.foreach._load_pathinput_checked — the
+%   MATLAB mirror of Python scidb.run.foreach._load_pathinput_checked — the
 %   policy half of the zero-padded-filename contract (the reporting half
 %   lives in scifor.PathInput.load_with_captures, which stays policy-free):
 %
@@ -70,7 +70,7 @@ function filepath = load_pathinput_checked(pi_obj, meta_nv, key_types, schema_ke
     end
 
     if ~isempty(res_fields)
-        scidb.Log.debug('pathinput resolved spellings (declared numeric): %s', ...
+        scifor.Log.debug('pathinput resolved spellings (declared numeric): %s', ...
             strjoin(string(res_fields), ', '));
     end
 end

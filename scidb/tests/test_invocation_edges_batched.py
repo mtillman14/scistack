@@ -14,7 +14,7 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query as pq
+from scidb.provenance import query as pq
 
 
 class EdgeRaw(BaseVariable):

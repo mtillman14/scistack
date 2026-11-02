@@ -54,7 +54,7 @@ VARIANT_FACTOR = "Variant"
 VARIABLE_COLUMN = "Variable"
 
 #: A selection value asking for "whatever is current", rather than a named
-#: ordinal. Matches ``scidb.variant.LATEST_VERSION``; duplicated as a literal
+#: ordinal. Matches ``scidb.model.variant.LATEST_VERSION``; duplicated as a literal
 #: rather than imported because this package must work with no scidb installed.
 LATEST = "latest"
 
@@ -269,7 +269,7 @@ def variant_set_mask(
 
     A list/tuple/set value means "any of these" — the subcube rule the popup's
     checkboxes produce, and the same membership semantics
-    ``scidb.database._match_branch_param`` already gives a list-valued
+    ``scidb.store.database._match_branch_param`` already gives a list-valued
     ``Variant(...)`` kwarg.
     """
     mask = pd.Series(True, index=frame.index)

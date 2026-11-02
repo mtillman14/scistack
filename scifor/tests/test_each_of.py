@@ -8,7 +8,7 @@ only scidb.for_each's DB-aware recursion supported EachOf.
 import pandas as pd
 import pytest
 
-from scifor import Col, EachOf, for_each, set_schema
+from scifor import Col, EachOf, LoopHooks, for_each, set_schema
 
 
 def setup_function():
@@ -122,6 +122,6 @@ def test_each_of_cancel_check_stops_immediately():
         lambda value: value,
         inputs={"value": EachOf(df, df, df)},
         subject=[1],
-        _cancel_check=lambda: True,
+        hooks=LoopHooks(cancel_check=lambda: True),
     )
     assert result is None or len(result) == 0

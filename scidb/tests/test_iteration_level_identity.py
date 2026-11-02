@@ -29,10 +29,10 @@ import numpy as np
 import pytest
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.exceptions import NotFoundError
-from scidb.foreach_config import ForEachConfig, _compute_fn_hash
-from scidb.provenance import compute_invocation_id
-from scidb.provenance_query import (
+from scidb.model.exceptions import NotFoundError
+from scidb.run.foreach_config import ForEachConfig, _compute_fn_hash
+from scidb.provenance.graph import compute_invocation_id
+from scidb.provenance.query import (
     expected_invocations_for_function,
     present_invocation_schema_pairs,
     run_options_label,
@@ -166,7 +166,7 @@ class TestSkip:
         a call at another level. Calling the hook directly isolates exactly the
         label comparison; an end-to-end run at a different level would usually
         land on other locations and recompute for an unrelated reason."""
-        from scidb.foreach import _build_skip_hook
+        from scidb.run.foreach import _build_skip_hook
 
         for_each(il_value, {}, [IlValue], subject=list(SUBJECTS))
 
@@ -180,7 +180,7 @@ class TestSkip:
 
     def test_an_unset_level_never_skips(self, db):
         """Fail safe: a hook nobody handed the level to recomputes."""
-        from scidb.foreach import _build_skip_hook
+        from scidb.run.foreach import _build_skip_hook
 
         for_each(il_value, {}, [IlValue], subject=list(SUBJECTS))
         hook = _build_skip_hook(il_value, [IlValue], db, {})
@@ -213,8 +213,8 @@ class TestIdentityTerms:
         one = ForEachConfig(il_value, {}, level=[])
         sub = ForEachConfig(il_value, {}, level=["subject"])
         assert one.to_call_id() == sub.to_call_id()
-        assert one.to_version_keys()["__level"] == []
-        assert sub.to_version_keys()["__level"] == ["subject"]
+        assert one.to_config_keys()["__level"] == []
+        assert sub.to_config_keys()["__level"] == ["subject"]
 
 
 # ---------------------------------------------------------------------------

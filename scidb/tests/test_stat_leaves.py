@@ -13,6 +13,7 @@ key columns (subject, session, ...) arrive as ordinary columns — exactly the
 group_column / repeated_measures_column contract of csv-stats.
 """
 
+from scidb.provenance import query as provenance_query
 import json as _json
 import warnings as _warnings
 
@@ -21,7 +22,7 @@ import matplotlib
 matplotlib.use("Agg")  # headless: csv-stats imports matplotlib for reports
 import numpy as np
 import pytest
-from scidb.database import _local
+from scidb.store.database import _local
 
 import scifor as _scifor
 from scidb import (
@@ -112,7 +113,7 @@ class TestStatRecord:
             "wall-clock date must be stripped for reproducibility"
         )
 
-        prov = db.get_upstream_provenance(rec.record_id)
+        prov = provenance_query.upstream_provenance(db, rec.record_id)
         nodes = [n for n in prov if n["variable_type"] == "TTestResult"]
         assert len(nodes) == 1 and nodes[0]["function_name"] == "stat_summary"
 

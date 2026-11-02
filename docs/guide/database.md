@@ -1,7 +1,7 @@
 # Database & Configuration
 
 <!-- Ground truth (tests/source win over prose). Verified against:
-     scidb/src/scidb/database.py: configure_database(dataset_db_path, dataset_schema_keys)
+     scidb/src/scidb/store/database.py: configure_database(dataset_db_path, dataset_schema_keys)
        -> DatabaseManager (auto-registers known subclasses, sets scifor schema, enables caching);
        get_database(); register() idempotent; list_versions(variable_class, include_excluded=False,
        **metadata) -> list[dict] with keys record_id/schema/branch_params/timestamp (sorted newest
@@ -10,7 +10,7 @@
        save/load/etc accept db= for one-shot ops;
      scidb/src/scidb/project/discover.py: discover_module(module), scan_package(name), scan_project(root,*,
        skip_dists, library_filter) -> DiscoveryResult (tooling/GUI introspection);
-     scidb/src/scidb/exceptions.py: SciStackError + NotRegisteredError/NotFoundError/
+     scidb/src/scidb/model/exceptions.py: SciStackError + NotRegisteredError/NotFoundError/
        DatabaseNotConfiguredError/ReservedMetadataKeyError/AmbiguousVersionError/AmbiguousParamError.
      NOTE: list_versions keys are timestamp + branch_params (NOT created_at/version);
      there is no load_all / include_record_id. -->

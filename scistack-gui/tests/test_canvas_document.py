@@ -155,7 +155,7 @@ class TestDocumentView:
 
 class TestMissingComboHides:
     def test_the_two_combinations_a_diagonal_never_ran_are_hidden(self):
-        from scidb.wirings import RecordedWiring
+        from scidb.provenance.wirings import RecordedWiring
 
         from scistack_gui.services.adoption import missing_combo_hides
 
@@ -177,7 +177,7 @@ class TestMissingComboHides:
         assert len({h["call_id"] for h in hides}) == 2
 
     def test_already_adopted_combos_are_skipped(self):
-        from scidb.wirings import RecordedWiring
+        from scidb.provenance.wirings import RecordedWiring
 
         from scistack_gui.domain.adoption import combo_subject
         from scistack_gui.services.adoption import missing_combo_hides

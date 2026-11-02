@@ -106,7 +106,7 @@ def matlab_function_source(path: str, name: str = "") -> tuple[str, str]:
     file and digest MATLAB recorded — the run-time half of the check whose
     graph-time half is the GUI's ``matlab_registry.current_matlab_function``.
     """
-    from scidb.log import Log
+    from scidb.model.log import Log
 
     src = read_matlab_source(str(path))
     Log.info(

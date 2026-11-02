@@ -2,7 +2,7 @@
 digit-only ``key_regex`` auto-declaration (``.claude/plan-schema-key-types-gui.md``
 Stage 4).
 
-The database owns the declaration (``scidb.schema_types``, tested in
+The database owns the declaration (``scidb.store.schema_types``, tested in
 scidb/tests/test_schema_key_types_stored.py). These tests cover only what the
 GUI adds: the RPC shapes, ``needs_confirm`` instead of an exception, and Q2 —
 a digit-only regex saved through the GUI declares an UNDECLARED key numeric
@@ -94,7 +94,7 @@ class TestAutoDeclare:
         out = svc.auto_declare_from_key_regex(_db(), {"subject": r"\d+"})
         assert out == {"declared": ["subject"], "hints": []}
         assert _db().dataset_schema_key_types == {"subject": "numeric"}
-        from scidb import schema_types
+        from scidb.store import schema_types
 
         assert schema_types.history(_db()._duck, "subject")[-1]["source"] == svc.SOURCE_KEY_REGEX
 

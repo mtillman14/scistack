@@ -7,7 +7,7 @@ actually HANDS it over — on the real path, on the dry-run path, and through th
 EachOf recursion — and that the narrowing shows up as records not written.
 
 That distinction matters: scidb passes its own pre-built combo list to scifor
-via ``_all_combos``, so a filter applied only to scifor's Cartesian branch
+via ``LoopHooks.all_combos``, so a filter applied only to scifor's Cartesian branch
 would be silently inert on every database-backed run, which is every run the
 GUI makes.
 """

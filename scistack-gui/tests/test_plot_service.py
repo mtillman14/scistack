@@ -2271,7 +2271,7 @@ def test_the_pickers_state_colours_come_from_python():
         assigned = re.search(rf"(?<![=!<>])=\s*'{state}'", source)
         assert assigned is None, (
             f"assigning {state!r} looks like the picker deciding a state for "
-            f"itself; states come from scidb.locations.location_states"
+            f"itself; states come from scidb.provenance.locations.location_states"
         )
 
 

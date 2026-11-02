@@ -1,39 +1,23 @@
-# scidb's internal layers (design review 04a "The six clusters", refactor B1).
+# scidb's internal layers (design review 04a "The six clusters", refactor B1),
+# one subpackage each since P4 stage 6 (scidb/model, store, provenance, run,
+# project, inspect).
 # Checked by test_import_layers.py through tools/import_layers.py.
 # Lower layers first. ["run", "project"] are peers: discover reads Pipelines and
 # run reads declared entities (the model-free half of project is scifor.project).
 package = "scidb"
 src = "../src"
 lazy_baseline = 517
-order = ["api", "store", "provenance", ["run", "project"], "inspect", "facade"]
+order = ["model", "store", "provenance", ["run", "project"], "inspect", "facade"]
 
 [layers]
-api = [
-    "scidb.variable", "scidb.variables.*", "scidb.parameter", "scidb.variant",
-    "scidb.filters", "scidb.input_spec", "scidb.across_variants",
-    "scidb.column_selection", "scidb.merge", "scidb.query", "scidb.exceptions",
-    "scidb.roles", "scidb.lineage_save", "scidb.log",
-]
-store = [
-    "scidb.tables", "scidb.sciduck", "scidb.versioned_store",
-    "scidb.database", "scidb.exclusions", "scidb.variant_pins",
-    "scidb.variant_delete", "scidb.clear_data", "scidb.rename",
-    "scidb.schema_types", "scidb.schema_values",
-]
-provenance = [
-    "scidb.provenance_query", "scidb.provenance_save", "scidb.provenance",
-    "scidb.intent", "scidb.state", "scidb.locations", "scidb.inventory",
-    "scidb.wirings",
-]
-run = [
-    "scidb.foreach", "scidb.pipeline", "scidb.glue", "scidb.foreach_config",
-    "scidb.bindings", "scidb.schema_level", "scidb.combine", "scidb.per_combo",
-    "scidb.external_loop",
-]
+model = ["scidb.model.*"]
+store = ["scidb.store.*"]
+provenance = ["scidb.provenance.*"]
+run = ["scidb.run.*"]
 project = [
     "scidb.project.*",
-    # Flat until P4 gives them a home: csv_export beside the store,
-    # artifact_stamp and run_markers beside foreach.
+    # Flat: csv_export (a convenience on model types), artifact_stamp and
+    # run_markers (written by a run) have no cluster of their own.
     "scidb.artifact_stamp", "scidb.run_markers", "scidb.csv_export",
 ]
 inspect = ["scidb.inspect.*"]

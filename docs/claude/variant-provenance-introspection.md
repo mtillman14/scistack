@@ -51,7 +51,7 @@ honours:
 
 The display spelling the Plot Studio picker uses (`Code:grSides`,
 `Run:loader`, `CodeIsLatest`) is accepted everywhere and canonicalized by
-`scidb.variant.normalize_selection`. That function is the **only** owner of
+`scidb.model.variant.normalize_selection`. That function is the **only** owner of
 the mapping: `scistackplotdb.variants.branch_params_for` now delegates to it,
 and a module-level check in `scistackplotdb.variants` raises at import if
 `scistackplot`'s column prefixes ever diverge from scidb's copies
@@ -76,7 +76,7 @@ is deliberately not in the key, and since 2026-09-14 the collapse also
 supersedes older run-option sets. So two code versions (or two option sets)
 **merge before any filter runs**, and a code/run pin against a collapsed load
 always matches nothing. The for_each loader already loaded `"all"` in that
-case; the rule now lives once, in `scidb.variant.pin_loads_uncollapsed`, and
+case; the rule now lives once, in `scidb.model.variant.pin_loads_uncollapsed`, and
 both the loader and `records_for_variant` read it. A branch-param pin keeps
 the collapsed load (branch_params IS in the key, so those never merged).
 

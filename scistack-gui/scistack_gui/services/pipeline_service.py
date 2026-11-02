@@ -10,7 +10,7 @@ from __future__ import annotations
 import inspect
 import logging
 
-from scidb.roles import endpoint_kind
+from scidb.model.roles import endpoint_kind
 
 from scistack_gui.domain.display_order import display_sorted
 from scistack_gui.ids import ROOT_SCOPE
@@ -58,7 +58,7 @@ def get_function_full_info(fn_name: str) -> dict:
 
     Used when dropping a function node onto the canvas so the node is
     created with the correct number of output handles — and with its
-    endpoint classification (plot_/stat_, scidb.roles.endpoint_kind), so a
+    endpoint classification (plot_/stat_, scidb.model.roles.endpoint_kind), so a
     freshly dragged endpoint shows its badge/Show button BEFORE any run
     exists (the graph post-pass only tags nodes on a refetch). Its ports
     come from ``graph_builder.port_visibility`` with nothing fed yet, the

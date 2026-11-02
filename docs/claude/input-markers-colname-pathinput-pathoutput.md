@@ -63,8 +63,8 @@ metadata into a template and resolves it to a real path the function then
   `scifor.foreach._resolve_path_inputs`, called right before `_call_fn` and
   inside `_run_column_iteration` — mirroring `_resolve_path_outputs`'s shape
   exactly. Default resolution is `pathinput.load(**metadata)`; scidb injects
-  a `_path_input_resolver` override (`_load_pathinput_checked`, schema-key-type
-  spelling enforcement) into `scifor.for_each(..., _path_input_resolver=...)`.
+  a `LoopHooks.path_input_resolver` override (`_load_pathinput_checked`, schema-key-type
+  spelling enforcement) into `scifor.for_each(..., hooks=LoopHooks(path_input_resolver=...))`.
 - Consequently, `PathInput` is **excluded** from scidb's `_is_loadable` (it
   has a real `.load()` so the old `hasattr(v, "load")` fallback would still
   catch it without an explicit early-out) — a bare `PathInput` is never
@@ -114,7 +114,7 @@ its input-discovery baggage above.
 
 ## How PathOutput resolves (scifor only)
 
-scidb **delegates the core loop to `scifor.for_each`** (`scidb/foreach.py:437`),
+scidb **delegates the core loop to `scifor.for_each`** (`scidb/run/foreach.py:437`),
 so all `PathOutput` resolution lives in scifor; scidb is transparent to it.
 
 In `scifor/src/scifor/foreach.py`:
@@ -137,12 +137,12 @@ the schema-key metadata it substitutes.
 
 ## Version keys: ColName and PathOutput are excluded
 
-`scidb/src/scidb/foreach_config.py` `_get_direct_constants` excludes **both**
+`scidb/src/scidb/run/foreach_config.py` `_get_direct_constants` excludes **both**
 `ColName` and `PathOutput`. Reasons:
 
 - They are per-combo/column **resolution markers**, not fixed scalar constants.
 - The for_each save path serializes `config_keys` via `json.dumps` **without**
-  `default=str` (`scidb/foreach.py:501`); a raw marker object (neither is
+  `default=str` (`scidb/run/foreach.py:501`); a raw marker object (neither is
   JSON-serializable) would crash it.
 - Semantically, an output path is *write bookkeeping*, not computation identity.
   So changing only the output filename does **not** fork the version-key group
@@ -157,8 +157,8 @@ the schema-key metadata it substitutes.
 | `scifor/src/scifor/pathinput.py` | `PathInput` (template parsing, `discover()`, `load()`, `apply_discovery()`) |
 | `scifor/src/scifor/pathoutput.py` | `PathOutput` (output template + `resolve`) |
 | `scifor/src/scifor/foreach.py` | `resolve_pathinput_discovery`, `_resolve_path_inputs`, `_resolve_path_outputs`, per-column resolution in `_run_column_iteration`, the `{ColName}`-needs-iterate guard |
-| `scidb/src/scidb/foreach.py` | `_for_each_prepare`'s Step 3 (thin call into `resolve_pathinput_discovery`), the `_path_input_resolver` closure around `_load_pathinput_checked`, `_has_pathinput`/`_find_pathinput` |
-| `scidb/src/scidb/foreach_config.py` | `_get_direct_constants` excludes `ColName` + `PathOutput` + `PathInput` from version keys; `_serialize_inputs` includes `PathInput` despite it no longer being `_is_loadable` |
+| `scidb/src/scidb/run/foreach.py` | `_for_each_prepare`'s Step 3 (thin call into `resolve_pathinput_discovery`), the `LoopHooks.path_input_resolver` closure around `_load_pathinput_checked`, `_has_pathinput`/`_find_pathinput` |
+| `scidb/src/scidb/run/foreach_config.py` | `_get_direct_constants` excludes `ColName` + `PathOutput` + `PathInput` from version keys; `_serialize_inputs` includes `PathInput` despite it no longer being `_is_loadable` |
 | `scifor/tests/test_foreach_standalone.py` | `PathOutput` + deferred-`ColName` tests |
 | `scifor/tests/test_foreach_pathinput.py` | Standalone `PathInput` discovery/resolution tests (new) |
 | `scidb/tests/test_for_columns.py` | `TestForColumnsPathOutput`, deferred-`ColName` tests |

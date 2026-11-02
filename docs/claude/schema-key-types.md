@@ -40,7 +40,7 @@ Validation at construction: declared keys must be schema keys; values must be
 The declaration used to live only in the `configure_database` call, so the GUI
 (which opens the DB without it) never saw it. A key's type decides how values
 are **stored**, so it now lives with the data. The owner is
-`scidb/src/scidb/schema_types.py`; table `_schema_key_type`, append-only
+`scidb/src/scidb/store/schema_types.py`; table `_schema_key_type`, append-only
 (newest row per key wins, NULL = cleared; `history()` answers "when did trial
 become numeric").
 
@@ -89,7 +89,7 @@ keys excluded from the zero-padding bridge).
 | standalone scifor | the call | `scifor.for_each(schema_key_types=)`: `numeric` converts explicit and discovered values; `string` keeps spelling and matches exactly; keys not listed are condensed automatically |
 
 scidb never passes types down to `scifor.for_each`. It applies the database's
-types itself (Step 5) before handing over `_all_combos`, and scifor's Step 2.6
+types itself (Step 5) before handing over `hooks.all_combos`, and scifor's Step 2.6
 only runs when it built the combos itself (`standalone`). MATLAB mirrors this:
 `+scifor/for_each.m` takes the `schema_key_types` option (with
 `canonical_numeric_values` and `exact_string_key_loader` going through Python's
@@ -126,12 +126,12 @@ rule), `PathInput.apply_discovery` takes a 5th `key_types` argument, and
 |---|---|
 | `load_with_captures(metadata, db=None, numeric_match=None)` — resolve + report bridged spellings; `numeric_match` restricts fallback-eligible keys | `scifor/src/scifor/pathinput.py` (policy-free reporting) |
 | `scifor_fatal` escape hatch — exceptions with this attr abort the loop instead of per-combo skip | `scifor/src/scifor/foreach.py` main loop |
-| `SchemaKeyTypeError` (`scifor_fatal = True`) | `scidb/src/scidb/exceptions.py` |
-| `_canonical_numeric_value(key, value)` — "001"→1, 1.0→1, "1.50"→1.5, else raise | `scidb/src/scidb/database.py` |
-| `schema_key_types=` param + validation + `canonicalize_metadata()` | `scidb/src/scidb/database.py` (`configure_database`, `DatabaseManager`) |
-| Entry-point canonicalization — `save_variable`, `save_batch`, `load`, `load_all_as_df` all call `canonicalize_metadata` (one seam covers Python direct calls AND the MATLAB bridge's `save_batch_bridge`/`load_and_extract`, which bypass `BaseVariable`) | `scidb/src/scidb/database.py` |
-| Step 5 iterable canonicalization + discovered-combo canonicalization/dedupe | `scidb/src/scidb/foreach.py` (`_prepare_foreach_state`) |
-| Per-combo enforcement (`_load_pathinput_checked`) — string keys excluded from `numeric_match`, undeclared resolved keys raise | `scidb/src/scidb/foreach.py` (Step 16 wrapper → `_resolve_per_combo_loader`) |
+| `SchemaKeyTypeError` (`scifor_fatal = True`) | `scidb/src/scidb/model/exceptions.py` |
+| `_canonical_numeric_value(key, value)` — "001"→1, 1.0→1, "1.50"→1.5, else raise | `scidb/src/scidb/store/database.py` |
+| `schema_key_types=` param + validation + `canonicalize_metadata()` | `scidb/src/scidb/store/database.py` (`configure_database`, `DatabaseManager`) |
+| Entry-point canonicalization — `save_variable`, `save_batch`, `load`, `load_all_as_df` all call `canonicalize_metadata` (one seam covers Python direct calls AND the MATLAB bridge's `save_batch_bridge`/`load_and_extract`, which bypass `BaseVariable`) | `scidb/src/scidb/store/database.py` |
+| Step 5 iterable canonicalization + discovered-combo canonicalization/dedupe | `scidb/src/scidb/run/foreach.py` (`_prepare_foreach_state`) |
+| Per-combo enforcement (`_load_pathinput_checked`) — string keys excluded from `numeric_match`, undeclared resolved keys raise | `scidb/src/scidb/run/foreach.py` (Step 16 wrapper → `_resolve_per_combo_loader`) |
 
 Standalone Python scifor (no database) keeps the silent fallback: there is no
 stored identity to protect, and scifor never sees schema policy.
@@ -184,9 +184,9 @@ so every pre-existing call site — including scidb's — is unaffected.
   standalone use, only the caller's own explicit-vs-discovered intent).
 - **Isolation from scidb is structural, not a runtime check.** Both layers
   share `PathInput.apply_discovery` / `scifor.foreach.resolve_pathinput_discovery`,
-  but scidb always pre-builds its own combos (`_all_combos=state.full_combos`
+  but scidb always pre-builds its own combos (`LoopHooks(all_combos=state.full_combos)`
   in Python, `opts.all_combos` in MATLAB) before calling into scifor, and
-  scifor's own discovery call site is gated by `_all_combos is None` /
+  scifor's own discovery call site is gated by `hooks.all_combos is None` /
   `isempty(opts.all_combos)` — so scidb's Step 3 discovery call
   (`condense_numeric` omitted, defaults False) and scifor's standalone call
   (`condense_numeric=True`, hardcoded) never both fire for the same run.
@@ -194,7 +194,7 @@ so every pre-existing call site — including scidb's — is unaffected.
 - **Python:** `scifor/src/scifor/pathinput.py::PathInput.apply_discovery`
   condenses each digit-only combo value via `int(value)`; the standalone
   call site in `scifor/src/scifor/foreach.py` (`resolve_pathinput_discovery`,
-  around the `_all_combos is None` block) passes `condense_numeric=True`.
+  around the `hooks.all_combos is None` block) passes `condense_numeric=True`.
 - **MATLAB:** `+scifor/PathInput.m::apply_discovery` takes a 4th
   `condense_numeric` arg (default `false`, so every pre-existing 3-arg call
   site is unaffected), forwarded to Python via `pyargs('condense_numeric',

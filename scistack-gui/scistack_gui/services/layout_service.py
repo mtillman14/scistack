@@ -867,12 +867,12 @@ def set_shown_argument(db, node_id: str, argument: str, shown: bool) -> dict:
 
 def set_on_duplicate(db, node_id: str, value: str) -> dict:
     """Set one function node's ``on_duplicate`` run option (``"error"`` |
-    ``"combine"``, scidb.combine): ``runOptions.on_duplicate`` in its saved
+    ``"combine"``, scidb.run.combine): ``runOptions.on_duplicate`` in its saved
     config, merged into the rest (``update_node_config`` replaces the whole
     blob). The duplicate-location popup's "Combine the rows" button calls it
     before re-running the node; ``run_failures.on_duplicate_from_config``
     reads it."""
-    from scidb.combine import validate_on_duplicate
+    from scidb.run.combine import validate_on_duplicate
 
     from scistack_gui.stores import pipeline_store
 

@@ -100,7 +100,7 @@ only phrases it._
 
 `Log` is the only symbol most callers use. 83 non-test files across 7
 packages import it. The MATLAB `+scidb/Log.m` reaches it through a re-export
-shim in `scidb.log`, which freezes the numeric level scale and call shapes.
+shim in `scidb.model.log`, which freezes the numeric level scale and call shapes.
 
 ### Assessment
 

@@ -1,6 +1,6 @@
 # for_each() Kwargs Reference
 
-`scidb.for_each()` is the main entry point for running pipeline functions. It lives in `scidb/src/scidb/foreach.py`.
+`scidb.for_each()` is the main entry point for running pipeline functions. It lives in `scidb/src/scidb/run/foreach.py`.
 
 ## Signature
 

@@ -29,7 +29,7 @@ viz owns the genuinely new surface (draft mode, artifact provenance).
 
 1. **`plot_` leaf nodes — v1 shipped.** See
    [plotting-leaf-nodes.md](plotting-leaf-nodes.md). Name-prefix detection in
-   `scidb/foreach.py`, `PathOutput` for the figure path, framework saves+closes
+   `scidb/run/foreach.py`, `PathOutput` for the figure path, framework saves+closes
    the Figure, stores the *path* as a queryable VARCHAR record with full
    lineage and `skip_computed`, `share_limits` for grouped axis ranges. Tests
    in `scidb/tests/test_plotting.py`.
@@ -251,7 +251,7 @@ environment, Python owns correctness).
 
 **As built** (plan: `.claude/plan-matlab-endpoint-parity.md`):
 
-- Endpoint POLICY extracted to `scidb.foreach._endpoint_policy` (one source
+- Endpoint POLICY extracted to `scidb.run.foreach._endpoint_policy` (one source
   of truth; `scidb.for_each` and `bridge.for_each_prepare` both call it);
   stat_ JSON canonicalization extracted to `normalize_stat_payload`, exposed
   as bridge entry `normalize_stat_result` so MATLAB- and Python-run stats

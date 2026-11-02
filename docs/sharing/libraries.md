@@ -7,8 +7,8 @@
      write_library/create_library, [library] derived_from),
      scifor.project.discovery authored_library_dirs (libs/<name>/src/<name>/) and
      ensure_authored_libraries_importable, scifor.project.names.library_of (recorded
-     names lib.fn), scidb/rename.py rename_functions + foreach_config.
-     function_hash_for, scidb/pipeline.py Pipeline.bind (params "fn.param" step
+     names lib.fn), scidb/store/rename.py rename_functions + foreach_config.
+     function_hash_for, scidb/run/pipeline.py Pipeline.bind (params "fn.param" step
      values, _default_input_names), services/library_authoring.py (copy:
      derived_from newest first, ancestors dropped from dependencies). -->
 
@@ -135,7 +135,7 @@ Moving `bandpass` from your project into `emg_tools` changes the name it's recor
 
 ```python
 from scidb import rename_functions
-from scidb.foreach_config import function_hash_for
+from scidb.run.foreach_config import function_hash_for
 import emg_tools
 
 report = rename_functions(

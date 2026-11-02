@@ -17,7 +17,7 @@ no trace to count as missing.
 
 from functools import partial
 
-from scidb.state import check_node_state, check_pathinput_node_state
+from scidb.provenance.state import check_node_state, check_pathinput_node_state
 
 from scidb import BaseVariable, exclude_schema, scistack
 from scidb import for_each as _for_each
@@ -346,7 +346,7 @@ class TestBodyEditRedensAPathInputLoader:
         self._run(import_from_file, db, tmp_path)
         self._run(_import_edited, db, tmp_path)
 
-        from scidb.provenance_query import function_versions_recorded
+        from scidb.provenance.query import function_versions_recorded
 
         assert len(function_versions_recorded(db._duck, "import_from_file")) == 2
 
@@ -374,7 +374,7 @@ class TestBodyEditRedensAPathInputLoader:
         is what narrows within the site. If the two ever stopped composing,
         the GUI would silently keep reporting green.
         """
-        from scidb.foreach_config import ForEachConfig, function_hash_for
+        from scidb.run.foreach_config import ForEachConfig, function_hash_for
         from scifor import PathInput  # noqa: F401 — used via _path_input
 
         _write_combo_files(tmp_path, _GRID)

@@ -46,8 +46,8 @@ Every recording site in the backend derives the function name from the
 callable itself:
 
 - `scifor/src/scifor/foreach.py:555` — the `for_each(...)` run banner
-- `scidb/src/scidb/foreach.py:532` — batch save / provenance
-- `scidb/src/scidb/state.py:396` — `check_node_state`
+- `scidb/src/scidb/run/foreach.py:532` — batch save / provenance
+- `scidb/src/scidb/provenance/state.py:396` — `check_node_state`
 
 `pandas.read_csv.__name__` is `"read_csv"`. The qualified reference exists
 only in the GUI's head; the callable itself has never heard of it.
@@ -138,7 +138,7 @@ module's no-caching rule — it only prevents identity churn, since
 
 ### Precedent
 
-`scidb/src/scidb/foreach.py:76-89` wraps a `scidb.Merge` spec for exactly
+`scidb/src/scidb/run/foreach.py:76-89` wraps a `scidb.Merge` spec for exactly
 the same reason: to give scifor the `__name__` it should record. Whenever a
 layer invents a name for a callable that the callable does not carry
 itself, that name has to be attached to the callable before it crosses into

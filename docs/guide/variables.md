@@ -1,12 +1,12 @@
 # Defining Variables
 
 <!-- Ground truth (tests/source win over prose). Verified against:
-     scidb/src/scidb/variable.py (BaseVariable.schema_version default 1; default to_db/from_db;
+     scidb/src/scidb/model/variable.py (BaseVariable.schema_version default 1; default to_db/from_db;
        save(data, index=None, db=None, **metadata)->record_id (list when DataFrame has schema-key
        columns); save_from_dataframe(df, data_column, metadata_columns, db=None, **common_metadata)
        ->list[str]; load(as_df=False, version="latest", where=None, db=None, introspect=False,
        **metadata) -> BaseVariable | list | DataFrame; _reserved_keys);
-     scidb/src/scidb/database.py:1801-1809 (loaded instance attrs: record_id, metadata,
+     scidb/src/scidb/store/database.py:1801-1809 (loaded instance attrs: record_id, metadata,
        content_hash, lineage_hash, branch_params); add_to_var_group/remove_from_var_group/
        list_var_groups/get_var_group;
      scidb/tests/test_integration.py, test_introspect.py, test_load_all_ordering.py

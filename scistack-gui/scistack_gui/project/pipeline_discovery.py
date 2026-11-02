@@ -20,7 +20,7 @@ A user's Python file can define a reusable, composable pipeline in source:
 "zero side effects beyond the log") — the same property that already lets
 functions/variables/constants be discovered just by IMPORTING a file.
 Importing this file during the normal registry-loading pass registers the
-Pipeline into ``scidb.pipeline._all_pipelines`` automatically; this module
+Pipeline into ``scidb.run.pipeline._all_pipelines`` automatically; this module
 seeds that into GUI state (``_pipeline_uses`` / manual nodes+edges) once a
 database connection exists — see :func:`discover_and_seed_pipelines`.
 
@@ -73,7 +73,7 @@ def discover_and_seed_pipelines(db) -> dict:
     Returns ``{"created": [name, ...], "skipped": [name, ...], "libraries":
     sync report}``.
     """
-    from scidb.pipeline import all_pipelines
+    from scidb.run.pipeline import all_pipelines
 
     from scistack_gui.services.library_service import sync_libraries
 

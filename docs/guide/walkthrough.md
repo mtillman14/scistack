@@ -6,7 +6,7 @@
        inputs=/outputs=, NOT @lineage_fcn + manual save(); configure_database(dataset_db_path=,
        dataset_schema_keys=["subject"]) 2 args; db.list_pipeline_variants(); BaseVariable.
        list_versions(**metadata) classmethod; load -> .data/.record_id);
-     scidb/src/scidb/variable.py:507 list_versions classmethod; database.py:3344
+     scidb/src/scidb/model/variable.py:507 list_versions classmethod; database.py:3344
        list_pipeline_variants -> dicts {function_name, output_type, input_types, constants,
        record_count}; configure_database 2 args; one DuckDB file (no SQLite lineage db).
      NOTE: the example's own comments/prints mentioning "SQLite (lineage)"/"vo2max_lineage.db"

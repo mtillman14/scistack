@@ -17,8 +17,8 @@ month, most of it this week.
 
 | | |
 |---|---|
-| `scidb/foreach.py` | 5,888 lines; `for_each` is a 975-line body with 22 parameters; `_save_results` takes 17 |
-| `scidb/database.py` | 5,082 lines; `DatabaseManager` has 73 methods |
+| `scidb/run/foreach.py` | 5,888 lines; `for_each` is a 975-line body with 22 parameters; `_save_results` takes 17 |
+| `scidb/store/database.py` | 5,082 lines; `DatabaseManager` has 73 methods |
 | GUI API | 108 JSON-RPC handlers (`server.py`) AND 106 FastAPI routes (`api/*.py`), hand-mirrored |
 | `for_each` implementations | Python 2,574 + 5,888 lines; MATLAB 2,974 + 1,953 — mirrored by hand |
 | Function-level (lazy) imports | 352 in scidb, 850 in the GUI |

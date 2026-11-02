@@ -12,9 +12,9 @@ import pytest
 import scifor as _scifor
 
 from scidb import configure_database
-from scidb import database as _database
-from scidb.database import _local, database_or_none, dataset_schema_keys_of
-from scidb.foreach import _get_schema_keys
+from scidb.store import database as _database
+from scidb.store.database import _local, database_or_none, dataset_schema_keys_of
+from scidb.run.foreach import _get_schema_keys
 
 
 @pytest.fixture

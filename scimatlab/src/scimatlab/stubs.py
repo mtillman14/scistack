@@ -168,7 +168,7 @@ def write_variable_classdefs(
     lists, because MATLAB reads this over the bridge. ``dir`` is ``""`` when
     no directory could be resolved.
     """
-    from scidb.log import Log
+    from scidb.model.log import Log
 
     wanted = [str(n) for n in names if str(n)]
     # The exact list as received, before anything touches the filesystem.

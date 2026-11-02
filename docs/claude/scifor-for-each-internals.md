@@ -35,17 +35,46 @@ def for_each(
     as_table: list[str] | bool | None = None,
     distribute: bool = False,
     where=None,
-    _all_combos: list[dict] | None = None,
-    _log_fn: Callable[[str], None] | None = None,
-    _progress_fn: Callable[[dict], None] | None = None,
-    _cancel_check: Callable[[], bool] | None = None,
+    locations=None,
+    share_limits=None,
+    schema_keys=None,
+    schema_key_types=None,
+    on_error: str = "continue",
+    project_root=None,
+    hooks: LoopHooks | None = None,
     **metadata_iterables: list[Any],
 ) -> pd.DataFrame | None
 ```
 
-Source: lines 15–28.
+`hooks` (`scifor.LoopHooks`, `scifor/hooks.py`) is how a layer above drives
+the loop: `all_combos` (pre-built combinations), `path_input_resolver`,
+`mapping_inputs`, `select_rows`, `keep_no_output`, `progress_fn` and
+`cancel_check`. Each field is documented on the class. Standalone use never
+needs it. A single-underscore keyword (`_progress_fn=`) raises `TypeError`
+instead of becoming a silent iteration axis.
 
-Parameters prefixed with `_` are internal hooks used by the `scidb` wrapper and the GUI. The user-facing parameters are `fn`, `inputs`, `outputs`, `dry_run`, `as_table`, `distribute`, `where`, and the `**metadata_iterables`.
+## The three phases (P4 stage 1, 2026-11-01)
+
+`for_each` is a composition:
+
+1. **Entry**: discard scidb-only kwargs, validate `schema_key_types` and
+   `on_error`, bind PathInputs to the project root, expand `EachOf`
+   (`_for_each_alternatives`, one recursive call per alternative).
+2. **`plan_run(...) -> RunPlan`**: every step below up to the share-limits
+   prepass. `RunPlan` is frozen; `ForColumnsPlan` is its column axis.
+   `_announce(plan)` logs the banner.
+3. **`run_combo(plan, metadata, hooks, tally) -> ComboResult`** per
+   combination: input preparation, the call, NoOutput tally, distribute. A
+   failure is RETURNED (`ComboResult.failure`); the loop in `for_each`
+   decides skip vs. `on_error="stop"`. `ProgressReporter` owns the progress
+   events and the periodic progress line; `RunTally` accumulates counts,
+   rows and failure groups.
+4. **`assemble(plan, tally, hooks, elapsed=...)`**: summary log + `summary`
+   event (journal and `progress_fn`), the result table
+   (`_build_result_table`, inside `user_value_seam`), the stop re-raise.
+
+The step-by-step sections below describe what each phase does; line numbers
+in them are historical.
 
 ---
 
@@ -65,7 +94,7 @@ This determines `n_outputs`, which is used later when collecting results.
 
 If you pass `subject=[]` (an empty list), scifor interprets that as "use every distinct value of `subject` that exists in the input DataFrames." It scans all DataFrame inputs for the column named `subject`, collects distinct non-null values, sorts them, and substitutes the result back into `metadata_iterables`.
 
-This resolution only happens in standalone mode (when `_all_combos is None`). When called from `scidb.for_each()`, the database layer resolves empty lists via SQL queries instead and passes pre-built combos via `_all_combos`.
+This resolution only happens in standalone mode (when `hooks.all_combos is None`). When called from `scidb.for_each()`, the database layer resolves empty lists via SQL queries instead and passes pre-built combos via `hooks.all_combos`.
 
 The scan logic lives in `_distinct_values_from_inputs()` (lines 691–707). It unwraps `Fixed` and `ColumnSelection` wrappers to reach the raw DataFrame, checks for the column, and collects unique values. If no input DataFrame has the column, it raises a `ValueError`.
 
@@ -121,7 +150,7 @@ The resolved set is stored as `as_table_set` and consulted during per-combo inpu
 
 ### Step 7: Build the combination list (lines 126–133)
 
-If `_all_combos` is provided (by the `scidb` wrapper), it is used directly.
+If `hooks.all_combos` is provided (by the `scidb` wrapper), it is used directly.
 
 Otherwise, scifor builds the list by taking the Cartesian product (via `itertools.product`) of all the value lists in `**metadata_iterables`.
 
@@ -157,11 +186,11 @@ For each combination in `all_combos`:
 
 #### 9a. Cancellation check (lines 199–216)
 
-If a `_cancel_check` callable was provided (by the GUI), it is called before each iteration. If it returns `True`, the loop breaks immediately. This enables cooperative cancellation from a user interface.
+If a `hooks.cancel_check` callable was provided (by the GUI), it is called before each iteration. If it returns `True`, the loop breaks immediately. This enables cooperative cancellation from a user interface.
 
 #### 9b. Progress callback — start (lines 220–228)
 
-If a `_progress_fn` was provided, it is called with an event dict: `{"event": "combo_start", "current": N, "total": M, "completed": C, "skipped": S, "metadata": {...}}`. This is how the GUI updates its progress bar.
+If a `hooks.progress_fn` was provided, it is called with an event dict: `{"event": "combo_start", "current": N, "total": M, "completed": C, "skipped": S, "metadata": {...}}`. This is how the GUI updates its progress bar.
 
 #### 9c. Dry-run short-circuit (lines 230–233)
 
@@ -383,13 +412,13 @@ Discovery works by splitting the template into path segments, converting each se
 
 ## How scifor relates to scidb
 
-`scidb.for_each()` (in `/workspace/scidb/src/scidb/foreach.py`) is the database-backed wrapper. It:
+`scidb.for_each()` (in `/workspace/scidb/src/scidb/run/foreach.py`) is the database-backed wrapper. It:
 
 1. Resolves empty `[]` metadata lists by querying the database for stored values
 2. Loads all input variables from DuckDB into in-memory DataFrames
 3. Builds version keys that fingerprint the computation (function hash, input specification, constant values)
 4. Pre-filters the combination list to only combinations that exist in the database
-5. **Delegates the actual iteration loop to `scifor.for_each()`** — passing the loaded DataFrames, the pre-built combo list (via `_all_combos`), and callbacks (via `_log_fn`, `_progress_fn`)
+5. **Delegates the actual iteration loop to `scifor.for_each()`** — passing the loaded DataFrames, the pre-built combo list and callbacks, all in one `LoopHooks`
 6. After `scifor.for_each()` returns, saves results back to the database with appropriate metadata and version keys
 
 The separation means that `scifor` can be used independently with plain DataFrames (no database required), while `scidb` adds the persistence layer on top.
@@ -405,7 +434,7 @@ Every skip logs a `[skip] subject=1, session=pre: reason` line at DEBUG. What ha
 - **No data for this combo** (a per-combo DataFrame input filtered to 0 rows, outside `as_table` mode): raised as `NoDataError` (`scifor:NoData` in MATLAB). This is expected — missing combinations are normal in experimental data (a subject might not have a particular session) — so it never escalates past DEBUG, carries no traceback, and is reported in the end-of-run summary as `no data: N combo(s) — ...`, separate from genuine failures.
 - **Anything else** (a bug in `fn`, a malformed input spec, etc.): the first occurrence of each distinct reason escalates to WARN with a full traceback, and the end-of-run summary reports it as `failed: N × "reason" — ...`.
 
-The final summary line (`completed=X, failed=Y, no_data=W, total=Z`) and the progress events passed to `_progress_fn` both carry this same split, so a UI consuming scifor's progress no longer has to treat "no data" as an error state.
+The final summary line (`completed=X, failed=Y, no_data=W, total=Z`) and the progress events passed to `hooks.progress_fn` both carry this same split, so a UI consuming scifor's progress no longer has to treat "no data" as an error state.
 
 Since 2026-10-26 every failure is also a **record** (`scifor/failures.py`: `ComboFailure` grouped into `FailureGroup`s, with the user's raising line), carried as `failures` on the `summary` event (replacing `failure_reasons`) and as a small `failure` on `combo_skip`. `on_error="stop"` stops at the first genuine failure and re-raises the original exception with the completed combos attached (`scifor.stopped_run_of`). See `docs/claude/error-surfacing.md`.
 

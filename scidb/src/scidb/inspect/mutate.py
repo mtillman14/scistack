@@ -10,8 +10,8 @@ the read-only guarantee is structural, not conventional.
 
 **The two exceptions**: ``delete_variant`` (user decision 2026-09-30) really
 deletes an erroneous variant and everything computed from it, through
-``scidb.variant_delete``; ``clear_data`` (user request 2026-10-21) deletes
-every record for debugging from a clean slate, through ``scidb.clear_data``.
+``scidb.store.variant_delete``; ``clear_data`` (user request 2026-10-21) deletes
+every record for debugging from a clean slate, through ``scidb.store.clear_data``.
 Both are dry-run-first, all-or-nothing operations with a required reason and
 a tombstone. Do not add a third one without asking.
 
@@ -45,11 +45,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..exceptions import DatabaseLockedError
-from ..log import Log
+from scidb.model.exceptions import DatabaseLockedError
+from scidb.model.log import Log
 
 if TYPE_CHECKING:
-    from ..database import DatabaseManager
+    from scidb.store.database import DatabaseManager
 
 
 @dataclass
@@ -111,9 +111,9 @@ class Mutator:
         Discovers the schema keys from the database itself (like
         Inspector.open) and maps lock contention to DatabaseLockedError.
         """
-        from ..sciduck import schema_keys_from_db
+        from scidb.store.sciduck import schema_keys_from_db
 
-        from ..database import DatabaseManager
+        from scidb.store.database import DatabaseManager
 
         with lock_errors_mapped(db_path):
             keys = schema_keys_from_db(db_path)
@@ -140,7 +140,7 @@ class Mutator:
         Values are passed verbatim (schema values are strings; zero-padded
         values like "01" survive). Omitted keys act as wildcards.
         """
-        from ..exclusions import exclude_schema
+        from scidb.store.exclusions import exclude_schema
 
         exclude_schema(reason, db=self._db, **schema_keys)
         return MutationResult(
@@ -155,7 +155,7 @@ class Mutator:
         self, key: str, key_type: "str | None", confirm_respelling: bool = False
     ) -> MutationResult:
         """Declare schema key *key* ``numeric`` / ``string``, or clear it
-        (``None``) — ``scidb.schema_types.set_type``, the owner. Refuses a
+        (``None``) — ``scidb.store.schema_types.set_type``, the owner. Refuses a
         change that re-spells stored values unless *confirm_respelling*.
 
         The primitive records a ``source`` (here ``"cli"``) but no free-text
@@ -181,12 +181,12 @@ class Mutator:
 
     @_mutation
     def pin_variant(self, variable, selection: dict, reason: str) -> MutationResult:
-        """Make one variant the DEFAULT of ``variable`` (``scidb.variant_pins``).
+        """Make one variant the DEFAULT of ``variable`` (``scidb.store.variant_pins``).
 
         A declarative flag the loaders consult. It hides nothing: a load that
         names a variant still reaches every other one.
         """
-        from ..variant_pins import pin_variant
+        from scidb.store.variant_pins import pin_variant
 
         pin = pin_variant(self._db, variable, selection, reason)
         return MutationResult(
@@ -204,7 +204,7 @@ class Mutator:
     def release_pin(self, variable, reason: str) -> MutationResult:
         """Release ``variable``'s pin; unnamed loads go back to every current
         variant. The pin row is kept, with ``released_at`` set."""
-        from ..variant_pins import release_pin
+        from scidb.store.variant_pins import release_pin
 
         name = getattr(variable, "__name__", variable)
         pin = release_pin(self._db, name, reason)
@@ -223,7 +223,7 @@ class Mutator:
         self, targets: list[dict], reason: str, expect_fingerprint: str | None = None
     ) -> MutationResult:
         """REALLY delete variant(s) and everything computed from them
-        (``scidb.variant_delete``).
+        (``scidb.store.variant_delete``).
 
         This is the one write that crosses the facade's bright line ("never
         delete"), by explicit user decision, for erroneous runs. It is all or
@@ -231,7 +231,7 @@ class Mutator:
         ``fingerprint`` of the plan the user confirmed, so a database that
         changed in between is refused rather than deleted from.
         """
-        from ..variant_delete import delete_variant
+        from scidb.store.variant_delete import delete_variant
 
         result = delete_variant(
             self._db, targets, reason, expect_fingerprint=expect_fingerprint
@@ -261,14 +261,14 @@ class Mutator:
         backup: bool = False,
     ) -> MutationResult:
         """REALLY delete every record and its run history, keeping the
-        pipeline, the run log and every declaration (``scidb.clear_data``).
+        pipeline, the run log and every declaration (``scidb.store.clear_data``).
 
         The second write that crosses the bright line (user request
         2026-10-21, for debugging from a clean slate). All or nothing,
         requires a reason, leaves a tombstone, and refuses a GUI project
         until its canvas is stored rather than derived from history.
         """
-        from ..clear_data import clear_data
+        from scidb.store.clear_data import clear_data
 
         result = clear_data(
             self._db, reason, expect_fingerprint=expect_fingerprint, backup=backup
@@ -296,7 +296,7 @@ class Mutator:
     @_mutation
     def include_schema(self, reason: str, **schema_keys) -> MutationResult:
         """Re-include a previously excluded schema-key combination."""
-        from ..exclusions import include_schema
+        from scidb.store.exclusions import include_schema
 
         include_schema(reason, db=self._db, **schema_keys)
         return MutationResult(

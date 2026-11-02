@@ -66,9 +66,9 @@ def capture_shapes(db) -> dict:
 
 
 def non_cartesian(db) -> list[dict]:
-    """``scidb.wirings.non_cartesian_report`` for the open project, with the
+    """``scidb.provenance.wirings.non_cartesian_report`` for the open project, with the
     GUI's PathInput names and claims (``services.adoption.gui_recorded_wirings``)."""
-    from scidb.wirings import non_cartesian_report
+    from scidb.provenance.wirings import non_cartesian_report
 
     from scistack_gui.services.graph_service import build_aggregate
     from scistack_gui.services.adoption import gui_recorded_wirings

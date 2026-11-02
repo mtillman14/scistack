@@ -259,7 +259,7 @@ class TestVariantWithFixed:
         Asserts at the loader layer (order-agnostic composition is the plan's
         concern) to avoid coupling to scifor.Fixed's per-combo broadcast.
         """
-        from scidb.foreach import _load_input
+        from scidb.run.foreach import _load_input
 
         # Two sessions, baseline "BL" and current "EX"
         RawSignal.save(2.0, subject="S01", session="BL")
@@ -508,7 +508,7 @@ class TestVariantAxes:
     filter, and the plotting layer's column mapping."""
 
     def _axes(self):
-        from scidb.variant import VariantAxes
+        from scidb.model.variant import VariantAxes
 
         return VariantAxes.of(
             {
@@ -527,7 +527,7 @@ class TestVariantAxes:
         assert axes.run == {"loader": "distribute=true"}
 
     def test_round_trips_to_the_one_dict_spelling(self):
-        from scidb.variant import VariantAxes
+        from scidb.model.variant import VariantAxes
 
         raw = {
             "bandpass.low_hz": 20,
@@ -537,14 +537,14 @@ class TestVariantAxes:
         assert VariantAxes.of(raw).to_dict() == raw
 
     def test_a_bare_save_kwarg_is_a_constant_not_a_pin(self):
-        from scidb.variant import VariantAxes
+        from scidb.model.variant import VariantAxes
 
         axes = VariantAxes.of({"__save__.side": "L"})
         assert axes.constants == {"__save__.side": "L"}
         assert not axes.pins_code_or_run
 
     def test_pins_code_or_run_is_what_uncollapsed_loading_turns_on(self):
-        from scidb.variant import pin_loads_uncollapsed
+        from scidb.model.variant import pin_loads_uncollapsed
 
         assert self._axes().pins_code_or_run
         assert pin_loads_uncollapsed({"__code__": "latest"})
@@ -553,7 +553,7 @@ class TestVariantAxes:
         assert not pin_loads_uncollapsed(None)
 
     def test_empty_is_falsey(self):
-        from scidb.variant import VariantAxes
+        from scidb.model.variant import VariantAxes
 
         assert not VariantAxes.of({})
         assert not VariantAxes.of(None)
@@ -564,27 +564,27 @@ class TestMatchBareName:
     {low_hz} mean in this output path" cannot disagree."""
 
     def test_exact_wins_over_suffix(self):
-        from scidb.variant import match_bare_name
+        from scidb.model.variant import match_bare_name
 
         bp = {"low_hz": 1, "bandpass.low_hz": 2}
         assert match_bare_name(bp, "low_hz") == "low_hz"
 
     def test_bare_name_suffix_matches(self):
-        from scidb.variant import match_bare_name
+        from scidb.model.variant import match_bare_name
 
         assert match_bare_name({"bandpass.low_hz": 2}, "low_hz") == "bandpass.low_hz"
         assert match_bare_name({"__save__.side": "L"}, "side") == "__save__.side"
 
     def test_absent_is_none_not_an_error(self):
-        from scidb.variant import match_bare_name
+        from scidb.model.variant import match_bare_name
 
         assert match_bare_name({"bandpass.low_hz": 2}, "nope") is None
 
     def test_ambiguous_raises_naming_the_candidates(self):
         import pytest
 
-        from scidb.exceptions import AmbiguousParamError
-        from scidb.variant import match_bare_name
+        from scidb.model.exceptions import AmbiguousParamError
+        from scidb.model.variant import match_bare_name
 
         with pytest.raises(AmbiguousParamError) as exc:
             match_bare_name({"a.hz": 1, "b.hz": 2}, "hz")

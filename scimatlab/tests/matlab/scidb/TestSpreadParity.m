@@ -51,7 +51,7 @@ classdef TestSpreadParity < matlab.unittest.TestCase
         end
 
         function test_duplicate_subject_combined_on_request(testCase)
-            % on_duplicate='combine' (Python scidb.combine): subject A's two
+            % on_duplicate='combine' (Python scidb.run.combine): subject A's two
             % rows become one record whose A holds both values in row order.
             tbl = table;
             tbl.A = [1; 2; 3];

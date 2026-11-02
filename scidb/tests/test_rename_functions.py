@@ -15,7 +15,7 @@ import pytest
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each, rename_functions
 from scifor.project import names
-from scidb.foreach_config import function_hash_for
+from scidb.run.foreach_config import function_hash_for
 
 CALLS: list[str] = []
 

@@ -12,8 +12,8 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.exceptions import NotFoundError
-from scidb.intent import describe_columns, normalize_columns, parse_selector, selector_json
+from scidb.model.exceptions import NotFoundError
+from scidb.provenance.intent import describe_columns, normalize_columns, parse_selector, selector_json
 from scifor.column_selection import ColumnGroupsError
 
 SCHEMA = ["subject"]
@@ -148,7 +148,7 @@ def test_mismatched_groups_across_inputs_are_refused(db):
         )
 
 
-# --- The stored selector (scidb.intent owns its shape) -----------------------
+# --- The stored selector (scidb.provenance.intent owns its shape) -----------------------
 
 
 def test_flat_selector_bytes_are_unchanged():

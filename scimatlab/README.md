@@ -65,7 +65,7 @@ Python (in-process)                                 │
    │     ├── for_each_prepare / for_each_save  ← run scidb.for_each's prepare +
    │     │                                        save phases (MATLAB runs the loop)
    │     ├── save_batch_bridge / load_and_extract ← bulk save/load
-   │     └── MatlabLineageFcn                  ← lightweight identity proxy used
+   │     └── MatlabFunctionIdentity                  ← lightweight identity proxy used
    │                                              only for node-state coloring
    │                                                │
    └── scidb (the single source of truth)           │

@@ -21,7 +21,7 @@ sys.path.insert(0, str(_root / "scistack" / "src"))  # scistack package
 
 import scistack_gui.runtime.db as _gui_db
 from fastapi.testclient import TestClient
-from scidb.database import _local
+from scidb.store.database import _local
 from scistack_gui.matlab import registry as _matlab_registry
 from scistack_gui.project import registry as _registry
 from scistack_gui.app import create_app
@@ -144,7 +144,7 @@ def clear_db_state():
     _scifor.clear_project_root()
     _registry._module_path = None
     _reset_matlab_registry()
-    from scidb.pipeline import _reset_pipeline_state as _reset_pipelines
+    from scidb.run.pipeline import _reset_pipeline_state as _reset_pipelines
 
     _reset_pipelines()
 

@@ -1,6 +1,6 @@
 """The data-inventory popup's handlers (``.claude/plan-data-inventory.md`` Stage 3).
 
-Statuses, views and the CSV layout belong to ``scidb.inventory`` (tested in
+Statuses, views and the CSV layout belong to ``scidb.provenance.inventory`` (tested in
 scidb/tests/test_inventory.py); these tests cover only what the GUI layer
 adds: the row cap for the popup, the CSV export path, and errors reaching the
 client as 400s.
@@ -137,7 +137,7 @@ def test_collapse_passes_through(inv_client, tmp_path):
 
 
 # --- Exclude / Include actions (.claude/plan-inventory-exclusion-actions.md) ---
-# Row -> keys is scidb.inventory.row_keyset and the rules are scidb.exclusions
+# Row -> keys is scidb.provenance.inventory.row_keyset and the rules are scidb.store.exclusions
 # (both tested in scidb/tests); these cover the wiring and the 400s.
 
 

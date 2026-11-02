@@ -27,8 +27,8 @@ from contextlib import redirect_stdout
 from io import StringIO
 
 from pydantic import BaseModel
-from scidb.database import DatabaseManager
-from scidb.foreach_config import RunOptions
+from scidb.store.database import DatabaseManager
+from scidb.run.foreach_config import RunOptions
 
 from scidb import for_each
 from scifor import enter_project_root
@@ -40,7 +40,7 @@ from scistack_gui.runtime.ws_hub import push_message
 # This logger is configured in server.py (FastAPI) / __main__.py (JSON-RPC)
 # to write to stderr with the "[scistack] …" prefix. The extension forwards
 # stderr to the SciStack Output channel, so .info() calls here show up in
-# VS Code's UI in addition to being captured by scidb.log.Log for the on-disk
+# VS Code's UI in addition to being captured by scidb.model.log.Log for the on-disk
 # scistack.log file.
 logger = logging.getLogger(__name__)
 
@@ -446,7 +446,7 @@ def _run_in_thread(
         )
 
     # Which schema keys this run iterates. ONE owner decides, for every route
-    # (execution_service.default_schema_level -> scidb.schema_level): the
+    # (execution_service.default_schema_level -> scidb.run.schema_level): the
     # node's stated level (`[]` = one call), else where THIS node last ran
     # under its current wiring, else its inputs' level, else every key.
     #
@@ -714,7 +714,7 @@ def _run_in_thread(
                 # This run reads the intent store (rule 3): label it so the
                 # `_run` row says so, and a later script run of the same
                 # function can be told apart from it on the canvas.
-                from scidb.intent import ORIGIN_GUI, run_origin, run_output_names
+                from scidb.provenance.intent import ORIGIN_GUI, run_origin, run_output_names
 
                 with _RunLogRelay(), redirect_stdout(buf), run_origin(ORIGIN_GUI), run_output_names(declared_ports):
                     for_each(
@@ -977,7 +977,7 @@ def notify_records_changed() -> None:
     1. the canvas re-fetches the DAG (``dag_updated``);
     2. Plot Studio drops its cached frames;
     3. scidb forgets its cached filesystem walks
-       (``scidb.state.clear_discovery_cache``).
+       (``scidb.provenance.state.clear_discovery_cache``).
 
     ``ScidbSource`` caches whole variable frames, so skipping (2) leaves the
     plot panel serving PRE-RUN data — a figure that silently disagrees with the
@@ -1008,7 +1008,7 @@ def notify_records_changed() -> None:
         # user's data is already written. Never let this bury the run result.
         logger.exception("[run] could not invalidate the plot source cache")
     try:
-        from scidb.state import clear_discovery_cache
+        from scidb.provenance.state import clear_discovery_cache
 
         clear_discovery_cache()
     except Exception:
@@ -1027,7 +1027,7 @@ def _build_where(where_filters: list[WhereFilterSpec] | None):
 
     import ast
 
-    from scidb.filters import VariableFilter
+    from scidb.model.filters import VariableFilter
 
     def _coerce(s: str):
         try:

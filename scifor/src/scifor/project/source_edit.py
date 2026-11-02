@@ -238,7 +238,7 @@ def _path_input_call(
     if key_regex:
         args.append(f"key_regex={key_regex!r}")
     # Required: the name is the PathInput's identity, and it must equal the
-    # binding the declaration is written under (scidb.parameter.
+    # binding the declaration is written under (scidb.model.parameter.
     # path_input_declaration).
     args.append(f"name={name!r}")
     return f"{qualifier}PathInput({', '.join(args)})"

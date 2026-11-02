@@ -4,7 +4,7 @@ classdef TestSciforNoScidbDependency < matlab.unittest.TestCase
 %   Mirrors Python's test_scifor_does_not_import_scidb (scifor/tests/
 %   test_logging.py): standalone scifor must not require the Python
 %   scidb package. scifor.Log delegates to py.scistacklog.Log directly
-%   (not py.scidb.log.Log) so that "no database configured" MATLAB usage
+%   (not py.scidb.model.log.Log) so that "no database configured" MATLAB usage
 %   doesn't pull in scidb just to log.
 %
 %   A source-text guard (rather than a py.sys.modules check) is used

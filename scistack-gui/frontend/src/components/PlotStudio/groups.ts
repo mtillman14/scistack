@@ -11,8 +11,10 @@
  * **The rule is depth, and depth comes from Python.** `FactorInfo.depth` is
  * "how many schema keys pin one value of this factor" (`table.py`), published
  * through `describe()`; nothing here invents it. So what is duplicated is a
- * sort, not a policy — and `test_grouping_layers.py` pins the Python half
- * against the same cases this file's test pins.
+ * sort, not a policy. Python owns the answers:
+ * `docs/claude/ordered-groups-cases.json` is generated from
+ * `PlotSpec.ordered_groups` (`scistackplot/tests/test_ordered_groups_cases.py`)
+ * and `groups.cases.test.ts` runs this module against it.
  *
  * The list runs innermost first (2026-09-17): the first entry is the mark's
  * own identity — the bars inside a tick, the spaghetti lines — and each later

@@ -20,9 +20,9 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.foreach_config import function_sources_for
-from scidb.provenance import insert_function_sources
-from scidb.provenance_query import function_source
+from scidb.run.foreach_config import function_sources_for
+from scidb.provenance.graph import insert_function_sources
+from scidb.provenance.query import function_source
 
 SCHEMA = ["subject"]
 
@@ -60,7 +60,7 @@ class TestFunctionSourcesFor:
     def test_hash_matches_the_stored_recipe(self):
         """The load-bearing guarantee. If these drift, source is filed under a
         key nothing was ever stored beneath."""
-        from scidb.foreach_config import _compute_fn_hash
+        from scidb.run.foreach_config import _compute_fn_hash
 
         derived, _entry_name, _units = function_sources_for(_entry)
 
@@ -257,7 +257,7 @@ def test_a_digest_only_stand_in_captures_nothing_and_reports_its_digest():
     hash that never matched the stored one ("the two recipes have drifted" on
     every MATLAB run) — and a match would have stored the sentinel as the
     user's code."""
-    from scidb.foreach_config import function_sources_for
+    from scidb.run.foreach_config import function_sources_for
 
     def stand_in():
         raise RuntimeError("never called")

@@ -6,7 +6,7 @@ function py_key_types = key_types_to_py(key_types)
 %   The one MATLAB -> Python conversion of a schema_key_types= option, used
 %   by scifor.for_each, scidb.for_each and scidb.configure_database. Values
 %   are validated Python-side (scifor.schema_types.validate_key_types /
-%   scidb.schema_types.validate). See docs/claude/schema-key-types.md.
+%   scidb.store.schema_types.validate). See docs/claude/schema-key-types.md.
 
     if nargin < 1 || isempty(key_types) || ~isstruct(key_types) ...
             || isempty(fieldnames(key_types))

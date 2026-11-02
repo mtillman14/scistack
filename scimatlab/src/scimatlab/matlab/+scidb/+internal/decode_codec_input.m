@@ -72,6 +72,6 @@ function out = decode_table(tbl, codec, var_name, data_cols, rid_col)
 
     out = tbl(first_idx, cellstr(meta_cols));
     out.(var_name) = values(:);
-    scidb.Log.debug('[codec] %s: %d stored row(s) -> %d record(s), grouped by %s', ...
+    scifor.Log.debug('[codec] %s: %d stored row(s) -> %d record(s), grouped by %s', ...
         var_name, height(tbl), n, grouped_by);
 end

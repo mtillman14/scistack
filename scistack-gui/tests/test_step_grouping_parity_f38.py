@@ -19,8 +19,8 @@ from scistack_gui.domain.graph_builder import (
 )
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query as pq
-from scidb.database import aggregate_pipeline_variants, call_site_wiring_ids
+from scidb.provenance import query as pq
+from scidb.store.database import aggregate_pipeline_variants, call_site_wiring_ids
 
 
 class ParityLoaded(BaseVariable):

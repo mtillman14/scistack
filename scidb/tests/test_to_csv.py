@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from conftest import ArrayValue, CustomDataFrameValue, ScalarValue
-from scidb.exceptions import NotFoundError
+from scidb.model.exceptions import NotFoundError
 
 from scidb import BaseVariable, Merge, for_each
 

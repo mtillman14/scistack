@@ -1,6 +1,6 @@
 """
 Function role — the four-way classification of a pipeline function by its
-name prefix (``scidb.roles.function_role``).
+name prefix (``scidb.model.roles.function_role``).
 
 One classifier for the whole stack: the prefixes already drive real execution
 behaviour inside scidb (endpoint policy, draft/record mode, artifact stamping),
@@ -14,7 +14,7 @@ is an ordinary process function, whatever the sidebar label says.
 import pytest
 
 from scidb import FUNCTION_ROLES, function_role
-from scidb.roles import ROLE_PREFIX, endpoint_kind
+from scidb.model.roles import ROLE_PREFIX, endpoint_kind
 
 
 class TestClassification:

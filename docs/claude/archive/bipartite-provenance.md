@@ -14,7 +14,7 @@
 ## The graph
 
 Provenance is a **bipartite graph**: *records* (entities) and *invocations*
-(activities). Seven tables, all in DuckDB (see `scidb/provenance.py`):
+(activities). Seven tables, all in DuckDB (see `scidb/provenance/graph.py`):
 
 - `_record` — every entity: variables AND constants. One immutable, content-
   addressed row each (`ON CONFLICT DO NOTHING`). Constants have `type =
@@ -35,7 +35,7 @@ Provenance is a **bipartite graph**: *records* (entities) and *invocations*
 `timestamp` audit trail, `excluded`, per-record `lineage_hash` for cache lookup).
 Its `branch_params` column is **gone** — see below.
 
-## Identity (`scidb/provenance.py`)
+## Identity (`scidb/provenance/graph.py`)
 
 ```
 constant record_id = sha16("__constant__" | content:canonical_hash(value))
@@ -57,7 +57,7 @@ content-addressed "computation id".
 
 ## Two save paths, one graph
 
-1. **for_each batch** (`scidb/foreach.py::_save_results` → `provenance_save.record_run`):
+1. **for_each batch** (`scidb/run/foreach.py::_save_results` → `provenance_save.record_run`):
    builds the graph from each saved row's `save_metadata` — `__fn`/`__fn_hash`,
    `__graph_var_bindings` (the COMPLETE per-row input edge set incl. Fixed rids +
    ColumnSelection selectors), `__constants`, `__as_table`/`__distribute`.
@@ -76,7 +76,7 @@ Every saved record (raw/manual included) gets a `_record` entity row via
 `insert_record_entity(ies)`; raw records simply have no producing invocation and
 terminate upstream walks.
 
-## Read side (`scidb/provenance_query.py`)
+## Read side (`scidb/provenance/query.py`)
 
 Pure SQL traversal — no JSON parsing, no heuristics:
 

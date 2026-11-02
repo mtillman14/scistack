@@ -117,6 +117,23 @@ classdef TestSciforForEachParity < matlab.unittest.TestCase
             tc.verifyEqual(height(result), 2);
         end
 
+        % --- frame_origin (delegates to scifor.failures.frame_origin) ------
+
+        function test_frame_origin_framework_library_user(tc)
+            fw = which('scifor.for_each');
+            tc.verifyEqual(scifor.frame_origin(fw), 'framework');
+            tc.verifyEqual(scifor.frame_origin(which('strjoin')), 'library');
+            tc.verifyEqual(scifor.frame_origin(''), 'user');
+            tc.verifyEqual(scifor.frame_origin(mfilename('fullpath')), 'user');
+        end
+
+        % --- scidb.Log is scifor.Log ------------------------------------
+
+        function test_scidb_log_inherits_scifor_log(tc)
+            tc.verifyEqual(scidb.Log.DEBUG, scifor.Log.DEBUG);
+            tc.verifyEqual(scidb.Log.get_level(), scifor.Log.get_level());
+        end
+
     end
 
 end

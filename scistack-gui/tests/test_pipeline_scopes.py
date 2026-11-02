@@ -1065,7 +1065,7 @@ class TestEdgeDrivenBinding:
     never from a name coincidence between a declaration and a signature
     parameter.
 
-    Motivated by a real GUI session (examples/vo2max/scidb.log, runs
+    Motivated by a real GUI session (examples/vo2max/scidb.model.log, runs
     6ila96uv / 9lt11d5m): a PathInput declared `test_pi` was wired into
     `pd.read_csv`, and because `read_csv` has no parameter called
     `test_pi`, the name match resolved nothing. for_each was called with
@@ -2544,7 +2544,7 @@ class TestDeriveTargetForNode:
         assert r.status_code == 400
 
     def test_compiled_pipelines_are_discarded(self, client):
-        from scidb.pipeline import _all_pipelines
+        from scidb.run.pipeline import _all_pipelines
         from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import plan_pipeline
 

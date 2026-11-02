@@ -29,10 +29,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import scidb.provenance as prov
+import scidb.provenance.graph as prov
 import scifor as _scifor
 from scidb import BaseVariable, GlueSpec, Parameter, configure_database, for_each
-from scidb.provenance_query import (
+from scidb.provenance.query import (
     glue_invocation_ids,
     invocation_edges_batch,
     pipeline_variants,
@@ -245,7 +245,7 @@ class TestOneOwner:
         """derived_branch_params walks history; the save stamped branch_params
         from __constants. Both must name the Parameter-fed constant under the
         CONSUMER with its raw value — not walk into the glue hop."""
-        from scidb import provenance_query as pq
+        from scidb.provenance import query as pq
 
         _seed(db)
         path = _write_cfg(tmp_path / "cfg.json", 3)
@@ -259,8 +259,8 @@ class TestOneOwner:
         ]
         assert pq.derived_branch_params(db._duck, rid) == {"weighted.cfg": path}
 
-    def test_variant_keys_batch_matches_the_per_record_key(self, db, tmp_path):
-        from scidb import provenance_query as pq
+    def test_variant_key_carries_the_glued_constant(self, db, tmp_path):
+        from scidb.provenance import query as pq
 
         _seed(db)
         _run(db, _config(_write_cfg(tmp_path / "cfg.json", 3)))
@@ -272,13 +272,12 @@ class TestOneOwner:
         ]
         batch = pq.variant_keys_batch(db._duck, rids)
         for rid in rids:
-            assert batch[rid] == pq._producing_variant_key(db._duck, rid)
-            assert batch[rid] is not None and "cfg" in repr(batch[rid])
+            assert batch[rid] != pq.RAW_VARIANT and "cfg" in repr(batch[rid])
 
     def test_a_glued_constant_is_not_a_variable_input(self, db, tmp_path):
         """A function whose only input is a glued Parameter is inputless —
         decided by the record type, the same answer in every reader."""
-        from scidb import provenance_query as pq
+        from scidb.provenance import query as pq
 
         def make(cfg):
             return float(cfg["factor"])
@@ -297,7 +296,7 @@ class TestOneOwner:
         assert pq.realized_inputless_invocations(db._duck, "make")
 
         # And it is realized under its RAW constant (the PathInput-node check).
-        from scidb.provenance import compute_constant_record_id
+        from scidb.provenance.graph import compute_constant_record_id
 
         sids = pq.realized_inputless_schema_ids(
             db._duck, "make", {"cfg": compute_constant_record_id(path)}
@@ -317,7 +316,7 @@ class TestOneOwner:
         assert len(hits) == 1, [r.getMessage() for r in hits]
 
     def test_record_types_are_spelled_only_in_provenance(self):
-        """AST guard: the record-type strings live in scidb.provenance and its
+        """AST guard: the record-type strings live in scidb.provenance.graph and its
         type sets (GLUE_RECORD_TYPES, NON_VARIABLE_INPUT_TYPES,
         INTERNAL_RECORD_TYPES). A reader that spells one inline drifts the day
         a type is added — the bug class this whole change removed."""
@@ -325,12 +324,12 @@ class TestOneOwner:
         from pathlib import Path
 
         import scidb
-        from scidb.provenance import INTERNAL_RECORD_TYPES
+        from scidb.provenance.graph import INTERNAL_RECORD_TYPES
 
         root = Path(scidb.__file__).parent
         offenders = []
         for path in sorted(root.rglob("*.py")):
-            if path.name == "provenance.py":
+            if path.relative_to(root).as_posix() == "provenance/graph.py":
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"))
             docstrings = {
@@ -356,7 +355,7 @@ class TestOneOwner:
                 ):
                     offenders.append(f"{path.relative_to(root)}:{node.lineno}")
         assert not offenders, (
-            "record-type strings spelled outside scidb.provenance — use its "
+            "record-type strings spelled outside scidb.provenance.graph — use its "
             f"constants / type sets: {offenders}"
         )
 

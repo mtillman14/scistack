@@ -176,4 +176,106 @@ pandas/seaborn text (16 `groupby` sites). `reduce.py` has 8.
 4. User runs `scistackplot`, `scistackplotdb` and `scistack-gui`.
 
 ## Progress
-- (none yet)
+- **Stage 1 done (2026-11-02, untested).** `+scifor/frame_origin.m` and
+  `+scifor/output_column_name.m` are delegators. Deviation: Python's
+  `frame_origin` gained `extra_library_dirs` (MATLAB passes `matlabroot`;
+  Python alone has no notion of MATLAB toolbox frames). The MATLAB dir is
+  already framework via the `scimatlab` package dir. New text rule
+  `scifor.outputs.output_column_name_from(default_name, column_name)`, which
+  `output_column_name` also uses. `+scidb/Log.m` is a member-free subclass of
+  `scifor.Log` (users call `scidb.Log.set_level`, docs/internals/scimatlab.md);
+  SciStack's own .m code now calls `scifor.Log`. Tests:
+  `scimatlab/tests/test_bridge_frame_origin.py`,
+  `scifor/tests/test_outputs_parity.py` (text-rule cases),
+  `test_matlab_py_class_dispatch.py` + `test_matlab_log_api_surface.py`
+  (inheritance), MATLAB `TestSciforForEachParity` (frame_origin, scidb.Log).
+  Not done: `classify_blame` in `failure_from_mexception.m` is still a MATLAB
+  twin (not in this stage's scope).
+- **Stage 2 done (2026-11-02, untested).** Deviation: the classifier lives in
+  `scifor.options` (`classify_for_each_args`, `MATLAB_ONLY_OPTIONS`,
+  `matlab_accepted_options`, `matlab_discarded_options`), not in
+  `scimatlab.bridge`: importing `scimatlab` imports scidb, and MATLAB scifor
+  must stay scidb-free. Values never cross: MATLAB sends only the NAMES
+  (`+scifor/option_pairs.m`), gets one role per name (option / discard /
+  internal / axis), and keeps one `case` per option for MATLAB-type coercion.
+  Both `split_options` now walk PAIRS (before: element by element, so a
+  metadata string VALUE equal to an option name was read as that option).
+  Deleted: scidb's `reserved_opts`, scifor's `db_only_kwargs()`, the unused
+  `_log_fn`. Typo warning moved to Python (both layers now warn). GUI:
+  `MATLAB_OPTION_EMISSION` places every option (run option, binding, or a
+  reason it is never emitted); `_format_run_option_pairs` iterates
+  `FOR_EACH_OPTIONS` (order now follows the declaration: `as_table` before
+  `distribute`). Tests: `scimatlab/tests/test_matlab_for_each_parity.py`
+  (rewritten), `scistack-gui/tests/test_matlab_option_parity.py`.
+- **Stage 3 NOT started (2026-11-02), deliberately.** Its slices (a)-(d) each
+  need the MATLAB parity suite green before the next, and this session cannot
+  run MATLAB (or Python). Rewriting the 3,900-line `+scifor/for_each.m` blind
+  would risk every MATLAB run. Note for the next session: the scidb path
+  ALREADY gets its combos (`_all_combos`) and per-combo record ids
+  (`_row_selection`) from Python's `for_each_prepare`; what MATLAB still
+  derives itself is the STANDALONE scifor path (combos from MATLAB tables,
+  `[]` resolution, distribute targeting, as_table, share_limits, NoOutput,
+  column groups, summary). Start with slice (a) for the standalone path, in a
+  session where the user can run `scimatlab/tests/matlab` after each slice.
+- **Stage 4 done (2026-11-02).** Steps 1-3 already held: scifor
+  (`test_locations.py`), scistackplot (`test_location_filter.py`: reduce AND
+  the executed codegen mask) and the GUI (`locationSelection.test.ts`) all
+  load `location-filter-cases.json`; the semantics doc now names the JSON as
+  the cases' owner (deviation: existing file names kept, not renamed to
+  `test_location_cases.py`). Step 4: `scistackplot/tests/test_ordered_groups_cases.py`
+  owns `docs/claude/ordered-groups-cases.json` (writes it when missing,
+  asserts it current); `PlotStudio/groups.cases.test.ts` runs `orderGroups`
+  on it. The committed JSON's expected values were derived by hand; the TS
+  side agrees (npm test 699/699 at that point); the Python test confirms them.
+- **Stage 5 started (2026-11-02).** `scistack_gui/api/wire_schema.py`
+  (`api_json_schema`: every `Handler.params` model via
+  `pydantic.json_schema.models_json_schema`, field titles dropped, methods as
+  `properties`), `tools/gen_ts_types.py` (writes the JSON, runs
+  `npm run gen:types`), `frontend/scripts/gen-types.mjs`
+  (json-schema-to-typescript 15, devDependency), tests:
+  `test_api_handlers.py::test_generated_request_schema_is_current` (writes
+  the JSON when missing) and `src/generated/generatedTypes.test.ts` (skips
+  until the JSON exists). NOT done: (a) the generated files themselves (need
+  Python); (b) `PlotSpec`/`StatsSpec` — their wire shape is `to_dict()`
+  (enums as text, nested `to_dict`s, nulls dropped), NOT the dataclass, so a
+  `TypeAdapter` schema would describe the wrong shape; needs a decision
+  (pydantic wire models, or a hand walker that mirrors `to_dict`); (c) the
+  typed `callBackend` overload and the `statsSpec.ts`/`CustomPlotSpec`
+  replacements (need the generated file to compile against).
+- **Stage 6 started (2026-11-02): one step type migrated.**
+  `scistackplot/reduce/reduction.py` (`ReductionPlan`, `LocationMask`,
+  `ValueFilter`, `filter_steps`); `export/reduction_code.py` (one emitter per
+  step, `emit_plan`). `apply_filters` applies `ValueFilter.mask`; codegen
+  prints the same steps; `ResolvedPlot.reduction` records them. **Export
+  behaviour change (a codegen bug fix under "export equals preview"):** the
+  export compared filter levels raw (`df[c].isin([...])`) and bounds raw,
+  while the preview compares levels as text and bounds on
+  `pd.to_numeric(errors="coerce")`, and skips a missing column; the export now
+  does the same. Test: `scistackplot/tests/test_reduction_code.py`. Not
+  migrated: cell collapse, categorical, level groups, the collapse chain
+  (`groupby` sites), compare, bins.
+
+User commands (one package per invocation):
+
+    python -m pytest scifor/tests -x -q
+    python -m pytest scimatlab/tests -x -q
+    python -m pytest scistackplot/tests -x -q
+    python -m pytest scistackplotdb/tests -x -q
+    python -m pytest scistack-gui/tests -x -q
+    python -m pytest scidb/tests -x -q
+
+then `cd scistack-gui/frontend && npm run gen:types && npm test` (the GUI
+pytest writes `api-schema.json` on its first run), and the MATLAB suite
+(`scimatlab/tests/matlab/run_tests.m`).
+
+### First test run (2026-11-02, morning)
+
+- `test_split_options_asks_python[scifor]`: the substring check also hit the
+  `discard_db_only_kwargs` INFO tag, which deliberately matches Python
+  `scifor.outputs`. The check now looks for the word `db_only_kwargs`.
+- `test_level_methods_guard_against_double_sprintf[+scidb]`: `+scidb/Log.m`
+  has no bodies now (it inherits from `scifor.Log`). The test runs on `+scifor` only.
+- scistackplot `clear_plan_cache` / `_build_plan` / `_plan_cache` AttributeErrors:
+  a P2 rename leftover. The tests imported the `resolve` FUNCTION as `reduce_mod`.
+  Now `import scistackplot.reduce.resolve as reduce_mod` (test_resolve_caching,
+  test_ylimits, test_cell_capability, test_display_aliases).

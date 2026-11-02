@@ -571,7 +571,7 @@ def test_switching_kind_on_a_cached_plan_recomputes_the_limits(three_level_table
     """LINE -> BAND reuses the plan (deliberately: kind is not in its key) but
     must NOT reuse the line's limits — the band draws mean ± SD, which sits
     outside the observations for small n. Until 2026-09-14 it did."""
-    from scistackplot.reduce.resolve import resolve as reduce_mod
+    import scistackplot.reduce.resolve as reduce_mod
 
     reduce_mod._plan_cache.clear()
     # The same roles for both — the plan is keyed by them — so the line is
@@ -591,7 +591,7 @@ def test_switching_kind_on_a_cached_plan_recomputes_the_limits(three_level_table
 
 
 def test_each_extent_mode_is_computed_once(three_level_table, caplog):
-    from scistackplot.reduce.resolve import resolve as reduce_mod
+    import scistackplot.reduce.resolve as reduce_mod
 
     reduce_mod._plan_cache.clear()
     collapsed = {"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.COLLAPSE}

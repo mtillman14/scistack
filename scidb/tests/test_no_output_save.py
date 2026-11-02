@@ -16,7 +16,7 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.exceptions import NotFoundError
+from scidb.model.exceptions import NotFoundError
 from scifor.outputs import NoOutput
 
 SCHEMA = ["subject"]

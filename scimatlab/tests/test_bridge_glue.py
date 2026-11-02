@@ -24,10 +24,10 @@ sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import pytest
-from scidb.database import configure_database
-from scidb.provenance import GLUE_TYPE
+from scidb.store.database import configure_database
+from scidb.provenance.graph import GLUE_TYPE
+from scimatlab.bridge.wire import _reconstruct_glue_chains
 from scimatlab.bridge import (
-    _reconstruct_glue_chains,
     for_each_prepare,
     register_matlab_variable,
 )

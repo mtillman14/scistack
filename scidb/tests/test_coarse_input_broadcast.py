@@ -17,7 +17,7 @@ constituents. Bound straight to a parameter — with or without a
 
 Both end in an empty result table, so the node reads as a silent no-op.
 
-Fix: ``_drop_unpopulated_schema_columns`` in ``scidb/foreach.py``, applied by
+Fix: ``_drop_unpopulated_schema_columns`` in ``scidb/run/foreach.py``, applied by
 ``_load_input`` to every input kind. See docs/claude/coarse-level-inputs.md.
 """
 
@@ -175,7 +175,7 @@ def test_merge_with_coarse_constituent_still_broadcasts(db):
 def test_only_entirely_null_schema_columns_are_dropped():
     """A partially-populated key still filters; conflating the two would make a
     row that genuinely has no session broadcast across every session."""
-    from scidb.foreach import _drop_unpopulated_schema_columns
+    from scidb.run.foreach import _drop_unpopulated_schema_columns
 
     df = pd.DataFrame(
         {
@@ -197,7 +197,7 @@ def test_only_entirely_null_schema_columns_are_dropped():
 
 
 def test_drop_leaves_a_fully_populated_frame_untouched():
-    from scidb.foreach import _drop_unpopulated_schema_columns
+    from scidb.run.foreach import _drop_unpopulated_schema_columns
 
     df = pd.DataFrame(
         {"subject": ["S01"], "session": ["BL"], "trial": ["1"], "value": [1.0]}
@@ -210,7 +210,7 @@ def test_drop_leaves_a_fully_populated_frame_untouched():
 
 def test_coarse_input_load_drops_the_unpopulated_columns(db):
     """The loaded input scifor actually receives carries no all-NULL schema key."""
-    from scidb.foreach import _load_input
+    from scidb.run.foreach import _load_input
 
     _seed(db)
     loaded = _load_input(Demographics, db, None, param_name="side")

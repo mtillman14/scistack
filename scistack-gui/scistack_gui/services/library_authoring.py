@@ -461,7 +461,7 @@ def _distributions(top_level_modules: set[str]) -> set[str]:
 def _strip_locations(snap) -> None:
     """A library never names a project's subjects: drop every location
     selection from the captured canvas."""
-    from scidb.intent import ASPECT_SCHEMA_LOCATION
+    from scidb.provenance.intent import ASPECT_SCHEMA_LOCATION
 
     for n in snap.nodes:
         n.config = {k: v for k, v in (n.config or {}).items() if k != "schemaSelection"}
@@ -810,9 +810,9 @@ def plan_library(db, *, name: str, pipeline_id: "str | None" = None,
 
 def _current_hashes(names) -> dict:
     """``{label: the hash a run of it records now}`` (O15): Python through
-    ``scidb.foreach_config.function_hash_for``, MATLAB through the file's
+    ``scidb.run.foreach_config.function_hash_for``, MATLAB through the file's
     current source hash. ``None`` when it cannot be resolved here."""
-    from scidb.foreach_config import function_hash_for
+    from scidb.run.foreach_config import function_hash_for
 
     from scistack_gui.matlab import registry as matlab_registry
 

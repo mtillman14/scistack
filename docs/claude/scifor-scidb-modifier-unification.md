@@ -44,7 +44,7 @@ for the same reason:
 5. **DB filter/query construction** (`ColumnSelection`'s `==`/`isin()` etc.)
    — investigated whether these could delegate to scifor's own generic
    `Col("column") == value` mechanism (`scifor/filters.py`) instead of
-   building `scidb.filters.ColumnFilter` directly. **Rejected** — see
+   building `scidb.model.filters.ColumnFilter` directly. **Rejected** — see
    "Filters were NOT unified" below. Stays scidb-only, as a subclass method,
    not a duplicate container.
 6. **Surrounding orchestration** — PathInput's discovery/resolve glue is
@@ -58,10 +58,10 @@ for the same reason:
 | Class | Now lives in | scidb's role |
 |---|---|---|
 | `Fixed` | `scifor/src/scifor/fixed.py` | `from scifor import Fixed` — straight re-export |
-| `Merge` | `scifor/src/scifor/merge.py` (base) | `scidb/src/scidb/merge.py` — thin **subclass** restoring a DB-aware `.to_csv()` (see Landmine E) |
+| `Merge` | `scifor/src/scifor/merge.py` (base) | `scidb/src/scidb/model/merge.py` — thin **subclass** restoring a DB-aware `.to_csv()` (see Landmine E) |
 | `ColName` | `scifor/src/scifor/colname.py` | straight re-export |
 | `EachOf` | `scifor/src/scifor/each_of.py` (container only) | straight re-export; scidb's own recursive *expansion* is separate and unchanged |
-| `ColumnSelection` | `scifor/src/scifor/column_selection.py` (base) | `scidb/src/scidb/column_selection.py` — thin **subclass** adding `==`/`!=`/`<`/`<=`/`>`/`>=`/`isin()` (build `scidb.filters` objects) + `.load()` + `.to_csv()` |
+| `ColumnSelection` | `scifor/src/scifor/column_selection.py` (base) | `scidb/src/scidb/model/column_selection.py` — thin **subclass** adding `==`/`!=`/`<`/`<=`/`>`/`>=`/`isin()` (build `scidb.model.filters` objects) + `.load()` + `.to_csv()` |
 | `PathInput` | `scifor/src/scifor/pathinput.py` (already unified before this pass) | scidb layers discovery-orchestration delegation + a schema-key-type-aware resolver on top — see the PathInput doc |
 
 Attribute names: the unified classes kept **scifor's** names (`Fixed.data`,
@@ -73,12 +73,12 @@ out of scope) have their **own, unrelated** `.var_type` attribute that was
 never touched — a real trap during the rename (see Landmine 3 below).
 
 Deleted entirely: `scidb/src/scidb/fixed.py`, `colname.py`, `each_of.py`.
-`scidb/src/scidb/column_selection.py` and `merge.py` were rewritten (not
+`scidb/src/scidb/model/column_selection.py` and `merge.py` were rewritten (not
 deleted) as the subclasses described above.
 
 ## Why `ColumnSelection` and `Merge` need a scidb subclass
 
-`ColumnSelection.__eq__`/`isin()` build `scidb.filters.ColumnFilter`/
+`ColumnSelection.__eq__`/`isin()` build `scidb.model.filters.ColumnFilter`/
 `InFilter` objects — these require a live `BaseVariable` **class reference**
 (which table to query) baked into the filter at construction time. scifor's
 `ColumnSelection` wraps a DataFrame; it has no field for "which table," and
@@ -94,7 +94,7 @@ Consequence for internal code: scidb's isinstance checks against
 `True` for both a scidb-constructed instance (`MyVar["col"]`) and a bare
 `scifor.ColumnSelection(df, [...])` passed directly into `scidb.for_each`
 (new capability, see Landmine 2). Checking against scidb's subclass instead
-would silently exclude the bare case. Only `scidb/src/scidb/variable.py`
+would silently exclude the bare case. Only `scidb/src/scidb/model/variable.py`
 (`BaseVariable.__class_getitem__` / `.for_columns()`, the actual
 construction sites needing the DB-only surface) imports scidb's
 `ColumnSelection` subclass directly. `scidb/__init__.py`'s public
@@ -111,7 +111,7 @@ for scifor's own loop, not something a user calls `.to_csv()` on.
 ## Filters were NOT unified (investigated and rejected)
 
 `scifor.filters` (`Col`, `ColFilter`, `CompoundFilter`, `NotFilter`) and
-`scidb.filters` (`ColumnFilter`, `InFilter`, `CompoundFilter`, `NotFilter`,
+`scidb.model.filters` (`ColumnFilter`, `InFilter`, `CompoundFilter`, `NotFilter`,
 `VariableFilter`, `SchemaKey*`, `RawFilter`) look like the same duplication
 pattern but are not:
 
@@ -138,7 +138,7 @@ pattern but are not:
 
 **A — version-key/lineage byte-identity.**
 `foreach_config.py._serialize_inputs()` puts `spec.to_key()` into
-`ForEachConfig.to_version_keys()["__inputs"]` (→ `call_id` → skip_computed /
+`ForEachConfig.to_config_keys()["__inputs"]` (→ `call_id` → skip_computed /
 lineage) whenever `hasattr(spec, "to_key")`. Before this pass, `to_key()`
 existed **only** on scidb's own `Fixed`/`Merge`/`ColumnSelection`. If the
 unified classes had been taken from scifor's pre-existing code as-is (no
@@ -195,7 +195,7 @@ silently started running the DataFrame-join version against variable
 *types* — surfaced only by `test_to_csv.py`'s existing Merge tests raising
 `AttributeError: type object 'X' has no attribute 'columns'`, not by any
 review before landing. Fixed the same way as `ColumnSelection`: a thin
-scidb subclass (`scidb/src/scidb/merge.py`) restoring just `.to_csv()`.
+scidb subclass (`scidb/src/scidb/model/merge.py`) restoring just `.to_csv()`.
 **Lesson for next time**: when a class unifies, audit every *method* on the
 pre-unification versions individually (not just the constructor/attributes)
 for behavioral differences — a class-level "this container is the same
@@ -207,11 +207,11 @@ either side.
 | File | Role |
 |---|---|
 | `scifor/src/scifor/fixed.py`, `merge.py`, `column_selection.py`, `colname.py`, `each_of.py` | Unified class definitions (`to_key()` added to `fixed.py`/`merge.py`/`column_selection.py`) |
-| `scidb/src/scidb/column_selection.py` | DB-only `ColumnSelection` subclass (comparison operators, `.load()`, `.to_csv()`) |
-| `scidb/src/scidb/merge.py` | DB-only `Merge` subclass (schema-id-keyed `.to_csv()` — Landmine E) |
-| `scidb/src/scidb/foreach.py` | `_is_loadable` (PathInput early-out), `_load_input`/`_resolve_per_combo_loader` (DataFrame fast paths, renamed attrs), `_has_pathinput`/`_find_pathinput` |
-| `scidb/src/scidb/foreach_config.py` | `_get_direct_constants`/`_serialize_inputs` (PathInput classification) |
-| `scidb/src/scidb/pipeline.py`, `csv_export.py`, `provenance_query.py`, `provenance_save.py`, `variant.py`, `across_variants.py` | Renamed attribute access + import-source swap; `Variant`/`AcrossVariants`' own `.var_type` left untouched |
+| `scidb/src/scidb/model/column_selection.py` | DB-only `ColumnSelection` subclass (comparison operators, `.load()`, `.to_csv()`) |
+| `scidb/src/scidb/model/merge.py` | DB-only `Merge` subclass (schema-id-keyed `.to_csv()` — Landmine E) |
+| `scidb/src/scidb/run/foreach.py` | `_is_loadable` (PathInput early-out), `_load_input`/`_resolve_per_combo_loader` (DataFrame fast paths, renamed attrs), `_has_pathinput`/`_find_pathinput` |
+| `scidb/src/scidb/run/foreach_config.py` | `_get_direct_constants`/`_serialize_inputs` (PathInput classification) |
+| `scidb/src/scidb/run/pipeline.py`, `csv_export.py`, `provenance_query.py`, `provenance_save.py`, `variant.py`, `across_variants.py` | Renamed attribute access + import-source swap; `Variant`/`AcrossVariants`' own `.var_type` left untouched |
 | `scimatlab/src/scimatlab/bridge.py` | Import-source swap for `Fixed`/`Merge`/`ColName` (MATLAB bridge's spec-reconstruction path); `Fixed(PathInput(...))` handling simplified since `scidb.Fixed`/`scifor.Fixed` collapsed to one class |
 | `scidb/tests/test_unified_modifier_classes.py` | isinstance-unification, Landmine B, Landmine A regression tests |
 | `scifor/tests/test_to_key.py` | `to_key()` output format for all three classes |
@@ -219,7 +219,7 @@ either side.
 ## Out of scope, confirmed
 
 - `Variant`/`AcrossVariants` — genuinely DB-specific.
-- `scifor.filters` / `scidb.filters` — see above.
+- `scifor.filters` / `scidb.model.filters` — see above.
 - `csv_export.py` (same filename in both packages) — scifor's does a generic
   in-memory `pd.merge` join; scidb's is a from-scratch schema-id-keyed
   export querying stored records. Two unrelated algorithms.
@@ -233,7 +233,7 @@ either side.
 
 - `docs/claude/input-markers-colname-pathinput-pathoutput.md` — PathInput's
   half of this story in detail (discovery orchestration, per-combo
-  resolution, the `_path_input_resolver` hook).
+  resolution, the `LoopHooks.path_input_resolver` hook).
 - `docs/claude/each-of-variant-expansion.md` — EachOf's container-vs-orchestration
   split.
 - `docs/claude/column-selection.md` — predates this unification (and several

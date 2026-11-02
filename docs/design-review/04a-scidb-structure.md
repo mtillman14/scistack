@@ -147,14 +147,14 @@ statements:
 | Module | Imports | | Module | Imports |
 |---|---:|---|---|---:|
 | `scidb` (top level) | 50 | | `provenance_query` | 8 |
-| `scidb.log` | 29 | | `foreach_config` | 8 |
+| `scidb.model.log` | 29 | | `foreach_config` | 8 |
 | `scidb.entities` | 20 | | `source_edit` | 7 |
-| `scidb.intent` | 15 | | `variant`, `run_markers`, `pipeline`, `inventory`, `inspect.cli`, `combine` | 5 each |
-| `scidb.database` | 15 | | `variable` | 4 |
+| `scidb.provenance.intent` | 15 | | `variant`, `run_markers`, `pipeline`, `inventory`, `inspect.cli`, `combine` | 5 each |
+| `scidb.store.database` | 15 | | `variable` | 4 |
 | `scidb.names` | 13 | | `bindings`, `exclusions`, `environment`, `project`, `parameter`, `inspect.mutate` | 3 each |
 | `scidb.library` | 11 | | 16 more modules | 1–2 each |
 | `scidb.bundle` | 11 | | | |
-| `scidb.provenance` | 10 | | | |
+| `scidb.provenance.graph` | 10 | | | |
 
 Consumers import **40 different scidb modules**. On top of that, the GUI uses
 the private `db._duck` (the sciduckdb connection) 26 times. scidb does
@@ -238,7 +238,7 @@ consume". In practice the GUI goes around both, straight to
 
 | # | Change | Removes |
 |---|---|---|
-| B1 | Turn the six clusters into subpackages (`scidb.model`, `scidb.run`, `scidb.store`, `scidb.provenance`, `scidb.inspect`, `scidb.project`) with a declared order. Suggested: model → store → provenance → run → inspect, with project off to the side. Enforce the order with one import-graph test that allows lazy imports only from an explicit list. | weakness 1; makes cycles visible as test failures |
+| B1 | Turn the six clusters into subpackages (`scidb.model`, `scidb.run`, `scidb.store`, `scidb.provenance.graph`, `scidb.inspect`, `scidb.project`) with a declared order. Suggested: model → store → provenance → run → inspect, with project off to the side. Enforce the order with one import-graph test that allows lazy imports only from an explicit list. | weakness 1; makes cycles visible as test failures |
 | B2 | Split `DatabaseManager` by job. Keep it as a thin facade that owns the connection, and delegate to `RecordStore` (save/load), `VariantIndex` (variant listing, latest) and `ProjectDisplay` (aliases/colours/key order, read from `scidb.project`). Delete the provenance pass-throughs in favour of `provenance_query`. | weakness 2 |
 | B3 | Split the project cluster by **dependency**, not by topic: model-free modules move to `scifor.project`, model-bound ones gather in `scidb.project`. See "Decision: where project runtime lives" below. | weakness 3 |
 | B4 | Declare scidb's public API: `scidb` (user-facing), `scidb.inspect` (read), and a short list of supported internals for the GUI. Add a test in the GUI that fails on imports outside that list. | weakness 4 |
@@ -249,6 +249,8 @@ consume". In practice the GUI goes around both, straight to
 > **Done (2026-11-01, P3):** B3 — model-free half in `scifor.project`; model-bound half in `scidb.project` (entities, discover, init, library, bundle, environment, verify, table_copy, schema_map). entities split into `scifor.project.entities_file` (grammar) + `scidb.project.entities` (materialize).
 
 > **Done (2026-11-01, e129c3bf):** B6 — `scidb.hashing` and `scidb.paths` deleted; `scidb-for-each-internals.md` and `scidb-identity-and-data-flow.md` archived to `docs/claude/archive/`; README exclusion and Logging sections refreshed.
+> **Done (2026-11-01, P4 stage 5), partly:** B2 — `scidb.store.record_store.RecordStore` (catalog, `long_frame`, sampled cell, levels, occupied keys; `write_batch_rows` + `BatchRows` + the columnar insert) over the connection, handed out as `db.record_store`; `save_batch` plans on `DatabaseManager` and writes through the store. Provenance pass-throughs deleted (`get_upstream_provenance`, `get_pipeline`, `get_pipeline_structure`, `get_derived_branch_params`, `get_execution_audit`, `has_lineage`, `get_provenance_by_schema`); callers use `provenance_query`. Not moved yet: the load half (`_find_record` -> `select_records`, materialize) — its "latest" collapse is the LOAD rule stage 4 flagged as a second definition of variant, so it moves after that decision; and `dataset_aliases` / `dataset_colors`, which also validate the TOML against the dataset (they need a home that keeps that, e.g. `scidb.project.display`).
+> **Done (2026-11-01, P4 stage 6):** B1 move half — `scidb/model`, `scidb/store`, `scidb/provenance`, `scidb/run` (plus the existing `project`, `inspect`); every relative import inside scidb is absolute; `provenance.py` / `provenance_query.py` / `provenance_save.py` are `scidb.provenance.graph` / `.query` / `.save` (a package cannot share its name with a module). Layer map is one glob per cluster; `test_imports.py` builds its graph through `tools.import_layers` over full module names. Consumers, MATLAB `py.scidb.*` calls, docs and the allow-list rewritten in one pass; all four clusters moved in one change (not one commit each — the user runs the suites once at the end of P4).
 
 **Open question (answered below, 2026-11-01).** Where should "project runtime"
 live: config, entities, display settings, discovery, bundles? Today it is

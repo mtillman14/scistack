@@ -213,7 +213,7 @@ def test_canvas_run_writes_ports_in_port_order_and_records_their_names(
     seen = []
 
     def fake_for_each(*a, **k):
-        from scidb.intent import current_output_names
+        from scidb.provenance.intent import current_output_names
 
         seen.append(([o.__name__ for o in k.get("outputs") or []], current_output_names()))
 

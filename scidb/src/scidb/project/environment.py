@@ -206,7 +206,7 @@ def install_project_requirements(root: "Path | str") -> InstallReport:
     the missing declared dependencies and libraries (at the exporter's
     versions), from the project's wheelhouse first. Call only after the
     user trusted the project. Never raises for an install problem."""
-    from .bundle import check_environment
+    from scidb.project.bundle import check_environment
 
     root = Path(root)
     env_path = root / STATE_DIR / ENVIRONMENT_FILE

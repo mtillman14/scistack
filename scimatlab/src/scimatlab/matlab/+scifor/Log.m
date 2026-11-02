@@ -15,14 +15,16 @@ classdef Log
 %   console (stderr): HH:MM:SS [layer] message
 %   file (scistack.log): YYYY-MM-DD HH:MM:SS.FFF LEVEL [layer] message
 %
-%   All logging calls delegate to Python's scistacklog.Log class directly —
-%   NOT via scidb — so that standalone (no-database) scifor usage in MATLAB
-%   stays free of a Python scidb dependency, mirroring Python scifor's own
-%   "scifor stays scidb-free; it depends only on scistacklog" contract.
-%   scidb.log.Log is a re-export of the same scistacklog.Log class, so
-%   scifor.Log and scidb.Log share one underlying Python singleton and one
-%   appdata cache — a level/path change from either class is visible to
-%   both, regardless of which one a given MATLAB session touches first.
+%   All logging calls delegate to Python's scistacklog.Log class directly,
+%   NOT via scidb, so standalone (no-database) scifor usage in MATLAB stays
+%   free of a Python scidb dependency. scidb.Log (+scidb/Log.m) is a subclass
+%   with no members of its own: one class, two package names.
+%
+%   Name the Python class by its DEFINING module (py.scistacklog.Log), never
+%   a re-export such as py.scidb.model.log.Log: MATLAB resolves a static call
+%   py.<module>.<Class>.<method> only when the class's __module__ matches the
+%   dotted path; for a re-export it falls back to constructor semantics and
+%   errors. Guarded by scimatlab/tests/test_matlab_py_class_dispatch.py.
 %
 %   The log level is cached in MATLAB's appdata for performance, but the
 %   Python logger is the source of truth.
@@ -59,8 +61,7 @@ classdef Log
             end
             % Cache the effective level (min of the two sinks) for fast
             % get_level() calls — a message suppressed by both sinks never
-            % needs to cross the Python bridge. Shared appdata key with
-            % scidb.Log: same underlying Python singleton, one cache.
+            % needs to cross the Python bridge.
             level_num = double(py.scistacklog.Log.get_level());
             setappdata(0, 'scidb_log_level', level_num);
         end
@@ -98,10 +99,10 @@ classdef Log
         %   Delegates to Python logging for unified output; MATLAB-originated
         %   lines carry the [matlab] layer tag.
             if scifor.Log.get_level() <= scifor.Log.DEBUG
-                % Only format when there are args to substitute — see the
-                % matching guard in +scidb/Log.m: a pre-formatted message
-                % containing a Windows path is otherwise sprintf'd twice and
-                % silently truncated at the first backslash escape.
+                % Only format when there are args to substitute: a
+                % pre-formatted message containing a Windows path would be
+                % sprintf'd twice and truncated at the first backslash
+                % escape (y:\LabMembers -> y:, seen 2026-09-01).
                 if nargin == 1
                     msg = fmt;
                 else
@@ -116,10 +117,10 @@ classdef Log
         %   Delegates to Python logging for unified output; MATLAB-originated
         %   lines carry the [matlab] layer tag.
             if scifor.Log.get_level() <= scifor.Log.INFO
-                % Only format when there are args to substitute — see the
-                % matching guard in +scidb/Log.m: a pre-formatted message
-                % containing a Windows path is otherwise sprintf'd twice and
-                % silently truncated at the first backslash escape.
+                % Only format when there are args to substitute: a
+                % pre-formatted message containing a Windows path would be
+                % sprintf'd twice and truncated at the first backslash
+                % escape (y:\LabMembers -> y:, seen 2026-09-01).
                 if nargin == 1
                     msg = fmt;
                 else
@@ -134,10 +135,10 @@ classdef Log
         %   Delegates to Python logging for unified output; MATLAB-originated
         %   lines carry the [matlab] layer tag.
             if scifor.Log.get_level() <= scifor.Log.WARN
-                % Only format when there are args to substitute — see the
-                % matching guard in +scidb/Log.m: a pre-formatted message
-                % containing a Windows path is otherwise sprintf'd twice and
-                % silently truncated at the first backslash escape.
+                % Only format when there are args to substitute: a
+                % pre-formatted message containing a Windows path would be
+                % sprintf'd twice and truncated at the first backslash
+                % escape (y:\LabMembers -> y:, seen 2026-09-01).
                 if nargin == 1
                     msg = fmt;
                 else
@@ -153,10 +154,10 @@ classdef Log
         %   Delegates to Python logging for unified output; MATLAB-originated
         %   lines carry the [matlab] layer tag.
             if scifor.Log.get_level() <= scifor.Log.ERROR
-                % Only format when there are args to substitute — see the
-                % matching guard in +scidb/Log.m: a pre-formatted message
-                % containing a Windows path is otherwise sprintf'd twice and
-                % silently truncated at the first backslash escape.
+                % Only format when there are args to substitute: a
+                % pre-formatted message containing a Windows path would be
+                % sprintf'd twice and truncated at the first backslash
+                % escape (y:\LabMembers -> y:, seen 2026-09-01).
                 if nargin == 1
                     msg = fmt;
                 else

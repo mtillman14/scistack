@@ -3,13 +3,13 @@
 docs/claude/cleanup-audit.md §4.2 / .claude/plan-schema-level-default.md: the
 Python Run, the Python pipeline, the generated MATLAB command, the MATLAB
 pipeline script and the settings panel all go through
-``execution_service.default_schema_level`` -> ``scidb.schema_level``.
+``execution_service.default_schema_level`` -> ``scidb.run.schema_level``.
 """
 
 import ast
 from pathlib import Path
 
-from scidb.schema_level import SchemaLevel
+from scidb.run.schema_level import SchemaLevel
 
 from scistack_gui.services.matlab_command_format import generate_matlab_command
 

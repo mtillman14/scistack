@@ -72,7 +72,7 @@ FOR_EACH PATH (orchestration layer on top of save/load)
 
 for_each(fn, inputs, outputs, subject=[], session=[])
   |
-  +--> ForEachConfig.to_version_keys()   --> config_keys (__fn, __fn_hash, __inputs, ...)
+  +--> ForEachConfig.to_config_keys()   --> config_keys (__fn, __fn_hash, __inputs, ...)
   +--> ForEachConfig.to_call_id()        --> call_id (16 hex chars, for _for_each_expected)
   +--> _convert_inputs() / load()        --> DataFrames with __record_id, __branch_params
   +--> variant tracking (rid_to_bp)      --> maps record_id -> upstream branch_params
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS _record_metadata (
 )
 ```
 
-Source: `/workspace/scidb/src/scidb/database.py`, lines 582-597.
+Source: `/workspace/scidb/src/scidb/store/database.py`, lines 582-597.
 
 | Column           | What it stores                                                  | How it's computed                                                               | Example                                       |
 | ---------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------- |
@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS _for_each_expected (
 )
 ```
 
-Source: `/workspace/scidb/src/scidb/database.py`, lines 627-634.
+Source: `/workspace/scidb/src/scidb/store/database.py`, lines 627-634.
 
 Stores the set of combos that a `for_each` call was _expected_ to produce. Used by `check_node_state()` to detect missing/stale outputs.
 
@@ -287,7 +287,7 @@ Source: `/workspace/canonical-hash/src/canonicalhash/hashing.py`, lines 13-45.
 Non-schema metadata stored as a JSON string in `_record_metadata`. When `for_each` saves, this includes the `ForEachConfig` keys:
 
 ```python
-ForEachConfig.to_version_keys()  # returns:
+ForEachConfig.to_config_keys()  # returns:
 {
     "__fn": "bandpass_filter",         # function name
     "__fn_hash": "a1b2c3d4e5f6a7b8",  # SHA-256 of function source (16 hex)
@@ -304,7 +304,7 @@ Additionally, per-record keys may be added:
 - `__upstream`: JSON dict of `{__rid_param: record_id}` -- upstream record_ids (added by `_save_results()` to ensure record_id uniqueness across upstream variants)
 - `__output_num`: integer position of this output in multi-output functions (used by GUI)
 
-Source: `/workspace/scidb/src/scidb/foreach_config.py`, lines 87-107.
+Source: `/workspace/scidb/src/scidb/run/foreach_config.py`, lines 87-107.
 
 The `load(version="latest")` query partitions by `(variable_name, schema_id, version_keys)`. This means different `for_each` configurations produce separate "version groups" at the same schema location, and `"latest"` returns the newest within each group.
 
@@ -354,7 +354,7 @@ branch_params accumulates; each step inherits everything upstream and adds its o
 
 ### call_id
 
-A 16-hex-char hash of what is unique to one call site. Since 2026-09-20 the payload has ONE assembly, `scidb.foreach_config.CallSite`:
+A 16-hex-char hash of what is unique to one call site. Since 2026-09-20 the payload has ONE assembly, `scidb.run.foreach_config.CallSite`:
 
 ```python
 @dataclass(frozen=True)
@@ -367,7 +367,7 @@ class CallSite:
     across_variants: Sequence[str] = ()
     glue: Mapping[str, Sequence[str]] = {}   # param -> glue node NAMES
 
-    def version_keys(self) -> dict: ...   # __fn/__inputs/__constants/__distribute/__as_table/__across_variants/__glue
+    def call_site_keys(self) -> dict: ...   # __fn/__inputs/__constants/__distribute/__as_table/__across_variants/__glue
     call_id = SHA256(json.dumps(version_keys(), sort_keys=True))[:16]
 ```
 
@@ -637,7 +637,7 @@ FilteredSignal.load(subject=1, low_hz=20)
     +-- len(results) == 1 → return the variable directly
 ```
 
-Source: `/workspace/scidb/src/scidb/variable.py` lines 347-370, `/workspace/scidb/src/scidb/database.py` lines 1364-1382.
+Source: `/workspace/scidb/src/scidb/model/variable.py` lines 347-370, `/workspace/scidb/src/scidb/store/database.py` lines 1364-1382.
 
 **Key mechanism**: `_find_record()` checks `version_keys` first (line 1379). Since `low_hz: 20` is a direct key in version_keys (unpacked there by `_save_results`), it matches immediately. If it weren't in version_keys, the fallback would check `branch_params` via suffix matching (`low_hz` → `bandpass_filter.low_hz`).
 
@@ -652,7 +652,7 @@ var = FilteredSignal.load(subject=1)
 #     bandpass_filter.low_hz=30  (record_id: 'b4e9c3d2f0a15678')
 ```
 
-The error message tells you exactly which branch parameters to add. Source: `/workspace/scidb/src/scidb/variable.py` lines 380-391.
+The error message tells you exactly which branch parameters to add. Source: `/workspace/scidb/src/scidb/model/variable.py` lines 380-391.
 
 ### Case 2: for_each input -- automatic variant tracking (no filtering needed)
 
@@ -764,7 +764,7 @@ So `Fixed(FilteredSignal, low_hz=20)` adds `low_hz=20` to the effective metadata
 Even if `_filter_df_for_combo` filtered on non-schema keys, `low_hz` wouldn't be a column in the DataFrame to filter on. When data was saved via `for_each` with `low_hz` as a constant input (`inputs={..., "low_hz": 20}`), `_stringify_meta()` inside `_load_var_type_all()` strips keys that appear in `__constants`:
 
 ```python
-# scidb/src/scidb/foreach.py, inside _load_var_type_all
+# scidb/src/scidb/run/foreach.py, inside _load_var_type_all
 def _stringify_meta(meta: dict) -> dict:
     const_keys = set(json.loads(meta.get("__constants", "{}")).keys())
     return {k: v for k, v in meta.items()
@@ -807,7 +807,7 @@ When `_find_record()` applies `branch_params_filter`, it checks **two places** p
 
 If the bare key matches multiple namespaced keys in branch_params (e.g., both `step1.low_hz` and `step2.low_hz`), an `AmbiguousParamError` is raised, telling you to use the fully namespaced key.
 
-Source: `/workspace/scidb/src/scidb/database.py` lines 89-108 (`_match_branch_param`), lines 1364-1382 (`branch_params_filter` loop).
+Source: `/workspace/scidb/src/scidb/store/database.py` lines 89-108 (`_match_branch_param`), lines 1364-1382 (`branch_params_filter` loop).
 
 ---
 
@@ -829,7 +829,7 @@ Source: `/workspace/scidb/src/scidb/database.py` lines 89-108 (`_match_branch_pa
 | Concept                                   | Where                   | Purpose                                                               |
 | ----------------------------------------- | ----------------------- | --------------------------------------------------------------------- |
 | `ForEachConfig`                           | `foreach_config.py`     | Serializes for_each() config into version_keys                        |
-| `to_version_keys()`                       | `foreach_config.py:87`  | Produces `__fn`, `__fn_hash`, `__inputs`, `__constants`, etc.         |
+| `to_config_keys()`                       | `foreach_config.py:87`  | Produces `__fn`, `__fn_hash`, `__inputs`, `__constants`, etc.         |
 | `to_call_id()`                            | `foreach_config.py:109` | 16-hex hash for \_for_each_expected disambiguation                    |
 | `_save_results()`                         | `foreach.py:1043`       | Per-row: merge branch_params, assemble save_metadata, call .save()    |
 | Variant tracking (`rid_to_bp`, `__rid_*`) | `foreach.py:321-458`    | Map upstream record_ids to their branch_params, expand combos         |
@@ -873,7 +873,7 @@ The `version_keys` JSON in `_record_metadata` may contain:
 - **Config fields** (from `ForEachConfig`): `__fn`, `__fn_hash`, `__inputs`, `__constants`, `__where`, `__distribute`, `__as_table`
 - **Per-record fields**: `__upstream`, `__output_num`, and for direct saves, any non-schema metadata keys
 
-`CallSite.version_keys()` emits only the call-site fields, and the hash keeps a strict allow-list (`_CALL_ID_INCLUDED_KEYS`) as a guard, so the call_id is stable even when per-record fields ride in the same dict.
+`CallSite.call_site_keys()` emits only the call-site fields, and the hash keeps a strict allow-list (`_CALL_ID_INCLUDED_KEYS`) as a guard, so the call_id is stable even when per-record fields ride in the same dict.
 
 ### Direct saves vs for_each saves
 

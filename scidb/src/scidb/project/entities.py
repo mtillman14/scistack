@@ -37,8 +37,8 @@ from scifor.project.entities_file import (
 )
 from scistacklog import Log
 
-from ..parameter import Parameter
-from ..variable import BaseVariable
+from scidb.model.parameter import Parameter
+from scidb.model.variable import BaseVariable
 
 
 @dataclass

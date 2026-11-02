@@ -58,6 +58,7 @@ from .failures import (
 )
 from .filters import Col, ColFilter, CompoundFilter, NotFilter
 from .fixed import Fixed
+from .hooks import LoopHooks
 from .foreach import (
     ColumnFunctionError,
     ForColumnsError,
@@ -67,7 +68,8 @@ from .foreach import (
 )
 from .locations import LocationFilter, filter_combo_indices, filter_combos
 from .merge import Merge
-from .outputs import COLUMN_NAME_ATTR, DB_ONLY_KWARGS, output_column_name
+from .options import DB_ONLY_KWARGS, FOR_EACH_OPTIONS, UNSET, OptionSpec
+from .outputs import COLUMN_NAME_ATTR, output_column_name
 from .pathinput import (
     PathInput,
     clear_listing_cache,
@@ -110,6 +112,7 @@ __all__ = [
     "canonical_numeric_value",
     # Batch execution
     "for_each",
+    "LoopHooks",
     "combine_duplicate_rows",
     "CombineReport",
     "CombineMixedTypesError",
@@ -132,6 +135,9 @@ __all__ = [
     "validate_on_error",
     "spread_nested_results",
     "DB_ONLY_KWARGS",
+    "FOR_EACH_OPTIONS",
+    "OptionSpec",
+    "UNSET",
     "output_column_name",
     "COLUMN_NAME_ATTR",
     # Input wrappers

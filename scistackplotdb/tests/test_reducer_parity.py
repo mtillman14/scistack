@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from scidb import BaseVariable, configure_database
-from scidb.database import _local
+from scidb.store.database import _local
 from scistackplot import PlotKind, PlotSpec, Role, resolve
 from scistackplot.reduce.reducer import DEFAULT_REDUCER, PandasReducer, Reducer, reducer_for
 from scistackplot.model.spec import Aggregation, ErrorBand, Statistic

@@ -8,7 +8,7 @@ after a re-run wrote 390 corrected records — a figure silently disagreeing wit
 the database it claimed to show.
 
 So the cache validates itself against a content fingerprint
-(``scidb.provenance_query.variable_content_fingerprint``) on every hit. Because
+(``scidb.provenance.query.variable_content_fingerprint``) on every hit. Because
 ``record_id`` is a content hash, that is PRECISE rather than merely
 conservative, and both halves of that are pinned here:
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scidb.provenance_query import variable_content_fingerprint
+from scidb.provenance.query import variable_content_fingerprint
 from scistackplotdb import ScidbSource
 
 from conftest import SESSIONS, SUBJECTS, TRIALS, Signal, StepLength
@@ -144,7 +144,7 @@ class TestFailureIsNotFatal:
             raise RuntimeError("database went away")
 
         monkeypatch.setattr(
-            "scidb.provenance_query.variable_content_fingerprint", boom
+            "scidb.provenance.query.variable_content_fingerprint", boom
         )
         assert source._content_fingerprint("StepLength") is None
         assert source._variable_frame("StepLength") is not None

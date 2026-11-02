@@ -17,24 +17,24 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import numpy as np
 import pytest
-from scidb.variable import BaseVariable
+from scidb.model.variable import BaseVariable
 from scimatlab.bridge import (
-    MatlabLineageFcn,
+    MatlabFunctionIdentity,
     get_surrogate_class,
     register_matlab_variable,
     split_flat_to_lists,
 )
 
 # ---------------------------------------------------------------------------
-# MatlabLineageFcn proxy tests
+# MatlabFunctionIdentity proxy tests
 # ---------------------------------------------------------------------------
 
 
-class TestMatlabLineageFcn:
-    """Verify MatlabLineageFcn is a usable node-state handle."""
+class TestMatlabFunctionIdentity:
+    """Verify MatlabFunctionIdentity is a usable node-state handle."""
 
     def test_has_required_attributes(self):
-        t = MatlabLineageFcn("abc123", "my_function")
+        t = MatlabFunctionIdentity("abc123", "my_function")
         assert hasattr(t, "hash")
         assert hasattr(t, "fcn")
         assert hasattr(t, "unpack_output")
@@ -42,25 +42,25 @@ class TestMatlabLineageFcn:
         assert t.unpack_output is False
 
     def test_hash_is_deterministic(self):
-        t1 = MatlabLineageFcn("abc123", "f")
-        t2 = MatlabLineageFcn("abc123", "f")
+        t1 = MatlabFunctionIdentity("abc123", "f")
+        t2 = MatlabFunctionIdentity("abc123", "f")
         assert t1.hash == t2.hash
         assert len(t1.hash) == 64  # Full SHA-256 hex
 
     def test_hash_changes_with_source(self):
-        t1 = MatlabLineageFcn("abc123", "f")
-        t2 = MatlabLineageFcn("def456", "f")
+        t1 = MatlabFunctionIdentity("abc123", "f")
+        t2 = MatlabFunctionIdentity("def456", "f")
         assert t1.hash != t2.hash
 
     def test_hash_changes_with_unpack_output(self):
-        t1 = MatlabLineageFcn("abc123", "f", unpack_output=False)
-        t2 = MatlabLineageFcn("abc123", "f", unpack_output=True)
+        t1 = MatlabFunctionIdentity("abc123", "f", unpack_output=False)
+        t2 = MatlabFunctionIdentity("abc123", "f", unpack_output=True)
         assert t1.hash != t2.hash
 
     def test_hash_recipe(self):
         """The handle hash is sha256(f"{source_hash}-{unpack_output}")."""
         source_hash = sha256(b"test_source").hexdigest()
-        t = MatlabLineageFcn(source_hash, "f", unpack_output=False)
+        t = MatlabFunctionIdentity(source_hash, "f", unpack_output=False)
         expected = sha256(f"{source_hash}-False".encode()).hexdigest()
         assert t.hash == expected
 
@@ -71,7 +71,7 @@ class TestMatlabLineageFcn:
         read side needs that value unchanged to compare against it.
         """
         source_hash = sha256(b"function y = f(x)\ny = x;\n").hexdigest()
-        t = MatlabLineageFcn(source_hash, "f")
+        t = MatlabFunctionIdentity(source_hash, "f")
 
         assert t.source_hash == source_hash
         assert t.hash != source_hash  # derived, deliberately different
@@ -85,25 +85,25 @@ class TestMatlabLineageFcn:
         inputs predicted invocation ids that could never be present and the
         node was permanently red.
         """
-        from scidb.foreach_config import _compute_fn_hash, function_hash_for
+        from scidb.run.foreach_config import _compute_fn_hash, function_hash_for
 
         source_hash = sha256(b"function y = f(x)\ny = x;\n").hexdigest()
-        t = MatlabLineageFcn(source_hash, "f")
+        t = MatlabFunctionIdentity(source_hash, "f")
 
         assert function_hash_for(t) == source_hash
         assert function_hash_for(t) != _compute_fn_hash(t.fcn)
 
     def test_editing_the_m_file_changes_the_read_side_hash(self):
-        from scidb.foreach_config import function_hash_for
+        from scidb.run.foreach_config import function_hash_for
 
-        before = MatlabLineageFcn(sha256(b"y = x;").hexdigest(), "f")
-        after = MatlabLineageFcn(sha256(b"y = x * 2;").hexdigest(), "f")
+        before = MatlabFunctionIdentity(sha256(b"y = x;").hexdigest(), "f")
+        after = MatlabFunctionIdentity(sha256(b"y = x * 2;").hexdigest(), "f")
 
         assert function_hash_for(before) != function_hash_for(after)
 
     def test_plain_python_functions_are_unaffected(self):
         """No source_hash attribute → the AST recipe, exactly as before."""
-        from scidb.foreach_config import _compute_fn_hash, function_hash_for
+        from scidb.run.foreach_config import _compute_fn_hash, function_hash_for
 
         def some_fn(x):
             return x + 1

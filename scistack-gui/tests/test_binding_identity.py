@@ -206,7 +206,7 @@ class TestWiringIdIncludesPathInputs:
         assert a == b
 
     def test_no_path_inputs_omits_the_term(self):
-        """Omitted rather than hashed as {} — mirrors scidb's to_version_keys
+        """Omitted rather than hashed as {} — mirrors scidb's to_config_keys
         dropping __inputs entirely — so only PathInput-fed nodes are affected
         by this term."""
         assert wiring_id("f", {"x": "V"}, {"Out"}, {}) == wiring_id(
@@ -253,7 +253,7 @@ class TestComputeCallIdIncludesPathInputs:
         PathInput under its parameter name, keyed by the PathInput's own
         to_key() (ForEachConfig._serialize_inputs)."""
         from scidb import BaseVariable
-        from scidb.foreach_config import ForEachConfig
+        from scidb.run.foreach_config import ForEachConfig
 
         target = {
             "bindings": {
@@ -338,11 +338,11 @@ class TestComputeCallIdIncludesPathInputs:
 
 
 class TestWiringIdIsScidbs:
-    """`wiring_id` is scidb's recipe (`scidb.provenance.compute_wiring_id`),
+    """`wiring_id` is scidb's recipe (`scidb.provenance.graph.compute_wiring_id`),
     imported — not a GUI prediction (Stage 1 of the 2026-09-20 plan)."""
 
     def test_the_gui_hashes_with_scidbs_recipe(self):
-        from scidb.provenance import compute_wiring_id
+        from scidb.provenance.graph import compute_wiring_id
 
         from scistack_gui.domain.graph_builder import wiring_id
 

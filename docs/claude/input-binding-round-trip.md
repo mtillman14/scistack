@@ -245,8 +245,8 @@ function receives, made loud, with both facts on the line.
 | selection normalizer, one spelling for logs/chips | `scistack-gui/scistack_gui/domain/column_selection.py` |
 | bindings → live objects for a run | `scistack_gui/services/execution_service.py::build_run_inputs` |
 | history → bindings | `execution_service.py::_attach_db_path_inputs`, `_attach_column_selections` |
-| inputs → selectors | `scidb/src/scidb/provenance_save.py::compute_input_selectors` |
-| edges written per row | `scidb/src/scidb/foreach.py::_save_results` (`__graph_var_bindings`) |
+| inputs → selectors | `scidb/src/scidb/provenance/save.py::compute_input_selectors` |
+| edges written per row | `scidb/src/scidb/run/foreach.py::_save_results` (`__graph_var_bindings`) |
 | edges read back | `provenance_save.py::_variable_bindings`, `provenance_query.function_variant_configs` |
 | the caching comparison of the same facts | `foreach.py::_build_skip_hook` ("selector for {param} changed") |
 | related docs | `column-selection.md`, `for-columns-iteration.md`, `function-input-resolution.md`, `free-code-glue-nodes.md`, `placement-qualified-ids.md`, `coarse-level-inputs.md` |

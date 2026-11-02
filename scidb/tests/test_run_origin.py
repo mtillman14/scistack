@@ -1,7 +1,7 @@
 """A run's origin — which surfaces it read — recorded on `_run`.
 
 Rule 3 of docs/claude/intent-and-fact.md. The origin is ambient
-(`scidb.intent.run_origin` / `set_ambient_origin` / `$SCIDB_RUN_ORIGIN`),
+(`scidb.provenance.intent.run_origin` / `set_ambient_origin` / `$SCIDB_RUN_ORIGIN`),
 because it is decided by whoever starts a run and read by the one place that
 records it, several call chains apart.
 """
@@ -13,7 +13,7 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb.intent import (
+from scidb.provenance.intent import (
     ORIGIN_ENV_VAR,
     ORIGIN_GUI,
     ORIGIN_SCRIPT,
@@ -22,7 +22,7 @@ from scidb.intent import (
     run_origin,
     set_ambient_origin,
 )
-from scidb.provenance_query import latest_runs
+from scidb.provenance.query import latest_runs
 
 
 @pytest.fixture
@@ -56,7 +56,7 @@ class TestAmbient:
         set_ambient_origin(ORIGIN_SCRIPT)
         # The context variable, when unset, defers to the environment; an
         # explicit ambient label beats it. Simulate "unset" by clearing.
-        from scidb import intent as _intent
+        from scidb.provenance import intent as _intent
 
         _intent._current_origin.set(None)
         monkeypatch.setenv(ORIGIN_ENV_VAR, ORIGIN_GUI)
@@ -69,7 +69,7 @@ class TestAmbient:
             set_ambient_origin("somewhere")
 
     def test_an_unknown_env_value_falls_back_to_script(self, monkeypatch):
-        from scidb import intent as _intent
+        from scidb.provenance import intent as _intent
 
         _intent._current_origin.set(None)
         monkeypatch.setenv(ORIGIN_ENV_VAR, "elsewhere")
@@ -114,7 +114,7 @@ class TestRecordedSchemaKeys:
     """The `schema_location` aspect's fact: where a function last ran."""
 
     def test_the_iterated_keys_are_read_off_the_records(self, db):
-        from scidb.provenance_query import recorded_schema_keys
+        from scidb.provenance.query import recorded_schema_keys
 
         class Src2(BaseVariable):
             pass
@@ -136,7 +136,7 @@ class TestRecordedSchemaKeys:
     def test_a_coarser_run_reports_its_own_level(self, db):
         """A run iterating subject only saves subject-level records, and that
         — not every key the dataset has — is what a re-run should default to."""
-        from scidb.provenance_query import recorded_schema_keys
+        from scidb.provenance.query import recorded_schema_keys
 
         class Src3(BaseVariable):
             pass
@@ -153,7 +153,7 @@ class TestRecordedSchemaKeys:
         assert recorded_schema_keys(db._duck, "pick3", ["subject", "trial"]) == ["subject"]
 
     def test_no_history_is_none(self, db):
-        from scidb.provenance_query import recorded_schema_keys
+        from scidb.provenance.query import recorded_schema_keys
 
         assert recorded_schema_keys(db._duck, "never", ["subject", "trial"]) is None
 
@@ -163,7 +163,7 @@ class TestInputSchemaKeys:
     for inputs at different levels."""
 
     def test_variable_levels_are_read_off_records(self, db):
-        from scidb.provenance_query import variable_schema_keys
+        from scidb.provenance.query import variable_schema_keys
 
         class Coarse(BaseVariable):
             pass
@@ -177,7 +177,7 @@ class TestInputSchemaKeys:
         assert levels == {"Coarse": ["subject"], "Fine": ["subject", "trial"]}
 
     def test_the_finest_level_is_the_union_in_dataset_order(self):
-        from scidb.provenance_query import finest_schema_keys
+        from scidb.provenance.query import finest_schema_keys
 
         keys = ["subject", "session", "trial"]
         assert finest_schema_keys([["subject", "trial"], ["subject", "session"]], keys) == keys
@@ -190,7 +190,7 @@ class TestDatasetLevel:
     must never be mistaken for "no information" (which is `None`)."""
 
     def test_a_variable_saved_with_no_keys_is_dataset_level(self, db):
-        from scidb.provenance_query import variable_schema_keys
+        from scidb.provenance.query import variable_schema_keys
 
         class Whole(BaseVariable):
             pass
@@ -199,7 +199,7 @@ class TestDatasetLevel:
         assert variable_schema_keys(db._duck, ["Whole"], ["subject", "trial"]) == {"Whole": []}
 
     def test_a_dataset_level_run_records_an_empty_level(self, db):
-        from scidb.provenance_query import recorded_schema_keys
+        from scidb.provenance.query import recorded_schema_keys
 
         class Whole2(BaseVariable):
             pass

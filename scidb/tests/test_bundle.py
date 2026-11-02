@@ -44,7 +44,7 @@ class FakeSection:
 @pytest.fixture
 def project(tmp_path):
     from scidb import configure_database
-    from scidb.database import clear_current_database
+    from scidb.store.database import clear_current_database
 
     _scifor.set_schema([])
     root = tmp_path / "gait"
@@ -429,7 +429,7 @@ def _double(x):
 
 def _with_history(project):
     """A saved input, a run, and an exclusion in the source project."""
-    from scidb.exclusions import exclude_schema
+    from scidb.store.exclusions import exclude_schema
 
     root, db = project
     BundleRaw.save(np.array([1.0, 2.0]), subject="S01", session="1")
@@ -445,7 +445,7 @@ def _count(db, table):
 
 def test_table_copy_keeps_rows_keys_and_views(tmp_path):
     from scidb import configure_database
-    from scidb.database import clear_current_database
+    from scidb.store.database import clear_current_database
 
     a = configure_database(tmp_path / "a.duckdb", SCHEMA)
     a._duck.execute("CREATE TABLE t_copy (k VARCHAR PRIMARY KEY, v DOUBLE[])")
@@ -626,7 +626,7 @@ def test_no_dataset_rules_means_no_warning(project, tmp_path):
 
 def report_db(report):
     """The target database the default opener left current."""
-    from scidb.database import get_database
+    from scidb.store.database import get_database
 
     return get_database()
 

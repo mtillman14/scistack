@@ -52,7 +52,7 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
     end
 
     % Call Python's configure_database. schema_key_types is recorded in the
-    % database, which owns it (scidb.schema_types): omitting it uses what is
+    % database, which owns it (scidb.store.schema_types): omitting it uses what is
     % stored, and a different stored type raises SchemaKeyTypeConflictError.
     db = py.scidb.configure_database( ...
         char(dataset_db_path), ...
@@ -60,7 +60,7 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
         pyargs('schema_key_types', scifor.key_types_to_py(options.schema_key_types)));
 
     % Verify the Python environment is working
-    py_db = py.scidb.database.get_database();
+    py_db = py.scidb.store.database.get_database();
     if isempty(py_db)
         error('scidb:ConfigFailed', ...
             'configure_database() did not produce a valid DatabaseManager.');
@@ -71,10 +71,10 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
     scifor.set_schema(dataset_schema_keys);
 
     % The journal (scistack.log) and the debug log (scistack-debug.log)
-    % beside the database. scidb.log.attach_log_file owns both names, so
+    % beside the database. scidb.model.log.attach_log_file owns both names, so
     % MATLAB and Python always write the same files.
-    py.scidb.log.attach_log_file(dataset_db_path);
+    py.scidb.model.log.attach_log_file(dataset_db_path);
 
-    scidb.Log.info('configure_database (MATLAB host): %s', dataset_db_path);
+    scifor.Log.info('configure_database (MATLAB host): %s', dataset_db_path);
 
 end

@@ -153,7 +153,8 @@ introduces, so both implementations say what they did:
 
 ## Parity case table
 
-The cases are **not written here**. They live in
+The cases are **not written here**. The JSON file is their one owner (this
+document owns what they mean). They live in
 `docs/claude/location-filter-cases.json`, and every implementation loads that
 one file:
 
@@ -161,7 +162,7 @@ one file:
 |---|---|---|
 | `scifor/tests/test_locations.py` | the JSON | `combo` |
 | `scistackplot/tests/test_location_filter.py` | the JSON | `row`, twice — once against `reduce._location_mask`, once against the pandas `codegen` emits |
-| `locationSelection.test.ts` (Stage 4) | the JSON | `tree` |
+| `locationSelection.test.ts` | the JSON | `tree` |
 
 A table written out three times is a table that drifts: the suite whose author
 forgot to copy a case keeps passing, which is the exact failure the parity test

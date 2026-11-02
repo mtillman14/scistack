@@ -682,13 +682,13 @@ def test_every_gui_table_is_classified():
     """Every GUI table says how it travels (canvas / global / history), in
     its owner module's PORTABILITY, so a new table cannot be silently left
     out of export (mirrors test_history.test_every_gui_table_is_tracked)."""
-    from scidb import tables
-    from scidb.intent import INTENT_TABLE
+    from scidb.store import tables
+    from scidb.provenance.intent import INTENT_TABLE
 
     from scistack_gui.services.canvas_snapshot import PORTABILITY_CLASSES, table_portability
 
     classified = table_portability()  # imports every GUI store, so each has declared
-    # The GUI's tables are the ones it declares in scidb.tables (the one
+    # The GUI's tables are the ones it declares in scidb.store.tables (the one
     # registry), plus `_intent`, which scidb declares and the GUI writes.
     created = {d.name for d in tables.declared() if d.owner == "scistack_gui"} | {INTENT_TABLE}
     assert len(created) > 10, "the registry lists no GUI tables — the GUI stores were not imported"

@@ -52,7 +52,7 @@ The core GUI concept is a **git-style branching pipeline map**:
 
 ### 2. Constants not tracked in version keys → branch collision ✓ IMPLEMENTED
 
-`ForEachConfig._get_direct_constants()` now extracts scalar constants and `to_version_keys()` serializes them under `__constants`. Two `for_each` calls that differ only in a constant now produce records with **distinct version keys**, so both are stored and discoverable.
+`ForEachConfig._get_direct_constants()` now extracts scalar constants and `to_config_keys()` serializes them under `__constants`. Two `for_each` calls that differ only in a constant now produce records with **distinct version keys**, so both are stored and discoverable.
 
 Additionally, a `branch_params` column in `_record_metadata` accumulates all branch-discriminating parameters (both scalar constants, namespaced by function, and dynamic input discriminators) for each record. This enables the load API described under item 3.
 
@@ -79,7 +79,7 @@ Additionally, a `branch_params` column in `_record_metadata` accumulates all bra
 GUI but flips for goal-directed execution and a GUI pipeline *builder* —
 both need the graph before first execution. A prescriptive registry now
 exists: `db.pipeline(name)` + deferred `for_each` registration
-(`scidb/pipeline.py`; see [endpoint-first-pipelines.md](endpoint-first-pipelines.md)).
+(`scidb/run/pipeline.py`; see [endpoint-first-pipelines.md](endpoint-first-pipelines.md)).
 The original reasoning, kept for the pure-visualization case:
 
 A registry would only be necessary for a no-code pipeline builder that reconstructs and replays pipelines without executing Python. If the GUI is a visualization and control layer over an existing Python project, this is unnecessary:

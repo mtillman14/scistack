@@ -21,7 +21,7 @@ for_each(fn, inputs={"x": MyVar[["col_a", "col_b"]]}, outputs=[Result], subject=
 for_each(fn, inputs={"x": Fixed(MyVar["col_a"], session="BL")}, outputs=[Result], subject=[1])
 ```
 
-`MyVar["col"]` uses `BaseVariable.__class_getitem__` (`scidb/src/scidb/variable.py`)
+`MyVar["col"]` uses `BaseVariable.__class_getitem__` (`scidb/src/scidb/model/variable.py`)
 to construct a `ColumnSelection`.
 
 **As of the scifor/scidb modifier-class unification**
@@ -30,9 +30,9 @@ container (`.data`, `.columns`, `.iterate`, `.excl_columns`, `to_key()`,
 `__hash__`, `__name__`) is defined once in
 `scifor/src/scifor/column_selection.py` and wraps either a DataFrame
 (standalone scifor use) or a variable type (scidb use) — the same class
-either way. `scidb/src/scidb/column_selection.py` is a thin **subclass**
+either way. `scidb/src/scidb/model/column_selection.py` is a thin **subclass**
 adding only the DB-only surface with no scifor equivalent: comparison
-operators (`MyVar["col"] == value` → `scidb.filters.ColumnFilter`),
+operators (`MyVar["col"] == value` → `scidb.model.filters.ColumnFilter`),
 `.load()`, `.to_csv()`. `MyVar["col"]` always constructs scidb's subclass;
 scidb's internal isinstance checks use the scifor **base** class so a bare
 `scifor.ColumnSelection(some_dataframe, [...])` passed directly into
@@ -66,7 +66,7 @@ directly on the instance in the `selected_columns` property
 ## How It Works (Python)
 
 1. `MyVar["col"]` creates `ColumnSelection(MyVar, ["col"])` (scidb's subclass).
-2. `_is_loadable()` in `scidb/src/scidb/foreach.py` recognizes `ColumnSelection`
+2. `_is_loadable()` in `scidb/src/scidb/run/foreach.py` recognizes `ColumnSelection`
    (checked against the scifor base class) as loadable.
 3. `_load_input` dispatches on what's inside: a plain DataFrame passes
    through unchanged (as-is, no loading needed); something with `.load()`
@@ -88,10 +88,10 @@ directly on the instance in the `selected_columns` property
    serializes a non-empty `selected_columns` (or `iterate`) into a
    `{"kind": "column_selection", "type_name": ..., "columns": ..., "iterate":
    ...}` spec, which Python's `_reconstruct_input_for_keys` rebuilds into a
-   real `scidb.column_selection.ColumnSelection` — from there it's the same
+   real `scidb.model.column_selection.ColumnSelection` — from there it's the same
    Python machinery described above.
 3. For direct calls that don't go through `for_each` (e.g. `.to_csv()`),
-   MATLAB constructs `py.scidb.column_selection.ColumnSelection(py_class,
+   MATLAB constructs `py.scidb.model.column_selection.ColumnSelection(py_class,
    py.list(cols))` directly via the bridge and calls its instance methods —
    MATLAB never re-implements the extraction itself.
 
@@ -182,7 +182,7 @@ spelling of `inputs={"df": MyVar.for_columns(), "col": ColName()}`.
 
 **A separate concept, so a separate owner.** A column selection restricts a
 VARIABLE input; ColName is a different *source* for an argument. It is the
-`colname` intent aspect (`scidb.intent.ASPECT_COLNAME`, shape owned by
+`colname` intent aspect (`scidb.provenance.intent.ASPECT_COLNAME`, shape owned by
 `normalize_colname_inputs`), one statement per parameter on the call site,
 blob key `colNameInputs: [param, ...]`:
 
@@ -264,9 +264,9 @@ column-selected node. `tests/test_column_selection_binding.py` pins both.
 | File | Role |
 |------|------|
 | `scifor/src/scifor/column_selection.py` | `ColumnSelection` base (container, `to_key()`, `__hash__`, `__name__`) |
-| `scidb/src/scidb/column_selection.py` | scidb subclass: comparison operators, `.load()`, `.to_csv()` |
-| `scidb/src/scidb/variable.py` | `BaseVariable.__class_getitem__`, `.for_columns()` |
-| `scidb/src/scidb/foreach.py` | `_is_loadable`, `_load_input`, `_resolve_per_combo_loader` |
+| `scidb/src/scidb/model/column_selection.py` | scidb subclass: comparison operators, `.load()`, `.to_csv()` |
+| `scidb/src/scidb/model/variable.py` | `BaseVariable.__class_getitem__`, `.for_columns()` |
+| `scidb/src/scidb/run/foreach.py` | `_is_loadable`, `_load_input`, `_resolve_per_combo_loader` |
 | `scifor/src/scifor/foreach.py` | Per-combo filter/extract logic (shared, package-agnostic) |
 | `scimatlab/src/scimatlab/matlab/+scidb/BaseVariable.m` | `selected_columns` / `iterate` properties |
 | `scimatlab/src/scimatlab/matlab/+scidb/for_each.m` | `describe_input_for_python` — bridges `selected_columns` to Python |

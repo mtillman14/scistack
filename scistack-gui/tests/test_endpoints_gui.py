@@ -13,7 +13,7 @@ import pytest
 import scistack_gui.runtime.db as _gui_db
 from conftest import FilteredSignal, RawSignal, bandpass_filter
 from fastapi.testclient import TestClient
-from scidb.database import _local
+from scidb.store.database import _local
 from scistack_gui.project import registry as _registry
 from scistack_gui.app import create_app
 

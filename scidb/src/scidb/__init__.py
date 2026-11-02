@@ -49,12 +49,12 @@ from scifor import (
     set_schema,
 )
 
-from .across_variants import AcrossVariants
-from .artifact_stamp import read_artifact_stamp, stamp_artifact
-from .column_selection import ColumnSelection
-from .parameter import Parameter
-from .database import configure_database, get_database
-from .project.discover import (
+from scidb.model.across_variants import AcrossVariants
+from scidb.artifact_stamp import read_artifact_stamp, stamp_artifact
+from scidb.model.column_selection import ColumnSelection
+from scidb.model.parameter import Parameter
+from scidb.store.database import configure_database, get_database
+from scidb.project.discover import (
     DiscoveryResult,
     ModuleError,
     ModuleExports,
@@ -63,9 +63,9 @@ from .project.discover import (
     scan_package,
     scan_project,
 )
-from .roles import FUNCTION_ROLES, function_role
-from .combine import ON_DUPLICATE_VALUES, validate_on_duplicate
-from .exceptions import (
+from scidb.model.roles import FUNCTION_ROLES, function_role
+from scidb.run.combine import ON_DUPLICATE_VALUES, validate_on_duplicate
+from scidb.model.exceptions import (
     AmbiguousParamError,
     AmbiguousVersionError,
     ColumnSetChangedError,
@@ -83,13 +83,13 @@ from .exceptions import (
     SchemaKeyTypeError,
     SciStackError,
 )
-from .exclusions import exclude_schema, include_schema, list_exclusions
-from .filters import raw_sql, schema_key
+from scidb.store.exclusions import exclude_schema, include_schema, list_exclusions
+from scidb.model.filters import raw_sql, schema_key
 
 # Batch execution (Layer 2 — DB-backed, no lineage)
-from .foreach import for_each
-from .foreach_config import ForEachConfig
-from .glue import (
+from scidb.run.foreach import for_each
+from scidb.run.foreach_config import ForEachConfig
+from scidb.run.glue import (
     GlueChainOrderError,
     GlueError,
     GlueLanguageMismatchError,
@@ -98,26 +98,26 @@ from .glue import (
     GlueSpec,
     GlueUnsupportedInputError,
 )
-from .lineage_save import save
-from .log import Log
-from .merge import Merge
-from .pipeline import Pipeline, PipelineBinding, Step, active_pipeline, scistack
-from .rename import RenameReport, rename_functions
-from .state import (
+from scidb.model.lineage_save import save
+from scidb.model.log import Log
+from scidb.model.merge import Merge
+from scidb.run.pipeline import Pipeline, PipelineBinding, Step, active_pipeline, scistack
+from scidb.store.rename import RenameReport, rename_functions
+from scidb.provenance.state import (
     check_combo_state,
     check_multiple_nodes_state,
     check_node_state,
     check_pathinput_node_state,
 )
-from .variable import BaseVariable
-from .variant import Variant, branch_param
+from scidb.model.variable import BaseVariable
+from scidb.model.variant import Variant, branch_param
 
 # Imported last, and as a module rather than its contents: `entities` builds
 # BaseVariable subclasses and Parameters, so it must come after both exist,
 # and `from scidb import entities; entities.WINDOW` needs the module object
 # itself -- attribute access on it is what resolves a declared name.
-from .project import entities  # noqa: E402
-from . import intent  # noqa: E402
+from scidb.project import entities  # noqa: E402
+from scidb.provenance import intent  # noqa: E402
 
 # The release tag owns the version (hatch-vcs writes it into the installed
 # metadata); "0.0.0" marks a source tree that was never installed.
@@ -135,41 +135,41 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb",
     "scidb.inspect",
     # Internals consumers import today; remove an entry once nothing needs it
-    "scidb.across_variants",
-    "scidb.bindings",
-    "scidb.clear_data",
-    "scidb.column_selection",
-    "scidb.combine",
-    "scidb.database",
-    "scidb.exceptions",
-    "scidb.exclusions",
-    "scidb.external_loop",
-    "scidb.filters",
-    "scidb.foreach",
-    "scidb.foreach_config",
-    "scidb.glue",
+    "scidb.model.across_variants",
+    "scidb.run.bindings",
+    "scidb.store.clear_data",
+    "scidb.model.column_selection",
+    "scidb.run.combine",
+    "scidb.store.database",
+    "scidb.model.exceptions",
+    "scidb.store.exclusions",
+    "scidb.run.external_loop",
+    "scidb.model.filters",
+    "scidb.run.foreach",
+    "scidb.run.foreach_config",
+    "scidb.run.glue",
     "scidb.inspect.cli",
     "scidb.inspect.mutate",
     "scidb.inspect.variant_cards",
-    "scidb.intent",
-    "scidb.inventory",
-    "scidb.locations",
-    "scidb.log",
-    "scidb.parameter",
-    "scidb.per_combo",
-    "scidb.pipeline",
-    "scidb.provenance",
-    "scidb.provenance_query",
-    "scidb.roles",
+    "scidb.provenance.intent",
+    "scidb.provenance.inventory",
+    "scidb.provenance.locations",
+    "scidb.model.log",
+    "scidb.model.parameter",
+    "scidb.run.per_combo",
+    "scidb.run.pipeline",
+    "scidb.provenance.graph",
+    "scidb.provenance.query",
+    "scidb.model.roles",
     "scidb.run_markers",
-    "scidb.schema_level",
-    "scidb.state",
-    "scidb.tables",
-    "scidb.variable",
-    "scidb.variant",
-    "scidb.variant_pins",
-    "scidb.versioned_store",
-    "scidb.wirings",
+    "scidb.run.schema_level",
+    "scidb.provenance.state",
+    "scidb.store.tables",
+    "scidb.model.variable",
+    "scidb.model.variant",
+    "scidb.store.variant_pins",
+    "scidb.store.versioned_store",
+    "scidb.provenance.wirings",
     # Project runtime, model-bound (the model-free half is scifor.project)
     "scidb.project.bundle",
     "scidb.project.discover",

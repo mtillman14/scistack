@@ -337,7 +337,7 @@ def _render(resolved: ResolvedPlot):
             lap("difference_bars")
             # Last, on the final layout: what the preview sizes its margins
             # and cell gaps from. Hidden y titles are named next to it, so a
-            # gap that did not shrink can be explained from scidb.log (the
+            # gap that did not shrink can be explained from scidb.model.log (the
             # widest title left in a gap still sets it).
             hidden = [
                 f"{p.title} ({p.grid_row},{p.grid_col})"

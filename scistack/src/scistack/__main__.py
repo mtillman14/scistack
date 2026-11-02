@@ -146,7 +146,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
 def _create_database(db_path: Path, schema_keys: list[str]) -> None:
     """Create the project's DuckDB file, leaving no configured database
     behind (this is a tool, not the user's pipeline)."""
-    from scidb.database import clear_current_database
+    from scidb.store.database import clear_current_database
 
     from scidb import configure_database
 

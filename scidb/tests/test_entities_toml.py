@@ -26,8 +26,8 @@ import pytest
 
 from scidb import entities
 from scifor.project import entities_file
-from scidb.parameter import Parameter
-from scidb.variable import BaseVariable
+from scidb.model.parameter import Parameter
+from scidb.model.variable import BaseVariable
 from scifor import EachOf, PathInput
 
 

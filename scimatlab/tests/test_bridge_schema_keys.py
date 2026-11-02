@@ -3,7 +3,7 @@
 These verify that ``scimatlab.bridge.for_each_prepare(schema_keys=...,
 schema_filter=...)`` reuses the same ``scifor.expand_schema_keys()`` +
 ``SchemaKeyInFilter`` machinery as the pure-Python ``scidb.for_each`` path
-(scidb/src/scidb/foreach.py), rather than duplicating DB-querying logic in
+(scidb/src/scidb/run/foreach.py), rather than duplicating DB-querying logic in
 the bridge. Runs entirely in Python without MATLAB — same pattern as
 test_bridge_skip_computed.py / test_bridge_where.py.
 """
@@ -21,7 +21,7 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 import numpy as np
 import pandas as pd
 import pytest
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 from scimatlab.bridge import for_each_prepare, register_matlab_variable
 
 SCHEMA = ["subject", "session", "trial"]

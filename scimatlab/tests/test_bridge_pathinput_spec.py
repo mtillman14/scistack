@@ -15,11 +15,11 @@ _root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import pytest
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 from scifor.pathinput import PathInput
 from scimatlab import bridge
+from scimatlab.bridge.wire import _reconstruct_input_for_keys
 from scimatlab.bridge import (
-    _reconstruct_input_for_keys,
     for_each_describe_loaded_input,
     for_each_prepare,
     register_matlab_variable,

@@ -448,7 +448,7 @@ def test_a_quiet_timer_says_nothing_until_it_is_done(tmp_path):
 
 
 def test_positional_matlab_call_shapes(tmp_path):
-    """MATLAB calls py.scidb.log.Log.info(msg) and set_level(level[, sink])."""
+    """MATLAB calls py.scidb.model.log.Log.info(msg) and set_level(level[, sink])."""
     log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     Log.info("plain positional")

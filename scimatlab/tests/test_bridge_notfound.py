@@ -24,8 +24,8 @@ sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import pytest
-from scidb.database import _local
-from scidb.exceptions import NotFoundError
+from scidb.store.database import _local
+from scidb.model.exceptions import NotFoundError
 from scimatlab.bridge import load_and_extract, register_matlab_variable
 
 from scidb import configure_database

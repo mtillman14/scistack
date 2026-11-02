@@ -1,0 +1,5420 @@
+"""Database connection and management using SciDuck backend."""
+
+import importlib.util
+import json
+import os
+import threading
+import time
+import warnings
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import pandas as pd
+
+from scicanonicalhash import canonical_hash, frame_path_counts, generate_record_id
+from sciduckdb import (
+    bulk_df_to_storage_rows,
+    column_type_change,
+    dataframe_to_storage_rows,
+    infer_data_columns,
+    record_schema_mismatch,
+    restore_types,
+    storage_to_python,
+    storage_to_python_column,
+    unflatten_dict,
+    value_to_storage_row,
+    convert_column_to_row_list,
+    is_row_list_meta,
+    row_list_change,
+    row_list_meta,
+    count_null_list_elements,
+    is_datetime_meta,
+    merge_tz_columns,
+    storage_column_names,
+    storage_column_types,
+    stored_tz_companions,
+    tz_companions,
+    user_column_types,
+)
+
+from scidb.provenance import query as provenance_query
+from scidb.store import schema_types
+from scidb.run.bindings import variant_signature
+from scidb.model.exceptions import (
+    AmbiguousVersionError,
+    DatabaseNotConfiguredError,
+    NotFoundError,
+    NotRegisteredError,
+)
+from scidb.model.log import Log
+from scidb.model.parameter import parameter_node_name
+from scidb.store.record_store import BatchRows, RecordStore
+from scidb.store.sciduck import SciDuck
+from scidb.store.schema_values import (
+    canonical_numeric_value,
+    from_schema_str,
+    schema_str,
+)
+from scidb.model.variable import BaseVariable
+
+if TYPE_CHECKING:
+    from scidb.run.pipeline import Pipeline
+
+
+def _pyarrow_available() -> bool:
+    """Is the optional PyArrow fast path for batch inserts installed?"""
+    return importlib.util.find_spec("pyarrow") is not None
+
+
+def _log_first_content_hash(type_name: str, data_val: Any, content_hash: str) -> None:
+    """Diagnostic (first record of a batch only): what is being content-hashed.
+
+    A DataFrame whose ``to_numpy()`` dtype is ``object`` (mixed-type columns)
+    was the source of non-deterministic hashes — object arrays hash Python
+    pointer bytes — so this line makes the culprit (object dtype, column
+    order, index) observable.
+    """
+    try:
+        if isinstance(data_val, pd.DataFrame):
+            Log.debug(
+                f"[content_hash] {type_name}: first-record input is "
+                f"DataFrame columns={list(data_val.columns)} "
+                f"dtypes={[str(d) for d in data_val.dtypes]} "
+                f"to_numpy_dtype={data_val.to_numpy().dtype} "
+                f"index_head={list(data_val.index)[:5]} -> "
+                f"content_hash={content_hash}"
+            )
+        else:
+            Log.debug(
+                f"[content_hash] {type_name}: first-record input "
+                f"type={type(data_val).__name__} -> "
+                f"content_hash={content_hash}"
+            )
+    except Exception as exc:  # a diagnostic must never fail a save
+        Log.debug(f"[content_hash] {type_name}: diagnostic skipped: {exc}")
+
+
+def _describe_data(val):
+    """Return a short type/shape string for logging data values."""
+    if isinstance(val, pd.DataFrame):
+        return f"DataFrame {val.shape[0]}x{val.shape[1]} cols={list(val.columns)}"
+    if isinstance(val, np.ndarray):
+        return f"ndarray shape={val.shape} dtype={val.dtype}"
+    if isinstance(val, (list, tuple)):
+        return f"{type(val).__name__} len={len(val)}"
+    if isinstance(val, dict):
+        return f"dict keys={list(val.keys())}"
+    return type(val).__name__
+
+
+def _match_branch_param(branch_params_dict: dict, key: str, value: Any) -> bool:
+    """Match a single branch_params filter key/value against a branch_params dict.
+
+    Which KEY a filter name refers to is ``variant.match_bare_name`` (exact
+    first, then bare-suffix, ambiguity is an error). This adds only the VALUE
+    rule: a list/tuple means membership (``stored in value``).
+    """
+    from scidb.model.variant import match_bare_name
+
+    matched = match_bare_name(branch_params_dict, key)
+    if matched is None:
+        return False
+    stored = branch_params_dict[matched]
+    if isinstance(value, (list, tuple)):
+        return stored in value
+    return stored == value
+
+
+def _filter_records_by_branch_params(df, branch_params_filter: dict | None, duck=None):
+    """Filter a records DataFrame by a branch_params_filter dict.
+
+    Shared by both load paths (``_find_record``'s no-``where`` fast path and the
+    ``where=`` path that routes through ``_load_with_where``) so ``where=`` and
+    branch_param pinning (``Variant``) can coexist.
+
+    Variant branch params are **derived from the bipartite graph** (the
+    accumulated upstream constants, §6) — including direct-save non-schema kwargs,
+    which P0 anchors as constants on a synthetic save invocation (namespaced
+    ``__save__.<kwarg>``). For each filter key/value a record is kept when its
+    derived branch params match (exact or bare-suffix via
+    :func:`_match_branch_param`). Raises ``AmbiguousParamError`` if a bare key
+    matches multiple namespaced branch params.
+    """
+    if not branch_params_filter or len(df) == 0:
+        return df
+    from scidb.model.variant import VariantAxes
+
+    # The three variant dimensions. They travel in one dict on purpose
+    # (docs/claude/variant-space.md §2) but resolve against different graph
+    # reads: constants accumulate through `branch_params_batch`, code versions
+    # and run options through `chain_batch`. `VariantAxes` is the ONE parse.
+    axes = VariantAxes.of(branch_params_filter)
+
+    if axes.code and duck is not None:
+        df = _filter_records_by_code_version(df, axes.code, duck)
+        if len(df) == 0:
+            return df
+    if axes.run and duck is not None:
+        df = _filter_records_by_run_options(df, axes.run, duck)
+        if len(df) == 0:
+            return df
+
+    param_filter = axes.constants
+    if not param_filter:
+        return df
+
+    # Derive every candidate record's branch params from the graph in one batched
+    # closure build (instead of a per-record ancestry walk).
+    bp_cache: dict = (
+        provenance_query.branch_params_batch(duck, df["record_id"].tolist())
+        if duck is not None
+        else {}
+    )
+
+    def _bp_for(record_id):
+        return bp_cache.get(record_id, {})
+
+    for key, value in param_filter.items():
+
+        def _match_row(row, k=key, v=value):
+            return _match_branch_param(_bp_for(row["record_id"]), k, v)
+
+        df = df[df.apply(_match_row, axis=1)]
+    return df
+
+
+def _pin_values(value) -> tuple[set, object]:
+    """``(wanted_set, wanted)`` for a code/run pin value.
+
+    A list/tuple/set means "any of these" — the membership rule branch params
+    have always had (`_match_branch_param`), and the form the Plot Studio
+    location picker sends: it hands scidb the row's selection as it holds it,
+    with list values (``{"__run__.fn": ["distribute=true"]}``). ``str()`` of
+    that is the literal text ``"['distribute=true']"``, which matched nothing
+    (2026-09-14). ``wanted`` is the scalar when there is exactly one, else the
+    sorted list — for messages only.
+    """
+    if isinstance(value, (list, tuple, set, frozenset)):
+        wanted_set = {str(v) for v in value}
+    else:
+        wanted_set = {str(value)}
+    wanted = sorted(wanted_set)[0] if len(wanted_set) == 1 else sorted(wanted_set)
+    return wanted_set, wanted
+
+
+def _filter_records_by_code_version(df, code_filter: dict, duck):
+    """Keep only records whose producing *code* matches ``code_filter``.
+
+    The code half of :func:`_filter_records_by_branch_params`. Keys are either
+    ``code_filter`` is the CODE axis as ``VariantAxes`` parsed it —
+    ``{fn_name: value}``, with ``None`` for the bare (resolve-the-function)
+    form. Values are a per-function ordinal (``"v1"``) or ``"latest"``.
+
+    Two resolutions, deliberately different:
+
+    * a named ordinal compares against
+      :func:`~scidb.provenance.query.code_version_ordinals`, which is scoped per
+      *function* so ``v2`` names the same code everywhere;
+    * ``"latest"`` uses ``variant_identity_batch``'s ``is_latest``, which is
+      chain-wide and resolved per schema *location* — so a location never re-run
+      under the newest code keeps its own newest record instead of dropping out
+      of the run entirely.
+    """
+    from scidb.model.exceptions import AmbiguousParamError
+    from scidb.model.variant import LATEST_VERSION
+
+    record_ids = df["record_id"].tolist()
+    pinned_fns: set = set()
+    chain_wide = False
+
+    for fn_name, value in code_filter.items():
+        wanted_set, wanted = _pin_values(value)
+
+        if wanted_set == {LATEST_VERSION}:
+            # Chain-wide: pins every versioned dimension at once, so it is never
+            # a partial pin and needs no per-function resolution.
+            chain_wide = True
+            ident = provenance_query.variant_identity_batch(duck, record_ids)
+            keep = {
+                rid
+                for rid in record_ids
+                # `is_latest` is None for a raw record — nothing upstream ever
+                # versioned it, so it cannot be stale. Keep it.
+                if (ident.get(rid) or {}).get("is_latest") is not False
+            }
+            df = df[df["record_id"].isin(keep)]
+            record_ids = df["record_id"].tolist()
+            continue
+
+        chains = provenance_query.code_versions_batch(duck, record_ids)
+        present_fns = {name for chain in chains.values() for name in chain}
+        ordinals = provenance_query.code_version_ordinals(duck, present_fns)
+
+        if fn_name is None:
+            # Bare pin: unambiguous only when exactly one upstream function has
+            # more than one version. Mirrors `_match_branch_param`'s bare-name
+            # rule, and fails the same way rather than picking arbitrarily.
+            candidates = sorted(ordinals)
+            if len(candidates) > 1:
+                raise AmbiguousParamError(
+                    f"code_version={wanted!r} is ambiguous: more than one "
+                    f"upstream function has multiple versions ({candidates}). "
+                    f'Name one with fn=, e.g. Variant(X, fn="{candidates[0]}", '
+                    f"code_version={wanted!r})."
+                )
+            if not candidates:
+                # Nothing upstream is versioned, so the pin selects everything
+                # rather than nothing — a project where no function was ever
+                # edited must not silently produce an empty run.
+                Log.debug(
+                    f"code_version={wanted!r}: no upstream function has >1 "
+                    f"version; pin is a no-op"
+                )
+                continue
+            fn_name = candidates[0]
+
+        # A named function that is nowhere upstream is a typo, not an empty
+        # result set. Every failure below says what IS available, because the
+        # alternative — silently keeping nothing — produces a run that reports
+        # success having computed no records at all.
+        if fn_name not in present_fns:
+            raise ValueError(
+                f"code_version pin names {fn_name!r}, which is not upstream of "
+                f"these records. Available: {sorted(present_fns) or 'none'}."
+            )
+
+        by_hash = ordinals.get(fn_name)
+        if not by_hash:
+            # Single-version function: `code_version_ordinals` omits it, but its
+            # one version IS v1. Treat that as a satisfied pin rather than
+            # matching nothing — the qualified path used to empty the run here.
+            if "v1" not in wanted_set:
+                raise ValueError(
+                    f"{fn_name!r} has only one recorded version, so "
+                    f"code_version={wanted!r} matches nothing. Use 'v1', or "
+                    f"'latest'."
+                )
+            pinned_fns.add(fn_name)
+            continue
+
+        available = sorted(set(by_hash.values()))
+        if not wanted_set & set(available):
+            raise ValueError(
+                f"{fn_name!r} has versions {available}; code_version="
+                f"{wanted!r} matches nothing."
+            )
+
+        pinned_fns.add(fn_name)
+        keep = {
+            rid
+            for rid in record_ids
+            if by_hash.get(chains.get(rid, {}).get(fn_name)) in wanted_set
+        }
+        df = df[df["record_id"].isin(keep)]
+        record_ids = df["record_id"].tolist()
+
+    # A pin naming ONE function when several upstream functions are versioned is
+    # a *partial* pin: the unnamed dimensions stay free and still fan out. That
+    # is legitimate ("every variant where bandpass=v1"), but it is not what
+    # "pin the variant" sounds like, and a silently doubled record count is the
+    # same failure class this whole feature exists to prevent. Say so.
+    if record_ids and not chain_wide:
+        chains = provenance_query.code_versions_batch(duck, record_ids)
+        versioned = set(
+            provenance_query.code_version_ordinals(
+                duck, {name for chain in chains.values() for name in chain}
+            )
+        )
+        unpinned = sorted(versioned - pinned_fns)
+        if unpinned:
+            Log.warn(
+                f"code_version pin is PARTIAL: {sorted(pinned_fns)} pinned, but "
+                f"{unpinned} still have multiple versions among the surviving "
+                f"records, so those dimensions remain free and will fan out. "
+                f"Pin them too, or use code_version='latest' to pin the whole "
+                f"chain."
+            )
+
+    return df
+
+
+def _filter_records_by_run_options(df, run_filter: dict, duck):
+    """Keep only records whose upstream *run options* match ``run_filter``.
+
+    The run-options third of :func:`_filter_records_by_branch_params`.
+    ``run_filter`` is the RUN axis as ``VariantAxes`` parsed it —
+    ``{fn_name: value}``, ``None`` for the bare form. Values are a
+    :func:`~scidb.provenance.query.run_options_label` string
+    (``"distribute=true"``) or ``"latest"``.
+
+    ``"latest"`` is the same chain-wide, per-location ``is_latest`` that
+    ``code_version="latest"`` uses — there is ONE notion of "current at this
+    location", and since 2026-09-14 it already accounts for run options, so
+    the two spellings deliberately share a resolution rather than growing a
+    second one.
+
+    A label pin compares exactly, per named function, against
+    :func:`~scidb.provenance.query.run_options_batch`. Bare pins resolve against
+    :func:`~scidb.provenance.query.run_option_axes` the way bare code pins
+    resolve against ``code_version_ordinals``: exactly one function that ran
+    more than one way is unambiguous, several raise, none is a no-op.
+    """
+    from scidb.model.exceptions import AmbiguousParamError
+    from scidb.model.variant import LATEST_VERSION
+
+    record_ids = df["record_id"].tolist()
+
+    for fn_name, value in run_filter.items():
+        wanted_set, wanted = _pin_values(value)  # list = membership, see there
+
+        if wanted_set == {LATEST_VERSION}:
+            ident = provenance_query.variant_identity_batch(duck, record_ids)
+            keep = {
+                rid
+                for rid in record_ids
+                if (ident.get(rid) or {}).get("is_latest") is not False
+            }
+            df = df[df["record_id"].isin(keep)]
+            record_ids = df["record_id"].tolist()
+            continue
+
+        runs = provenance_query.run_options_batch(duck, record_ids)
+        present_fns = {name for chain in runs.values() for name in chain}
+        axes = provenance_query.run_option_axes(duck, present_fns)
+
+        if fn_name is None:
+            candidates = sorted(axes)
+            if len(candidates) > 1:
+                raise AmbiguousParamError(
+                    f"run_options={wanted!r} is ambiguous: more than one "
+                    f"upstream function has run under several option sets "
+                    f"({candidates}). Name one with fn=, e.g. "
+                    f'Variant(X, fn="{candidates[0]}", run_options={wanted!r}).'
+                )
+            if not candidates:
+                Log.debug(
+                    f"run_options={wanted!r}: no upstream function ran under >1 "
+                    f"run-option set; pin is a no-op"
+                )
+                continue
+            fn_name = candidates[0]
+
+        if fn_name not in present_fns:
+            raise ValueError(
+                f"run_options pin names {fn_name!r}, which is not upstream of "
+                f"these records. Available: {sorted(present_fns) or 'none'}."
+            )
+        available = sorted(
+            {chain.get(fn_name) for chain in runs.values() if fn_name in chain}
+            - {None}
+        )
+        # Exact, except a pin naming no level matches any (`run_options_label_matches`,
+        # the one rule): "distribute=true" matches at any level.
+        match = provenance_query.run_options_label_matches
+
+        def _wanted(label) -> bool:
+            return any(match(pin, label) for pin in wanted_set)
+
+        if not any(_wanted(label) for label in available):
+            raise ValueError(
+                f"{fn_name!r} ran under {available}; run_options={wanted!r} "
+                f"matches nothing."
+            )
+        keep = {
+            rid
+            for rid in record_ids
+            if _wanted(runs.get(rid, {}).get(fn_name))
+        }
+        n_before = len(record_ids)
+        df = df[df["record_id"].isin(keep)]
+        record_ids = df["record_id"].tolist()
+        # INFO, not DEBUG: an empty result here is indistinguishable downstream
+        # from "no records at all" (for_each just runs zero combos), so the
+        # count and the labels it chose between have to be in the log.
+        Log.info(
+            f"run_options pin {fn_name}={wanted!r}: kept {len(record_ids)}/{n_before} "
+            f"record(s); labels present for {fn_name}: {available}"
+        )
+
+    return df
+
+
+# Global database instance (thread-local for safety)
+_local = threading.local()
+
+
+def _get_leaf_paths(d, prefix=()):
+    """Recursively get all leaf paths in a nested dict.
+
+    A leaf is any value that is NOT a dict.  Returns a list of tuples,
+    each tuple being the sequence of keys from root to leaf.
+    """
+    paths = []
+    for key, value in d.items():
+        current = prefix + (key,)
+        if isinstance(value, dict):
+            paths.extend(_get_leaf_paths(value, current))
+        else:
+            paths.append(current)
+    return paths
+
+
+def _get_nested_value(d, path):
+    """Get a value from a nested dict following *path* (tuple of keys)."""
+    current = d
+    for key in path:
+        current = current[key]
+    return current
+
+
+def _set_nested_value(d, path, value):
+    """Set a value in a nested dict by *path*, creating intermediate dicts."""
+    for key in path[:-1]:
+        d = d.setdefault(key, {})
+    d[path[-1]] = value
+
+
+def _sample_values(frames: list, col, limit: int = 3) -> list:
+    """Up to ``limit`` distinct non-empty values of column ``col`` across
+    ``frames`` — the examples a ColumnTypeChangedError shows."""
+    seen: list = []
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame) or col not in frame.columns:
+            continue
+        for v in frame[col].dropna().tolist():
+            if v not in seen:
+                seen.append(v)
+                if len(seen) >= limit:
+                    return seen
+    return seen
+
+
+def _value_fingerprint(value) -> str:
+    """Comparable stand-in for one column's value in _differing_columns."""
+    if isinstance(value, pd.Series):
+        return repr(value.tolist())
+    try:
+        return canonical_hash(value)
+    except Exception:  # noqa: BLE001 — only used to name differing columns
+        return repr(value)
+
+
+def _differing_columns(values: list) -> list[str]:
+    """Data columns whose values differ across ``values`` (the records that
+    collide at one location). DataFrames compare per column, dicts per key;
+    any other kind has no columns to name, so the list is empty."""
+    if all(isinstance(v, pd.DataFrame) for v in values):
+        columns = list(dict.fromkeys(c for v in values for c in v.columns))
+        cells = lambda v, c: v[c].reset_index(drop=True) if c in v.columns else None  # noqa: E731
+    elif all(isinstance(v, dict) for v in values):
+        columns = list(dict.fromkeys(k for v in values for k in v))
+        cells = lambda v, c: v.get(c)  # noqa: E731
+    else:
+        return []
+    return [
+        str(c)
+        for c in columns
+        if len({_value_fingerprint(cells(v, c)) for v in values}) > 1
+    ]
+
+
+def _data_column_names(value) -> set[str]:
+    """The column names a saved value carries (DataFrame columns, dict keys);
+    empty for any other kind."""
+    if isinstance(value, pd.DataFrame):
+        return {str(c) for c in value.columns}
+    if isinstance(value, dict):
+        return {str(k) for k in value}
+    return set()
+
+
+def _colliding_locations(
+    data_items: "list[tuple[Any, dict]]", schema_keys: "list[str]"
+) -> "tuple[list[dict], dict]":
+    """THE rule for "two records at one location" within one save batch
+    (docs/claude/duplicate-location-vs-stale.md).
+
+    Items collide when they share the schema location AND every other
+    metadata key (version keys, ``__invocation_id``, ``__branch_params``) but
+    their data differ. Different ``__branch_params`` are separate variants and
+    byte-identical data merge into one record, so neither collides. Items
+    with no schema key are not checked. Only items that share a group are
+    hashed, so a batch without collisions costs one pass over its metadata.
+
+    A ``__branch_params`` entry that names one of the item's OWN data columns
+    is ignored: for_each's flatten mode copies every scalar data column of a
+    spread row into its branch params (foreach.py, "dynamic discriminators"),
+    so two differing CSV rows for one subject would otherwise always look like
+    two variants and never collide. A variant is told apart by its inputs and
+    constants, never by the value it stores.
+
+    Returns ``(collisions, stats)``: ``collisions`` as DuplicateLocationError
+    takes them, ``stats`` the counts for the save_batch DEBUG line.
+    """
+    groups: dict[tuple, list[int]] = {}
+    no_location = 0
+    for i, (data, meta) in enumerate(data_items):
+        location = tuple(
+            (k, schema_str(meta[k])) for k in schema_keys if k in meta
+        )
+        if not location:
+            no_location += 1
+            continue
+        rest_meta = {k: v for k, v in meta.items() if k not in schema_keys}
+        bp = rest_meta.get("__branch_params")
+        own = _data_column_names(data)
+        if isinstance(bp, dict) and own:
+            rest_meta["__branch_params"] = {
+                k: v for k, v in bp.items() if str(k) not in own
+            }
+        rest = json.dumps(
+            rest_meta,
+            sort_keys=True,
+            default=str,
+        )
+        groups.setdefault((location, rest), []).append(i)
+
+    collisions: list[dict] = []
+    for (location, _rest), idx in groups.items():
+        if len(idx) < 2:
+            continue
+        distinct: dict[str, Any] = {}
+        for i in idx:
+            distinct.setdefault(canonical_hash(data_items[i][0]), data_items[i][0])
+        if len(distinct) < 2:
+            continue
+        collisions.append(
+            {
+                "location": dict(location),
+                "count": len(distinct),
+                "differing_columns": _differing_columns(list(distinct.values())),
+            }
+        )
+    stats = {
+        "items": len(data_items),
+        "locations": len({loc for loc, _ in groups}),
+        "variant_groups": len(groups),
+        "no_location": no_location,
+    }
+    return collisions, stats
+
+
+def _flatten_struct_columns(df):
+    """Flatten DataFrame columns that contain nested dicts into dot-separated columns.
+
+    For each object-dtype column whose first non-null value is a ``dict``,
+    recursively extract all leaf paths and create new columns named
+    ``"original_col.key1.key2.leaf"``.
+
+    **Leaf handling:**
+    - Scalar leaves (int, float, str, bool, None) are stored directly.
+    - Array leaves (numpy arrays, Python lists) are serialised to a JSON
+      string so every cell in the resulting column is a simple scalar type
+      that DuckDB can ingest.
+
+    Returns
+    -------
+    (flattened_df, struct_columns_info)
+        *struct_columns_info* maps each flattened original column name to
+        metadata needed by ``_unflatten_struct_columns`` on load.
+        Empty dict when no struct columns are found.
+    """
+    if len(df) == 0:
+        return df, {}
+
+    struct_info = {}
+    cols_to_drop = []
+    new_col_data = {}  # ordered: col_name -> list of values
+
+    for col_idx, col in enumerate(df.columns):
+        if df[col].dtype != object:
+            continue
+
+        # Find first non-null value
+        first_val = None
+        for v in df[col]:
+            if v is not None and not (isinstance(v, float) and np.isnan(v)):
+                first_val = v
+                break
+
+        if not isinstance(first_val, dict):
+            continue
+
+        # This column contains nested dicts — flatten it
+        leaf_paths = _get_leaf_paths(first_val)
+        if not leaf_paths:
+            continue
+
+        array_leaves = {}  # dot_path -> {"dtype": ..., "shape": ...}
+
+        for path in leaf_paths:
+            dot_path = ".".join(path)
+            flat_col_name = f"{col}.{dot_path}"
+            values = []
+            for row_val in df[col]:
+                if row_val is None or (
+                    isinstance(row_val, float) and np.isnan(row_val)
+                ):
+                    values.append(None)
+                    continue
+                try:
+                    leaf = _get_nested_value(row_val, path)
+                except (KeyError, TypeError):
+                    values.append(None)
+                    continue
+
+                if isinstance(leaf, np.ndarray):
+                    # Track array metadata from first occurrence
+                    if dot_path not in array_leaves:
+                        array_leaves[dot_path] = {
+                            "dtype": str(leaf.dtype),
+                            "shape": list(leaf.shape),
+                        }
+                    values.append(json.dumps(leaf.tolist()))
+                elif isinstance(leaf, list):
+                    if dot_path not in array_leaves:
+                        array_leaves[dot_path] = {"dtype": "list"}
+                    values.append(json.dumps(leaf))
+                else:
+                    values.append(leaf)
+
+            new_col_data[flat_col_name] = values
+
+        cols_to_drop.append(col)
+        struct_info[col] = {
+            "paths": [list(p) for p in leaf_paths],
+            "array_leaves": array_leaves,
+            "col_position": col_idx,
+        }
+
+    if not cols_to_drop:
+        return df, {}
+
+    result = df.drop(columns=cols_to_drop)
+    for name, values in new_col_data.items():
+        result[name] = values
+
+    return result, struct_info
+
+
+def _unflatten_struct_columns(df, struct_info):
+    """Reconstruct nested-dict columns from dot-separated flat columns.
+
+    Inverse of ``_flatten_struct_columns``.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with dot-separated columns produced by ``_flatten_struct_columns``.
+    struct_info : dict
+        The metadata dict that was stored alongside the data.
+
+    Returns
+    -------
+    pd.DataFrame with the original nested-dict object columns restored.
+    """
+    if not struct_info:
+        return df
+
+    result = df.copy()
+
+    # Process struct columns in reverse position order so inserts don't shift indices
+    for col_name, info in sorted(
+        ((k, v) for k, v in struct_info.items() if k != "__list_columns__"),
+        key=lambda x: x[1]["col_position"],
+        reverse=True,
+    ):
+        paths = [tuple(p) for p in info["paths"]]
+        array_leaves = info.get("array_leaves", {})
+        col_position = info["col_position"]
+
+        # Collect all flat column names belonging to this struct
+        flat_col_names = [f"{col_name}.{'.'.join(p)}" for p in paths]
+        existing_flat = [c for c in flat_col_names if c in result.columns]
+
+        if not existing_flat:
+            continue
+
+        # Build nested dicts row by row
+        nested_values = []
+        n_rows = len(result)
+
+        for row_idx in range(n_rows):
+            row_dict = {}
+            for path, flat_col in zip(paths, flat_col_names, strict=False):
+                if flat_col not in result.columns:
+                    continue
+                val = result[flat_col].iloc[row_idx]
+                dot_path = ".".join(path)
+
+                # Restore arrays from JSON
+                if dot_path in array_leaves and val is not None:
+                    arr_meta = array_leaves[dot_path]
+                    if isinstance(val, str):
+                        parsed = json.loads(val)
+                    else:
+                        parsed = val
+                    if arr_meta.get("dtype") == "list":
+                        val = parsed
+                    else:
+                        val = np.array(parsed, dtype=np.dtype(arr_meta["dtype"]))
+                        expected_shape = arr_meta.get("shape")
+                        if (
+                            expected_shape
+                            and list(val.shape) != expected_shape
+                            and val.size == np.prod(expected_shape)
+                        ):
+                            val = val.reshape(expected_shape)
+
+                _set_nested_value(row_dict, path, val)
+            nested_values.append(row_dict)
+
+        # Drop the flat columns
+        result = result.drop(columns=existing_flat)
+
+        # Insert the reconstituted column at its original position
+        # (clamped to current column count since other columns may have shifted)
+        insert_pos = min(col_position, len(result.columns))
+        result.insert(insert_pos, col_name, nested_values)
+
+    # Convert list-valued cells to numpy arrays for MATLAB interop.
+    # DuckDB DOUBLE[] columns come back as Python lists; old VARCHAR saves
+    # come back as string representations like "[1.0, 2.0, 3.0]".
+    for col in result.columns:
+        if result[col].dtype != object:
+            continue
+        first_val = next(
+            (
+                v
+                for v in result[col]
+                if v is not None and not (isinstance(v, float) and np.isnan(v))
+            ),
+            None,
+        )
+        if first_val is None:
+            continue
+
+        if isinstance(first_val, (list, np.ndarray)):
+            # DuckDB DOUBLE[] returns as lists or numpy arrays — ensure numpy
+            result[col] = result[col].apply(
+                lambda v: np.array(v, dtype=float) if isinstance(v, list) else v
+            )
+        elif isinstance(first_val, str) and first_val.strip().startswith("["):
+            # Backwards compat: parse VARCHAR strings from old saves
+            def _parse_list_str(v):
+                if not isinstance(v, str):
+                    return v
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return np.array(parsed, dtype=float)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+                return v
+
+            result[col] = result[col].apply(_parse_list_str)
+
+    return result
+
+
+def configure_database(
+    dataset_db_path: str | Path,
+    dataset_schema_keys: list[str],
+    schema_key_types: "dict[str, str] | None" = None,
+) -> "DatabaseManager":
+    """
+    Configure the global database connection.
+
+    Single-call setup that creates the database, auto-registers all known
+    BaseVariable subclasses, and enables lineage caching.
+
+    Args:
+        dataset_db_path: Path to the DuckDB database file
+        dataset_schema_keys: List of metadata keys that define the dataset schema
+            (e.g., ["subject", "visit", "channel"]). These keys identify the
+            logical location of data and are used for the folder hierarchy.
+            Any metadata keys not in this list are treated as version parameters
+            that distinguish different computational versions of the same data.
+        schema_key_types: Optional per-key type declaration, e.g.
+            ``{"trial": "numeric"}``.  ``"numeric"`` keys canonicalize every
+            spelling of the same number to one identity ("001", 1, and 1.0
+            all store as "1"; zero-padded filenames still resolve via
+            PathInput's numeric fallback).  ``"string"`` keys are verbatim —
+            spelling IS identity, and PathInput matches them exactly only.
+            Undeclared keys behave as strings until a PathInput resolution
+            has to bridge spellings (e.g. trial=1 matching "6MWT-001.mat"),
+            which raises SchemaKeyTypeError asking for a declaration.
+
+            The DATABASE owns the declaration (``scidb.store.schema_types``); this
+            argument writes to it. A key with no stored type gets this one,
+            the same stored type is a no-op, and a different stored type
+            raises ``SchemaKeyTypeConflictError``. Omitting the argument
+            uses whatever is stored. Change a stored type with
+            ``db.set_schema_key_type`` or the GUI's Numeric checkbox.
+
+    Returns:
+        The DatabaseManager instance
+    """
+    # Set log file path next to the database file (a no-op if a caller —
+    # e.g. the GUI server, which attaches before its startup discovery pass
+    # — already pointed the sink here).
+    #
+    # Attached BEFORE the connection is built, not after: a MATLAB host calls
+    # this as its first scidb entry point, so anything logged during
+    # construction — including the phase timings below and any DDL failure —
+    # would otherwise land on stderr only and be missing from the very log
+    # file being set up.
+    from scidb.model.log import Log, attach_log_file
+
+    attach_log_file(dataset_db_path)
+
+    # Phase timing: a MATLAB run pays this cost on every invocation (the
+    # script must close the database at the end to hand the write lock back
+    # to the GUI, so nothing is reused), and it was measured at ~170ms
+    # against a database on a network share. The breakdown says whether that
+    # is the DuckDB open itself or the idempotent DDL (scidb.store.tables)
+    # round trips re-run each time.
+    with Log.timer(
+        "configure_database", extra=Path(dataset_db_path).name
+    ) as timer:
+        with timer.phase("database_manager"):
+            db = DatabaseManager(
+                dataset_db_path,
+                dataset_schema_keys=dataset_schema_keys,
+                dataset_schema_key_types=schema_key_types,
+            )
+        with timer.phase("register_types"):
+            for cls in BaseVariable._all_subclasses.values():
+                db.register(cls)
+        db.set_current_db()
+
+        # Propagate schema keys to scifor so that DataFrame detection and
+        # distribute=True work identically in DB-backed and standalone modes.
+        with timer.phase("scifor_set_schema"):
+            try:
+                import scifor
+
+                scifor.set_schema(list(dataset_schema_keys))
+            except ImportError:
+                pass
+
+    # Run-context header: makes every log file self-describing (which
+    # versions produced it) when debugging an archived log or a colleague's.
+    Log.info(
+        f"configure_database: path={dataset_db_path}, "
+        f"schema_keys={list(dataset_schema_keys)}, "
+        f"schema_key_types={schema_types.describe(db.dataset_schema_key_types)} "
+        f"(stored in the database) | {_run_context()}"
+    )
+
+    return db
+
+
+def _run_context() -> str:
+    """One-line host/version fingerprint for the log header.
+
+    Includes the interpreter PATH (``sys.executable``), not only its version:
+    the GUI runs under VS Code's selected interpreter and ``scidb`` in a
+    terminal under whichever one installed it, and "which environment wrote
+    this line" is the question when one works and the other is missing
+    packages (2026-10-01).
+    """
+    import os
+    import platform
+    import sys
+    from importlib import metadata
+
+    versions = []
+    for pkg in ("scidb", "scifor", "sciduckdb", "scicanonicalhash", "scistacklog"):
+        try:
+            versions.append(f"{pkg}={metadata.version(pkg)}")
+        except Exception:
+            pass
+    return (
+        f"python={platform.python_version()} ({sys.executable}), pid={os.getpid()}"
+    ) + (
+        ", " + ", ".join(versions) if versions else ""
+    )
+
+
+def get_database() -> "DatabaseManager":
+    """
+    Get the global database connection.
+
+    Returns:
+        The DatabaseManager instance
+
+    Raises:
+        DatabaseNotConfiguredError: If configure_database() hasn't been called
+    """
+    db = getattr(_local, "database", None)
+    if db is None:
+        raise DatabaseNotConfiguredError(
+            "Database not configured. Call configure_database(path) first."
+        )
+    if getattr(db, "_closed", False):
+        db.reopen()
+    return db
+
+
+def set_current_database(db) -> None:
+    """Install *db* as the thread's current database — what ``get_database``
+    returns. Public so a caller that supplies its own database object does not
+    reach into ``_local``."""
+    _local.database = db
+
+
+def clear_current_database() -> None:
+    """Forget the thread's current database, if any (a tool that configured
+    one only to scaffold a project leaves none behind)."""
+    if hasattr(_local, "database"):
+        delattr(_local, "database")
+
+
+def database_or_none(db: "DatabaseManager | None" = None) -> "DatabaseManager | None":
+    """*db* if given, else the configured database, else ``None`` — for a
+    caller that can proceed without one.
+
+    THE one spelling of "which database does this call use". Only "nothing
+    configured" (:class:`DatabaseNotConfiguredError`) reads as ``None``; any
+    other failure — a reopen that cannot get the file lock, above all —
+    propagates. ``foreach`` used to spell this as ``try: get_database()
+    except Exception: pass`` in a dozen places, so a locked database looked
+    exactly like no database and a run silently carried on with different
+    schema keys (cleanup-audit F5).
+    """
+    if db is not None:
+        return db
+    try:
+        return get_database()
+    except DatabaseNotConfiguredError:
+        return None
+
+
+def dataset_schema_keys_of(db: "DatabaseManager | None" = None) -> list[str]:
+    """The dataset's schema keys, from the database (the one holder).
+
+    ``scifor.set_schema`` keeps a COPY for scifor's standalone mode; scidb
+    reads the database, never that copy back (cleanup-audit F14). ``[]``
+    when no database is configured.
+    """
+    active = database_or_none(db)
+    return list(getattr(active, "dataset_schema_keys", None) or [])
+
+
+def aggregate_pipeline_variants(variants: list[dict]) -> dict:
+    """Pipeline variant rows (``list_pipeline_variants``) -> the aggregated
+    shape :meth:`DatabaseManager.get_aggregated_variants` returns — PURE, no
+    database. THE one conversion: the GUI used to keep a second, test-only copy
+    of it (``graph_builder.aggregate_variants``), so its tests exercised a path
+    production never ran (cleanup-audit F19).
+
+    ``variables`` carries ``record_count: None``; the method fills the real
+    counts. ``path_inputs`` is keyed by the PathInput SPEC (its JSON), each
+    entry ``{"template", "root_folder", "functions": [(fkey, param_name), ...],
+    "declared_names": {(fkey, param_name): declared PathInput name}}`` — the
+    latter only where the run recorded one (cleanup-audit F38).
+    """
+    from collections import defaultdict
+
+    from scidb.provenance.graph import parse_path_input_spec as _parse_path_input
+
+    # Initialize result structure
+    functions = defaultdict(
+        lambda: {
+            "input_params": {},
+            "outputs": [],
+            "constants": defaultdict(list),
+            "parameter_names": {},
+            # {argument: declared PathInput name} where the run recorded it
+            # (cleanup-audit F38) — what `provenance.call_site_wiring_ids`
+            # groups steps by.
+            "path_input_names": {},
+            # {argument: [glue node names]} the recorded runs passed the
+            # argument through — either head (a variable or a Parameter).
+            # Glue names are part of the call_id, so every variant of one
+            # call site agrees. The canvas uses it to draw a glued history
+            # input through its glue node, not straight into the function.
+            "glue_chains": {},
+            # Step names (for_each(step=...)) of the runs behind this call
+            # site, oldest first. Reported, never identity.
+            "steps": [],
+            "variant_count": 0,
+            "variants": [],
+        }
+    )
+    all_var_types = set()
+    const_counts = defaultdict(lambda: defaultdict(int))
+    const_fns = defaultdict(set)
+    fn_constants_map = defaultdict(set)
+    path_inputs = {}
+
+    # Aggregate variants by (fn_name, call_id)
+    for v in variants:
+        fn = v["function_name"]
+        cid = v.get("call_id", "")
+        if not cid:
+            continue  # Skip legacy variants without call_id
+
+        fkey = (fn, cid)
+        out = v["output_type"]
+        inputs = v["input_types"]
+        constants = v["constants"]
+        count = v["record_count"]
+
+        # Track variable types
+        all_var_types.add(out)
+
+        # Process inputs
+        for param_name, type_val in inputs.items():
+            # Check if it's a PathInput
+            pi = _parse_path_input(type_val)
+            if pi is not None:
+                # Keyed by the SPEC, never the parameter name: two
+                # functions whose PathInput parameters share a name
+                # (`filePath`) but not a template used to be filed under
+                # the FIRST one's template (cleanup-audit F37).
+                spec_key = json.dumps(pi, sort_keys=True, default=str)
+                entry = path_inputs.setdefault(
+                    spec_key, {**pi, "functions": set(), "declared_names": {}}
+                )
+                entry["functions"].add((fkey, param_name))
+                recorded = (v.get("path_input_names") or {}).get(param_name)
+                if recorded:
+                    entry["declared_names"][(fkey, param_name)] = recorded
+                    functions[fkey]["path_input_names"][param_name] = recorded
+            else:
+                all_var_types.add(type_val)
+                functions[fkey]["input_params"][param_name] = type_val
+
+        for param_name, names in (v.get("glue_chains") or {}).items():
+            functions[fkey]["glue_chains"][param_name] = list(names)
+        for step in v.get("steps") or ():
+            if step not in functions[fkey]["steps"]:
+                functions[fkey]["steps"].append(step)
+
+        # Track outputs
+        if out not in functions[fkey]["outputs"]:
+            functions[fkey]["outputs"].append(out)
+
+        # Track constants. A constant's NODE is the declared Parameter its
+        # run recorded, else the argument it filled (cleanup-audit B1):
+        # the value lives under the argument in `functions[...]` (that is
+        # what the function receives), and under the node everywhere a
+        # Parameter is named (`constants`, `parameter_names`).
+        recorded_names = v.get("parameter_names") or {}
+        for k, val in constants.items():
+            node = parameter_node_name(k, recorded_names)
+            seen = functions[fkey]["parameter_names"].get(k)
+            if seen is not None and seen != node:
+                Log.warn(
+                    f"aggregate_pipeline_variants: {fn} call {cid} argument "
+                    f"{k!r} was fed by Parameter {seen!r} in one run and "
+                    f"{node!r} in another; showing {seen!r}"
+                )
+                node = seen
+            functions[fkey]["parameter_names"][k] = node
+            const_counts[node][str(val)] += count
+            const_fns[node].add(fkey)
+            fn_constants_map[fkey].add(k)
+            if val not in functions[fkey]["constants"][k]:
+                functions[fkey]["constants"][k].append(val)
+
+        # Track variant. output_num is carried through because for a
+        # MULTI-OUTPUT fn it tells the GUI which slot of the signature
+        # produced this output, and for MATLAB fns that is the sole
+        # DB-derived source for the fn->output edge (see api/pipeline.py
+        # matlab_param_to_class). Dropping it silently forced that edge to
+        # depend on a hand-drawn manual edge instead.
+        #
+        # It is NOT variant identity (2026-09-22): a distributed run
+        # numbers its slices, so keying on it made one call N variants.
+        # Each output_type is now its own group and this is that type's
+        # own (lowest) slot — which is what the GUI wanted all along.
+        # A single-output fn must ignore it entirely; see
+        # _matlab_param_to_class_from_db for the two cases where the
+        # number is not a signature position at all.
+        functions[fkey]["variants"].append(
+            {
+                "input_types": inputs,
+                "constants": constants,
+                "parameter_names": dict(recorded_names),
+                "output_type": out,
+                "output_num": v.get("output_num"),
+                "record_count": count,
+            }
+        )
+        functions[fkey]["variant_count"] += 1
+
+    # Record counts need the database; the caller fills them in.
+    variables = {t: {"record_count": None} for t in sorted(all_var_types)}
+
+    # Build constants result
+    constants_result = {}
+    for const_name in const_counts:
+        values = [
+            {"value": val, "record_count": cnt}
+            for val, cnt in sorted(const_counts[const_name].items())
+        ]
+        constants_result[const_name] = {
+            "values": values,
+            "functions": list(const_fns[const_name]),
+        }
+
+    # Convert functions dict to regular dict (remove defaultdict)
+    functions_result = {}
+    for fkey, data in functions.items():
+        functions_result[fkey] = {
+            "input_params": dict(data["input_params"]),
+            "outputs": data["outputs"],
+            "constants": {k: list(v) for k, v in data["constants"].items()},
+            "parameter_names": dict(data["parameter_names"]),
+            "path_input_names": dict(data["path_input_names"]),
+            "glue_chains": {p: list(n) for p, n in data["glue_chains"].items()},
+            "steps": list(data["steps"]),
+            "variant_count": data["variant_count"],
+            "variants": data["variants"],
+        }
+
+    # Functions as a sorted list of (fkey, param_name) pairs.
+    for entry in path_inputs.values():
+        entry["functions"] = sorted(entry["functions"])
+
+    return {
+        "functions": functions_result,
+        "variables": variables,
+        "constants": constants_result,
+        "path_inputs": path_inputs,
+    }
+
+
+def call_site_path_input_names(path_inputs: dict, fallback=None) -> dict:
+    """``{fkey: {param: PathInput name}}`` for the ``path_inputs`` of
+    :func:`aggregate_pipeline_variants` — the PathInput term of a step's wiring.
+
+    The name a run RECORDED (``declared_names``) always wins: it is the fact.
+    Only a run recorded without one — before 2026-09-24, or a hand-written
+    script whose PathInput was never declared — takes ``fallback(entry)``,
+    the caller's best guess (the GUI matches its registry; the CLI has none and
+    uses the spec, the default here). The spec is template AND root folder —
+    the key the GUI's registry match uses too: one template under two roots
+    names two different sets of files.
+    """
+    fallback = fallback or (
+        lambda entry: "spec:"
+        + json.dumps(
+            {"template": entry.get("template"), "root_folder": entry.get("root_folder")},
+            sort_keys=True,
+            default=str,
+        )
+    )
+    out: dict = {}
+    for entry in path_inputs.values():
+        recorded = entry.get("declared_names") or {}
+        guess = None
+        for fkey, param in entry.get("functions") or ():
+            fkey = tuple(fkey)
+            name = recorded.get((fkey, param))
+            if name is None:
+                if guess is None:
+                    guess = fallback(entry)
+                name = guess
+            out.setdefault(fkey, {})[param] = name
+    return out
+
+
+def call_site_wiring_ids(aggregate: dict, fallback=None) -> dict:
+    """``{fkey: wiring_id}`` — which recorded call sites form ONE pipeline
+    step, for the output of :func:`aggregate_pipeline_variants`.
+
+    THE step grouping (cleanup-audit F38). ``scidb graph`` groups through
+    this function; the GUI groups by the same recipe
+    (``provenance.compute_wiring_id``) over the same facts, its PathInput
+    names coming from :func:`call_site_path_input_names`' rule (recorded
+    first). Constants are not in the key: a sweep is one step with several
+    variants.
+    """
+    from scidb.provenance.graph import split_call_site_outputs
+
+    # No `_node_wiring` claims here (they are GUI-side), so the owner answers
+    # one wiring per call site — the union of its outputs, as before.
+    names = call_site_path_input_names(aggregate.get("path_inputs") or {}, fallback)
+    return {
+        tuple(fkey): split_call_site_outputs(
+            fkey[0],
+            data.get("input_params") or {},
+            data.get("outputs") or [],
+            names.get(tuple(fkey), {}),
+        )[0][0]
+        for fkey, data in (aggregate.get("functions") or {}).items()
+    }
+
+
+def _declared_rank_column(col, declared: list[str]) -> list[int]:
+    """Sort positions for *col* under a declared level order.
+
+    One integer per row, because a DataFrame sort needs a comparable column and
+    a ``(group, position)`` tuple would make every undeclared level tie — they
+    would then come out in whatever order the query happened to return.
+
+    Declared levels take ``0…n-1``; everything else is appended, ordered among
+    itself by the same numeric-or-string rule the undeclared path below uses,
+    so the promise "the rest keeps the default order" holds literally.
+    """
+    position = {level: index for index, level in enumerate(declared)}
+    extra = sorted(
+        {str(v) for v in col if v is not None and str(v) not in position},
+        key=_natural_text_key,
+    )
+    for offset, value in enumerate(extra):
+        position[value] = len(declared) + offset
+    # A null has no level, so it sorts after every real one rather than
+    # colliding with the first declared position.
+    return [position.get(str(v), len(position)) for v in col]
+
+
+def _natural_text_key(value: str) -> tuple:
+    """Numeric when the whole value is a number, text otherwise — the same
+    distinction ``_sort_by_schema_keys`` makes per column, applied per value so
+    a mixed set ("1", "S01") still has a total order."""
+    try:
+        return (0, float(value), "")
+    except (TypeError, ValueError):
+        return (1, 0.0, value)
+
+
+class DatabaseManager:
+    """
+    Manages data storage and lineage persistence (both in DuckDB via SciDuck).
+
+    Example:
+        db = configure_database("experiment.duckdb", ["subject", "session"])
+
+        RawSignal.save(np.eye(3), subject=1, session=1)
+        loaded = RawSignal.load(subject=1, session=1)
+    """
+
+    def __init__(
+        self,
+        dataset_db_path: str | Path,
+        dataset_schema_keys: list[str],
+        read_only: bool = False,
+        dataset_schema_key_types: "dict[str, str] | None" = None,
+    ):
+        """
+        Initialize database connection.
+
+        Args:
+            dataset_db_path: Path to DuckDB database file (created if doesn't exist)
+            dataset_schema_keys: List of metadata keys that define the dataset schema
+                (e.g., ["subject", "visit", "channel"]). These keys identify the
+                logical location of data. Any other metadata keys are treated as
+                version parameters.
+            read_only: Open the database read-only (it must already exist). No
+                DDL runs and every write on the connection fails at the DuckDB
+                level — used by inspection tooling (scidb.inspect / the scidb
+                CLI) so it can never contend for the write lock.
+            dataset_schema_key_types: Declared key types to record in the
+                database (see ``configure_database(schema_key_types=...)``).
+        """
+        self.dataset_db_path = Path(dataset_db_path)
+
+        if isinstance(dataset_schema_keys, (set, frozenset)):
+            raise TypeError(
+                "dataset_schema_keys must be an ordered sequence (list or tuple), "
+                "not a set. Schema key order defines the dataset hierarchy."
+            )
+        self.dataset_schema_keys = list(dataset_schema_keys)
+
+        # Validated before the file is opened; recorded in the database once
+        # its tables exist (scidb.store.schema_types.declare, below). The database
+        # is the one owner of the declaration: see dataset_schema_key_types.
+        declared_key_types = schema_types.validate(
+            dataset_schema_key_types, self.dataset_schema_keys
+        )
+        self._schema_key_types: dict[str, str] = {}
+
+        # Declared level order (`[schema_keys]`) is NOT snapshotted here: see
+        # the `dataset_schema_key_order` property. Asked once now so the
+        # config it came from is logged, and a typo reported, when the
+        # database opens.
+        self._validated_key_order: "dict | None" = None
+        _ = self.dataset_schema_key_order
+
+        self.read_only = bool(read_only)
+        self._registered_types: dict[str, type[BaseVariable]] = {}
+
+        # Open the SciDuck backend: connect, create any missing table
+        # (scidb.store.tables.ensure_core, idempotent; none on a read-only open),
+        # then check the schema columns. Timed: this runs on every MATLAB
+        # invocation (see configure_database), and "opening the file" and
+        # "re-running the idempotent DDL" have very different fixes when the
+        # database lives on a network share -- the DDL's own time is the
+        # `[tables] ensured ... in N ms` line inside `duck_open`.
+        with Log.timer(
+            "DatabaseManager.__init__", extra=self.dataset_db_path.name
+        ) as timer:
+            with timer.phase("duck_open"):
+                self._duck = SciDuck(
+                    self.dataset_db_path,
+                    dataset_schema=dataset_schema_keys,
+                    read_only=self.read_only,
+                )
+                self._duck.add_rollback_listener(self._forget_uncommitted_caches)
+
+            with timer.phase("schema_key_types"):
+                self._refresh_schema_key_types()
+                if declared_key_types:
+                    try:
+                        schema_types.declare(self, declared_key_types)
+                    except Exception:
+                        # A refused declaration must not leave the file
+                        # locked: the caller never gets a manager to close.
+                        self._duck.close()
+                        raise
+
+        self._closed = False  # Track connection open/closed state
+        self._inspector = None  # lazy scidb.inspect.Inspector (see .inspect)
+
+    @property
+    def dataset_schema_key_types(self) -> dict[str, str]:
+        """Declared schema-key types, as stored in THIS database.
+
+        Read-only view of ``scidb.store.schema_types``, the one owner. Read from the
+        database at open and on :meth:`reopen` (another process — the GUI, a
+        MATLAB run — may have changed it in between), and replaced by every
+        write. Cached because ``canonicalize_metadata`` asks once per saved
+        item. Change it with :meth:`set_schema_key_type`.
+        """
+        return self._schema_key_types
+
+    def _refresh_schema_key_types(self) -> None:
+        """Re-read the declaration from the database (``schema_types``)."""
+        previous = getattr(self, "_schema_key_types", {})
+        current = schema_types.read_types(self._duck)
+        self._schema_key_types = current
+        if current != previous:
+            self._forget_schema_key_kinds()
+
+    def set_schema_key_type(
+        self,
+        key: str,
+        key_type: "str | None",
+        *,
+        confirm_respelling: bool = False,
+        source: str = "api",
+    ) -> dict:
+        """Declare schema key *key* ``"numeric"`` or ``"string"``, or clear it
+        (``None``). See :func:`scidb.store.schema_types.set_type`; returns the impact."""
+        return schema_types.set_type(
+            self, key, key_type, confirm_respelling=confirm_respelling, source=source
+        )
+
+    def declare_schema_key_types(
+        self, key_types: dict, *, dry_run: bool = False, source: str = "for_each"
+    ) -> None:
+        """Record ``schema_key_types=`` from a call (``for_each``, the MATLAB
+        bridge) the way ``configure_database`` does: store what is missing,
+        ignore what matches, raise ``SchemaKeyTypeConflictError`` on a
+        difference. *dry_run* checks without writing."""
+        schema_types.declare(
+            self,
+            schema_types.validate(key_types, self.dataset_schema_keys),
+            source=source,
+            dry_run=dry_run,
+        )
+
+    def schema_key_type_impact(self, key: str, key_type: "str | None") -> dict:
+        """What :meth:`set_schema_key_type` would do to the stored values,
+        without writing (:func:`scidb.store.schema_types.impact`)."""
+        return schema_types.impact(self, key, key_type)
+
+    def canonicalize_metadata(self, metadata: dict) -> dict:
+        """Apply declared schema-key types to addressing metadata.
+
+        Keys declared ``"numeric"`` collapse every spelling of the same
+        number to one canonical identity (``"001"`` → 1 → stored ``"1"``);
+        list values (load()'s OR semantics) canonicalize element-wise.
+        ``"string"`` and undeclared keys pass through verbatim.  Returns a
+        new dict; the input is not mutated.
+        """
+        if not self.dataset_schema_key_types:
+            return metadata
+        out = dict(metadata)
+        for key, key_type in self.dataset_schema_key_types.items():
+            if key_type != "numeric" or key not in out or out[key] is None:
+                continue
+            value = out[key]
+            if isinstance(value, (list, tuple)):
+                out[key] = [canonical_numeric_value(key, v) for v in value]
+            else:
+                out[key] = canonical_numeric_value(key, value)
+        return out
+
+    def _check_duplicate_locations(
+        self, type_name: str, data_items: "list[tuple[Any, dict]]"
+    ) -> None:
+        """Raise DuplicateLocationError when the batch puts two different
+        records of one variant at one location (rule: _colliding_locations)."""
+        schema_keys = list(self.dataset_schema_keys)
+        collisions, stats = _colliding_locations(data_items, schema_keys)
+        Log.debug(
+            f"save_batch({type_name}): {stats['items']} item(s) -> "
+            f"{stats['locations']} location(s), {stats['variant_groups']} "
+            f"variant group(s), {stats['no_location']} without schema keys, "
+            f"{len(collisions)} duplicate location(s)"
+        )
+        if not collisions:
+            return
+        from scidb.model.exceptions import DuplicateLocationError
+
+        Log.warn(
+            f"[batch_save] {type_name}: {len(collisions)} location(s) with more "
+            f"than one different record in one save; refusing the save: "
+            + "; ".join(
+                f"{c['location']} x{c['count']} differ in {c['differing_columns']}"
+                for c in collisions
+            )
+        )
+        raise DuplicateLocationError(type_name, collisions, schema_keys)
+
+    def _check_column_set(
+        self,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        columns,
+        *,
+        dtype_meta: dict | None = None,
+    ) -> None:
+        """The one owner of "may this save write these data columns into the
+        variable's existing table". Call it before the create-if-missing
+        block of every save path.
+
+        Same columns: nothing to do. Different columns:
+        - the table holds no rows (every record was deleted): drop it and its
+          view, so the caller's create-if-missing builds it with the new
+          columns. Nothing is lost, and it is what makes "delete the old
+          records and run again" work;
+        - the table holds records: raise ColumnSetChangedError, naming the
+          columns and the two ways out. Before 2026-10-01 a NEW column failed
+          as an opaque DuckDB Binder Error, and a MISSING one silently
+          overwrote the variable's column list, so old records loaded
+          without their columns.
+
+        A datetime column's ``__tz`` zone companion (``dtype_meta``'s
+        datetime columns, sciduckdb.datetimes) is not a column of its own
+        here: when this save turns a still-empty column into a datetime one,
+        ``_reconcile_column_types`` adds the companion.
+        """
+        if not self._duck.table_exists(table_name):
+            return
+        stored_types = self.stored_data_column_types(table_name)
+        existing = list(stored_types)
+        new = [str(c) for c in columns]
+        if set(existing) == set(new):
+            return
+        # This save's companions and the stored ones: a datetime column
+        # meeting non-datetime values is a TYPE question, answered (and
+        # refused) by _reconcile_column_types, not a column-set change.
+        companions = set(tz_companions(dtype_meta)) | set(
+            stored_tz_companions(stored_types)
+        )
+        if companions and (set(existing) - companions) == (set(new) - companions):
+            Log.debug(
+                f"[save] {variable_class.__name__}: column set matches; only "
+                f"datetime zone column(s) differ "
+                f"({sorted((set(new) ^ set(existing)) & companions)}), "
+                f"reconciled with the column types"
+            )
+            return
+        added = [c for c in new if c not in set(existing)]
+        removed = [c for c in existing if c not in set(new)]
+        n_existing = self._duck.fetchall(
+            f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
+        )[0][0]
+        type_name = variable_class.__name__
+        if n_existing == 0:
+            Log.info(
+                f"[save] {type_name}: its table is empty, so it is rebuilt with "
+                f"this save's columns ({len(added)} new, {len(removed)} dropped)"
+            )
+            self._duck.execute(
+                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
+            )
+            self._duck.execute(f'DROP TABLE "{table_name}"')
+            return
+        from scidb.model.exceptions import ColumnSetChangedError
+
+        err = ColumnSetChangedError(type_name, added, removed, n_existing)
+        Log.error(f"[save] {err}")
+        raise err
+
+    def _create_variable_view(self, variable_class: type[BaseVariable]):
+        """Create a view joining a variable table with _schema via _record.
+
+        ``schema_id`` and the mutable ``excluded`` flag now come straight from the
+        content-addressed ``_record`` entity (one row per record_id), so no
+        latest-by-timestamp CTE over the save-event log is needed.
+        """
+        table_name = variable_class.table_name()
+        view_name = variable_class.view_name()
+        schema_cols = ", ".join(f's."{col}"' for col in self.dataset_schema_keys)
+        self._duck.execute(f"""
+            CREATE OR REPLACE VIEW "{view_name}" AS
+            SELECT
+                t.*,
+                s.schema_level, {schema_cols},
+                r.excluded
+            FROM "{table_name}" t
+            LEFT JOIN _record r ON t.record_id = r.record_id
+            LEFT JOIN _schema s ON r.schema_id = s.schema_id
+        """)
+
+    def _split_metadata(self, flat_metadata: dict) -> dict:
+        """
+        Split flat metadata into nested schema/version structure.
+
+        Keys in schema_keys go to "schema", all other keys go to "version".
+        """
+        schema = {}
+        version = {}
+        for key, value in flat_metadata.items():
+            if key in self.dataset_schema_keys:
+                schema[key] = value
+            else:
+                version[key] = value
+        return {"schema": schema, "version": version}
+
+    def _infer_schema_level(self, schema_keys: dict) -> str | None:
+        """
+        Infer the schema level from provided keys.
+
+        Walks dataset_schema_keys top-down. Returns the deepest provided key.
+        Keys need not be contiguous — any subset of schema keys is valid.
+
+        Returns None if no schema keys are provided.
+        """
+        if not schema_keys:
+            return None
+
+        level = None
+        for key in self.dataset_schema_keys:
+            if key in schema_keys:
+                level = key
+        return level
+
+    def _save_record_event(
+        self,
+        record_id: str,
+        timestamp: str,
+    ) -> None:
+        """Append a save-event row to ``_record_save``. Always inserts (audit trail).
+
+        The record's type/schema/content metadata is carried by the ``_record``
+        entity row (written alongside by the caller), not here.
+        """
+        Log.debug(
+            f"_save_record_event: record_id={record_id[:12]}, timestamp={timestamp}"
+        )
+        self._duck.execute(
+            """
+            INSERT INTO _record_save (record_id, timestamp)
+            VALUES (?, ?)
+            ON CONFLICT (record_id, timestamp) DO NOTHING
+            """,
+            [record_id, timestamp],
+        )
+
+    def _save_columnar(
+        self,
+        record_id: str,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        df: pd.DataFrame,
+        schema_level: str | None,
+        schema_keys: dict,
+        content_hash: str,
+        dict_of_arrays: bool = False,
+        ndarray_keys: dict | None = None,
+        struct_columns: dict | None = None,
+    ) -> int:
+        """
+        Save a DataFrame into a columnar table identified by record_id.
+
+        Used for custom-serialized data (to_db/from_db), native DataFrames,
+        and dict-of-arrays data. The table uses record_id as the row identifier;
+        multiple data rows sharing the same record_id are allowed.
+
+        Returns schema_id.
+        """
+        # New schema rows can change a key's numeric/string answer.
+        self._forget_schema_key_kinds()
+        schema_id = (
+            self._duck.get_or_create_schema_id(schema_level, schema_keys)
+            if schema_level is not None and schema_keys
+            else 0
+        )
+
+        self._ensure_columnar_table(table_name, variable_class, df)
+        self.record_store.insert_columnar_frames(table_name, [(record_id, df)])
+
+        # Upsert into _variables (one row per variable)
+        effective_level = schema_level or self.dataset_schema_keys[-1]
+        if dict_of_arrays:
+            dtype_json = json.dumps(
+                {
+                    "custom": True,
+                    "dict_of_arrays": True,
+                    "ndarray_keys": ndarray_keys or {},
+                }
+            )
+        elif struct_columns:
+            dtype_json = json.dumps(
+                {
+                    "custom": True,
+                    "struct_columns": struct_columns,
+                }
+            )
+        else:
+            dtype_json = json.dumps({"custom": True})
+        self._duck.execute(
+            "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (variable_name) DO UPDATE SET dtype = excluded.dtype",
+            [variable_class.__name__, effective_level, dtype_json, ""],
+        )
+
+        return schema_id
+
+    def stored_data_columns(self, table_name: str) -> list[str]:
+        """The data columns of a variable's ``<Type>_data`` table, in stored
+        order (``record_id`` excluded); ``[]`` when the table does not exist.
+
+        The one owner of reading them: ``_check_column_set`` compares a save
+        against them, and the MATLAB bridge uses them to tell a custom
+        (``to_db``) record's stored columns from the metadata columns of a
+        loaded input (``scimatlab.bridge.codec_storage_columns``).
+        """
+        return list(self.stored_data_column_types(table_name))
+
+    def stored_data_column_types(self, table_name: str) -> dict[str, str]:
+        """``{column: DuckDB type}`` of a variable's ``<Type>_data`` table, in
+        stored order (``record_id`` excluded); ``{}`` when it does not exist.
+        The one reader of the stored columns (``stored_data_columns`` is its
+        key view)."""
+        if not self._duck.table_exists(table_name):
+            return {}
+        return {
+            row[0]: row[1]
+            for row in self._duck.fetchall(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_name = ? AND column_name <> 'record_id' "
+                "ORDER BY ordinal_position",
+                [table_name],
+            )
+        }
+
+    def _stored_empty_columns(
+        self, table_name: str, col_types: dict[str, str]
+    ) -> set[str]:
+        """Which of ``col_types`` hold no value in any stored row (all NULL,
+        or NaN in a float column) — one aggregate query. The stored DATA is
+        the owner of "is this column's type still undecided"; no flag is
+        persisted that could disagree with it."""
+        if not col_types:
+            return set()
+        exprs = []
+        for col, ddb_type in col_types.items():
+            cond = f'"{col}" IS NOT NULL'
+            if ddb_type.strip().upper() in ("DOUBLE", "FLOAT", "REAL"):
+                cond += f' AND NOT isnan("{col}")'
+            exprs.append(f"COUNT(*) FILTER (WHERE {cond})")
+        counts = self._duck.fetchall(
+            f'SELECT {", ".join(exprs)} FROM "{table_name}"'
+        )[0]
+        return {col for col, n in zip(col_types, counts) if n == 0}
+
+    def _reconcile_row_lists(
+        self,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        data_col_types: dict,
+        dtype_meta: dict,
+        frames: list,
+    ) -> tuple[dict, dict]:
+        """The one owner of "this save meets a row_list column" (sciduckdb
+        ``row_lists``; ``on_duplicate="combine"``). Call it right before
+        ``_reconcile_column_types`` on every save path, in every mode.
+
+        Per column where this save or the stored column is a row list (rule:
+        sciduckdb ``row_list_change``):
+        - stored scalar column, this save needs lists -> the column is
+          converted IN PLACE to a row list (every stored value wrapped, so
+          every stored record loads unchanged): lazy conversion;
+        - stored row list, this save's values are scalars -> stored as
+          ``[v]`` (the kind is sticky);
+        - stored row list of ints, this save has fractions -> elements widen;
+        - a genuine array column on either side, or element types the
+          scalar rules refuse -> ColumnTypeChangedError, nothing changed.
+
+        The ALTERs and the ``_variables.dtype`` metadata change in ONE
+        transaction: a converted column is never described as a scalar one.
+        Returns the merged ``(data_col_types, dtype_meta)``.
+        """
+        if dtype_meta.get("custom"):
+            return data_col_types, dtype_meta
+        stored_types = self.stored_data_column_types(table_name)
+        if not stored_types:
+            return data_col_types, dtype_meta
+        type_name = variable_class.__name__
+        stored_dtype = self.get_dtype_meta(type_name) or {}
+        stored_metas = stored_dtype.get("columns", {})
+        in_metas = dtype_meta.get("columns", {})
+
+        new_types = dict(data_col_types)
+        new_metas = dict(in_metas)
+        conversions: list[tuple[str, str, bool]] = []  # (column, elem, from_row_list)
+        conflicts = []
+        for col, in_meta in in_metas.items():
+            s_type = stored_types.get(col)
+            in_type = data_col_types.get(col)
+            if s_type is None or in_type is None or in_meta.get("empty"):
+                continue
+            s_meta = stored_metas.get(col)
+            if s_meta is not None and s_meta.get("empty"):
+                continue  # still undecided: _reconcile_column_types types it
+            decision = row_list_change(s_meta, s_type, in_meta, in_type)
+            if decision is None:
+                continue
+            action, arg = decision
+            if action == "refuse":
+                Log.warn(
+                    f"[save] {type_name}: column {col} cannot be a row list "
+                    f"here: {arg}"
+                )
+                conflicts.append((col, s_type, in_type, _sample_values(frames, col)))
+                continue
+            new_types[col] = f"{arg}[]"
+            new_metas[col] = row_list_meta(arg)
+            if action in ("convert", "alter"):
+                conversions.append((col, arg, action == "alter"))
+            elif not is_row_list_meta(in_meta):
+                Log.debug(
+                    f"[save] {type_name}: column {col} is a row list; this "
+                    f"save's single values are stored as one-element lists"
+                )
+
+        if conflicts:
+            from scidb.model.exceptions import ColumnTypeChangedError
+
+            n_existing = self._duck.fetchall(
+                f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
+            )[0][0]
+            err = ColumnTypeChangedError(type_name, conflicts, n_existing)
+            Log.error(f"[save] {err}")
+            raise err
+
+        if conversions:
+            t0 = time.perf_counter()
+            self._duck.execute(
+                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
+            )
+            try:
+                with self._duck.transaction("row-list conversion"):
+                    for col, elem, from_rl in conversions:
+                        convert_column_to_row_list(
+                            self._duck, table_name, col, elem, from_row_list=from_rl
+                        )
+                    if stored_dtype:
+                        updated = dict(stored_dtype)
+                        updated["columns"] = {
+                            **stored_metas,
+                            **{c: row_list_meta(e) for c, e, _ in conversions},
+                        }
+                        self._duck.execute(
+                            "UPDATE _variables SET dtype = ? WHERE variable_name = ?",
+                            [json.dumps(updated), type_name],
+                        )
+            finally:
+                self._create_variable_view(variable_class)
+            Log.info(
+                f"[save] {type_name}: column(s) "
+                + ", ".join(
+                    f"{c} -> {e}[]" + (" (elements widened)" if rl else "")
+                    for c, e, rl in conversions
+                )
+                + " converted to row lists in place (stored values load "
+                f"unchanged) in {time.perf_counter() - t0:.3f}s"
+            )
+
+        merged_meta = dict(dtype_meta)
+        merged_meta["columns"] = new_metas
+        return new_types, merged_meta
+
+    def _reconcile_column_types(
+        self,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        data_col_types: dict,
+        dtype_meta: dict,
+        frames: list,
+    ) -> tuple[dict, dict]:
+        """The one owner of "may this save's column TYPES go into the
+        variable's existing DataFrame table". Call it right after
+        ``_check_column_set`` on every DataFrame save path; store and upsert
+        with what it returns.
+
+        Per column (rule for a column with values: sciduckdb
+        ``column_type_change``):
+        - this save is empty in it -> the stored type and metadata stand;
+        - the stored column is still empty -> converted in place to this
+          save's type (a blank first CSV load, values in a later one);
+        - integer column, fractional values -> widened to DOUBLE;
+        - text column, numbers -> stored as text;
+        - otherwise -> ColumnTypeChangedError, before anything is changed.
+
+        Returns the MERGED ``(data_col_types, dtype_meta)``: the stored type
+        and metadata wherever they stand, so the ``_variables.dtype`` upsert
+        never overwrites a decided column with this save's guess. History:
+        scistack.log 2026-10-22, IP_SPINAL_STIMULATION blank then 'Y'.
+        """
+        if dtype_meta.get("mode") != "dataframe" or dtype_meta.get("custom"):
+            return data_col_types, dtype_meta
+        stored_types = self.stored_data_column_types(table_name)
+        if not stored_types:
+            return data_col_types, dtype_meta
+        t0 = time.perf_counter()
+        type_name = variable_class.__name__
+        stored_metas = (self.get_dtype_meta(type_name) or {}).get("columns", {})
+        in_metas = dtype_meta.get("columns", {})
+        # Datetime zone companions follow their column (sciduckdb.datetimes):
+        # judged through it, and re-derived from the merged metadata below.
+        user_types = user_column_types(data_col_types, dtype_meta)
+
+        changes = {}
+        for col, in_type in user_types.items():
+            s_type = stored_types.get(col)
+            if s_type is None or in_metas.get(col, {}).get("empty"):
+                continue
+            change = column_type_change(s_type, in_type)
+            if change != "same" or stored_metas.get(col, {}).get("empty", col not in stored_metas):
+                changes[col] = change
+        empty = self._stored_empty_columns(
+            table_name, {c: stored_types[c] for c in changes}
+        )
+
+        new_types = dict(user_types)
+        new_metas = dict(in_metas)
+        alters: list[tuple[str, str, bool]] = []  # (column, new type, stored empty)
+        conflicts = []
+        for col, in_type in user_types.items():
+            s_type = stored_types.get(col)
+            if s_type is None:
+                continue
+            s_meta = stored_metas.get(col)
+            change = changes.get(col, "same")
+            if col in empty:
+                if s_type.upper() != in_type.upper():
+                    alters.append((col, in_type, True))
+                continue  # this save's type and metadata decide the column
+            if in_metas.get(col, {}).get("empty") or change in ("same", "as_text"):
+                new_types[col] = s_type
+                if s_meta is not None and not s_meta.get("empty"):
+                    new_metas[col] = s_meta
+                if change == "as_text":
+                    Log.info(
+                        f"[save] {type_name}: column {col} is stored as text; "
+                        f"this save's {in_type} values are stored as text too"
+                    )
+                continue
+            if change == "widen":
+                alters.append((col, in_type, False))
+                continue
+            conflicts.append(
+                (col, s_type, in_type, _sample_values(frames, col))
+            )
+
+        if conflicts:
+            from scidb.model.exceptions import ColumnTypeChangedError
+
+            n_existing = self._duck.fetchall(
+                f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
+            )[0][0]
+            err = ColumnTypeChangedError(type_name, conflicts, n_existing)
+            Log.error(f"[save] {err}")
+            raise err
+
+        if alters:
+            self._duck.execute(
+                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
+            )
+            for col, new_type, was_empty in alters:
+                using = f" USING CAST(NULL AS {new_type})" if was_empty else ""
+                self._duck.execute(
+                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{col}" '
+                    f"SET DATA TYPE {new_type}{using}"
+                )
+                Log.info(
+                    f"[save] {type_name}: column {col} "
+                    + (
+                        f"was empty in every stored record; its type is now "
+                        f"{new_type}, decided by this save's values"
+                        if was_empty
+                        else f"widened {stored_types[col]} -> {new_type} for "
+                        f"this save's fractional values"
+                    )
+                )
+            self._create_variable_view(variable_class)
+
+        merged_meta = dict(dtype_meta)
+        merged_meta["columns"] = new_metas
+        # A column that just became a datetime one (it was empty in every
+        # stored record) gets its zone companion now; every other datetime
+        # column has had one since its first save.
+        missing_tz = [c for c in tz_companions(merged_meta) if c not in stored_types]
+        if missing_tz:
+            self._duck.execute(
+                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
+            )
+            for comp in missing_tz:
+                self._duck.execute(
+                    f'ALTER TABLE "{table_name}" ADD COLUMN "{comp}" VARCHAR'
+                )
+            self._create_variable_view(variable_class)
+            Log.info(
+                f"[save] {type_name}: added datetime zone column(s) {missing_tz} "
+                f"(NULL = naive) for column(s) that are now datetimes"
+            )
+
+        Log.debug(
+            f"[save] {type_name}: column types reconciled in "
+            f"{time.perf_counter() - t0:.3f}s — {len(user_types)} column(s), "
+            f"{len(changes)} checked against stored data, "
+            f"{len(empty)} still empty, {len(alters)} altered, "
+            f"{len(missing_tz)} zone column(s) added"
+        )
+        return storage_column_types(new_types, merged_meta), merged_meta
+
+    def _ensure_columnar_table(
+        self,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        df: pd.DataFrame,
+    ) -> None:
+        """Create the columnar (``"custom": True``) data table from *df*'s
+        columns if it does not exist yet; check the column set if it does.
+
+        The one owner of the columnar table's shape, shared by ``save`` and
+        ``save_batch`` so both paths store a custom-serialized variable alike.
+        """
+        self._check_column_set(table_name, variable_class, list(df.columns))
+        if self._duck.table_exists(table_name):
+            return
+        col_defs = []
+        for col in df.columns:
+            dtype = df[col].dtype
+            if pd.api.types.is_integer_dtype(dtype):
+                ddb_type = "BIGINT"
+            elif pd.api.types.is_float_dtype(dtype):
+                ddb_type = "DOUBLE"
+            elif pd.api.types.is_bool_dtype(dtype):
+                ddb_type = "BOOLEAN"
+            elif dtype == object:
+                first_val = next(
+                    (
+                        v
+                        for v in df[col]
+                        if v is not None
+                        and not (isinstance(v, float) and np.isnan(v))
+                    ),
+                    None,
+                )
+                if isinstance(first_val, np.ndarray) and np.issubdtype(
+                    first_val.dtype, np.number
+                ):
+                    ddb_type = "DOUBLE[]"
+                elif (
+                    isinstance(first_val, list)
+                    and len(first_val) > 0
+                    and all(isinstance(x, (int, float)) for x in first_val)
+                ):
+                    ddb_type = "DOUBLE[]"
+                else:
+                    ddb_type = "VARCHAR"
+            else:
+                ddb_type = "VARCHAR"
+            col_defs.append(f'"{col}" {ddb_type}')
+
+        data_cols_sql = ", ".join(col_defs)
+        self._duck.execute(f"""
+            CREATE TABLE "{table_name}" (
+                record_id VARCHAR NOT NULL,
+                {data_cols_sql}
+            )
+        """)
+        self._create_variable_view(variable_class)
+        Log.debug(f"_ensure_columnar_table: created table '{table_name}'")
+
+
+    def _custom_storage_frame(self, variable: BaseVariable) -> pd.DataFrame:
+        """The frame a custom-serialized *variable* is stored (and hashed) as:
+        its ``to_db()`` result. THE owner of calling ``to_db`` on save, for
+        both ``save`` and ``save_batch``; raises a ``TypeError`` naming the
+        class when ``to_db`` does not return a DataFrame."""
+        df = variable.to_db()
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(
+                f"{type(variable).__name__}.to_db() must return a pandas "
+                f"DataFrame, got {type(df).__name__}"
+            )
+        return df
+
+    def _save_native(
+        self,
+        record_id: str,
+        table_name: str,
+        variable_class: type[BaseVariable],
+        data: Any,
+        content_hash: str,
+        schema_level: str | None = None,
+        schema_keys: dict | None = None,
+    ) -> int:
+        """
+        Save native data as a single record using sciduck's type inference.
+
+        Handles scalars, arrays, lists, dicts (flat & nested), and
+        dict-of-arrays.  Each dict key becomes its own DuckDB column;
+        vector values become DuckDB array types (e.g. DOUBLE[]).
+
+        The table uses record_id as PRIMARY KEY so identical data is stored once.
+
+        Returns schema_id.
+        """
+        if schema_level is not None and schema_keys:
+            self._forget_schema_key_kinds()
+            schema_id = self._duck.get_or_create_schema_id(
+                schema_level, {k: schema_str(v) for k, v in schema_keys.items()}
+            )
+        else:
+            schema_id = 0
+
+        data_col_types, dtype_meta = infer_data_columns(data)
+        is_dataframe = isinstance(data, pd.DataFrame)
+
+        # Ensure table exists, with this save's columns.
+        self._check_column_set(
+            table_name, variable_class, list(data_col_types), dtype_meta=dtype_meta
+        )
+        data_col_types, dtype_meta = self._reconcile_row_lists(
+            table_name, variable_class, data_col_types, dtype_meta, [data]
+        )
+        data_col_types, dtype_meta = self._reconcile_column_types(
+            table_name, variable_class, data_col_types, dtype_meta, [data]
+        )
+        if not self._duck.table_exists(table_name):
+            data_cols_sql = ", ".join(
+                f'"{col}" {dtype}' for col, dtype in data_col_types.items()
+            )
+            if is_dataframe:
+                # One DuckDB row per table row: record_id is not unique per row.
+                record_id_col = "record_id VARCHAR NOT NULL"
+            else:
+                record_id_col = "record_id VARCHAR PRIMARY KEY"
+            self._duck.execute(f'''
+                CREATE TABLE "{table_name}" (
+                    {record_id_col},
+                    {data_cols_sql}
+                )
+            ''')
+            self._create_variable_view(variable_class)
+            Log.debug(f"_save_native: created table '{table_name}'")
+
+        if is_dataframe:
+            # Idempotency: skip all inserts if this record_id already exists.
+            existing_count = self._duck.fetchall(
+                f'SELECT COUNT(*) FROM "{table_name}" WHERE record_id = ?',
+                [record_id],
+            )[0][0]
+            if existing_count == 0:
+                col_names = ["record_id"] + list(data_col_types.keys())
+                col_str = ", ".join(f'"{c}"' for c in col_names)
+                placeholders = ", ".join(["?"] * len(col_names))
+                for storage_row in dataframe_to_storage_rows(data, dtype_meta):
+                    self._duck.execute(
+                        f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders})',
+                        [record_id] + storage_row,
+                    )
+                Log.debug(
+                    f"_save_native: inserted {len(data)} rows (dataframe) into '{table_name}', record_id={record_id[:12]}"
+                )
+            else:
+                Log.debug(
+                    f"_save_native: record_id={record_id[:12]} already exists in '{table_name}', skipped"
+                )
+        else:
+            storage_values = value_to_storage_row(data, dtype_meta)
+            col_names = ["record_id"] + list(data_col_types.keys())
+            col_str = ", ".join(f'"{c}"' for c in col_names)
+            placeholders = ", ".join(["?"] * len(col_names))
+            self._duck.execute(
+                f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders}) '
+                f"ON CONFLICT (record_id) DO NOTHING",
+                [record_id] + storage_values,
+            )
+            Log.debug(
+                f"_save_native: inserted single record into '{table_name}', record_id={record_id[:12]}"
+            )
+
+        # Upsert into _variables (one row per variable)
+        effective_level = schema_level or self.dataset_schema_keys[-1]
+        self._duck.execute(
+            "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT (variable_name) DO UPDATE SET dtype = excluded.dtype",
+            [variable_class.__name__, effective_level, json.dumps(dtype_meta), ""],
+        )
+
+        return schema_id
+
+    def save_batch(
+        self,
+        variable_class: type[BaseVariable],
+        data_items: list[tuple[Any, dict]],
+        profile: bool = False,
+        row_list_columns: "list | tuple" = (),
+    ) -> list[str]:
+        """
+        Bulk-save a list of (data_value, metadata_dict) pairs for a single variable type.
+
+        Amortizes setup work (registration, table creation) and batches SQL
+        operations using DataFrame-based inserts for speed.
+
+        Data is deduplicated by record_id (same content → same record_id → stored once).
+        Every call appends a (record_id, timestamp) save-event row to _record_save.
+
+        Two phases: :meth:`_plan_batch_rows` (metadata canonicalization, type
+        reconciliation, row lists, record ids and storage rows, as a
+        :class:`BatchRows`), then ``RecordStore.write_batch_rows`` (the inserts,
+        in one re-entrant transaction).
+
+        Args:
+            variable_class: The BaseVariable subclass to save as
+            data_items: List of (data_value, flat_metadata_dict) tuples
+            profile: If True, print phase-by-phase timing summary
+            row_list_columns: data columns a table save combined into row
+                lists (``on_duplicate="combine"``, scidb.run.combine): stored as
+                sciduckdb ``row_list`` columns, a scalar item as ``[v]``. In
+                single-column mode any name marks the one data column.
+
+        Returns:
+            List of record_ids for each saved item (in input order), None in
+            the slot of a record that was skipped.
+        """
+        if not data_items:
+            return []
+        rows = self._plan_batch_rows(variable_class, data_items, row_list_columns)
+        if not rows.writable:
+            return rows.aligned_record_ids()
+        self.record_store.write_batch_rows(rows)
+        self._log_batch_timings(rows, profile)
+        return rows.aligned_record_ids()
+
+    def _plan_batch_rows(
+        self,
+        variable_class: type[BaseVariable],
+        data_items: list[tuple[Any, dict]],
+        row_list_columns: "list | tuple" = (),
+    ) -> "BatchRows":
+        """Everything a batch save decides before its inserts.
+
+        Canonicalizes declared-numeric schema keys, converts custom-serialized
+        values, infers and reconciles the column types (row lists included),
+        skips records that do not fit the batch schema, prepares the table,
+        resolves schema ids, and computes each record's content hash, record
+        id and storage row. Raises a duplicate-location error before anything
+        is written for two different records of one variant at one location.
+        """
+        row_list_columns = list(row_list_columns or ())
+        n_original = len(data_items)
+
+        # Declared-numeric schema keys canonicalize at every DB entry point —
+        # this covers the MATLAB bridge (save_batch_bridge) as well as the
+        # Python for_each save path with one seam.
+        if self.dataset_schema_key_types:
+            data_items = [(d, self.canonicalize_metadata(m)) for d, m in data_items]
+
+        timings: dict = {}
+        t0 = time.perf_counter()
+        table_name = self._ensure_registered(variable_class)
+        type_name = variable_class.__name__
+        rows = BatchRows(
+            variable_class=variable_class,
+            table_name=table_name,
+            n_original=n_original,
+            timings=timings,
+            t0=t0,
+        )
+
+        # --- Custom serialization (to_db/from_db): convert first, then batch ---
+        # Every item becomes its to_db() frame BEFORE any hashing or SQL, so the
+        # rest of the batch (hashing, record ids, dedup, one bulk insert, the
+        # _record/_record_save rows) runs on stored frames exactly as `save`
+        # stores one: the columnar ("custom": True) table. Loads then hand each
+        # record's frame to from_db (_deserialize_custom_subdf).
+        rows.is_custom = self._has_custom_serialization(variable_class)
+        if rows.is_custom:
+            _t = time.perf_counter()
+            data_items = [
+                (self._custom_storage_frame(variable_class(d)), m)
+                for d, m in data_items
+            ]
+            timings["to_db"] = time.perf_counter() - _t
+            Log.debug(
+                f"save_batch({type_name}): custom serialization, to_db() on "
+                f"{len(data_items)} item(s) in {timings['to_db']:.3f}s"
+            )
+
+        first_data = self._batch_reference_schema(rows, data_items, row_list_columns)
+        # No usable schema anywhere (e.g. every record is an empty dict): there
+        # is nothing to store. Skip the whole batch rather than create an
+        # empty-column table or write contentless rows.
+        if not rows.data_col_types and not rows.is_dataframe:
+            Log.warn(
+                f"[batch_save] {type_name}: no usable data schema in any of "
+                f"{len(data_items)} record(s) (all empty); nothing saved."
+            )
+            return rows
+
+        col_types_str = ", ".join(f"{c}: {t}" for c, t in rows.data_col_types.items())
+        Log.debug(
+            f"save_batch({type_name}): {len(data_items)} items, "
+            f"mode={rows.dtype_meta.get('mode', 'single_column')}, "
+            f"data: {_describe_data(first_data)}, "
+            f"DuckDB columns: [{col_types_str}]"
+        )
+
+        data_items = self._validate_batch_items(rows, data_items, row_list_columns)
+        if not data_items:
+            return rows
+
+        # Two different records of one variant at one location: refuse the
+        # save before anything (table, schema ids, rows) is written.
+        self._check_duplicate_locations(type_name, data_items)
+        self._prepare_batch_table(rows, data_items, first_data)
+        timings["setup"] = time.perf_counter() - t0
+
+        all_nested = self._resolve_batch_schema_ids(rows, data_items)
+        self._compute_batch_rows(rows, data_items, all_nested)
+        rows.effective_level = (
+            self._infer_schema_level(all_nested[0].get("schema", {}))
+            or self.dataset_schema_keys[-1]
+        )
+        rows.writable = True
+        return rows
+
+    def _batch_reference_schema(
+        self, rows: "BatchRows", data_items: list, row_list_columns: list
+    ) -> Any:
+        """Infer the batch's column types from its first usable item, into
+        ``rows``; returns that reference item's value."""
+        type_name = rows.variable_class.__name__
+        first_data = data_items[0][0]
+        if rows.is_custom:
+            rows.data_col_types = {c: str(first_data[c].dtype) for c in first_data.columns}
+            rows.dtype_meta = {"custom": True}
+        else:
+            # The rest of the batch types columns that the first frame
+            # leaves blank (a spread CSV whose first subject has no value).
+            rows.data_col_types, rows.dtype_meta = infer_data_columns(
+                first_data,
+                more_frames=(
+                    [d for d, _ in data_items[1:]]
+                    if isinstance(first_data, pd.DataFrame) else ()
+                ),
+                row_list_columns=row_list_columns,
+                more_values=(
+                    [d for d, _ in data_items[1:]]
+                    if row_list_columns and not isinstance(first_data, pd.DataFrame)
+                    else ()
+                ),
+            )
+        rows.is_dataframe = rows.dtype_meta.get("mode") == "dataframe"
+        # The row-list columns under their STORED names (single-column mode
+        # stores the one data column as "value" whatever the table called it).
+        rows.stored_row_lists = (
+            list(rows.dtype_meta.get("columns", {}))
+            if row_list_columns and rows.dtype_meta.get("mode") == "single_column"
+            else row_list_columns
+        )
+        if row_list_columns:
+            Log.debug(
+                f"save_batch({type_name}): on_duplicate=combine row_list "
+                f"column(s) {row_list_columns} -> stored as "
+                + ", ".join(
+                    f"{c}: {rows.data_col_types.get(c)}" for c in rows.stored_row_lists
+                )
+            )
+
+        # Reference-schema selection: a leading degenerate record (e.g. an
+        # empty dict -> no columns) must not define the table schema. Fall back
+        # to the first record that yields a usable (non-empty) schema. The
+        # degenerate record itself is caught by the validation pass.
+        if not rows.data_col_types and not rows.is_dataframe and not rows.is_custom:
+            for _dv, _ in data_items:
+                _ct, _dm = infer_data_columns(_dv)
+                if _ct:
+                    first_data = _dv
+                    rows.data_col_types, rows.dtype_meta = _ct, _dm
+                    rows.is_dataframe = rows.dtype_meta.get("mode") == "dataframe"
+                    break
+        return first_data
+
+    def _validate_batch_items(
+        self, rows: "BatchRows", data_items: list, row_list_columns: list
+    ) -> list:
+        """The items that fit the batch's columns; the rest are skipped.
+
+        A single record whose value doesn't fit the batch's columns (empty
+        dict, missing/extra keys, or a scalar where the column stores a
+        vector, etc.) would abort the atomic batch insert and lose ALL saves
+        in the batch. Skip such records with a clear per-record warning and
+        persist the rest. ``rows.valid_orig_idx`` maps each kept item back to
+        its slot in the caller's list, so the returned record ids stay
+        aligned (None in each skipped slot).
+
+        DataFrame mode stores one DuckDB row per frame row with its own
+        empty-frame handling, so it is left unvalidated here to avoid
+        false-positive skips (e.g. an empty frame inferring VARCHAR columns).
+        """
+        type_name = rows.variable_class.__name__
+        if rows.is_dataframe:
+            rows.valid_orig_idx = list(range(len(data_items)))
+            return data_items
+        valid_items = []
+        for _idx, (_dv, _fm) in enumerate(data_items):
+            if rows.is_custom:
+                # One table per variable: every to_db() frame in the batch
+                # must have the first frame's columns, in order.
+                _reason = (
+                    None
+                    if list(_dv.columns) == list(rows.data_col_types)
+                    else f"to_db() columns {list(_dv.columns)} differ from "
+                    f"the batch's {list(rows.data_col_types)}"
+                )
+            else:
+                _rec_col_types, _ = infer_data_columns(_dv, row_list_columns=row_list_columns)
+                _reason = record_schema_mismatch(
+                    rows.data_col_types, _rec_col_types,
+                    row_list_columns=rows.stored_row_lists,
+                )
+            if _reason is None:
+                valid_items.append((_dv, _fm))
+                rows.valid_orig_idx.append(_idx)
+                continue
+            rows.skipped = True
+            _meta_str = (
+                ", ".join(f"{k}={v}" for k, v in _fm.items() if not str(k).startswith("__"))
+                or f"item #{_idx}"
+            )
+            Log.warn(
+                f"[batch_save] {type_name}: SKIPPED record ({_meta_str}) — "
+                f"incompatible with batch schema and NOT saved: {_reason}"
+            )
+        if not valid_items:
+            Log.warn(
+                f"[batch_save] {type_name}: all {rows.n_original} record(s) "
+                f"incompatible with the batch schema; nothing saved."
+            )
+        return valid_items
+
+    def _prepare_batch_table(self, rows: "BatchRows", data_items: list, first_data: Any) -> None:
+        """Check the batch against the variable's stored columns (a variable
+        keeps the columns of its first save), reconcile row lists and column
+        types, and create the data table on a variable's first save."""
+        variable_class = rows.variable_class
+        table_name = rows.table_name
+        if rows.is_custom:
+            self._ensure_columnar_table(table_name, variable_class, first_data)
+            return
+        self._check_column_set(
+            table_name, variable_class, list(rows.data_col_types), dtype_meta=rows.dtype_meta
+        )
+        values = [d for d, _ in data_items]
+        rows.data_col_types, rows.dtype_meta = self._reconcile_row_lists(
+            table_name, variable_class, rows.data_col_types, rows.dtype_meta, values
+        )
+        rows.data_col_types, rows.dtype_meta = self._reconcile_column_types(
+            table_name, variable_class, rows.data_col_types, rows.dtype_meta, values
+        )
+        if self._duck.table_exists(table_name):
+            return
+        data_cols_sql = ", ".join(f'"{col}" {dtype}' for col, dtype in rows.data_col_types.items())
+        record_id_col = (
+            "record_id VARCHAR NOT NULL" if rows.is_dataframe else "record_id VARCHAR PRIMARY KEY"
+        )
+        self._duck.execute(f'''
+            CREATE TABLE "{table_name}" (
+                {record_id_col},
+                {data_cols_sql}
+            )
+        ''')
+        self._create_variable_view(variable_class)
+
+    def _resolve_batch_schema_ids(self, rows: "BatchRows", data_items: list) -> list:
+        """Split each item's metadata and resolve every distinct schema
+        location to its schema id (one batch query). Returns the split
+        metadata per item; the ids land in ``rows.schema_ids``."""
+        t1 = time.perf_counter()
+        all_nested = []
+        unique_schema_combos: dict = {}  # {combo_key: schema_keys_dict}
+        for _data_val, flat_meta in data_items:
+            # Drop transient for_each bookkeeping that must not become a
+            # version key: __branch_params (derived from the graph). The
+            # record's producing invocation is a version key on purpose —
+            # `__invocation_id`, stamped by the save path — so identical
+            # content from different inputs, code or options is a different
+            # record; the edges themselves travel typed on the GraphRecord.
+            flat_meta_cleaned = {k: v for k, v in flat_meta.items() if k != "__branch_params"}
+            nested = self._split_metadata(flat_meta_cleaned)
+            all_nested.append(nested)
+            combo_key = self._schema_combo_key(nested.get("schema", {}))
+            if combo_key is not None and combo_key not in unique_schema_combos:
+                unique_schema_combos[combo_key] = nested.get("schema", {})
+        rows.timings["split_metadata"] = time.perf_counter() - t1
+
+        t2 = time.perf_counter()
+        self._forget_schema_key_kinds()
+        rows.schema_ids = self._duck.batch_get_or_create_schema_ids(
+            {
+                k: {col: schema_str(v) for col, v in vals.items()}
+                for k, vals in unique_schema_combos.items()
+            }
+        )
+        rows.unique_schemas = len(unique_schema_combos)
+        rows.timings["schema_resolution"] = time.perf_counter() - t2
+        return all_nested
+
+    def _schema_combo_key(self, schema_keys: dict) -> "tuple | None":
+        """``(schema level, key values)`` naming one schema location, or None
+        for a record at no schema level (schema id 0)."""
+        schema_level = self._infer_schema_level(schema_keys)
+        if schema_level is None or not schema_keys:
+            return None
+        key_tuple = tuple(
+            schema_str(schema_keys.get(k, ""))
+            for k in self.dataset_schema_keys
+            if k in schema_keys
+        )
+        return (schema_level, key_tuple)
+
+    def _compute_batch_rows(self, rows: "BatchRows", data_items: list, all_nested: list) -> None:
+        """Per-record content hash, record id, storage row and ``_record``
+        row (no SQL)."""
+        type_name = rows.variable_class.__name__
+        schema_version = rows.variable_class.schema_version
+        timings = rows.timings
+        t4 = time.perf_counter()
+        timestamp = datetime.now().isoformat()
+
+        # Arrow fast path for multi_column mode of 1-D arrays: indexes
+        # `data_val[col]` per column, which only works when data_val is a dict.
+        # Single-column mode stores data_val as a bare ndarray/scalar, so it
+        # falls through to the generic value_to_storage_row path.
+        if not rows.is_dataframe and rows.dtype_meta.get("mode") == "multi_column":
+            col_metas = rows.dtype_meta.get("columns", {})
+            if _pyarrow_available() and all(
+                m.get("python_type") == "ndarray" and m.get("ndim", 1) == 1
+                for m in col_metas.values()
+            ):
+                rows.arrow_columns = {col: [] for col in rows.data_col_types}
+
+        t4_hash = 0.0
+        # Which DataFrame serialization path the hashes took (F30): "fast"
+        # skips pandas' per-column Series; "reference" is the public-API path
+        # (unaddressable frames, or a signature whose fast path disagreed).
+        frames_before = frame_path_counts()
+        t4_record_id = 0.0
+        t4_storage = 0.0
+        t4_meta = 0.0
+        # DataFrames are converted to storage rows in bulk after the loop.
+        # Per-row dataframe_to_storage_rows (54 iloc calls × 7k records) was
+        # the dominant cost; bulk_df_to_storage_rows processes column-by-column.
+        df_bulk: list = []
+        df_bulk_rids: list = []
+
+        for i, (data_val, _flat_meta) in enumerate(data_items):
+            combo_key = self._schema_combo_key(all_nested[i].get("schema", {}))
+            schema_id = rows.schema_ids[combo_key] if combo_key is not None else 0
+
+            _t = time.perf_counter()
+            content_hash = canonical_hash(data_val)
+            t4_hash += time.perf_counter() - _t
+            if i == 0:
+                _log_first_content_hash(type_name, data_val, content_hash)
+
+            _t = time.perf_counter()
+            record_id = generate_record_id(
+                class_name=type_name,
+                schema_version=schema_version,
+                content_hash=content_hash,
+                metadata=all_nested[i],
+            )
+            rows.record_ids.append(record_id)
+            t4_record_id += time.perf_counter() - _t
+
+            _t = time.perf_counter()
+            if rows.arrow_columns is not None:
+                for col in rows.data_col_types:
+                    rows.arrow_columns[col].append(data_val[col])
+            elif rows.is_custom:
+                rows.custom_frames.append((record_id, data_val))
+            elif rows.is_dataframe:
+                df_bulk.append(data_val)
+                df_bulk_rids.append(record_id)
+            else:
+                storage_values = value_to_storage_row(data_val, rows.dtype_meta)
+                rows.data_rows.append((record_id,) + tuple(storage_values))
+            t4_storage += time.perf_counter() - _t
+
+            _t = time.perf_counter()
+            rows.metadata_rows.append(
+                (record_id, timestamp, type_name, schema_id, content_hash, schema_version)
+            )
+            t4_meta += time.perf_counter() - _t
+
+        if df_bulk:
+            _t = time.perf_counter()
+            rows.data_rows = bulk_df_to_storage_rows(df_bulk, df_bulk_rids, rows.dtype_meta)
+            t4_storage += time.perf_counter() - _t
+
+        timings["per_row_hashing"] = time.perf_counter() - t4
+        timings["canonical_hash"] = t4_hash
+        frames_after = frame_path_counts()
+        rows.hash_paths = (
+            f"hash frames fast={frames_after['fast'] - frames_before['fast']} "
+            f"reference={frames_after['reference'] - frames_before['reference']}"
+        )
+        timings["record_id"] = t4_record_id
+        timings["storage_row"] = t4_storage
+        timings["meta_row"] = t4_meta
+
+
+    def _log_batch_timings(self, rows: "BatchRows", profile: bool) -> None:
+        """The phase breakdown of one batch save.
+
+        At INFO, not DEBUG. This path is measured in tens of seconds on
+        payload-heavy batches (77.3s for 419 RawEMG records, 2026-09-13) and a
+        single opaque total gives no way to tell hashing from inserts from the
+        commit. ~18 phases is far too many for one readable line, so the INFO
+        line carries the costliest few and every phase still gets its DEBUG
+        line.
+        """
+        type_name = rows.variable_class.__name__
+        n = len(rows.record_ids)
+        if rows.is_custom:
+            n_total_rows = sum(len(_df) for _, _df in rows.custom_frames)
+        elif rows.arrow_columns is not None:
+            n_total_rows = len(rows.record_ids)
+        else:
+            n_total_rows = len(rows.data_rows)
+        Log.timings(
+            f"save_batch({type_name})",
+            rows.timings,
+            extra=(
+                f"{n} items ({rows.n_new} new rows, {n_total_rows} total storage rows), "
+                f"{rows.unique_schemas} schemas, {rows.hash_paths}, "
+                f"serialization={'custom' if rows.is_custom else 'native'}"
+            ),
+            top=6,
+        )
+        if profile:
+            print(f"\n--- save_batch() profile ({n} items, {rows.unique_schemas} unique schemas) ---")
+            for phase, elapsed in rows.timings.items():
+                print(f"  {phase:30s} {elapsed:8.3f}s")
+            print()
+
+    @staticmethod
+    def _has_custom_serialization(variable_class: type) -> bool:
+        """Check if a BaseVariable subclass overrides to_db or from_db."""
+        return (
+            "to_db" in variable_class.__dict__ or "from_db" in variable_class.__dict__
+        )
+
+    @property
+    def dataset_schema_key_order(self) -> dict[str, list[str]]:
+        """``{schema key: [levels]}`` from the project's ``[schema_keys]``, LIVE.
+
+        Read through :func:`scifor.project.schema_order.project_level_order` on every
+        access rather than once at open: this used to be a snapshot, so an
+        edit to scistack.toml changed no table and no figure until the GUI (or
+        the session) was restarted. The reader caches the config's location
+        for a couple of seconds and its content on the file's mtime, so an
+        access is a ``stat``.
+
+        Each time the declaration CHANGES it is validated against this
+        dataset's keys, so a typo is reported when it is written, not just
+        when the database opens.
+        """
+        from scifor.project import schema_order as _schema_order
+
+        order = _schema_order.project_level_order()
+        if order is not self._validated_key_order:
+            self._validated_key_order = order
+            if order:
+                _schema_order.validate(order, self.dataset_schema_keys)
+        return order
+
+    def _variable_names_for_validation(self, what: str) -> "list[str] | None":
+        """The variable names, or None when they cannot be read right now.
+
+        For the display-only validation of `[aliases]` and `[colors]`, which
+        Plot Studio reads lazily, sometimes after the GUI has released this
+        connection. A closed connection is asked first (`SciDuck.is_open`)
+        rather than queried: querying it made sciduckdb log an ERROR with a
+        traceback for a case this code expects and handles (scistack.log
+        2026-10-01 22:29, "Connection already closed!").
+
+        The check and the query are one atomic step in sciduckdb
+        (`list_variables_if_open`): checking `is_open` here and querying
+        after left a window that a concurrent GUI request's close hit
+        (scistack.log 2026-10-19 15:08:27).
+        """
+        duck = getattr(self, "_duck", None)
+        if duck is None:
+            Log.debug(f"[{what}] no connection; validation deferred to a later access")
+            return None
+        try:
+            frame = duck.list_variables_if_open()
+        except Exception as exc:  # a half-open database
+            Log.debug(f"[{what}] variable names unavailable for validation: {exc}")
+            return None
+        if frame is None:
+            Log.debug(f"[{what}] connection closed; validation deferred to a later access")
+            return None
+        return [str(name) for name in frame["variable_name"]]
+
+    @property
+    def dataset_aliases(self) -> "dict[str, dict]":
+        """``{thing: {"name": …, "levels": {…}}}`` from the project's
+        ``[aliases]``, LIVE — the display names every plot starts from.
+
+        Same discipline as :attr:`dataset_schema_key_order`: read through
+        :func:`scifor.project.aliases.project_aliases` on every access (a ``stat``, the
+        parse is cached on mtime), and validated against this dataset's schema
+        keys and variables each time the content CHANGES, so a typo is
+        reported when it is written. Display only: nothing in scidb reads it.
+        """
+        from scifor.project import aliases as _aliases
+
+        table = _aliases.project_aliases()
+        if table is not getattr(self, "_validated_aliases", None):
+            if not table:
+                self._validated_aliases = table
+            else:
+                variables = self._variable_names_for_validation("aliases")
+                # Unavailable (the GUI released the connection before Plot
+                # Studio read this): leave it unvalidated so the next access
+                # validates it, instead of marking it done with no variables.
+                if variables is not None:
+                    self._validated_aliases = table
+                    _aliases.validate(
+                        table, schema_keys=self.dataset_schema_keys, variables=variables
+                    )
+        return table
+
+    @property
+    def dataset_colors(self) -> "dict[str, object]":
+        """``{"default": "#…", thing: {level: "#…"}}`` from the project's
+        ``[colors]``, LIVE — the mark colours every plot starts from.
+
+        The discipline of :attr:`dataset_aliases`: read through
+        :func:`scifor.project.colors.project_colors` on every access, validated when
+        the content CHANGES. Display only: nothing in scidb reads it.
+        """
+        from scifor.project import colors as _colors
+
+        table = _colors.project_colors()
+        if table is not getattr(self, "_validated_colors", None):
+            if not _colors.things_of(table):
+                self._validated_colors = table
+            else:
+                variables = self._variable_names_for_validation("colors")
+                if variables is None:
+                    return table  # validate on a later access (see dataset_aliases)
+                self._validated_colors = table
+                _colors.validate(
+                    table, schema_keys=self.dataset_schema_keys, variables=variables
+                )
+        return table
+
+    def _sort_by_schema_keys(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Sort DataFrame by schema keys with numeric sorting for numeric-only columns.
+
+        For each schema key:
+        - If all values are purely numeric (convertible to float), sort numerically
+        - Otherwise, sort alphabetically (lexicographically)
+
+        This ensures "1", "2", "10" sorts as 1, 2, 10 (not "1", "10", "2").
+        But "S01", "S02", "S10" or mixed "1", "S01", "10" sorts alphabetically.
+        """
+        if len(df) == 0:
+            return df
+
+        # Create temporary sort columns for each schema key
+        sort_cols = []
+        sort_ascending = []
+        temp_col_names = []
+        # Asked once per sort: the property re-reads the project config.
+        key_order = self.dataset_schema_key_order or {}
+
+        for key in self.dataset_schema_keys:
+            if key not in df.columns:
+                continue
+
+            temp_col_name = f"__sort_{key}"
+            temp_col_names.append(temp_col_name)
+            col = df[key]
+
+            # A DECLARED order wins outright: `[schema_keys] session = ["BL",
+            # "POST", "FU"]` is the user saying these levels are chronological,
+            # not alphabetical, and no amount of value inspection can work that
+            # out. Undeclared levels rank after every declared one and then
+            # sort among themselves by the rules below — which is also what
+            # every other consumer of the declaration does (scifor.project.schema_order).
+            declared = key_order.get(key)
+            if declared:
+                df[temp_col_name] = _declared_rank_column(col, declared)
+                sort_cols.append(temp_col_name)
+                sort_ascending.append(True)
+                continue
+
+            # Get non-null values to check if column is numeric-only
+            non_null_mask = col.notna()
+            non_null_values = col[non_null_mask]
+
+            # Check if all non-null values are numeric (can be converted to float)
+            is_numeric = True
+            if len(non_null_values) > 0:
+                for val in non_null_values:
+                    try:
+                        float(str(val))
+                    except (ValueError, TypeError):
+                        is_numeric = False
+                        break
+
+            if is_numeric and len(non_null_values) > 0:
+                # Numeric-only: convert to float for numeric sorting
+                df[temp_col_name] = pd.to_numeric(col, errors="coerce")
+            else:
+                # Contains non-numeric: use string sorting
+                df[temp_col_name] = col.astype(str)
+
+            sort_cols.append(temp_col_name)
+            sort_ascending.append(True)
+
+        # Add timestamp as final tiebreaker (descending)
+        if "timestamp" in df.columns:
+            sort_cols.append("timestamp")
+            sort_ascending.append(False)
+
+        # Sort by all columns
+        if sort_cols:
+            df = df.sort_values(sort_cols, ascending=sort_ascending)
+
+        # Drop temporary sort columns
+        df = df.drop(columns=temp_col_names, errors="ignore")
+
+        return df
+
+    def _any_records_exist(self, type_name: str) -> bool:
+        """Return True if any records of this type have ever been saved."""
+        rows = self._duck.fetchall(
+            "SELECT 1 FROM _record WHERE type = ? LIMIT 1",
+            [type_name],
+        )
+        return len(rows) > 0
+
+    def _find_record(
+        self,
+        type_name: str,
+        record_id: str | None = None,
+        nested_metadata: dict | None = None,
+        version_id: str = "all",
+        branch_params_filter: dict | None = None,
+        include_excluded: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Query the _record_save log (joined to _record) to find matching records.
+
+        Supports two modes:
+        - By record_id: direct primary key lookup (with JOINs for full row data)
+        - By metadata: filter by schema keys via JOIN with _schema, then match
+          non-schema metadata + branch_params against the bipartite graph,
+          order by timestamp DESC
+
+        version_id controls which versions are returned:
+        - "all" (default): no version filtering (return every version)
+        - "latest": only the latest row per (variable_name, schema_id, variant),
+          where the variant is graph-derived (producing function + accumulated
+          constants)
+        - any other string: treated as a record_id for direct lookup
+
+        branch_params_filter: optional dict of branch_params key/value filters
+        include_excluded: if False (default), skip records with excluded=TRUE
+
+        Schema key values and filter values may be lists, interpreted as
+        "match any" (SQL IN / Python in).
+
+        Returns a DataFrame of matching rows including schema columns.
+        """
+        # Build schema column SELECT list
+        schema_col_select = ", ".join(f's."{col}"' for col in self.dataset_schema_keys)
+
+        # The save-event log (_record_save, one row per (record_id, timestamp))
+        # joined to the _record entity (one row per record_id) for the
+        # type/schema/content/excluded columns the log no longer stores. Aliased
+        # back to the legacy column names so downstream row access is unchanged.
+        meta_select = (
+            "rm.record_id, rm.timestamp, "
+            "r.type AS variable_name, r.schema_id, r.content_hash, "
+            "r.schema_version, r.excluded"
+        )
+        meta_from = (
+            "FROM _record_save rm "
+            "JOIN _record r ON r.record_id = rm.record_id "
+            "LEFT JOIN _schema s ON r.schema_id = s.schema_id "
+        )
+
+        excluded_clause = (
+            "" if include_excluded else " AND COALESCE(r.excluded, FALSE) = FALSE"
+        )
+
+        if record_id is not None:
+            sql = (
+                f"SELECT {meta_select}, {schema_col_select} "
+                f"{meta_from}"
+                f"WHERE rm.record_id = ? AND r.type = ?{excluded_clause}"
+            )
+            df = self._duck.fetchdf(sql, [record_id, type_name])
+            return self._sort_by_schema_keys(df)
+
+        # Unrecognized version_id → treat as record_id lookup
+        if version_id not in ("latest", "all"):
+            Log.debug(
+                f"_find_record({type_name}): treating version_id={version_id!r} as record_id"
+            )
+            sql = (
+                f"SELECT {meta_select}, {schema_col_select} "
+                f"{meta_from}"
+                f"WHERE rm.record_id = ? AND r.type = ?{excluded_clause}"
+            )
+            df = self._duck.fetchdf(sql, [version_id, type_name])
+            return self._sort_by_schema_keys(df)
+
+        # By metadata
+        schema_keys = nested_metadata.get("schema", {}) if nested_metadata else {}
+        version_keys = nested_metadata.get("version", {}) if nested_metadata else {}
+
+        conditions = ["r.type = ?"]
+        params: list[Any] = [type_name]
+
+        # Exclude excluded variants by default
+        if not include_excluded:
+            conditions.append("COALESCE(r.excluded, FALSE) = FALSE")
+
+        # Filter schema keys via _schema columns in SQL (lists → IN)
+        for key, value in schema_keys.items():
+            if isinstance(value, (list, tuple)):
+                placeholders = ", ".join(["?"] * len(value))
+                conditions.append(f's."{key}" IN ({placeholders})')
+                params.extend([schema_str(v) for v in value])
+            else:
+                conditions.append(f's."{key}" = ?')
+                params.append(schema_str(value))
+
+        # branch_params_filter is handled entirely in Python (lines below).
+        # We do NOT push it to SQL because:
+        # 1. Keys stored in version_keys (direct user saves) would be incorrectly
+        #    excluded by a branch_params SQL filter before the Python fallback runs.
+        # 2. Suffix matching (e.g. "low_hz" → "bandpass.low_hz") cannot be expressed
+        #    in SQL without fetching all records anyway.
+        # The Python _match_row already checks version_keys first, then branch_params.
+
+        where = " AND ".join(conditions)
+
+        # One row per distinct record_id at the SQL level, at its newest save
+        # event (dedups audit re-saves of identical content; the one recency
+        # window, provenance_query.LATEST_SAVE_PER_RECORD_SQL). For
+        # version_id="latest" the *variant* collapse — keeping the newest
+        # record per (fn, accumulated constants, consumed locations) — is done
+        # in Python below using the bipartite graph.
+        sql = (
+            f"WITH ranked AS ("
+            f"SELECT {meta_select}, {schema_col_select}, "
+            f"{provenance_query.LATEST_SAVE_PER_RECORD_SQL} as rn "
+            f"{meta_from}"
+            f"WHERE {where}"
+            f") SELECT * FROM ranked WHERE rn = 1"
+        )
+        _t_sql = time.perf_counter()
+        df = self._duck.fetchdf(sql, params)
+        t_sql = time.perf_counter() - _t_sql
+        Log.debug(
+            f"_find_record({type_name}): SQL returned {len(df)} records, version_id={version_id}"
+        )
+        # Collapse to the CURRENT record of each variant when version_id="latest".
+        # THE rule is provenance_query.current_record_ids (one owner with node
+        # state): a variant is the producing function's name + the accumulated
+        # upstream constants + the consumed input schema locations; within one,
+        # the newest wins, after the run-option and renamed-function
+        # supersession rules. Raw saves are one variant per location.
+        t_collapse = 0.0
+        rows_before_collapse = len(df)
+        if version_id == "latest" and len(df) > 0:
+            _t_collapse = time.perf_counter()
+            current = provenance_query.current_record_ids(
+                self._duck,
+                list(zip(df["record_id"], df["variable_name"], df["schema_id"], df["timestamp"])),
+                context=f"_find_record({type_name}, latest)",
+            )
+            if current.dropped_by_family or current.dropped_globally:
+                Log.info(
+                    f"_find_record({type_name}, latest): run-option supersession "
+                    f"superseded {current.dropped_by_family + current.dropped_globally} "
+                    f"record(s) across {current.superseded_families} location(s) — an "
+                    f"older distribute/as_table run, a since-renamed function, or a newer hand save"
+                )
+            keep_mask = df["record_id"].isin(current.kept)
+            collapsed_count = int((~keep_mask).sum())
+            if collapsed_count > 0:
+                Log.debug(
+                    f"_find_record: collapsed {collapsed_count} non-latest variant row(s)"
+                )
+            df = df[keep_mask]
+
+            # --- Diagnostic: why do some locations still have >1 record? ---
+            # After "latest per (variable, schema_id, variant)" collapse, a schema
+            # KEY location should normally map to ONE record. If it doesn't, the
+            # survivors differ either by schema_id (two schema_ids allocated for
+            # identical key values) or by variant_key (same schema_id but distinct
+            # producing fn / branch_params / output_num / consumed input locations).
+            # The branch is vectorized and only does work when duplicates remain.
+            _sk = self.dataset_schema_keys
+            if _sk and len(df) > 1:
+                _dupmask = df.duplicated(subset=_sk, keep=False)
+                if _dupmask.any():
+                    _dup = df[_dupmask]
+                    # dropna=False: a record saved above the deepest schema key
+                    # has NULL there (a trial-level record in a schema that ends
+                    # in cycle), and pandas drops NULL-keyed groups by default —
+                    # which made this WARN say "0 location(s) ... Examples:"
+                    # with nothing after it, for exactly the rows it exists to
+                    # describe (2026-09-14, GAITRiteLoaded).
+                    _n_locs = _dup.groupby(_sk, sort=False, dropna=False).ngroups
+                    _samples = []
+                    for _vals, _g in _dup.groupby(_sk, sort=False, dropna=False):
+                        if len(_samples) >= 3:
+                            break
+                        _sids = sorted(set(_g["schema_id"].tolist()))
+                        _rids = _g["record_id"].tolist()
+                        if len(_sids) > 1:
+                            _kind = f"DISTINCT schema_id for identical keys {_sids}"
+                        else:
+                            _vks = [current.variant_keys.get(_r) for _r in _rids]
+                            _kind = f"same schema_id {_sids[0]}, DISTINCT variant_keys={_vks}"
+                        _loc = dict(
+                            zip(
+                                _sk,
+                                _vals if isinstance(_vals, tuple) else (_vals,),
+                                strict=False,
+                            )
+                        )
+                        _samples.append(
+                            f"{_loc}: {len(_g)} records, record_ids={_rids[:4]} -> {_kind}"
+                        )
+                    Log.warn(
+                        f"_find_record({type_name}, latest): {_n_locs} schema "
+                        f"location(s) retain >1 record after collapse — these feed "
+                        f"multi-row per-combo tables. Examples: " + "; ".join(_samples)
+                    )
+
+            # Apply smart sorting by schema keys (numeric or alphabetic per column)
+            df = self._sort_by_schema_keys(df)
+            t_collapse = time.perf_counter() - _t_collapse
+
+        t_vk_filter = 0.0
+
+        # Filter by non-schema metadata. Both the "version" portion of the
+        # metadata (non-schema kwargs passed plainly, e.g. find_record_id(C,
+        # {subject:1, low_hz:20})) and an explicit ``branch_params_filter`` are
+        # matched against graph-derived branch params (constants on the producing
+        # invocation — incl. direct-save kwargs via the synthetic __save__
+        # invocation), with bare-name suffix matching.
+        combined_bp = {**version_keys, **(branch_params_filter or {})}
+        t_bp_filter = 0.0
+        if combined_bp and len(df) > 0:
+            _t_bp = time.perf_counter()
+            df = _filter_records_by_branch_params(df, combined_bp, self._duck)
+            t_bp_filter = time.perf_counter() - _t_bp
+
+        # Apply smart sorting by schema keys before returning
+        _t_sort = time.perf_counter()
+        result = self._sort_by_schema_keys(df)
+        t_sort = time.perf_counter() - _t_sort
+
+        total = t_sql + t_collapse + t_vk_filter + t_bp_filter + t_sort
+        Log.info(
+            f"[timing] _find_record({type_name}, version_id={version_id!r}): "
+            f"total={total:.3f}s, sql={t_sql:.3f}s ({rows_before_collapse} rows), "
+            f"collapse={t_collapse:.3f}s, vk_filter={t_vk_filter:.3f}s, "
+            f"bp_filter={t_bp_filter:.3f}s, sort={t_sort:.3f}s, "
+            f"returned={len(result)} rows"
+        )
+        return result
+
+    def _reconstruct_metadata_from_row(
+        self, row: pd.Series, branch_params: "dict | None" = None
+    ) -> tuple[dict, dict]:
+        """
+        Reconstruct flat and nested metadata for a record.
+
+        Schema keys come from the JOINed _schema columns; the non-schema
+        "version" portion is the record's direct-save kwargs, derived from the
+        bipartite graph (the synthetic ``__save__`` invocation's constants —
+        see :func:`provenance_query.derived_branch_params`). Internal pipeline
+        markers (``__fn`` etc.) are not user metadata and are not exposed.
+
+        *branch_params* is the record's already-derived branch params, for a
+        caller that batched them (``provenance_query.branch_params_batch``);
+        without it this walks the record's ancestry itself, one record at a
+        time — the N+1 a loop over rows must not pay (cleanup-audit F3).
+
+        Returns (flat_metadata, nested_metadata).
+        """
+        schema = {}
+        for key in self.dataset_schema_keys:
+            if key in row.index:
+                val = row[key]
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    schema[key] = self.restore_schema_value(key, val)
+
+        # Direct-save kwargs: __save__.<kwarg> entries in derived branch params.
+        version = {}
+        rid = row.get("record_id")
+        if branch_params is None and rid is not None:
+            branch_params = provenance_query.derived_branch_params(self._duck, rid)
+        for k, v in (branch_params or {}).items():
+            if k.startswith("__save__."):
+                version[k[len("__save__.") :]] = v
+
+        nested_metadata = {"schema": schema, "version": version}
+        flat_metadata = {}
+        flat_metadata.update(schema)
+        flat_metadata.update(version)
+        return flat_metadata, nested_metadata
+
+    def _deserialize_custom_subdf(
+        self,
+        variable_class: type[BaseVariable],
+        sub_df: pd.DataFrame,
+        dtype_meta: dict,
+    ):
+        """Deserialize a sub-DataFrame using custom dtype metadata.
+
+        Handles four sub-paths based on dtype_meta flags:
+        - dict_of_arrays: reconstruct dict of numpy arrays
+        - from_db: class-level custom deserialization
+        - struct_columns: unflatten dot-separated columns
+        - raw: return DataFrame as-is
+
+        The sub_df must already have internal columns
+        (record_id) dropped.
+        """
+        if dtype_meta.get("dict_of_arrays"):
+            ndarray_keys = dtype_meta.get("ndarray_keys", {})
+            data = {}
+            for col in sub_df.columns:
+                arr = sub_df[col].values
+                if col in ndarray_keys:
+                    col_meta = ndarray_keys[col]
+                    arr = arr.astype(np.dtype(col_meta["dtype"]))
+                    orig_shape = col_meta.get("shape")
+                    if orig_shape and len(orig_shape) == 2:
+                        if orig_shape[0] == 1:
+                            arr = arr.reshape(1, -1)
+                        elif orig_shape[1] == 1:
+                            arr = arr.reshape(-1, 1)
+                        else:
+                            try:
+                                arr = arr.reshape(orig_shape)
+                            except ValueError:
+                                pass
+                data[col] = arr
+            return data
+        elif self._has_custom_serialization(variable_class):
+            return variable_class.from_db(sub_df)
+        elif dtype_meta.get("struct_columns"):
+            return _unflatten_struct_columns(sub_df, dtype_meta["struct_columns"])
+        else:
+            return sub_df
+
+    def register(self, variable_class: type[BaseVariable]) -> None:
+        """
+        Register a variable type for storage.
+
+        Args:
+            variable_class: The BaseVariable subclass to register
+        """
+        type_name = variable_class.__name__
+        table_name = variable_class.table_name()
+        schema_version = variable_class.schema_version
+
+        # Register in metadata table (skip if already registered)
+        existing = self._duck.fetchall(
+            "SELECT 1 FROM _registered_types WHERE type_name = ?",
+            [type_name],
+        )
+        if not existing:
+            self._duck.execute(
+                """
+                INSERT INTO _registered_types (type_name, table_name, schema_version)
+                VALUES (?, ?, ?)
+                """,
+                [type_name, table_name, schema_version],
+            )
+
+        # Cache locally
+        self._registered_types[type_name] = variable_class
+
+    def ensure_variable_table(self, variable_class: type[BaseVariable]) -> bool:
+        """Give a variable with no records an EMPTY data table and its view,
+        so SQL on the view returns no rows instead of "does not exist".
+        Returns whether a table was created (False: it already existed).
+
+        The table holds ``record_id`` only: a variable's data columns are
+        not known until a value exists. ``_check_column_set`` drops and
+        rebuilds an empty table with the first real save's columns, so the
+        placeholder never conflicts. scidb's loads answer from the record
+        tables and behave the same with or without it (Stage 0 of
+        .claude/plan-for-columns-groups.md, 2026-10-28).
+        """
+        table_name = self._ensure_registered(variable_class)
+        if self._duck.table_exists(table_name):
+            return False
+        self._duck.execute(
+            f'CREATE TABLE "{table_name}" (record_id VARCHAR NOT NULL)'
+        )
+        self._create_variable_view(variable_class)
+        Log.debug(f"ensure_variable_table: created empty table '{table_name}'")
+        return True
+
+    def _ensure_registered(
+        self, variable_class: type[BaseVariable], auto_register: bool = True
+    ) -> str:
+        """
+        Ensure a variable type is registered.
+
+        Returns:
+            The table name for this variable type
+        """
+        type_name = variable_class.__name__
+
+        if type_name in self._registered_types:
+            return variable_class.table_name()
+
+        # Check database
+        rows = self._duck.fetchall(
+            "SELECT table_name FROM _registered_types WHERE type_name = ?",
+            [type_name],
+        )
+
+        if not rows:
+            if auto_register:
+                self.register(variable_class)
+                return variable_class.table_name()
+            else:
+                raise NotRegisteredError(
+                    f"Variable type '{type_name}' is not registered. "
+                    f"No data has been saved for this type yet."
+                )
+
+        self._registered_types[type_name] = variable_class
+        return rows[0][0]
+
+    def save_variable(
+        self,
+        variable_class: type[BaseVariable],
+        data: Any,
+        index: Any = None,
+        **metadata,
+    ) -> str:
+        """
+        Save data as a variable.
+
+        Accepts a BaseVariable instance or raw data.
+
+        Args:
+            variable_class: The BaseVariable subclass to save as
+            data: The data to save (BaseVariable or raw data)
+            index: Optional index to set on the DataFrame
+            **metadata: Addressing metadata (e.g., subject=1, trial=1)
+
+        Returns:
+            The record_id of the saved data
+        """
+        metadata = self.canonicalize_metadata(metadata)
+        type_name = variable_class.__name__
+        user_keys = {k: v for k, v in metadata.items() if not k.startswith("__")}
+        Log.debug(f"save_variable({type_name}): metadata={user_keys}")
+
+        raw_data = data.data if isinstance(data, BaseVariable) else data
+
+        instance = variable_class(raw_data)
+        record_id = self.save(instance, metadata, index=index)
+
+        instance.record_id = record_id
+        instance.metadata = metadata
+
+        Log.info(f"save_variable({type_name}): saved -> record_id={record_id[:12]}")
+        return record_id
+
+    def save(
+        self,
+        variable: BaseVariable,
+        metadata: dict,
+        index: Any = None,
+    ) -> str:
+        """
+        Save a variable to the database.
+
+        Args:
+            variable: The variable instance to save
+            metadata: Addressing metadata (flat dict)
+            index: Optional index to set on the DataFrame
+
+        Returns:
+            The record_id of the saved data
+        """
+        table_name = self._ensure_registered(type(variable))
+        type_name = variable.__class__.__name__
+
+        # Drop transient for_each bookkeeping that must not become version keys:
+        # __branch_params (accumulated constants, now derived from the graph).
+        if isinstance(metadata, dict):
+            metadata = {k: v for k, v in metadata.items() if k != "__branch_params"}
+
+        # Split metadata
+        nested_metadata = self._split_metadata(metadata)
+
+        # Warn if no metadata keys match the schema (skip internal __* keys)
+        user_metadata_keys = [k for k in metadata if not k.startswith("__")]
+        if user_metadata_keys and not nested_metadata.get("schema"):
+            warnings.warn(
+                f"None of the metadata keys {user_metadata_keys} match the "
+                f"configured dataset_schema_keys {self.dataset_schema_keys}. "
+                f"All keys will be treated as version parameters.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        # Normalize array.array values to numpy arrays (MATLAB bridge can produce these)
+        import array as _array_mod
+
+        if isinstance(variable.data, dict):
+            for k, v in variable.data.items():
+                if isinstance(v, _array_mod.array):
+                    variable.data[k] = np.array(v)
+
+        # Compute content hash. A custom-serialized variable is hashed by its
+        # STORED form (the to_db() frame), as in save_batch: its value may be an
+        # object canonical_hash cannot serialize, and one stored table must mean
+        # one record whichever save path wrote it.
+        is_custom = self._has_custom_serialization(type(variable))
+        custom_df = self._custom_storage_frame(variable) if is_custom else None
+        content_hash = canonical_hash(custom_df if is_custom else variable.data)
+
+        # Generate record_id
+        record_id = generate_record_id(
+            class_name=type_name,
+            schema_version=variable.schema_version,
+            content_hash=content_hash,
+            metadata=nested_metadata,
+        )
+
+        serialization = "custom" if is_custom else "native"
+        Log.debug(
+            f"save({type_name}): record_id={record_id[:12]}, content_hash={content_hash[:12]}, serialization={serialization}"
+        )
+
+        # Wrap all writes in a single transaction to avoid repeated
+        # WAL checkpoints (each auto-committed statement can trigger a
+        # checkpoint/fsync, causing random multi-second stalls).
+        try:
+            with self._duck.transaction("save"):
+                schema_keys = nested_metadata.get("schema", {})
+                version_keys = nested_metadata.get("version", {})
+                schema_level = self._infer_schema_level(schema_keys)
+                created_at = datetime.now().isoformat()
+
+                if is_custom:
+                    # Custom serialization: the to_db() frame computed for the hash
+                    df = custom_df
+
+                    if index is not None:
+                        index_list = list(index) if not isinstance(index, list) else index
+                        if len(index_list) != len(df):
+                            raise ValueError(
+                                f"Index length ({len(index_list)}) does not match "
+                                f"DataFrame row count ({len(df)})"
+                            )
+                        df.index = index
+
+                    schema_id = self._save_columnar(
+                        record_id,
+                        table_name,
+                        type(variable),
+                        df,
+                        schema_level,
+                        schema_keys,
+                        content_hash,
+                    )
+                else:
+                    # ALL other data: scalars, arrays, lists, dicts, dict-of-arrays,
+                    # and native DataFrames (stored as a single record with array-typed
+                    # columns, e.g. DOUBLE[], BIGINT[], VARCHAR[]).
+                    schema_id = self._save_native(
+                        record_id,
+                        table_name,
+                        type(variable),
+                        variable.data,
+                        content_hash,
+                        schema_level=schema_level,
+                        schema_keys=schema_keys,
+                    )
+
+                self._save_record_event(
+                    record_id=record_id,
+                    timestamp=created_at,
+                )
+
+                # Mirror into the bipartite entities table (_record). Covers raw /
+                # manually saved records, which have no producing invocation.
+                from scidb.provenance.graph import insert_record_entity
+
+                insert_record_entity(
+                    self._duck,
+                    record_id=record_id,
+                    created_at=created_at,
+                    type_name=type_name,
+                    schema_id=schema_id,
+                    content_hash=content_hash,
+                    schema_version=variable.schema_version,
+                )
+
+                # A save carrying non-schema kwargs: anchor those kwargs in the graph
+                # as a synthetic save invocation so they are graph-derivable branch
+                # params.
+                if version_keys:
+                    save_kwargs = {
+                        k: v for k, v in version_keys.items() if not str(k).startswith("__")
+                    }
+                    if save_kwargs:
+                        from scidb.provenance.save import record_direct_save
+
+                        record_direct_save(self._duck, record_id, save_kwargs, created_at)
+        except Exception as e:
+            Log.error(f"save({type_name}): transaction rolled back: {e}")
+            raise
+        Log.debug(f"save({type_name}): transaction committed")
+
+        return record_id
+
+    def _load_with_where(
+        self,
+        variable_class: type[BaseVariable],
+        metadata: dict,
+        table_name: str,
+        where,
+        version_id: str = "latest",
+    ):
+        """Load records using where= with **semantic** variant matching.
+
+        ``where=`` is a *variant/computation* selector: its variable-level portion
+        identifies which computed variant to return by the **schema_id set it
+        resolves to now** (§10 "where= redesign"). Any SchemaKey portion is a *row*
+        selector applied on top. The producing run's ``where_clause`` STRING is
+        never read here — it survives only for visual inspection (get_execution_audit).
+
+        Matching rule (subset + raw fallback), which collapses the old Strategy 1
+        (provenance) and Strategy 2 (schema fallback) into one mechanism:
+          - a record **with** a producing invocation matches iff every input
+            schema_id that invocation consumed is within the resolved variant set
+            ``S_var`` (an aggregation consumed all of ``S_var``; a per-combo output
+            consumed a single location in it);
+          - a record with **no** producing invocation (raw/direct save) matches iff
+            its own schema_id ∈ ``S_var``.
+        The result is then intersected with the SchemaKey / pre-resolved row set.
+
+        Returns:
+            A pandas DataFrame of matching record rows.
+
+        Raises:
+            NotFoundError: If no records match.
+        """
+        type_name = variable_class.__name__
+
+        from scidb.model.filters import Filter, split_schema_key_filters
+
+        # Separate the variant role (variable-level filter → S_var) from the row
+        # role (SchemaKey portion, or a Merge constituent's pre-resolved id set).
+        # ``variant_validate_coverage`` is False for Merge constituents (the merge
+        # path validates coverage once over the merged result, not per constituent).
+        variant_validate_coverage = True
+        if getattr(where, "_restrict_to_resolved_ids", False):
+            # Merge constituent: variant filter carried explicitly; resolve() is the
+            # pre-resolved row restriction (full filter, variable-level AND SchemaKey).
+            var_filter = getattr(where, "_variable_filter", None)
+            row_ids = where.resolve(self, variable_class, table_name)
+            variant_validate_coverage = False
+        elif isinstance(where, Filter):
+            sk_filter, var_filter = split_schema_key_filters(where)
+            row_ids = (
+                sk_filter.resolve(self, variable_class, table_name)
+                if sk_filter is not None
+                else None
+            )
+        elif where is None or hasattr(where, "resolve"):
+            var_filter, row_ids = where, None
+        else:
+            raise TypeError(
+                f"load(where=...) expects a Filter (e.g. Var=='x', raw_sql(...)); "
+                f"got {type(where).__name__}."
+            )
+
+        nested_base = self._split_metadata(metadata)
+        records_all = self._find_record(
+            type_name, nested_metadata=nested_base, version_id=version_id
+        )
+        if len(records_all) == 0:
+            raise NotFoundError(f"No {type_name} found matching metadata: {metadata}")
+
+        records = records_all
+
+        # --- Variant match (semantic) on the variable-level portion ---
+        if var_filter is not None:
+            s_var = frozenset(
+                var_filter.resolve(
+                    self,
+                    variable_class,
+                    table_name,
+                    validate_coverage=variant_validate_coverage,
+                )
+            )
+            # The consumed-input subset test runs at the INPUT variable's level,
+            # which the target-resolved ``s_var`` does not capture when the output
+            # is coarser than the filter (cross-level where=): there ``resolve``
+            # short-circuits a finer filter to "all target ids", so consumed
+            # (input-level) ids could never be a subset. Resolve the filter at its
+            # OWN granularity for that test; fall back to ``s_var`` for filters with
+            # no intrinsic level (raw SQL) and for the same-level case (identical).
+            try:
+                s_var_native = frozenset(var_filter.resolve_native(self))
+            except NotImplementedError:
+                s_var_native = s_var
+            consumed_map = provenance_query.consumed_input_schema_ids(
+                self._duck, records_all["record_id"].tolist()
+            )
+
+            fell_back: list[str] = []
+
+            def _variant_match(row, _s=s_var, _sn=s_var_native, _c=consumed_map):
+                consumed = _c.get(row["record_id"])
+                if consumed is not None:
+                    return (
+                        consumed <= _sn
+                    )  # subset: every consumed loc ∈ S_var (native level)
+                fell_back.append(row["record_id"])
+                return row["schema_id"] in _s  # raw/direct-save fallback (target level)
+
+            records = records_all[records_all.apply(_variant_match, axis=1)]
+            Log.debug(
+                f"[_load_with_where] {type_name}: variant match kept {len(records)} "
+                f"of {len(records_all)} records (|S_var|={len(s_var)})"
+            )
+            # The raw/direct-save fallback is correct for a record nothing
+            # produced, but it CANNOT narrow a cross-level where=: there
+            # ``resolve`` short-circuits a finer filter to "all target ids", so
+            # ``schema_id in S_var`` is true for every candidate and the filter
+            # silently selects nothing at all. Two variants at one output
+            # location then both come back and the caller gets an ambiguous
+            # result instead of the one it asked for.
+            #
+            # Reaching it for a record that HAS a producing invocation means the
+            # invocation recorded no variable input edges — which is the only
+            # thing that makes this variant identity work. Say so: without this
+            # line the symptom is "load returned 2 records" with nothing
+            # anywhere connecting it to missing provenance edges.
+            if fell_back and s_var_native != s_var:
+                Log.warn(
+                    f"[_load_with_where] {type_name}: {len(fell_back)} record(s) "
+                    f"had no recorded consumed-input locations, so a CROSS-LEVEL "
+                    f"where= fell back to matching on the record's own schema_id "
+                    f"— which cannot narrow (the filter resolves to every target "
+                    f"location). Expect an over-broad result. Record(s): "
+                    f"{fell_back[:5]}"
+                )
+
+            # A where= that selects a variant is supposed to land on ONE of
+            # them. More than one surviving means the subset test admitted
+            # records it should have excluded, and the only way to see WHY is
+            # the two sets it compared — the filter's own resolved locations
+            # against each record's consumed locations. Both are small here (a
+            # handful of schema_ids), this fires only on the ambiguous case, and
+            # without it the symptom is a bare "load returned 2 records" with
+            # nothing to attribute it to.
+            if len(records) > 1:
+                Log.info(
+                    f"[_load_with_where] {type_name}: where= left "
+                    f"{len(records)} records AMBIGUOUS (expected one variant). "
+                    f"filter={var_filter!r} resolved natively to "
+                    f"{sorted(s_var_native)}; target-level S_var="
+                    f"{sorted(s_var)}; per-record consumed inputs: "
+                    + ", ".join(
+                        f"{rid}(schema={sid}) consumed="
+                        f"{sorted(consumed_map[rid]) if rid in consumed_map else 'NONE'}"
+                        for rid, sid in zip(
+                            records["record_id"].tolist(),
+                            records["schema_id"].tolist(),
+                            strict=False,
+                        )
+                    )
+                )
+
+        # --- Row restriction (SchemaKey portion / pre-resolved Merge ids) ---
+        if row_ids is not None:
+            _before = len(records)
+            records = records[records["schema_id"].isin(row_ids)]
+            Log.debug(
+                f"[_load_with_where] {type_name}: row restriction {_before} -> "
+                f"{len(records)} records ({len(row_ids)} allowed schema_ids)"
+            )
+
+        if len(records) == 0:
+            raise NotFoundError(
+                f"No {type_name} found matching metadata: {metadata} "
+                f"with the given where= filter."
+            )
+        return records
+
+    # -------------------------------------------------------------------------
+    # Bulk DataFrame loading engine
+    # -------------------------------------------------------------------------
+
+    def _load_as_df_via_iterator(
+        self,
+        variable_class: type[BaseVariable],
+        metadata: dict,
+        *,
+        layout: str,
+        include_rid: bool,
+        include_bp: bool,
+        stringify_schema: bool,
+        version_id: str,
+        where,
+        branch_params_filter: dict | None,
+    ) -> pd.DataFrame:
+        """Slow fallback: load via instance iterator, then assemble DataFrame.
+
+        Mirrors the output shape of the fast path but uses ``db.load()`` so
+        it is always correct regardless of dtype or subclass customisation.
+        """
+        schema_keys_set = set(self.dataset_schema_keys)
+        view_name = (
+            variable_class.view_name()
+            if hasattr(variable_class, "view_name")
+            else variable_class.__name__
+        )
+
+        loaded = list(
+            self.load(
+                variable_class,
+                metadata,
+                version_id=version_id,
+                where=where,
+                branch_params_filter=branch_params_filter,
+            )
+        )
+
+        if not loaded:
+            return pd.DataFrame()
+
+        def _process_meta(var, *, spread: bool) -> dict:
+            meta = dict(var.metadata) if var.metadata else {}
+            if spread:
+                # Drop __* keys and const-param keys (same as _stringify_meta).
+                const_val = meta.get("__constants", {})
+                if isinstance(const_val, str):
+                    try:
+                        const_val = json.loads(const_val)
+                    except Exception:
+                        const_val = {}
+                const_keys = set(const_val.keys()) if const_val else set()
+                result = {}
+                for k, v in meta.items():
+                    if k.startswith("__") or k in const_keys:
+                        continue
+                    result[k] = (
+                        str(v)
+                        if (k in schema_keys_set and stringify_schema and v is not None)
+                        else v
+                    )
+                return result
+            else:
+                # Packed: include all metadata (current BaseVariable.load(as_df=True) behaviour).
+                return meta
+
+        is_spread = layout == "spread"
+        first = loaded[0]
+
+        if hasattr(first, "data") and isinstance(first.data, pd.DataFrame):
+            # DataFrame-mode variable
+            if layout == "spread":
+                all_data: list = []
+                all_meta_rows: list = []
+                for var in loaded:
+                    data_df = var.data
+                    meta = _process_meta(var, spread=True)
+                    if include_rid:
+                        meta["__record_id"] = var.record_id
+                    if include_bp:
+                        meta["__branch_params"] = json.dumps(var.branch_params or {})
+                    nr = len(data_df)
+                    for _ in range(nr):
+                        all_meta_rows.append(meta)
+                    all_data.append(data_df.reset_index(drop=True))
+                if not all_meta_rows:
+                    return pd.DataFrame()
+                combined_meta = pd.DataFrame(all_meta_rows)
+                combined_data = pd.concat(all_data, ignore_index=True)
+                return pd.concat(
+                    [
+                        combined_meta.reset_index(drop=True),
+                        combined_data.reset_index(drop=True),
+                    ],
+                    axis=1,
+                )
+            else:  # packed
+                rows = []
+                for var in loaded:
+                    row = _process_meta(var, spread=False)
+                    row["data"] = var.data
+                    if include_rid:
+                        row["__record_id"] = var.record_id
+                    if include_bp:
+                        row["__branch_params"] = json.dumps(var.branch_params or {})
+                    rows.append(row)
+                return pd.DataFrame(rows)
+        else:
+            # Scalar / array / dict mode
+            col_name = "data" if layout == "packed" else view_name
+            rows = []
+            for var in loaded:
+                row = _process_meta(var, spread=is_spread)
+                row[col_name] = var.data if hasattr(var, "data") else var
+                if include_rid:
+                    row["__record_id"] = (
+                        var.record_id if hasattr(var, "record_id") else None
+                    )
+                if include_bp:
+                    row["__branch_params"] = json.dumps(
+                        var.branch_params if hasattr(var, "branch_params") else {}
+                    )
+                rows.append(row)
+            return pd.DataFrame(rows)
+
+    def _assemble_df_from_records_and_data(
+        self,
+        records: pd.DataFrame,
+        data_df: pd.DataFrame,
+        dtype_meta: dict,
+        variable_class: type[BaseVariable],
+        *,
+        layout: str,
+        include_rid: bool,
+        include_bp: bool,
+        stringify_schema: bool,
+    ) -> pd.DataFrame:
+        """Assemble the output DataFrame from bulk-fetched records and data.
+
+        Fast path — no per-record Python loops, no BaseVariable construction.
+        Called only when all dispatch checks pass (native dtype, no subclass overrides).
+        """
+        mode = dtype_meta.get("mode", "single_column")
+        columns_meta = dtype_meta.get("columns", {})
+        data_cols = list(columns_meta.keys())
+        schema_keys = self.dataset_schema_keys
+        view_name = (
+            variable_class.view_name()
+            if hasattr(variable_class, "view_name")
+            else variable_class.__name__
+        )
+
+        # -- Apply vectorized type restoration to data columns --
+        # NULL list elements come back from DuckDB as masked arrays and are
+        # restored as NaN by sciduckdb; count them BEFORE restoration so the
+        # log says how many were touched (they used to become 0 — 2026-09-15).
+        null_counts: dict = {}
+        for col, col_meta in columns_meta.items():
+            if col in data_df.columns:
+                n_null = count_null_list_elements(data_df[col])
+                if n_null:
+                    null_counts[col] = n_null
+                data_df[col] = storage_to_python_column(data_df[col], col_meta)
+        if null_counts:
+            Log.info(
+                f"load_all_as_df({variable_class.__name__}): restored "
+                f"{sum(null_counts.values())} NULL list element(s) as NaN in "
+                f"{len(null_counts)} column(s): {null_counts}"
+            )
+
+        # -- Build metadata DataFrame --
+        meta_dict: dict = {}
+
+        # Always include record_id temporarily for joining; rename/drop at end.
+        meta_dict["__record_id"] = records["record_id"].values
+
+        # Schema columns
+        for key in schema_keys:
+            if key in records.columns:
+                col_series = records[key]
+                if stringify_schema:
+                    # Values come back as strings from DuckDB VARCHAR columns
+                    meta_dict[key] = col_series.values
+                else:
+                    meta_dict[key] = col_series.apply(
+                        lambda v, _key=key: (
+                            self.restore_schema_value(_key, v)
+                            if v is not None
+                            and not (isinstance(v, float) and pd.isna(v))
+                            else None
+                        )
+                    ).values
+
+        # Non-schema metadata columns: a record's direct-save kwargs, derived
+        # from the graph (the synthetic ``__save__`` invocation's constants).
+        # Internal pipeline markers (__fn etc.) and fn sweep-constants are not
+        # exposed here — the latter appear in the ``__branch_params`` column below.
+
+        # Batched: derive every record's branch params in one closure build,
+        # reused for both the __save__ kwarg columns and the __branch_params
+        # column (previously two per-record ancestry walks each — the dominant
+        # cost when assembling large spread results).
+        rec_id_values = records["record_id"].values
+        bp_map = provenance_query.branch_params_batch(self._duck, list(rec_id_values))
+        per_row_kwargs: list[dict] = []
+        kwarg_col_names: dict[str, list] = {}
+        for rid in rec_id_values:
+            kw = {
+                k[len("__save__.") :]: v
+                for k, v in bp_map.get(rid, {}).items()
+                if k.startswith("__save__.")
+            }
+            per_row_kwargs.append(kw)
+            for name in kw:
+                if name not in kwarg_col_names:
+                    kwarg_col_names[name] = [None] * len(records)
+        for i, kw in enumerate(per_row_kwargs):
+            for name, val in kw.items():
+                kwarg_col_names[name][i] = val
+
+        meta_dict.update(kwarg_col_names)
+
+        # Branch params column — derived from the bipartite graph (§6) per record,
+        # not read from a stored column.
+        if include_bp:
+            meta_dict["__branch_params"] = [
+                json.dumps(bp_map.get(rid, {})) for rid in rec_id_values
+            ]
+
+        meta_df = pd.DataFrame(meta_dict)
+
+        # Detect and warn about orphaned records: present in the save log / _record
+        # but absent from the data table.  These arise when a save partially failed
+        # or when a record was logged without a corresponding data row (e.g. a buggy
+        # prior for_each run with an unexpected schema key).
+        # Using an inner join below excludes them; we surface a warning so users can
+        # investigate the root cause in their database.
+        type_name = variable_class.__name__
+        data_rids = set(data_df["record_id"].tolist()) if not data_df.empty else set()
+        meta_rids = set(meta_df["__record_id"].tolist())
+        orphaned = meta_rids - data_rids
+        if orphaned:
+            sample = sorted(orphaned)[:3]
+            Log.warn(
+                f"load_all_as_df({type_name}): {len(orphaned)} record(s) exist in "
+                f"the save log but have no data in {type_name}_data — "
+                f"excluding from results. Sample IDs: {sample}"
+                f"{'...' if len(orphaned) > 3 else ''}. "
+                f"This usually means a previous save partially failed or used an "
+                f"unexpected schema key. Inspect the database for orphaned rows."
+            )
+
+        # -- Assemble by storage mode --
+        if mode == "dataframe":
+            df_columns = dtype_meta.get("df_columns", data_cols)
+
+            if layout == "spread":
+                # INNER JOIN meta to data on record_id — excludes orphaned records
+                # (those with no data rows) so they never appear as NaN-filled rows.
+                result = meta_df.merge(
+                    data_df,
+                    left_on="__record_id",
+                    right_on="record_id",
+                    how="inner",
+                )
+                result = result.drop(columns=["record_id"], errors="ignore")
+                if not include_rid:
+                    result = result.drop(columns=["__record_id"], errors="ignore")
+                return result.reset_index(drop=True)
+            else:  # packed
+                # Group data by record_id and build a nested DataFrame per record.
+                grouped = data_df.groupby("record_id", sort=False)
+                packed_map: dict = {}
+                for rid, group in grouped:
+                    g = group.drop(columns=["record_id"], errors="ignore").reset_index(
+                        drop=True
+                    )
+                    cols_present = [c for c in df_columns if c in g.columns]
+                    packed_map[rid] = g[cols_present] if cols_present else g
+                meta_df["data"] = meta_df["__record_id"].map(packed_map)
+                if not include_rid:
+                    meta_df = meta_df.drop(columns=["__record_id"], errors="ignore")
+                return meta_df.reset_index(drop=True)
+
+        elif mode == "single_column":
+            # data_df: [record_id, value_col] — one row per record.
+            col_name = data_cols[0] if data_cols else None
+            if col_name is None:
+                if not include_rid:
+                    meta_df = meta_df.drop(columns=["__record_id"], errors="ignore")
+                return meta_df.reset_index(drop=True)
+
+            out_col = "data" if layout == "packed" else view_name
+            data_renamed = data_df[["record_id", col_name]].rename(
+                columns={"record_id": "__record_id", col_name: out_col}
+            )
+            # INNER JOIN: excludes orphaned records so they never produce NaN data rows.
+            result = meta_df.merge(data_renamed, on="__record_id", how="inner")
+            if not include_rid:
+                result = result.drop(columns=["__record_id"], errors="ignore")
+            return result.reset_index(drop=True)
+
+        elif mode == "multi_column":
+            # data_df: [record_id, col1, col2, …] — one row per record.
+            if layout == "packed":
+                data_only = data_df.drop(columns=["record_id"], errors="ignore")
+                data_dicts = data_only.to_dict("records")
+                data_map = dict(zip(data_df["record_id"], data_dicts, strict=False))
+                meta_df["data"] = meta_df["__record_id"].map(data_map)
+                if not include_rid:
+                    meta_df = meta_df.drop(columns=["__record_id"], errors="ignore")
+                return meta_df.reset_index(drop=True)
+            else:  # spread
+                data_renamed = data_df.rename(columns={"record_id": "__record_id"})
+                # INNER JOIN: excludes orphaned records so they never produce NaN data rows.
+                result = meta_df.merge(data_renamed, on="__record_id", how="inner")
+                if not include_rid:
+                    result = result.drop(columns=["__record_id"], errors="ignore")
+                return result.reset_index(drop=True)
+
+        else:
+            # Unknown mode — return just metadata.
+            if not include_rid:
+                meta_df = meta_df.drop(columns=["__record_id"], errors="ignore")
+            return meta_df.reset_index(drop=True)
+
+    def get_dtype_meta(self, variable_name: str) -> "dict | None":
+        """The stored ``dtype`` metadata for a variable type, or ``None``.
+
+        ``dtype_meta`` records how sciduckdb laid the value out on disk —
+        ``mode`` (``single_column`` / ``multi_column`` / ``dataframe``),
+        the per-column type map, and the ``nested`` / ``custom`` flags. It is
+        the only record of the fact that a variable's rows are the fields of
+        one dict rather than the columns of one table, which is a distinction
+        the loaded DataFrame cannot express on its own.
+
+        Read-only; the query is ``RecordStore.dtype_meta``.
+        """
+        return self.record_store.dtype_meta(variable_name)
+
+    def mapping_data_columns(self, variable_class) -> "list[str] | None":
+        """Column names to reassemble into a dict for a dict-valued variable.
+
+        Returns the ordered dict keys when *variable_class* stores in
+        ``multi_column`` mode (one DuckDB column per dict key), otherwise
+        ``None``.
+
+        Why callers need it: ``load_all_as_df(layout="spread")`` deliberately
+        spreads those keys across top-level columns, because column selection
+        (``Type("col")``), ``ColName``, ``Merge``, ``as_table=True``,
+        ``share_limits`` and ``for_columns`` all operate on them. The cost is
+        that a single record then looks exactly like a one-row table, and the
+        per-combo extraction in scifor has no way to tell the two apart —
+        so a struct saved from MATLAB (or a dict from Python) came back as a
+        1-row table. Compare ``_load_record``'s single-record path, which does
+        rebuild the dict, and ``_load_as_df_via_iterator``, which keeps a
+        ``nested`` dict in a single column: both already round-trip.
+
+        ``nested`` and ``custom`` layouts are excluded — they never reach the
+        spreading fast path (``load_all_as_df`` routes them to the iterator,
+        which already returns the value whole).
+        """
+        name = getattr(variable_class, "__name__", None)
+        if not name:
+            return None
+        dtype_meta = self.get_dtype_meta(name)
+        if not dtype_meta:
+            return None
+        if dtype_meta.get("custom") or dtype_meta.get("nested"):
+            return None
+        if dtype_meta.get("mode") != "multi_column":
+            return None
+        return list(dtype_meta.get("columns", {}).keys()) or None
+
+    def data_column_names(self, variable_class: type[BaseVariable]) -> "list[str] | None":
+        """The data columns a ``layout="spread"`` load of *variable_class*
+        returns, read from storage metadata (``_variables.dtype``) — no data
+        is loaded. ``None`` when metadata cannot answer and only a load can.
+
+        THE owner of that answer, mirroring :meth:`load_all_as_df`'s fast path
+        and :meth:`_assemble_df_from_records_and_data`: a ``dataframe`` or
+        ``multi_column`` type spreads its stored columns in stored order; a
+        ``single_column`` type spreads one column named after the variable
+        (``view_name``). Whatever routes the load to the iterator fallback
+        (custom or nested storage, an overridden ``__init__``, custom
+        serialization) answers ``None`` here too, so a caller never gets a
+        column list the real load would not produce.
+
+        Unlike reading ``loaded.columns``, this never includes a record's
+        direct-save kwarg columns (``version="v1"`` spreads as a ``version``
+        column): they are metadata, not data (cleanup-audit F28).
+        """
+        type_name = variable_class.__name__
+        rows = self._duck.fetchall(
+            "SELECT dtype FROM _variables WHERE variable_name = ?", [type_name]
+        )
+        if not rows:
+            return None
+        dtype_meta = json.loads(rows[0][0])
+        if (
+            variable_class.__init__ is not BaseVariable.__init__
+            or self._has_custom_serialization(variable_class)
+            or dtype_meta.get("custom")
+            or dtype_meta.get("nested")
+        ):
+            return None
+        data_cols = list(dtype_meta.get("columns", {}).keys())
+        mode = dtype_meta.get("mode", "single_column")
+        if mode == "single_column":
+            if not data_cols:
+                return None
+            return [
+                variable_class.view_name()
+                if hasattr(variable_class, "view_name")
+                else type_name
+            ]
+        if mode in ("dataframe", "multi_column"):
+            return data_cols or None
+        return None
+
+    def load_all_as_df(
+        self,
+        variable_class: type[BaseVariable],
+        metadata: dict | None = None,
+        *,
+        layout: str = "packed",
+        include_rid: bool = False,
+        include_bp: bool = False,
+        stringify_schema: bool = False,
+        version_id: str = "latest",
+        where=None,
+        branch_params_filter: dict | None = None,
+    ) -> pd.DataFrame:
+        """Bulk load all records of a variable type into a DataFrame.
+
+        Shared engine for two callers:
+
+        * ``BaseVariable.load(as_df=True)`` — ``layout="packed"``, one row per
+          record, data stored in a ``"data"`` column.
+        * ``foreach._convert_inputs`` — ``layout="spread"``, DataFrame-mode variables
+          produce one output row per inner-table row; data columns are spread across
+          top-level columns rather than nested.
+
+        Fast path
+        ---------
+        Fetches records and data in bulk SQL queries and assembles the output with
+        vectorised pandas operations.  Applies when all of the following hold:
+
+        * ``variable_class.__init__`` is not overridden (standard construction).
+        * ``variable_class`` does not override ``from_db`` (no custom deserialisation).
+        * ``dtype_meta`` does not have ``"custom": True`` (native storage only).
+        * ``dtype_meta`` does not have ``"nested": True`` (flat multi-column only).
+
+        Fall-back
+        ---------
+        Any violated condition routes to ``_load_as_df_via_iterator``, which uses the
+        ``db.load()`` iterator and assembles row-by-row.  Output shape is identical.
+
+        Parameters
+        ----------
+        variable_class :
+            BaseVariable subclass to load.
+        metadata :
+            Optional flat metadata dict for filtering (default: load all records).
+        layout :
+            ``"packed"`` — one output row per record; ``"spread"`` — data columns
+            spread, multiple rows per record for DataFrame-mode variables.
+        include_rid :
+            Add ``"__record_id"`` column to the output.
+        include_bp :
+            Add ``"__branch_params"`` (JSON string) column to the output.
+        stringify_schema :
+            Keep schema key values as strings (foreach uses this; notebook users
+            generally do not).
+        version_id :
+            ``"latest"`` or ``"all"`` — passed to ``_find_record``.
+        where :
+            Optional Filter for restricting records.
+        branch_params_filter :
+            Optional branch_params key/value filter dict.
+
+        Returns
+        -------
+        pd.DataFrame
+            Empty DataFrame when no matching records exist.
+        """
+        metadata = self.canonicalize_metadata(metadata or {})
+        type_name = variable_class.__name__
+        table_name = type_name + "_data"
+
+        # Look up dtype metadata — needed for dispatch and deserialisation.
+        dtype_rows = self._duck.fetchall(
+            "SELECT dtype FROM _variables WHERE variable_name = ?",
+            [type_name],
+        )
+        if not dtype_rows:
+            return pd.DataFrame()
+        dtype_meta = json.loads(dtype_rows[0][0])
+
+        # -- Dispatch: fast path or iterator fallback? --
+        # Class-introspection bailouts
+        if variable_class.__init__ is not BaseVariable.__init__:
+            return self._load_as_df_via_iterator(
+                variable_class,
+                metadata,
+                layout=layout,
+                include_rid=include_rid,
+                include_bp=include_bp,
+                stringify_schema=stringify_schema,
+                version_id=version_id,
+                where=where,
+                branch_params_filter=branch_params_filter,
+            )
+        if self._has_custom_serialization(variable_class):
+            return self._load_as_df_via_iterator(
+                variable_class,
+                metadata,
+                layout=layout,
+                include_rid=include_rid,
+                include_bp=include_bp,
+                stringify_schema=stringify_schema,
+                version_id=version_id,
+                where=where,
+                branch_params_filter=branch_params_filter,
+            )
+        # Storage-mode bailouts
+        if dtype_meta.get("custom"):
+            return self._load_as_df_via_iterator(
+                variable_class,
+                metadata,
+                layout=layout,
+                include_rid=include_rid,
+                include_bp=include_bp,
+                stringify_schema=stringify_schema,
+                version_id=version_id,
+                where=where,
+                branch_params_filter=branch_params_filter,
+            )
+        if dtype_meta.get("nested"):
+            return self._load_as_df_via_iterator(
+                variable_class,
+                metadata,
+                layout=layout,
+                include_rid=include_rid,
+                include_bp=include_bp,
+                stringify_schema=stringify_schema,
+                version_id=version_id,
+                where=where,
+                branch_params_filter=branch_params_filter,
+            )
+
+        # -- Fast path --
+        t0 = time.perf_counter()
+        if where is not None:
+            try:
+                records = self._load_with_where(
+                    variable_class,
+                    metadata,
+                    table_name,
+                    where,
+                    version_id=version_id,
+                )
+            except Exception as _exc:
+                Log.debug(
+                    f"[load_all_as_df] {type_name}: _load_with_where raised "
+                    f"{type(_exc).__name__}: {_exc} — returning empty DataFrame"
+                )
+                return pd.DataFrame()
+            # where= and branch_params_filter (Variant) coexist: apply the
+            # branch_params filter as a post-step on the where-matched records.
+            if branch_params_filter:
+                _n_before = len(records)
+                records = _filter_records_by_branch_params(
+                    records, branch_params_filter, self._duck
+                )
+                Log.debug(
+                    f"[load_all_as_df] {type_name}: branch_params_filter "
+                    f"{branch_params_filter} kept {len(records)}/{_n_before} records"
+                )
+        else:
+            nested_metadata = self._split_metadata(metadata)
+            records = self._find_record(
+                type_name,
+                nested_metadata=nested_metadata,
+                version_id=version_id,
+                branch_params_filter=branch_params_filter,
+            )
+
+        if len(records) == 0:
+            return pd.DataFrame()
+
+        # Bulk-fetch data rows in chunks to avoid very long IN clauses.
+        all_record_ids = records["record_id"].tolist()
+        if not dtype_meta.get("columns"):
+            return pd.DataFrame()
+        # Stored columns: datetime zone companions included, folded back by
+        # merge_tz_columns below (owner sciduckdb.datetimes).
+        data_cols = storage_column_names(dtype_meta)
+
+        data_select = ", ".join(f'"{c}"' for c in data_cols)
+        chunk_size = 500
+        chunks: list = []
+        t_sql = 0.0
+        for start in range(0, len(all_record_ids), chunk_size):
+            chunk = all_record_ids[start : start + chunk_size]
+            placeholders = ", ".join(["?"] * len(chunk))
+            sql = (
+                f'SELECT record_id, {data_select} FROM "{table_name}" '
+                f"WHERE record_id IN ({placeholders})"
+            )
+            _t = time.perf_counter()
+            chunk_df = self._duck.fetchdf(sql, chunk)
+            t_sql += time.perf_counter() - _t
+            if not chunk_df.empty:
+                chunks.append(chunk_df)
+
+        if not chunks:
+            return pd.DataFrame()
+
+        data_df = (
+            pd.concat(chunks, ignore_index=True)
+            if len(chunks) > 1
+            else chunks[0].copy()
+        )
+        merge_tz_columns(data_df, dtype_meta, where=f"load_all_as_df({type_name})")
+
+        result = self._assemble_df_from_records_and_data(
+            records,
+            data_df,
+            dtype_meta,
+            variable_class,
+            layout=layout,
+            include_rid=include_rid,
+            include_bp=include_bp,
+            stringify_schema=stringify_schema,
+        )
+        t_total = time.perf_counter() - t0
+        Log.info(
+            f"[timing] load_all_as_df({type_name}): {len(records)} records, "
+            f"layout={layout!r}, sql={t_sql:.3f}s, total={t_total:.3f}s"
+        )
+        return result
+
+    def load(
+        self,
+        variable_class: type[BaseVariable],
+        metadata: dict,
+        version_id: str = "all",
+        where=None,
+        branch_params_filter: dict | None = None,
+    ):
+        """
+        Load variables matching the given metadata as a generator.
+
+        Args:
+            variable_class: The type to load
+            metadata: Flat metadata dict
+            version_id: Which versions to return:
+                - "all" (default): return every version
+                - "latest": return only the latest version per (schema_id, variant)
+                - any other string: treated as a specific record_id
+            where: Optional Filter selecting the computation *variant* by the
+                schema_id set its variable-level portion resolves to (semantic
+                matching by consumed inputs); any SchemaKey portion further
+                restricts rows. See ``_load_with_where``.
+            branch_params_filter: Optional dict of branch_params key/value filters.
+
+        Yields:
+            BaseVariable instances matching the metadata
+        """
+        metadata = self.canonicalize_metadata(metadata)
+        type_name = variable_class.__name__
+        user_summary = {k: v for k, v in metadata.items() if not k.startswith("__")}
+        Log.debug(f"load({type_name}): metadata={user_summary}")
+        _t_load_all_total = time.perf_counter()
+        table_name = self._ensure_registered(variable_class, auto_register=False)
+
+        _t_find = time.perf_counter()
+
+        # Specific record_id: bypass normal filtering
+        if version_id not in ("all", "latest") and version_id is not None:
+            records = self._find_record(
+                variable_class.__name__,
+                record_id=version_id,
+                include_excluded=True,
+            )
+            if len(records) == 0:
+                raise NotFoundError(f"No data found with record_id '{version_id}'")
+        elif where is not None:
+            # where= specified: semantic variant match + row restriction
+            try:
+                records = self._load_with_where(
+                    variable_class,
+                    metadata,
+                    table_name,
+                    where,
+                    version_id=version_id,
+                )
+            except NotFoundError:
+                Log.info(f"load({type_name}): no records found")
+                if not self._any_records_exist(type_name):
+                    raise NotFoundError(
+                        f"Variable type '{type_name}' is registered but has no saved records in this database."
+                    )
+                return
+            # where= and branch_params_filter (Variant) coexist: apply the
+            # branch_params filter as a post-step on the where-matched records.
+            if branch_params_filter:
+                _n_before = len(records)
+                records = _filter_records_by_branch_params(
+                    records, branch_params_filter, self._duck
+                )
+                Log.debug(
+                    f"load({type_name}): branch_params_filter {branch_params_filter} "
+                    f"kept {len(records)}/{_n_before} records"
+                )
+                if len(records) == 0:
+                    return
+        else:
+            nested_metadata = self._split_metadata(metadata)
+            try:
+                records = self._find_record(
+                    variable_class.__name__,
+                    nested_metadata=nested_metadata,
+                    version_id=version_id,
+                    branch_params_filter=branch_params_filter,
+                )
+            except NotFoundError:
+                Log.info(f"load({type_name}): no records found")
+                return  # No data
+
+            if len(records) == 0:
+                Log.info(f"load({type_name}): no records found")
+                if not self._any_records_exist(type_name):
+                    raise NotFoundError(
+                        f"Variable type '{type_name}' is registered but has no saved records in this database."
+                    )
+                return
+        t_find = time.perf_counter() - _t_find
+
+        Log.debug(f"load({type_name}): found {len(records)} record(s)")
+
+        # --- Bulk loading path ---
+
+        # 1. Get dtype from _variables (one row per variable)
+        _t_dtype = time.perf_counter()
+        dtype_rows = self._duck.fetchall(
+            "SELECT dtype FROM _variables WHERE variable_name = ?",
+            [variable_class.__name__],
+        )
+        if not dtype_rows:
+            return
+        dtype_meta = json.loads(dtype_rows[0][0])
+        is_custom = dtype_meta.get("custom", False)
+        t_dtype = time.perf_counter() - _t_dtype
+
+        # 2. Collect all unique record_ids to fetch
+        all_record_ids = records["record_id"].tolist()
+        if not all_record_ids:
+            return
+
+        # 3. Batch fetch data rows by record_id
+        data_lookup: dict[str, Any] = {}  # record_id -> deserialized value
+
+        chunk_size = 500
+        t_chunk_sql = 0.0
+        t_chunk_deserialize = 0.0
+        _t_chunks_total = time.perf_counter()
+        for start in range(0, len(all_record_ids), chunk_size):
+            chunk = all_record_ids[start : start + chunk_size]
+            placeholders = ", ".join(["?"] * len(chunk))
+
+            if is_custom:
+                # Custom (columnar) path: fetch all rows for this chunk
+                sql = (
+                    f'SELECT * FROM "{table_name}" WHERE record_id IN ({placeholders})'
+                )
+                _t = time.perf_counter()
+                chunk_df = self._duck.fetchdf(sql, chunk)
+                t_chunk_sql += time.perf_counter() - _t
+
+                if len(chunk_df) > 0:
+                    _t = time.perf_counter()
+                    grouped = chunk_df.groupby("record_id", sort=False)
+                    for rid, sub_df in grouped:
+                        sub_df = sub_df.drop(
+                            columns=["record_id"], errors="ignore"
+                        ).reset_index(drop=True)
+                        data_lookup[rid] = self._deserialize_custom_subdf(
+                            variable_class,
+                            sub_df,
+                            dtype_meta,
+                        )
+                    t_chunk_deserialize += time.perf_counter() - _t
+            else:
+                # Native path. Stored columns are selected (datetime zone
+                # companions included) and folded back right after the fetch.
+                data_cols = list(dtype_meta.get("columns", {}).keys())
+                data_select = ", ".join(
+                    f'"{c}"' for c in storage_column_names(dtype_meta)
+                )
+                sql = (
+                    f'SELECT record_id, {data_select} FROM "{table_name}" '
+                    f"WHERE record_id IN ({placeholders})"
+                )
+                _t = time.perf_counter()
+                chunk_df = self._duck.fetchdf(sql, chunk)
+                t_chunk_sql += time.perf_counter() - _t
+                merge_tz_columns(chunk_df, dtype_meta, where=f"load({type_name})")
+
+                if len(chunk_df) > 0:
+                    _t = time.perf_counter()
+                    mode = dtype_meta.get("mode", "single_column")
+                    columns_meta = dtype_meta.get("columns", {})
+
+                    if mode == "dataframe":
+                        # One DuckDB row per DataFrame row: group by record_id.
+                        df_columns = dtype_meta.get(
+                            "df_columns", list(columns_meta.keys())
+                        )
+                        for rid, group_df in chunk_df.groupby("record_id", sort=False):
+                            group_df = group_df.drop(
+                                columns=["record_id"], errors="ignore"
+                            ).reset_index(drop=True)
+                            result = {}
+                            for c, meta in columns_meta.items():
+                                if c in group_df.columns and is_datetime_meta(meta):
+                                    # Restored by merge_tz_columns; the Series
+                                    # keeps its dtype (unit, zone), a list
+                                    # would not — and the hash includes it.
+                                    result[c] = group_df[c]
+                                elif c in group_df.columns:
+                                    # Optimized: use tolist() instead of iloc[i] (5-10x faster)
+                                    result[c] = [
+                                        storage_to_python(val, meta)
+                                        for val in group_df[c].tolist()
+                                    ]
+                            data_lookup[rid] = pd.DataFrame(result, columns=df_columns)
+                    else:
+                        # Non-DataFrame: restore types, then one value per record_id row.
+                        restored = chunk_df[data_cols].copy()
+                        restored = restore_types(restored, dtype_meta)
+
+                        if mode == "single_column":
+                            col_name = next(iter(columns_meta))
+                            for i, rid in enumerate(chunk_df["record_id"].tolist()):
+                                data_lookup[rid] = restored[col_name].iloc[i]
+                        elif mode == "multi_column":
+                            for i, rid in enumerate(chunk_df["record_id"].tolist()):
+                                result = {}
+                                for c, meta in columns_meta.items():
+                                    result[c] = storage_to_python(
+                                        restored[c].iloc[i], meta
+                                    )
+                                if dtype_meta.get("nested"):
+                                    data_lookup[rid] = unflatten_dict(
+                                        result, dtype_meta["path_map"]
+                                    )
+                                else:
+                                    data_lookup[rid] = result
+                        else:
+                            col_names = list(columns_meta.keys())
+                            for i, rid in enumerate(chunk_df["record_id"].tolist()):
+                                data_lookup[rid] = {
+                                    c: restored[c].iloc[i] for c in col_names
+                                }
+                    t_chunk_deserialize += time.perf_counter() - _t
+
+        t_chunks_total = time.perf_counter() - _t_chunks_total
+        n_chunks = (len(all_record_ids) + chunk_size - 1) // chunk_size
+        _mode_str = "custom" if is_custom else dtype_meta.get("mode", "single_column")
+        Log.info(
+            f"[timing] load({type_name}): pre-yield setup: "
+            f"find={t_find:.3f}s, dtype_lookup={t_dtype:.3f}s, "
+            f"chunks_total={t_chunks_total:.3f}s "
+            f"(sql={t_chunk_sql:.3f}s, deserialize={t_chunk_deserialize:.3f}s, "
+            f"n_chunks={n_chunks}, mode={_mode_str})"
+        )
+
+        # 4. Construct instances using itertuples + inline metadata.
+        # This is a generator: per-yield body cost is measured cumulatively
+        # and emitted in a TOTAL summary after the last yield.
+        schema_keys = self.dataset_schema_keys
+        n_yielded = 0
+        t_yield_body = 0.0
+        for row in records.itertuples(index=False):
+            _t_body = time.perf_counter()
+            record_id = row.record_id
+
+            if record_id not in data_lookup:
+                t_yield_body += time.perf_counter() - _t_body
+                continue
+
+            data_value = data_lookup[record_id]
+            content_hash = row.content_hash
+
+            flat_metadata = {}
+            for sk in schema_keys:
+                val = getattr(row, sk, None)
+                if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                    flat_metadata[sk] = self.restore_schema_value(sk, val)
+
+            # branch_params + direct-save kwargs derived from the bipartite graph
+            # (§6), not a column. __save__.<kwarg> entries are the record's
+            # non-schema save metadata.
+            try:
+
+                bp = provenance_query.derived_branch_params(self._duck, record_id)
+            except Exception:
+                bp = {}
+            for k, v in bp.items():
+                if k.startswith("__save__."):
+                    flat_metadata[k[len("__save__.") :]] = v
+
+            instance = variable_class(data_value)
+            instance.record_id = record_id
+            instance.metadata = flat_metadata
+            instance.content_hash = content_hash
+            instance.branch_params = bp
+
+            n_yielded += 1
+            t_yield_body += time.perf_counter() - _t_body
+            yield instance
+
+        t_total = time.perf_counter() - _t_load_all_total
+        _caller_overhead = t_total - t_find - t_chunks_total - t_yield_body - t_dtype
+        Log.info(
+            f"[timing] load({type_name}): TOTAL={t_total:.3f}s "
+            f"(find={t_find:.3f}s, chunks={t_chunks_total:.3f}s, "
+            f"yield_body={t_yield_body:.3f}s for {n_yielded} records, "
+            f"caller_overhead~={_caller_overhead:.3f}s)"
+        )
+
+    def list_versions(
+        self,
+        variable_class: type[BaseVariable],
+        include_excluded: bool = False,
+        **metadata,
+    ) -> list[dict]:
+        """
+        List all versions at a schema location.
+
+        Args:
+            variable_class: The type to query
+            include_excluded: If True, include excluded variants in results.
+            **metadata: Schema metadata to match; non-schema keys are treated
+                as branch_params filters.
+
+        Returns:
+            List of dicts with record_id, schema, branch_params, timestamp
+            (plus "excluded" bool when include_excluded=True).
+        """
+        self._ensure_registered(variable_class, auto_register=True)
+
+        schema_keys_set = set(self.dataset_schema_keys)
+        schema_metadata = {k: v for k, v in metadata.items() if k in schema_keys_set}
+        branch_params_filter = {
+            k: v for k, v in metadata.items() if k not in schema_keys_set
+        } or None
+
+        nested_metadata = self._split_metadata(schema_metadata)
+
+        try:
+            records = self._find_record(
+                variable_class.__name__,
+                nested_metadata=nested_metadata,
+                version_id="all",
+                branch_params_filter=branch_params_filter,
+                include_excluded=include_excluded,
+            )
+        except Exception as exc:
+            # Still answered as "no versions" (callers and MATLAB rely on a
+            # list), but no longer silently: an error here is not the same as
+            # a location with nothing saved.
+            Log.warn(
+                f"list_versions({variable_class.__name__}): record lookup failed "
+                f"({type(exc).__name__}: {exc}); reporting no versions"
+            )
+            return []
+
+        # Every row's branch params from ONE upstream closure. This loop used
+        # to walk each record's ancestry twice (once for its save kwargs, once
+        # for branch_params) — the N+1 the batched helpers exist to avoid
+        # (cleanup-audit F3).
+        bp_map = provenance_query.branch_params_batch(
+            self._duck, list(records["record_id"]) if len(records) else []
+        )
+        results = []
+        for _, row in records.iterrows():
+            # branch_params derived from the bipartite graph (§6), not a column.
+            bp = bp_map.get(row["record_id"], {})
+            _, nested = self._reconstruct_metadata_from_row(row, branch_params=bp)
+            entry = {
+                "record_id": row["record_id"],
+                "schema": nested.get("schema", {}),
+                "branch_params": bp,
+                "timestamp": row["timestamp"],
+            }
+            if include_excluded:
+                exc = row.get("excluded") if hasattr(row, "get") else row["excluded"]
+                entry["excluded"] = bool(exc) if exc is not None else False
+            results.append(entry)
+
+        # Sort by timestamp descending
+        results.sort(key=lambda x: x["timestamp"], reverse=True)
+        return results
+
+    def _resolve_record_id(
+        self,
+        record_id_or_type: "str | type[BaseVariable]",
+        **kwargs,
+    ) -> str:
+        """Resolve a record_id string or (variable_class, **kwargs) to a single record_id.
+
+        Raises AmbiguousVersionError if multiple records match, NotFoundError if none.
+        Always searches including excluded records.
+        """
+        if isinstance(record_id_or_type, str):
+            return record_id_or_type
+
+        variable_class = record_id_or_type
+        schema_keys_set = set(self.dataset_schema_keys)
+        schema_metadata = {k: v for k, v in kwargs.items() if k in schema_keys_set}
+        branch_params_filter = {
+            k: v for k, v in kwargs.items() if k not in schema_keys_set
+        } or None
+
+        nested_metadata = self._split_metadata(schema_metadata)
+        records = self._find_record(
+            variable_class.__name__,
+            nested_metadata=nested_metadata,
+            version_id="all",
+            branch_params_filter=branch_params_filter,
+            include_excluded=True,
+        )
+
+        if len(records) == 0:
+            raise NotFoundError(
+                f"No {variable_class.__name__} found matching: {kwargs}"
+            )
+        if len(records) > 1:
+            ids = records["record_id"].tolist()
+            raise AmbiguousVersionError(
+                f"{len(records)} records match for {variable_class.__name__} "
+                f"with {kwargs}. "
+                f"Pass a record_id directly or narrow with more branch parameters. "
+                f"Matching record_ids: {ids}"
+            )
+        return records.iloc[0]["record_id"]
+
+    def exclude_variant(
+        self,
+        record_id_or_type: "str | type[BaseVariable]",
+        **kwargs,
+    ) -> int:
+        """Mark variant(s) as excluded from automatic inclusion in for_each and load().
+
+        If multiple variants match the provided metadata, ALL matching variants
+        are excluded (e.g., all branch_params for a given schema combo).
+
+        Usage:
+            db.exclude_variant("abc123")                                  # by record_id (1 variant)
+            db.exclude_variant(DetectedSpikes, subject="S01", low_hz=20)  # specific variant
+            db.exclude_variant(DetectedSpikes, subject="S01")             # all variants for S01
+
+        Returns:
+            Number of variants excluded.
+        """
+        if isinstance(record_id_or_type, str):
+            # Direct record_id provided - exclude just that one
+            self._duck.execute(
+                "UPDATE _record SET excluded = TRUE WHERE record_id = ?",
+                [record_id_or_type],
+            )
+            return 1
+
+        # Variable class + kwargs: find and exclude ALL matching records
+        variable_class = record_id_or_type
+        schema_keys_set = set(self.dataset_schema_keys)
+        schema_metadata = {k: v for k, v in kwargs.items() if k in schema_keys_set}
+        branch_params_filter = {
+            k: v for k, v in kwargs.items() if k not in schema_keys_set
+        } or None
+
+        nested_metadata = self._split_metadata(schema_metadata)
+        records = self._find_record(
+            variable_class.__name__,
+            nested_metadata=nested_metadata,
+            version_id="all",
+            branch_params_filter=branch_params_filter,
+            include_excluded=True,
+        )
+
+        if len(records) == 0:
+            raise NotFoundError(
+                f"No {variable_class.__name__} found matching: {kwargs}"
+            )
+
+        # Exclude all matching records
+        record_ids = records["record_id"].tolist()
+        for rid in record_ids:
+            self._duck.execute(
+                "UPDATE _record SET excluded = TRUE WHERE record_id = ?",
+                [rid],
+            )
+
+        if len(record_ids) > 1:
+            Log.info(
+                f"Excluded {len(record_ids)} variant(s) of {variable_class.__name__} "
+                f"matching {kwargs}"
+            )
+        return len(record_ids)
+
+    def include_variant(
+        self,
+        record_id_or_type: "str | type[BaseVariable]",
+        **kwargs,
+    ) -> int:
+        """Re-include previously excluded variant(s).
+
+        If multiple variants match the provided metadata, ALL matching variants
+        are re-included.
+
+        Usage:
+            db.include_variant("abc123")                                  # by record_id (1 variant)
+            db.include_variant(DetectedSpikes, subject="S01", low_hz=20)  # specific variant
+            db.include_variant(DetectedSpikes, subject="S01")             # all variants for S01
+
+        Returns:
+            Number of variants re-included.
+        """
+        if isinstance(record_id_or_type, str):
+            # Direct record_id provided - include just that one
+            self._duck.execute(
+                "UPDATE _record SET excluded = FALSE WHERE record_id = ?",
+                [record_id_or_type],
+            )
+            return 1
+
+        # Variable class + kwargs: find and include ALL matching records
+        variable_class = record_id_or_type
+        schema_keys_set = set(self.dataset_schema_keys)
+        schema_metadata = {k: v for k, v in kwargs.items() if k in schema_keys_set}
+        branch_params_filter = {
+            k: v for k, v in kwargs.items() if k not in schema_keys_set
+        } or None
+
+        nested_metadata = self._split_metadata(schema_metadata)
+        records = self._find_record(
+            variable_class.__name__,
+            nested_metadata=nested_metadata,
+            version_id="all",
+            branch_params_filter=branch_params_filter,
+            include_excluded=True,
+        )
+
+        if len(records) == 0:
+            raise NotFoundError(
+                f"No {variable_class.__name__} found matching: {kwargs}"
+            )
+
+        # Re-include all matching records
+        record_ids = records["record_id"].tolist()
+        for rid in record_ids:
+            self._duck.execute(
+                "UPDATE _record SET excluded = FALSE WHERE record_id = ?",
+                [rid],
+            )
+
+        if len(record_ids) > 1:
+            Log.info(
+                f"Re-included {len(record_ids)} variant(s) of {variable_class.__name__} "
+                f"matching {kwargs}"
+            )
+        return len(record_ids)
+
+    def get_provenance(
+        self,
+        variable_class: type[BaseVariable] | None,
+        version: str | None = None,
+        **metadata,
+    ) -> dict | None:
+        """
+        Get the provenance (lineage) of a variable.
+
+        Returns:
+            Dict with function_name, function_hash, inputs, constants
+            or None if no lineage recorded
+        """
+        if version:
+            record_id = version
+        else:
+            var = next(self.load(variable_class, metadata, version_id="latest"))
+            record_id = var.record_id
+        return provenance_query.provenance(self._duck, record_id)
+
+    def list_pipeline_variants(
+        self,
+        output_type: str | None = None,
+    ) -> list[dict]:
+        """
+        List all distinct pipeline step variants recorded in the database.
+
+        Each entry represents a unique (function, constants, output_type)
+        combination — a "branch" of the pipeline. Two for_each runs on the
+        same function with different constants produce two separate entries.
+
+        Derived entirely from the bipartite provenance graph (no version_keys).
+
+        Args:
+            output_type: Optional variable type name to filter results
+                         (e.g. "Filtered"). If None, all types are returned.
+
+        Returns:
+            List of dicts with keys:
+                function_name (str),
+                output_type   (str),
+                call_id       (str: 16 hex chars; identifies the for_each call
+                               site that produced this variant.  Same across
+                               cosmetic source edits to the fn body),
+                input_types   (dict: param_name → type_name),
+                constants     (dict: param_name → value),
+                run_options   (str: the distribute/as_table set this variant
+                               ran under — provenance_query.run_options_label),
+                output_num    (int | None: which output of the PRODUCING
+                               INVOCATION this record is — the PK half of
+                               _invocation_output. That coincides with the
+                               0-based signature slot only for an ordinary
+                               multi-output call: a `distribute` run numbers
+                               its SLICES, and a batch loader sharing one
+                               invocation across runs gives a re-run's record
+                               the next free slot. Do not index a signature
+                               with it without checking the range, and never
+                               for a single-output function — see
+                               scistack_gui.services.graph_service.
+                               _matlab_param_to_class_from_db),
+                record_count  (int: distinct records for this variant)
+        """
+
+        return provenance_query.pipeline_variants(self._duck, output_type)
+
+    def get_aggregated_variants(
+        self,
+        fn_name: str | None = None,
+        call_id: str | None = None,
+    ) -> dict:
+        """
+        Get aggregated variant data for pipeline visualization.
+
+        Aggregates variants by (fn_name, call_id) and collects metadata about
+        functions, variables, constants, and path inputs. This provides all the
+        data needed to build a pipeline graph in one query.
+
+        Args:
+            fn_name: Optional function name to filter results.
+            call_id: Optional call_id to filter to a specific for_each call site.
+
+        Returns:
+            Dict with keys:
+
+            ``"functions"`` (dict)
+                Keyed by (fn_name, call_id) tuples::
+
+                    {
+                        (fn_name, call_id): {
+                            "input_params": {param: var_type},
+                            "outputs": [var_type1, var_type2],
+                            "constants": {param: [val1, val2]},
+                            "parameter_names": {param: parameter node name},
+                            "glue_chains": {param: [glue node name, ...]},
+                            "variant_count": int,
+                            "variants": [
+                                {
+                                    "input_types": {param: type_name},
+                                    "constants": {param: value},
+                                    "output_type": str,
+                                    "output_num": int | None,
+                                    "record_count": int,
+                                }
+                            ],
+                        }
+                    }
+
+            ``"variables"`` (dict)
+                Variable metadata keyed by variable name::
+
+                    {
+                        var_type: {
+                            "record_count": int,
+                        }
+                    }
+
+            ``"constants"`` (dict)
+                Constants used across functions, keyed by PARAMETER NODE name:
+                the declared Parameter the run recorded, else the argument.
+                Each function's ``"parameter_names"`` (``{argument: node}``)
+                says which argument each node filled — the handle an edge
+                from it lands on::
+
+                    {
+                        const_name: {
+                            "values": [{"value": val, "record_count": N}],
+                            "functions": [(fn_name, call_id), ...],
+                        }
+                    }
+
+            ``"path_inputs"`` (dict)
+                PathInputs, keyed by SPEC (its JSON), not by parameter name —
+                two functions may name different PathInputs alike::
+
+                    {
+                        spec_json: {
+                            "template": str,
+                            "root_folder": str | None,
+                            "functions": [((fn_name, call_id), param_name), ...],
+                        }
+                    }
+
+            The conversion itself is :func:`aggregate_pipeline_variants`
+            (pure); this method adds the database-only record counts.
+        """
+        variants = self.list_pipeline_variants()
+        if fn_name is not None:
+            variants = [v for v in variants if v["function_name"] == fn_name]
+        if call_id is not None:
+            variants = [v for v in variants if v.get("call_id") == call_id]
+
+        result = aggregate_pipeline_variants(variants)
+
+        # Every variable type's record count in ONE query (it was one per type).
+        types = list(result["variables"])
+        counts: dict = {}
+        if types:
+            ph = ", ".join("?" for _ in types)
+            counts = {
+                t: n
+                for t, n in self._duck.fetchall(
+                    "SELECT type, COUNT(DISTINCT record_id) FROM _record "  # noqa: S608
+                    f"WHERE type IN ({ph}) AND COALESCE(excluded, FALSE) = FALSE "
+                    "GROUP BY type",
+                    types,
+                )
+            }
+        for t in types:
+            result["variables"][t] = {"record_count": counts.get(t, 0)}
+        return result
+
+    def filter_variants_for_execution(
+        self,
+        fn_name: str,
+        call_id: str,
+        schema_filter: dict[str, list] | None = None,
+        constant_overrides: dict[str, Any] | None = None,
+    ) -> list[dict]:
+        """
+        Filter variants for execution based on schema and constant selection.
+
+        This method prepares variants for execution by:
+        1. Getting variants for the specified function and call_id
+        2. Filtering by schema_filter if provided
+        3. Applying constant_overrides (replacing DB constants)
+        4. Deduplicating the result
+
+        Args:
+            fn_name: Function name to filter.
+            call_id: Call site identifier (16 hex chars).
+            schema_filter: Optional dict of {schema_key: [selected_values]} to
+                filter variants by. Only variants matching these schema values
+                will be included.
+            constant_overrides: Optional dict of {constant_name: value} to
+                override database constants. When provided, these values replace
+                the constants from the database for all matching variants.
+
+        Returns:
+            List of variant dicts ready for for_each execution::
+
+                [
+                    {
+                        "input_types": {param: var_type},
+                        "output_type": var_type,
+                        "constants": {param: value},
+                    }
+                ]
+
+            The list is deduplicated so identical variants appear only once.
+
+        Example::
+
+            # Get variants for a function, overriding threshold constant
+            variants = db.filter_variants_for_execution(
+                fn_name="process_signal",
+                call_id="abc123def456789",
+                schema_filter={"subject": [1, 2]},  # Only subjects 1 and 2
+                constant_overrides={"threshold": 0.75},  # Override with 0.75
+            )
+        """
+        from scidb.provenance.graph import constants_identity_key
+
+        # Get all variants for this function and call_id
+        all_variants = self.list_pipeline_variants()
+        fn_variants = [
+            v
+            for v in all_variants
+            if v["function_name"] == fn_name and v.get("call_id") == call_id
+        ]
+
+        if not fn_variants:
+            return []
+
+        # Build result variants
+        result_variants = []
+        seen = set()  # For deduplication
+
+        for variant in fn_variants:
+            input_types = variant["input_types"]
+            output_type = variant["output_type"]
+            constants = dict(variant["constants"])  # Make a copy
+
+            # Apply constant overrides
+            if constant_overrides:
+                for const_name, const_value in constant_overrides.items():
+                    if const_name in constants:
+                        constants[const_name] = const_value
+
+            # Create variant dict
+            result_variant = {
+                "input_types": input_types,
+                "output_type": output_type,
+                "constants": constants,
+            }
+
+            # Deduplicate by converting to a hashable key. Constants are
+            # canonicalized through scidb.provenance.graph.constants_identity_key:
+            # a constant may be a dict (a config table declared in
+            # scistack_entities.toml), and a bare tuple(sorted(...)) of those
+            # items is unhashable.
+            key = (
+                output_type,
+                tuple(sorted(input_types.items())),
+                constants_identity_key(constants),
+            )
+
+            if key not in seen:
+                seen.add(key)
+                result_variants.append(result_variant)
+
+        # Note: schema_filter is intentionally NOT applied here because
+        # for_each handles schema filtering via **metadata_iterables.
+        # The schema_filter parameter is kept for API compatibility with the
+        # original plan, but filtering by schema happens at execution time,
+        # not during variant selection.
+
+        return result_variants
+
+    def invocation_exists(self, invocation_id: str) -> bool:
+        """True if an invocation (unique function call) is already recorded.
+
+        The §9c membership test: an invocation and its ``_invocation_output``
+        rows are written together, so *invocation present ⇒ outputs present*.
+        ``skip_computed`` and node-completeness both use this.
+        """
+        rows = self._duck.fetchall(
+            "SELECT 1 FROM _invocation WHERE invocation_id = ? LIMIT 1",
+            [invocation_id],
+        )
+        return bool(rows)
+
+    def find_record_id(
+        self,
+        variable_class: type,
+        metadata: dict,
+        branch_params_filter: dict | None = None,
+    ) -> str | None:
+        """Lightweight lookup returning the record_id of the latest record for
+        a variable + metadata combination, without loading any data.
+
+        Args:
+            variable_class: The BaseVariable subclass to look up.
+            metadata: Flat dict of schema keys (and optionally non-schema kwargs,
+                matched as branch params against the graph).
+            branch_params_filter: Optional namespaced branch_params dict
+                (e.g. ``{"bandpass_filter.low_hz": 20}``) for variant
+                disambiguation via suffix matching against graph-derived branch
+                params (the producing invocation's constants).
+
+        Returns None if no matching record exists.
+        """
+        nested = self._split_metadata(metadata)
+        rows = self._find_record(
+            variable_class.__name__,
+            nested_metadata=nested,
+            version_id="latest",
+            branch_params_filter=branch_params_filter or None,
+        )
+        if rows.empty:
+            return None
+        return rows.iloc[0]["record_id"]
+
+    # -------------------------------------------------------------------------
+    # Export Methods
+    # -------------------------------------------------------------------------
+
+    def export_to_csv(
+        self,
+        variable_class: type[BaseVariable],
+        path: str,
+        **metadata,
+    ) -> int:
+        """Export matching variables to a CSV file."""
+        results = list(self.load(variable_class, metadata))
+
+        if not results:
+            raise NotFoundError(
+                f"No {variable_class.__name__} found matching metadata: {metadata}"
+            )
+
+        all_dfs = []
+        for var in results:
+            df = variable_class(var.data).to_db()
+            df["_record_id"] = var.record_id
+            if var.metadata:
+                for key, value in var.metadata.items():
+                    df[f"_meta_{key}"] = value
+            all_dfs.append(df)
+
+        combined = pd.concat(all_dfs, ignore_index=True)
+        combined.to_csv(path, index=False)
+
+        return len(results)
+
+    def _get_variable_class(self, type_name: str):
+        """Get a variable class by name (class name, not table name)."""
+        if type_name in self._registered_types:
+            return self._registered_types[type_name]
+
+        return BaseVariable.get_subclass_by_name(type_name)
+
+    def schema_key_is_numeric(self, key: str) -> bool:
+        """Whether loaded values of ``key`` are restored to numbers.
+
+        The rule, in order:
+
+        1. a declared type (``schema_key_types``) wins — ``"numeric"`` or
+           ``"string"``;
+        2. otherwise the key is numeric only if EVERY value stored for it
+           round-trips through :func:`from_schema_str` unchanged in spelling.
+           One zero-padded ``"01"`` among the values makes the whole key a
+           string key, so ``"10"`` beside it stays ``"10"`` rather than
+           becoming 10 and giving the column two types.
+
+        Cached per key; the cache is dropped whenever records are saved, since
+        a new value can change the answer (a first ``"01"`` after ``1, 2``).
+        """
+        cache = self.__dict__.setdefault("_schema_key_numeric_cache", {})
+        if key in cache:
+            return cache[key]
+        declared = (self.dataset_schema_key_types or {}).get(key)
+        if declared in ("numeric", "string"):
+            numeric = declared == "numeric"
+            reason = f"declared {declared}"
+        else:
+            values = [v for v in self._duck.distinct_schema_values(key) if v is not None]
+            kept = [v for v in values if isinstance(from_schema_str(v), str)]
+            numeric = bool(values) and not kept
+            reason = (
+                "no values stored yet"
+                if not values
+                else "every stored value is a plain number"
+                if numeric
+                else f"{len(kept)} of {len(values)} stored value(s) keep their spelling "
+                f"(e.g. {kept[0]!r})"
+            )
+        Log.debug(
+            "schema key %r loads as %s: %s",
+            key,
+            "numbers" if numeric else "strings",
+            reason,
+        )
+        cache[key] = numeric
+        return numeric
+
+    def restore_schema_value(self, key: str, value):
+        """A loaded schema value with the type its KEY has — see
+        :meth:`schema_key_is_numeric`. The one restore every load path uses."""
+        if value is None or not isinstance(value, str):
+            return value
+        return from_schema_str(value) if self.schema_key_is_numeric(key) else value
+
+    def _forget_schema_key_kinds(self) -> None:
+        """Drop the per-key numeric/string cache — called after any save."""
+        self.__dict__.pop("_schema_key_numeric_cache", None)
+
+    def transaction(self, label: str = ""):
+        """One transaction around the block (re-entrant; see
+        :meth:`sciduckdb.DuckConnection.transaction`). Saves inside it commit
+        together or not at all."""
+        return self._duck.transaction(label)
+
+    def _forget_uncommitted_caches(self) -> None:
+        """Rollback listener: drop caches that statements rolled back may
+        have filled (a type registered inside the transaction, schema-key
+        kinds read from rows that are now gone). Both refill from the DB."""
+        Log.debug(
+            f"[transaction] rolled back; forgetting {len(self._registered_types)} "
+            f"registered-type cache entr(ies) and schema-key kinds"
+        )
+        self._registered_types.clear()
+        self._forget_schema_key_kinds()
+
+    def distinct_schema_values(self, key: str) -> list:
+        """Return all distinct values stored for a schema key.
+
+        Args:
+            key: A schema key name (e.g. "subject", "session")
+
+        Returns:
+            Distinct non-null values for that key: the levels declared in the
+            project's ``[schema_keys]`` first, in that order, then the rest in
+            the database's own (sorted) order.
+
+        The declared order applies here, and not only to loaded frames,
+        because this is where ``for_each(subject=[], session=[])`` gets its
+        levels — so it decides the iteration order, and therefore the row
+        order of every table ``for_each`` hands back, and the GUI's level lists.
+        """
+        from scifor.project.schema_order import order_levels
+
+        return order_levels(
+            key,
+            self._duck.distinct_schema_values(key),
+            declared=self.dataset_schema_key_order or {},
+            fallback=lambda values: values,
+        )
+
+    def distinct_schema_combinations(self, keys: list[str]) -> list[tuple]:
+        """Return all distinct combinations for multiple schema keys.
+
+        Args:
+            keys: List of schema key names (e.g. ["subject", "session"])
+
+        Returns:
+            List of tuples of distinct non-null value combinations (strings)
+        """
+        return self._duck.distinct_schema_combinations(keys)
+
+    def list_variables(self) -> "pd.DataFrame":
+        """Return all variable types stored in this database.
+
+        Queries the ``_variables`` table and returns a DataFrame with columns:
+        ``variable_name``, ``schema_level``, ``created_at``, ``description``.
+
+        Useful for discovering what variable types exist in a database file
+        without needing the original Python class definitions.
+        """
+        return self._duck.list_variables()
+
+    # -------------------------------------------------------------------------
+    # Variable Groups
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_var_name(v) -> str:
+        """Resolve a single variable to its name string.
+
+        Accepts a Python str, a BaseVariable subclass (class object),
+        or a MATLAB BaseVariable instance (matlab.object with class name).
+        """
+        if isinstance(v, str):
+            return v
+        if isinstance(v, type) and issubclass(v, BaseVariable):
+            return v.table_name()
+        # MATLAB objects cross the bridge as matlab.object; try str()
+        # to extract the class name (e.g. "StepLength").
+        s = str(v)
+        if s:
+            return s
+        raise TypeError(f"Expected a string or BaseVariable subclass, got {type(v)}")
+
+    @staticmethod
+    def _resolve_var_names(variables) -> list:
+        """Resolve a single or list/iterable of variables to name strings.
+
+        Each element can be a string, a BaseVariable subclass, or a MATLAB
+        object.  Accepts Python lists, MATLAB cell arrays, and MATLAB string
+        arrays (any iterable).
+        """
+        # Scalar: single string or single class
+        if isinstance(variables, (str, type)):
+            return [DatabaseManager._resolve_var_name(variables)]
+        # Any iterable (Python list, MATLAB cell array, MATLAB string array)
+        try:
+            return [DatabaseManager._resolve_var_name(v) for v in variables]
+        except TypeError:
+            # Not iterable — treat as a single item
+            return [DatabaseManager._resolve_var_name(variables)]
+
+    def add_to_var_group(self, group_name: str, variables):
+        """Add one or more variables to a variable group.
+
+        Args:
+            group_name: Name of the group.
+            variables: A BaseVariable subclass, a variable name string,
+                or a list of either.
+        """
+        self._duck.add_to_group(group_name, self._resolve_var_names(variables))
+
+    def remove_from_var_group(self, group_name: str, variables):
+        """Remove one or more variables from a variable group.
+
+        Args:
+            group_name: Name of the group.
+            variables: A BaseVariable subclass, a variable name string,
+                or a list of either.
+        """
+        self._duck.remove_from_group(group_name, self._resolve_var_names(variables))
+
+    def list_var_groups(self) -> list:
+        """List all variable group names.
+
+        Returns:
+            Sorted list of distinct group names.
+        """
+        return self._duck.list_groups()
+
+    def get_var_group(self, group_name: str) -> list:
+        """Get all variable classes in a variable group.
+
+        Args:
+            group_name: Name of the group.
+
+        Returns:
+            Sorted list of BaseVariable subclasses in the group.
+        """
+        names = self._duck.get_group(group_name)
+        classes = []
+        for name in names:
+            cls = BaseVariable.get_subclass_by_name(name)
+            if cls is None:
+                raise NotRegisteredError(
+                    f"Variable '{name}' in group '{group_name}' has no "
+                    f"registered BaseVariable subclass."
+                )
+            classes.append(cls)
+        return classes
+
+    def close(self):
+        """Close the database connection."""
+        self._duck.close()
+        # remove global reference
+        if getattr(_local, "database", None) is self:
+            self._closed = True
+
+    def reopen(self):
+        # reopen DuckDB (preserving read-only mode)
+        if self._duck is None:
+            self._duck = SciDuck(
+                self.dataset_db_path,
+                dataset_schema=self.dataset_schema_keys,
+                read_only=getattr(self, "read_only", False),
+            )
+            self._duck.add_rollback_listener(self._forget_uncommitted_caches)
+        else:
+            self._duck.reopen()
+        self._closed = False
+        # Another process (the GUI, a MATLAB run) may have changed the
+        # declaration while this connection was closed.
+        self._refresh_schema_key_types()
+
+    @property
+    def record_store(self) -> RecordStore:
+        """THE storage-table SQL (``scidb.store.record_store``) over this database's
+        connection; rebuilt when ``reopen`` replaced the connection."""
+        store = self.__dict__.get("_record_store")
+        if store is None or store.connection is not self._duck:
+            store = RecordStore(self._duck)
+            self.__dict__["_record_store"] = store
+        return store
+
+    @property
+    def inspect(self):
+        """Lazy read-side observability facade (scidb.inspect.Inspector)."""
+        if self._inspector is None:
+            from scidb.inspect.api import Inspector
+
+            self._inspector = Inspector(self)
+        return self._inspector
+
+    def pipeline(self, name: str, uses=()) -> "Pipeline":
+        """Create a named Pipeline bound to this database and ACTIVATE it.
+
+        While active, ``for_each`` calls register as deferred steps instead
+        of executing (see ``scidb.run.pipeline.Pipeline``); ``run_all()``/
+        ``run_until()`` execute and deactivate. ``uses=`` declares other
+        Pipelines as dependencies: their steps join this pipeline's graph.
+        """
+        from scidb.run.pipeline import Pipeline
+
+        return Pipeline(name, db=self, uses=uses).activate()
+
+    def set_current_db(self):
+        """Set this DatabaseManager as the active global database."""
+        set_current_database(self)
+        self._closed = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()

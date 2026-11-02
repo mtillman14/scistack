@@ -45,7 +45,7 @@ no-op. Neither says "your input is coarser than your iteration level".
 
 ## The fix: drop unpopulated schema columns at load
 
-`scidb/src/scidb/foreach.py` `_drop_unpopulated_schema_columns` removes every
+`scidb/src/scidb/run/foreach.py` `_drop_unpopulated_schema_columns` removes every
 schema-key column that is **entirely** null, and `_load_input` applies it to
 every input kind — plain variable type, `ColumnSelection`, `Fixed` (via
 recursion) and `Merge` constituents. With the column gone,
@@ -159,8 +159,8 @@ incidental, since filtering happens before any column extraction. Binding bare
 
 | File | Role |
 |------|------|
-| `scidb/src/scidb/foreach.py` | `_drop_unpopulated_schema_columns` (the owner), applied in `_load_input`; `_RidIndex.probe_key` (built by `_build_rid_index`) for the full-iteration lookup |
-| `scidb/src/scidb/database.py` | `_assemble_df_from_records_and_data` — emits one column per dataset schema key (the source of the shape) |
+| `scidb/src/scidb/run/foreach.py` | `_drop_unpopulated_schema_columns` (the owner), applied in `_load_input`; `_RidIndex.probe_key` (built by `_build_rid_index`) for the full-iteration lookup |
+| `scidb/src/scidb/store/database.py` | `_assemble_df_from_records_and_data` — emits one column per dataset schema key (the source of the shape) |
 | `scifor/src/scifor/foreach.py` | `_filter_df_for_combo` — the Python victim |
 | `scimatlab/src/scimatlab/matlab/+scifor/for_each.m` | `filter_table_for_combo` — the MATLAB victim |
 | `scidb/tests/test_coarse_input_broadcast.py` | regression: coarse input under full iteration, all four input kinds |

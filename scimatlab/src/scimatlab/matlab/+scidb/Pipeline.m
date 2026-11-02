@@ -224,7 +224,7 @@ classdef Pipeline < handle
             run_handle = res{'run_handle'};
             steps_list = res{'steps'};
             n = double(py.len(steps_list));
-            scidb.Log.info('pipeline_run_started (MATLAB-driven): %s, %d step(s)', ...
+            scifor.Log.info('pipeline_run_started (MATLAB-driven): %s, %d step(s)', ...
                 obj.name, n);
             cleanup = onCleanup(@() ...
                 py.scimatlab.bridge.pipeline_run_free(run_handle)); %#ok<NASGU>
@@ -237,7 +237,7 @@ classdef Pipeline < handle
                         run_handle, py.int(pos));
                 end
             end
-            scidb.Log.info('pipeline_run_finished (MATLAB-driven): %s', obj.name);
+            scifor.Log.info('pipeline_run_finished (MATLAB-driven): %s', obj.name);
         end
 
         function replay_matlab_step(obj, d)
@@ -284,7 +284,7 @@ classdef Pipeline < handle
                 fin_arg = logical(af);
             end
 
-            scidb.Log.info('pipeline_step_run (MATLAB): %s (via %s)', ...
+            scifor.Log.info('pipeline_step_run (MATLAB): %s (via %s)', ...
                 char(d{'step'}), obj.name);
             % schema_keys/schema_filter were stored separately at
             % registration time (not folded into metadata_iterables, which

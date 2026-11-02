@@ -14,10 +14,11 @@ Covers:
 Tests run across multiple data types and realistic multi-subject pipelines.
 """
 
+from scidb.provenance import query as provenance_query
 import numpy as np
 import pandas as pd
 import pytest
-from scidb.exceptions import AmbiguousParamError, AmbiguousVersionError
+from scidb.model.exceptions import AmbiguousParamError, AmbiguousVersionError
 
 import scifor as _scifor
 from scidb import BaseVariable, NotFoundError, configure_database, for_each
@@ -746,7 +747,7 @@ class TestGetUpstreamProvenance:
     def test_raw_record_returns_single_node(self, db):
         RawSignal.save(np.array([1.0]), subject="S01", session="1")
         raw = RawSignal.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(raw.record_id)
+        chain = provenance_query.upstream_provenance(db, raw.record_id)
 
         assert len(chain) == 1
         node = chain[0]
@@ -768,7 +769,7 @@ class TestGetUpstreamProvenance:
         )
 
         f = Filtered.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(f.record_id)
+        chain = provenance_query.upstream_provenance(db, f.record_id)
 
         assert len(chain) == 2
         assert chain[0]["variable_type"] == "Filtered"
@@ -796,7 +797,7 @@ class TestGetUpstreamProvenance:
         )
 
         s = Spikes.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(s.record_id)
+        chain = provenance_query.upstream_provenance(db, s.record_id)
 
         types = [n["variable_type"] for n in chain]
         depths = [n["depth"] for n in chain]
@@ -826,12 +827,12 @@ class TestGetUpstreamProvenance:
             )
 
         s_20_05 = Spikes.load(subject="S01", session="1", low_hz=20, threshold=0.5)
-        chain_20 = db.get_upstream_provenance(s_20_05.record_id)
+        chain_20 = provenance_query.upstream_provenance(db, s_20_05.record_id)
         filt_node_20 = next(n for n in chain_20 if n["variable_type"] == "Filtered")
         assert filt_node_20["branch_params"]["bandpass.low_hz"] == 20
 
         s_30_06 = Spikes.load(subject="S01", session="1", low_hz=30, threshold=0.6)
-        chain_30 = db.get_upstream_provenance(s_30_06.record_id)
+        chain_30 = provenance_query.upstream_provenance(db, s_30_06.record_id)
         filt_node_30 = next(n for n in chain_30 if n["variable_type"] == "Filtered")
         assert filt_node_30["branch_params"]["bandpass.low_hz"] == 30
 
@@ -854,7 +855,7 @@ class TestGetUpstreamProvenance:
         )
 
         s = Spikes.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(s.record_id)
+        chain = provenance_query.upstream_provenance(db, s.record_id)
 
         spikes_node = chain[0]
         filtered_node = chain[1]
@@ -875,7 +876,7 @@ class TestGetUpstreamProvenance:
         )
 
         f = Filtered.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(f.record_id)
+        chain = provenance_query.upstream_provenance(db, f.record_id)
 
         for node in chain:
             assert node["schema"]["subject"] == "S01"
@@ -893,7 +894,7 @@ class TestGetUpstreamProvenance:
 
         raw = RawSignal.load(subject="S01", session="1")
         f = Filtered.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(f.record_id)
+        chain = provenance_query.upstream_provenance(db, f.record_id)
 
         filtered_node = chain[0]
         assert len(filtered_node["inputs"]) == 1
@@ -920,7 +921,7 @@ class TestGetUpstreamProvenance:
         )
 
         s = Spikes.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(s.record_id, max_depth=1)
+        chain = provenance_query.upstream_provenance(db, s.record_id, max_depth=1)
 
         types = {n["variable_type"] for n in chain}
         assert "Spikes" in types
@@ -952,7 +953,7 @@ class TestGetUpstreamProvenance:
         )
 
         feat = Feature.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(feat.record_id)
+        chain = provenance_query.upstream_provenance(db, feat.record_id)
 
         types = [n["variable_type"] for n in chain]
         assert types == ["Feature", "Spikes", "Filtered", "RawSignal"]
@@ -973,12 +974,12 @@ class TestGetUpstreamProvenance:
         )
 
         f = Filtered.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(f.record_id)
+        chain = provenance_query.upstream_provenance(db, f.record_id)
         assert len(chain) == 2
         assert chain[1]["variable_type"] == "RawSignal"
 
     def test_invalid_record_id_returns_empty_list(self, db):
-        chain = db.get_upstream_provenance("nonexistent-record-id-xyz")
+        chain = provenance_query.upstream_provenance(db, "nonexistent-record-id-xyz")
         assert chain == []
 
     def test_multi_input_provenance_both_inputs_linked(self, db):
@@ -1001,7 +1002,7 @@ class TestGetUpstreamProvenance:
         )
 
         s = Spikes.load(subject="S01", session="1")
-        chain = db.get_upstream_provenance(s.record_id)
+        chain = provenance_query.upstream_provenance(db, s.record_id)
 
         spikes_node = chain[0]
         assert len(spikes_node["inputs"]) == 1

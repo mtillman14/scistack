@@ -19,7 +19,7 @@ layer read it (2026-10-21). scidb imports the rule from here now.
 **Who declares.** Without a database there is nowhere to store a declaration
 and nothing stored to protect, so in standalone scifor the
 ``for_each(schema_key_types=...)`` call owns it. With scidb the database owns
-it (``scidb.schema_types``) and scidb applies it through the helpers below,
+it (``scidb.store.schema_types``) and scidb applies it through the helpers below,
 before it hands scifor a pre-built combo list.
 """
 

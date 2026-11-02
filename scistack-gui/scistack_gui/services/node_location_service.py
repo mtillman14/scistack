@@ -115,7 +115,7 @@ def node_location_tree(
        it is the same question: a hidden input edge, or a node that has never
        run and has nothing wired.
     """
-    from scidb.locations import (
+    from scidb.provenance.locations import (
         intersect_location_states,
         location_states,
         prune_to_problems,

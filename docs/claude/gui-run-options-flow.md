@@ -25,7 +25,7 @@ at the same schema location. Any code that derives or filters targets must
 therefore use the same values the run will actually use, or it computes a
 call_id for a call nobody makes.
 
-**They travel as one value**, `scidb.foreach_config.RunOptions` — built from
+**They travel as one value**, `scidb.run.foreach_config.RunOptions` — built from
 a node's saved config blob with `RunOptions.from_config(...)`, read by
 `CallSite`, `filter_hidden_targets` / `resolve_target_call_id` /
 `compute_call_id`, and both code exporters. They were three loose keyword

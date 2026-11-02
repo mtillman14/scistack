@@ -11,7 +11,7 @@ from pathlib import Path
 _root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
-from scidb.foreach_config import function_hash_for, function_sources_for
+from scidb.run.foreach_config import function_hash_for, function_sources_for
 from scimatlab.bridge import _make_matlab_fn_sentinel
 
 
@@ -60,7 +60,7 @@ def test_text_that_does_not_hash_to_the_digest_is_not_captured():
 
 
 def test_prepare_carries_the_source_to_the_save(tmp_path):
-    from scidb.database import configure_database
+    from scidb.store.database import configure_database
 
     from scimatlab import bridge
     from scimatlab.bridge import (

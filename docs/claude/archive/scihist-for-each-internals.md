@@ -546,7 +546,7 @@ This quirk is important for `_get_lineage_variants()` in the staleness system, w
 
 ## Logging
 
-scihist uses Python's standard `logging` module (`logger = logging.getLogger(__name__)`) plus the optional `scidb.log.Log` class for dual-destination logging (file + structured).
+scihist uses Python's standard `logging` module (`logger = logging.getLogger(__name__)`) plus the optional `scidb.model.log.Log` class for dual-destination logging (file + structured).
 
 Key log points:
 

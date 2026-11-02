@@ -14,9 +14,9 @@ The hybrid contract:
 
 import numpy as np
 import pytest
-from scidb.database import DatabaseManager
-from scidb.schema_values import canonical_numeric_value
-from scidb.exceptions import SchemaKeyTypeError
+from scidb.store.database import DatabaseManager
+from scidb.store.schema_values import canonical_numeric_value
+from scidb.model.exceptions import SchemaKeyTypeError
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each

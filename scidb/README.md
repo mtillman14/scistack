@@ -88,7 +88,7 @@ over present). A deeper row counts for its projection onto the chosen keys,
 and only the database is consulted, never a Variable.
 
 ```python
-from scidb.inventory import schema_inventory, write_inventory_csv
+from scidb.provenance.inventory import schema_inventory, write_inventory_csv
 
 inv = schema_inventory(db, ["subject", "session"])   # None = every key
 inv.counts            # {"present": 10, "missing": 2, "excluded": 0}

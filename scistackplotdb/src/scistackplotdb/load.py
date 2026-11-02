@@ -7,11 +7,12 @@ columns once a variable is joined to ``_schema``, which is the same shape
 part a flat CSV never needed: attaching branch params as columns, and knowing
 which schema keys a given variable actually occupies.
 
-Queries go through ``fetchall``/``fetchone``/``fetchdf`` (never
-``execute(...).fetchall()`` — see docs/claude on DuckDB fetch locking); the
-payload itself only ever through ``fetchdf``, which is what keeps a sample from
-becoming a Python float (see ``load_variable``) and batch the branch-params walk
-rather than asking per record (the N+1 trap).
+The storage SQL is scidb's: every read of a variable's records goes through
+``db.record_store`` (``scidb.store.record_store.RecordStore``: the catalog, one
+sampled cell, the long frame), which fetches the payload only through
+``fetchdf`` so a sample never becomes a Python float (see ``load_variable``).
+The branch-params walk is batched rather than asked per record (the N+1
+trap).
 """
 
 from __future__ import annotations
@@ -109,12 +110,11 @@ class VariableFrame:
 
 
 def schema_keys(db) -> list[str]:
-    return list(db._duck.dataset_schema)
+    return db.record_store.schema_keys()
 
 
 def registered_variables(db) -> list[str]:
-    rows = db._duck.fetchall("SELECT variable_name FROM _variables ORDER BY variable_name")
-    return [row[0] for row in rows]
+    return db.record_store.variable_names()
 
 
 def table_name_for(db, variable: str) -> str:
@@ -126,10 +126,7 @@ def table_name_for(db, variable: str) -> str:
     filters on ``_record.type`` — reading a shared table without that filter
     would silently mix two variables' records into one plot.
     """
-    row = db._duck.fetchone(
-        "SELECT table_name FROM _registered_types WHERE type_name = ?", [variable]
-    )
-    return row[0] if row and row[0] else f"{variable}_data"
+    return db.record_store.table_name(variable)
 
 
 def data_columns_for(db, variable: str) -> list[str]:
@@ -139,14 +136,7 @@ def data_columns_for(db, variable: str) -> list[str]:
 def _stored_column_types(db, variable: str) -> dict[str, str]:
     """``{column: DuckDB type}`` of the variable's table as stored (zone
     companions included), in ordinal order."""
-    table = table_name_for(db, variable)
-    rows = db._duck.fetchall(
-        "SELECT column_name, data_type FROM information_schema.columns "
-        "WHERE table_name = ? AND column_name != 'record_id' "
-        "ORDER BY ordinal_position",
-        [table],
-    )
-    return {row[0]: str(row[1] or "") for row in rows}
+    return db.record_store.stored_column_types(variable)
 
 
 def datetime_zone_meta(db, variable: str, columns) -> dict:
@@ -283,15 +273,7 @@ def sample_value(db, variable: str) -> Any:
     columns = data_columns_for(db, variable)
     if not columns:
         return None
-    table = table_name_for(db, variable)
-    row = db._duck.fetchone(
-        f'SELECT t."{columns[0]}" FROM "{table}" t '
-        f"JOIN _record r ON t.record_id = r.record_id "
-        f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
-        f"AND t.\"{columns[0]}\" IS NOT NULL LIMIT 1",
-        [variable],
-    )
-    value = row[0] if row else None
+    value = db.record_store.sample_cell(variable, columns[0])
     # A row list's cell is its source rows, not a series: classify by one
     # ELEMENT, the shape the source turns it into (rows + a Row factor).
     if value is not None and _row_list_columns(db, variable, columns[:1]):
@@ -308,15 +290,7 @@ def sample_column_value(db, variable: str, column: str) -> Any:
     in every column, so "what is this variable" cannot answer "may this column
     group a figure".
     """
-    table = table_name_for(db, variable)
-    row = db._duck.fetchone(
-        f'SELECT t."{column}" FROM "{table}" t '
-        f"JOIN _record r ON t.record_id = r.record_id "
-        f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
-        f'AND t."{column}" IS NOT NULL LIMIT 1',
-        [variable],
-    )
-    return row[0] if row else None
+    return db.record_store.sample_cell(variable, column)
 
 
 def field_shapes(db, variable: str) -> dict[str, Shape]:
@@ -361,16 +335,7 @@ def column_levels(db, variable: str, column: str, *, limit: int) -> list[str]:
     NULL arrives as float64 in pandas and would spell its integer levels
     ``1.0``, which nothing downstream matches.
     """
-    table = table_name_for(db, variable)
-    rows = db._duck.fetchall(
-        f'SELECT DISTINCT CAST(t."{column}" AS VARCHAR) AS level FROM "{table}" t '
-        f"JOIN _record r ON t.record_id = r.record_id "
-        f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
-        f'AND t."{column}" IS NOT NULL '
-        f"LIMIT {int(limit)}",
-        [variable],
-    )
-    return [row[0] for row in rows]
+    return db.record_store.column_levels(variable, column, limit=limit)
 
 
 def variable_levels(db, variable: str) -> list[str]:
@@ -382,19 +347,7 @@ def variable_levels(db, variable: str) -> list[str]:
     database just to open the panel. COUNT ignores NULLs, so one row of counts
     says exactly which keys are populated.
     """
-    keys = schema_keys(db)
-    if not keys:
-        return []
-    counts = ", ".join(f'COUNT(s."{key}")' for key in keys)
-    row = db._duck.fetchone(
-        f"SELECT {counts} FROM _record r "
-        f"LEFT JOIN _schema s ON r.schema_id = s.schema_id "
-        f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE",
-        [variable],
-    )
-    if row is None:
-        return []
-    return [key for key, count in zip(keys, row, strict=True) if count]
+    return db.record_store.occupied_keys(variable)
 
 
 def _normalize_cell(value: Any) -> Any:
@@ -541,32 +494,19 @@ def load_variable(
         if not include_data:
             columns = []
 
-        table = table_name_for(db, variable)
-        # Schema keys as VARCHAR in the query, not stringified after: a
-        # DataFrame fetch types each column, and an integer key with one NULL
-        # among its rows would arrive as float64 and stringify as "1.0".
-        schema_select = "".join(
-            f', CAST(s."{key}" AS VARCHAR) AS "{key}"' for key in keys
-        )
         # Datetime columns bring their __tz zone column, folded back right
         # after the fetch (sciduckdb.merge_tz_columns): without it every
         # aware value reached a plot as a naive UTC instant.
         zone_meta = datetime_zone_meta(db, variable, columns) if columns else {"columns": {}}
         zone_select = [tz_column_name(c) for c in zone_meta["columns"]]
-        data_select = "".join(f', t."{column}"' for column in [*columns, *zone_select])
-        query = (
-            f"SELECT t.record_id{data_select}{schema_select} "
-            f'FROM "{table}" t '
-            f"JOIN _record r ON t.record_id = r.record_id "
-            f"LEFT JOIN _schema s ON r.schema_id = s.schema_id "
-            f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE"
-        )
         # NOTE: no schema filter, no LIMIT, no column projection — this reads
         # EVERY non-excluded record of the variable with EVERY data column,
         # whatever the caller intends to plot (pushdown is a later stage of
         # .claude/plan-plot-minimal-load-examples.md).
         #
-        # `fetchdf`, never `fetchall`, for the data columns. Measured on the
+        # The read is scidb's (`RecordStore.long_frame`, schema keys cast to
+        # text in the query), through `fetchdf`, never `fetchall`, for the
+        # data columns. Measured on the
         # real database 2026-09-13 (plan §7): one DOUBLE[] column of 17.4 M
         # samples took 4.7 s through `fetchall` — a Python float per sample —
         # and 0.26 s through `.df()`, which hands each cell over as one numpy
@@ -574,7 +514,7 @@ def load_variable(
         # timed out. The "loaded" line below says `ndarray` or `boxed` so a
         # regression to per-sample boxing is visible in the log, not inferred.
         with timer.phase("fetch"):
-            frame = db._duck.fetchdf(query, [variable])
+            frame = db.record_store.long_frame(variable, [*columns, *zone_select])
         if zone_meta["columns"]:
             with timer.phase("datetime_zones"):
                 merge_tz_columns(frame, zone_meta, where=f"load_variable({variable})")
@@ -870,7 +810,7 @@ def attach_variants(
     See ``docs/claude/variant-selection.md`` and
     ``docs/claude/function-version-variants.md``.
     """
-    from scidb.provenance_query import variant_identity_batch
+    from scidb.provenance.query import variant_identity_batch
 
     record_ids = frame["record_id"].tolist()
     ident = variant_identity_batch(db._duck, record_ids)
@@ -1131,9 +1071,9 @@ def _truncate(value: Any, limit: int = 60) -> Any:
 
 def _drop_excluded_rows(db, frame: pd.DataFrame, keys: list[str], variable: str) -> pd.DataFrame:
     """``frame`` minus the rows at a schema location the project excluded
-    (:func:`scidb.exclusions.filter_excluded_combos`, the rule ``for_each``
+    (:func:`scidb.store.exclusions.filter_excluded_combos`, the rule ``for_each``
     applies). One pass over the DISTINCT locations, not the rows."""
-    from scidb.exclusions import filter_excluded_combos
+    from scidb.store.exclusions import filter_excluded_combos
 
     present = [key for key in keys if key in frame.columns]
     if frame.empty or not present:

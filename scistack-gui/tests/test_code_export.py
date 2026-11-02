@@ -14,7 +14,7 @@ they're the genuinely new (not-reused-from-execution_service) code.
 from __future__ import annotations
 
 import pytest
-from scidb.foreach_config import RunOptions
+from scidb.run.foreach_config import RunOptions
 from scistack_gui.runtime.db import get_db
 from scistack_gui.services.code_export_service import (
     _matlab_literal,

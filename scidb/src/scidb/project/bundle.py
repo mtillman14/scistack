@@ -45,7 +45,7 @@ from typing import Any, Callable, Protocol
 
 from scistacklog import Log
 
-from .. import tables as table_registry
+from scidb.store import tables as table_registry
 
 #: Bumped on any incompatible change; a mismatch is refused (beta: no migration).
 FORMAT_VERSION = 1
@@ -83,7 +83,7 @@ INTENT_TABLES: tuple[str, ...] = table_registry.intent_tables()
 #: What a warning calls each dataset-intent table (a user reads it), and how
 #: to put it back by hand. A table missing here falls back to its name.
 _INTENT_LABELS: dict[str, tuple[str, str]] = {
-    "__scidb_schema_overrides": ("schema exclusion(s)", "re-exclude them (scidb.exclusions.exclude_schema)"),
+    "__scidb_schema_overrides": ("schema exclusion(s)", "re-exclude them (scidb.store.exclusions.exclude_schema)"),
     "_schema_key_type": (
         "schema key type declaration(s)",
         "re-declare them (db.set_schema_key_type, or the Numeric box on the PathInput)",
@@ -236,7 +236,7 @@ def _sha256(data: bytes) -> str:
 
 
 def _scistack_version() -> str:
-    from .. import __version__
+    from scidb import __version__
 
     return __version__
 
@@ -320,7 +320,7 @@ def _wheelhouse_section() -> "dict[str, bytes]":
     missing wheel never fails the export."""
     import tempfile
 
-    from .environment import library_wheel
+    from scidb.project.environment import library_wheel
     from scifor.project.names import library_packages
 
     files: dict[str, bytes] = {}
@@ -489,7 +489,7 @@ def export_project(
         CONFIG_SECTION: _config_section(root),
         ENV_SECTION: _env_section(),
     }
-    from . import table_copy
+    from scidb.project import table_copy
 
     intent_rows = _intent_rows(db._duck)
     if options.include_history:
@@ -781,7 +781,7 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
     declined, another schema) is a WARNING naming what was left behind
     (:func:`_intent_not_applied`), never silent.
     """
-    from . import table_copy
+    from scidb.project import table_copy
 
     history = bundle.sections.get(HISTORY_SECTION)
     data = bundle.sections.get(DATA_SECTION)
@@ -856,7 +856,7 @@ IMPORT_RECORD = "import.json"
 
 
 def _write_import_record(root: Path, bundle_path, manifest: dict, keys: list[str], kmap) -> None:
-    from .environment import STATE_DIR
+    from scidb.project.environment import STATE_DIR
 
     state = root / STATE_DIR
     state.mkdir(parents=True, exist_ok=True)
@@ -873,7 +873,7 @@ def _write_import_record(root: Path, bundle_path, manifest: dict, keys: list[str
 
 
 def _default_open_db(db_path: Path, schema_keys: list[str]):
-    from .. import configure_database
+    from scidb import configure_database
 
     return configure_database(db_path, schema_keys)
 
@@ -899,7 +899,7 @@ def import_project(
     """
     from scifor.project.config import config_path_at
 
-    from .init import init_project
+    from scidb.project.init import init_project
 
     bundle = read_bundle(bundle_path)
     manifest = bundle.manifest
@@ -908,7 +908,7 @@ def import_project(
     keys = list(schema_keys or project.get("schema_keys") or [])
     if not keys:
         raise BundleError("no schema keys: the bundle records none and none were given")
-    from .schema_map import KeyMap, MapReport
+    from scidb.project.schema_map import KeyMap, MapReport
 
     try:
         kmap = KeyMap.auto(list(project.get("schema_keys") or []), keys, key_map)
@@ -964,7 +964,7 @@ def import_project(
     report.sections["path_inputs"] = _rewrite_path_inputs(root, kmap, path_roots or {}, map_report)
 
     env_files = bundle.sections.get(ENV_SECTION, {})
-    from .environment import ENVIRONMENT_FILE, STATE_DIR, WHEELHOUSE_DIR
+    from scidb.project.environment import ENVIRONMENT_FILE, STATE_DIR, WHEELHOUSE_DIR
 
     if ENV_FILE in env_files:
         # Kept with the project: the install (after trust, a separate step:
@@ -1046,7 +1046,7 @@ def preview(
 
     from scifor.project.config import config_path_at
 
-    from .schema_map import KeyMap, MapReport
+    from scidb.project.schema_map import KeyMap, MapReport
 
     bundle = read_bundle(bundle_path)
     manifest = bundle.manifest

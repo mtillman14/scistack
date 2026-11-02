@@ -24,8 +24,8 @@ import threading
 import time
 from contextlib import contextmanager
 
-from scidb import tables
-from scidb.tables import TableDecl
+from scidb.store import tables
+from scidb.store.tables import TableDecl
 
 from scistack_gui.stores import pipeline_store
 from scistack_gui.stores import library_lock as _library_lock
@@ -90,7 +90,7 @@ def _layout_write(operation: str):
         _layout_lock.release()
 
 
-# The tables this module owns, declared through scidb (scidb.tables owns
+# The tables this module owns, declared through scidb (scidb.store.tables owns
 # every table of a project database; this module creates them on first use).
 tables.declare(
     TableDecl(

@@ -23,6 +23,7 @@ from scifor import (
     output_column_name,
     set_schema,
 )
+from scifor.outputs import output_column_name_from
 
 
 def setup_function():
@@ -98,6 +99,22 @@ def test_shared_cases(case):
         attrs = {} if case["column_name"] is None else {"column_name": case["column_name"]}
         output = type(case["class"], (), attrs)
     assert output_column_name(output) == case["expected"]
+
+
+@pytest.mark.parametrize("case", _CASES, ids=lambda c: c.get("class", c.get("string")))
+def test_shared_cases_through_text_rule(case):
+    """The text form MATLAB calls (``+scifor/output_column_name.m`` passes
+    ``class(obj)`` and its ``column_name`` property) gives the same answers."""
+    if "string" in case:
+        got = output_column_name(case["string"])
+    else:
+        got = output_column_name_from(case["class"], case["column_name"])
+    assert got == case["expected"]
+
+
+def test_text_rule_ignores_non_text_column_name():
+    assert output_column_name_from("Cls", 5) == "Cls"
+    assert output_column_name_from("Cls", None) == "Cls"
 
 
 # --- outputs= in for_each ----------------------------------------------------

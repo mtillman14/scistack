@@ -1,7 +1,7 @@
 # FAQ & Troubleshooting
 
 <!-- Ground truth (tests/source win over prose). Each entry verified against:
-     scidb/src/scidb/variable.py (load returns single|list|DataFrame; no load_all; reserved keys;
+     scidb/src/scidb/model/variable.py (load returns single|list|DataFrame; no load_all; reserved keys;
        schema_version), variable.py:271 (BaseVariable.save does NOT record lineage);
      scihist/__init__ + database.py (configure_database wires cache backend; for_each/save);
      scihist/tests/test_cache_hit.py, test_skip_computed.py (cache hits / skip_computed);

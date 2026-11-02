@@ -14,8 +14,8 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, Variant, configure_database, for_each
-from scidb.exceptions import AmbiguousParamError
-from scidb.variant import CODE_PIN_PREFIX
+from scidb.model.exceptions import AmbiguousParamError
+from scidb.model.variant import CODE_PIN_PREFIX
 
 SCHEMA = ["subject"]
 SUBJECTS = ["01", "02"]

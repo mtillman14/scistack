@@ -6,12 +6,12 @@ core tables already encode (see docs/claude/observability-api-design.md).
 
 ``LocationTree`` and friends are re-exported rather than defined here, for that
 same reason: ``Inspector.locations`` returns them, so naming its return type
-should not need a second import, but the rule stays in ``scidb.locations``
+should not need a second import, but the rule stays in ``scidb.provenance.locations``
 where the CLI, the GUI's picker and any library caller reach one definition.
 """
 
-from ..locations import LocationNode, LocationState, LocationTree
-from .api import (
+from scidb.provenance.locations import LocationNode, LocationState, LocationTree
+from scidb.inspect.api import (
     VERDICT_CURRENT,
     VERDICT_PARTIAL,
     VERDICT_SUPERSEDED,
@@ -35,15 +35,15 @@ from .api import (
     location_sample,
     variant_verdict,
 )
-from .graph import (
+from scidb.inspect.graph import (
     FunctionNode,
     PipelineEdge,
     PipelineGraph,
     VariableNode,
     VariantSummary,
 )
-from .mutate import MutationResult, Mutator
-from .render import ASCII_STYLE, DEFAULT_STYLE, RenderStyle
+from scidb.inspect.mutate import MutationResult, Mutator
+from scidb.inspect.render import ASCII_STYLE, DEFAULT_STYLE, RenderStyle
 
 __all__ = [
     "Inspector",

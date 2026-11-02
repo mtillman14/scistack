@@ -11,8 +11,8 @@ sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scifor" / "src"))
 sys.path.insert(0, str(_root / "canonical-hash" / "src"))
 
-from scidb.database import _local
-from scidb.exclusions import (
+from scidb.store.database import _local
+from scidb.store.exclusions import (
     _TABLE,
     _current_status,
     exclusion_status,

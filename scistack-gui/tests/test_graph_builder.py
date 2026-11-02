@@ -59,7 +59,7 @@ def aggregate_variants(
     tests' call shape while exercising the real path. ``listed_var_names``
     adds types that exist with no variants, as the old helper did.
     """
-    from scidb.database import aggregate_pipeline_variants
+    from scidb.store.database import aggregate_pipeline_variants
 
     from scistack_gui.domain.graph_builder import aggregate_from_scidb
 
@@ -1629,7 +1629,7 @@ class TestBuildEdges:
         graduation rewrites its endpoints onto the DB-derived node ids — so it
         describes the same connection as an ``e__...`` edge while never
         colliding by id. Both used to render: 4 edges for 2 connections
-        (examples/vo2max/scidb.log), and deleting one left its twin.
+        (examples/vo2max/scidb.model.log), and deleting one left its twin.
         """
         edges = build_edges(
             fn_input_params={self.F_KEY: {"signal": "Raw"}},

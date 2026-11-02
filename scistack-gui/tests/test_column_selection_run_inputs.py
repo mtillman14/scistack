@@ -85,7 +85,7 @@ class TestBuildRunInputsColumnSelection:
     def test_it_is_scidbs_subclass_not_the_bare_scifor_container(self, populated_db):
         """The DB-only surface (.load(), comparison operators) has to be
         there -- scidb's foreach dispatches on what is INSIDE the wrapper."""
-        from scidb.column_selection import ColumnSelection as ScidbColumnSelection
+        from scidb.model.column_selection import ColumnSelection as ScidbColumnSelection
 
         inputs = build_run_inputs(
             self._target(["a"]), "bandpass_filter", populated_db

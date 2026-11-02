@@ -42,7 +42,7 @@ function exclude_schema(reason, varargin)
         end
     end
 
-    py.scidb.exclusions.exclude_schema_dict( ...
+    py.scidb.store.exclusions.exclude_schema_dict( ...
         py_keys, char(reason), py.None);
 
 end

@@ -2,7 +2,7 @@
 
 <!-- Ground truth (tests/declared deps win over prose). Verified against:
      pyproject [dependencies] of each package (the authoritative dependency graph);
-     scidb/src/scidb/foreach.py (delegation to scifor.for_each; provenance graph
+     scidb/src/scidb/run/foreach.py (delegation to scifor.for_each; provenance graph
      written on save); scifor/tests/test_foreach_standalone.py;
      scidb/tests/test_integration.py; scidb/tests/test_hist_*.py.
      NOTE: two USER-FACING layers (scifor/scidb); everything else

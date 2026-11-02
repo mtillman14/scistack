@@ -13,9 +13,9 @@
 > `gui-export-to-plain-python.md`, which sat at "not yet built" long after the
 > feature shipped, for why this warning is here.)
 >
-> Entry points: `scidb/glue.py` (the contract and the fusion),
-> `scidb.provenance.compute_glue_record_id` (§2's virtual record),
-> `scidb.roles.function_role` (§0), `scistack_gui/services/glue_service.py`
+> Entry points: `scidb/run/glue.py` (the contract and the fusion),
+> `scidb.provenance.graph.compute_glue_record_id` (§2's virtual record),
+> `scidb.model.roles.function_role` (§0), `scistack_gui/services/glue_service.py`
 > and `frontend/src/components/Sidebar/GlueSettingsPanel.tsx` (the panel).
 
 ## The question this answers
@@ -84,7 +84,7 @@ accumulates dozens of one-line reshapers.
 
 Glue applies to the **bulk-loaded input table for one parameter of the consuming
 function**, between Step 10 (`_convert_inputs` / `_load_var_type_all`) and
-Step 11 (`__record_id` → `__rid_{param}` renaming) of `scidb/foreach.py`.
+Step 11 (`__record_id` → `__rid_{param}` renaming) of `scidb/run/foreach.py`.
 
 Everything good about this feature follows from that one placement:
 
@@ -115,7 +115,7 @@ A `Parameter`-fed parameter has **no loaded table at all** — a `scidb.Paramete
 *is* a `scifor.EachOf`, a fan-out axis, and by the time prepare runs,
 `for_each`'s Step 1 has already expanded it into one recursive call per
 concrete value. Its glue is therefore applied earlier still, in
-`scidb.glue.apply_constant_glue`, **before Step 8 builds the version keys**.
+`scidb.run.glue.apply_constant_glue`, **before Step 8 builds the version keys**.
 
 That placement is not a convenience, it is the identity story: the glued
 value's hash is known before identity is built.
@@ -143,7 +143,7 @@ _invocation  <the function>
   an unchanged path) moves the binding and the result goes stale.
 - `__constant_glue__` is its own record type, so "is this a variable input?"
   is answered by the type: `provenance.NON_VARIABLE_INPUT_TYPES`. All the
-  type sets are owned by `scidb.provenance` (`GLUE_RECORD_TYPES`,
+  type sets are owned by `scidb.provenance.graph` (`GLUE_RECORD_TYPES`,
   `NON_VARIABLE_INPUT_TYPES`, `INTERNAL_RECORD_TYPES`). An AST test refuses
   the type strings anywhere else.
 - Readers (`invocation_edges_batch`, `invocation_call_ids_batch`,
@@ -187,7 +187,7 @@ placement removes.
 That is also why Python glue can cross into a MATLAB run at all: the GUI emits
 the chain element as `struct('name', …, 'language', 'python', 'source_file', …)`
 rather than a handle (`+scidb/for_each.m:build_glue_chains`), and
-`scimatlab.bridge` loads the body with `scidb.glue.resolve_python_glue` —
+`scimatlab.bridge` loads the body with `scidb.run.glue.resolve_python_glue` —
 MATLAB's interpreter has no function registry, so the *path* is what travels.
 
 **A multi-valued Parameter needs no special handling.** The fan-out and the glue
@@ -213,7 +213,7 @@ just before `fn` is called. Same code, different hook.
 
 | | `version_keys` | The provenance graph |
 |---|---|---|
-| Where | `_record_metadata.version_keys`, built by `ForEachConfig.to_version_keys()` | `_invocation`, `_invocation_input`, `_record` |
+| Where | `_record_metadata.version_keys`, built by `ForEachConfig.to_config_keys()` | `_invocation`, `_invocation_input`, `_record` |
 | Drives | `load(version="latest")` partitioning; which variant group a record belongs to | **`skip_computed` and node state** |
 | Key | `__fn`, `__fn_hash`, `__inputs`, `__constants`, … | `invocation_id = sha16(fn_hash \| as_table \| distribute \| sorted(bindings))` |
 

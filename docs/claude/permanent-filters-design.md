@@ -339,7 +339,7 @@ so `exclude_schema` on a never-touched keyset succeeds.
 **`include_schema` guard (changed 2026-10-26,
 `.claude/plan-inventory-exclusion-actions.md`):** it raises iff the
 keyset is already included **in effect**, meaning the row that governs it
-(`scidb.exclusions.governing_overrides`, the one owner of the matching
+(`scidb.store.exclusions.governing_overrides`, the one owner of the matching
 rule) is an include, or no row covers it at all. The exact keyset's own row
 always governs when there is one (nothing else matching it can be as
 specific), so this is the old exact-keyset guard whenever such a row exists.
@@ -463,7 +463,7 @@ contents and add it as a version key under a reserved name like
    `docs/guide/filters.md`. ~1 commit.
 
 2. **Global schema-id exclusion.** New file
-   `scidb/exclusions.py` with `exclude_schema`, `include_schema`,
+   `scidb/store/exclusions.py` with `exclude_schema`, `include_schema`,
    `list_exclusions`. Migration to add `__scidb_schema_overrides` table.
    Modification to `for_each` to skip excluded combos and include the
    `__schema_overrides_hash` in version_keys. Tests for NULL-wildcard
@@ -476,7 +476,7 @@ contents and add it as a version key under a reserved name like
 
 4. **Filter canonicalization (optional, only if load-time recall of
    named-Filter variants turns out to matter in practice).** Add
-   `Filter._canonical()` to each subclass in `scidb/filters.py`; route
+   `Filter._canonical()` to each subclass in `scidb/model/filters.py`; route
    `to_key()` through it; mirror the canonicalization rules in the
    MATLAB filter serializer; write a one-shot migration that
    re-serializes `__where` for existing `_record_metadata` rows. Tests

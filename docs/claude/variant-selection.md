@@ -123,7 +123,7 @@ Everything in the stack assumes supersession:
   branch) groups on `variant_key = (fn_name, branch_params, output_num,
   consumed_input_schema_ids)`. **`function_hash` is absent.** Two body versions
   land in one group; the newer wins. `load()` returns one.
-- `_producing_variant_key` — constants only, by explicit docstring decision.
+- `provenance_query.variant_keys_batch` — THE variant key since 2026-11-01 (function name + accumulated constants + consumed input locations; never the function hash). The constants-only `_producing_variant_key` is gone.
 - `EachOf` varies inputs, constants and `where=` (`each_of.py:8-10`). **There is
   no axis over the callable.**
 
@@ -204,7 +204,7 @@ real.
 > than gaining a twin that could drift from it. The write site verifies the
 > derived hash equals the stored one and refuses to write on mismatch.
 >
-> ⚠️ **MATLAB captures nothing yet**: `MatlabLineageFcn` holds the digest, not
+> ⚠️ **MATLAB captures nothing yet**: `MatlabFunctionIdentity` holds the digest, not
 > the text. The `source_text` duck-typed hook exists; nothing supplies it. Read
 > an empty `units` as "not captured", never "no code" — old records legitimately
 > have none, and offering to re-run a version whose source was never stored is

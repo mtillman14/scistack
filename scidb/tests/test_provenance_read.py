@@ -11,6 +11,7 @@ get_upstream_provenance's full contract is exercised by test_branch_params.py;
 here we add the new methods.
 """
 
+from scidb.provenance import query as provenance_query
 import numpy as np
 import pytest
 
@@ -101,14 +102,14 @@ def test_get_provenance_none_for_raw(db):
 # ---------------------------------------------------------------------------
 def test_derived_branch_params_accumulates(db):
     s = _two_step(db)
-    bp = db.get_derived_branch_params(s.record_id)
+    bp = provenance_query.derived_branch_params(db._duck, s.record_id)
     assert bp == {"bandpass.low_hz": 20, "detect_spikes.threshold": 0.5}
 
 
 def test_derived_branch_params_empty_for_raw(db):
     RawSignal.save(np.array([1.0]), subject="S01", session="1")
     raw = RawSignal.load(subject="S01", session="1")
-    assert db.get_derived_branch_params(raw.record_id) == {}
+    assert provenance_query.derived_branch_params(db._duck, raw.record_id) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +143,7 @@ def _multi_record_pipeline(db):
 
 
 def test_batched_provenance_matches_per_record(db):
-    from scidb import provenance_query as pq
+    from scidb.provenance import query as pq
 
     rids = _multi_record_pipeline(db)
     duck = db._duck
@@ -160,7 +161,7 @@ def test_batched_provenance_matches_per_record(db):
 
 
 def test_batched_provenance_empty_inputs(db):
-    from scidb import provenance_query as pq
+    from scidb.provenance import query as pq
 
     assert pq.producing_invocation_batch(db._duck, []) == {}
     assert pq.output_num_batch(db._duck, []) == {}
@@ -170,7 +171,7 @@ def test_batched_provenance_empty_inputs(db):
 def test_branch_params_batch_handles_duplicates(db):
     """Duplicate seed ids (a record appearing twice in a result set) must not
     corrupt the per-record accumulation."""
-    from scidb import provenance_query as pq
+    from scidb.provenance import query as pq
 
     s = _two_step(db)
     once = pq.branch_params_batch(db._duck, [s.record_id])
@@ -184,7 +185,7 @@ def test_branch_params_batch_handles_duplicates(db):
 # ---------------------------------------------------------------------------
 def test_get_pipeline_nodes_and_edges(db):
     s = _two_step(db)
-    pipe = db.get_pipeline(s.record_id)
+    pipe = provenance_query.pipeline(db, s.record_id)
 
     types = [n["variable_type"] for n in pipe["nodes"]]
     assert types == ["Spikes", "Filtered", "RawSignal"]
@@ -210,7 +211,7 @@ def test_execution_audit_records_run(db):
     )
     f = Filtered.load(subject="S01", session="1")
 
-    audit = db.get_execution_audit(f.record_id)
+    audit = provenance_query.execution_audit(db._duck, f.record_id)
     assert len(audit) >= 1
     entry = audit[0]
     assert entry["function_name"] == "bandpass"
@@ -226,7 +227,7 @@ def test_execution_audit_records_run(db):
 # consumed_input_schema_ids (§10 "where= redesign" (B) — semantic variant match)
 # ---------------------------------------------------------------------------
 def test_consumed_input_schema_ids(db):
-    from scidb import provenance_query
+    from scidb.provenance import query as provenance_query
 
     RawSignal.save(np.array([1.0, 2.0]), subject="S01", session="1")
     raw = RawSignal.load(subject="S01", session="1")
@@ -249,7 +250,7 @@ def test_consumed_input_schema_ids(db):
 
 
 def test_consumed_input_schema_ids_empty_for_raw(db):
-    from scidb import provenance_query
+    from scidb.provenance import query as provenance_query
 
     RawSignal.save(np.array([1.0]), subject="S01", session="1")
     raw = RawSignal.load(subject="S01", session="1")
@@ -272,5 +273,5 @@ def test_has_lineage_true_for_computed_false_for_raw(db):
     )
     f = Filtered.load(subject="S01", session="1")
 
-    assert db.has_lineage(f.record_id) is True
-    assert db.has_lineage(raw.record_id) is False
+    assert provenance_query.has_producing_invocation(db._duck, f.record_id) is True
+    assert provenance_query.has_producing_invocation(db._duck, raw.record_id) is False

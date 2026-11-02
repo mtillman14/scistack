@@ -208,7 +208,7 @@ def test_the_project_layer_is_read_per_resolve(scalar_table):
 
 def test_an_alias_edit_does_not_re_plan(scalar_table, monkeypatch):
     """`aliases` is plan-irrelevant: text changes, the reduction does not."""
-    from scistackplot.reduce.resolve import resolve as reduce
+    import scistackplot.reduce.resolve as reduce
 
     calls = []
     real = reduce._build_plan

@@ -22,8 +22,8 @@ distinguished by a stored **`__where` provenance key**.
 
 ## The `__where` version key
 
-When `for_each` saves a computed variant, `ForEachConfig.to_version_keys()`
-(`scidb/src/scidb/foreach_config.py`) writes the `where=` filter into the record's
+When `for_each` saves a computed variant, `ForEachConfig.to_config_keys()`
+(`scidb/src/scidb/run/foreach_config.py`) writes the `where=` filter into the record's
 `version_keys` JSON under the key `"__where"`:
 
 ```python
@@ -36,7 +36,7 @@ that together define a variant's identity.
 
 ## The two-strategy load: `_load_with_where`
 
-`DatabaseManager._load_with_where` (`scidb/src/scidb/database.py`) is the single
+`DatabaseManager._load_with_where` (`scidb/src/scidb/store/database.py`) is the single
 engine that turns a `where=` filter into a set of records. It tries two strategies
 **in order**:
 
@@ -65,14 +65,14 @@ filtering returns all of them. Only Strategy 1 (provenance) separates them.
 
 ## `_where_key_from_filter`: one source of truth
 
-`_where_key_from_filter(where_for_key)` (`scidb/src/scidb/database.py`) is the
+`_where_key_from_filter(where_for_key)` (`scidb/src/scidb/store/database.py`) is the
 **single** function that maps a (variable-level) filter to its `__where` key string.
 It handles `str`, `RawFilter._original_str`, anything with `.to_key()`, and falls
 back to `str()`. Both the direct-load path (`_load_with_where`) and the Merge path
 (`_merge_constituent_where_key` in `foreach.py`) call it, so they always agree on
 the key. If you change key derivation, change it here — never duplicate the logic.
 
-> ⚠️ **Save/load must agree.** `to_version_keys()` keys on the **full** filter; the
+> ⚠️ **Save/load must agree.** `to_config_keys()` keys on the **full** filter; the
 > load path keys on the **variable-level portion** (SchemaKey split off). For pure
 > variable/column filters these are identical, so provenance matches. If a `SchemaKey`
 > filter is mixed into a `for_each` `where=`, the stored and load-time keys diverge
@@ -83,7 +83,7 @@ the key. If you change key derivation, change it here — never duplicate the lo
 
 `scidb.Merge(A, B)` loads each constituent independently and column-joins them on
 schema keys. The loading lives in `_load_input` (the `isinstance(var_spec, Merge)`
-branch) in `scidb/src/scidb/foreach.py`.
+branch) in `scidb/src/scidb/run/foreach.py`.
 
 The subtlety: each constituent must be filtered **exactly as a direct `.load(where=…)`
 would be**, including provenance. The mechanism:
@@ -139,10 +139,10 @@ sync.
 
 | File | Role |
 |------|------|
-| `scidb/src/scidb/foreach_config.py` | `to_version_keys()` writes `__where` at save time |
-| `scidb/src/scidb/database.py` | `_where_key_from_filter()` (source of truth); `_load_with_where()` Strategy 1/2 |
-| `scidb/src/scidb/foreach.py` | `_PreresolvedFilter`, `_merge_constituent_where_key`, Merge branch of `_load_input` |
-| `scidb/src/scidb/filters.py` | `split_schema_key_filters()`, filter `to_key()`/`resolve()` |
+| `scidb/src/scidb/run/foreach_config.py` | `to_config_keys()` writes `__where` at save time |
+| `scidb/src/scidb/store/database.py` | `_where_key_from_filter()` (source of truth); `_load_with_where()` Strategy 1/2 |
+| `scidb/src/scidb/run/foreach.py` | `_PreresolvedFilter`, `_merge_constituent_where_key`, Merge branch of `_load_input` |
+| `scidb/src/scidb/model/filters.py` | `split_schema_key_filters()`, filter `to_key()`/`resolve()` |
 | `sci-matlab/src/sci_matlab/matlab/+scidb/for_each.m` | Thin shell delegating to the Python bridge |
 | `sci-matlab/src/sci_matlab/bridge.py` | `for_each_prepare` → `_for_each_prepare` |
 

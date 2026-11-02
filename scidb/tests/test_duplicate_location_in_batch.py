@@ -24,7 +24,7 @@ from scidb import (
     configure_database,
     for_each,
 )
-from scidb.database import _colliding_locations, _differing_columns
+from scidb.store.database import _colliding_locations, _differing_columns
 
 
 class Demo(BaseVariable):

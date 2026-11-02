@@ -1,7 +1,7 @@
-"""Regression: scidb.log must keep re-exporting the scistacklog facade.
+"""Regression: scidb.model.log must keep re-exporting the scistacklog facade.
 
-MATLAB's +scidb/Log.m delegates via py.scidb.log.Log.*, and many modules
-import ``from scidb.log import Log`` — this import path is a public contract
+MATLAB's +scidb/Log.m delegates via py.scidb.model.log.Log.*, and many modules
+import ``from scidb.model.log import Log`` — this import path is a public contract
 even though the implementation moved to the scistacklog package.
 
 Also pins the level policy contracts that Stage 3 established:
@@ -13,7 +13,7 @@ Also pins the level policy contracts that Stage 3 established:
 """
 
 import numpy as np
-from scidb.log import Log as shim_log
+from scidb.model.log import Log as shim_log
 
 import scidb
 from scistacklog import Log as real_log
@@ -77,13 +77,13 @@ def test_per_record_internals_in_debug_file_not_journal(db, tmp_path):
 
 
 def test_log_path_for_is_beside_the_database(tmp_path):
-    from scidb.log import log_path_for
+    from scidb.model.log import log_path_for
 
     assert log_path_for(tmp_path / "proj.duckdb") == tmp_path / "scistack.log"
 
 
 def test_attach_log_file_opens_the_sink_before_any_database(tmp_path):
-    from scidb.log import attach_log_file
+    from scidb.model.log import attach_log_file
 
     try:
         path = attach_log_file(tmp_path / "not_created_yet.duckdb")
@@ -103,7 +103,7 @@ def test_attach_log_file_is_idempotent(tmp_path):
     configure_database() calls this after the GUI server already has, and a
     tear-down/reopen there would drop buffered output and churn the file.
     """
-    from scidb.log import attach_log_file
+    from scidb.model.log import attach_log_file
 
     try:
         attach_log_file(tmp_path / "proj.duckdb")
@@ -150,7 +150,7 @@ def test_setup_phase_timings_reach_the_file(tmp_path):
 
 def test_configure_database_keeps_an_already_attached_sink(tmp_path):
     """The early-attached file keeps receiving records after DB setup."""
-    from scidb.log import attach_log_file
+    from scidb.model.log import attach_log_file
 
     db_path = tmp_path / "proj.duckdb"
     attach_log_file(db_path)

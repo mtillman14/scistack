@@ -20,6 +20,7 @@ Covers:
 - No-variant aggregations behave exactly as before (1:1 expansion)
 """
 
+from scidb.provenance import query as provenance_query
 import warnings as _warnings
 
 import numpy as np
@@ -482,7 +483,7 @@ class TestProvenancePerGroup:
         )
 
         agg20 = Aggregated.load(subject="S01", **branch_param("bandpass", low_hz=20))
-        prov = db.get_upstream_provenance(agg20.record_id)
+        prov = provenance_query.upstream_provenance(db, agg20.record_id)
 
         agg_nodes = [n for n in prov if n["variable_type"] == "Aggregated"]
         assert len(agg_nodes) == 1
@@ -535,7 +536,7 @@ class TestProvenancePerGroup:
         for_each(aggregate_sum, {"signal": Filtered}, [Aggregated], save=True)
 
         agg10 = Aggregated.load(**branch_param("bandpass", low_hz=10))
-        prov = db.get_upstream_provenance(agg10.record_id)
+        prov = provenance_query.upstream_provenance(db, agg10.record_id)
         agg_nodes = [n for n in prov if n["variable_type"] == "Aggregated"]
         assert len(agg_nodes) == 1
         assert agg_nodes[0]["function_name"] == "aggregate_sum"

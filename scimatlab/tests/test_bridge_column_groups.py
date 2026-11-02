@@ -15,12 +15,12 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import pandas as pd
 import pytest
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 from scifor.column_selection import ColumnSelection
 from scifor.outputs import is_no_output
+from scimatlab.bridge.entry import _merge_output_tables
+from scimatlab.bridge.wire import _reconstruct_input_for_keys
 from scimatlab.bridge import (
-    _merge_output_tables,
-    _reconstruct_input_for_keys,
     for_each_describe_loaded_input,
     register_matlab_variable,
 )

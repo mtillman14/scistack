@@ -421,7 +421,7 @@ class Log:
         """Point the debug file at ``log_path`` and the journal at
         ``journal_path`` (``None`` detaches either).
 
-        ``scidb.log.attach_log_file`` (called by ``configure_database``) sets
+        ``scidb.model.log.attach_log_file`` (called by ``configure_database``) sets
         both: ``scistack-debug.log`` and ``scistack.log`` beside the database.
         """
         cls.attach()

@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 
-from .api import (
+from scidb.inspect.api import (
     DbOverview,
     ExclusionRecord,
     IntentReport,
@@ -33,8 +33,8 @@ from .api import (
     location_sample,
     variant_verdict,
 )
-from .graph import FunctionNode, PipelineGraph, VariantSummary, parse_path_input
-from .mutate import MutationResult
+from scidb.inspect.graph import FunctionNode, PipelineGraph, VariantSummary, parse_path_input
+from scidb.inspect.mutate import MutationResult
 
 
 @dataclass
@@ -1077,8 +1077,8 @@ def render_exclusions(exclusions: list[ExclusionRecord], schema_keys: list[str])
 
 def render_inventory(inv, missing_only: bool, collapse: bool = True) -> str:
     """``scidb inventory``: a counts line, then the table the chosen view shows
-    (columns and rows from ``scidb.inventory.inventory_table``)."""
-    from ..inventory import EXCLUDED, MISSING, PRESENT, inventory_table
+    (columns and rows from ``scidb.provenance.inventory.inventory_table``)."""
+    from scidb.provenance.inventory import EXCLUDED, MISSING, PRESENT, inventory_table
 
     def tally(c):
         return f"{c[PRESENT]} present, {c[MISSING]} missing, {c[EXCLUDED]} excluded"
@@ -1201,7 +1201,7 @@ def render_intent(report: IntentReport) -> str:
     selection, the winner carries none — is the shape of a dropped selection
     and is marked so it cannot be skimmed past.
     """
-    from ..intent import describe_columns
+    from scidb.provenance.intent import describe_columns
 
     lines = [f"{report.function_name} — intent vs fact (origin={report.origin}, scope={report.scope})"]
     if report.last_run:

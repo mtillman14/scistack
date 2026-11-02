@@ -13,7 +13,7 @@ These run additively alongside the legacy _lineage writes (deleted in Phase 5).
 
 import numpy as np
 import pytest
-from scidb.provenance import CONSTANT_TYPE, compute_constant_record_id
+from scidb.provenance.graph import CONSTANT_TYPE, compute_constant_record_id
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
@@ -196,8 +196,8 @@ def test_rerun_idempotent_graph_new_run(db):
 # _invocation_output PK collision — the slot-allocation cursor.
 # ---------------------------------------------------------------------------
 def test_distribute_fanout_one_invocation_unique_slots(db):
-    from scidb.bindings import Binding
-    from scidb.provenance_save import GraphRecord, record_run
+    from scidb.run.bindings import Binding
+    from scidb.provenance.save import GraphRecord, record_run
 
     n = 500
     # A live dict for __constants — that is how real for_each meta arrives,

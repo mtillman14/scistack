@@ -23,8 +23,8 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb.provenance_query import check_recorded_selectors
-from scidb.provenance_save import check_selector_round_trip
+from scidb.provenance.query import check_recorded_selectors
+from scidb.provenance.save import check_selector_round_trip
 
 
 @pytest.fixture

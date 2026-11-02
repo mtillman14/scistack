@@ -63,7 +63,7 @@ def recorded_orders(db, function_names) -> "dict[str, list[list[str]]]":
     (``provenance_query.recorded_output_orders``). Empty when the database
     cannot answer; output order then falls back as documented above."""
     try:
-        from scidb.provenance_query import recorded_output_orders
+        from scidb.provenance.query import recorded_output_orders
 
         return recorded_output_orders(db._duck, function_names)
     except Exception:
@@ -89,7 +89,7 @@ def recorded_params(db, function_names) -> "dict[str, dict[str, str]]":
     run log (``provenance_query.recorded_output_params``): which variable
     each NAMED output saved to. Empty when the database cannot answer."""
     try:
-        from scidb.provenance_query import recorded_output_params
+        from scidb.provenance.query import recorded_output_params
 
         return recorded_output_params(db._duck, function_names)
     except Exception:

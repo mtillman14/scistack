@@ -279,10 +279,7 @@ class ScidbSource(BaseSource):
         return self._levels[variable]
 
     def _schema_levels(self, key: str) -> list[str]:
-        rows = self._db._duck.fetchall(
-            f'SELECT DISTINCT s."{key}" FROM _schema s WHERE s."{key}" IS NOT NULL'
-        )
-        values = [str(row[0]) for row in rows]
+        values = [str(v) for v in self._db.distinct_schema_values(key)]
         return self._ordered(key, values)
 
     def _aliases_source(self):
@@ -478,7 +475,7 @@ class ScidbSource(BaseSource):
         than one drawn from a cache that is almost certainly still good.
         """
         try:
-            from scidb.provenance_query import variable_content_fingerprint
+            from scidb.provenance.query import variable_content_fingerprint
 
             return variable_content_fingerprint(self._db._duck, variable)
         except Exception as exc:
@@ -814,13 +811,13 @@ class ScidbSource(BaseSource):
         return table
 
     def _absent_locations(self, frame, levels: list[str]):
-        """The variable's "No record" locations (`scidb.inventory.
+        """The variable's "No record" locations (`scidb.provenance.inventory.
         absent_locations`, the owner) as a frame of its schema-key columns:
         places the dataset has where this variable has no record. None when
         it cannot be told (no schema keys, or the query failed — said in the
         log, never fatal: the figure draws either way)."""
         import pandas as pd
-        from scidb.inventory import absent_locations
+        from scidb.provenance.inventory import absent_locations
 
         keys = [key for key in levels if key in frame.columns]
         if not keys:

@@ -61,8 +61,8 @@ import json
 import logging
 import uuid
 
-from scidb import tables
-from scidb.tables import TableDecl
+from scidb.store import tables
+from scidb.store.tables import TableDecl
 
 from scistack_gui.stores import library_lock as _library_lock
 from scistack_gui.ids import ROOT_SCOPE
@@ -137,7 +137,7 @@ GUARDED_WRITES: tuple[str, ...] = (
 )
 
 
-# The tables this module owns, declared through scidb (scidb.tables owns
+# The tables this module owns, declared through scidb (scidb.store.tables owns
 # every table of a project database; this module creates them on first use).
 tables.declare(
     TableDecl(
@@ -2175,7 +2175,7 @@ def clear_pipeline_content(db, pipeline_id: str) -> dict:
     # Edges by their endpoints' CANVAS, not by this pipeline's manual rows: a
     # seeded node that graduated onto its history twin has no manual row any
     # more, and its edges name the placed id (`bare::pipeline_id`).
-    from scidb.intent import ASPECT_WIRING, SUBJECT_EDGE
+    from scidb.provenance.intent import ASPECT_WIRING, SUBJECT_EDGE
 
     n_edges = 0
     for st in intent_store.load_statements(db, aspect=ASPECT_WIRING, subject_kind=SUBJECT_EDGE):

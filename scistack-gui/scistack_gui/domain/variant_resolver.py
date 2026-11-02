@@ -12,10 +12,10 @@ import logging
 from itertools import product as _product
 from typing import TYPE_CHECKING
 
-from scidb.provenance import constants_identity_key
+from scidb.provenance.graph import constants_identity_key
 
 if TYPE_CHECKING:
-    from scidb.foreach_config import RunOptions
+    from scidb.run.foreach_config import RunOptions
 
 logger = logging.getLogger(__name__)
 
@@ -261,7 +261,7 @@ def compute_call_id(
     options: "RunOptions | None" = None,
 ) -> str | None:
     """Deterministic call_id for a target: the target's bindings mapped onto
-    ``scidb.foreach_config.CallSite`` — the ONE assembly of the call-id
+    ``scidb.run.foreach_config.CallSite`` — the ONE assembly of the call-id
     payload, the same type ``ForEachConfig.to_call_id`` fills from live
     inputs — so a combo hidden before it's ever run lands on the same id as
     the real record it eventually produces. This function only says which
@@ -283,7 +283,7 @@ def compute_call_id(
     an id no record would ever carry. The key comes from the live PathInput
     object so there is exactly one spelling of the recipe, scidb's.
     """
-    from scidb.foreach_config import CallSite, RunOptions
+    from scidb.run.foreach_config import CallSite, RunOptions
 
     from scistack_gui.domain.edge_resolver import (
         BINDING_PATHINPUT,

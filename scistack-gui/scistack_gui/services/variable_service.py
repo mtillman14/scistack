@@ -13,7 +13,7 @@ import keyword
 import logging
 
 from fastapi import HTTPException
-from scidb.database import DatabaseManager
+from scidb.store.database import DatabaseManager
 
 from scistack_gui.stores import history
 
@@ -338,7 +338,7 @@ def get_variable_records(variable_name: str, db: DatabaseManager) -> dict:
         raise HTTPException(status_code=404, detail=str(exc))
 
     record_ids = [row[0] for row in rows]
-    from scidb.provenance_query import variant_identity_batch
+    from scidb.provenance.query import variant_identity_batch
 
     # Not branch_params_batch: two records produced by different versions of the
     # same function have IDENTICAL branch params, so grouping on those alone
@@ -377,7 +377,7 @@ def get_variable_records(variable_name: str, db: DatabaseManager) -> dict:
     # docs/claude/variant-space.md §4) *and* producing function hash. The hash
     # is what separates two runs of an edited function — without it they merge
     # into a single row whose count is the sum of both.
-    from scidb.bindings import variant_signature
+    from scidb.run.bindings import variant_signature
 
     variant_map: dict[tuple, dict] = {}
     for rec in records:

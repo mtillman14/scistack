@@ -1,7 +1,7 @@
 """scidb's SciDuck: schema ids, the variable list and groups.
 
 ``SciDuck`` moved here from sciduckdb (plan P3 stage 6, D4): its three
-tables are declared in ``scidb.tables`` and created on a writable open
+tables are declared in ``scidb.store.tables`` and created on a writable open
 (connect -> ``tables.ensure_core`` -> schema validation). The codec and the
 connection it builds on are sciduckdb's, tested there
 (``sciduckdb/tests/test_codec_storage.py``).
@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from scidb.sciduck import SciDuck
+from scidb.store.sciduck import SciDuck
 
 
 @pytest.fixture
@@ -272,7 +272,7 @@ def test_list_variables_if_open_returns_none_when_closed_without_error(
     and no ERROR traceback (scistack.log 2026-10-19 15:08:27)."""
     import logging
 
-    from scidb.sciduck import SciDuck
+    from scidb.store.sciduck import SciDuck
 
     db = SciDuck(str(tmp_path / "ifopen.duckdb"), dataset_schema=["subject"])
     assert db.list_variables_if_open() is not None

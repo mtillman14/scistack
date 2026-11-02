@@ -55,11 +55,15 @@ def test_scan_finds_the_source_tree():
     """The guard is only as good as its reach: an empty scan would pass
     vacuously, so prove it sees the files it is meant to police."""
     files = _source_files()
-    names = {p.name for p in files}
+    names = {p.relative_to(REPO).as_posix() for p in files}
     print(f"[test_no_user_identity] scanning {len(files)} source file(s)")
     if not (REPO / "scistack-gui").is_dir():
         pytest.skip("not running from the monorepo checkout")
-    for expected in ("provenance_save.py", "variant_pins.py", "VariantsPopup.tsx"):
+    for expected in (
+        "scidb/src/scidb/provenance/save.py",
+        "scidb/src/scidb/store/variant_pins.py",
+        "scistack-gui/frontend/src/components/Variants/VariantsPopup.tsx",
+    ):
         assert expected in names, f"scan missed {expected}; globs out of date"
 
 
@@ -108,7 +112,7 @@ def db(tmp_path, monkeypatch):
 
 
 def test_fresh_database_has_no_who_columns_and_stores_no_identity(db):
-    from scidb.exclusions import exclude_schema
+    from scidb.store.exclusions import exclude_schema
 
     IdentityRaw.save(np.array([1.0, 2.0]), subject="S01")
     for_each(_double, {"x": IdentityRaw}, [IdentityOut], subject=["S01"])

@@ -64,10 +64,20 @@ def _strip_matlab_comments(text: str) -> str:
     return "\n".join(out)
 
 
+_SUBCLASS = re.compile(r"^\s*classdef\s+Log\s*<\s*(\w+)\.Log\b", re.MULTILINE)
+
+
 def _public_surface(package: str) -> set[str]:
-    """Public static methods + constant properties of <package>/Log.m."""
+    """Public static methods + constant properties of <package>/Log.m.
+
+    A ``classdef Log < other.Log`` file inherits its parent's surface
+    (``+scidb/Log.m`` is a member-free subclass of ``scifor.Log``).
+    """
     src = (_MATLAB_SRC / package / "Log.m").read_text(encoding="utf-8")
     code = _strip_matlab_comments(src)
+    parent = _SUBCLASS.search(code)
+    if parent:
+        return _public_surface("+" + parent.group(1))
 
     names: set[str] = set()
     for block in _CONSTANT_BLOCK.finditer(code):
@@ -140,7 +150,7 @@ def test_generated_matlab_error_handlers_use_err():
     )
 
 
-@pytest.mark.parametrize("package", ["+scidb", "+scifor"])
+@pytest.mark.parametrize("package", ["+scifor"])  # scidb.Log inherits these
 def test_level_methods_guard_against_double_sprintf(package):
     """``Log.<level>`` must not re-format an already-formatted message.
 

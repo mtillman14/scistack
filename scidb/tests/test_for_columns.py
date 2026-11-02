@@ -717,7 +717,7 @@ class TestEveryColumnFromMetadata:
         """Same set AND order: the resolved list becomes the selector, which
         is folded into invocation_id, so an order change would re-identify
         every existing all-columns call site."""
-        from scidb.foreach import _load_var_type_as_spread, _resolve_all_columns
+        from scidb.run.foreach import _load_var_type_as_spread, _resolve_all_columns
 
         _seed_wide(db)
         loaded = _load_var_type_as_spread(GaitData, db, None)
@@ -730,7 +730,7 @@ class TestEveryColumnFromMetadata:
     def test_resolving_every_column_loads_nothing(self, db, monkeypatch):
         """It used to load the whole variable just to read its column names,
         and prepare then loaded it again."""
-        import scidb.foreach as fe
+        import scidb.run.foreach as fe
 
         _seed_wide(db)
         loads = []
@@ -753,7 +753,7 @@ class TestEveryColumnFromMetadata:
         (tmp_stage0_empty_variable.py, 2026-10-28)."""
         from scifor.failures import classify_blame
 
-        from scidb.exceptions import ForColumnsNoColumnsError
+        from scidb.model.exceptions import ForColumnsNoColumnsError
 
         with pytest.raises(ForColumnsNoColumnsError, match="no saved records yet") as exc:
             for_each(

@@ -6,12 +6,12 @@ In code, ``inputs={"df": MyVar.for_columns(), "col": ColName()}`` hands
 GUI the same thing is stated on a function node's Inputs section: with an
 input set to **Run once per column**, any other parameter's ``n/a`` row is a
 dropdown ``n/a | ColName``. The choice is stored as the ``colname`` intent
-aspect (``scidb.intent.ASPECT_COLNAME``, blob key ``colNameInputs``) and
+aspect (``scidb.provenance.intent.ASPECT_COLNAME``, blob key ``colNameInputs``) and
 rides on the run target as a ``colname`` BINDING from here on
 (``edge_resolver.BINDING_COLNAME``), so ``build_run_inputs``, MATLAB
 generation and code export only render it.
 
-**The shape is not defined here.** ``scidb.intent.normalize_colname_inputs``
+**The shape is not defined here.** ``scidb.provenance.intent.normalize_colname_inputs``
 owns it; this module is the binding-shaped adapter.
 
 **Not part of call identity.** scidb leaves ColName out of version keys
@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 
-from scidb.intent import normalize_colname_inputs as normalize
+from scidb.provenance.intent import normalize_colname_inputs as normalize
 
 logger = logging.getLogger(__name__)
 

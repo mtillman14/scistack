@@ -26,15 +26,15 @@ import pandas as pd
 import pytest
 import scifor as _scifor
 from scidb import BaseVariable, Variant, configure_database, for_each
-from scidb.exceptions import AmbiguousParamError
-from scidb.foreach_config import ForEachConfig
-from scidb.provenance_query import (
+from scidb.model.exceptions import AmbiguousParamError
+from scidb.run.foreach_config import ForEachConfig
+from scidb.provenance.query import (
     run_option_axes,
     run_options_batch,
     run_options_label,
     variant_identity_batch,
 )
-from scidb.variant import RUN_PIN_PREFIX
+from scidb.model.variant import RUN_PIN_PREFIX
 
 SCHEMA = ["subject", "trial"]
 TRIALS = [1, 2, 3]
@@ -411,7 +411,7 @@ class TestCurrencyIsPerFunctionNotPerLocation:
         return variant_identity_batch(db._duck, rids)
 
     def test_current_run_options_is_the_newest_set(self, stale_trial):
-        from scidb.provenance_query import current_run_options
+        from scidb.provenance.query import current_run_options
 
         # Keyed by (function, output variable) since 2026-10-01.
         assert current_run_options(stale_trial._duck, ["make_rows"]) == {
@@ -477,7 +477,7 @@ class TestNodeStateAgreesWithTheLoadPath:
         return db
 
     def _current_for_node_state(self, db) -> set:
-        from scidb.provenance_query import current_records_by_schema_batch
+        from scidb.provenance.query import current_records_by_schema_batch
 
         by_schema = current_records_by_schema_batch(db._duck, "Loaded")
         return {rid for rids in by_schema.values() for rid in rids}
@@ -525,7 +525,7 @@ class TestNodeStateAgreesWithTheLoadPath:
         failed and nothing is left to do, so the node is done. It reads red
         because the predictor built a fourth invocation from the stale record.
         """
-        from scidb.state import check_node_state
+        from scidb.provenance.state import check_node_state
 
         def consume(loaded):
             return _total(loaded)
@@ -550,34 +550,34 @@ class TestNodeStateAgreesWithTheLoadPath:
 
 class TestRunOptionsValue:
     """`distribute` / `as_table` / `across_variants` are one value
-    (`scidb.foreach_config.RunOptions`), not three loose kwargs. They were
+    (`scidb.run.foreach_config.RunOptions`), not three loose kwargs. They were
     threaded through a dozen call sites, and the ones that forgot did not
     fail — they computed the identity of a call nobody made (two GUI paths
     hardcoded `distribute=False, as_table=None` beside a node that had saved
     otherwise)."""
 
     def test_from_config_tolerates_a_missing_or_empty_blob(self):
-        from scidb.foreach_config import RunOptions
+        from scidb.run.foreach_config import RunOptions
 
         assert RunOptions.from_config(None) == RunOptions()
         assert RunOptions.from_config({}) == RunOptions()
         assert RunOptions.from_config({"distribute": True}).distribute is True
 
     def test_as_table_true_resolves_against_the_call_s_own_params(self):
-        from scidb.foreach_config import RunOptions
+        from scidb.run.foreach_config import RunOptions
 
         assert RunOptions(as_table=True).resolved_as_table(["b", "a"]) == ["a", "b"]
         assert RunOptions(as_table=["b"]).resolved_as_table(["b", "a"]) == ["b"]
         assert RunOptions().resolved_as_table(["a"]) == []
 
     def test_round_trips_through_the_stored_blob(self):
-        from scidb.foreach_config import RunOptions
+        from scidb.run.foreach_config import RunOptions
 
         opts = RunOptions(distribute=True, as_table=["df"], across_variants=("x",))
         assert RunOptions.from_config(opts.to_config()) == opts
 
     def test_the_call_site_reads_it(self):
-        from scidb.foreach_config import CallSite, RunOptions
+        from scidb.run.foreach_config import CallSite, RunOptions
 
         base = CallSite("fn", {"df": "Wide"})
         pooled = CallSite("fn", {"df": "Wide"}, options=RunOptions(as_table=True))

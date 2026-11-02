@@ -48,10 +48,10 @@ logger = logging.getLogger(__name__)
 
 
 def gui_recorded_wirings(db, scidb_agg: dict, agg) -> list:
-    """``scidb.wirings.recorded_wirings`` with the GUI's PathInput names and
+    """``scidb.provenance.wirings.recorded_wirings`` with the GUI's PathInput names and
     ``_node_wiring`` claims, so each wiring id equals the one the canvas uses
     for that step."""
-    from scidb.wirings import recorded_wirings
+    from scidb.provenance.wirings import recorded_wirings
 
     from scistack_gui.stores import node_wiring
     from scistack_gui.domain import graph_builder as gb
@@ -74,7 +74,7 @@ def missing_combo_hides(db, wirings, adopted: set) -> list[dict]:
     does not match, and the combination shows up again: it can never hide the
     wrong one.
     """
-    from scidb.foreach_config import RunOptions
+    from scidb.run.foreach_config import RunOptions
 
     from scistack_gui.domain.edge_resolver import pathinput_binding, variable_binding
     from scistack_gui.domain.variant_resolver import compute_call_id

@@ -16,10 +16,10 @@ sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import pytest
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 from scimatlab import bridge
+from scimatlab.bridge.wire import _parameter_names_from_matlab
 from scimatlab.bridge import (
-    _parameter_names_from_matlab,
     for_each_prepare,
     register_matlab_variable,
 )

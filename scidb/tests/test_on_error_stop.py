@@ -80,7 +80,7 @@ def test_bad_on_error_value_rejected_before_any_work(db):
 
 
 def test_stop_halts_a_pipeline(db):
-    from scidb.pipeline import _reset_pipeline_state
+    from scidb.run.pipeline import _reset_pipeline_state
 
     _reset_pipeline_state()
     try:

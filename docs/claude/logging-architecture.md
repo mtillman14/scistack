@@ -9,7 +9,7 @@
 | `scistack.log` (**journal**) | the scientist | one block per run: what ran, counts, duration, each failure labelled with **who can fix it**; data notes; failed GUI actions | `Log.journal` only (via `Log.run`, `Log.journal_note`, `Log.journal_json`) |
 | `scistack-debug.log` | whoever debugs SciStack | everything, **DEBUG by default**, `run=<id>` on every line inside a run | every `Log.*` call / layer logger |
 
-Both sit beside the database. `scidb.log.attach_log_file(db)` sets both (`log_path_for` = journal, `debug_log_path_for` = debug; the debug name is derived by `scistacklog.debug_path_for`). `configure_database` (Python and MATLAB), the GUI server and the `scidb` CLI all call it.
+Both sit beside the database. `scidb.model.log.attach_log_file(db)` sets both (`log_path_for` = journal, `debug_log_path_for` = debug; the debug name is derived by `scistacklog.debug_path_for`). `configure_database` (Python and MATLAB), the GUI server and the `scidb` CLI all call it.
 
 **Both goals, one emit stream.** Audience is a separate axis from level: a scientist never has to read a level-filtered framework log, and a debugger never has to re-run with `-v`. The debug file is a **superset**: every journal block is also logged as one INFO record (`[journal]`, layer `scistack`) to the debug file and the console. A journal block names `run=<id>`; grepping the debug file for that token gives the whole trace of that run.
 
@@ -67,7 +67,7 @@ Unchanged triage rule: **INFO only if O(1) per user-visible operation**; per-ite
 | Python script | INFO narrative + journal blocks on stderr | `configure_database` attaches both files |
 | `scidb` CLI | **WARN** unless `-v` | errors: one `Error: …` line to stderr + Log.error to file |
 | GUI (JSON-RPC server) | DEBUG (stderr → VS Code Output Channel) | no `logging.basicConfig`; run console fed by `_RunLogRelay` on `scifor`/`scidb` loggers only (the `[journal]` mirror is layer `scistack`, so it is not relayed). The extension's "Open log" opens the journal. |
-| MATLAB | same files | `+scidb/Log.m` gates client-side on `get_level()` (min of sinks), which is now **DEBUG**: every MATLAB `Log.debug` crosses the bridge. Watch `TestForEachTimingInstrumentation` for the cost. MATLAB tests read `scidb.Log.get_path()` = the debug file. |
+| MATLAB | same files | `+scifor/Log.m` (inherited by `scidb.Log`) gates client-side on `get_level()` (min of sinks), which is now **DEBUG**: every MATLAB `Log.debug` crosses the bridge. Watch `TestForEachTimingInstrumentation` for the cost. MATLAB tests read `scidb.Log.get_path()` = the debug file. |
 
 Config: `SCIDB_LOG_LEVEL` (both sinks, at attach), `Log.set_level(level, sink)`, CLI `-v`.
 

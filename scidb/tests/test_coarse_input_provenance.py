@@ -16,6 +16,7 @@ Fix: group only by the schema keys the input actually populates (drop all-NaN
 columns); the mapping key is still built over the full lookup-key set.
 """
 
+from scidb.provenance import query as provenance_query
 import numpy as np
 import pandas as pd
 import pytest
@@ -60,7 +61,7 @@ def _schema_id_of(db, record_id):
 
 
 def test_coarse_input_records_input_edges_in_aggregation(db):
-    from scidb import provenance_query
+    from scidb.provenance import query as provenance_query
 
     # CoarseInput at subject/session (no 'cycle') → its loaded spread carries an
     # all-NaN 'cycle' column.
@@ -90,7 +91,7 @@ def test_coarse_input_has_lineage(db):
     CoarseInput.save(5.0, subject="S01", session="1")
     for_each(_sum, {"signal": CoarseInput}, [AggOut], subject=["S01"], session=["1"])
     out = AggOut.load(subject="S01", session="1")
-    assert db.has_lineage(out.record_id) is True
+    assert provenance_query.has_producing_invocation(db._duck, out.record_id) is True
 
 
 class Demo(BaseVariable):
@@ -111,7 +112,7 @@ def test_input_coarser_than_the_iterated_level_records_its_edge(db):
     keys the input POPULATES (`RecordPool.location_keys`) — keyed by all of
     them, the subject-level record matched no session and the output was
     saved with no edge to it."""
-    from scidb import provenance_query
+    from scidb.provenance import query as provenance_query
 
     Demo.save(10.0, subject="S01")
     for cycle in ("1", "2"):

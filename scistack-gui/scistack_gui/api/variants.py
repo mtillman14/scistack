@@ -11,7 +11,7 @@ table for both transports (``api/handlers.py``).
     POST /api/variants/run-pin-conflicts    run_pin_conflicts
 
 Everything is answered by ``services/variant_cards_service.py``, a shell over
-``scidb.inspect`` and ``scidb.variant_pins`` / ``variant_delete``
+``scidb.inspect`` and ``scidb.store.variant_pins`` / ``variant_delete``
 (``.claude/plan-variants-popup.md`` Stage 4).
 
 The reads take the connection inside the service (``holds_db_lock=False``):
@@ -26,7 +26,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from scidb.exceptions import NotFoundError
+from scidb.model.exceptions import NotFoundError
 
 from scistack_gui.api.handlers import Handler, install_routes
 

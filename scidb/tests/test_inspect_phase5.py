@@ -139,7 +139,7 @@ class TestLockContention:
         def locked_keys(path):
             raise RuntimeError(msg)
 
-        monkeypatch.setattr("scidb.sciduck.schema_keys_from_db", locked_keys)
+        monkeypatch.setattr("scidb.store.sciduck.schema_keys_from_db", locked_keys)
         with pytest.raises(DatabaseLockedError):
             Inspector.open(db_path)
 

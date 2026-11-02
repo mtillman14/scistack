@@ -22,8 +22,8 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, EachOf, PathInput, configure_database, for_each
-from scidb import provenance_query as pq
-from scidb.state import check_node_state
+from scidb.provenance import query as pq
+from scidb.provenance.state import check_node_state
 
 SUBJECTS = ["01", "02"]
 

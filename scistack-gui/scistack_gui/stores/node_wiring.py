@@ -61,8 +61,8 @@ import logging
 import uuid
 from datetime import datetime
 
-from scidb import tables
-from scidb.tables import TableDecl
+from scidb.store import tables
+from scidb.store.tables import TableDecl
 
 from scistack_gui.ids import (
     FN_ID_PREFIX,
@@ -94,7 +94,7 @@ UNDOABLE_TABLES: tuple[str, ...] = ("_node_wiring",)
 PORTABILITY: dict[str, str] = {"_node_wiring": "history", "_adopted": "history"}
 
 
-# The tables this module owns, declared through scidb (scidb.tables owns
+# The tables this module owns, declared through scidb (scidb.store.tables owns
 # every table of a project database; this module creates them on first use).
 tables.declare(
     TableDecl(
@@ -183,7 +183,7 @@ def associations(db) -> list[dict]:
 
 def claimed_wirings(db) -> set[str]:
     """Every wiring some node has claimed — the input
-    ``scidb.provenance.split_call_site_outputs`` splits a multi-output call
+    ``scidb.provenance.graph.split_call_site_outputs`` splits a multi-output call
     site by. One query; the build and the run path both read it."""
     return {r[0] for r in _rows(db, "SELECT DISTINCT wiring_id FROM _node_wiring")}
 

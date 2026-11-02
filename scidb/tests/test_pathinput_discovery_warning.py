@@ -1,7 +1,7 @@
 """The "no values found for '<key>' in database, 0 iterations" WARN must not
 fire when PathInput discovery is about to supply those values from disk.
 
-Found by reading examples/vo2max/scidb.log: a first run against a fresh
+Found by reading examples/vo2max/scidb.model.log: a first run against a fresh
 database logged
 
     WARN  no values found for 'subject' in database, 0 iterations

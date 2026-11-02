@@ -314,7 +314,7 @@ def load_from_config(
     # module: the entities file is the file the GUI writes, so if the two
     # disagree, what the user just edited is what they should see. (For a
     # Variable a TOML entry is only a NAME, so a module that DEFINES the
-    # class keeps its definition: `scidb.variable.same_definition`.)
+    # class keeps its definition: `scidb.model.variable.same_definition`.)
     if config.entities_file is not None:
         _load_entities_file(config.entities_file)
     else:
@@ -565,7 +565,7 @@ def _load_library_entities(pkg_name: str) -> None:
     the project: a library's Parameters and PathInputs stay its own
     (portability.md, "Reusing code"). A name the project already has is
     left alone -- a TOML declaration only says the type exists
-    (``scidb.variable.same_definition``), and the project's own definition
+    (``scidb.model.variable.same_definition``), and the project's own definition
     is the one that counts.
     """
     import importlib.resources
@@ -793,7 +793,7 @@ def _register_variable(name: str, *, source: str) -> None:
         conflict = BaseVariable.definition_conflicts().get(name)
         if conflict is None and (_is_library_source(previous) or _is_library_source(source)):
             # Across a library boundary the same name declared the same way
-            # is ONE type (scidb.variable.same_definition; portability.md
+            # is ONE type (scidb.model.variable.same_definition; portability.md
             # "Reusing code"): nothing to fix, nothing to warn.
             logger.info(
                 "[registry] Variable '%s' is declared in %s and in %s with the "
@@ -1110,7 +1110,7 @@ def _scan_module_path_inputs(module, *, source: str) -> None:
         if is_path_input(obj):
             # The declared name is the object's own `name=` (its identity);
             # scidb owns the rule (parameter.path_input_declaration).
-            from scidb.parameter import path_input_declaration
+            from scidb.model.parameter import path_input_declaration
 
             declared, problem = path_input_declaration(obj, name)
             if problem:

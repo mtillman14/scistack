@@ -7,7 +7,7 @@ canvas hashed the union of its outputs (``1540882c…``), a wiring no Run had
 claimed, and minted a phantom node; the run path hashed each output alone, so
 the phantom's Run matched none of its own history ("no targets").
 
-The one owner is now ``scidb.provenance.split_call_site_outputs``: a call
+The one owner is now ``scidb.provenance.graph.split_call_site_outputs``: a call
 site's recorded outputs are split by the wirings Runs claimed together.
 ``.claude/plan-multi-output-call-site-wiring.md``.
 """
@@ -235,7 +235,7 @@ class TestSplitCallSitesByClaims:
         assert set(agg.fn_outputs) == {fkey}
 
     def test_per_output_claims_split_it(self):
-        from scidb.provenance import compute_wiring_id
+        from scidb.provenance.graph import compute_wiring_id
 
         from scistack_gui.domain.graph_builder import call_id_of, split_call_sites_by_claims
 

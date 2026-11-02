@@ -1,12 +1,12 @@
 # Browsing & Exporting
 
 <!-- Ground truth (tests/source win over prose). Verified against:
-     scidb/src/scidb/variable.py:661 BaseVariable.to_csv(filename, *args, **kwargs) CLASSMETHOD —
+     scidb/src/scidb/model/variable.py:661 BaseVariable.to_csv(filename, *args, **kwargs) CLASSMETHOD —
        flat table, one row per schema_id, value column named after the class; filename must end
        ".csv"; supports **metadata filters and where=; ValueError for multi-row table / bare vector;
      scidb/tests/test_to_csv.py (ScalarValue.to_csv(path); .to_csv(path, subject=1);
        .to_csv(path, where=_Side=="L"); filename must end .csv);
-     scidb/src/scidb/database.py:4017 db.export_to_csv(variable_class, path, **metadata) -> int
+     scidb/src/scidb/store/database.py:4017 db.export_to_csv(variable_class, path, **metadata) -> int
        (raw to_db() rows + _record_id + _meta_<key> columns; NotFoundError if none);
      scifor/src/scifor/merge.py Merge(a,b).to_csv(path, ...) and .as_df(where=None, verbose=False,
        **metadata) — inner-join on shared schema columns; scifor Col("col") filters;

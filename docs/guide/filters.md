@@ -3,7 +3,7 @@
 <!-- Ground truth (tests/source win over prose). Verified against:
      scidb/tests/test_filters.py (Side == "L" where Side is a BaseVariable subclass ->
        VariableFilter with .variable_class/.op/.value via metaclass comparison ops; raw_sql,
-       schema_key imported from scidb.filters and exported from scidb);
+       schema_key imported from scidb.model.filters and exported from scidb);
      scidb/tests/test_where.py (where= in load(); ColumnFilter MyVar["col"] == val for tabular
        vars; & | ~ composition; returns filtered list);
      scidb/tests/test_exclusions.py (exclude_schema(**keys, reason=, db=), include_schema,

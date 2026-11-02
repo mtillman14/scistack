@@ -35,7 +35,7 @@ from typing import Any, Callable
 
 from scistacklog import Log
 
-from scidb.versioned_store import VersionedStore
+from scidb.store.versioned_store import VersionedStore
 
 LAYER = "scistackplotdb"
 
@@ -124,7 +124,7 @@ class SavedPlot:
 # Table
 # ---------------------------------------------------------------------------
 
-#: The rules (names, versions, hiding, never deleting) live in `scidb.versioned_store`,
+#: The rules (names, versions, hiding, never deleting) live in `scidb.store.versioned_store`,
 #: shared with presets so the two stores cannot drift apart.
 STORE = VersionedStore(
     table=TABLE,
@@ -466,7 +466,7 @@ def freeze_code(db, spec, table) -> dict[str, dict[str, list[str]]]:
     ``Code:`` column then, but the chain still names the hash, and that is
     what lets the plot reopen on it after a second version appears.
     """
-    from scidb.provenance_query import code_versions_batch
+    from scidb.provenance.query import code_versions_batch
 
     frame = table.frame
     if "record_id" not in frame.columns:
@@ -549,7 +549,7 @@ def thaw_code(db, spec, table, frozen_code: dict, *, label: str = ""):
     """
     from dataclasses import replace
 
-    from scidb.provenance_query import function_versions
+    from scidb.provenance.query import function_versions
     from scistackplot import NoteKind, RestoreNote
     from scistackplot.model.spec import VariantSet
     from scistackplot.reduce.variants import _ordinal_rank

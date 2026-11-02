@@ -195,7 +195,7 @@ def test_the_default_pin_follows_a_code_edit(scratch_db, pipeline):
     drawn = [float(v) for f in figures for p in f.panels for v in p.frame[Y]]
     latest_flag = table.frame[table.latest_column].value_counts(dropna=False).to_dict()
     # Per-record view of one location, straight from the identity query.
-    from scidb.provenance_query import variant_identity_batch
+    from scidb.provenance.query import variant_identity_batch
 
     records = Doubled.load(as_df=True, version="all", speed="slow", trial="01", cycle="01")
     identity = variant_identity_batch(scratch_db._duck, list(records["record_id"])) if "record_id" in records.columns else {}

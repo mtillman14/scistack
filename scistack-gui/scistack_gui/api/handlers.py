@@ -57,7 +57,7 @@ _PATH_PARAM = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)(?::[a-z]+)?\}")
 class Handler:
     """One GUI operation, declared once for both transports.
 
-    ``call`` receives the open :class:`~scidb.database.DatabaseManager`
+    ``call`` receives the open :class:`~scidb.store.database.DatabaseManager`
     (when ``needs_db``) and the validated request model (when ``params`` is
     not None), in that order — plus ``transport="rpc" | "http"`` as a
     keyword when ``wants_transport`` — and returns a JSON-serialisable

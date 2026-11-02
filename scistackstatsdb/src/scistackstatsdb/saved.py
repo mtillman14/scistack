@@ -1,6 +1,6 @@
 """Saved StatStudio tables and stats presets, kept in the project database.
 
-Both use :class:`scidb.versioned_store.VersionedStore`, the owner of the
+Both use :class:`scidb.store.versioned_store.VersionedStore`, the owner of the
 saved-plot rules (S20). So a saved stats table behaves like
 a saved plot:
 
@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from scistacklog import Log
-from scidb.versioned_store import VersionedStore
+from scidb.store.versioned_store import VersionedStore
 
 from scistackstats import StatsSpec, StatsSpecError
 from scistackstats.restore import restore_stats_spec, stats_settings, with_stats_settings

@@ -86,7 +86,7 @@ class ShownArgument(BaseModel):
 
 class OnDuplicate(BaseModel):
     node_id: str
-    #: "error" | "combine" (scidb.combine owns the values).
+    #: "error" | "combine" (scidb.run.combine owns the values).
     value: str
 
 

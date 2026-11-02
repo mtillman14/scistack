@@ -26,10 +26,10 @@ answers. This is the one shape:
   rather than inheriting them, so editing the copy can never reach the
   original.
 * ``origin`` records which surface a statement came from, so precedence is
-  data rather than convention (``scidb.intent``).
+  data rather than convention (``scidb.provenance.intent``).
 
 **scidb owns the meaning, this module owns the storage.** Shapes,
-normalizers and the resolver are ``scidb.intent``; if that layer ever had to
+normalizers and the resolver are ``scidb.provenance.intent``; if that layer ever had to
 import this one, the design would be wrong.
 
 **Every execution-intent aspect lives here.** ``pipeline_store`` keeps its
@@ -44,8 +44,8 @@ import json
 import logging
 from datetime import datetime
 
-from scidb import tables
-from scidb.intent import (
+from scidb.store import tables
+from scidb.provenance.intent import (
     INTENT_TABLE,
     ASPECT_COLNAME,
     ASPECT_COLUMNS,
@@ -94,7 +94,7 @@ PORTABILITY: dict[str, str] = {"_intent": "canvas"}
 
 
 def ensure_tables(db) -> None:
-    """Make sure ``_intent`` exists. It is scidb's table (``scidb.tables``,
+    """Make sure ``_intent`` exists. It is scidb's table (``scidb.store.tables``,
     created on every writable open), so this is a no-op on any database
     scidb opened; it keeps the GUI's precondition in one call.
 
@@ -166,7 +166,7 @@ def load_statements(
     """Statements, filtered in SQL rather than in Python.
 
     Filtering here and indexing once
-    (``scidb.intent.index_statements``) is what keeps resolution off the N+1
+    (``scidb.provenance.intent.index_statements``) is what keeps resolution off the N+1
     path when a canvas render resolves every node.
     """
     sql = "SELECT subject_kind, subject_ref, scope, aspect, aspect_key, value_json, origin, stated_at FROM _intent"
@@ -563,7 +563,7 @@ def set_colname_inputs(
     parameter (value ``True``), the per-key shape ``set_column_selections``
     uses, so one parameter can be overridden or dropped without the others.
 
-    *names* is anything :func:`scidb.intent.normalize_colname_inputs` takes
+    *names* is anything :func:`scidb.provenance.intent.normalize_colname_inputs` takes
     (the panel sends a list). ``scope`` defaults to :func:`scope_of_node`.
     """
     from scistack_gui.ids import strip_placement

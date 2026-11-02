@@ -95,6 +95,7 @@ from ..model.table import LongTable, natural_sort_key
 from ..text.xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
 from .spaghetti import overlay_offsets, series_offsets
 from .reducer import reducer_for
+from .reduction import ValueFilter, filter_steps
 from .diffbars import figure_has_bars, log_figure as log_difference_bars
 from .compare import (
     ComparisonPlan,
@@ -1124,31 +1125,23 @@ def apply_filters(frame: pd.DataFrame, spec: PlotSpec) -> pd.DataFrame:
                 {key: list(values) for key, values in excluded.items()} or "nothing",
                 layer=LAYER,
             )
-    for flt in spec.filters:
-        if flt.column not in frame.columns:
+    for step in filter_steps(spec).of_type(ValueFilter):
+        if step.column not in frame.columns:
             # A spec outlives the table it was written against — a filter naming
             # a column this table lacks is stale, not fatal.
             Log.warn(
-                "filter on unknown column %r ignored", flt.column, layer=LAYER
+                "filter on unknown column %r ignored", step.column, layer=LAYER
             )
             continue
-        column = frame[flt.column]
         before = int(mask.sum())
-        if flt.include is not None:
-            as_text = column.astype(str)
-            mask &= as_text.isin({str(v) for v in flt.include})
-        if flt.exclude is not None:
-            as_text = column.astype(str)
-            mask &= ~as_text.isin({str(v) for v in flt.exclude})
-        if flt.minimum is not None:
-            mask &= pd.to_numeric(column, errors="coerce") >= flt.minimum
-        if flt.maximum is not None:
-            mask &= pd.to_numeric(column, errors="coerce") <= flt.maximum
+        # The rule is the step's own (reduction.ValueFilter.mask); codegen
+        # prints the same step (export.reduction_code).
+        mask &= step.mask(frame)
         # Per column, so an empty figure names the filter that emptied it
         # rather than only the total.
         Log.debug(
             "filter on %s: %d -> %d row(s)",
-            flt.column,
+            step.column,
             before,
             int(mask.sum()),
             layer=LAYER,
@@ -1871,6 +1864,10 @@ def _build_figure(
             sample_join_reason=join.reason if join is not None else "",
             sample_offsets=sample_offsets,
             text=figure_text,
+            # The filtering steps this figure was built with (the spec here is
+            # the one `apply_filters` read: a categorical rewrite has already
+            # consumed a filter on the text measure).
+            reduction=filter_steps(spec),
             # The colour pins (`colors`), told which factor paints the marks
             # and which the overlay; `render.base.palette_for` reads them.
             colors=(colors or mark_colors(spec, table)).for_figure(

@@ -1,13 +1,13 @@
 """Schema-key types (numeric / string) for the GUI — the "Numeric" checkbox.
 
-The database owns the declaration (``scidb.schema_types``, user decision
+The database owns the declaration (``scidb.store.schema_types``, user decision
 2026-10-21); this module only adapts it for the sidebar. Nothing here decides
 a type or converts a value:
 
 * :func:`get_schema_key_types` — every schema key with its stored type, how it
   currently LOADS (numbers or strings, ``DatabaseManager.schema_key_is_numeric``)
   and how many values it has;
-* :func:`schema_key_type_impact` — ``scidb.schema_types.impact``, unchanged;
+* :func:`schema_key_type_impact` — ``scidb.store.schema_types.impact``, unchanged;
 * :func:`set_schema_key_type` — the checkbox write. A change that re-spells
   stored values comes back ``needs_confirm`` with the impact instead of
   raising, so the sidebar can ask; the confirmed call passes

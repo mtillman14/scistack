@@ -14,8 +14,8 @@ saved positions, and the frontend assigns dagre positions for new nodes.
 import logging
 import time
 
-from scidb.database import DatabaseManager
-from scidb.roles import endpoint_kind
+from scidb.store.database import DatabaseManager
+from scidb.model.roles import endpoint_kind
 
 from scistack_gui.stores import layout as layout_store
 from scistack_gui.project import registry
@@ -45,12 +45,12 @@ def fn_arguments(fn_name: str) -> list:
 
 
 def _build_matlab_fn_proxy(fn_name: str):
-    """Build a MatlabLineageFcn proxy for use in check_node_state.
+    """Build a MatlabFunctionIdentity proxy for use in check_node_state.
 
     Uses the source hash from the MATLAB registry so the proxy's ``.hash``
     matches what was stored at save time.
     """
-    from scimatlab.bridge import MatlabLineageFcn
+    from scimatlab.bridge import MatlabFunctionIdentity
 
     from scistack_gui.matlab import registry as matlab_registry
 
@@ -60,7 +60,7 @@ def _build_matlab_fn_proxy(fn_name: str):
     # Native MATLAB multi-output (`[a,b,c] = fn(...)`) uses unpack_output=False
     # and is unpacked at runtime by the n_out>1 branch. unpack_output=True
     # is only for the rarer single-cell-array-return pattern.
-    proxy = MatlabLineageFcn(info.source_hash, fn_name, unpack_output=False)
+    proxy = MatlabFunctionIdentity(info.source_hash, fn_name, unpack_output=False)
     logger.debug(
         "[pipeline] matlab proxy fn=%s source_hash=%s unpack=False hash=%s",
         fn_name,
@@ -161,7 +161,7 @@ def build_aggregate(db, scidb_agg: dict):
         path_input_renames=_store.path_input_rename_index(db),
     )
     # A call site holding several output types is split by what Runs claimed
-    # together (scidb.provenance.split_call_site_outputs) BEFORE anything
+    # together (scidb.provenance.graph.split_call_site_outputs) BEFORE anything
     # hashes a wiring, so every FnKey below has exactly one. Without it a
     # rewired node's call site hashed old+new outputs together and minted a
     # phantom node (scistack.log 2026-09-29).
@@ -1624,7 +1624,7 @@ def build_graph(
         if n.get("type") == "functionNode" and n["data"].get("columnSelections")
     }
     if fn_with_selections:
-        from scidb import provenance_query as _pq
+        from scidb.provenance import query as _pq
 
         try:
             latest = _pq.latest_runs(db._duck, fn_with_selections)

@@ -48,6 +48,7 @@ from ..reduce.resolve import (
     x_axis_title,
 )
 from ..reduce.resolved import DASH_CYCLE
+from ..reduce.reduction import LocationMask, ReductionPlan, ValueFilter, filter_steps
 from ..reduce.rows import row_factor
 from ..model.roles import (
     collapse_steps,
@@ -90,6 +91,7 @@ from ..reduce.temporal import (
     mpl_date_axis_code,
     normalize_mode,
 )
+from .reduction_code import emit_location_mask, emit_plan
 from ..reduce.weights import SAMPLE_EDGE_WIDTH, sample_weight, spaghetti_weight
 from ..reduce.ylimits import GLOBAL_KEY, pinned_ends
 from ..reduce.variants import (
@@ -789,18 +791,14 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
     lines.extend(_location_lines(spec))
     lines.extend(categorical_lines)
 
-    filter_lines: list[str] = []
-    for flt in spec.filters:
-        if categorical_lines and flt.column == spec.y_measure:
-            continue  # a record filter on the text, emitted in the block above
-        if flt.include is not None:
-            filter_lines.append(f"df = df[df[{flt.column!r}].isin({list(flt.include)!r})]")
-        if flt.exclude is not None:
-            filter_lines.append(f"df = df[~df[{flt.column!r}].isin({list(flt.exclude)!r})]")
-        if flt.minimum is not None:
-            filter_lines.append(f"df = df[df[{flt.column!r}] >= {flt.minimum!r}]")
-        if flt.maximum is not None:
-            filter_lines.append(f"df = df[df[{flt.column!r}] <= {flt.maximum!r}]")
+    # Value filters: printed from the steps `reduce` applies
+    # (`reduction.ValueFilter`), so the export filters by the preview's rule. A
+    # filter on a text measure is skipped: the categorical block above applied
+    # it to the records, where `reduce` consumes it.
+    skipped = frozenset({spec.y_measure}) if categorical_lines else frozenset()
+    filter_lines = emit_plan(
+        ReductionPlan(tuple(filter_steps(spec, skipped).of_type(ValueFilter)))
+    )
     if filter_lines:
         lines.extend([*filter_lines, ""])
 
@@ -1952,56 +1950,11 @@ def _sample_legend_lines(
 def _location_lines(spec: PlotSpec) -> list[str]:
     """Generated pandas for ``spec.location_filter`` — empty when it is inert.
 
-    Kept beside the other preamble emitters rather than inlined so the one test
-    that matters can compare its output against
-    :func:`scistackplot.reduce.resolve._location_mask` on the same frame.
+    The step's one emitter (``reduction_code.emit_location_mask``), kept under
+    this name because the location-filter tests compare its output against
+    :func:`scistackplot.reduce.resolve.apply_filters` on the same frame.
     """
-    prefixes = spec.location_filter.prefixes()
-    excluded = spec.location_filter.excluded()
-    if not prefixes and not excluded:
-        return []
-
-    lines: list[str] = []
-
-    # The spellings are BAKED IN rather than recomputed by generated code: the
-    # exported script must not carry a copy of `value_spellings` that can drift
-    # from the one the live figure used. One spec therefore always produces
-    # byte-identical source, which is why `value_spellings` sorts.
-    if prefixes:
-        baked = [
-            [[key, list(value_spellings(value))] for key, value in prefix]
-            for prefix in prefixes
-        ]
-        plural = "" if len(prefixes) == 1 else "s"
-        lines += [
-            f"# schema locations: {len(prefixes)} selection{plural}",
-            f"_loc_prefixes = {baked!r}",
-            "_loc_mask = pd.Series(False, index=df.index)",
-            "for _p in _loc_prefixes:",
-            "    _m = pd.Series(True, index=df.index)",
-            "    for _k, _vs in _p:",
-            "        if _k in df.columns:",
-            "            _m &= df[_k].notna() & df[_k].astype(str).isin(_vs)",
-            "    _loc_mask |= _m",
-            "df = df[_loc_mask]",
-            "",
-        ]
-
-    if excluded:
-        baked_levels = {
-            key: sorted({s for value in values for s in value_spellings(value)})
-            for key, values in excluded.items()
-        }
-        lines += [
-            f"# schema levels omitted everywhere: {len(baked_levels)} key(s)",
-            f"_loc_excluded = {baked_levels!r}",
-            "for _k, _vs in _loc_excluded.items():",
-            "    if _k in df.columns:",
-            "        df = df[~(df[_k].notna() & df[_k].astype(str).isin(_vs))]",
-            "",
-        ]
-
-    return lines
+    return emit_location_mask(LocationMask(spec.location_filter))
 
 
 def _facet_layout_args(spec, table: LongTable, facets: list[str]) -> list[str]:

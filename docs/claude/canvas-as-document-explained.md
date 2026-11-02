@@ -89,7 +89,7 @@ node is drawn per wiring, and its different constant values become **variant
 rows** inside that node.
 
 **wiring_id.** A hash of a wiring. scidb owns the recipe
-(`scidb.provenance.compute_wiring_id`). If you rewire a node (for example, feed
+(`scidb.provenance.graph.compute_wiring_id`). If you rewire a node (for example, feed
 it `RawGait_v2` instead), the wiring_id changes.
 
 **Target.** What the GUI hands to `for_each` for one run: the bindings
@@ -548,7 +548,7 @@ kept; Q6 step names deferred.
 
 | piece | where |
 |---|---|
-| the recorded step shape, non-Cartesian measure (Stage 1) | `scidb/src/scidb/wirings.py` (`recorded_wirings`, `RecordedWiring.missing_combinations`, `non_cartesian_report`); tests `scidb/tests/test_recorded_wirings.py`; CLI `python -m scistack_gui.canvas_shape_cli combos DB` |
+| the recorded step shape, non-Cartesian measure (Stage 1) | `scidb/src/scidb/provenance/wirings.py` (`recorded_wirings`, `RecordedWiring.missing_combinations`, `non_cartesian_report`); tests `scidb/tests/test_recorded_wirings.py`; CLI `python -m scistack_gui.canvas_shape_cli combos DB` |
 | adoption rule (pure) | `scistack_gui/domain/adoption.py` (`plan_adoption`, `visibility_by_node`) |
 | adoption writer | `scistack_gui/services/adoption.py` (`plan_for_build`, `write`, `missing_combo_hides`, `notification`) |
 | the marker | `_adopted` in `node_wiring.py` (`adopted_subjects`, `mark_adopted`); not undoable (`history.UNTRACKED_TABLES`) |

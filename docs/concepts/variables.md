@@ -1,9 +1,9 @@
 # Variables & Storage
 
 <!-- Ground truth (tests win over prose). Verified against:
-     scidb/src/scidb/variable.py (BaseVariable: schema_version, save/load signatures,
+     scidb/src/scidb/model/variable.py (BaseVariable: schema_version, save/load signatures,
        default to_db/from_db, __class_getitem__ column selection, _reserved_keys);
-     scidb/src/scidb/database.py:515-540 (configure_database auto-registers all known
+     scidb/src/scidb/store/database.py:515-540 (configure_database auto-registers all known
        subclasses; db.register for classes defined later);
      scidb/tests/test_integration.py (save->record_id, load->.data/.record_id/.metadata,
        version history, content-addressed dedup, native vs custom DataFrame serialization);

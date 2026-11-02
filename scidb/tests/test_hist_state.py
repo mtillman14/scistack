@@ -1,9 +1,9 @@
-"""Tests for scidb.state: check_combo_state and check_node_state."""
+"""Tests for scidb.provenance.state: check_combo_state and check_node_state."""
 
 from functools import partial
 
 import numpy as np
-from scidb.state import check_combo_state, check_node_state
+from scidb.provenance.state import check_combo_state, check_node_state
 
 from scidb import BaseVariable, scistack
 from scidb import for_each as scidb_for_each
@@ -380,7 +380,7 @@ def test_variable_input_classification(tmp_path):
     This verifies the fix for the input classification quirk where BaseVariable
     inputs were being classified as constants instead of variables.
     """
-    from scidb.database import get_database
+    from scidb.store.database import get_database
 
     from scidb import BaseVariable, configure_database
 
@@ -451,7 +451,7 @@ def test_variable_input_classification(tmp_path):
 class TestCheckMultipleNodesState:
     def test_multiple_nodes_basic(self, db):
         """Test checking state for multiple nodes at once."""
-        from scidb.state import check_multiple_nodes_state
+        from scidb.provenance.state import check_multiple_nodes_state
 
         _seed_raw(db)
         _run_all(db, subjects=(1,), trials=("A",))  # Run only subject=1, trial=A
@@ -478,7 +478,7 @@ class TestCheckMultipleNodesState:
 
     def test_multiple_nodes_with_call_id(self, db):
         """Test checking state with call_id specified."""
-        from scidb.state import check_multiple_nodes_state
+        from scidb.provenance.state import check_multiple_nodes_state
 
         _seed_raw(db)
         _run_all(db)
@@ -504,7 +504,7 @@ class TestCheckMultipleNodesState:
 
     def test_multiple_nodes_with_fn_registry(self, db):
         """Test using fn_registry to lookup functions by name."""
-        from scidb.state import check_multiple_nodes_state
+        from scidb.provenance.state import check_multiple_nodes_state
 
         _seed_raw(db)
         _run_all(db)
@@ -526,7 +526,7 @@ class TestCheckMultipleNodesState:
 
     def test_multiple_nodes_missing_function(self, db):
         """Test that missing functions are marked as red."""
-        from scidb.state import check_multiple_nodes_state
+        from scidb.provenance.state import check_multiple_nodes_state
 
         fn_registry = {}  # Empty registry
 
@@ -562,7 +562,7 @@ class TestCallSiteScoping:
     configs — the GUI's per-call-site display broke)."""
 
     def _call_id(self, constants):
-        from scidb.foreach_config import ForEachConfig
+        from scidb.run.foreach_config import ForEachConfig
 
         return ForEachConfig(
             scale_data, {"raw": RawState, "factor": constants}

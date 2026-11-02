@@ -227,7 +227,7 @@ class ResolvedEdges:
     # binding of its own, and it is never a step.
     #
     # Which of those heads is RUNNABLE is scidb's call, not this module's:
-    # ``scidb.glue`` applies a variable head at the Step-10/11 fusion point, a
+    # ``scidb.run.glue`` applies a variable head at the Step-10/11 fusion point, a
     # Parameter head before fan-out, and refuses a PathInput head outright
     # (``GlueUnsupportedInputError``). Resolving the binding honestly here and
     # letting scidb refuse is what keeps an unsupported head a loud error
@@ -405,7 +405,7 @@ def resolve_glue_chain(
     ``_seen`` — a cycle on the canvas must not hang the graph build.
 
     Only the glue node's FIRST incoming edge is followed. A glue node may
-    take N parameters (``scidb.glue.GlueSpec.extra_inputs``), but exactly one
+    take N parameters (``scidb.run.glue.GlueSpec.extra_inputs``), but exactly one
     of them is the *piped* input whose provenance flows through; the GUI has
     no way to express the others yet, so extra incoming edges are reported
     rather than silently folded in.

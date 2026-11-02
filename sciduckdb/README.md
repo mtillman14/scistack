@@ -3,8 +3,8 @@
 The DuckDB layer under `scidb`. It owns two things: the **codec** that turns
 Python values into queryable DuckDB columns and back, and a **locked
 connection** that is safe to share across threads. It creates no tables:
-`scidb` owns every table of a project database (`scidb.tables`) and the
-schema-location ids (`scidb.sciduck.SciDuck`, moved out of sciduckdb in P3).
+`scidb` owns every table of a project database (`scidb.store.tables`) and the
+schema-location ids (`scidb.store.sciduck.SciDuck`, moved out of sciduckdb in P3).
 Application code reaches the database only through `scidb`.
 
 All data, arrays included, is stored in queryable DuckDB types (LIST, nested
@@ -61,7 +61,7 @@ Modules: `codec.py` (conversion functions), `connection.py`
 
 ## Schema ids
 
-Moved to scidb (`scidb.sciduck.SciDuck`): `_schema`, `_variables` and
+Moved to scidb (`scidb.store.sciduck.SciDuck`): `_schema`, `_variables` and
 `_variable_groups` are project tables like any other.
 
 ## Datetimes

@@ -43,12 +43,12 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-from ..exceptions import NotFoundError
-from ..log import Log
-from .api import RunRef, _iso, variant_verdict
+from scidb.model.exceptions import NotFoundError
+from scidb.model.log import Log
+from scidb.inspect.api import RunRef, _iso, variant_verdict
 
 if TYPE_CHECKING:
-    from ..database import DatabaseManager
+    from scidb.store.database import DatabaseManager
 
 
 #: Node-id prefixes for :class:`VariantUpstream`. Ids are local to one card's
@@ -220,7 +220,7 @@ def coordinate_selection(
     ``run_option_axes``, over the variable's whole chain. Only functions with a
     real choice contribute a code or run key.
     """
-    from ..variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
+    from scidb.model.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
 
     selection = dict(branch_params or {})
     for fn_name, fn_hash in sorted((chain or {}).get("code", {}).items()):
@@ -238,9 +238,9 @@ def selection_matches(selection: dict, coordinate: dict) -> bool:
     with an equal value. Canonical keys only, so there is no suffix matching
     here; that rule belongs to the loader and is never needed between two
     canonical dicts."""
-    from ..bindings import variant_signature
-    from ..provenance_query import run_options_label_matches
-    from ..variant import RUN_PIN_PREFIX
+    from scidb.run.bindings import variant_signature
+    from scidb.provenance.query import run_options_label_matches
+    from scidb.model.variant import RUN_PIN_PREFIX
 
     for key, value in selection.items():
         other = coordinate.get(key, _ABSENT)
@@ -262,8 +262,8 @@ def varying_axes(selections: list[dict]) -> list[str]:
     """The keys whose value is not the same on every selection (a key missing
     from one selection counts as a different value). Sorted: constants first,
     then code, then run options, each alphabetical."""
-    from ..bindings import variant_signature
-    from ..variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
+    from scidb.run.bindings import variant_signature
+    from scidb.model.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
 
     if len(selections) < 2:
         return []
@@ -288,13 +288,13 @@ def varying_axes(selections: list[dict]) -> list[str]:
 
 
 def _display(value) -> str:
-    from .graph import _value_str
+    from scidb.inspect.graph import _value_str
 
     return value if isinstance(value, str) else _value_str(value)
 
 
 def _card_id(function_name, chain_fns, selection) -> str:
-    from ..bindings import variant_signature
+    from scidb.run.bindings import variant_signature
 
     text = f"{function_name}|{sorted(chain_fns)}|{variant_signature(selection)}"
     return hashlib.sha1(text.encode()).hexdigest()[:12]
@@ -318,8 +318,8 @@ def build_variant_cards(
     ``is_pinned`` are identical. Only the display detail is skipped: the
     per-location lists, runs and upstream DAG come back empty.
     """
-    from .. import provenance_query as pq
-    from ..provenance import SAVE_FUNCTION_NAME
+    from scidb.provenance import query as pq
+    from scidb.provenance.graph import SAVE_FUNCTION_NAME
 
     name = getattr(variable, "__name__", variable)
     duck = db._duck
@@ -406,7 +406,7 @@ def build_variant_cards(
     # before 20), where the card id, being a hash, would not be meaningful.
     # Two passes because Python's sort is stable: tie order first, then the
     # descending recency, which leaves ties in that order. Never-saved last.
-    from ..bindings import variant_signature
+    from scidb.run.bindings import variant_signature
 
     ordered = sorted(
         groups.items(),
@@ -533,7 +533,7 @@ def build_variant_cards(
         )
     lap("cards", t0)
 
-    # -- pins: which card an unnamed load gets (scidb.variant_pins owns it) --
+    # -- pins: which card an unnamed load gets (scidb.store.variant_pins owns it) --
     t0 = time.perf_counter()
     pin, default_selection, default_sources = _mark_defaults(db, name, cards)
     lap("pins", t0)
@@ -613,8 +613,8 @@ def _mark_defaults(db, name: str, cards: list[VariantCard]):
     still goes through the ``latest`` collapse, so a superseded code version
     that matches the constants is not what the load returns.
     """
-    from ..variant import pin_loads_uncollapsed
-    from ..variant_pins import active_pins, effective_default
+    from scidb.model.variant import pin_loads_uncollapsed
+    from scidb.store.variant_pins import active_pins, effective_default
 
     pin = active_pins(db).get(name)
     found = effective_default(db, name)
@@ -689,8 +689,8 @@ def _card_upstream(
 ) -> VariantUpstream:
     """The card's upstream DAG: steps keyed by (function, output type), each
     aggregating every invocation of it that fed the card's records."""
-    from ..parameter import parameter_node_name
-    from ..provenance import SAVE_FUNCTION_NAME
+    from scidb.model.parameter import parameter_node_name
+    from scidb.provenance.graph import SAVE_FUNCTION_NAME
 
     variables: dict[str, None] = {VARIABLE_NODE_PREFIX + variable: None}
     steps: dict[str, dict] = {}

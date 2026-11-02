@@ -340,7 +340,7 @@ class TestErrorHandling:
     def test_schema_filter_requires_db(self):
         """schema_filter requires database connection."""
         # Create a scenario without db parameter and no global db
-        from scidb.database import _local
+        from scidb.store.database import _local
 
         if hasattr(_local, "db"):
             delattr(_local, "db")

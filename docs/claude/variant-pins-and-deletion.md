@@ -83,7 +83,7 @@ saves.
 
 ## 2. Pins: "current" means the DEFAULT, never "the only one"
 
-*Built 2026-09-30 (Stage 2), pytest not yet run. `scidb/variant_pins.py`
+*Built 2026-09-30 (Stage 2), pytest not yet run. `scidb/store/variant_pins.py`
 (`_variant_pin` table created at DB init; `pin_variant`, `release_pin`,
 `active_pins`, `pin_history`, `effective_default`, `default_load_args`,
 `default_records_by_schema`). `Mutator.pin_variant` / `release_pin`,
@@ -128,7 +128,7 @@ effective_default(V) = merge over the pins on V's upstream chain and V itself;
 It is applied as a `branch_params_filter` through `records_for_variant`, so the
 collapse trap (`variant.pin_loads_uncollapsed`) is respected.
 
-**One owner:** `scidb.variant_pins.effective_default(db, variable)`.
+**One owner:** `scidb.store.variant_pins.effective_default(db, variable)`.
 
 **Consumers**, where an unnamed load gets the default:
 
@@ -164,7 +164,7 @@ collapse trap (`variant.pin_loads_uncollapsed`) is respected.
 
 ## 3. Delete: real deletion, the one sanctioned exception
 
-*Built 2026-09-30 (Stage 3), pytest not yet run. `scidb/variant_delete.py`
+*Built 2026-09-30 (Stage 3), pytest not yet run. `scidb/store/variant_delete.py`
 (`delete_plan`, `delete_variant`, `tombstones`; the `_variant_tombstone` table is
 created at DB init). `Mutator.delete_variant(targets, reason,
 expect_fingerprint=)`, `Inspector.delete_plan` / `tombstones`, and the CLI
@@ -230,8 +230,8 @@ Parameter still declares the value, and whether its file is editable
 | | owner |
 |---|---|
 | cards (full-chain grouping, selection, distinguishing) | `Inspector.variant_cards` (`scidb/inspect/api.py`), helpers in `scidb/inspect/variant_cards.py` |
-| pins, `effective_default` | `scidb/variant_pins.py` (planned) |
-| delete plan / execute / tombstone | `scidb/variant_delete.py` (planned) |
+| pins, `effective_default` | `scidb/store/variant_pins.py` (planned) |
+| delete plan / execute / tombstone | `scidb/store/variant_delete.py` (planned) |
 | write entry points | `Mutator.pin_variant` / `release_pin` / `delete_variant` (planned) |
 | CLI | `scidb variants X --cards`, `scidb pin`, `scidb unpin`, `scidb delete-variant` |
 | GUI backend | `scistack_gui/services/variant_cards_service.py` + `api/variants.py`: RPCs `variable_variants`, `pin_variant`, `release_pin`, `pin_newest_variant`, `delete_variant_plan`, `delete_variant`, `run_pin_conflicts` (built Stage 4) |

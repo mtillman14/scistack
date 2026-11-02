@@ -3,7 +3,7 @@
 <!-- Ground truth (source/tests win over prose). Verified against:
      scidb/tests/test_filters.py (Side == "L" where Side is a BaseVariable subclass ->
        VariableFilter with .variable_class/.op/.value via metaclass comparison ops;
-       raw_sql, schema_key imported from scidb.filters, exported from scidb);
+       raw_sql, schema_key imported from scidb.model.filters, exported from scidb);
      scidb/tests/test_where.py (where= in load(); ColumnFilter MyVar["col"] == val; & | ~);
      scidb/src/scidb/__init__.py exports raw_sql, schema_key.
      NOTE: where= works in load() and for_each(), NOT a `load_all` method (no such method).

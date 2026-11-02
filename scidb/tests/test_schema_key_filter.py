@@ -19,7 +19,7 @@ import pytest
 _root = Path(__file__).parent.parent
 sys.path.insert(0, str(_root / "src"))
 
-from scidb.exceptions import NotFoundError
+from scidb.model.exceptions import NotFoundError
 
 from scidb import BaseVariable, configure_database, schema_key
 
@@ -262,7 +262,7 @@ class TestSchemaKeyFilterWithMerge:
 
     def test_isin_filters_merge_input_rows(self, merge_session_db):
         """Merge loaded with schema_key("session").isin([...]) must exclude non-listed sessions."""
-        from scidb.foreach import Merge
+        from scidb.run.foreach import Merge
 
         from scidb import for_each
 
@@ -290,7 +290,7 @@ class TestSchemaKeyFilterWithMerge:
 
     def test_compare_filter_filters_merge_input_rows(self, merge_session_db):
         """Merge loaded with schema_key("subject") == 1 must contain only subject=1 rows."""
-        from scidb.foreach import Merge
+        from scidb.run.foreach import Merge
 
         from scidb import for_each
 
@@ -397,7 +397,7 @@ class TestCrossLevelMergeWithSchemaKeyFilter:
     """
 
     def test_isin_does_not_empty_subject_level_constituent(self, cross_level_db):
-        from scidb.foreach import Merge
+        from scidb.run.foreach import Merge
 
         from scidb import for_each
 
@@ -425,7 +425,7 @@ class TestCrossLevelMergeWithSchemaKeyFilter:
                 assert not bad, f"unexpected sessions after filter: {bad}"
 
     def test_compare_does_not_empty_subject_level_constituent(self, cross_level_db):
-        from scidb.foreach import Merge
+        from scidb.run.foreach import Merge
 
         from scidb import for_each
 
@@ -461,7 +461,7 @@ class TestCrossLevelMergeWithSchemaKeyFilter:
         still filtering SessionValue (session-level, same as filter) to BL only.
         The function must be called and receive merged rows for BL sessions.
         """
-        from scidb.foreach import Merge
+        from scidb.run.foreach import Merge
 
         from scidb import for_each
 
@@ -687,7 +687,7 @@ class TestSchemaKeyOnMergeConstituent:
         """Directly exercise the bug: a _PreresolvedFilter whose variable_filter
         matches the computed variant must still restrict rows to its resolved
         schema_ids (the row-restriction applied on top of the variant match)."""
-        from scidb.foreach import _PreresolvedFilter
+        from scidb.run.foreach import _PreresolvedFilter
 
         db = foreach_where_db
         # Resolve ComputedOutput's schema_ids restricted to session=BL.

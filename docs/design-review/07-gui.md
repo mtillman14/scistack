@@ -202,7 +202,7 @@ The GUI creates **18 tables** of its own in the user's project `.duckdb`:
 These are created in five top-level modules (`pipeline_store`, `intent_store`,
 `layout`, `node_wiring`, `history`). One crosses a layer the wrong way:
 **`_intent` is created by the GUI (`intent_store.py:101`) and read by scidb**
-(`scidb.intent.load_statements_sql`, `INTENT_TABLE = "_intent"`). The core
+(`scidb.provenance.intent.load_statements_sql`, `INTENT_TABLE = "_intent"`). The core
 depends on a table only the application creates.
 
 Counting every package, at least five packages now write DDL into one
@@ -365,16 +365,20 @@ Availability, defaults and refusals come from `capability.py` and
 | G1 | Move `_build_graph` and the other logic in `api/pipeline.py`, `api/run.py` and `api/matlab_command.py` into services, leaving api modules as Handler tables plus request models. Add an import-order test (api → services → domain → stores; no upward edges). | backend weakness 1 |
 | G2 | Give the top level a home. `stores/` (pipeline_store, intent_store, layout, node_wiring, history — everything that owns a table), `matlab/` (parser, registry, run_watch, sidecar, rewrite, command generation), `project/` (config, registry, discovery, libraries; see G3), and `runtime/` (server, app, db, startup, bootstrap). | backend weakness 1, 4 (visibility) |
 | G3 | Move project-config *meaning* (`modules`, `matlab.sources`, packages) out of `config.py` into the project-runtime home decided in 04a B3 (`scifor.project`). The GUI calls it. | backend weakness 3 |
-| G4 | Make scidb own `_intent` (scidb already owns its vocabulary in `scidb.intent`). Then decide one rule for application tables: a GUI-owned table that scidb never reads may stay in the GUI, declared through the same store helper as PD2's `VersionedStore` ([06](06-plot-and-stats.md)). | backend weakness 2 |
+| G4 | Make scidb own `_intent` (scidb already owns its vocabulary in `scidb.provenance.intent`). Then decide one rule for application tables: a GUI-owned table that scidb never reads may stay in the GUI, declared through the same store helper as PD2's `VersionedStore` ([06](06-plot-and-stats.md)). | backend weakness 2 |
 | G5 | Generate MATLAB `for_each` command text from one declaration of `for_each`'s options, the same declaration W3 ([04b](04b-scidb-write-path.md)) proposes for the Python signature. scimatlab's `split_options` reads it too (M4 in [05](05-scidb-satellites.md)). | backend weakness 4, the option-list copies |
 | G6 | Route GUI reads through `scidb.inspect.Inspector` and drop `db._duck` use (04c Q3). | backend weakness 6 |
 | G7 | Split `PlotStudio.tsx` by rail group (the five collapsible groups already exist in the UI), with a reducer (`useReducer`) or store for the spec, instead of 63 `useState`s. | frontend weakness 1 |
 | G8 | Generate TypeScript types from the pydantic request models and from `PlotSpec` / `StatsSpec` (JSON Schema → TS). The existing handler test can assert the generated file is current. | frontend weakness 2 |
 | G9 | Archive or rewrite `scistack-gui-backend-internals.md` from this document. | backend weakness 7 |
 
+> **Done (2026-11-02, P5 stage 2, uncommitted):** G5 — `MATLAB_OPTION_EMISSION` places every `FOR_EACH_OPTIONS` entry; `_format_run_option_pairs` iterates the declaration.
+> **Started (2026-11-02, P5 stage 5, uncommitted):** G8 — `api.wire_schema` -> `frontend/src/generated/api-schema.json` -> `npm run gen:types` -> `api-types.ts`, both held current by tests. Not yet: `PlotSpec`/`StatsSpec` (their wire shape is `to_dict`, not the dataclass) and the typed `callBackend` overload.
+
 > **Done (2026-11-01, P2 stages 5-6):** G1 — logic moved out of `api/` unchanged: `services/graph_service.py` (from `api/pipeline.py`), `services/run_service.py` (`api/run.py`), `services/project_service.py`, `services/variable_service.py`, `services/matlab_command_format.py` (all of `api/matlab_command.py`), `ws_hub.py` (`api/ws.py`); only `app.py`/`server.py` import `api/`. G2 — `stores/`, `matlab/`, `project/`, `runtime/`; `ids`, `bootstrap`, `headless`, `app` stay top level (their measured layers differ from the proposal). `scistack-gui/tests/test_import_layers.py` enforces core → runtime → stores → project/matlab → domain → services → setup → api → entry, 14 allow-listed pairs.
 > **Done (2026-11-01, P3):** G3 — `scifor.project.config.read_project_config` returns typed `ProjectConfig`/`MatlabSection`; the GUI's `load_config` only expands entries into files. No `tomllib` in the GUI (`test_config_reader_owner.py`), none outside scifor.project repo-wide except a listed allow-list (`scifor/tests/test_toml_reader_owner.py`).
-> **Done (2026-11-01, P3):** G4 — `_intent` is declared by scidb (`scidb.tables.INTENT`) and created on every writable open; the GUI's 17 other tables are `TableDecl`s with owner `scistack_gui`, created on first use through `tables.ensure`.
+> **Done (2026-11-01, P3):** G4 — `_intent` is declared by scidb (`scidb.store.tables.INTENT`) and created on every writable open; the GUI's 17 other tables are `TableDecl`s with owner `scistack_gui`, created on first use through `tables.ensure`.
+> **Done in part (2026-11-01, P4 stage 9):** G7 reducer half — `PlotStudio/plotSpecReducer.ts` (pure, `npm test`): 24 typed actions grouped by rail group, the `FacetOptions`/`YAxis`/`StylePatch`/`Matcher` types; PlotStudio dispatches them through `setSpec`, so undo is unchanged (the spec was already ONE history state, not 63 `useState`s — the 63 are view state). Not done: splitting the five rail groups into components; their JSX reads ~100 component-local values each, so that split needs a view-state store designed first.
 
 **Order.** G1 + G2 are mechanical moves that make every later change smaller.
 G7 is independent and is the largest maintainability win on the frontend.

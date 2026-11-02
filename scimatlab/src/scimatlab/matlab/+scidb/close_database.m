@@ -26,10 +26,10 @@ function close_database(db)
     try
         db.close();
     catch close_err__
-        scidb.Log.err('MATLAB: db.close FAILED for %s: %s', ...
+        scifor.Log.err('MATLAB: db.close FAILED for %s: %s', ...
             db_path, close_err__.message);
         rethrow(close_err__);
     end
 
-    scidb.Log.info('MATLAB: db.close — DuckDB lock RELEASED: %s', db_path);
+    scifor.Log.info('MATLAB: db.close — DuckDB lock RELEASED: %s', db_path);
 end

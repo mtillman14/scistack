@@ -17,8 +17,8 @@ import scifor as _scifor
 from scifor import PathInput
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query
-from scidb.provenance_query import _supersede_same_invocation, variant_identity_batch
+from scidb.provenance import query as provenance_query
+from scidb.provenance.query import _supersede_same_invocation, variant_identity_batch
 
 
 class Demo(BaseVariable):

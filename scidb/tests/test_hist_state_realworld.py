@@ -1,4 +1,4 @@
-"""Real-world scenario tests: scidb.state with CSV data.
+"""Real-world scenario tests: scidb.provenance.state with CSV data.
 
 Mirrors the aim2 pipeline: a function reading CSV files iterated across
 3 subjects × 5 trials (15 combos total). Key scenarios not covered by
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scidb.state import check_node_state
+from scidb.provenance.state import check_node_state
 
 from scidb import BaseVariable, scistack
 from scifor import PathInput

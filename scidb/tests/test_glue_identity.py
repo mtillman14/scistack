@@ -17,11 +17,12 @@ Covers:
 - node state stays green across the glue hop (the falsely-red risk)
 """
 
+from scidb.provenance import query as provenance_query
 import numpy as np
 import pandas as pd
 import pytest
 
-import scidb.provenance as prov
+import scidb.provenance.graph as prov
 import scifor as _scifor
 from scidb import (
     BaseVariable,
@@ -31,7 +32,7 @@ from scidb import (
     configure_database,
     for_each,
 )
-from scidb.glue import chain_hash, input_set_signature, virtual_rid_map
+from scidb.run.glue import chain_hash, input_set_signature, virtual_rid_map
 
 SCHEMA = ["subject", "session"]
 
@@ -108,7 +109,7 @@ def _spec(fn, name=None):
 
 def cfg_fn_hash(db):
     """The fn hash node-state prediction uses for ``analyze``."""
-    from scidb.foreach_config import _compute_fn_hash
+    from scidb.run.foreach_config import _compute_fn_hash
 
     return _compute_fn_hash(analyze)
 
@@ -184,7 +185,7 @@ class TestVersionKeys:
 
     def test_glue_names_and_hashes_are_separate_keys(self):
         spec = _spec(glue_drop_baseline)
-        keys = self._config([spec]).to_version_keys()
+        keys = self._config([spec]).to_config_keys()
         # Both keys are PER-NODE lists, parallel to each other — the names in
         # one, that same node's body hash in the other. (The whole-chain
         # ``chain_hash`` is a different thing: it identifies the chain for the
@@ -193,11 +194,11 @@ class TestVersionKeys:
         assert keys["__glue_hashes"] == {"emg": [spec.hash]}
 
     def test_the_chain_hash_is_not_a_version_key(self):
-        keys = self._config([_spec(glue_drop_baseline)]).to_version_keys()
+        keys = self._config([_spec(glue_drop_baseline)]).to_config_keys()
         assert chain_hash([_spec(glue_drop_baseline)]) not in str(keys)
 
     def test_no_glue_emits_no_glue_keys(self):
-        keys = self._config(None).to_version_keys()
+        keys = self._config(None).to_config_keys()
         assert "__glue" not in keys and "__glue_hashes" not in keys
 
     def test_adding_glue_is_a_different_call_site(self):
@@ -218,10 +219,10 @@ class TestVersionKeys:
         assert a == b
 
     def test_editing_a_glue_body_does_change_the_version_keys(self):
-        a = self._config([_spec(glue_drop_baseline, name="glue_x")]).to_version_keys()
+        a = self._config([_spec(glue_drop_baseline, name="glue_x")]).to_config_keys()
         b = self._config(
             [_spec(glue_drop_baseline_v2, name="glue_x")]
-        ).to_version_keys()
+        ).to_config_keys()
         assert a["__glue_hashes"] != b["__glue_hashes"]
 
 
@@ -362,7 +363,7 @@ class TestGraphReads:
         rid = db._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = ?", ["Analyzed"]
         )[0][0]
-        chain = db.get_upstream_provenance(rid)
+        chain = provenance_query.upstream_provenance(db, rid)
         types = [node["variable_type"] for node in chain]
         fns = [node["function_name"] for node in chain]
         assert "Analyzed" in types
@@ -371,7 +372,7 @@ class TestGraphReads:
         assert "RawEMG" in types
 
     def test_the_consumers_input_reports_the_source_variable_type(self, db):
-        from scidb import provenance_query
+        from scidb.provenance import query as provenance_query
 
         _seed(db, subjects=("1",))
         _run(db, glue={"emg": _spec(glue_drop_baseline)})
@@ -389,7 +390,7 @@ class TestGraphReads:
         assert entry["record_id"] != entry["glue_source_record_id"]
 
     def test_a_glue_hop_is_not_a_pipeline_variant(self, db):
-        from scidb import provenance_query
+        from scidb.provenance import query as provenance_query
 
         _seed(db, subjects=("1",))
         _run(db, glue={"emg": _spec(glue_drop_baseline)})
@@ -449,7 +450,7 @@ class TestNodeState:
         # glued node flips state depending on which one answered. Compared on
         # the invocation ids they predict, so the as_table gap above cannot
         # mask a genuine glue-identity mismatch.
-        from scidb import provenance_query
+        from scidb.provenance import query as provenance_query
 
         _seed(db)
         glue = {"emg": _spec(glue_drop_baseline)}

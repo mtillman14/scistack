@@ -54,7 +54,7 @@ class TestRule:
         assert SchemaKeyTypeError.scifor_fatal is True
 
     def test_scidb_raises_its_own_subclass(self):
-        scidb_exceptions = pytest.importorskip("scidb.exceptions")
+        scidb_exceptions = pytest.importorskip("scidb.model.exceptions")
         assert issubclass(scidb_exceptions.SchemaKeyTypeError, SchemaKeyTypeError)
 
     def test_validate(self):

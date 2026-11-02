@@ -338,7 +338,7 @@ def _producing_invocations(db, type_name: str) -> dict:
     re-run was a DIFFERENT computation (the two signatures say how); if it
     does not and the count still grew, the same call produced different
     content."""
-    from scidb import provenance_query as pq
+    from scidb.provenance import query as pq
 
     duck = db._duck
     out: dict = {}
@@ -422,7 +422,7 @@ def test_the_run_logs_a_bindings_line_naming_every_input(seeded, pipeline, pushe
     for param in ("knee", "walking_speed_mps", "height_cm"):
         assert f"{param}:" in line, f"{param} missing from: {line}"
         assert f"{param}: (unbound)" not in line, f"{param} bound to nothing: {line}"
-    # The selection half is spelled by scidb.intent.describe_columns, the same
+    # The selection half is spelled by scidb.provenance.intent.describe_columns, the same
     # words the canvas chip uses: `("knee")` for one column, `(whole variable)`
     # for none. Every input of this step is one column, so the line carries
     # the one-column spelling for each.

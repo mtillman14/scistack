@@ -20,7 +20,7 @@ call site. **What, if anything, makes them different?**
 The stack has three separate answers to that question and a fourth place that
 never asks it. None of them mentions the function body.
 
-## Answer 1 — the load-path collapse (`scidb/database.py`)
+## Answer 1 — the load-path collapse (`scidb/store/database.py`)
 
 `_find_record(version_id="latest")` groups candidate rows and keeps the newest
 per group (`database.py:1788-1836`). The group key is:
@@ -55,7 +55,7 @@ a changed upstream input is the *same* variant, just newer."
 
 Again: a body edit collapses. The new record supersedes the old.
 
-## Answer 3 — `invocation_id` (`scidb/provenance.py:144`)
+## Answer 3 — `invocation_id` (`scidb/provenance/graph.py:144`)
 
 ```
 invocation_id = sha16(function_hash | as_table | distribute | sorted(bindings))
@@ -85,7 +85,7 @@ the first, and used its vocabulary to answer the second:
 
 | | question | answer | consumer |
 |---|---|---|---|
-| **Supersession key** | "does this new record *replace* that old one, or coexist with it?" | constants (+ fn name, output_num, consumed locations on the load path) | `load`, node state, `find_record_id` |
+| **Supersession key** | "does this new record *replace* that old one, or coexist with it?" | ONE rule since 2026-11-01 (`provenance_query.variant_keys_batch` + `current_record_ids`): producing function name + accumulated constants + consumed input locations, with run-option and renamed-function supersession, and a newer hand save replacing every variant saved before it at its location; never the function hash. A newer record of another variant never makes consumers stale | `load`, node state, `find_record_id`, the location picker |
 | **Display discriminator** | "these records coexist on screen — what do I *call* each one?" | `variant_identity_batch` — branch params + `fn_version` / `is_latest` | variable panel, Plot Studio |
 
 The supersession answer is **right and did not change**: a body edit produces a
@@ -179,11 +179,11 @@ For MATLAB the read side did not compute the MATLAB hash at all:
   `sha256(fileread(...).encode("utf-8"))`, which diverged from the GUI's
   raw-bytes hash on non-UTF-8-decoded files).
 - **Read**: `check_node_state` did `_compute_fn_hash(fn.fcn)`. For a
-  `MatlabLineageFcn`, `fn.fcn` is a `_FunctionProxy` carrying only `__name__`,
+  `MatlabFunctionIdentity`, `fn.fcn` is a `_FunctionProxy` carrying only `__name__`,
   so `compute_function_hash` fails `inspect.getsource` and falls back to
   `_hash_bytecode_only` on a non-function — a constant unrelated to the `.m`
   file.
-- `MatlabLineageFcn.hash`, which *does* encode the source hash, was computed in
+- `MatlabFunctionIdentity.hash`, which *does* encode the source hash, was computed in
   `__init__` and never read by the state path.
 
 This was masked only because the inputless gap short-circuited first. Any MATLAB
@@ -191,14 +191,14 @@ function with variable inputs would have been **permanently red**, since its
 predicted `invocation_id` could never match a stored one — which is why the two
 fixes had to ship together.
 
-> ✅ **Fixed.** `MatlabLineageFcn` exposes `source_hash` (the `.m` digest
+> ✅ **Fixed.** `MatlabFunctionIdentity` exposes `source_hash` (the `.m` digest
 > verbatim, as stored), and `foreach_config.function_hash_for(fn)` is now the
 > single read-side recipe: an explicit `source_hash` wins, else the AST hash
 > with the existing `.fcn` unwrap. Duck-typed, so scidb still does not import
 > scimatlab. Applied at all three read sites — `check_node_state`,
 > `_check_via_graph`, `inspect/graph._node_states`.
 >
-> `ForEachConfig.to_version_keys` is deliberately untouched: that is the
+> `ForEachConfig.to_config_keys` is deliberately untouched: that is the
 > **write** recipe, and changing it would invalidate every hash already stored
 > in existing databases.
 

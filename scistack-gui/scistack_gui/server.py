@@ -38,7 +38,7 @@ from pathlib import Path
 # Channel gets full detail. A root basicConfig would double-print every
 # layer record (propagate=True), so only non-scistack loggers get a plain
 # stderr handler of their own.
-from scidb.log import Log as _Log
+from scidb.model.log import Log as _Log
 
 _Log.attach()
 _Log.set_level("DEBUG", sink="console")
@@ -359,7 +359,7 @@ def _handle_request(req: dict) -> None:
     attached therefore hung the whole GUI. Hence the acquire inside the try
     and the outer safety net: a response is emitted no matter what fails.
     """
-    from scidb.log import Log
+    from scidb.model.log import Log
 
     from scistack_gui.runtime.db import (
         DatabaseLockedError,
@@ -436,7 +436,7 @@ def _handle_request(req: dict) -> None:
             elif elapsed_ms >= SLOW_RPC_MS:
                 # A slow write or plot call is the one the user waited on;
                 # at DEBUG, plot_resolve's end-to-end time (load + layout +
-                # serialise) was absent from scidb.log (2026-10-15).
+                # serialise) was absent from scidb.model.log (2026-10-15).
                 Log.info(f"RPC << {method} OK ({elapsed_ms:.1f}ms) — slow")
             else:
                 Log.debug(f"RPC << {method} OK ({elapsed_ms:.1f}ms)")
@@ -550,7 +550,7 @@ def _run_plot_only(t0: float, log_file: "Path | None") -> None:
         log_file.parent.mkdir(parents=True, exist_ok=True)
         _Log.set_path(str(log_file))
 
-    from scidb.log import Log
+    from scidb.model.log import Log
 
     Log.bridge_python_logging()
 
@@ -687,7 +687,7 @@ def main():
     # "configure_database:" and a question like "why is this PathInput
     # missing?" had no record to answer it. attach_log_file is idempotent,
     # so the later configure_database() call is a no-op.
-    from scidb.log import attach_log_file
+    from scidb.model.log import attach_log_file
 
     if args.log_file is not None:
         args.log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -897,7 +897,7 @@ def main():
 
     # Bridge Python logging → scistack.log so that scidb/scistack_gui logger
     # calls appear in the unified log file.
-    from scidb.log import Log
+    from scidb.model.log import Log
 
     Log.bridge_python_logging()
 

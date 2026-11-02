@@ -17,6 +17,6 @@ function add_to_var_group(group_name, variables)
 %       scidb.add_to_var_group("kinematics", 'StepLength')
 
     py_names = scidb.internal.resolve_var_names(variables);
-    db = py.scidb.database.get_database();
+    db = py.scidb.store.database.get_database();
     db.add_to_var_group(char(group_name), py_names);
 end

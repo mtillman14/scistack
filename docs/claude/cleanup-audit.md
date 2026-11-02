@@ -51,10 +51,10 @@ under-count (many commits bundle several fixes). Top files:
 
 | commits | fix commits | lines | file |
 |---:|---:|---:|---|
-| 103 | 26 | 5,749 | `scidb/foreach.py` |
+| 103 | 26 | 5,749 | `scidb/run/foreach.py` |
 | 63 | 17 | 1,798 | `scistack_gui/api/pipeline.py` |
-| 81 | 16 | 4,947 | `scidb/database.py` |
-| 39 | 11 | 3,452 | `scidb/provenance_query.py` |
+| 81 | 16 | 4,947 | `scidb/store/database.py` |
+| 39 | 11 | 3,452 | `scidb/provenance/query.py` |
 | 53 | 10 | 848 | `scistack_gui/server.py` |
 | 37 | 10 | 2,234 | `scistack_gui/services/execution_service.py` |
 | 35 | 9 | 2,876 | `scistack_gui/domain/graph_builder.py` |
@@ -70,15 +70,15 @@ under-count (many commits bundle several fixes). Top files:
 
 | lines | params | function |
 |---:|---:|---|
-| 1,522 | 18 | `scidb/foreach.py:1572 _for_each_prepare` |
+| 1,522 | 18 | `scidb/run/foreach.py:1572 _for_each_prepare` |
 | 1,039 | 29 | `scifor/foreach.py:86 for_each` |
 | 951 | 2 | `scistack_gui/api/pipeline.py:705 _build_graph` |
 | 684 | 9 | `scistack_gui/api/run.py:102 _run_in_thread` |
-| 610 | 4 | `scidb/foreach.py:4998 _save_results` |
+| 610 | 4 | `scidb/run/foreach.py:4998 _save_results` |
 | 524 | 16 | `scimatlab/bridge.py:468 for_each_prepare` |
-| 502 | 4 | `scidb/database.py:1299 save_batch` |
-| 480 | 31 | `scidb/foreach.py:231 for_each` |
-| 391 | 6 | `scidb/database.py:1920 _find_record` |
+| 502 | 4 | `scidb/store/database.py:1299 save_batch` |
+| 480 | 31 | `scidb/run/foreach.py:231 for_each` |
+| 391 | 6 | `scidb/store/database.py:1920 _find_record` |
 | 376 | 2 | `scistack_gui/project/config.py:296 load_config` |
 
 The four largest hotspots in §1.2 each contain one of these functions.
@@ -91,7 +91,7 @@ imports up the stack.
 **Private cross-package imports (11):** the ownership boundary exists on paper
 but is crossed by reaching into internals:
 
-- `scimatlab/bridge.py` imports **7** private `scidb.foreach` functions
+- `scimatlab/bridge.py` imports **7** private `scidb.run.foreach` functions
   (`_for_each_prepare`, `_build_skip_hook`, `_resolve_for_columns`,
   `_endpoint_policy`, `_for_each_save_resolved`, `_apply_introspect`,
   `_load_var_type_all`). The MATLAB path assembles scidb's `for_each` from
@@ -100,14 +100,14 @@ but is crossed by reaching into internals:
 - `scidb` imports **8** private `sciduckdb` converters
   (`_storage_to_python`, `_dataframe_to_storage_rows`, `_unflatten_dict`, …).
   The storage-row encoding is shared but not public.
-- `scidb.database._local` (thread-local current DB) is read by scidb-net and scistack.
-- `scifor.foreach._merge_parts` → scidb; `scidb.pipeline._all_pipelines` → GUI.
+- `scidb.store.database._local` (thread-local current DB) is read by scidb-net and scistack.
+- `scifor.foreach._merge_parts` → scidb; `scidb.run.pipeline._all_pipelines` → GUI.
 
 **Lazy (function-level) imports:** 1,097 total, 758 in the GUI alone
 (`scimatlab/bridge.py` 86, `execution_service.py` 76, `scope_service.py` 69).
 
 **Ambient global database:** 60 `get_database()` calls, 21 in
-`scidb/foreach.py`, several inside `try/except: pass` (§1.6).
+`scidb/run/foreach.py`, several inside `try/except: pass` (§1.6).
 
 ### 1.5 Python ↔ MATLAB parity
 
@@ -127,12 +127,12 @@ but is crossed by reaching into internals:
 220 `except Exception` / bare `except` blocks; **37 swallow** (body is
 `pass`/`return []`/`return None`). The ones on data paths matter most:
 
-- **`scidb/intent.py:774 load_statements_sql` and `scistack_gui/stores/intent_store.py:481 _rows`**:
+- **`scidb/provenance/intent.py:774 load_statements_sql` and `scistack_gui/stores/intent_store.py:481 _rows`**:
   any SQL error, including a locked database or a missing table, returns
   `[]`. Intent statements are the user's wiring, hides, and pending
   constants. A transient lock makes them read as *absent*, so the canvas can
   silently drop edges or un-hide nodes. **Highest-priority item in this pass.**
-- `scidb/foreach.py` × 9 (`_load_input` ×2, `_save_results`, `_get_schema_keys`,
+- `scidb/run/foreach.py` × 9 (`_load_input` ×2, `_save_results`, `_get_schema_keys`,
   `_propagate_schema`, `_active_database`, `_load_var_type_as_spread` ×2,
   `_resolve_mapping_inputs`): mostly "fetch the ambient DB / schema, else
   carry on". A failure silently changes which schema keys the run uses.
@@ -157,11 +157,11 @@ The rest (rollback-after-failure, natural-sort keys, JSON fallbacks, WS client r
 31 functions (~680 lines) have no reference anywhere; 35 (~330 lines) are
 referenced only by tests. Largest confirmed-looking:
 
-- `scidb/database.py:2391 _load_by_record_row` (118 lines)
+- `scidb/store/database.py:2391 _load_by_record_row` (118 lines)
 - `scimatlab/bridge.py`: `build_for_each_config_keys` (103),
   `get_data_column_name` (97), `discover_pathinput_combos` (84, left over
   from the PathInput resolution split), `load_var_type_all_as_df` (31)
-- `scidb/database.py`: `invocation_exists`, `_is_tabular_dict`, `_get_variable_class`
+- `scidb/store/database.py`: `invocation_exists`, `_is_tabular_dict`, `_get_variable_class`
 - `scistack_gui/api/pipeline.py`: `_node_id_to_var_label`, `_get_record_counts`
 
 False positives to ignore: FastAPI-decorated routes (`websocket_endpoint`,
@@ -181,7 +181,7 @@ likewise wrapper + implementation.
 
 306 "trap/silently/workaround/hack" mentions and 317 date-stamped lines in
 source; 4 TODO/FIXME. Top: `execution_service.py` 19, `api/matlab_command.py`
-13, `scidb/foreach.py` 13, `scistackplotdb/source.py` 10.
+13, `scidb/run/foreach.py` 13, `scistackplotdb/source.py` 10.
 
 ### 1.11 Resolved since 2026-09-20
 
@@ -208,11 +208,11 @@ owners or no owner, **bug class present**.
 | Canvas node id + handle spelling | `scistack_gui/ids.py` (AST guard) | graph_builder, stores, services | — | ✅ |
 | Scope-qualified (placement) id | `ids.placement_id` + `scope_filter.resolve_scope_view` | every node-keyed state lookup | lookup-before-resolve trap fixed 4× (review §5); typed `BareNodeId`/`PlacedNodeId` now | ✅ |
 | Function-node identity | allocated id, minted once (`_node_wiring`, D-2026-09-22-1/3) | layout, intent statements | graduation id-swap kept on purpose (D-2026-09-22-4) | ✅ |
-| Call-site identity (`call_id`) | `scidb.foreach_config.CallSite` | scidb forward + backward, GUI `variant_resolver.compute_call_id` | parity test `test_identity_parity.py` | ✅ |
-| `wiring_id` (now an attribute) | `scidb.provenance.compute_wiring_id` | `derive_target_for_node`, hidden wirings, grouping | — | ✅ |
-| rid / vsig spellings | `scidb/bindings.py` | foreach, provenance, plot loaders | — | ✅ |
-| Variant coordinate (`branch_params`) | `scidb.variant.VariantAxes` | loaders, Topologies panel, plots | — | ✅ |
-| Constant identity | `scidb.provenance.constants_identity_key` / `compute_constant_record_id` | variant grouping, save | — | ✅ |
+| Call-site identity (`call_id`) | `scidb.run.foreach_config.CallSite` | scidb forward + backward, GUI `variant_resolver.compute_call_id` | parity test `test_identity_parity.py` | ✅ |
+| `wiring_id` (now an attribute) | `scidb.provenance.graph.compute_wiring_id` | `derive_target_for_node`, hidden wirings, grouping | — | ✅ |
+| rid / vsig spellings | `scidb/run/bindings.py` | foreach, provenance, plot loaders | — | ✅ |
+| Variant coordinate (`branch_params`) | `scidb.model.variant.VariantAxes` | loaders, Topologies panel, plots | — | ✅ |
+| Constant identity | `scidb.provenance.graph.constants_identity_key` / `compute_constant_record_id` | variant grouping, save | — | ✅ |
 | **Parameter identity (declared name ↔ argument name)** | forward: `edge_resolver.ResolvedWiring.parameter_params`; **backward: none** | execution_service (translates), matlab_command_service (translates), graph_builder (**doesn't**) | history keys constants by *argument* name; the canvas keys Parameters by *declared* name. `graph_builder.py:1618` builds `param__{argument}`. **B1** | ❌ |
 | PathInput identity (declared ↔ argument) | forward: `ResolvedWiring.path_input_params`; backward: `graph_builder.convert_scidb_path_inputs` (GUI, reverse-matches by registry value + name history) | execution_service `_db_path_input_params`, build_edges | backward mapping is reconstructed in the GUI, not recorded by scidb (NOTE 3) | ⚠️ |
 | Function hash | Python: `foreach_config.function_sources_for`; MATLAB: bridge-supplied digest | provenance, source capture, variant axes | two recipes. `foreach.py:5575` refused source capture for `calculateSymmetryOneVector` on 2026-09-23 ("the two recipes have drifted"). Possibly CRLF on Windows (cf. hash-recipes memory: agree on ASCII/**LF**) | ❌ |
@@ -225,7 +225,7 @@ owners or no owner, **bug class present**.
 | Entities file path | `scifor.project.entities_file.resolve_entities_path` | GUI bootstrap, MATLAB | memory says `server.py` duplicates the bootstrap startup inline; *to verify* | ⚠️ |
 | Entity editability | `target_file_service.entity_editability` | sidebar panels | — | ✅ |
 | Dataset schema keys | `DatabaseManager.dataset_schema_keys` | foreach, loaders | **mirrored** into the `scifor.set_schema()` global in 3 places (`database.py:744`, `foreach.py:5664`, `:5677`); readers fall back to the global and swallow errors (§1.6) | ⚠️ |
-| Current database | `scidb.database._local` / `get_database()` | 60 call sites | scidb-net and scistack read the private `_local` | ⚠️ |
+| Current database | `scidb.store.database._local` / `get_database()` | 60 call sites | scidb-net and scistack read the private `_local` | ⚠️ |
 | GUI default schema level | `execution_service.default_schema_level` | GUI runs, MATLAB command generation | — | ✅ |
 | Load errors | `registry.all_load_errors` | sidebar, logs | — | ✅ |
 
@@ -233,10 +233,10 @@ owners or no owner, **bug class present**.
 
 | concept | owner | consumers | rival / gap | status |
 |---|---|---|---|---|
-| Intent statements (wiring, hides, constants, columns) | `scidb.intent` + `scistack_gui/stores/intent_store.py` | `pipeline_store` and `layout` (forwarders), services | reads swallow SQL errors as "no statements" (**F1**); up to 3 forwarding hops (F10) | ⚠️ |
+| Intent statements (wiring, hides, constants, columns) | `scidb.provenance.intent` + `scistack_gui/stores/intent_store.py` | `pipeline_store` and `layout` (forwarders), services | reads swallow SQL errors as "no statements" (**F1**); up to 3 forwarding hops (F10) | ⚠️ |
 | Current wiring of a node | `edge_resolver.ResolvedWiring.bindings` (one dict, three views) | execution, MATLAB command, call_id | — | ✅ |
 | Manual edges vs history | `graph_builder.manual_input_overrides` (rule: visible edges outrank history) | build_edges, execution | **B1 breaks the rule**: a history constant edge supersedes the manual Parameter edge because the two have different source ids | ❌ |
-| **Column-selection shape** | `scidb.intent.normalize_columns` / `same_columns` | GUI chip, `provenance_save.compute_input_selectors`, `mark_unused_intent` | "every column" is **symbolic** in intent (`{columns: [], iterate: true}`) but **resolved** in the recorded selector. `same_columns` compares literally, so every all-columns `for_columns` is flagged "not reflected by its last run" (seen 14:45:56). **B2** | ❌ |
+| **Column-selection shape** | `scidb.provenance.intent.normalize_columns` / `same_columns` | GUI chip, `provenance_save.compute_input_selectors`, `mark_unused_intent` | "every column" is **symbolic** in intent (`{columns: [], iterate: true}`) but **resolved** in the recorded selector. `same_columns` compares literally, so every all-columns `for_columns` is flagged "not reflected by its last run" (seen 14:45:56). **B2** | ❌ |
 | Entity values (Parameter values etc.) | the entities TOML via `scidb.project.entities` (only writable surface) | GUI panels, MATLAB | — | ✅ |
 
 ### 2.4 Execution
@@ -247,7 +247,7 @@ owners or no owner, **bug class present**.
 | PathInput resolution + discovery | `scifor.PathInput.apply_discovery` | scifor (MATLAB side resolves), GUI | — | ✅ |
 | Storage-row encoding | `sciduckdb` | scidb | consumed through 8 private functions (F7) | ⚠️ |
 | Run completion status | `scidb/run_markers.py` | GUI matlab_watch | — | ✅ |
-| Pinned loads | `scidb.variant.pin_loads_uncollapsed` | plot loaders, inspect | — | ✅ |
+| Pinned loads | `scidb.model.variant.pin_loads_uncollapsed` | plot loaders, inspect | — | ✅ |
 | Line recurrence (plots) | `scistackplot.model.roles.line_recurrence` | reduce, render | — | ✅ |
 
 ### 2.5 What the table says
@@ -297,7 +297,7 @@ went unseen.
 
 **Fix (2026-09-23, Option A, tests written, unrun).** The run records the
 declared name; nothing reconstructs it on read.
-- One owner: `scidb.parameter.declared_input_names(inputs, explicit)`
+- One owner: `scidb.model.parameter.declared_input_names(inputs, explicit)`
   merges an explicit `parameter_names=` (GUI wiring, generated MATLAB) with a
   named `Parameter` (`.name`, set by the entities loader and discovery).
   `parameter_node_name` owns the read-side fallback (recorded name, else
@@ -324,7 +324,7 @@ declared name; nothing reconstructs it on read.
 `same_columns({columns: [], iterate: true}, {columns: [<resolved>], iterate: true})`
 is `False`. The unused-intent chip then lies on every all-columns node that ran.
 
-**Fix (2026-09-23, tests written, unrun).** `scidb.intent.is_every_column`;
+**Fix (2026-09-23, tests written, unrun).** `scidb.provenance.intent.is_every_column`;
 `same_columns` treats "every column" as matching any per-column selection.
 Only diagnostic callers (the chip, `[selector-changed]`). Tests in
 `scidb/tests/test_intent.py`.
@@ -367,7 +367,7 @@ get_pipeline (api/pipeline._build_graph, 951 lines)            10.1 s
 │    └─ per variable type: COUNT(*) _record    ── 1 query each (small N)
 ├─ build_aggregate → filter_hidden → run-state pass 1
 │    └─ _compute_run_states
-│         └─ scidb.state.check_multiple_nodes_state
+│         └─ scidb.provenance.state.check_multiple_nodes_state
 │              for each fn call site:
 │                check_node_state
 │                  expected_invocations_for_function          unmeasured
@@ -426,7 +426,7 @@ MATLAB pipeline script                  ┼─► params["schema_level"] (node's
 Canvas (FunctionSettingsPanel)          ─► null shown as EVERY box ticked
 ```
 
-**Status 2026-09-23:** F22–F27 fixed by `.claude/plan-schema-level-default.md`: one owner `scidb.schema_level`, all routes via `execution_service.default_schema_level`, panel via the `get_schema_level` RPC.
+**Status 2026-09-23:** F22–F27 fixed by `.claude/plan-schema-level-default.md`: one owner `scidb.run.schema_level`, all routes via `execution_service.default_schema_level`, panel via the `get_schema_level` RPC.
 
 **Findings**
 - **F22 (high): MATLAB runs never use the default.** Evidence: `loadDemographics`
@@ -532,7 +532,7 @@ Status against the code on 2026-09-23 (numbers re-measured, not copied).
 
 | # | review item | status | evidence now |
 |---|---|---|---|
-| 1 | Identity is two systems (move `wiring_id` into scidb + parity tests) | **closed** | `scidb.provenance.compute_wiring_id`; `scidb/tests/test_identity_parity.py`. The same *class* recurred for Parameters (B1, fixed) and schema levels (F22–F26, open) |
+| 1 | Identity is two systems (move `wiring_id` into scidb + parity tests) | **closed** | `scidb.provenance.graph.compute_wiring_id`; `scidb/tests/test_identity_parity.py`. The same *class* recurred for Parameters (B1, fixed) and schema levels (F22–F26, open) |
 | 2 | `for_each` assembles provenance two ways; extract phases | **partial** | phases exist (`_for_each_prepare` / `_execute` / `_save_results`, typed `_ForEachState`, `RunBindings.for_combo` one edge function; `_save_results` 17 → 4 params), but `_for_each_prepare` is now a **1,522-line** body, larger than the 975-line `for_each` the review measured |
 | 3 | Two hand-mirrored GUI transports | **closed** | `api/tables.ALL_HANDLERS`; 4 FastAPI routes remain |
 | 4 | Lazy imports from cycles | **partial** | scidb 352 → 159, GUI 850 → 758; `scidb/tests/test_imports.py` guards scidb only; the GUI has no guard |
@@ -585,7 +585,7 @@ scidb owner rather than add a MATLAB-side rule.
 | # | severity | kind | finding | evidence |
 |---|---|---|---|---|
 | F1 | high | silent failure — **fixed 2026-09-23, tests unrun** | Intent reads return `[]` on any SQL error, so wiring/hides vanish under a lock | §1.6 |
-| F2 | high | coupling — **fixed 2026-09-23: seam module `scidb.external_loop` (public re-exports); bridge calls only it; AST guard test. With F7 and the rest: private cross-package imports 11 -> 0; tests unrun** | MATLAB for_each built from 7 private scidb.foreach steps | §1.4 |
+| F2 | high | coupling — **fixed 2026-09-23: seam module `scidb.run.external_loop` (public re-exports); bridge calls only it; AST guard test. With F7 and the rest: private cross-package imports 11 -> 0; tests unrun** | MATLAB for_each built from 7 private scidb.run.foreach steps | §1.4 |
 | F3 | med | perf (N+1) — **fixed 2026-09-23: one `branch_params_batch` pass; its silent `except: return []` now warns; tests unrun** | `list_versions` does 2 graph walks per row | §1.7 |
 | F4 | med | structure — **prepare split 2026-09-23 (.claude/plan-split-for-each-prepare.md): 146-line sequence of 8 named stages + `_RidIndex`; dry run now shares `_existing_combos` (its duplicate prefilter/exclusion copy deleted); size guard test; tests unrun. scifor `for_each` not yet touched** | `_for_each_prepare` 1,522 lines; scifor `for_each` 1,039 lines / 29 params | §1.3 |
 | F5 | med | silent failure — **fixed 2026-09-23: `database.database_or_none` (only DatabaseNotConfiguredError reads as None) replaces 13 swallowing lookups in foreach; tests unrun** | ambient `get_database()`/schema lookups swallowed in foreach | §1.4, §1.6 |

@@ -37,7 +37,7 @@ def aggregate_variants(
     tests' call shape while exercising the real path. ``listed_var_names``
     adds types that exist with no variants, as the old helper did.
     """
-    from scidb.database import aggregate_pipeline_variants
+    from scidb.store.database import aggregate_pipeline_variants
 
     from scistack_gui.domain.graph_builder import aggregate_from_scidb
 

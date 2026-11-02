@@ -17,7 +17,7 @@ tells them apart is where each one sits in *variant space*.
 | | What it is | Where it lives |
 |---|---|---|
 | **`branch_params`** | a record's POSITION in variant space | derived from the graph on every read (`provenance_query.branch_params_batch`) — never a stored column |
-| **`Variant(X, low_hz=20)`** | a PREDICATE over that space | `scidb/variant.py`; its payload *is* a `branch_params` dict, threaded to the loader as `branch_params_filter` |
+| **`Variant(X, low_hz=20)`** | a PREDICATE over that space | `scidb/model/variant.py`; its payload *is* a `branch_params` dict, threaded to the loader as `branch_params_filter` |
 
 So `Variant` cannot absorb `branch_params`: it is defined in terms of it.
 `Variant.branch_params` is literally the same dict shape that
@@ -124,7 +124,7 @@ an error naming the candidates (`AmbiguousParamError`), not a silent pick.
 `Variant(X, fn="detect_spikes", threshold=0.5)` is the disambiguating form —
 a dotted string cannot be a kwarg.
 
-One owner: `scidb.variant.match_bare_name`. It used to be spelled twice —
+One owner: `scidb.model.variant.match_bare_name`. It used to be spelled twice —
 once for load filtering, once for PathOutput `{placeholder}` resolution — with
 the same `.endswith` and the same ambiguity error.
 
@@ -158,13 +158,13 @@ run had pooled, so such a node could never plan green.
 
 | | File |
 |---|---|
-| the pin vocabulary, prefixes, `Variant`, `branch_param()` | `scidb/variant.py` |
+| the pin vocabulary, prefixes, `Variant`, `branch_param()` | `scidb/model/variant.py` |
 | deriving a record's coordinate from the graph | `provenance_query.branch_params_batch` / `derived_branch_params` |
-| the canonical signature of a coordinate, and variant GROUPS | `scidb/bindings.py` (`variant_signature`, `VariantGroup`, `RecordPool`) |
+| the canonical signature of a coordinate, and variant GROUPS | `scidb/run/bindings.py` (`variant_signature`, `VariantGroup`, `RecordPool`) |
 | filtering records by a pin | `database._filter_records_by_branch_params` (+ the code / run halves) |
 | the latest-collapse | `database._find_record` |
 | naming coexisting records | `provenance_query.variant_identity_batch` |
-| the pooling opt-out | `scidb/across_variants.py`, `_invocation.across_variants` |
+| the pooling opt-out | `scidb/model/across_variants.py`, `_invocation.across_variants` |
 
 ## See also
 

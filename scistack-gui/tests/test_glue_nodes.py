@@ -320,7 +320,7 @@ class TestGluePanelRoundTrip:
         assert registry.get_function("glue_scale")(3) == 6
 
     def test_editing_the_body_changes_the_glue_hash(self, client, glue_project):
-        from scidb.glue import GlueSpec
+        from scidb.run.glue import GlueSpec
         from scistack_gui.project import registry
 
         client.post("/api/glue", json={"name": "shift"})
@@ -414,7 +414,7 @@ class TestExport:
             _glue_comments,
             _py_glue_literal,
         )
-        from scidb.glue import GlueSpec
+        from scidb.run.glue import GlueSpec
 
         def glue_drop_baseline(emg):
             return emg
@@ -428,7 +428,7 @@ class TestExport:
         assert "for_each" not in comment
 
     def test_matlab_export_wraps_the_chain_in_a_cell(self):
-        from scidb.glue import GlueSpec
+        from scidb.run.glue import GlueSpec
         from scistack_gui.services.code_export_service import _matlab_glue_struct
 
         chain = [

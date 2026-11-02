@@ -10,7 +10,8 @@ import pytest
 
 import scifor as _scifor
 
-from scidb import BaseVariable, configure_database, provenance_query
+from scidb import BaseVariable, configure_database
+from scidb.provenance import query as provenance_query
 
 
 class Versioned(BaseVariable):

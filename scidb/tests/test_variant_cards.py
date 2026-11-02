@@ -24,15 +24,15 @@ import numpy as np
 import pytest
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.exceptions import NotFoundError
+from scidb.model.exceptions import NotFoundError
 from scidb.inspect.cli import main as cli_main
 from scidb.inspect.variant_cards import (
     coordinate_selection,
     selection_matches,
     varying_axes,
 )
-from scidb.provenance_query import records_for_variant
-from scidb.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
+from scidb.provenance.query import records_for_variant
+from scidb.model.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX
 
 SCHEMA = ["subject", "trial"]
 SUBJECTS = ["01", "02"]
@@ -438,7 +438,7 @@ from scidb.inspect.variant_cards import (  # noqa: E402
     build_variant_cards,
     current_variants,
 )
-from scidb.variant_pins import pin_variant, release_pin  # noqa: E402
+from scidb.store.variant_pins import pin_variant, release_pin  # noqa: E402
 
 #: What the node reads. Everything else may be empty in the light build.
 _IDENTITY_FIELDS = (
@@ -482,7 +482,7 @@ class TestOrdinals:
         }
 
     def test_deleting_a_variant_renumbers_the_later_ones(self, upstream_split):
-        from scidb.variant_delete import delete_variant
+        from scidb.store.variant_delete import delete_variant
 
         db = upstream_split
         first = next(

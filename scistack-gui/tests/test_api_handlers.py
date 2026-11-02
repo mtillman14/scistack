@@ -19,6 +19,7 @@ import pytest
 from scistack_gui.api.handlers import Handler, rpc_methods, self_managed
 from scistack_gui.api.plot import PLOT_HANDLERS
 from scistack_gui.api.tables import ALL_HANDLERS, TABLES
+from scistack_gui.api.wire_schema import SCHEMA_PATH, api_json_schema, schema_text
 
 GUI_ROOT = Path(__file__).parent.parent
 HTTP_HANDLERS = [h for h in ALL_HANDLERS if h.path is not None]
@@ -272,3 +273,30 @@ def test_the_report_needs_no_database_over_http(client):
 
 def test_every_table_is_registered():
     assert set(TABLES) >= {"pipeline", "layout", "scopes", "run", "plot", "project"}
+
+
+# --- generated frontend request types (P5 stage 5, G8) ----------------------
+
+
+def test_generated_request_schema_is_current():
+    """``frontend/src/generated/api-schema.json`` is what the handler table
+    says. Missing: written here (then run ``npm run gen:types`` in the
+    frontend, or ``python scistack-gui/tools/gen_ts_types.py`` for both
+    steps). Stale: regenerate the same way; the frontend's
+    ``generatedTypes.test.ts`` then holds ``api-types.ts`` to it."""
+    target = GUI_ROOT / SCHEMA_PATH
+    expected = schema_text()
+    if not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(expected, encoding="utf-8")
+    assert target.read_text(encoding="utf-8") == expected, (
+        "api-schema.json is stale: run `python scistack-gui/tools/gen_ts_types.py`"
+    )
+
+
+def test_every_method_with_params_is_in_the_schema():
+    schema = api_json_schema()
+    named = {h.name for h in ALL_HANDLERS if h.params is not None}
+    assert set(schema["properties"]) == named
+    for ref in schema["properties"].values():
+        assert ref["$ref"].removeprefix("#/$defs/") in schema["$defs"]

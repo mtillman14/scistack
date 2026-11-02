@@ -30,17 +30,17 @@ import pandas as pd
 import pytest
 import scifor as _scifor
 from scidb import BaseVariable, Variant, configure_database, for_each
-from scidb.exceptions import AmbiguousVersionError, NotFoundError
+from scidb.model.exceptions import AmbiguousVersionError, NotFoundError
 from scidb.inspect.api import Inspector
 from scidb.inspect.cli import main as cli_main
-from scidb.provenance_query import (
+from scidb.provenance.query import (
     invocation_call_ids_batch,
     producing_invocation_batch,
     producing_invocations_batch,
     records_for_variant,
     runs_for_invocations_batch,
 )
-from scidb.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX, normalize_selection
+from scidb.model.variant import CODE_PIN_PREFIX, RUN_PIN_PREFIX, normalize_selection
 
 SCHEMA = ["subject", "trial"]
 SUBJECTS = ["01", "02"]
@@ -233,7 +233,7 @@ class TestRecordsForVariant:
         (`foreach._load_var_type_as_spread`): `branch_params_filter` plus the
         `pin_loads_uncollapsed` version rule, which both sides now read from
         one place."""
-        from scidb.variant import pin_loads_uncollapsed
+        from scidb.model.variant import pin_loads_uncollapsed
 
         db = two_code_versions
         pin = Variant(VpScaled, fn="vp_scale", code_version="v1").branch_params
@@ -253,7 +253,7 @@ class TestRecordsForVariant:
         """`version_id="latest"` merges v1 into v2 before any filter runs, so
         a collapsed load can never see v1. The pin resolver must load
         uncollapsed — the same rule the for_each loader applies."""
-        from scidb.variant import pin_loads_uncollapsed
+        from scidb.model.variant import pin_loads_uncollapsed
 
         pin = {f"{CODE_PIN_PREFIX}.vp_scale": "v1"}
         assert pin_loads_uncollapsed(pin)

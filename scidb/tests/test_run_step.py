@@ -6,9 +6,9 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query as pq
-from scidb.database import aggregate_pipeline_variants
-from scidb.intent import current_step, run_step, set_ambient_step
+from scidb.provenance import query as pq
+from scidb.store.database import aggregate_pipeline_variants
+from scidb.provenance.intent import current_step, run_step, set_ambient_step
 
 SUBJECTS = ["S01", "S02"]
 

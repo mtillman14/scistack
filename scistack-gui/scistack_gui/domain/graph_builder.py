@@ -12,9 +12,9 @@ import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
-from scidb.provenance import compute_wiring_id as _compute_wiring_id
-from scidb.provenance import parse_path_input_spec as _parse_path_input_spec
-from scidb.provenance import strip_path_input_specs as _strip_path_input_specs
+from scidb.provenance.graph import compute_wiring_id as _compute_wiring_id
+from scidb.provenance.graph import parse_path_input_spec as _parse_path_input_spec
+from scidb.provenance.graph import strip_path_input_specs as _strip_path_input_specs
 
 from scistack_gui.ids import (
     FN_ID_PREFIX,
@@ -92,7 +92,7 @@ class AggregatedData:
     )
     """``{fkey: {argument: Parameter node name}}`` — which Parameter node each
     constant argument belongs to, as scidb resolved it
-    (``get_aggregated_variants`` / ``scidb.parameter.parameter_node_name``).
+    (``get_aggregated_variants`` / ``scidb.model.parameter.parameter_node_name``).
     ``const_counts``/``const_fns`` are keyed by NODE; ``fn_constants`` and
     variant rows by ARGUMENT (the handle). The two differ when a Parameter
     declared ``gaitrite_config`` feeds ``gaitRiteConfig`` (cleanup-audit B1);
@@ -196,7 +196,7 @@ _STATE_WORST_ORDER = {"red": 0, "pending": 1, "green": 2}
 
 def strip_path_input_params(input_params: dict) -> dict:
     """*input_params* without the entries that are really PathInput specs —
-    ``scidb.provenance.strip_path_input_specs``, kept under the GUI's name."""
+    ``scidb.provenance.graph.strip_path_input_specs``, kept under the GUI's name."""
     return _strip_path_input_specs(input_params)
 
 
@@ -204,7 +204,7 @@ def wiring_id(fn_name: str, input_params: dict, out_types, path_inputs: dict) ->
     """16-hex id for a function's WIRING — the id a canvas node is keyed by
     and the subject every ``_intent`` statement is about.
 
-    **The recipe is scidb's** (``scidb.provenance.compute_wiring_id``), the
+    **The recipe is scidb's** (``scidb.provenance.graph.compute_wiring_id``), the
     same way ``call_id`` is: one owner below every caller, computed here by
     IMPORT rather than predicted. Until 2026-09-20 this module held the only
     copy, and each time the canvas and the run path disagreed the fix was a
@@ -538,9 +538,9 @@ def parse_path_input(value: str) -> dict | None:
     """If *value* (from __inputs) represents a PathInput spec, return
     ``{"template": ..., "root_folder": ...}``, else ``None``.
 
-    The parser is scidb's (``scidb.provenance.parse_path_input_spec``); this
+    The parser is scidb's (``scidb.provenance.graph.parse_path_input_spec``); this
     name is kept for the GUI's call sites. Three copies of it existed before
-    2026-09-20 (here, ``scidb.inspect.graph``, ``scidb.database``).
+    2026-09-20 (here, ``scidb.inspect.graph``, ``scidb.store.database``).
     """
     return _parse_path_input_spec(value)
 
@@ -866,7 +866,7 @@ def aggregate_from_scidb(
     path_input_renames: "dict[str, str] | None" = None,
 ) -> AggregatedData:
     """``get_aggregated_variants()`` (or the pure
-    ``scidb.database.aggregate_pipeline_variants``) -> :class:`AggregatedData`.
+    ``scidb.store.database.aggregate_pipeline_variants``) -> :class:`AggregatedData`.
 
     PURE — the registry, history index and root are passed in; ``services/graph_service
     .build_aggregate`` is the thin wrapper that reads them. THE one conversion:
@@ -945,7 +945,7 @@ def split_call_sites_by_claims(agg: "AggregatedData", claimed_wirings) -> "Aggre
     """Split each call site whose recorded outputs form more than one wiring
     into one sub-site per wiring, IN PLACE; returns *agg*.
 
-    Which outputs belong together is ``scidb.provenance.split_call_site_outputs``
+    Which outputs belong together is ``scidb.provenance.graph.split_call_site_outputs``
     — the one owner, also asked by the run path — given the wirings Runs have
     claimed (``_node_wiring``). A call site that does not split is untouched, so
     single-output history (nearly all of it) keeps its FnKey exactly.
@@ -958,7 +958,7 @@ def split_call_sites_by_claims(agg: "AggregatedData", claimed_wirings) -> "Aggre
     the union of old and new outputs, a wiring no Run had claimed, and the
     build minted a phantom node for it (scistack.log 2026-09-29, pandas.read_csv).
     """
-    from scidb.provenance import split_call_site_outputs
+    from scidb.provenance.graph import split_call_site_outputs
 
     pi_by_fkey = path_input_bindings_by_fkey(agg.path_inputs)
     replaced: dict[FnKey, list[FnKey]] = {}
@@ -1516,7 +1516,7 @@ def build_parameter_nodes(
         # stays true on EVERY rebuild for any Parameter that hasn't been run,
         # so this is steady-state bookkeeping, not an event. Logged once per
         # parameter at debug; at INFO it was three lines per build forever
-        # (5% of a real session's log, examples/vo2max/scidb.log).
+        # (5% of a real session's log, examples/vo2max/scidb.model.log).
         merged_source_values = []
         for src_val in current_source:
             if src_val not in existing_values:
@@ -3878,7 +3878,7 @@ def mark_unused_intent(nodes: list[dict], latest_runs: dict) -> int:
 
     Pure: no I/O. Returns the number of nodes marked.
     """
-    from scidb.intent import ORIGIN_SCRIPT, normalize_columns, same_columns
+    from scidb.provenance.intent import ORIGIN_SCRIPT, normalize_columns, same_columns
 
     marked = 0
     for n in nodes:

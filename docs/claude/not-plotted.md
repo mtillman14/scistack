@@ -12,7 +12,7 @@ out and why.
 | reason | meaning | lost? | decided in |
 |---|---|---|---|
 | `no_value` | the record exists but its sample value is empty (any of y / x) | yes | `omissions.no_value` on the sample rows |
-| `no_record` | the dataset has the location, but this variable has no record there | yes | `scidb.inventory.absent_locations`, then `LongTable.absent`, then `omissions.no_record` |
+| `no_record` | the dataset has the location, but this variable has no record there | yes | `scidb.provenance.inventory.absent_locations`, then `LongTable.absent`, then `omissions.no_record` |
 | `outside_range` | a histogram value outside the typed From / To range | yes | `omissions.outside_range`, using `bins._scistack_regular` |
 | `nan_elements` | a 1-D record with NaN entries | no (thinned) | `omissions.nan_elements` on the records |
 | `partly_averaged` | a collapsed value averaged from fewer members than exist | no (thinned) | `omissions.partly_averaged`, raw rows vs sample |

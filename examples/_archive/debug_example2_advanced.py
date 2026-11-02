@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scidb.database import DatabaseManager
+from scidb.store.database import DatabaseManager
 from scipy import signal as scipy_signal  # External library to wrap
 
 # -----------------------------------------------------------------------------

@@ -18,7 +18,7 @@ import pandas as pd
 import scifor.foreach
 
 import scifor
-from scifor import for_each, set_schema
+from scifor import LoopHooks, for_each, set_schema
 
 
 def setup_function():
@@ -156,7 +156,7 @@ def test_summary_progress_event_carries_failure_groups():
             raise ValueError("boom")
         return float(value)
 
-    for_each(fn, inputs={"value": df}, subject=[1, 2], _progress_fn=events.append)
+    for_each(fn, inputs={"value": df}, subject=[1, 2], hooks=LoopHooks(progress_fn=events.append))
 
     summaries = [e for e in events if e.get("event") == "summary"]
     assert len(summaries) == 1

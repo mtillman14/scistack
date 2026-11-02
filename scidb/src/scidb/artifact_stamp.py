@@ -37,7 +37,7 @@ import re
 import zlib
 from pathlib import Path
 
-from .log import Log
+from scidb.model.log import Log
 
 STAMP_VERSION = 1
 _PNG_SIG = b"\x89PNG\r\n\x1a\n"

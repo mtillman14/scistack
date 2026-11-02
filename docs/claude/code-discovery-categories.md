@@ -54,7 +54,7 @@ Two separate scanners exist, used in different contexts:
   projects (walks `src/{project}/` + the `packages` its scistack.toml lists;
   never a lockfile since 2026-10-08). Here a
   function must be explicitly tagged `@scistack` (`is_scistack_function`,
-  `scidb/src/scidb/pipeline.py`) to be picked up.
+  `scidb/src/scidb/run/pipeline.py`) to be picked up.
 
 ### MATLAB
 
@@ -329,7 +329,7 @@ What appears in the graph as `pipelineNode` is a **nested pipeline**
 "Hypothesis tabs & submodules" feature, backed by `_pipeline_uses` DB rows
 (`parent_pipeline_id` / `child_pipeline_id` / `use_id` / `binding_json =
 {key_map, params, iterate}`). `scidb.Pipeline`/`.use()`/`.bind()`
-(`scidb/src/scidb/pipeline.py`) already implements the identical shape in
+(`scidb/src/scidb/run/pipeline.py`) already implements the identical shape in
 source code — `binding_json`'s three keys are a direct, field-for-field
 match with `PipelineBinding.key_map`/`.params`/`.iterate`.
 
@@ -346,7 +346,7 @@ for_each(bandpass_filter, {"signal": RawSignal, "low_hz": 20}, [Filtered], ...)
 `Pipeline` registration is side-effect-free until `run_*` is called — the
 same property that lets functions/variables/constants be discovered by
 *importing* a file. `discover_and_seed_pipelines(db)` reads
-`scidb.pipeline._all_pipelines` (filtered to `db=None` — the convention that
+`scidb.run.pipeline._all_pipelines` (filtered to `db=None` — the convention that
 tells a genuine user-authored pipeline apart from
 `execution_service.build_backend_pipeline`'s own per-request COMPILED
 Pipelines, which always set `db=`), recursively seeds each into GUI state
@@ -456,7 +456,7 @@ filtering at the **file-path/module-name level, before a file is ever
 imported** — since every kind above is only ever discovered as a side effect
 of importing/scanning a module (functions/constants/PathInputs/Sweeps via
 `inspect.getmembers`/`vars()`; variables via `BaseVariable`'s metaclass;
-submodules via `scidb.pipeline._all_pipelines`), preventing the import means
+submodules via `scidb.run.pipeline._all_pipelines`), preventing the import means
 nothing from that file is ever discovered — one choke point per source tier
 covers all six kinds with no per-category logic needed.
 

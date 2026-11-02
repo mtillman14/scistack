@@ -1,5 +1,5 @@
 """``save_batch_bridge(on_duplicate="combine")`` — MATLAB's save_from_table
-with two rows at one location (scidb.combine; plan
+with two rows at one location (scidb.run.combine; plan
 ``.claude/plan-combine-duplicate-locations.md``).
 
 The returned ids stay one per INPUT row (MATLAB splits them by line):
@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from scidb import DuplicateLocationError
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 from scimatlab.bridge import register_matlab_variable, save_batch_bridge
 
 

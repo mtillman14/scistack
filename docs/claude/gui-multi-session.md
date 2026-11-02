@@ -38,7 +38,7 @@ database file:
 
 | Resource | Keyed by |
 |---|---|
-| `scistack.log` | `scidb.log.log_path_for(db)` — beside the `.duckdb` |
+| `scistack.log` | `scidb.model.log.log_path_for(db)` — beside the `.duckdb` |
 | pipeline / intent / layout / plot-cache tables | inside the `.duckdb` (positions too, since 2026-10-21) |
 | push notifications | that process's own stdout |
 | React state | per webview iframe |

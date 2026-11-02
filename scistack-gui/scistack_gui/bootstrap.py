@@ -264,7 +264,7 @@ def open_or_create_project(
             logger.exception("[bootstrap] failed to discover/seed pipelines from source")
             warnings.append("Failed to discover pipelines defined in source.")
 
-    from scidb.log import Log
+    from scidb.model.log import Log
 
     Log.bridge_python_logging()
 

@@ -10,7 +10,7 @@ the call's one transaction rolls back the data with it.
 import numpy as np
 import pytest
 
-import scidb.provenance_save as provenance_save
+import scidb.provenance.save as provenance_save
 import scifor as _scifor
 from scidb import BaseVariable, OutputSaveError, configure_database, for_each
 

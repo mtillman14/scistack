@@ -2,7 +2,7 @@
 
 Five packages used to create tables in one ``.duckdb`` with nobody owning
 the list (design review 09, T2). Now every fixed table is a
-``scidb.tables.TableDecl``: scidb's own are created on every writable open,
+``scidb.store.tables.TableDecl``: scidb's own are created on every writable open,
 other packages' through ``tables.ensure`` on first use. Guards:
 
 * no ``CREATE TABLE`` / ``SEQUENCE`` / ``INDEX`` outside the files listed in
@@ -16,9 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from scidb import configure_database, tables
-from scidb.exceptions import TableDeclarationError
-from scidb.sciduck import SciDuck
+from scidb import configure_database
+from scidb.store import tables
+from scidb.model.exceptions import TableDeclarationError
+from scidb.store.sciduck import SciDuck
 
 REPO = Path(__file__).resolve().parents[2]
 SCANNED = [
@@ -29,9 +30,9 @@ SCANNED = [
     REPO / "scistack-gui" / "scistack_gui",
 ]
 ALLOWED = {
-    "scidb/src/scidb/tables.py": "the registry: every scidb table",
-    "scidb/src/scidb/versioned_store.py": "declares each store's table via TableDecl",
-    "scidb/src/scidb/database.py": "the per-variable <Type>_data tables (dynamic)",
+    "scidb/src/scidb/store/tables.py": "the registry: every scidb table",
+    "scidb/src/scidb/store/versioned_store.py": "declares each store's table via TableDecl",
+    "scidb/src/scidb/store/database.py": "the per-variable <Type>_data tables (dynamic)",
     "scidb/src/scidb/project/verify.py": "an in-memory copy of a bundle, not a project database",
     "scistack-gui/scistack_gui/stores/pipeline_store.py": "TableDecls, owner scistack_gui",
     "scistack-gui/scistack_gui/stores/layout.py": "TableDecls, owner scistack_gui",
@@ -66,9 +67,9 @@ def test_gui_and_store_ddl_goes_through_table_decl() -> None:
 
 
 def test_database_creates_only_data_tables() -> None:
-    text = (REPO / "scidb/src/scidb/database.py").read_text(encoding="utf-8")
+    text = (REPO / "scidb/src/scidb/store/database.py").read_text(encoding="utf-8")
     fixed = [m for m in re.finditer(r"CREATE TABLE IF NOT EXISTS", text)]
-    assert fixed == [], "a fixed table belongs in scidb.tables"
+    assert fixed == [], "a fixed table belongs in scidb.store.tables"
     assert _DYNAMIC.search(text)
 
 
@@ -156,7 +157,7 @@ def test_every_scidb_table_is_cleared_xor_kept_with_a_reason():
 
 
 def test_bundle_and_clear_read_the_registry():
-    from scidb import clear_data
+    from scidb.store import clear_data
     from scidb.project import bundle
 
     assert bundle.HISTORY_TABLES == tables.history_tables()
@@ -164,10 +165,10 @@ def test_bundle_and_clear_read_the_registry():
     assert clear_data.CLEARED_TABLES == tables.cleared_tables()
     assert clear_data.KEPT_TABLES == tables.kept_tables()
     for name in ("HISTORY_TABLES", "INTENT_TABLES", "CLEARED_TABLES", "KEPT_TABLES"):
-        for path in ("scidb/src/scidb/project/bundle.py", "scidb/src/scidb/clear_data.py"):
+        for path in ("scidb/src/scidb/project/bundle.py", "scidb/src/scidb/store/clear_data.py"):
             text = (REPO / path).read_text(encoding="utf-8")
             assert not re.search(rf"^{name}\b[^=]*= *[\(\{{\[]", text, re.M), (
-                f"{path} restates {name}; read it from scidb.tables"
+                f"{path} restates {name}; read it from scidb.store.tables"
             )
 
 

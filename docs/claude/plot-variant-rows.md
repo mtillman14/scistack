@@ -284,7 +284,7 @@ survive export. Three verified facts set its shape:
   with the absent variant contributing zero rows — the same behaviour as the
   panel.
 - **List-valued branch params already mean membership**
-  (`scidb/database.py:133-146`), so the popup's multi-checkbox selection is
+  (`scidb/store/database.py:133-146`), so the popup's multi-checkbox selection is
   `low_hz=["20", "50"]` with no new scidb work.
 
 Hence **one input per variant**, labelled and stacked inside the generated
@@ -457,7 +457,7 @@ beats one that guesses.
 
 | concern | home | why there |
 |---|---|---|
-| every recorded version of a function | `scidb.provenance_query.function_versions` | Provenance. `code_version_ordinals` is now expressed in terms of it, so the two cannot disagree about what `v2` means. |
+| every recorded version of a function | `scidb.provenance.query.function_versions` | Provenance. `code_version_ordinals` is now expressed in terms of it, so the two cannot disagree about what `v2` means. |
 | which axes a variable has, and their origin | `scistackplotdb.load.attach_variants` → `VariableFrame.variant_axes` → `FactorInfo.origin` | Both halves (`Code:<fn>`, `fn.param`) are in hand there. A GUI splitting those strings would re-implement scidb's namespacing one layer away, and break first when it changes. |
 | axes + versions for the popup | `ScidbSource.variant_graph` | Reuses the source's frame cache; opening a dialog must not re-read the variable. |
 | `scidb.Variant` → selection | `scistackplotdb.variant_set` | Needs both vocabularies; scistackplot must stay scidb-free. |

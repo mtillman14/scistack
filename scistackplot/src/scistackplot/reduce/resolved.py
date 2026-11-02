@@ -24,6 +24,7 @@ import pandas as pd
 from ..text.aliases import DisplayText
 from ..text.colors import MarkColors
 from ..model.spec import PlotKind, PlotSpec
+from .reduction import ReductionPlan
 
 #: Canonical column names inside a panel frame. Renderers address these, never
 #: the user's original column names, so a renderer never needs the spec to know
@@ -334,6 +335,10 @@ class ResolvedPlot:
     #: name and levels as ``{raw, text, origin}``. Shipped as
     #: ``layout.meta.labelable``; the panel never derives the list.
     labelable: list[dict] = field(default_factory=list)
+    #: The reduction steps this figure's rows went through, in order
+    #: (``reduction.ReductionPlan``). Codegen prints the same steps; the
+    #: renderers ignore it. Not serialised.
+    reduction: ReductionPlan = field(default_factory=ReductionPlan, repr=False)
     #: Other figures of the fan-out that carry difference bars and may draw a
     #: y range this figure shares, attached by ``reduce`` so the renderer can
     #: raise this figure to the top THEIR bars need (``diffbars.sibling_floors``,

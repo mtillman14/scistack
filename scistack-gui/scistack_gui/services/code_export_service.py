@@ -26,8 +26,8 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from scidb.foreach_config import RunOptions
-from scidb.provenance import constants_identity_key
+from scidb.run.foreach_config import RunOptions
+from scidb.provenance.graph import constants_identity_key
 
 logger = logging.getLogger(__name__)
 
@@ -599,7 +599,7 @@ def _matlab_run_option_args(options, inputs: dict) -> str:
     """``, 'distribute', true, 'as_table', ["a"]`` for a step's run options,
     or ``""``.
 
-    They are identity-bearing (``scidb.foreach_config.RunOptions``): a script
+    They are identity-bearing (``scidb.run.foreach_config.RunOptions``): a script
     that omits them re-runs the pipeline as a DIFFERENT call, writing a second
     record at every location. ``across_variants`` needs nothing here — it
     rides on the input expression as ``scidb.AcrossVariants(...)``.

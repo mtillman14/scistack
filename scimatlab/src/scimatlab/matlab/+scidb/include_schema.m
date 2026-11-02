@@ -43,7 +43,7 @@ function include_schema(reason, varargin)
         end
     end
 
-    py.scidb.exclusions.include_schema_dict( ...
+    py.scidb.store.exclusions.include_schema_dict( ...
         py_keys, char(reason), py.None);
 
 end

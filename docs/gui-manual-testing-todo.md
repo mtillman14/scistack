@@ -972,7 +972,7 @@ in an old `.layout.json` are lost once, so existing nodes are laid out again.
 What changed (GUI): each schema key in a PathInput panel's **Schema Keys**
 section now has a **Numeric** checkbox. Ticking it declares the key numeric
 for the whole project, so `"001"`, `"1"` and `1` are one value. The type is
-stored in the database (`scidb.schema_types`), so MATLAB and Python runs see
+stored in the database (`scidb.store.schema_types`), so MATLAB and Python runs see
 it too. Saving a key pattern that only matches digits (e.g. `trial = '\d+'`)
 for an undeclared key ticks the box for you. Doc:
 `docs/claude/schema-key-types.md` ("Stored in the database").
@@ -1009,7 +1009,7 @@ built their own key, which can't be hashed when a constant is a dict (an
 inline table under `[parameters]`, such as `delsys_config = {...}`). Running a
 history node with a drawn output edge raised
 `TypeError: unhashable type: 'dict'` in `_apply_manual_output_types`. All six
-now use `scidb.provenance.constants_identity_key`. Separately, an exception
+now use `scidb.provenance.graph.constants_identity_key`. Separately, an exception
 before the per-target loop used to kill the run thread without sending
 `run_done`, so the run spun until you cancelled it. It now ends as a failed
 run. Doc: `docs/claude/constants-are-not-scalars.md` §2a.
@@ -3051,7 +3051,7 @@ resolves to success/failure (not "unknown"). `scistack.log` shows
 after its output was rewired or because the function returns several values.
 Before, the canvas and the Run button hashed that call site differently, so
 the next canvas build created a phantom node whose Run found no targets. Now
-one owner (`scidb.provenance.split_call_site_outputs`) splits the outputs by
+one owner (`scidb.provenance.graph.split_call_site_outputs`) splits the outputs by
 what each Run wrote together. Plan: `.claude/plan-multi-output-call-site-wiring.md`.
 
 **Backend**
@@ -4916,7 +4916,7 @@ and 4). Docs: `run-option-variants.md` §"The third consumer",
 3. **Terminal MATLAB runs never asked the canvas to repaint.** 4 refresh
    messages in a 55-minute session against 9 runs, none after a run.
 
-**Backend:** `scidb/provenance_query.py`, `scidb/database.py`,
+**Backend:** `scidb/provenance/query.py`, `scidb/store/database.py`,
 `scistack_gui/domain/graph_builder.py`, `domain/run_state.py`,
 `api/pipeline.py`, `api/run.py`, `matlab_run_watch.py`. Pull and reload the
 VS Code window. **No frontend change — no rebuild needed.**
@@ -5412,7 +5412,7 @@ pipeline** (Run Pipeline / Run Scope) and **both code exports** hardcoded
 `distribute=False, as_table=None`. So a node set to distribute ran
 non-distributed from the pipeline button, and an exported script re-ran the
 pipeline as a *different* call — writing a second record at every location.
-All three now read the node's config (`scidb.foreach_config.RunOptions`).
+All three now read the node's config (`scidb.run.foreach_config.RunOptions`).
 
 **Backend**
 1. Nothing special. Keep `scistack.log` open.
@@ -5482,7 +5482,7 @@ model in `docs/claude/intent-and-fact.md`). Python + both bundles changed.
 - [ ] Duplicate a hypothesis containing a node with a column selection: the copy
       shows the same selection; changing it on the copy leaves the original.
 - [ ] MATLAB: generate a run command from the GUI. The script contains
-      `py.scidb.intent.set_ambient_origin('gui');` after the pyenv preamble and
+      `py.scidb.provenance.intent.set_ambient_origin('gui');` after the pyenv preamble and
       `...('script');` at the end on both the success and the catch path. After
       running it, the node's last run shows as a GUI run (no amber marker).
 - [ ] **Pins survive the panel.** In Plot Studio, add/rename a variant row,
@@ -5920,7 +5920,7 @@ its own, and skip-computed still checks globally. Plan:
 **What changed:** `scistack.toml` is now read only by `scifor.project.config`
 (the GUI turns its typed sections into files); the entities file is parsed by
 `scifor.project.entities_file` and materialized by `scidb.project.entities`;
-every fixed table of the project database is declared in `scidb.tables`
+every fixed table of the project database is declared in `scidb.store.tables`
 (sciduckdb creates none; `_intent` is created by scidb on open). Plan:
 `.claude/plan-tidy-p3-homes.md`.
 
@@ -5940,6 +5940,44 @@ every fixed table of the project database is declared in `scidb.tables`
    is `IF NOT EXISTS`, so nothing changes in the file).
 3. Save a plot, a plot preset and a stats table, then export and import the
    project bundle; all three should arrive in the new project.
+
+
+### P4 stage 9 (2026-11-01): Plot Studio spec edits go through one reducer
+
+Plain field edits now dispatch `plotSpecReducer` actions instead of inline
+updaters. Nothing should look different. For each rail group, every control
+below still changes the preview, and **Undo** reverts each change one step:
+
+- **Data:** X variable (the kind follows), Time zone.
+- **Chart:** Categories (count / % and one level), Bars stacked, Histogram
+  bins, Density curve, Regression options.
+- **Structure:** Colour layer, Facet grid rows / columns / share x, Compare to
+  reference (set and clear).
+- **Statistics:** Cell statistic, Aggregate (statistic, error, pooled), Show
+  sample per key, Join sample, Sample colour, Sample in legend, Difference
+  bars (add / remove).
+- **Appearance:** Show missing levels, "Not plotted" footnote, Y axis scope /
+  min / max, Style (size, tick rotation / every, legend ticks), Panels
+  overrides, Labels (aliases), Colours.
+
+---
+
+## P5 cross-language: MATLAB option list, filters in exported plots — added 2026-11-02
+
+- **MATLAB run with run options.** On a MATLAB function node, turn on
+  Distribute and As table, set On error = stop, run. The generated script
+  (Output panel) shows `'as_table', ...` before `'distribute', true` (order now
+  follows the one option declaration) and the run behaves as before.
+- **MATLAB misspelled option.** In a MATLAB terminal call
+  `scidb.for_each(..., skipComputed=true, subject=[])`: scistack.log has a
+  WARNING naming `skip_computed` (now from Python, for scifor.for_each too).
+- **MATLAB failure frames.** Make a MATLAB function error; the failure popup
+  still jumps to the user's line (frame classification now crosses to
+  Python), and toolbox frames are not offered as "your code".
+- **Exported plot with a filter.** In Plot Studio, pick only some subjects of
+  an integer-keyed schema (e.g. trial 1) with the value filter, Export, run
+  the exported function: it draws the same rows as the preview (before, a
+  text selection on an integer column kept nothing in the export).
 
 ---
 

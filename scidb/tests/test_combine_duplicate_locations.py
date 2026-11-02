@@ -1,5 +1,5 @@
 """``on_duplicate="combine"``: two rows at one schema location become one
-record, a differing value the list of every row's value (scidb.combine; rule
+record, a differing value the list of every row's value (scidb.run.combine; rule
 scifor.combine_duplicate_rows; storage sciduckdb.row_lists).
 
 The motivating shape: a CSV with a ``subject`` column, schema

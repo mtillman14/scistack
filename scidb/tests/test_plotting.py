@@ -16,7 +16,7 @@ matplotlib.use("Agg")  # headless backend for tests
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
-from scidb.database import _local
+from scidb.store.database import _local
 
 from scidb import BaseVariable, PathOutput, configure_database, for_each
 

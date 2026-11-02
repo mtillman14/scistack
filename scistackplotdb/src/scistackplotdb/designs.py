@@ -31,7 +31,7 @@ from typing import Any
 
 from scistacklog import Log
 
-from scidb.versioned_store import VersionedStore
+from scidb.store.versioned_store import VersionedStore
 
 LAYER = "scistackplotdb"
 

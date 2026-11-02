@@ -42,7 +42,7 @@ classdef Parameter < scifor.EachOf
 %   because a zero-length axis would iterate zero times and write nothing
 %   while appearing to succeed.
 %
-%   Mirrors Python's scidb.Parameter (scidb/src/scidb/parameter.py). See
+%   Mirrors Python's scidb.Parameter (scidb/src/scidb/model/parameter.py). See
 %   docs/claude/entity-editability-model.md.
 
     properties (SetAccess = immutable)

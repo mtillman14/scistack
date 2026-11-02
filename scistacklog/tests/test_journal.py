@@ -264,11 +264,11 @@ def test_blame_headline_covers_every_category():
 
 def test_only_scistacklog_reads_the_journal_path():
     """The journal has one writer (Log.journal). Outside scistacklog, only
-    scidb.log.attach_log_file may touch its path (to stay idempotent)."""
+    scidb.model.log.attach_log_file may touch its path (to stay idempotent)."""
     repo = pathlib.Path(__file__).resolve().parents[2]
     allowed = {
         repo / "scistacklog" / "src" / "scistacklog" / "__init__.py",
-        repo / "scidb" / "src" / "scidb" / "log.py",
+        repo / "scidb" / "src" / "scidb" / "model" / "log.py",
     }
     offenders = []
     for src in repo.glob("*/src/**/*.py"):

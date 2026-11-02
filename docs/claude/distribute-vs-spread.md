@@ -132,7 +132,7 @@ A schema key is an address, never payload. Both result paths now strip
 returned schema-key columns before the save:
 
 - **spread path** — always did: scidb's flatten save reads every non-`__`,
-  non-schema-key column as data (`scidb/foreach.py`, `data_cols = ...`), so
+  non-schema-key column as data (`scidb/run/foreach.py`, `data_cols = ...`), so
   the 73x27 `FunctionalOutcomes` sheet filed as 73 `1x25` records.
 - **one-record-per-combo path** — did NOT until 2026-09-16. A multi-row table
   whose only schema-key columns were already *pinned* by the combination

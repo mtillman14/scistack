@@ -84,7 +84,7 @@ is gated only by its own value (plus db/outputs/not-dry-run preconditions).
 (scifor discards it). Recorded on the run in `_run_step(run_id, step)` (its own
 table, so existing databases gain it on open with no migration), reported on
 each variant as `steps`, never identity (renaming re-runs nothing). Ambient in
-Python (`scidb.intent.run_step` / `set_ambient_step`, like the origin), so
+Python (`scidb.provenance.intent.run_step` / `set_ambient_step`, like the origin), so
 EachOf alternatives inherit it; MATLAB's `scidb.for_each(..., 'step', "x")`
 sets it through `set_ambient_step` and clears it on exit. The GUI uses it to
 attribute a script run to the canvas node of that step name

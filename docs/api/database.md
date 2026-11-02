@@ -1,16 +1,15 @@
 # Database API
 
-<!-- Ground truth (source/tests win over prose). Verified against scidb/src/scidb/database.py:
+<!-- Ground truth (source/tests win over prose). Verified against scidb/src/scidb/store/database.py:
      configure_database(dataset_db_path, dataset_schema_keys) -> DatabaseManager (2 args, both
        required; auto-registers known subclasses; sets scifor schema; enables caching);
      get_database() -> DatabaseManager (DatabaseNotConfiguredError if not configured);
      register(variable_class) (idempotent); list_versions(variable_class, include_excluded=False,
        **metadata) -> list[dict] keys record_id/schema/branch_params/timestamp (newest first);
      get_provenance(variable_class, version=None, **metadata) -> {function_name, function_hash,
-       inputs, constants} | None; get_provenance_by_schema(**schema_keys) -> list[dict] keys
-       output_record_id/output_type/function_name/function_hash/inputs/constants;
-       get_pipeline_structure() -> list[dict] keys function_name/function_hash/output_type/
-       input_types; has_lineage(record_id)->bool; distinct_schema_values(key)->list;
+       inputs, constants} | None; distinct_schema_values(key)->list;
+     graph reads are scidb.provenance.query functions (upstream_provenance(db, rid),
+       pipeline_structure(duck), has_producing_invocation(duck, rid), ...) or the Inspector;
        export_to_csv(variable_class, path, **metadata)->int; add_to_var_group/remove_from_var_group/
        list_var_groups/get_var_group;
      scidb/__init__ module-level exclude_schema/include_schema/list_exclusions.
@@ -102,20 +101,23 @@ Non-schema keyword arguments act as `branch_params` filters. With
 
 ```python
 db.get_provenance(variable_class, version=None, **metadata) -> dict | None
-db.get_provenance_by_schema(**schema_keys) -> list[dict]
-db.get_pipeline_structure() -> list[dict]
-db.has_lineage(record_id) -> bool
 ```
 
 - **`get_provenance`** — lineage of one record (latest matching, or a specific
   `version=`): `{function_name, function_hash, inputs, constants}`, or `None` if it
   was saved without lineage.
-- **`get_provenance_by_schema`** — every lineage record at a schema location;
-  dicts keyed `output_record_id`, `output_type`, `function_name`, `function_hash`,
-  `inputs`, `constants`.
-- **`get_pipeline_structure`** — the abstract graph, ignoring data instances:
-  dicts keyed `function_name`, `function_hash`, `output_type`, `input_types`.
-- **`has_lineage`** — whether a record has a lineage row.
+
+Everything else about the graph is read from `scidb.provenance.query` (or the
+`Inspector`, `db.inspect`), not from the database handle:
+
+```python
+from scidb.provenance import query as provenance_query
+
+provenance_query.upstream_provenance(db, record_id, max_depth=20) -> list[dict]
+provenance_query.pipeline(db, record_id) -> {"nodes": [...], "edges": [...]}
+provenance_query.pipeline_structure(db._duck) -> list[dict]
+provenance_query.has_producing_invocation(db._duck, record_id) -> bool
+```
 
 ---
 

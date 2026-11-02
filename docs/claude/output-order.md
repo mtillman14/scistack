@@ -10,7 +10,7 @@ log: `.claude/plan-output-order-owner.md`.
 | Role | Where |
 |---|---|
 | The fact, written by every run (Python and MATLAB) | scidb `_run_outputs (run_id, outputs VARCHAR[])`, written by `provenance_save.record_run` → `_commit_graph` beside the `_run` row |
-| Reading it | `scidb.provenance_query.recorded_output_orders(duck, fns)` → `{fn: [order, ...]}`, distinct, newest run first |
+| Reading it | `scidb.provenance.query.recorded_output_orders(duck, fns)` → `{fn: [order, ...]}`, distinct, newest run first |
 | The node's handle order | `scistack_gui.domain.output_order.node_output_order(wired, recorded, edge_order, declared)` |
 | Whether one call writes them all | `output_order.writes_together` |
 
@@ -90,7 +90,7 @@ its variable, or one unnamed default port (tooltip **output**).
   `_build_graph`); `build_function_nodes` now branches on "has a declared
   output order", not "is MATLAB".
 - **Canvas run** (`api/run.py`): `declared_output_classes` → one call with
-  every port's variable in port order, inside `scidb.intent.
+  every port's variable in port order, inside `scidb.provenance.intent.
   run_output_names(ports)` so the run records the port names; an
   unconnected port refuses the run (`UnconnectedOutputPortError`).
 - **3a:** when the newest recorded order lists the same variables in another

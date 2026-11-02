@@ -181,7 +181,7 @@ def variant_expression(input_variable: str, variant_set) -> str:
 
         Variant(Variant(EMG, fn="loadEMG", code_version="v1"), fn="bandpass", low_hz=20)
 
-    Nesting is documented, merges the two filters (``scidb.variant.Variant``
+    Nesting is documented, merges the two filters (``scidb.model.variant.Variant``
     handles it explicitly), and keeps every keyword readable — where
     ``**{"__code__.loadEMG": "v1"}`` would leak a reserved namespace into code a
     user is meant to edit.

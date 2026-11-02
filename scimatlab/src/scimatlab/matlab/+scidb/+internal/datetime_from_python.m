@@ -45,6 +45,6 @@ function data = datetime_from_python(py_obj)
     if logical(desc{'scalar'})
         data = data(1);
     end
-    scidb.Log.debug('datetime_from_python: %d value(s), TimeZone=''%s'', %d NaT', ...
+    scifor.Log.debug('datetime_from_python: %d value(s), TimeZone=''%s'', %d NaT', ...
         numel(data), tz, sum(nat));
 end

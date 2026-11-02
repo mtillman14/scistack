@@ -12,7 +12,7 @@ Stage 5 of `.claude/plan-intent-and-fact.md`; model in
 
 from __future__ import annotations
 
-from scidb.intent import (
+from scidb.provenance.intent import (
     ASPECT_COLUMNS,
     GLOBAL_SCOPE,
     ORIGIN_GUI,
@@ -193,7 +193,7 @@ class TestMoveAndCopy:
 
 
 class TestResolution:
-    """The store feeds `scidb.intent.resolve`; these pin the two rules that
+    """The store feeds `scidb.provenance.intent.resolve`; these pin the two rules that
     only matter once statements carry a scope."""
 
     def test_another_scopes_statement_does_not_apply(self, populated_db):

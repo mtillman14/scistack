@@ -139,12 +139,12 @@ its comparison. Exactly one owner each, in the lowest layer that can host it:
 | aspect | payload | owner |
 |---|---|---|
 | `columns` | `{"columns": [...], "iterate": bool}`, `None` = whole variable | scidb (merging `provenance_save.compute_input_selectors` + the GUI's `column_selection.normalize`) |
-| `run_options` | `distribute` / `as_table` / `iterate` | `scidb.foreach_config` |
+| `run_options` | `distribute` / `as_table` / `iterate` | `scidb.run.foreach_config` |
 | `schema_location` | which levels iterate, which are pinned | the location-filter owner (`docs/claude/location-filter-semantics.md`) |
 | `wiring` | which source feeds which parameter | `scidb`, alongside the input-binding shape (`docs/claude/input-binding-round-trip.md`) |
 | `hidden` | which call sites / values / edges are excluded | scidb (it already stores `excluded` on records) |
-| `constants` | pending and recorded constant values | `scidb.foreach_config` |
-| `variant_selection` | a plot's named pins over variant space (`VariantSet`), keyed by name, about the plotted variable; no fact side | `scidb.intent` (shape), `scistackplot.model.spec.VariantSet` (payload) |
+| `constants` | pending and recorded constant values | `scidb.run.foreach_config` |
+| `variant_selection` | a plot's named pins over variant space (`VariantSet`), keyed by name, about the plotted variable; no fact side | `scidb.provenance.intent` (shape), `scistackplot.model.spec.VariantSet` (payload) |
 
 The GUI imports all of them. The precedent that this works is `call_id`:
 scidb owns the recipe (`foreach_config.CallSite`), computes
@@ -231,7 +231,7 @@ shippable.
 |---|---|
 | intent tables today | `scistack-gui/scistack_gui/stores/pipeline_store.py:92-300` |
 | the five derivation paths | `services/execution_service.py`, `api/run.py`, `services/matlab_command_format.py`, `services/code_export_service.py`, `domain/graph_builder.py` |
-| the working precedent (one recipe, both directions) | `scidb/src/scidb/foreach_config.py` + `provenance_query.config_call_id` |
+| the working precedent (one recipe, both directions) | `scidb/src/scidb/run/foreach_config.py` + `provenance_query.config_call_id` |
 | what a binding is | `docs/claude/input-binding-round-trip.md` |
 | why ids move | `docs/claude/placement-qualified-ids.md` |
 | duplication semantics | `services/scope_service.py::duplicate_pipeline`, `_clone_nodes` |
@@ -245,7 +245,7 @@ Every stage of `.claude/plan-intent-and-fact.md` is built:
   delegates (`scistack_gui/stores/intent_store.py`, `GRADUATED_ASPECTS` is the
   progress bar). The old tables are left in place, rows untouched, after a
   marker-guarded one-time import each; dropping them is a separate step.
-* **Origin:** `_run.origin`; `scidb.intent.run_origin` / `set_ambient_origin`;
+* **Origin:** `_run.origin`; `scidb.provenance.intent.run_origin` / `set_ambient_origin`;
   the GUI run thread, the compiled pipeline and GUI-generated MATLAB commands
   label `gui`; unlabelled is `script`.
 * **Divergence:** `graph_builder.mark_unused_intent` → amber chip + NOT

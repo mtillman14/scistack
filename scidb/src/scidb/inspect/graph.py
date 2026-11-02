@@ -34,12 +34,12 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from ..exceptions import NotFoundError
-from ..log import Log
-from ..provenance import constants_identity_key, parse_path_input_spec
+from scidb.model.exceptions import NotFoundError
+from scidb.model.log import Log
+from scidb.provenance.graph import constants_identity_key, parse_path_input_spec
 
 if TYPE_CHECKING:
-    from ..database import DatabaseManager
+    from scidb.store.database import DatabaseManager
 
 
 # ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ def var_node_id(name: str) -> str:
 
 
 def parse_path_input(value: str) -> dict | None:
-    """``scidb.provenance.parse_path_input_spec`` under this module's name."""
+    """``scidb.provenance.graph.parse_path_input_spec`` under this module's name."""
     return parse_path_input_spec(value)
 
 
@@ -179,8 +179,8 @@ def _node_states(db, fn_names, fn_registry=None) -> dict[str, dict]:
     are the schema locations of the expected-but-absent invocations (used by
     the state command to say *which* combos need running).
     """
-    from .. import provenance_query
-    from ..foreach_config import function_hash_for
+    from scidb.provenance import query as provenance_query
+    from scidb.run.foreach_config import function_hash_for
 
     stored = _stored_function_hashes(db._duck)
     states: dict[str, dict] = {}
@@ -236,7 +236,7 @@ def _node_states(db, fn_names, fn_registry=None) -> dict[str, dict]:
 
 
 def _variable_record_counts(duck) -> dict[str, int]:
-    from ..provenance import INTERNAL_RECORD_TYPES
+    from scidb.provenance.graph import INTERNAL_RECORD_TYPES
 
     rows = duck.fetchall(
         "SELECT type, COUNT(*) FROM _record "
@@ -258,9 +258,9 @@ def build_pipeline_graph(
     output_type: str | None = None,
     fn_registry: dict | None = None,
 ) -> PipelineGraph:
-    from .. import provenance_query
+    from scidb.provenance import query as provenance_query
 
-    from ..database import aggregate_pipeline_variants, call_site_wiring_ids
+    from scidb.store.database import aggregate_pipeline_variants, call_site_wiring_ids
 
     duck = db._duck
     raw_variants = provenance_query.pipeline_variants(duck)

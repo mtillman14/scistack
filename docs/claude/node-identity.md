@@ -73,7 +73,7 @@ the same statement by the same person.
 | `call_id` | the call-site config | `foreach_config.CallSite` |
 | `wiring_id` | fn name + input params + outputs + path inputs | `provenance.compute_wiring_id` |
 | constant / PathInput / glue record ids | the value / template / chain | `provenance.compute_*_record_id` |
-| `chain_hash` | the glue chain | `scidb.glue` |
+| `chain_hash` | the glue chain | `scidb.run.glue` |
 
 ### Allocated — already UUIDs
 
@@ -296,7 +296,7 @@ them. That is a storage requirement, not a design question.
 
 | what | where |
 |---|---|
-| the id constructors | `scidb/src/scidb/provenance.py`, `scicanonicalhash/hashing.py` |
+| the id constructors | `scidb/src/scidb/provenance/graph.py`, `scicanonicalhash/hashing.py` |
 | node id shapes and the placement suffix | `scistack_gui/ids.py`, `placement-qualified-ids.md` |
 | `subject_ref` as a stable id | `intent-and-fact.md` §3 |
 | `wiring` as an aspect | `intent-and-fact.md` §5 |

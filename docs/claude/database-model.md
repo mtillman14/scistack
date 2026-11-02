@@ -38,7 +38,7 @@ fresh `_run` audit row.
 
 ## 1. Schema
 
-### Provenance graph (`scidb/provenance.py`)
+### Provenance graph (`scidb/provenance/graph.py`)
 
 A **bipartite graph** in the classic W3C-PROV shape: **records** (entities) and
 **invocations** (activities), connected by edges `record → invocation → record`.
@@ -81,7 +81,7 @@ is a first-class node rather than a flat edge table.
 
 ---
 
-## 2. Identity model (`scidb/provenance.py`)
+## 2. Identity model (`scidb/provenance/graph.py`)
 
 ```
 constant record_id  = sha16("__constant__" | "content:" canonical_hash(value))
@@ -261,7 +261,7 @@ out one call per column.
 
 ---
 
-## 8. provenance (read side — `scidb/provenance_query.py`)
+## 8. provenance (read side — `scidb/provenance/query.py`)
 
 Pure-SQL traversal — no JSON parsing, no heuristics:
 
@@ -323,16 +323,16 @@ GUI-layer decision.
 
 ## 10. Key modules
 
-- `scidb/provenance.py` — schema (DDL) + identity helpers + entity inserts.
-- `scidb/provenance_save.py` — graph writers (`record_run`,
+- `scidb/provenance/graph.py` — schema (DDL) + identity helpers + entity inserts.
+- `scidb/provenance/save.py` — graph writers (`record_run`,
   `record_direct_save`, `invocation_id_for_meta`, `_commit_graph`).
-- `scidb/provenance_query.py` — pure-SQL read side.
-- `scidb/database.py` — save/load/find_record_id/save_batch/`_load_with_where` /
+- `scidb/provenance/query.py` — pure-SQL read side.
+- `scidb/store/database.py` — save/load/find_record_id/save_batch/`_load_with_where` /
   variant queries.
-- `scidb/foreach.py` — for_each orchestration, `_save_results`,
+- `scidb/run/foreach.py` — for_each orchestration, `_save_results`,
   `_build_skip_hook`.
-- `scidb/state.py` — node-state (binary) + `check_combo_state`.
-- `scidb/pipeline.py` — the `@scistack` marker (formerly `@pipeline`, replaces `@lineage_fcn`).
+- `scidb/provenance/state.py` — node-state (binary) + `check_combo_state`.
+- `scidb/run/pipeline.py` — the `@scistack` marker (formerly `@pipeline`, replaces `@lineage_fcn`).
 - `scilineage/` — reduced to `hashing.py` (`compute_function_hash`,
   `canonical_hash`).
 

@@ -56,13 +56,13 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       the run (`_run_step`). Not identity. The GUI uses it to
 %                       attribute this run to the canvas node of the same step
 %                       name, even when the wiring changed. See
-%                       scidb.intent.run_step (Python).
+%                       scidb.provenance.intent.run_step (Python).
 %       parameter_names - struct: input name -> the DECLARED Parameter name
 %                       that fed it (e.g. struct('gaitRiteConfig',
 %                       'gaitrite_config')). Recorded on the constant's
 %                       provenance edge so the GUI shows ONE Parameter node
 %                       after a run; never part of identity. See
-%                       scidb.parameter.declared_input_names (Python),
+%                       scidb.model.parameter.declared_input_names (Python),
 %                       which also names PathInputs (cleanup-audit F38).
 %       locations     - JSON text: the schema location selection
 %                       {"include": [[[key, value], ...], ...],
@@ -87,7 +87,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %                       location and variant. "error" refuses the save
 %                       (DuplicateLocationError); "combine" makes them one
 %                       record, a differing value becoming the list of every
-%                       row's value. Owner: Python scidb.combine.
+%                       row's value. Owner: Python scidb.run.combine.
 %       categorical   - If true, convert metadata columns of the RETURNED
 %                       table to categorical (scifor.categorize_metadata),
 %                       after saving. (default: false)
@@ -117,9 +117,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % --- step: ambient in Python for this call (read where the run is
     % recorded); cleared when this function exits, however it exits. ---
     if strlength(opts.step) > 0
-        py.scidb.intent.set_ambient_step(char(opts.step));
-        step_cleanup = onCleanup(@() py.scidb.intent.set_ambient_step(py.None)); %#ok<NASGU>
-        scidb.Log.info('for_each step: %s', char(opts.step));
+        py.scidb.provenance.intent.set_ambient_step(char(opts.step));
+        step_cleanup = onCleanup(@() py.scidb.provenance.intent.set_ambient_step(py.None)); %#ok<NASGU>
+        scifor.Log.info('for_each step: %s', char(opts.step));
     end
 
     dry_run = opts.dry_run;
@@ -142,7 +142,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     end
 
     % --- Step 0: EachOf expansion — must be first, before any other logic.
-    %     Mirrors Python scidb/src/scidb/foreach.py's own EachOf expansion
+    %     Mirrors Python scidb/src/scidb/run/foreach.py's own EachOf expansion
     %     (see docs/claude/each-of-variant-expansion.md): each alternative
     %     becomes an independent recursive scidb.for_each() call (own
     %     prepare/save/lineage), and results are vertcat'd. This recursion
@@ -163,7 +163,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     end
 
     if ~isempty(each_of_axes)
-        scidb.Log.debug('EachOf expansion detected - %d axis(es), making recursive calls', ...
+        scifor.Log.debug('EachOf expansion detected - %d axis(es), making recursive calls', ...
             numel(each_of_axes));
         value_cells = cellfun(@(ax) ax{3}, each_of_axes, 'UniformOutput', false);
         combos = scidb.internal.cartesian_product(value_cells);
@@ -187,7 +187,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             end
         end
         result_tbl = vertcat_each_of_results(branch_results, fn_name);
-        scidb.Log.debug('EachOf expansion complete - concatenated %d branch result(s)', ...
+        scifor.Log.debug('EachOf expansion complete - concatenated %d branch result(s)', ...
             numel(branch_results));
         return;
     end
@@ -214,12 +214,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % Endpoint (plot_/stat_) detection needs a NAMED function handle:
     % func2str(@(x)...) starts with '@' and can never match the prefix.
     if opts.finalized && startsWith(fn_name, '@')
-        scidb.Log.warn(['finalized=true passed with an anonymous function ' ...
+        scifor.Log.warn(['finalized=true passed with an anonymous function ' ...
             'handle: endpoint detection requires a NAMED plot_*/stat_* ' ...
             'function, so the flag will be ignored.']);
     end
 
-    scidb.Log.info('===== for_each(%s) start =====', fn_name);
+    scifor.Log.info('===== for_each(%s) start =====', fn_name);
 
     % Dry-run is handled below by passing dry_run=true through the bridge
     % so Python's _for_each_prepare can resolve empty [] iterables from
@@ -279,7 +279,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     py_output_classes = py.list(output_class_names);
 
     % --- where filter: ship the Python Filter object directly.
-    %     ForEachConfig.to_version_keys handles the .to_key() stringification
+    %     ForEachConfig.to_config_keys handles the .to_key() stringification
     %     for __where; _load_input also expects the live Filter object.
     if isempty(where_filter)
         py_where = py.None;
@@ -372,7 +372,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                        'parameter_names', py_parameter_names, ...
                        'locations', py_locations)));
             target_pipe.store_step(step_index, fn, inputs, outputs, opts);
-            scidb.Log.info(['pipeline_step_registered (MATLAB): %s -> ' ...
+            scifor.Log.info(['pipeline_step_registered (MATLAB): %s -> ' ...
                 'pipeline %s (deferred)'], fn_name, target_pipe.name);
             result_tbl = struct('deferred', true, ...
                                 'pipeline', target_pipe.name, ...
@@ -405,7 +405,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'schema_key_types', scifor.key_types_to_py(opts.schema_key_types), ...
                'project_root', project_root_to_py(opts.project_root), ...
                'source_text', fn_source));
-    scidb.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
+    scifor.Log.info('for_each_prepare returned in %.3fs', toc(prep_t0));
 
     % Dry-run: Python ran the scifor.for_each(dry_run=true) call itself
     % and returned a stub (handle=-1). Nothing else to do.
@@ -463,7 +463,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     catch mi_err
         % An older bridge without the key, or a conversion surprise: fall
         % back to the previous (table) delivery rather than failing the run.
-        scidb.Log.debug('for_each: mapping_inputs unavailable (%s)', mi_err.message);
+        scifor.Log.debug('for_each: mapping_inputs unavailable (%s)', mi_err.message);
         mapping_inputs = struct();
     end
     if ~isempty(fieldnames(mapping_inputs))
@@ -473,7 +473,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             mi_parts{mi} = sprintf('%s (%d field(s))', mi_names{mi}, ...
                 numel(mapping_inputs.(mi_names{mi})));
         end
-        scidb.Log.info(sprintf( ...
+        scifor.Log.info(sprintf( ...
             'struct-valued input(s) rebuilt per combo: %s', ...
             strjoin(mi_parts, ', ')));
     end
@@ -506,7 +506,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             resolved_paths.(k_rpo) = cs;
         end
     catch rpo_err
-        scidb.Log.warn('for_each: could not convert resolved_path_outputs: %s', ...
+        scifor.Log.warn('for_each: could not convert resolved_path_outputs: %s', ...
             rpo_err.message);
     end
     t_resolved_paths = toc(t0_rpo);
@@ -536,7 +536,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             scifor_inputs.(k), meta_original_classes);
         % One line per input: this is the phase that hung on a 1.7e8-sample
         % EMG variable, and per-input granularity is what names the culprit.
-        scidb.Log.info('for_each: converted input ''%s'' in %.3fs (%s)', ...
+        scifor.Log.info('for_each: converted input ''%s'' in %.3fs (%s)', ...
             k, toc(t0_one), describe_converted_input(scifor_inputs.(k)));
     end
     t_inputs = toc(t0_inputs);
@@ -547,7 +547,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     %     work MATLAB owns, because a .m function cannot execute inside
     %     Python's prepare step.
     %
-    %     Same contract as scidb.glue: __-prefixed bookkeeping columns are
+    %     Same contract as scidb.run.glue: __-prefixed bookkeeping columns are
     %     hidden and re-attached, the row set must not change, and
     %     schema-key columns must come back value-identical. ---
     t0_glue = tic;
@@ -595,7 +595,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     end
     t_combos = toc(t0_combos);
 
-    scidb.Log.info(['[timing] for_each_convert_inputs: %d input(s), ' ...
+    scifor.Log.info(['[timing] for_each_convert_inputs: %d input(s), ' ...
         '%d combo(s), TOTAL=%.3fs (resolved_paths=%.3fs, loaded_inputs=%.3fs, ' ...
         'glue=%.3fs, metadata_iterables=%.3fs, full_combos=%.3fs)'], ...
         numel(loaded_keys), n_combos, toc(convert_t0), t_resolved_paths, ...
@@ -618,12 +618,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % exactly the combos prepare deliberately removed. Free the prepare-side
     % cache and return an empty result instead.
     if n_combos == 0
-        scidb.Log.info(['for_each(%s): 0 combos to run (all filtered/skipped); ' ...
+        scifor.Log.info(['for_each(%s): 0 combos to run (all filtered/skipped); ' ...
             'skipping scifor loop'], fn_name);
         try
             py.scimatlab.bridge.for_each_save(handle, py.list(), pyargs('save', false));
         catch free_err
-            scidb.Log.warn('for_each: failed to free prepare cache: %s', free_err.message);
+            scifor.Log.warn('for_each: failed to free prepare cache: %s', free_err.message);
         end
         result_tbl = table();
         return;
@@ -686,7 +686,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         % scifor stays policy-free). string keys: exact only; undeclared
         % keys needing a spelling bridge: scidb:SchemaKeyTypeError.
         if isempty(opts.db)
-            py_db_kt = py.scidb.database.get_database();
+            py_db_kt = py.scidb.store.database.get_database();
         else
             py_db_kt = opts.db;
         end
@@ -746,12 +746,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             fn = @(varargin) stat_endpoint_call(user_fn, endpoint_path_idx, ...
                 logical(opts.finalized), fn_name, varargin{:});
         end
-        scidb.Log.info('for_each(%s): wrapped as %s endpoint (finalized=%d)', ...
+        scifor.Log.info('for_each(%s): wrapped as %s endpoint (finalized=%d)', ...
             fn_name, endpoint_kind, opts.finalized);
     end
 
     % --- MATLAB inner loop: scifor.for_each ---
-    scidb.Log.debug('scifor.for_each: %d combo(s), %d input(s), %d output(s)', ...
+    scifor.Log.debug('scifor.for_each: %d combo(s), %d input(s), %d output(s)', ...
         n_combos, numel(fieldnames(scifor_inputs)), n_outputs);
     n_out = max(n_outputs, 1);
     result_tables = cell(1, n_out);
@@ -790,17 +790,17 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     py_result_dfs = py.list();
     for o = 1:n_out
         if n_outputs == 0
-            scidb.Log.info('scifor output %d: Skipping storing output, 0 outputs specified', o)
+            scifor.Log.info('scifor output %d: Skipping storing output, 0 outputs specified', o)
             break; % Don't store outputs if 0 outputs are specified, e.g. {}
         end
         tbl = result_tables{o};
         if isempty(tbl)
-            scidb.Log.warn('scifor output %d (%s): empty table; nothing to save', ...
+            scifor.Log.warn('scifor output %d (%s): empty table; nothing to save', ...
                 o, output_names{o});
             py_result_dfs.append(py.None);
             continue;
         end
-        scidb.Log.debug('scifor output %d (%s): table %dx%d cols=%s', ...
+        scifor.Log.debug('scifor output %d (%s): table %dx%d cols=%s', ...
             o, output_names{o}, height(tbl), width(tbl), ...
             strjoin(string(tbl.Properties.VariableNames), ', '));
         t_out = tic;
@@ -815,7 +815,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         % numeric dtype to double.
         [tbl, cast_cols] = scidb.internal.whole_metadata_columns(tbl, output_names);
         if ~isempty(cast_cols)
-            scidb.Log.debug('scifor output %d (%s): metadata sent as int64: %s', ...
+            scifor.Log.debug('scifor output %d (%s): metadata sent as int64: %s', ...
                 o, output_names{o}, strjoin(cast_cols, ', '));
         end
         [py_df, col_stats] = scidb.internal.to_python(tbl);
@@ -825,7 +825,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             output_names{o}, height(tbl), width(tbl), w.bytes, toc(t_out), ...
             describe_slowest_columns(col_stats, 3)); %#ok<AGROW>
     end
-    scidb.Log.info('[timing] for_each_result_transfer: %d output(s), TOTAL=%.3fs (%s)', ...
+    scifor.Log.info('[timing] for_each_result_transfer: %d output(s), TOTAL=%.3fs (%s)', ...
         numel(transfer_parts), toc(transfer_t0), strjoin(transfer_parts, '; '));
 
     % --- Call #2: Python save ---
@@ -842,10 +842,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         note_run_failure(save_err, fn_name);
         rethrow(save_err);
     end
-    scidb.Log.info('for_each_save returned in %.3fs', toc(save_t0));
+    scifor.Log.info('for_each_save returned in %.3fs', toc(save_t0));
     stop_err = scidb.internal.iteration_tally('take_stop');
     if ~isempty(stop_err)
-        scidb.Log.info(['for_each(%s): on_error=stop — completed combos saved; ' ...
+        scifor.Log.info(['for_each(%s): on_error=stop — completed combos saved; ' ...
             'rethrowing %s'], fn_name, stop_err.identifier);
         rethrow(stop_err);
     end
@@ -883,7 +883,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         % rather than leaving it unset — do not rely on MATLAB tolerating an
         % unassigned output on a statement call.
         result_tbl = table();
-        scidb.Log.info(['for_each(%s): caller requested no output (nargout=0) — ' ...
+        scifor.Log.info(['for_each(%s): caller requested no output (nargout=0) — ' ...
             'skipping post-save result conversion (records are already saved)'], ...
             fn_name);
     elseif isa(py_result_df, 'py.NoneType')
@@ -900,7 +900,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         end
     end
 
-    scidb.Log.debug('post-save result: %dx%d cols=%s', ...
+    scifor.Log.debug('post-save result: %dx%d cols=%s', ...
         height(result_tbl), width(result_tbl), ...
         strjoin(string(result_tbl.Properties.VariableNames), ', '));
 
@@ -913,7 +913,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         t0_fl = tic;
         result_tbl = flatten_nested_table_outputs(result_tbl, output_names);
         t_flatten = toc(t0_fl);
-        scidb.Log.debug('post-flatten result: %dx%d cols=%s', ...
+        scifor.Log.debug('post-flatten result: %dx%d cols=%s', ...
             height(result_tbl), width(result_tbl), ...
             strjoin(string(result_tbl.Properties.VariableNames), ', '));
     end
@@ -1007,7 +1007,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
             string(result_tbl.Properties.VariableNames), 'stable');
         result_tbl = scifor.categorize_metadata(result_tbl, meta_cols, ...
             scifor.get_schema());
-        scidb.Log.debug('categorical: converted %d metadata column(s): %s', ...
+        scifor.Log.debug('categorical: converted %d metadata column(s): %s', ...
             numel(meta_cols), strjoin(meta_cols, ', '));
     end
 
@@ -1015,12 +1015,12 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % 'for_each_save returned' and 'for_each done'. bytes is the size of the
     % converted MATLAB table (0 when the conversion was skipped or unmeasurable),
     % so a slow conversion reports HOW MUCH it converted, not just how long.
-    scidb.Log.info(['[timing] for_each_postsave: TOTAL=%.3fs (from_python=%.3fs, ' ...
+    scifor.Log.info(['[timing] for_each_postsave: TOTAL=%.3fs (from_python=%.3fs, ' ...
         'flatten=%.3fs, type_restore=%.3fs, introspect_parse=%.3fs, bytes=%d)'], ...
         toc(post_t0), t_from_python, t_flatten, t_type_restore, t_introspect, ...
         result_bytes);
 
-    scidb.Log.info('===== for_each(%s) done =====', fn_name);
+    scifor.Log.info('===== for_each(%s) done =====', fn_name);
 end
 
 
@@ -1041,15 +1041,15 @@ function note_run_failure(err, fn_name)
 %   Never throws: describing an error must not replace it.
     try
         if ~isa(err, 'matlab.exception.PyException') || ~isprop(err, 'ExceptionObject')
-            scidb.Log.debug('note_run_failure: %s is not a Python error; no group', class(err));
+            scifor.Log.debug('note_run_failure: %s is not a Python error; no group', class(err));
             return;
         end
         txt = char(py.scimatlab.bridge.run_failure_group_json(err.ExceptionObject, fn_name));
         if isempty(txt), return; end
         scidb.internal.iteration_tally('add_group', jsondecode(txt));
-        scidb.Log.debug('note_run_failure: run-level group recorded for %s', fn_name);
+        scifor.Log.debug('note_run_failure: run-level group recorded for %s', fn_name);
     catch note_err
-        scidb.Log.warn('note_run_failure: could not describe the save error of %s: %s', ...
+        scifor.Log.warn('note_run_failure: could not describe the save error of %s: %s', ...
             fn_name, note_err.message);
     end
 end
@@ -1700,7 +1700,7 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
 %     * a MATLAB function handle — the body runs here, in apply_matlab_glue;
 %     * a struct with fields NAME, LANGUAGE ('python') and SOURCE_FILE — the
 %       body runs in Python's for_each_prepare. That is the only site a
-%       CONSTANT-fed glue can run (scidb.glue.apply_constant_glue applies it
+%       CONSTANT-fed glue can run (scidb.run.glue.apply_constant_glue applies it
 %       while the version keys are being built, so the glued value is what
 %       lands in __constants), and prepare is Python on both run paths. Such
 %       an element contributes NO handle: MATLAB must not apply it again.
@@ -1726,7 +1726,7 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
             continue;
         end
         if ~isfield(inputs, param)
-            scidb.Log.warn(['[glue] ''%s'': chain declared but there is no ' ...
+            scifor.Log.warn(['[glue] ''%s'': chain declared but there is no ' ...
                 'such input on this call — glue not applied'], param);
             continue;
         end
@@ -1780,7 +1780,7 @@ function [handles, py_glue] = build_glue_chains(glue_opt, inputs)
         if ~isempty(matlab_handles)
             handles.(param) = matlab_handles;
         end
-        scidb.Log.info('[glue] ''%s'': chain = [%s]', param, ...
+        scifor.Log.info('[glue] ''%s'': chain = [%s]', param, ...
             strjoin(labels, ', '));
     end
 end
@@ -1796,12 +1796,12 @@ function src = read_function_source(name)
         if ~isempty(path) && exist(path, 'file') == 2
             src = fileread(path);
         else
-            scidb.Log.warn(['[glue] could not locate source for ''%s'' on the ' ...
+            scifor.Log.warn(['[glue] could not locate source for ''%s'' on the ' ...
                 'MATLAB path; hashing its name only, so edits to its body ' ...
                 'will NOT invalidate downstream results.'], name);
         end
     catch err
-        scidb.Log.warn('[glue] could not read source for ''%s'': %s', name, err.message);
+        scifor.Log.warn('[glue] could not read source for ''%s'': %s', name, err.message);
     end
 end
 
@@ -1838,7 +1838,7 @@ function scifor_inputs = decode_codec_inputs(scifor_inputs, inputs, py_db, rid_c
         parts = strsplit(type_name, '.');
         scifor_inputs.(k) = scidb.internal.decode_codec_input( ...
             scifor_inputs.(k), codec, parts{end}, data_cols, rid_col);
-        scidb.Log.info('for_each: input ''%s'' (%s) decoded with from_db', k, type_name);
+        scifor.Log.info('for_each: input ''%s'' (%s) decoded with from_db', k, type_name);
     end
 end
 
@@ -1848,7 +1848,7 @@ function scifor_inputs = apply_matlab_glue(scifor_inputs, py_chains, handles)
 %
 %   Applied between prepare and the loop, on the tables MATLAB has already
 %   rebuilt from for_each_describe_loaded_input. Enforces the same contract
-%   scidb.glue enforces on the Python path:
+%   scidb.run.glue enforces on the Python path:
 %
 %     * ``__``-prefixed columns are hidden from the glue and re-attached
 %       afterwards — internal bookkeeping the user must never think about;
@@ -1899,7 +1899,7 @@ function value = apply_one_glue(value, h, param, schema_keys)
         % A scalar / array / struct: nothing to preserve, just apply.
         t0 = tic;
         out = h(tbl);
-        scidb.Log.debug('[glue] ''%s'': applied %s (non-table) in %.3fs', ...
+        scifor.Log.debug('[glue] ''%s'': applied %s (non-table) in %.3fs', ...
             param, name, toc(t0));
         if ~isempty(wrapper)
             wrapper.data = out;
@@ -1976,7 +1976,7 @@ function value = apply_one_glue(value, h, param, schema_keys)
         collisions = intersect(string(out.Properties.VariableNames), ...
                                string(hidden.Properties.VariableNames));
         if ~isempty(collisions)
-            scidb.Log.warn(['[glue] ''%s'': %s produced internal column(s) %s ' ...
+            scifor.Log.warn(['[glue] ''%s'': %s produced internal column(s) %s ' ...
                 '— overwritten by scidb''s own bookkeeping'], ...
                 param, name, strjoin(cellstr(collisions), ', '));
             out(:, cellstr(collisions)) = [];
@@ -1984,7 +1984,7 @@ function value = apply_one_glue(value, h, param, schema_keys)
         out = [out hidden];
     end
 
-    scidb.Log.debug('[glue] ''%s'': applied %s (%d -> %d cols) in %.3fs', ...
+    scifor.Log.debug('[glue] ''%s'': applied %s (%d -> %d cols) in %.3fs', ...
         param, name, width(visible), width(out) - width(hidden), elapsed);
 
     if ~isempty(wrapper)
@@ -2006,7 +2006,7 @@ function [meta_args, opts] = split_options(varargin)
     opts.where = [];
     opts.introspect = false;
     opts.on_error = 'continue';  % scifor owns it; validated there (Python)
-    opts.on_duplicate = 'error';  % scidb.combine owns it; validated there (Python)
+    opts.on_duplicate = 'error';  % scidb.run.combine owns it; validated there (Python)
     opts.skip_computed = false;
     opts.finalized = false;
     opts.categorical = false;   % scifor option; applied to the returned table
@@ -2035,147 +2035,101 @@ function [meta_args, opts] = split_options(varargin)
     % to register into a non-ambient pipeline.
     opts.pipeline = '';
 
-    % Reserved option names (normalized: lowercased, underscores removed) used
-    % to warn when a metadata key looks like a misspelled option. Keep in sync
-    % with the cases below.
-    reserved_opts = ["dryrun", "save", "preload", "astable", "db", ...
-                     "parallel", "distribute", "where", "introspect", ...
-                     "skipcomputed", "finalized", "categorical", "sharelimits", ...
-                     "schemakeys", "schemakeytypes", "schemafilter", "glue", "parameternames", "locations", ...
-                     "fnname", "fnhash", "pipeline"];
-
+    % Which names are options is Python's call (scifor.option_pairs ->
+    % scifor.options.classify_for_each_args, which also warns about a
+    % misspelled option). This function only turns each value into the
+    % MATLAB type the rest of for_each reads.
+    [names, values, roles] = scifor.option_pairs(varargin, 'scidb');
     meta_args = {};
-    i = 1;
-    while i <= numel(varargin)
-        key = varargin{i};
-        if (ischar(key) || isstring(key))
-            switch lower(string(key))
-                case "dry_run"
-                    opts.dry_run = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "save"
-                    opts.save = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "preload"
-                    % Accepted but no longer used (Python owns prepare).
-                    i = i + 2; continue;
-                case "as_table"
-                    val = varargin{i+1};
-                    if islogical(val)
-                        opts.as_table = val;
-                    elseif isstring(val)
-                        opts.as_table = val;
-                    elseif ischar(val)
-                        opts.as_table = string(val);
-                    elseif iscell(val)
-                        opts.as_table = string(val);
-                    end
-                    i = i + 2; continue;
-                case "db"
-                    opts.db = varargin{i+1};
-                    i = i + 2; continue;
-                case "parallel"
-                    % Accepted but no longer supported (parallel branch deleted
-                    % per redesign plan Phase 0).
-                    if logical(varargin{i+1})
-                        scidb.Log.warn('parallel=true ignored: parfor branch removed in redesign');
-                    end
-                    i = i + 2; continue;
-                case "distribute"
-                    opts.distribute = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "on_error"
-                    opts.on_error = char(string(varargin{i+1}));
-                    py.scifor.validate_on_error(opts.on_error);
-                    i = i + 2; continue;
-                case "on_duplicate"
-                    opts.on_duplicate = char(string(varargin{i+1}));
-                    py.scidb.validate_on_duplicate(opts.on_duplicate);
-                    i = i + 2; continue;
-                case "where"
-                    opts.where = varargin{i+1};
-                    i = i + 2; continue;
-                case "introspect"
-                    opts.introspect = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "skip_computed"
-                    opts.skip_computed = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "categorical"
-                    opts.categorical = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "finalized"
-                    opts.finalized = logical(varargin{i+1});
-                    i = i + 2; continue;
-                case "share_limits"
-                    opts.share_limits = varargin{i+1};
-                    i = i + 2; continue;
-                case "schema_keys"
-                    % Schema key names to iterate — structural sugar for
-                    % key=[] on each. Forwarded to for_each_prepare, which
-                    % seeds metadata_iterables via scifor.expand_schema_keys
-                    % (same function scidb.for_each's Python path uses).
-                    opts.schema_keys = string(varargin{i+1});
-                    opts.schema_keys_given = true;
-                    i = i + 2; continue;
-                case "schema_key_types"
-                    % struct: schema key -> 'numeric' | 'string'. The
-                    % database owns it; for_each_prepare records it there.
-                    opts.schema_key_types = varargin{i+1};
-                    i = i + 2; continue;
-                case "schema_filter"
-                    % struct: schema key -> explicit value list, overriding
-                    % auto-resolution (or constraining a non-iterated key
-                    % via where=). See Python scidb.for_each's schema_filter.
-                    opts.schema_filter = varargin{i+1};
-                    i = i + 2; continue;
-                case "glue"
-                    % struct: input name -> glue function handle, or a cell
-                    % array of handles applied in order.
-                    opts.glue = varargin{i+1};
-                    i = i + 2; continue;
-                case "parameter_names"
-                    opts.parameter_names = varargin{i+1};
-                    i = i + 2; continue;
-                case "step"
-                    opts.step = string(varargin{i+1});
-                    i = i + 2; continue;
-                case "locations"
-                    opts.locations = varargin{i+1};
-                    i = i + 2; continue;
-                case "project_root"
-                    opts.project_root = string(varargin{i+1});
-                    i = i + 2; continue;
-                case "pipeline"
-                    opts.pipeline = varargin{i+1};
-                    i = i + 2; continue;
-                case "_fn_name"
-                    opts.fn_name_override = char(varargin{i+1});
-                    i = i + 2; continue;
-                case "_fn_hash"
-                    opts.fn_hash_override = char(varargin{i+1});
-                    i = i + 2; continue;
-            end
+    for k = 1:numel(names)
+        if strcmp(roles{k}, 'axis')
+            meta_args(end+1:end+2) = {names{k}, values{k}}; %#ok<AGROW>
+            continue;
         end
-        meta_args{end+1} = varargin{i}; %#ok<AGROW>
-        i = i + 1;
-    end
-
-    % Typo guard: an unrecognized option name (e.g. "skipComputed",
-    % "dry_run" misspelled) silently becomes a metadata iteration axis, which
-    % is almost never intended and produces confusing phantom iterations. Warn
-    % when a metadata KEY normalizes to a reserved option name but didn't match
-    % a case above.
-    for j = 1:2:numel(meta_args)
-        k = meta_args{j};
-        if ischar(k) || isstring(k)
-            nkey = erase(lower(string(k)), "_");
-            if ismember(nkey, reserved_opts)
-                scidb.Log.warn(['Metadata key "%s" looks like a for_each ' ...
-                    'option but was not recognized — it is being treated as ' ...
-                    'an iteration axis. Check spelling/case (e.g. ' ...
-                    '"skip_computed").'], char(string(k)));
-            end
+        val = values{k};
+        switch string(names{k})
+            case "dry_run"
+                opts.dry_run = logical(val);
+            case "save"
+                opts.save = logical(val);
+            case "preload"
+                % Accepted and ignored (Python owns prepare).
+            case "as_table"
+                if islogical(val) || isstring(val)
+                    opts.as_table = val;
+                elseif ischar(val) || iscell(val)
+                    opts.as_table = string(val);
+                end
+            case "db"
+                opts.db = val;
+            case "parallel"
+                % Accepted and ignored (there is no parallel loop).
+                if logical(val)
+                    scifor.Log.warn('parallel=true ignored: for_each has no parallel loop');
+                end
+            case "distribute"
+                opts.distribute = logical(val);
+            case "on_error"
+                opts.on_error = char(string(val));
+                py.scifor.validate_on_error(opts.on_error);
+            case "on_duplicate"
+                opts.on_duplicate = char(string(val));
+                py.scidb.validate_on_duplicate(opts.on_duplicate);
+            case "where"
+                opts.where = val;
+            case "introspect"
+                opts.introspect = logical(val);
+            case "skip_computed"
+                opts.skip_computed = logical(val);
+            case "categorical"
+                opts.categorical = logical(val);
+            case "finalized"
+                opts.finalized = logical(val);
+            case "share_limits"
+                opts.share_limits = val;
+            case "schema_keys"
+                % Schema key names to iterate — structural sugar for
+                % key=[] on each. Forwarded to for_each_prepare, which
+                % seeds metadata_iterables via scifor.expand_schema_keys
+                % (same function scidb.for_each's Python path uses).
+                opts.schema_keys = string(val);
+                opts.schema_keys_given = true;
+            case "schema_key_types"
+                % struct: schema key -> 'numeric' | 'string'. The
+                % database owns it; for_each_prepare records it there.
+                opts.schema_key_types = val;
+            case "schema_filter"
+                % struct: schema key -> explicit value list, overriding
+                % auto-resolution (or constraining a non-iterated key
+                % via where=). See Python scidb.for_each's schema_filter.
+                opts.schema_filter = val;
+            case "glue"
+                % struct: input name -> glue function handle, or a cell
+                % array of handles applied in order.
+                opts.glue = val;
+            case "parameter_names"
+                opts.parameter_names = val;
+            case "step"
+                opts.step = string(val);
+            case "locations"
+                opts.locations = val;
+            case "project_root"
+                opts.project_root = string(val);
+            case "pipeline"
+                opts.pipeline = val;
+            case "_fn_name"
+                opts.fn_name_override = char(val);
+            case "_fn_hash"
+                opts.fn_hash_override = char(val);
+            otherwise
+                if strcmp(roles{k}, 'option')
+                    % Python declares an option this file cannot read yet.
+                    error('scidb:for_each', ['for_each option "%s" has no ' ...
+                        'MATLAB handling in +scidb/for_each.m split_options.'], names{k});
+                end
+                % An unknown leading-underscore name stays an iteration
+                % axis, as it always has.
+                meta_args(end+1:end+2) = {names{k}, val}; %#ok<AGROW>
         end
     end
 end
@@ -2201,7 +2155,7 @@ function py_names = parameter_names_to_python(names)
         end
         py_names{fns{k}} = char(v);
     end
-    scidb.Log.debug('parameter_names (input -> declared): %s', ...
+    scifor.Log.debug('parameter_names (input -> declared): %s', ...
         char(py.str(py_names)));
 end
 

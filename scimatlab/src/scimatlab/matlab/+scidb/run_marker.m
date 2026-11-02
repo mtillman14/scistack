@@ -41,7 +41,7 @@ function cleanup = run_marker(action, marker_dir, run_id, varargin)
 %
 %   **Never throws.** A marker is diagnostics about a run, and failing to
 %   write one must not fail the run it describes. Every failure is logged
-%   through scidb.Log and swallowed.
+%   through scifor.Log and swallowed.
 %
 %   The file format is one line of JSON, defined by scidb.run_markers on the
 %   Python side and pinned from both directions by
@@ -76,7 +76,7 @@ function cleanup = run_marker(action, marker_dir, run_id, varargin)
             if numel(varargin) >= 4, failures = varargin{4}; end
             write_done(marker_dir, run_id, ok, identifier, message, false, failures);
         otherwise
-            scidb.Log.warn('run_marker: unknown action ''%s'' (ignored)', action);
+            scifor.Log.warn('run_marker: unknown action ''%s'' (ignored)', action);
     end
 end
 
@@ -91,7 +91,7 @@ function write_started(marker_dir, run_id)
     catch marker_err__
         % Deliberately not rethrown: see the header. The run is more
         % important than the report about the run.
-        scidb.Log.warn('run_marker: could not write .started for %s: %s', ...
+        scifor.Log.warn('run_marker: could not write .started for %s: %s', ...
             run_id, marker_err__.message);
     end
 end
@@ -125,7 +125,7 @@ function write_done(marker_dir, run_id, ok, identifier, message, interrupted, fa
         end
         write_atomic(fullfile(marker_dir, [run_id '.done']), payload);
     catch marker_err__
-        scidb.Log.warn('run_marker: could not write .done for %s: %s', ...
+        scifor.Log.warn('run_marker: could not write .done for %s: %s', ...
             run_id, marker_err__.message);
     end
 end
@@ -142,7 +142,7 @@ function text = encode_failures(failures, run_id)
         text = jsonencode(failures);
         text = strrep(strrep(text, newline, ' '), char(13), ' ');
     catch enc_err__
-        scidb.Log.warn('run_marker: could not encode failures for %s: %s', ...
+        scifor.Log.warn('run_marker: could not encode failures for %s: %s', ...
             run_id, enc_err__.message);
         text = '';
     end

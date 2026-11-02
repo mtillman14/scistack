@@ -37,8 +37,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from scidb import tables
-from scidb.tables import TableDecl
+from scidb.store import tables
+from scidb.store.tables import TableDecl
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ PORTABILITY: dict[str, str] = {AUDIT_TABLE: "history"}
 _loaded_for: "str | None" = None
 
 
-# The tables this module owns, declared through scidb (scidb.tables owns
+# The tables this module owns, declared through scidb (scidb.store.tables owns
 # every table of a project database; this module creates them on first use).
 tables.declare(
     TableDecl(

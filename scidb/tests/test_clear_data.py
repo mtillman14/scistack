@@ -1,4 +1,4 @@
-"""Clearing every record while keeping the pipeline (``scidb.clear_data``).
+"""Clearing every record while keeping the pipeline (``scidb.store.clear_data``).
 
 ``.claude/plan-clear-data.md``; user decisions 2026-10-21. What is pinned:
 
@@ -25,18 +25,18 @@ import pandas as pd
 import pytest
 import scifor as _scifor
 from scidb import BaseVariable, ColumnSetChangedError, configure_database, for_each
-from scidb import clear_data as clear_mod
-from scidb.clear_data import (
+from scidb.store import clear_data as clear_mod
+from scidb.store.clear_data import (
     CLEARED_TABLES,
     KEPT_TABLES,
     ClearRefused,
     clear_data,
     clear_plan,
 )
-from scidb.exclusions import exclude_schema
+from scidb.store.exclusions import exclude_schema
 from scidb.inspect.cli import main as cli_main
-from scidb.variant_delete import tombstones
-from scidb.variant_pins import active_pins, pin_history, pin_variant
+from scidb.store.variant_delete import tombstones
+from scidb.store.variant_pins import active_pins, pin_history, pin_variant
 
 SCHEMA = ["subject", "trial"]
 SUBJECTS = ["01", "02"]
@@ -166,7 +166,7 @@ class TestAtomic:
         def failing(*_a, **_k):
             raise RuntimeError("simulated failure")
 
-        monkeypatch.setattr("scidb.variant_delete.write_tombstone", failing)
+        monkeypatch.setattr("scidb.store.variant_delete.write_tombstone", failing)
         with pytest.raises(RuntimeError, match="simulated"):
             clear_data(db, "x")
         assert _snapshot(db) == before
@@ -219,7 +219,7 @@ class TestClassification:
         }
         unclassified = sorted(tables - data_tables - set(CLEARED_TABLES) - set(KEPT_TABLES))
         assert unclassified == [], (
-            "classify each table where it is declared, in scidb/tables.py "
+            "classify each table where it is declared, in scidb/store/tables.py "
             "(TableDecl cleared=True, or kept_reason=...)"
         )
 
@@ -267,8 +267,8 @@ class TestCli:
 
 
 def test_module_reads_the_table_registry():
-    """The classification is read from scidb.tables, not restated."""
-    from scidb import tables
+    """The classification is read from scidb.store.tables, not restated."""
+    from scidb.store import tables
 
     assert clear_mod.CLEARED_TABLES == tables.cleared_tables()
     assert clear_mod.KEPT_TABLES == tables.kept_tables()

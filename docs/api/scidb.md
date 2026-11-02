@@ -186,7 +186,7 @@ Omitted keys act as wildcards. History is kept: re-including a location adds a n
 | `check_node_state(fn, outputs, inputs)` | Whether a step is up to date, out of date or never run, across every combination. |
 | `check_combo_state(fn, outputs, schema_combo)` | The same check for one location. |
 | `check_pathinput_node_state(...)`, `check_multiple_nodes_state(nodes)` | The same for file-loading steps; a batched form for many steps. |
-| `db.get_provenance(...)`, `db.get_upstream_provenance(record_id)` | What produced a record, one step back or the whole chain. |
+| `db.get_provenance(...)`, `provenance_query.upstream_provenance(db, record_id)` | What produced a record, one step back or the whole chain. |
 | `db.list_variables()`, `db.distinct_schema_values(key)` | What the database holds. |
 | `db.exclude_variant(...)` / `db.include_variant(...)` | Hide or restore one variant of a variable. |
 
@@ -197,7 +197,7 @@ For deeper inspection, `scidb.inspect.Inspector.open(path)` is a read-only API. 
 Find schema combinations that have no data:
 
 ```python
-from scidb.inventory import schema_inventory, write_inventory_csv
+from scidb.provenance.inventory import schema_inventory, write_inventory_csv
 
 inv = schema_inventory(db, ["subject", "session"])
 inv.counts      # {"present": 10, "missing": 2, "excluded": 0}

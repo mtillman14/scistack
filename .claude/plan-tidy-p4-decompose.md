@@ -288,4 +288,152 @@ second pass in scidb.
    through `from_python`).
 
 ## Progress
-- (none yet)
+- **Stage 1 done (2026-11-01, untested — user runs all suites at the end).**
+  `scifor/hooks.py` `LoopHooks`; `foreach.py` `RunPlan`/`ForColumnsPlan`,
+  `plan_run`, `run_combo` -> `ComboResult`, `ProgressReporter`, `RunTally`,
+  `assemble`. Deviations (design bar): `plan_run` is itself a composition of
+  small step functions rather than one verbatim block; `_log_fn` dropped (was
+  ignored); a single-underscore kwarg raises `TypeError`; EachOf
+  alternatives receive the caller's hooks unchanged (before, the recursion
+  dropped `_all_combos`; no caller combined the two). Parity tests exclude
+  `hooks` (not a user option). New test: `scifor/tests/test_run_plan.py`.
+- **Stage 2 done (2026-11-01, untested).** `scifor/options.py`
+  (`OptionSpec`, `FOR_EACH_OPTIONS`, `UNSET`; `DB_ONLY_KWARGS` derived);
+  `scidb/foreach_call.py` (`SCIDB_FOR_EACH_OPTIONS`, `RunSelection`,
+  `RunContext`, `ForEachCall`). `scidb.for_each` = bundle -> `_run_for_each`
+  (registration, step, schema selection, EachOf via `_run_alternatives`) ->
+  `_run_concrete`. Deviation: `Selection` is `RunSelection` (name taken by
+  `scidb.bindings.Selection`). `_save_results` already took `(tbl, outputs,
+  state, db)`, so step 2's "17 parameters" was stale. Test:
+  `scidb/tests/test_foreach_options.py`. The scidb lazy-import count dropped by
+  5 (local `itertools` imports); baseline left at 517 until stage 6.
+- **Stage 3 done (2026-11-01, untested).** `scidb/foreach.py`: `SaveItem`,
+  `SavePlan`, `SaveReport`, `build_save_plan`, `apply_save_plan` (+ small
+  phase helpers). `scidb/database.py`: `BatchRows`, `save_batch` =
+  `_plan_batch_rows` -> `_write_batch_rows` -> `_log_batch_timings`.
+  Deviation: `apply_save_plan(plan, state, db)` also takes the state (glue,
+  parameter names, endpoint kind, fn for source capture are call facts); the
+  JSON-string `__constants` fallback was dropped (config keys are always an
+  in-memory dict). Test: `scidb/tests/test_save_plan.py`.
+- **Stage 4 done (2026-11-01, untested).** Owner:
+  `provenance_query.latest_at_location_batch` (+ `_is_superseded`, DEBUG
+  `latest_at_location_batch: N rids, M superseded`) exporting
+  `LATEST_SAVE_PER_RECORD_SQL`, used by `_find_record` and the owner's
+  candidate query. Deleted `DatabaseManager.get_latest_record_id_for_variant`
+  and `state._get_latest_record_at_location` (only caller:
+  `_has_superseded_ancestor`, now one owner call). NULL `schema_id` before:
+  variant half NULL-safe, any-variant half raised `TypeError`, batch
+  `latest_any=None`; now the batch rule everywhere. Not GUI-visible (NULL
+  schema_id records — constants, PathInputs, constant glue — are never
+  variable inputs). Deviation: step 3's premise was wrong — `_find_record`'s
+  `ROW_NUMBER` dedups the save log; its "latest" collapse is the separate
+  LOAD rule (consumed locations + run-option families). That second
+  definition of "variant" is reported to the user, not changed.
+  Test: `scidb/tests/test_latest_null_schema_id.py`.
+- **Stage 5 done in part (2026-11-01, untested).** `scidb/record_store.py`
+  `RecordStore` (catalog, `long_frame`, `sample_cell`, `column_levels`,
+  `occupied_keys`, `dtype_meta`; write: `write_batch_rows`, `BatchRows`,
+  `insert_columnar_frames`), `db.record_store`. PD1 done: `scistackplotdb.load`
+  has no SQL. Provenance pass-throughs deleted from `DatabaseManager` (tests
+  call `provenance_query`). NOT done, by decision: (a) the read half's
+  `select_records`/`materialize` move of `_find_record`/`_load_with_where`/
+  `_assemble_df_from_records_and_data` — `_find_record`'s variant collapse is
+  the LOAD "latest" rule stage 4 found to be a second variant definition, so it
+  should move once that is decided; (b) `dataset_aliases`/`dataset_colors`
+  stay: they validate the TOML against the dataset, which reading
+  `scifor.project` directly would drop; `dataset_schema_key_order` is used by
+  scidb's own sorting. Allow-list +1 (`scidb.record_store ->
+  scidb.provenance`, the `_record` writer moved with the inserts). User step:
+  compare `[timing] load_variable` on a large variable in Plot Studio.
+  Tests: `scidb/tests/test_record_store.py`,
+  `scistackplotdb/tests/test_load_through_record_store.py`.
+- **Stage 6 done (2026-11-01, untested).** All four clusters moved at once
+  (deviation: the plan said one cluster per commit with a test run between;
+  the user asked for one run at the end). Renames forced by the layout:
+  `scidb.provenance` (module) -> `scidb.provenance.graph`,
+  `provenance_query` -> `scidb.provenance.query`, `provenance_save` ->
+  `scidb.provenance.save`; layer `api` renamed `model`. Every relative import
+  in scidb made absolute first; then one scripted rewrite of `scidb.<mod>`,
+  `from scidb import <mod>`, and `scidb/src/scidb/<mod>.py` paths across .py,
+  .m, .md, .toml, .txt (not `.claude/`, not TS). pyright with
+  `reportMissingImports` over scidb, scimatlab, scistackplotdb, statsdb, GUI,
+  tests/, scistack, scistacklog tests: no unresolved scidb import.
+  `scidb/tests/test_imports.py` static half rewritten over full module names
+  (via `tools.import_layers`). Not attempted: deleting allow-list lines /
+  hoisting lazy imports (needs test runs). Lower `lazy_baseline` after
+  `python -m tools.import_layers scidb/tests/import_layers.toml` reports the
+  count (indented import lines fell by 6).
+- **Stage 7 done (2026-11-01, untested).** `to_version_keys` ->
+  `to_config_keys`, `CallSite.version_keys` -> `call_site_keys`,
+  `constant_glue_version_keys` -> `constant_glue_config_keys`, manifest key
+  `version_keys` -> `config_keys` (display only: `StepSpec.to_manifest` is
+  never stored). Deviation: not "call-site keys" for the whole dict — it holds
+  version-only keys too. STOP check: no stored JSON key changes (the nested
+  metadata `"version"` key that `generate_record_id` hashes is untouched; local
+  `version_keys` variables reading it keep their name). Prose saying "a
+  record's version keys" (its non-schema metadata) is still accurate and kept.
+- **Stage 8 done (2026-11-01, untested).** `docs/claude/identity-table.md`
+  + `scidb/tests/test_identity_table.py` (`IDENTITY_TABLE` owner, `CALLS`
+  baseline/variant per fact, a control row proving ids reproduce across two
+  databases). Expectations were derived by reading the recipes; a failing row
+  means either the recipe or my reading differs — check the recipe before
+  changing the dict.
+- **Stage 9 done in part (2026-11-01).** M2 done (untested in Python):
+  `scimatlab/bridge/{__init__,entry,wire,convert,pipeline}.py`,
+  `MatlabFunctionIdentity`, `test_bridge_entry_points.py`; tests importing
+  bridge privates now import them from the owning submodule. G7 reducer half
+  done and verified: `plotSpecReducer.ts` + test, `npx tsc --noEmit` clean,
+  `npm test` 688/688, both bundles rebuilt; manual-test entry added. Deviation:
+  the five rail-group component extractions were NOT done — each group's JSX
+  reads many component-local values, so the split needs a view-state store
+  first (a design step, not a mechanical move). User: run the MATLAB suite
+  (`scimatlab/tests/matlab`) for the bridge split.
+- **Stage 10 STOPPED at step 2, as the plan requires (2026-11-01).** Read
+  from `scicanonicalhash.hashing`: `np.float64` hashes like `float`
+  (subclass), but `np.int64` / `np.bool_` take the ndarray branch and hash
+  differently from `int` / `bool`. So the fix changes record ids on re-save
+  (back to the original save's id, which is the point — today a loaded and
+  re-saved `42` forks a record). Done: step 1 measurement
+  (`sciduckdb.codec._log_scalar_kinds`, DEBUG `restore_types: scalar cells
+  (python, numpy) per column: ...`, `SCALAR_PTYPES`), and the characterization
+  test `scicanonicalhash/tests/test_numpy_scalar_hash_parity.py`. Prepared, NOT
+  applied: `.claude/p4-checkpoints/stage10-scalar-fix.patch` (step 3). Waiting
+  for the user's yes; then apply it and write step 4's tests.
+- **Stage 10 done (2026-11-01, untested).** User decision D1 (2026-11-01):
+  "Yes, apply it. We want the data to be roundtripped as accurately as
+  possible, and certainly to never create a new fork just by roundtripping
+  data." Applied `stage10-scalar-fix.patch`: `restore_types` keeps
+  bool/int/float/str columns as an object Series of Python scalars. Tests:
+  `sciduckdb/tests/test_codec_storage.py` (int/float `type() is`, bool
+  `is True`), `scidb/tests/test_scalar_roundtrip.py` (Python type, json.dumps,
+  load-then-re-save keeps the record id). The hash-parity characterization
+  test stays (it pins why the fix matters).
+- **Follow-up (2026-11-01): one variant rule (user decision: "newer
+  version").** `provenance_query.variant_keys_batch` is THE variant key
+  (function name + accumulated constants + consumed input locations; never the
+  function hash, so a code edit re-run supersedes) and
+  `provenance_query.current_record_ids` THE "which records are current" rule
+  (newest per variant per location, after run-option family, global
+  run-option and renamed-function supersession). `_find_record`'s latest
+  collapse, `latest_at_location_batch` (variant half),
+  `current_records_by_schema_batch` all ask it; `_producing_variant_key`
+  deleted. Behaviour change for node state: two records at one location that
+  read DIFFERENT input locations are now two variants (before, staleness
+  treated the newer as superseding). Kept unchanged and flagged: the
+  "latest_any" staleness signal (any newer record of any variant at an input's
+  location marks its consumers stale).
+- **Fixes from the user's scidb run (2026-11-01):** `_for_each_prepare` copies
+  `selection.metadata_iterables` (stage 2 regression: PathInput discovery in one
+  EachOf arm mutated the shared dict, so the next arm iterated the first arm's
+  subjects); two path-based guards updated for the stage-6 layout
+  (`test_constant_glue_provenance` owner path, `test_no_user_identity` globs).
+- **Follow-up (2026-11-02): option A + hand saves (user decision).** The
+  "any newer record at the location" staleness check (`latest_any`) is gone
+  from `latest_at_location_batch`, `_is_superseded` and
+  `state._has_superseded_ancestor`: stale means only "the input is no longer
+  the current record of its own variant" (ends the constant-sweep ping-pong).
+  Added rule 4 to `current_record_ids` (`_replaced_by_hand_saves`): a hand save
+  (raw variant, or a `__save__` invocation) supersedes every other variant's
+  records saved BEFORE it at its location, so load and node state both treat a
+  hand-correction as a replacement; a pipeline run after it coexists. Tests in
+  `scidb/tests/test_one_variant_rule.py`.

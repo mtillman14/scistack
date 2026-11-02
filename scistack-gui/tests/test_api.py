@@ -21,7 +21,7 @@ from conftest import (
     find_fn_node_id_by_label,
     fn_min_state_across_call_sites,
 )
-from scidb.database import _local
+from scidb.store.database import _local
 from scistack_gui.stores import layout as layout_store
 from scistack_gui.stores import pipeline_store as _pipeline_store
 from scistack_gui.project import registry as _registry
@@ -1066,7 +1066,7 @@ class TestRunEndpoint:
 
     def test_forwards_schema_keys_not_schema_level_to_for_each(self, client, monkeypatch):
         """Regression test: scidb.for_each's real parameter is `schema_keys`
-        (see scidb/src/scidb/foreach.py), not `schema_level` — `schema_level`
+        (see scidb/src/scidb/run/foreach.py), not `schema_level` — `schema_level`
         is only this module's own GUI-facing name (RunRequest.schema_level)
         for "which schema keys to iterate".
 

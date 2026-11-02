@@ -36,6 +36,7 @@
     "src/components/PlotStudio/locationSelection.test.ts",
     "src/components/PlotStudio/groups.ts",
     "src/components/PlotStudio/groups.test.ts",
+    "src/components/PlotStudio/groups.cases.test.ts",
     "src/components/PlotStudio/combine.ts",
     "src/components/PlotStudio/combine.test.ts",
     "src/components/PlotStudio/dataWarnings.ts",
@@ -70,6 +71,8 @@
     "src/components/PlotStudio/aliasEdit.test.ts",
     "src/components/PlotStudio/colorEdit.ts",
     "src/components/PlotStudio/colorEdit.test.ts",
+    "src/components/PlotStudio/plotSpecReducer.ts",
+    "src/components/PlotStudio/plotSpecReducer.test.ts",
     "src/components/PlotStudio/markWeights.ts",
     "src/components/PlotStudio/markWeights.test.ts",
     "src/components/PlotStudio/pickerCanvas.test.ts",
@@ -128,6 +131,7 @@
     "src/components/Studio/sharedDesign.ts",
     "src/components/Studio/sharedDesign.test.ts",
     "src/components/Studio/plotGuide.ts",
-    "src/components/Studio/plotGuide.test.ts"
+    "src/components/Studio/plotGuide.test.ts",
+    "src/generated/generatedTypes.test.ts"
   ]
 }

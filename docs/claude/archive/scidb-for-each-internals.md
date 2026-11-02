@@ -6,7 +6,7 @@
 
 `scidb.for_each()` is the database-backed batch execution engine for SciStack. It wraps `scifor.for_each()` (documented separately in `scifor-for-each-internals.md`) by adding automatic data loading from DuckDB, variant tracking, version-key fingerprinting, and result saving. If you have read the scifor document, you know what the inner loop does; this document explains everything that happens *around* it.
 
-All source references are to `/workspace/scidb/src/scidb/foreach.py` unless otherwise noted.
+All source references are to `/workspace/scidb/src/scidb/run/foreach.py` unless otherwise noted.
 
 > **Stage map (2026-09-23, cleanup-audit F4).** `_for_each_prepare` is now a
 > short sequence of named stage functions; the "Step N" sections below still
@@ -83,7 +83,7 @@ CREATE TABLE IF NOT EXISTS _record_metadata (
 )
 ```
 
-Source: `/workspace/scidb/src/scidb/database.py`, lines 580–597.
+Source: `/workspace/scidb/src/scidb/store/database.py`, lines 580–597.
 
 Each row is one saved record. Key columns:
 
@@ -95,7 +95,7 @@ Each row is one saved record. Key columns:
 
 - **`schema_id`**: Foreign key to `_schema`, identifying where in the experimental hierarchy this record lives.
 
-- **`version_keys`**: JSON dict of non-schema metadata that distinguishes computational variants. When `for_each` saves a record, this includes `__fn`, `__fn_hash`, `__inputs`, `__constants`, etc. — everything from `ForEachConfig.to_version_keys()`.
+- **`version_keys`**: JSON dict of non-schema metadata that distinguishes computational variants. When `for_each` saves a record, this includes `__fn`, `__fn_hash`, `__inputs`, `__constants`, etc. — everything from `ForEachConfig.to_config_keys()`.
 
 - **`content_hash`**: SHA-256 of the data itself (first 16 hex chars), used for content-addressed deduplication.
 
@@ -152,13 +152,13 @@ CREATE TABLE IF NOT EXISTS _for_each_expected (
 )
 ```
 
-Source: `/workspace/scidb/src/scidb/database.py`, lines 622–629.
+Source: `/workspace/scidb/src/scidb/store/database.py`, lines 622–629.
 
 Stores the set of combos that a `for_each` call was *expected* to produce. Used by `check_node_state()` to determine whether a pipeline step is complete or has missing outputs.
 
 The `call_id` column is a 16-hex-character SHA-256 hash that uniquely identifies a specific `for_each()` call site. It is computed from a subset of the version keys (`__fn`, `__inputs`, `__constants`, `__where`, `__distribute`, `__as_table`) — intentionally excluding `__fn_hash` so that cosmetic edits to the function source don't change the call site identity. This allows the same function to be called from multiple places in a pipeline (e.g., `bandpass` called once with `low_hz=20` and again with `low_hz=50`) without the second call's expected combos clobbering the first's. The DELETE during `_persist_expected_combos` is scoped to `(function_name, call_id)`.
 
-The `call_id` is a **derived value** — it is not stored in `_record_metadata` or `branch_params`. It can be recomputed from any record's `version_keys` at any time via `call_id_from_version_keys()` (source: `/workspace/scidb/src/scidb/foreach_config.py`).
+The `call_id` is a **derived value** — it is not stored in `_record_metadata` or `branch_params`. It can be recomputed from any record's `version_keys` at any time via `call_id_from_version_keys()` (source: `/workspace/scidb/src/scidb/run/foreach_config.py`).
 
 ### Data tables (e.g., `FilteredEMG_data`)
 
@@ -317,13 +317,13 @@ If `distribute=True` and no database is available to provide schema keys, a `Val
 
 Database values may come back as typed Python objects (e.g., `numpy.int64(1)` instead of `"1"`). But the DataFrames produced by bulk loading (Step 10) have their schema columns stringified. For scifor's combo filtering to work — which compares metadata values to DataFrame column values via `==` — the metadata iterable values must also be strings.
 
-scidb uses `_schema_str()` (source: `/workspace/scidb/src/scidb/database.py`, lines 41–50) to convert all schema-key values to strings. This function has a special case: whole-number floats are converted to ints first (`1.0` → `"1"` instead of `"1.0"`), because MATLAB sends all numbers as floats, and without this conversion, `"1.0" != "1"` would cause lookups to fail.
+scidb uses `_schema_str()` (source: `/workspace/scidb/src/scidb/store/database.py`, lines 41–50) to convert all schema-key values to strings. This function has a special case: whole-number floats are converted to ints first (`1.0` → `"1"` instead of `"1.0"`), because MATLAB sends all numbers as floats, and without this conversion, `"1.0" != "1"` would cause lookups to fail.
 
 ### Step 6: Build output names (line 260)
 
 Each output type is converted to a display name string via `_output_name()` (lines 1260–1266). This uses `view_name()` if available, otherwise falls back to `__name__`. These become the column names in scifor's result DataFrame.
 
-`view_name()` is a classmethod on `BaseVariable` (source: `/workspace/scidb/src/scidb/variable.py`, lines 197–208) that simply returns `cls.__name__` — the class name as a string. For example, `FilteredEMG.view_name()` returns `"FilteredEMG"`. It exists as a method rather than using `__name__` directly because DuckDB views for each variable type are named after this value (the view joins the data table with `_schema` and `_variables` for direct SQL querying).
+`view_name()` is a classmethod on `BaseVariable` (source: `/workspace/scidb/src/scidb/model/variable.py`, lines 197–208) that simply returns `cls.__name__` — the class name as a string. For example, `FilteredEMG.view_name()` returns `"FilteredEMG"`. It exists as a method rather than using `__name__` directly because DuckDB views for each variable type are named after this value (the view joins the data table with `_schema` and `_variables` for direct SQL querying).
 
 ### Step 7: Dry-run shortcut (lines 263–275)
 
@@ -335,14 +335,14 @@ The display conversion (`_convert_inputs_for_display()`, lines 634–656) create
 
 **What this is:** A computation fingerprinting system. Every `for_each` call produces outputs, and those outputs need to be distinguishable from outputs produced by *different* calls with different parameters. If you run `bandpass_filter` with `low_hz=20` and then later with `low_hz=30`, you want both sets of results to coexist in the database, not overwrite each other. The version keys are the mechanism that makes this work: they are a serialized snapshot of the computation's configuration, stored alongside every output record.
 
-`ForEachConfig` (source: `/workspace/scidb/src/scidb/foreach_config.py`) captures everything about the `for_each()` call that affects the output's identity:
+`ForEachConfig` (source: `/workspace/scidb/src/scidb/run/foreach_config.py`) captures everything about the `for_each()` call that affects the output's identity:
 
 ```python
 config = ForEachConfig(fn=fn, inputs=inputs, where=where, distribute=distribute, as_table=as_table)
-config_keys = config.to_version_keys()
+config_keys = config.to_config_keys()
 ```
 
-`to_version_keys()` (lines 52–72 of `foreach_config.py`) produces a dict with these keys:
+`to_config_keys()` (lines 52–72 of `foreach_config.py`) produces a dict with these keys:
 
 | Key | Value | Purpose |
 |---|---|---|
@@ -415,7 +415,7 @@ The loading logic lives in `_load_input()` (lines 742–811). Each input type is
 
 This is the primary loading path. It calls `var_type.load(version="latest")` to fetch all records for a variable type, then assembles them into a single pandas DataFrame with both metadata columns and data columns.
 
-**What `load(version="latest")` does:** (source: `/workspace/scidb/src/scidb/variable.py`, lines 412–500, delegating to `/workspace/scidb/src/scidb/database.py`, lines 1313–1333)
+**What `load(version="latest")` does:** (source: `/workspace/scidb/src/scidb/model/variable.py`, lines 412–500, delegating to `/workspace/scidb/src/scidb/store/database.py`, lines 1313–1333)
 
 It executes a SQL query against `_record_metadata` with a window function:
 
@@ -496,7 +496,7 @@ For each loaded DataFrame input that has a `__record_id` column:
 
    This mapping is used later in Step 19 (save) to inherit upstream branch params.
 
-2. **Sort each input by kind** (`InputKind`, `scidb.bindings`): a plain variable is *tracked* (its record is an iteration axis, or a pool under aggregation); a `Fixed` is *pinned* (one record, resolved here from the frame by applying the pin's metadata); a `ColumnSelection` is *lineage-only* (prunes combos, never expands). The frame keeps its `__record_id` column exactly as the loader wrote it.
+2. **Sort each input by kind** (`InputKind`, `scidb.run.bindings`): a plain variable is *tracked* (its record is an iteration axis, or a pool under aggregation); a `Fixed` is *pinned* (one record, resolved here from the frame by applying the pin's metadata); a `ColumnSelection` is *lineage-only* (prunes combos, never expands). The frame keeps its `__record_id` column exactly as the loader wrote it.
 
    > Until 2026-09-20 this step renamed `__record_id` to `__rid_{param}` per input, and Step 15 pushed those names into scifor's global schema so its per-combo filter would select rows by them; scifor then stripped the prefixes back out in four places, and MATLAB's `for_each.m` in four more. That convention is gone — see **The selection seam** under Step 12.
 
@@ -515,7 +515,7 @@ scidb needs to expand each base combo into one combo per variant. If subject 1, 
 | half | what | owner | where it lives |
 |---|---|---|---|
 | **location** | schema keys + declared iterables | scifor — its row filter, its `distribute` resolution, its result row | the combo dict |
-| **selection** | which record(s) of each input this combination reads | scidb — the frame filter AND the graph edges | a `Selection` (`scidb.bindings`) on `RunBindings.selections` |
+| **selection** | which record(s) of each input this combination reads | scidb — the frame filter AND the graph edges | a `Selection` (`scidb.run.bindings`) on `RunBindings.selections` |
 
 The combo dict scifor sees is the location plus **one** key, `__combo` (`bindings.COMBO_KEY`): the index of that combination's `Selection`. So the two combos above are `{subject: "1", session: "A", __combo: 0}` and `{..., __combo: 1}`, with `selections[0].rids == {"signal": ("a1b2…",)}` and `selections[1].rids == {"signal": ("x9y8…",)}`. A `Fixed` input's pin and a `ColumnSelection`'s record(s) at the location go into every combination's selection without expanding it.
 
@@ -529,7 +529,7 @@ The detection is simple: if the set of iterated schema keys is a strict subset o
 
 **Aggregation AUTO-SPLITS by branch_param signature (D1, implemented).** Skipping *per-record* rid expansion does not mean pooling variants: if a schema location holds multiple branch_param variants of an input, aggregation runs **one call per distinct branch_params group** — equivalent to the user writing `EachOf(Variant(...), Variant(...))`, but implemented at signature granularity with no per-alternative reload. Pooling distinct variants into one table (the pre-D1 behavior, "variant smushing") double-counted aggregates and destroyed variant identity. Mechanics:
 
-- Each record's derived branch params canonicalize to a **signature** (`scidb.bindings.variant_signature`, sorted-key JSON through one normalising round trip — the ONE recipe the save path and the expected-invocation predictor share). Each call's `Selection` names the group it reads (`Selection.groups[param]` is the signature; `Selection.rids[param]` the group's records) — nothing is added to the frame.
+- Each record's derived branch params canonicalize to a **signature** (`scidb.run.bindings.variant_signature`, sorted-key JSON through one normalising round trip — the ONE recipe the save path and the expected-invocation predictor share). Each call's `Selection` names the group it reads (`Selection.groups[param]` is the signature; `Selection.rids[param]` the group's records) — nothing is added to the frame.
 - Every rid-tracked input becomes a **`RecordPool`** on its `InputBinding` (`RunBindings`, built at Step 13): its records per iterated location, per `VariantGroup(signature, rids)`. The pool is keyed by the iterated keys the input *populates* (`location_keys`), so an input coarser than the iterated level is found at every location beneath it. A plain input's pool is `split=True` (one call per group); `AcrossVariants` and `ColumnSelection` pools are `split=False` (every group in the one call).
 - Base combos expand over the observed signature combinations (Cartesian across multi-variant inputs, mirroring full-iteration rid expansion). Single-signature inputs expand 1:1 — **no behavior change when there are no variants**. A split input with no data at a combo expands with the empty signature, so the combo still flows through and skips gracefully.
 - Each call's `Selection` names the group's records: per split input, `pool.rids_at(location, signature)`; per pooled input, every group's records; plus any pinned rid — and `Selection.groups` records the signature per split input. scifor's `_select_rows` hook selects the frame's rows by those ids; nothing is added to the frame or to scifor's schema. `RunBindings.edges_for(selection)` writes the same records as the graph edges and `branch_params_for` merges their branch params — **conflict-free by construction** for split aggregations (the "branch_params key … overwritten" warning fires only when two groups reach one call). Two groups at one schema location save as two variants (their `__invocation_id` differs), loadable via `branch_param("bandpass", low_hz=20)`-style filters.
@@ -589,7 +589,7 @@ The expansion count is logged: `expanded 4 base combos -> 8 full combos (rid var
 
 ### Step 13: The typed bindings (`RunBindings`)
 
-`_build_run_bindings` turns Step 11's sorting into one typed structure (`scidb.bindings.RunBindings`): every input's `InputBinding` (kind, selector, pinned rid, `RecordPool` under aggregation), every loaded record's branch params (`rid_to_bp`), and — registered by Step 12's expansion — every combination's `Selection`. It is built BEFORE the skip hook fires (Step 14), because the gate is its first reader; the save path and the draft endpoint stamp are the others. It is `state.bindings`, never `None`.
+`_build_run_bindings` turns Step 11's sorting into one typed structure (`scidb.run.bindings.RunBindings`): every input's `InputBinding` (kind, selector, pinned rid, `RecordPool` under aggregation), every loaded record's branch params (`rid_to_bp`), and — registered by Step 12's expansion — every combination's `Selection`. It is built BEFORE the skip hook fires (Step 14), because the gate is its first reader; the save path and the draft endpoint stamp are the others. It is `state.bindings`, never `None`.
 
 ### (Historical) Step 13: Persist expected combos
 
@@ -739,7 +739,7 @@ The save metadata dict is assembled from:
 
 For each output type, the corresponding column value is extracted from the result row and saved via `output_obj.save(data, **save_metadata)`.
 
-Inside `save()` (source: `/workspace/scidb/src/scidb/database.py`, lines 1701–1846):
+Inside `save()` (source: `/workspace/scidb/src/scidb/store/database.py`, lines 1701–1846):
 
 1. Schema keys are separated from version keys in the metadata
 2. A `schema_id` is looked up or created in the `_schema` table
@@ -872,7 +872,7 @@ Key property: `var_type` (not `data` as in scifor.Fixed).
 
 ### `scidb.Merge(*var_specs)`
 
-Source: `/workspace/scidb/src/scidb/merge.py`
+Source: `/workspace/scidb/src/scidb/model/merge.py`
 
 Wraps 2+ variable types (or Fixed/ColumnSelection wrappers) for combined loading. Each constituent is loaded independently and merged column-wise.
 
@@ -882,7 +882,7 @@ If any constituent cannot be bulk-loaded, the entire Merge becomes a `PerComboLo
 
 ### `scidb.ColumnSelection(var_type, columns)`
 
-Source: `/workspace/scidb/src/scidb/column_selection.py`
+Source: `/workspace/scidb/src/scidb/model/column_selection.py`
 
 Created automatically by `BaseVariable.__class_getitem__` when using bracket syntax:
 
@@ -955,7 +955,7 @@ Each layer adds one concern and delegates the rest downward.
 
 ## Logging
 
-scidb logs to a file (set by `configure_database()`) via the `Log` class (source: `/workspace/scidb/src/scidb/log.py`). Every significant operation is logged:
+scidb logs to a file (set by `configure_database()`) via the `Log` class (source: `/workspace/scidb/src/scidb/model/log.py`). Every significant operation is logged:
 
 - Input loading: type, row count, timing
 - Empty-list resolution: key, number of values resolved

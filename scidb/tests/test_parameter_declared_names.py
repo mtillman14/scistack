@@ -15,7 +15,7 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, Parameter, configure_database, entities, for_each
-from scidb.parameter import declared_input_names, parameter_node_name
+from scidb.model.parameter import declared_input_names, parameter_node_name
 
 SCHEMA = ["subject", "session"]
 

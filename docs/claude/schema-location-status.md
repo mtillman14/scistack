@@ -3,7 +3,7 @@
 > Written 2026-09-13, ahead of the schema location picker
 > (`.claude/plan-schema-location-picker.md`).
 >
-> **Status: implemented as `scidb/locations.py` (`location_states`) the same
+> **Status: implemented as `scidb/provenance/locations.py` (`location_states`) the same
 > day; tests in `scidb/tests/test_locations.py` are written but have not been
 > run.** The batch primitives named in §"Batching is the whole implementation"
 > are real functions in `provenance_query.py`: `variant_keys_batch`,

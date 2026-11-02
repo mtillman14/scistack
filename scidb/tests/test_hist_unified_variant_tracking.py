@@ -4,6 +4,7 @@ Tests that for_each(skip_computed=True) outputs have complete version_keys and b
 matching scidb.for_each structure, eliminating the dual variant tracking system.
 """
 
+from scidb.provenance import query as provenance_query
 from functools import partial
 
 import numpy as np
@@ -32,7 +33,7 @@ def derived_bp(db, variable_name):
     ).fetchone()
     if row is None:
         return None
-    return db.get_derived_branch_params(row[0])
+    return provenance_query.derived_branch_params(db._duck, row[0])
 
 
 # Test variable types
@@ -600,7 +601,7 @@ class TestGeneratesFile:
     def test_generates_file_has_metadata(self, db):
         """generates_file outputs are recorded lineage-only (no data row), with
         their function + constants captured in the bipartite graph."""
-        from scidb import provenance_query
+        from scidb.provenance import query as provenance_query
 
         @scistack(generates_file=True)
         def export_data(x, filename):

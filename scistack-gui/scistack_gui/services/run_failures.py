@@ -7,7 +7,7 @@ One owner for the GUI's side of "what failed in this run":
   deliberately NOT part of ``scidb.RunOptions``: that value is
   identity-bearing, and stopping early never changes what a run computes.
 - :func:`on_duplicate_from_config` — the ONE reader of a node's
-  ``on_duplicate`` run option (``"error"`` | ``"combine"``, scidb.combine),
+  ``on_duplicate`` run option (``"error"`` | ``"combine"``, scidb.run.combine),
   set by the duplicate-location popup's "Combine the rows" button. Not
   identity either: same callers as ``on_error``.
 - :class:`RunFailures` — collects the failed groups of one run (no-data
@@ -50,7 +50,7 @@ def on_error_from_config(run_options: "dict | None") -> str:
 def on_duplicate_from_config(run_options: "dict | None") -> str:
     """``"error"`` | ``"combine"`` from a run-options blob; an unknown value
     is logged and read as the default rather than failing the run."""
-    from scidb.combine import validate_on_duplicate
+    from scidb.run.combine import validate_on_duplicate
 
     value = (run_options or {}).get(ON_DUPLICATE_KEY) or "error"
     try:

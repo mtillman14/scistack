@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from scistackplot import DataFrameSource, PlotSpec, Role, resolve, resolve_one
-from scistackplot.reduce.resolve import resolve as reduce_mod
+import scistackplot.reduce.resolve as reduce_mod
 from scistackplot.model.spec import FacetOptions, PlotKind
 
 

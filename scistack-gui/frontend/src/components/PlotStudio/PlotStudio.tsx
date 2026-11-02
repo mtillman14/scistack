@@ -63,10 +63,7 @@ import {
   isLocked,
   isTicked,
   joinChoice,
-  joinSetting,
   sampleColorChoice,
-  sampleColorSetting,
-  toggleShowSample,
   MARK_COLOR,
   type JoinChoice,
   type SampleOverlay,
@@ -138,7 +135,6 @@ import { HistogramSection, KdeSection, RegressionSection, XMeasureSection } from
 import NotPlottedPopup from './NotPlottedPopup'
 import { NOT_PLOTTED_DEPTH, type NotPlottedTotal, type OmissionReport } from './notPlotted'
 import {
-  kindForXMeasure,
   type BinsMeta,
   type HistogramCapability,
   type HistogramOptions,
@@ -177,6 +173,16 @@ import {
   type YTitles,
 } from './panelOverrides'
 import { type Labelable, type SpecAliases } from './aliasEdit'
+import {
+  plotSpecReducer,
+  type FacetOptions,
+  type MatchOp,
+  type Matcher,
+  type PlotSpecAction,
+  type PlotSpecFields,
+  type StylePatch,
+  type YAxis,
+} from './plotSpecReducer'
 import { plotMarkColor, type Colorable, type SpecColors } from './colorEdit'
 import { type MarkWeightsMeta, type WeightKey, weightTitle, withWeight } from './markWeights'
 import { copyFigurePng } from './clipboardPng'
@@ -668,7 +674,6 @@ interface GroupingInfo {
   new_grouping_role?: Role
 }
 
-type MatchOp = 'starts_with' | 'ends_with' | 'contains' | 'not_contains' | 'equals' | 'regex'
 
 const MATCH_OPS: { value: MatchOp; label: string }[] = [
   { value: 'starts_with', label: 'starts with' },
@@ -679,38 +684,6 @@ const MATCH_OPS: { value: MatchOp; label: string }[] = [
   { value: 'regex', label: 'matches regex' },
 ]
 
-interface Matcher {
-  op: MatchOp
-  value: string
-  label?: string | null
-}
-
-interface FacetOptions {
-  /** Grid size. null/absent means "compute me from the other one and the panel count". */
-  n_rows?: number | null
-  n_cols?: number | null
-  /** One entry per row / column slot; a blank value is an unset slot. */
-  rows?: Matcher[]
-  cols?: Matcher[]
-  share_x?: boolean
-  // No `share_y` — it became `Spec.y_axis`, see YAxis below.
-}
-
-/**
- * What the y axis spans, and what separates spans.
- *
- * `scope` names the factors that get their OWN limits. Empty means one range
- * across the whole dataset; naming every panel factor means each panel scales
- * to itself; anything between is the useful middle ("one scale per subject").
- * Only factors that separate panels — iterate and facet — may appear, because
- * a colour or replicate factor lives inside a single panel.
- */
-interface YAxis {
-  scope?: string[]
-  /** A number, or ISO date text on a datetime axis (`temporal.parse_limit`). */
-  minimum?: number | string | null
-  maximum?: number | string | null
-}
 
 /**
  * What the backend actually laid out, echoed back on every figure.
@@ -759,21 +732,7 @@ interface VariantSet {
   follow_latest?: boolean
 }
 
-/** The `StyleOptions` fields this panel edits. The tick settings are null
- *  for "fitted" (scistackplot.fit_labels) and a value for "fixed". */
-interface StylePatch {
-  width?: number
-  height?: number
-  tick_rotation?: number | null
-  tick_every?: number | null
-  hide_legend_ticks?: boolean
-  /** The "Not plotted" footnote under the figure (StyleOptions.not_plotted_note). */
-  not_plotted_note?: boolean
-  /** Which panels draw their y title (StyleOptions.y_titles). */
-  y_titles?: YTitles
-}
-
-interface Spec {
+interface Spec extends PlotSpecFields {
   measures: string[]
   /** Variable supplying the x axis of a relational plot. Separate from
    *  `measures` because it JOINS (one x per y) where extra series STACK. */
@@ -1076,6 +1035,12 @@ export default function PlotStudio({
   useUndoShortcuts(undo)
   // setSpec = a user edit (an undo step); replaceSpec = loading (not one).
   const [spec, setSpec, replaceSpec] = useHistoryState<Spec | null>(undo, null, 'figure edit')
+  // A plain field edit is an action of the spec reducer (plotSpecReducer.ts),
+  // one undo step like any setSpec.
+  const dispatchSpec = useCallback(
+    (action: PlotSpecAction) => setSpec(prev => plotSpecReducer(prev, action)),
+    [setSpec]
+  )
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
 
   // Factors of the resolved table (Variant included, selected-away columns
@@ -1698,7 +1663,7 @@ export default function PlotStudio({
   /** Colour one grouping layer (null: none). Colour is a tag on a layer,
    *  not a role — it never splits data, it labels a split by legend. */
   const setColor = useCallback((factor: string | null) => {
-    setSpec(prev => (prev ? { ...prev, color: factor } : prev))
+    dispatchSpec({ type: 'setColor', factor })
   }, [])
 
   const setKind = useCallback((tile: KindInfo) => {
@@ -1737,124 +1702,113 @@ export default function PlotStudio({
   }, [])
 
   const setCellStatistic = useCallback((statistic: string) => {
-    setSpec(prev => (prev ? { ...prev, cell_statistic: statistic } : prev))
+    dispatchSpec({ type: 'setCellStatistic', statistic })
   }, [])
 
   const setAggregate = useCallback((patch: { statistic?: string; error?: string; pooled?: boolean }) => {
-    setSpec(prev => prev && ({
-      ...prev,
-      aggregate: { statistic: 'mean', error: 'sd', ...(prev.aggregate ?? {}), ...patch },
-    }))
+    dispatchSpec({ type: 'setAggregate', patch })
   }, [])
 
   const setShowSample = useCallback((name: string, on: boolean) => {
-    setSpec(prev => (prev ? { ...prev, show_sample: toggleShowSample(prev.show_sample, name, on) } : prev))
+    dispatchSpec({ type: 'setShowSample', name, on })
   }, [])
 
   const setJoinSample = useCallback((choice: JoinChoice) => {
-    setSpec(prev => (prev ? { ...prev, join_sample: joinSetting(choice) } : prev))
+    dispatchSpec({ type: 'setJoinSample', choice })
   }, [])
 
   /** Colour the overlay by one of its shown keys, independently of the
    *  marks' colour; Python says whether the choice is active right now. */
   const setSampleColor = useCallback((choice: string) => {
-    setSpec(prev => (prev ? { ...prev, sample_color: sampleColorSetting(choice) } : prev))
+    dispatchSpec({ type: 'setSampleColor', choice })
   }, [])
 
   /** Unticked, the legend reads as though no key were shown. */
   const setSampleInLegend = useCallback((on: boolean) => {
-    setSpec(prev => (prev ? { ...prev, sample_in_legend: on } : prev))
+    dispatchSpec({ type: 'setSampleInLegend', on })
   }, [])
 
   /** Unticked, the x axis holds only this figure's own levels. */
   const setShowMissingLevels = useCallback((on: boolean) => {
-    setSpec(prev => (prev ? { ...prev, show_missing_levels: on } : prev))
+    dispatchSpec({ type: 'setShowMissingLevels', on })
   }, [])
 
   /** Data > Time zone: "local" or a zone to convert every aware value to. */
   const setTimeZone = useCallback((mode: string) => {
-    setSpec(prev => (prev ? { ...prev, time_zone: mode } : prev))
+    dispatchSpec({ type: 'setTimeZone', mode })
   }, [])
 
   /** Data > X variable. With one, only scatter / line / regression draw, so
    *  the kind follows (continuousKinds.kindForXMeasure). */
   const setXMeasure = useCallback((name: string | null) => {
     console.info('[Plot Studio] x_measure_set', { x_measure: name })
-    setSpec(prev =>
-      prev ? { ...prev, x_measure: name, kind: kindForXMeasure(prev.kind, name) } : prev
-    )
+    dispatchSpec({ type: 'setXMeasure', name })
   }, [])
 
   /** Chart > Categories: merge into `spec.categorical` (a text measure). */
   const setCategorical = useCallback((patch: { stat?: string; level?: string | null }) => {
     console.info('[Plot Studio] categorical_set', patch)
-    setSpec(prev => (prev ? { ...prev, categorical: { ...(prev.categorical ?? {}), ...patch } } : prev))
+    dispatchSpec({ type: 'setCategorical', patch })
   }, [])
 
   /** Chart > Bars: stack the colour levels, or not. */
   /** The "Not plotted" footnote (StyleOptions.not_plotted_note); absent = off. */
   const setNotPlottedNote = useCallback((on: boolean) => {
     console.info('[Plot Studio] not_plotted_note_set', on)
-    setSpec(prev => {
-      if (!prev) return prev
-      const style = { ...(prev.style ?? {}) }
-      if (on) style.not_plotted_note = true
-      else delete style.not_plotted_note
-      return { ...prev, style }
-    })
+    dispatchSpec({ type: 'setNotPlottedNote', on })
   }, [])
 
   const setBarStack = useCallback((stack: boolean) => {
     console.info('[Plot Studio] bar_stack_set', stack)
-    setSpec(prev => (prev ? { ...prev, bar: { ...(prev.bar ?? {}), stack } } : prev))
+    dispatchSpec({ type: 'setBarStack', stack })
   }, [])
 
   /** Chart > Histogram: merge into `spec.histogram`. */
   const setHistogram = useCallback((patch: HistogramOptions) => {
     console.info('[Plot Studio] histogram_set', patch)
-    setSpec(prev => (prev ? { ...prev, histogram: { ...(prev.histogram ?? {}), ...patch } } : prev))
+    dispatchSpec({ type: 'setHistogram', patch })
   }, [])
 
   /** Chart > Density curve: merge into `spec.kde`. */
   const setKde = useCallback((patch: KdeOptions) => {
     console.info('[Plot Studio] kde_set', patch)
-    setSpec(prev => (prev ? { ...prev, kde: { ...(prev.kde ?? {}), ...patch } } : prev))
+    dispatchSpec({ type: 'setKde', patch })
   }, [])
 
   /** Chart > Regression: merge into `spec.regression`. */
   const setRegression = useCallback((patch: RegressionOptions) => {
     console.info('[Plot Studio] regression_set', patch)
-    setSpec(prev => (prev ? { ...prev, regression: { ...(prev.regression ?? {}), ...patch } } : prev))
+    dispatchSpec({ type: 'setRegression', patch })
   }, [])
 
   const setFacet = useCallback((patch: Partial<FacetOptions>) => {
-    setSpec(prev => (prev ? { ...prev, facet: { ...(prev.facet ?? {}), ...patch } } : prev))
+    dispatchSpec({ type: 'setFacet', patch })
   }, [])
 
   const setYAxis = useCallback((patch: Partial<YAxis>) => {
-    setSpec(prev => (prev ? { ...prev, y_axis: { ...(prev.y_axis ?? {}), ...patch } } : prev))
+    dispatchSpec({ type: 'setYAxis', patch })
   }, [])
 
   const setStyle = useCallback((patch: StylePatch) => {
-    setSpec(prev => (prev ? { ...prev, style: { ...(prev.style ?? {}), ...patch } } : prev))
+    dispatchSpec({ type: 'setStyle', patch })
   }, [])
 
   /** Replace `spec.panel_overrides` (built by panelOverrides.ts). */
   const setPanelOverrides = useCallback((next: PanelOverride[]) => {
     console.info('[Plot Studio] panel_overrides_set', { count: next.length, overrides: next })
-    setSpec(prev => (prev ? { ...prev, panel_overrides: next } : prev))
+    dispatchSpec({ type: 'setPanelOverrides', overrides: next })
   }, [])
 
   /** Replace `spec.comparison` (built by compare.ts). */
   const setComparison = useCallback((next: Comparison | null | undefined) => {
     console.info('[Plot Studio] comparison_set', { comparison: next })
-    setSpec(prev => (prev ? { ...prev, comparison: next ?? null } : prev))
+    dispatchSpec({ type: 'setComparison', comparison: next })
   }, [])
 
   /** Replace `spec.difference_bars` (built by differenceBars.ts). */
   const setDifferenceBars = useCallback((next: DifferenceBar[]) => {
     console.info('[Plot Studio] difference_bars_set', { count: next.length, bars: next })
-    setSpec(prev => (prev ? { ...prev, difference_bars: next } : prev))
+    dispatchSpec({ type: 'setDifferenceBars', bars: next })
   }, [])
 
   // "+ Add difference bar": two clicks on the preview. `picking` is the step,
@@ -2001,11 +1955,11 @@ export default function PlotStudio({
   }, [])
 
   const setAliases = useCallback((next: SpecAliases) => {
-    setSpec(prev => (prev ? { ...prev, aliases: next } : prev))
+    dispatchSpec({ type: 'setAliases', aliases: next })
   }, [])
 
   const setColors = useCallback((next: SpecColors) => {
-    setSpec(prev => (prev ? { ...prev, colors: next } : prev))
+    dispatchSpec({ type: 'setColors', colors: next })
   }, [])
 
   /** The plot's one mark colour (`style.mark_color`); null deletes the key,

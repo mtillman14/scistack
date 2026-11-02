@@ -602,7 +602,7 @@ def _hashable_selection(raw: Any) -> tuple[tuple[str, Any], ...]:
     Accepts the dict form callers naturally write and the tuple form a
     round-trip hands back. **List values become tuples**: a selection may name
     several levels (``{"bandpass.low_hz": ["20", "50"]}`` — membership, the same
-    semantics ``scidb.database._match_branch_param`` gives a list-valued
+    semantics ``scidb.store.database._match_branch_param`` gives a list-valued
     ``Variant`` kwarg), and a list inside a frozen dataclass makes the whole
     thing unhashable, which would break ``get_table``'s memo the moment anyone
     pinned a subcube.

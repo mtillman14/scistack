@@ -1,6 +1,6 @@
 """Tests for the bipartite provenance identity helpers and schema (Phase 2).
 
-Covers ``scidb.provenance``:
+Covers ``scidb.provenance.graph``:
 - content-addressed ids are deterministic / idempotent (re-run → same id)
 - distinct inputs (function, value, binding set, output slot) → distinct ids
 - identity-neutral facts (where, binding order, as_table order) don't shift ids
@@ -11,7 +11,7 @@ Covers ``scidb.provenance``:
 import pytest
 import scifor as _scifor
 
-import scidb.provenance as prov
+import scidb.provenance.graph as prov
 
 from scidb import configure_database
 
@@ -157,12 +157,12 @@ def test_invocation_id_distribute_matters():
 # ---------------------------------------------------------------------------
 def _inline_invocation_id(meta, edges):
     """Reproduce the exact assembly record_run does inline for one record."""
-    from scidb.bindings import Binding
-    from scidb.provenance import (
+    from scidb.run.bindings import Binding
+    from scidb.provenance.graph import (
         compute_invocation_id,
         constant_record_id_from_hash,
     )
-    from scidb.provenance_save import (
+    from scidb.provenance.save import (
         _constant_bindings,
         _normalize_as_table,
         _parse_json_dict,
@@ -196,7 +196,7 @@ def _inline_invocation_id(meta, edges):
 def test_inline_invocation_id_matches_helper():
     import json
 
-    from scidb.provenance_save import invocation_identity
+    from scidb.provenance.save import invocation_identity
 
     cases = [
         # plain variable + constant
@@ -235,8 +235,8 @@ def test_record_run_refuses_a_graph_that_disagrees_with_the_record(db):
     """The self-check: a GraphRecord whose stamped invocation id does not
     match the edges it carries is a bug of exactly the class the typed spine
     exists to catch, and record_run must not paper over it."""
-    from scidb.bindings import Binding
-    from scidb.provenance_save import GraphRecord, record_run
+    from scidb.run.bindings import Binding
+    from scidb.provenance.save import GraphRecord, record_run
 
     meta = {"__fn": "f", "__fn_hash": "h", "__constants": {}}
     bad = GraphRecord(
@@ -317,13 +317,13 @@ _PI_SPEC = '{"__type": "PathInput", "template": "{subject}/x.csv", "root_folder"
 
 
 def test_variable_input_params_excludes_path_inputs():
-    from scidb.provenance_save import variable_input_params
+    from scidb.provenance.save import variable_input_params
 
     assert variable_input_params({"__inputs": {"filepath_or_buffer": _PI_SPEC}}) == []
 
 
 def test_variable_input_params_finds_variable_inputs():
-    from scidb.provenance_save import variable_input_params
+    from scidb.provenance.save import variable_input_params
 
     meta = {"__inputs": {"signal": "RawSignal", "filepath_or_buffer": _PI_SPEC}}
     assert variable_input_params(meta) == ["signal"]
@@ -334,14 +334,14 @@ def test_variable_input_params_handles_json_string_inputs():
     stored record."""
     import json
 
-    from scidb.provenance_save import variable_input_params
+    from scidb.provenance.save import variable_input_params
 
     meta = {"__inputs": json.dumps({"signal": "RawSignal", "fp": _PI_SPEC})}
     assert variable_input_params(meta) == ["signal"]
 
 
 def test_variable_input_params_empty_when_no_inputs():
-    from scidb.provenance_save import variable_input_params
+    from scidb.provenance.save import variable_input_params
 
     assert variable_input_params({}) == []
     assert variable_input_params({"__inputs": {}, "__constants": {"hz": 30}}) == []

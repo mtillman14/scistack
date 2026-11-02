@@ -1,4 +1,4 @@
-"""The ``on_duplicate`` run option in the GUI (scidb.combine).
+"""The ``on_duplicate`` run option in the GUI (scidb.run.combine).
 
 - on_duplicate_from_config: the one reader; unknown values fall back, logged
 - the single-node Run passes it to for_each

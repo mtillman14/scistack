@@ -9,7 +9,7 @@ footnote and the log line only display it.
 | reason | meaning | lost? |
 |---|---|---|
 | ``no_value`` | the record exists but its value is empty (NaN / NULL) | yes |
-| ``no_record`` | the dataset has the location; this variable has no record there (``scidb.inventory.absent_locations``) | yes |
+| ``no_record`` | the dataset has the location; this variable has no record there (``scidb.provenance.inventory.absent_locations``) | yes |
 | ``outside_range`` | a histogram value outside the typed From / To range | yes |
 | ``nan_elements`` | some entries inside a vector are NaN | no: thinned |
 | ``partly_averaged`` | a collapsed average used fewer members than exist | no: thinned |

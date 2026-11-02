@@ -419,7 +419,7 @@ class TestIntent:
 
     The green database has never been opened by a GUI, so it has no intent
     store — the report shows fact alone, and says so. The store's read
-    contract is scidb's (`scidb.intent.INTENT_COLUMNS`), so when a table IS
+    contract is scidb's (`scidb.provenance.intent.INTENT_COLUMNS`), so when a table IS
     present the inspector reads it without importing the GUI.
     """
 
@@ -440,7 +440,7 @@ class TestIntent:
         """
         import duckdb
 
-        from scidb.intent import INTENT_COLUMNS, INTENT_TABLE
+        from scidb.provenance.intent import INTENT_COLUMNS, INTENT_TABLE
 
         db_path, data_root = tmp_path / "intent.duckdb", tmp_path / "data"
         build_p3_db(db_path, data_root)

@@ -1,11 +1,11 @@
-"""Stage 1a of the schema location picker: ``scidb.locations.location_states``.
+"""Stage 1a of the schema location picker: ``scidb.provenance.locations.location_states``.
 
 Companion doc: ``docs/claude/schema-location-status.md``. Plan:
 ``.claude/plan-schema-location-picker.md``.
 
 The correctness anchor here is :class:`TestAgreesWithCheckComboState` — the new
 batch primitive must agree, location for location, with the existing
-one-combo-at-a-time :func:`scidb.state.check_combo_state`. If the two ever
+one-combo-at-a-time :func:`scidb.provenance.state.check_combo_state`. If the two ever
 disagree on a non-excluded location, one of them is wrong and this test says so
 before a colour reaches a user.
 
@@ -20,8 +20,8 @@ Fixture (schema keys subject/trial), for ``LocFilt``::
 
 import numpy as np
 import pytest
-from scidb.locations import intersect_location_states, location_states
-from scidb.state import check_combo_state, check_node_state, check_pathinput_node_state
+from scidb.provenance.locations import intersect_location_states, location_states
+from scidb.provenance.state import check_combo_state, check_node_state, check_pathinput_node_state
 
 from scidb import BaseVariable, configure_database, for_each, scistack
 
@@ -87,7 +87,7 @@ def _node_at(tree, **keys):
 
 
 def build_states_db(db_path):
-    from scidb.exclusions import exclude_schema
+    from scidb.store.exclusions import exclude_schema
 
     db = configure_database(db_path, SCHEMA_KEYS)
     for subject, trial in [("S01", "t1"), ("S01", "t2"), ("S02", "t1"), ("S02", "t2")]:
@@ -220,7 +220,7 @@ class TestFourStates:
         assert red.is_leaf and red.record_id is None
 
     def test_a_node_with_only_grey_beneath_it_is_grey_not_green(self, states_db):
-        from scidb.exclusions import exclude_schema
+        from scidb.store.exclusions import exclude_schema
 
         exclude_schema("whole subject withdrawn", subject="S02", trial="t2")
         tree = location_states(LocFilt, db=states_db)
@@ -281,8 +281,10 @@ class TestAgreesWithCheckComboState:
 
 
 class TestBatchHelpersMatchPerRecord:
-    def test_variant_keys_batch_matches_per_record(self, variant_db):
-        from scidb import provenance_query as pq
+    def test_variant_keys_name_function_constants_and_locations(self, variant_db):
+        """THE variant key (one rule since 2026-11-01): producing function
+        name, accumulated constants, consumed input locations."""
+        from scidb.provenance import query as pq
 
         rids = [
             row[0]
@@ -293,11 +295,14 @@ class TestBatchHelpersMatchPerRecord:
         assert rids
         batch = pq.variant_keys_batch(variant_db._duck, rids)
         for rid in rids:
-            assert batch[rid] == pq._producing_variant_key(variant_db._duck, rid)
+            key = batch[rid]
+            assert key != pq.RAW_VARIANT and len(key) == 3
+            assert isinstance(key[0], str) and isinstance(key[2], tuple)
+        assert len(set(batch.values())) >= 2, "constant variants must differ"
 
     def test_superseded_batch_matches_per_record(self, states_db):
-        from scidb import provenance_query as pq
-        from scidb.state import _has_superseded_ancestor
+        from scidb.provenance import query as pq
+        from scidb.provenance.state import _has_superseded_ancestor
 
         rids = [
             row[0]
@@ -339,8 +344,8 @@ class TestPathInputLoaderDenominator:
         keeps the two distinguishable: if this ever goes red, the expected set
         grew a live source and the gate may no longer be needed.
         """
-        from scidb import provenance_query as pq
-        from scidb.foreach_config import function_hash_for
+        from scidb.provenance import query as pq
+        from scidb.run.foreach_config import function_hash_for
 
         db, _path_input = loader_db
         fn_hash = function_hash_for(loc_import)
@@ -616,7 +621,7 @@ def run_locations_json(capsys, db_path, argv):
 def _clear_discovery_cache():
     """The gate caches filesystem walks for a few seconds; tests must not
     inherit one another's."""
-    from scidb.state import clear_discovery_cache
+    from scidb.provenance.state import clear_discovery_cache
 
     clear_discovery_cache()
     yield
@@ -682,8 +687,8 @@ class TestDiscoveryGate:
         exclusion — which forces the user to write down WHY, and which the
         picker already subtracts from its denominator.
         """
-        from scidb.exclusions import exclude_schema
-        from scidb.state import clear_discovery_cache
+        from scidb.store.exclusions import exclude_schema
+        from scidb.provenance.state import clear_discovery_cache
 
         db, _path_input = loader_db
         assert check_node_state(loc_import, [LocLoaded], db=db)["state"] == "red"
@@ -716,7 +721,7 @@ class TestDiscoveryCredibilityGuard:
     def test_an_unreachable_data_root_does_not_red_the_node(self, loader_db, tmp_path):
         import shutil
 
-        from scidb.state import clear_discovery_cache
+        from scidb.provenance.state import clear_discovery_cache
 
         db, path_input = loader_db
         # The loader has realized locations; now the data disappears.
@@ -751,7 +756,7 @@ class TestDiscoveryCache:
     def test_a_second_call_does_not_walk_the_filesystem_again(self, loader_db):
         """`check_node_state` runs on every canvas refresh, and a refresh comes
         in bursts. The walk is the one thing here that is not a DB query."""
-        from scidb import state as state_mod
+        from scidb.provenance import state as state_mod
 
         db, path_input = loader_db
         calls = {"n": 0}
@@ -781,7 +786,7 @@ class TestDiscoveryCache:
 # ---------------------------------------------------------------------------
 
 
-from scidb import state as state_mod  # noqa: E402
+from scidb.provenance import state as state_mod  # noqa: E402
 
 
 class TestLocationStatesReusesTheDiscoveryWalk:

@@ -220,6 +220,7 @@ of group C living in the wrong package.
 
 > **Done (2026-11-01, P3):** R3′ — no new package: `scifor.project` (root, machine, discovery, config, config_file, aliases, colors, schema_order, names, source_edit, entities_file); the engine may import it, it imports no engine module (`scifor/tests/test_import_layers.py`).
 > **Done (2026-11-01, P3):** R4 — `PathInput.bound_to(root)`; `for_each(project_root=...)` in scifor and scidb decides the root once at entry and binds it into the inputs; the global pin is only the default (`scifor/tests/test_pathinput_explicit_root.py`).
+> **Done (2026-11-01, P4 stage 1):** R1 — `for_each` = `plan_run` (frozen `RunPlan`, `ForColumnsPlan`) → `run_combo` (returns a `ComboResult`; failures returned, not raised) → `assemble` (summary + `_build_result_table`); `ProgressReporter` and `RunTally` hold the loop state (`scifor/tests/test_run_plan.py`). R2 — `scifor.LoopHooks` (`scifor/hooks.py`, a docstring per field) replaces the `_`-params; the ignored `_log_fn` is gone; a leftover `_name=` raises `TypeError`.
 R1 and R3 are independent and each is mechanical. R1 is the one that would
 most reduce the cost of future iteration features.
 

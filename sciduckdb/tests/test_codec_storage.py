@@ -35,16 +35,18 @@ class TestCodecRoundTrip:
     """Values stored through the codec in a real table load back unchanged."""
 
     def test_save_and_load_int(self, duck):
-        """Round-trip an integer."""
+        """Round-trip an integer, as a Python int (not np.int64)."""
         meta = store(duck, "my_int", 42)
         loaded = fetch(duck, "my_int", meta)
         assert loaded == 42
+        assert type(loaded) is int
 
     def test_save_and_load_float(self, duck):
-        """Round-trip a float."""
+        """Round-trip a float, as a Python float."""
         meta = store(duck, "my_float", 3.14)
         loaded = fetch(duck, "my_float", meta)
         assert abs(loaded - 3.14) < 1e-10
+        assert type(loaded) is float
 
     def test_save_and_load_string(self, duck):
         """Round-trip a string."""
@@ -53,12 +55,12 @@ class TestCodecRoundTrip:
         assert loaded == "hello world"
 
     def test_save_and_load_bool(self, duck):
-        """Round-trip a boolean. A single-column load returns the restored
-        cell, which pandas holds as ``np.bool_`` (scidb's load does the same)."""
+        """Round-trip a boolean as the Python ``True``. ``restore_types`` keeps
+        a scalar column as Python objects; a list assignment let pandas
+        re-infer ``np.bool_`` (P4 stage 10)."""
         meta = store(duck, "my_bool", True)
         loaded = fetch(duck, "my_bool", meta)
-        assert isinstance(loaded, (bool, np.bool_))
-        assert loaded == True  # noqa: E712 - np.True_ is not True
+        assert loaded is True
 
     def test_save_and_load_1d_array(self, duck):
         """Round-trip a 1D numpy array."""

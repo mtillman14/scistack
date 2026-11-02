@@ -43,10 +43,10 @@ from typing import Any
 from scifor import EachOf, PathInput
 from scifor.project.discovery import PathInsert, purge_module, read_project_name, walk_package
 
-from ..parameter import Parameter, path_input_declaration
-from ..pipeline import is_scistack_function
-from ..roles import FunctionRole, function_role
-from ..variable import BaseVariable
+from scidb.model.parameter import Parameter, path_input_declaration
+from scidb.run.pipeline import is_scistack_function
+from scidb.model.roles import FunctionRole, function_role
+from scidb.model.variable import BaseVariable
 
 logger = logging.getLogger(__name__)
 

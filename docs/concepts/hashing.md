@@ -13,7 +13,7 @@
      scilineage/tests/test_hashing.py:177 (whitespace/comments/docstrings don't change hash),
        :375-402 (recursive vs bytecode-only path);
      scilineage/tests/test_lineage.py (lineage record function_hash is full 64-char SHA-256);
-     scidb/src/scidb/database.py:1147,2015 (canonical_hash(data) -> content_hash;
+     scidb/src/scidb/store/database.py:1147,2015 (canonical_hash(data) -> content_hash;
        generate_record_id -> record_id; stored in _record_metadata).
      scicanonicalhash depends on nothing; it is the leaf every other layer builds on. -->
 

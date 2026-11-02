@@ -18,7 +18,7 @@ import pytest
 import scistack_gui.runtime.db as _gui_db
 from conftest import FilteredSignal, RawSignal, bandpass_filter
 from fastapi.testclient import TestClient
-from scidb.database import _local
+from scidb.store.database import _local
 from scistack_gui.project import registry as _registry
 from scistack_gui.app import create_app
 from scistack_gui.domain.graph_builder import edge_dedup_key, wiring_id
@@ -372,7 +372,7 @@ def test_first_build_after_run_has_no_duplicate_edges(client):
     so it doesn't compare equal to the DB-derived edge. Graduation then
     rewrites its endpoints onto the DB-derived ids, which is exactly what
     makes it a duplicate, and nothing re-checked afterwards. Found in a real
-    GUI session (examples/vo2max/scidb.log): the post-run build reported
+    GUI session (examples/vo2max/scidb.model.log): the post-run build reported
     "4 total edges (2 DB-derived, 2 manual)" and the very next rebuild
     reported "2 total edges (... 2 manual superseded by DB-derived)". The
     doubled edges stay on the canvas until some unrelated refresh, and

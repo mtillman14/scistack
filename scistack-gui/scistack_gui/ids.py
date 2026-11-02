@@ -201,7 +201,7 @@ def strip_placement(node_id: str) -> BareNodeId:
 # DB-derived function nodes use composite ids:
 #     fn__{fn_name}__{wiring_id}
 # where wiring_id is a 16-hex-char hash of the function's wiring
-# (scidb.provenance.compute_wiring_id, the one owner).
+# (scidb.provenance.graph.compute_wiring_id, the one owner).
 #
 # Manual function nodes (dragged in by the user) use a different suffix:
 #     fn__{fn_name}__{6-char-random}

@@ -2,7 +2,7 @@
 
 `ScidbSource` attaches `LongTable.absent` — the variable's schema locations
 the dataset has (some `_schema` row) where it has no record — from
-`scidb.inventory.absent_locations`, the owner; `scistackplot.reduce.omissions`
+`scidb.provenance.inventory.absent_locations`, the owner; `scistackplot.reduce.omissions`
 reports them per figure.
 """
 

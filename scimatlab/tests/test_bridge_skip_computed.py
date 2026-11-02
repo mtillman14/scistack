@@ -24,8 +24,8 @@ sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import numpy as np
-from scidb.database import configure_database
-from scidb.foreach import for_each as scidb_for_each
+from scidb.store.database import configure_database
+from scidb.run.foreach import for_each as scidb_for_each
 from scimatlab.bridge import for_each_prepare, for_each_save, register_matlab_variable
 
 

@@ -26,7 +26,7 @@ import pandas as pd
 import pytest
 
 import scifor.foreach as scifor_foreach
-from scifor import ForColumnsError, NoDataError, for_each, set_schema
+from scifor import ForColumnsError, LoopHooks, NoDataError, for_each, set_schema
 from scifor.failures import (
     ActionableError,
     FailureGroup,
@@ -59,7 +59,7 @@ def _df(n=2):
 def _only_group(fn, n=1):
     set_schema(["subject"])
     events = []
-    for_each(fn, inputs={"value": _df(n)}, subject=list(range(1, n + 1)), _progress_fn=events.append)
+    for_each(fn, inputs={"value": _df(n)}, subject=list(range(1, n + 1)), hooks=LoopHooks(progress_fn=events.append))
     (group,) = _summary(events)["failures"]
     return group
 
@@ -260,12 +260,15 @@ def test_for_each_combine_failure_names_mixed_kinds(monkeypatch):
 
 
 def test_combine_step_is_inside_the_seam():
-    """Every call of the combine step in for_each sits inside a
-    `with user_value_seam(...)` block, so a failure there can never be
-    reported as SciStack's fault without the user-value check."""
+    """Every call of the combine step in for_each's assemble phase
+    (`_build_result_table`) sits inside a `with user_value_seam(...)` block, so a
+    failure there can never be reported as SciStack's fault without the
+    user-value check."""
     src = pathlib.Path(scifor_foreach.__file__).read_text(encoding="utf-8")
     tree = ast.parse(src)
-    (fe,) = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "for_each"]
+    (fe,) = [
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_build_result_table"
+    ]
 
     def in_seam(node, ancestors):
         for a in ancestors:

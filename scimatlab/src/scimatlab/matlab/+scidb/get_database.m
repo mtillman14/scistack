@@ -8,5 +8,5 @@ function db = get_database()
 %       db = scidb.get_database();
 %       db.close();
 
-    db = py.scidb.database.get_database();
+    db = py.scidb.store.database.get_database();
 end

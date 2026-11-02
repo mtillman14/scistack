@@ -28,8 +28,8 @@ from scidb import (
 # A never-computed variable type raises NotFoundError if registered (e.g. by
 # an earlier save of the same class) and NotRegisteredError otherwise.
 NOT_STORED = (NotFoundError, NotRegisteredError)
-from scidb.database import _local
-from scidb.pipeline import _reset_pipeline_state, _unrun_pipelines
+from scidb.store.database import _local
+from scidb.run.pipeline import _reset_pipeline_state, _unrun_pipelines
 
 SCHEMA = ["subject", "trial"]
 SUBJECTS = ["1", "2"]
@@ -465,7 +465,7 @@ class TestLastRunReport:
         per-combo filtering (e.g. a `where=` clause, or one of several
         inputs missing data for a combo whose other inputs exist) and comes
         back with a NoDataError there."""
-        import scidb.foreach as scidb_foreach
+        import scidb.run.foreach as scidb_foreach
 
         _seed(db)
         pipe = db.pipeline("gait")
@@ -1148,7 +1148,7 @@ class TestBinding:
         }
 
     def test_key_map_rewrites_fixed_and_structured_where(self, db):
-        from scidb.filters import schema_key
+        from scidb.model.filters import schema_key
 
         from scidb import Fixed
 

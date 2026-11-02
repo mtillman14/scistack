@@ -1,7 +1,7 @@
 """
 An entity write must re-read one file, not the whole project.
 
-The cost this guards, measured on a real project from scidb.log on
+The cost this guards, measured on a real project from scidb.model.log on
 2026-09-01: one full ``_refresh_registries()`` was ~16.5 s -- 2.5 s to
 re-parse the config, 1.6 s to re-import 19 Python modules, and 14.9 s to
 re-classify 303 MATLAB source files. Creating a single variable paid all of

@@ -12,7 +12,7 @@ and rides on the parameter's VARIABLE BINDING from there
 (``edge_resolver.variable_binding``) down to ``build_run_inputs``, MATLAB
 generation and code export.
 
-**The shape is not defined here.** ``scidb.intent`` owns the ``columns``
+**The shape is not defined here.** ``scidb.provenance.intent`` owns the ``columns``
 aspect — its payload, its ``None``-means-whole-variable rule, its log
 spelling and its stored serialisation — and this module is the GUI's
 adapter onto it: binding-shaped helpers (:func:`from_binding`,
@@ -44,9 +44,9 @@ from __future__ import annotations
 
 import logging
 
-from scidb.intent import describe_columns as describe
-from scidb.intent import normalize_columns as normalize
-from scidb.intent import parse_selector, same_columns, selection_spec, selector_json
+from scidb.provenance.intent import describe_columns as describe
+from scidb.provenance.intent import normalize_columns as normalize
+from scidb.provenance.intent import parse_selector, same_columns, selection_spec, selector_json
 
 logger = logging.getLogger(__name__)
 

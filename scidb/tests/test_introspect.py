@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from scidb.database import _local
+from scidb.store.database import _local
 
 import scifor as _scifor
 from scidb import BaseVariable, Fixed, configure_database, for_each

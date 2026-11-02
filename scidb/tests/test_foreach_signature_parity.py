@@ -18,10 +18,14 @@ import scidb
 
 
 def _public_params(fn) -> dict[str, inspect.Parameter]:
+    # `hooks` (scifor.LoopHooks) is how scidb drives scifor's loop, not a
+    # user option, so scidb does not take it.
     return {
         name: p
         for name, p in inspect.signature(fn).parameters.items()
-        if not name.startswith("_") and p.kind is not inspect.Parameter.VAR_KEYWORD
+        if not name.startswith("_")
+        and name != "hooks"
+        and p.kind is not inspect.Parameter.VAR_KEYWORD
     }
 
 

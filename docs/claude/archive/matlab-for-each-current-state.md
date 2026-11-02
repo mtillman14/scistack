@@ -52,15 +52,15 @@ Unlike Python (where the layers are clean delegations), the MATLAB layers have s
 |---|---|---|
 | `for_each.m` | 2160 | DB-backed for_each. Builds version keys, loads inputs, propagates schema, delegates the loop to `+scifor/for_each`, then saves results. Includes a 340-line `run_parallel` branch (not currently in use). |
 | `BaseVariable.m` | 972 | Base class for variable types. Provides `.save()`, `.load()`, `.list_versions()`, `.provenance()`. Each method bridges to a Python equivalent. |
-| `LineageFcn.m` | 190 | Wraps a MATLAB function for lineage tracking. Constructs a `MatlabLineageFcn` Python proxy. On call: builds `MatlabLineageFcnInvocation`, checks Python cache, executes in MATLAB on miss, wraps results as `scidb.LineageFcnResult`. |
+| `LineageFcn.m` | 190 | Wraps a MATLAB function for lineage tracking. Constructs a `MatlabFunctionIdentity` Python proxy. On call: builds `MatlabLineageFcnInvocation`, checks Python cache, executes in MATLAB on miss, wraps results as `scidb.LineageFcnResult`. |
 | `LineageFcnResult.m` | 59 | Pairs MATLAB result data with the Python lineage shadow. |
 | `PathGenerator.m` | 218 | Filesystem path generator helper. |
 | `Fixed.m` | 71 | Wraps a `BaseVariable` (or other scidb wrapper) with metadata overrides. Distinct classdef from `+scifor/Fixed.m`. |
 | `Merge.m` | 102 | Wraps multiple variable types for merged loading. Distinct from `+scifor/Merge`. |
-| `Filter.m` | 56 | Wraps Python `scidb.filters.Filter`. |
+| `Filter.m` | 56 | Wraps Python `scidb.model.filters.Filter`. |
 | `ColName.m` | 42 | Wraps a `BaseVariable`; resolves to its data column name via Python query. |
 | `configure_database.m` | 58 | Calls `py.scidb.configure_database`, sets schema global. |
-| `Log.m` | 135 | MATLAB-side logging that mirrors `scidb.log.Log`. |
+| `Log.m` | 135 | MATLAB-side logging that mirrors `scidb.model.log.Log`. |
 | `register_variable.m` | 32 | Registers a MATLAB type via `py.sci_matlab.bridge.register_matlab_variable`. |
 | `get_database.m` | (small) | Returns the global Python `DatabaseManager`. |
 | `close_database.m` | 35 | Closes the database. |
@@ -102,7 +102,7 @@ Helper functions used by `+scidb/for_each.m`, `+scidb/BaseVariable.m`, `+scidb/L
 `bridge.py` exposes the following entry points to MATLAB. Grouped by purpose:
 
 **Lineage proxy classes:**
-- `MatlabLineageFcn` — proxy satisfying `scilineage.LineageFcn`'s duck-typing contract.
+- `MatlabFunctionIdentity` — proxy satisfying `scilineage.LineageFcn`'s duck-typing contract.
 - `MatlabLineageFcnInvocation` — proxy for `LineageFcnInvocation`. Reuses `classify_inputs`.
 - `make_lineage_fcn_result(invocation, output_num, data)` — instantiates a real `LineageFcnResult`.
 
@@ -169,7 +169,7 @@ Walking through the major sections:
 - `serialize_loadable_inputs` produces `__inputs` JSON.
 - `input_spec_to_key` recursively converts each input spec to its canonical string form.
 - `format_repr` formats values in Python `repr()` style.
-- **Duplicates** Python `ForEachConfig.to_version_keys()`.
+- **Duplicates** Python `ForEachConfig.to_config_keys()`.
 
 ### 8. Schema combo prefilter (lines 313–388)
 - When some keys were resolved from DB AND no PathInput, calls `db.distinct_schema_combinations(filter_keys)`.
@@ -179,7 +179,7 @@ Walking through the major sections:
 
 ### 9. Persist expected combos (lines 396–422)
 - Builds `py_combos` list-of-dicts.
-- Calls `py.scidb.foreach._persist_expected_combos(...)`.
+- Calls `py.scidb.run.foreach._persist_expected_combos(...)`.
 - **Delegates** to Python — good.
 
 ### 10. Parallel branch (lines 436–453, function at 1338)
@@ -190,7 +190,7 @@ Walking through the major sections:
 - **Not currently in use** per Phase 0 of the redesign.
 
 ### 11. Resolve DB for loading (lines 456–460)
-- Either uses `opts.db` or `py.scidb.database.get_database()`.
+- Either uses `opts.db` or `py.scidb.store.database.get_database()`.
 
 ### 12. Load all inputs (lines 462–497, function at 688)
 - Iterates over `inputs`, calling `convert_input` on each loadable.
@@ -298,7 +298,7 @@ This dual-global setup is a known fragility: a bug in the MATLAB sync would sile
 
 `scidb.internal.hash_function` reads the `.m` file via `fileread` and hashes via `py.hashlib.sha256`. The format is raw-source-bytes-SHA-256, no normalization.
 
-This hash is then passed to `MatlabLineageFcn(source_hash, name, unpack_output)` in Python, which combines it with `unpack_output` and re-hashes:
+This hash is then passed to `MatlabFunctionIdentity(source_hash, name, unpack_output)` in Python, which combines it with `unpack_output` and re-hashes:
 
 ```python
 string_repr = f"{source_hash}{STRING_REPR_DELIMITER}{unpack_output}"
@@ -349,7 +349,7 @@ What happens:
 
 8. **Schema prefilter:** skipped (no DB-resolved keys).
 
-9. **Persist expected combos:** call `py.scidb.foreach._persist_expected_combos(db, "bandpass", py_combos)`.
+9. **Persist expected combos:** call `py.scidb.run.foreach._persist_expected_combos(db, "bandpass", py_combos)`.
 
 10. **Load `signal`:** `convert_input` → `load_and_extract(RawEMG_class, {}, db=...)` → bridge returns wrapped batch → `wrap_py_vars_batch` extracts `BaseVariable[]` → `lineage_results_to_table` builds a MATLAB table with `subject`, `session`, `RawEMG` columns. Note: `__record_id` and `__branch_params` are **not surfaced** by the MATLAB bridge path — the variant tracking columns from Python's `_load_var_type_all` are stripped during `wrap_py_vars_batch` since they're internal to `_record_metadata`. **This is the root cause of MATLAB's missing `__rid_*` variant expansion.**
 

@@ -212,7 +212,7 @@ classdef BaseVariable < dynamicprops
             % matching the configured schema keys, dispatch to save_from_table.
             if istable(data) && ~codec.has_codec
                 if isempty(db_val)
-                    py_db_check = py.scidb.database.get_database();
+                    py_db_check = py.scidb.store.database.get_database();
                 else
                     py_db_check = db_val;
                 end
@@ -226,12 +226,12 @@ classdef BaseVariable < dynamicprops
                             'Table has no data columns (all columns are schema keys: %s).', ...
                             strjoin(meta_cols, ', '));
                     elseif numel(data_cols) == 1
-                        scidb.Log.info(['[save] auto-distribute %s: single-col branch, ' ...
+                        scifor.Log.info(['[save] auto-distribute %s: single-col branch, ' ...
                             'meta=[%s], data_col=%s, rows=%d'], ...
                             type_name, strjoin(meta_cols, ','), data_cols(1), height(data));
                         record_id = obj.save_from_table(data, data_cols(1), meta_cols, varargin{:});
                     else
-                        scidb.Log.info(['[save] auto-distribute %s: multi-col branch, ' ...
+                        scifor.Log.info(['[save] auto-distribute %s: multi-col branch, ' ...
                             'meta=[%s], data_cols=[%s], rows=%d'], ...
                             type_name, strjoin(meta_cols, ','), strjoin(data_cols, ','), height(data));
                         % Multiple data columns: wrap each row's sub-table as a cell
@@ -247,7 +247,7 @@ classdef BaseVariable < dynamicprops
                     return;
                 end
                 % No schema-key columns in table → fall through and save as one record.
-                scidb.Log.info(['[save] auto-distribute %s: fall-through branch ' ...
+                scifor.Log.info(['[save] auto-distribute %s: fall-through branch ' ...
                     '(no schema-key columns), cols=[%s], rows=%d'], ...
                     type_name, strjoin(tbl_cols, ','), height(data));
             end
@@ -260,7 +260,7 @@ classdef BaseVariable < dynamicprops
             end
 
             if isempty(db_val)
-                py_db = py.scidb.database.get_database();
+                py_db = py.scidb.store.database.get_database();
             else
                 py_db = db_val;
             end
@@ -294,7 +294,7 @@ classdef BaseVariable < dynamicprops
         %            when two rows share one location. "error" refuses the
         %            save; "combine" makes them one record, a differing value
         %            becoming the list of every row's value (Python
-        %            scidb.combine). Rows that were combined share an id.
+        %            scidb.run.combine). Rows that were combined share an id.
         %       Any other name-value pairs are common metadata applied to
         %       every row (e.g. experiment="exp1").
         %
@@ -412,7 +412,7 @@ classdef BaseVariable < dynamicprops
                     end
                 end
 
-                scidb.Log.info('[timing] save_from_table(%s): data_convert=%.3fs, mode=%s, n=%d', ...
+                scifor.Log.info('[timing] save_from_table(%s): data_convert=%.3fs, mode=%s, n=%d', ...
                     type_name, toc(t_conv), bulk_mode, height(tbl));
             end
 
@@ -525,7 +525,7 @@ classdef BaseVariable < dynamicprops
             py_metadata = scidb.internal.metadata_to_pydict(metadata_args{:});
 
             if isempty(db_val)
-                py_db = py.scidb.database.get_database();
+                py_db = py.scidb.store.database.get_database();
             else
                 py_db = db_val;
             end
@@ -681,7 +681,7 @@ classdef BaseVariable < dynamicprops
             py_kwargs = scidb.internal.build_csv_kwargs( ...
                 metadata_args, version, where, db_val);
 
-            scidb.Log.info('[to_csv] %s -> %s (version=%s)', ...
+            scifor.Log.info('[to_csv] %s -> %s (version=%s)', ...
                 type_name, string(filename), version);
 
             % Column selection (e.g. GaitData("Speed")) maps onto the Python
@@ -698,7 +698,7 @@ classdef BaseVariable < dynamicprops
                     type_name, char(filename), pyargs(py_kwargs{:}));
             else
                 cols = cellstr(obj.selected_columns(:)');
-                py_spec = py.scidb.column_selection.ColumnSelection( ...
+                py_spec = py.scidb.model.column_selection.ColumnSelection( ...
                     py_class, py.list(cols));
                 py_spec.to_csv(char(filename), pyargs(py_kwargs{:}));
             end
@@ -730,7 +730,7 @@ classdef BaseVariable < dynamicprops
             py_kwargs = scidb.internal.metadata_to_pykwargs(metadata_nv{:});
 
             if isempty(db_val)
-                py_db = py.scidb.database.get_database();
+                py_db = py.scidb.store.database.get_database();
             else
                 py_db = db_val;
             end
@@ -782,7 +782,7 @@ classdef BaseVariable < dynamicprops
             py_kwargs = scidb.internal.metadata_to_pykwargs(metadata_args{:});
 
             if isempty(db_val)
-                py_db = py.scidb.database.get_database();
+                py_db = py.scidb.store.database.get_database();
             else
                 py_db = db_val;
             end
@@ -829,10 +829,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.filters.ColumnFilter(py_class, column, '==', py_val);
+                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '==', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.filters.VariableFilter(py_class, '==', py_val);
+                py_filter = py.scidb.model.filters.VariableFilter(py_class, '==', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -851,10 +851,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.filters.ColumnFilter(py_class, column, '!=', py_val);
+                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '!=', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.filters.VariableFilter(py_class, '!=', py_val);
+                py_filter = py.scidb.model.filters.VariableFilter(py_class, '!=', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -869,10 +869,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.filters.ColumnFilter(py_class, column, '<', py_val);
+                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '<', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.filters.VariableFilter(py_class, '<', py_val);
+                py_filter = py.scidb.model.filters.VariableFilter(py_class, '<', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -887,10 +887,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.filters.ColumnFilter(py_class, column, '<=', py_val);
+                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '<=', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.filters.VariableFilter(py_class, '<=', py_val);
+                py_filter = py.scidb.model.filters.VariableFilter(py_class, '<=', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -905,10 +905,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.filters.ColumnFilter(py_class, column, '>', py_val);
+                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '>', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.filters.VariableFilter(py_class, '>', py_val);
+                py_filter = py.scidb.model.filters.VariableFilter(py_class, '>', py_val);
             end
             filt = scidb.Filter(py_filter);
         end
@@ -923,10 +923,10 @@ classdef BaseVariable < dynamicprops
             if ~isempty(obj.selected_columns)
                 % Use ColumnFilter for column-specific filtering
                 column = char(obj.selected_columns(1));  % Use first column
-                py_filter = py.scidb.filters.ColumnFilter(py_class, column, '>=', py_val);
+                py_filter = py.scidb.model.filters.ColumnFilter(py_class, column, '>=', py_val);
             else
                 % Use VariableFilter for whole-variable filtering
-                py_filter = py.scidb.filters.VariableFilter(py_class, '>=', py_val);
+                py_filter = py.scidb.model.filters.VariableFilter(py_class, '>=', py_val);
             end
             filt = scidb.Filter(py_filter);
         end        
@@ -1065,7 +1065,7 @@ classdef BaseVariable < dynamicprops
             if has_scalar_data
                 % Use from_python to properly convert scalar array
                 all_scalar_data = scidb.internal.from_python(bulk{'scalar_data'});
-                scidb.Log.debug('wrap_py_vars_batch: loaded %d scalar values', numel(all_scalar_data));
+                scifor.Log.debug('wrap_py_vars_batch: loaded %d scalar values', numel(all_scalar_data));
             end
 
             % --- Optimization B2: DataFrame batch transfer ---
@@ -1075,19 +1075,19 @@ classdef BaseVariable < dynamicprops
             has_concat_df = logical( ...
                 py.operator.contains(bulk, 'concat_df'));
             if has_concat_df
-                scidb.Log.debug('wrap_py_vars_batch: using concat_df fast path...');
+                scifor.Log.debug('wrap_py_vars_batch: using concat_df fast path...');
                 concat_table = scidb.internal.from_python(bulk{'concat_df'});
                 % Use from_python to properly convert row counts
                 row_counts = scidb.internal.from_python(bulk{'concat_df_row_counts'});
                 % Build cumulative row offsets for slicing
                 cum_rows = cumsum([0; row_counts(:)]);
-                scidb.Log.debug('wrap_py_vars_batch: concat_df has %d rows, split into %d tables', ...
+                scifor.Log.debug('wrap_py_vars_batch: concat_df has %d rows, split into %d tables', ...
                     height(concat_table), numel(row_counts));
 
                 % Reconstruct flattened array columns if present
                 has_flattened = logical(py.operator.contains(bulk, 'flattened_arrays'));
                 if has_flattened
-                    scidb.Log.debug('wrap_py_vars_batch: reconstructing flattened array columns...');
+                    scifor.Log.debug('wrap_py_vars_batch: reconstructing flattened array columns...');
                     flat_dict = bulk{'flattened_arrays'};
                     flat_keys = cell(py.list(flat_dict.keys()));
 
@@ -1099,7 +1099,7 @@ classdef BaseVariable < dynamicprops
                         flat_data = scidb.internal.from_python(flat_info{'flat'});
                         sizes = scidb.internal.from_python(flat_info{'sizes'});
 
-                        scidb.Log.debug('wrap_py_vars_batch: reconstructing column "%s": %d elements, %d arrays', ...
+                        scifor.Log.debug('wrap_py_vars_batch: reconstructing column "%s": %d elements, %d arrays', ...
                             col_name, numel(flat_data), numel(sizes));
 
                         % Reconstruct variable-length arrays using cumulative offsets
@@ -1120,10 +1120,10 @@ classdef BaseVariable < dynamicprops
                             reconstructed = scidb.internal.try_stack_numeric(reconstructed);
                         end
                         concat_table.(col_name) = reconstructed;
-                        scidb.Log.debug('wrap_py_vars_batch: column "%s" reconstructed successfully', col_name);
+                        scifor.Log.debug('wrap_py_vars_batch: column "%s" reconstructed successfully', col_name);
                     end
 
-                    scidb.Log.info('wrap_py_vars_batch: reconstructed %d flattened array columns', numel(flat_keys));
+                    scifor.Log.info('wrap_py_vars_batch: reconstructed %d flattened array columns', numel(flat_keys));
                 end
 
                 % Parse JSON string columns back to structs
@@ -1137,7 +1137,7 @@ classdef BaseVariable < dynamicprops
                     else
                         json_cols = cell(py.list(json_col_list));
                     end
-                    scidb.Log.debug('wrap_py_vars_batch: parsing %d JSON columns to structs...', numel(json_cols));
+                    scifor.Log.debug('wrap_py_vars_batch: parsing %d JSON columns to structs...', numel(json_cols));
 
                     for k = 1:numel(json_cols)
                         col_name = string(json_cols{k});
@@ -1158,11 +1158,11 @@ classdef BaseVariable < dynamicprops
                             end
 
                             concat_table.(col_name) = structs;
-                            scidb.Log.debug('wrap_py_vars_batch: parsed JSON column "%s" to structs', col_name);
+                            scifor.Log.debug('wrap_py_vars_batch: parsed JSON column "%s" to structs', col_name);
                         end
                     end
 
-                    scidb.Log.info('wrap_py_vars_batch: parsed %d JSON columns to structs', numel(json_cols));
+                    scifor.Log.info('wrap_py_vars_batch: parsed %d JSON columns to structs', numel(json_cols));
                 end
             end
 
@@ -1269,7 +1269,7 @@ end
 function [remaining, on_duplicate] = extract_on_duplicate(args)
 %EXTRACT_ON_DUPLICATE  Extract the 'on_duplicate' option from name-value pairs.
 %   Returns the remaining pairs and the option ('error' if not given),
-%   validated by Python's scidb.combine (the one owner of its values).
+%   validated by Python's scidb.run.combine (the one owner of its values).
     on_duplicate = 'error';
     remaining = {};
     i = 1;

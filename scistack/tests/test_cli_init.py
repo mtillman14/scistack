@@ -56,7 +56,7 @@ def test_schema_keys_create_the_database(tmp_path, capsys):
     assert "schema: subject, session" in capsys.readouterr().out
 
     from scidb import configure_database
-    from scidb.database import clear_current_database
+    from scidb.store.database import clear_current_database
 
     db = configure_database(root / "gait.duckdb", ["subject", "session"])
     try:

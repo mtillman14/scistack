@@ -7,9 +7,9 @@ different files, had their wiring rewritten between runs.
 
 | Layer | Owner | Recipe | Answers |
 |---|---|---|---|
-| `invocation_id` | `scidb.provenance.compute_invocation_id`, fed by `provenance_save.invocation_identity` / `record_run` (save), `_predict_config_invocations` (predict) | fn_hash + run options + **every input edge** (variable rids + selectors, constant rids, PathInput spec rids) | "Which exact call produced this record?" One `_invocation` row; outputs hang on it via `_invocation_output`. |
-| `call_id` | `scidb.foreach_config.CallSite` (forward `ForEachConfig.to_call_id`, backward `provenance_query.config_call_id` / `pipeline_variants`) | fn name + input TYPES (a PathInput contributes its `to_key()`) + constants + run options + glue names | "Which for_each call site is this?" `pipeline_variants` rows group by it; the GUI's `fkey = (fn, call_id)`. |
-| `wiring_id` | `scidb.provenance.compute_wiring_id` (GUI `graph_builder.wiring_id` delegates) | fn name + loadable-input shape + output types + `{param: declared PathInput name}` — no constants | "Which canvas node?" Constant sweeps share one node. Dispatch records a claim (`node_wiring`) so the next build attributes the run to the node that ran it. |
+| `invocation_id` | `scidb.provenance.graph.compute_invocation_id`, fed by `provenance_save.invocation_identity` / `record_run` (save), `_predict_config_invocations` (predict) | fn_hash + run options + **every input edge** (variable rids + selectors, constant rids, PathInput spec rids) | "Which exact call produced this record?" One `_invocation` row; outputs hang on it via `_invocation_output`. |
+| `call_id` | `scidb.run.foreach_config.CallSite` (forward `ForEachConfig.to_call_id`, backward `provenance_query.config_call_id` / `pipeline_variants`) | fn name + input TYPES (a PathInput contributes its `to_key()`) + constants + run options + glue names | "Which for_each call site is this?" `pipeline_variants` rows group by it; the GUI's `fkey = (fn, call_id)`. |
+| `wiring_id` | `scidb.provenance.graph.compute_wiring_id` (GUI `graph_builder.wiring_id` delegates) | fn name + loadable-input shape + output types + `{param: declared PathInput name}` — no constants | "Which canvas node?" Constant sweeps share one node. Dispatch records a claim (`node_wiring`) so the next build attributes the run to the node that ran it. |
 
 Each coarser layer is built FROM what the finer one recorded: `pipeline_variants`
 reads invocations and their edges; `aggregate_pipeline_variants` groups them by

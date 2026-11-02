@@ -286,10 +286,10 @@ def test_every_mutating_handler_decides_undo():
 
 def _gui_tables() -> set[str]:
     """Every table the GUI writes: the ones it declares (owner scistack_gui in
-    scidb.tables, the one registry) plus `_intent`, which scidb declares and
+    scidb.store.tables, the one registry) plus `_intent`, which scidb declares and
     the GUI writes."""
-    from scidb import tables
-    from scidb.intent import INTENT_TABLE
+    from scidb.store import tables
+    from scidb.provenance.intent import INTENT_TABLE
 
     from scistack_gui.stores import intent_store, node_wiring, pipeline_store  # noqa: F401 - declare
 

@@ -37,7 +37,7 @@ function data = from_python(py_obj)
         dtype_kind = string(py_c.dtype.kind);
         arr_shape = int64(py_c.shape);
         arr_ndim = int64(py_c.ndim);
-        scidb.Log.debug('from_python: numpy array dtype=%s, shape=[%s], ndim=%d', ...
+        scifor.Log.debug('from_python: numpy array dtype=%s, shape=[%s], ndim=%d', ...
             string(char(py.str(py_c.dtype))), strjoin(string(arr_shape), ' '), arr_ndim);
 
         % --- Bulk path: ONE bridge crossing for the whole array. ---
@@ -56,9 +56,9 @@ function data = from_python(py_obj)
             % Convert to Python list to avoid libmwbuffer errors.
             try
                 py_list = py_c.tolist();
-                scidb.Log.debug('from_python: tolist() succeeded, converting to MATLAB...');
+                scifor.Log.debug('from_python: tolist() succeeded, converting to MATLAB...');
             catch list_err
-                scidb.Log.err('from_python: tolist() failed: %s', list_err.message);
+                scifor.Log.err('from_python: tolist() failed: %s', list_err.message);
                 rethrow(list_err);
             end
 
@@ -97,7 +97,7 @@ function data = from_python(py_obj)
                     elseif ~isempty(c) && is_python_object(c{1})
                         % 2-D+ array: inner elements are Python row-lists.
                         % Recursively convert each row, then stack into a matrix.
-                        scidb.Log.debug('from_python: numeric array contains Python row-lists, converting recursively');
+                        scifor.Log.debug('from_python: numeric array contains Python row-lists, converting recursively');
                         data = cell(1, numel(c));
                         for idx_inner = 1:numel(c)
                             data{idx_inner} = scidb.internal.from_python(c{idx_inner});
@@ -114,7 +114,7 @@ function data = from_python(py_obj)
             data = data(:);
         end
 
-        scidb.Log.debug('from_python: numpy conversion complete, result class=%s size=[%s]', ...
+        scifor.Log.debug('from_python: numpy conversion complete, result class=%s size=[%s]', ...
             class(data), num2str(size(data)))
 
     elseif isa(py_obj, 'py.bool')
@@ -189,7 +189,7 @@ function data = from_python(py_obj)
             py_lengths = py_result{2};
 
             if ~isa(py_flat, 'py.NoneType')
-                scidb.Log.debug('from_python: using sequences fast path (flatten+split)');
+                scifor.Log.debug('from_python: using sequences fast path (flatten+split)');
 
                 % Single bridge crossing for the flattened array
                 flat_data = scidb.internal.from_python(py_flat);
@@ -222,7 +222,7 @@ function data = from_python(py_obj)
         try
             py_json = py.scimatlab.bridge.convert_nested_dicts_to_json(py_obj);
             if ~isa(py_json, 'py.NoneType')
-                scidb.Log.debug('from_python: using nested dicts JSON fast path');
+                scifor.Log.debug('from_python: using nested dicts JSON fast path');
 
                 % Single bridge crossing for the JSON string
                 json_str = char(py_json);
@@ -255,7 +255,7 @@ function data = from_python(py_obj)
         [can_concat_dfs, concat_df] = try_concat_homogeneous_dataframes(c);
         if can_concat_dfs
             try
-                scidb.Log.debug('from_python: trying DataFrame concat for list (%d DataFrames)', n);
+                scifor.Log.debug('from_python: trying DataFrame concat for list (%d DataFrames)', n);
 
                 % Record original row counts before concatenation so we can
                 % split back correctly even when sub-DataFrames have >1 row.
@@ -276,10 +276,10 @@ function data = from_python(py_obj)
                     pos = pos + rc;
                 end
 
-                scidb.Log.debug('from_python: DataFrame concat succeeded');
+                scifor.Log.debug('from_python: DataFrame concat succeeded');
                 return;
             catch concat_err
-                scidb.Log.debug('from_python: DataFrame concat failed, falling back: %s', ...
+                scifor.Log.debug('from_python: DataFrame concat failed, falling back: %s', ...
                     concat_err.message);
                 % Fall through to element-by-element conversion
             end
@@ -370,19 +370,19 @@ function data = convert_dataframe(py_obj)
 %CONVERT_DATAFRAME  Convert a pandas DataFrame to a MATLAB table.
     try
         py_cols = py_obj.columns.tolist();
-        scidb.Log.debug('convert_dataframe: got columns, converting to cell...');
+        scifor.Log.debug('convert_dataframe: got columns, converting to cell...');
         col_names = cell(py_cols);
-        scidb.Log.debug('convert_dataframe: %d columns: %s', numel(col_names), strjoin(string(col_names(1:min(5,end))), ', '));
+        scifor.Log.debug('convert_dataframe: %d columns: %s', numel(col_names), strjoin(string(col_names(1:min(5,end))), ', '));
         args = cell(1, numel(col_names));
 
-        scidb.Log.debug('convert_dataframe: getting row count...');
+        scifor.Log.debug('convert_dataframe: getting row count...');
         py_len = py.builtins.len(py_obj);
         n_rows = int64(py_len);
-        scidb.Log.debug('convert_dataframe: py_len type = %s, n_rows = %d', class(py_len), n_rows);
-        scidb.Log.debug('convert_dataframe: converting DataFrame with %d rows, %d columns', ...
+        scifor.Log.debug('convert_dataframe: py_len type = %s, n_rows = %d', class(py_len), n_rows);
+        scifor.Log.debug('convert_dataframe: converting DataFrame with %d rows, %d columns', ...
             n_rows, numel(col_names));
     catch init_err
-        scidb.Log.err('convert_dataframe: initialization failed: %s', init_err.message);
+        scifor.Log.err('convert_dataframe: initialization failed: %s', init_err.message);
         rethrow(init_err);
     end
 
@@ -396,38 +396,38 @@ function data = convert_dataframe(py_obj)
         col_t0 = tic;
         try
             col_key = col_names{i};
-            scidb.Log.debug('convert_dataframe: column %d - getting column "%s"', i, string(col_key));
+            scifor.Log.debug('convert_dataframe: column %d - getting column "%s"', i, string(col_key));
             col = py.operator.getitem(py_obj, col_key);
-            scidb.Log.debug('convert_dataframe: column %d - got column, getting dtype...', i);
+            scifor.Log.debug('convert_dataframe: column %d - got column, getting dtype...', i);
 
             % Break down dtype conversion into steps to find where it fails
             try
                 py_dtype = col.dtype;
-                scidb.Log.debug('convert_dataframe: got dtype object');
+                scifor.Log.debug('convert_dataframe: got dtype object');
                 py_dtype_str = py.str(py_dtype);
-                scidb.Log.debug('convert_dataframe: converted dtype to py.str');
+                scifor.Log.debug('convert_dataframe: converted dtype to py.str');
                 char_dtype = char(py_dtype_str);
-                scidb.Log.debug('convert_dataframe: converted py.str to char');
+                scifor.Log.debug('convert_dataframe: converted py.str to char');
                 dtype_str = string(char_dtype);
-                scidb.Log.debug('convert_dataframe: converted char to string: %s', dtype_str);
+                scifor.Log.debug('convert_dataframe: converted char to string: %s', dtype_str);
             catch dtype_err
-                scidb.Log.err('convert_dataframe: dtype conversion failed: %s', dtype_err.message);
+                scifor.Log.err('convert_dataframe: dtype conversion failed: %s', dtype_err.message);
                 rethrow(dtype_err);
             end
-            scidb.Log.debug('convert_dataframe: column %d/%d "%s" dtype=%s', ...
+            scifor.Log.debug('convert_dataframe: column %d/%d "%s" dtype=%s', ...
                 i, numel(col_names), string(col_key), dtype_str);
         catch col_err
-            scidb.Log.err('convert_dataframe: column %d "%s" failed: %s', i, string(col_key), col_err.message);
+            scifor.Log.err('convert_dataframe: column %d "%s" failed: %s', i, string(col_key), col_err.message);
             rethrow(col_err);
         end
         if startsWith(dtype_str, "datetime")
-            scidb.Log.debug('convert_dataframe: column %d - datetime branch', i);
+            scifor.Log.debug('convert_dataframe: column %d - datetime branch', i);
             % datetime64[ns(, zone)] column -> Nx1 MATLAB datetime in its
             % zone, NaT kept (datetime_from_python). The old strftime path
             % dropped the zone and failed on NaT.
             args{i} = scidb.internal.datetime_from_python(col);
         elseif dtype_str == "object"
-            scidb.Log.debug('convert_dataframe: column %d "%s" - object branch', i, string(col_key));
+            scifor.Log.debug('convert_dataframe: column %d "%s" - object branch', i, string(col_key));
             % Object column (e.g. dicts/structs, array columns) -> cell array via from_python
             py_list = col.tolist();
 
@@ -441,7 +441,7 @@ function data = convert_dataframe(py_obj)
             [can_concat_dfs, concat_df] = try_concat_homogeneous_dataframes(c);
             if can_concat_dfs
                 try
-                    scidb.Log.debug('convert_dataframe: column %d - trying DataFrame concat (%d DataFrames)', i, numel(c));
+                    scifor.Log.debug('convert_dataframe: column %d - trying DataFrame concat (%d DataFrames)', i, numel(c));
 
                     % Record original row counts before concatenation so we can
                     % split back correctly even when sub-DataFrames have >1 row.
@@ -463,12 +463,12 @@ function data = convert_dataframe(py_obj)
                         pos = pos + rc;
                     end
 
-                    scidb.Log.debug('convert_dataframe: column %d - DataFrame concat succeeded', i);
+                    scifor.Log.debug('convert_dataframe: column %d - DataFrame concat succeeded', i);
                     args{i} = col_data;
                     col_secs(i) = toc(col_t0);
                     continue;  % Skip to next column
                 catch concat_err
-                    scidb.Log.debug('convert_dataframe: column %d - DataFrame concat failed, falling back: %s', ...
+                    scifor.Log.debug('convert_dataframe: column %d - DataFrame concat failed, falling back: %s', ...
                         i, concat_err.message);
                     % Fall through to next fast path
                 end
@@ -478,9 +478,9 @@ function data = convert_dataframe(py_obj)
             % This handles homogeneous numeric/logical data efficiently by using
             % from_python(py_list) which can convert to numpy array in one call.
             try
-                scidb.Log.debug('convert_dataframe: column %d - attempting optimized py.list conversion...', i);
+                scifor.Log.debug('convert_dataframe: column %d - attempting optimized py.list conversion...', i);
                 col_data = scidb.internal.from_python(py_list);
-                scidb.Log.debug('convert_dataframe: column %d - SUCCESS: used optimized py.list conversion', i);
+                scifor.Log.debug('convert_dataframe: column %d - SUCCESS: used optimized py.list conversion', i);
 
                 if ~iscell(col_data) && size(col_data, 1) == n_rows
                     % from_python already produced the right shape (e.g., an
@@ -508,12 +508,12 @@ function data = convert_dataframe(py_obj)
                 args{i} = col_data;
             catch opt_err
                 % Fast path 3: Element-by-element fallback (for complex/heterogeneous types)
-                scidb.Log.debug('convert_dataframe: column %d - optimized conversion failed, using element-by-element', i);
-                scidb.Log.debug('convert_dataframe: column %d - error was: %s', i, opt_err.message);
+                scifor.Log.debug('convert_dataframe: column %d - optimized conversion failed, using element-by-element', i);
+                scifor.Log.debug('convert_dataframe: column %d - error was: %s', i, opt_err.message);
 
                 % c is already populated from DataFrame concat attempt above
                 col_data = cell(numel(c), 1);
-                scidb.Log.debug('convert_dataframe: column %d - converting %d elements individually...', i, numel(c));
+                scifor.Log.debug('convert_dataframe: column %d - converting %d elements individually...', i, numel(c));
                 for k = 1:numel(c)
                     col_data{k} = scidb.internal.from_python(c{k});
                     % Parse stringified arrays (e.g. "[[false], [true], ...]")
@@ -531,19 +531,19 @@ function data = convert_dataframe(py_obj)
                 args{i} = try_stack_structs(col_data);
             end
         else
-            scidb.Log.debug('convert_dataframe: column %d - default branch, calling to_numpy()', i);
+            scifor.Log.debug('convert_dataframe: column %d - default branch, calling to_numpy()', i);
             try
                 py_arr = col.to_numpy();
-                scidb.Log.debug('convert_dataframe: column %d - to_numpy() succeeded, calling from_python', i);
+                scifor.Log.debug('convert_dataframe: column %d - to_numpy() succeeded, calling from_python', i);
                 args{i} = scidb.internal.from_python(py_arr);
-                scidb.Log.debug('convert_dataframe: column %d - from_python succeeded', i);
+                scifor.Log.debug('convert_dataframe: column %d - from_python succeeded', i);
                 % pandas 3.0+ returns StringDtype for text columns; from_python
                 % converts these to cell arrays.  Stack into string arrays.
                 if iscell(args{i})
                     args{i} = try_stack_strings(args{i});
                 end
             catch convert_err
-                scidb.Log.err('convert_dataframe: column %d conversion failed: %s', i, convert_err.message);
+                scifor.Log.err('convert_dataframe: column %d conversion failed: %s', i, convert_err.message);
                 rethrow(convert_err);
             end
         end
@@ -562,7 +562,7 @@ function data = convert_dataframe(py_obj)
     % took 11 minutes", which is the whole point of the instrumentation.
     df_secs = toc(df_t0);
     if df_secs >= 1.0
-        scidb.Log.info('[timing] convert_dataframe: %dx%d, TOTAL=%.3fs (%s)', ...
+        scifor.Log.info('[timing] convert_dataframe: %dx%d, TOTAL=%.3fs (%s)', ...
             n_rows, numel(col_names), df_secs, ...
             format_slowest_columns(col_names, col_secs));
     end
@@ -806,7 +806,7 @@ function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape, arr_ndim)
     % fallback reconstructs the shape by stacking and does not depend on this
     % conversion at all.
     if numel(arr_shape) ~= double(arr_ndim)
-        scidb.Log.warn(['from_python: shape [%s] has %d dimension(s) but the ' ...
+        scifor.Log.warn(['from_python: shape [%s] has %d dimension(s) but the ' ...
             'array reports ndim=%d -- declining the buffer path so the shape ' ...
             'is rebuilt element-by-element rather than silently flattened'], ...
             strjoin(string(arr_shape), ' '), numel(arr_shape), double(arr_ndim));
@@ -817,13 +817,13 @@ function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape, arr_ndim)
         desc = py.scimatlab.bridge.ndarray_to_buffer(py_c);
     catch err
         % A scimatlab without the helper, or a Python-side failure.
-        scidb.Log.debug('from_python: buffer path unavailable (%s)', err.message);
+        scifor.Log.debug('from_python: buffer path unavailable (%s)', err.message);
         return;
     end
 
     try
         if ~logical(desc{'ok'})
-            scidb.Log.debug('from_python: buffer path declined: %s', ...
+            scifor.Log.debug('from_python: buffer path declined: %s', ...
                 char(desc{'reason'}));
             return;
         end
@@ -868,7 +868,7 @@ function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape, arr_ndim)
         % of step (a mis-mapped dtype, a truncated read).  Refuse rather
         % than hand back silently wrong data -- the fallback is correct.
         if numel(vec) ~= n_expected
-            scidb.Log.warn(['from_python: buffer path produced %d element(s) ' ...
+            scifor.Log.warn(['from_python: buffer path produced %d element(s) ' ...
                 'but the array holds %d -- falling back to element-by-element'], ...
                 numel(vec), n_expected);
             data = [];
@@ -886,7 +886,7 @@ function [data, ok] = ndarray_via_buffer(py_c, dtype_kind, arr_shape, arr_ndim)
         end
         ok = true;
     catch conv_err
-        scidb.Log.debug(['from_python: buffer conversion failed (%s) -- ' ...
+        scifor.Log.debug(['from_python: buffer conversion failed (%s) -- ' ...
             'falling back to element-by-element'], conv_err.message);
         data = [];
         ok = false;
@@ -915,7 +915,7 @@ function warn_if_large_slow_conversion(arr_shape, py_c)
     catch
         dtype_str = "unknown";
     end
-    scidb.Log.warn(['from_python: converting a %d-element %s array ' ...
+    scifor.Log.warn(['from_python: converting a %d-element %s array ' ...
         'element-by-element (the bulk buffer path declined) -- this crosses ' ...
         'the Python bridge once per element and can take minutes'], ...
         n_elems, dtype_str);

@@ -63,7 +63,7 @@ def step_name_of(db, node_id: str) -> "str | None":
 def set_step_name(db, node_id: str, step: "str | None") -> None:
     """Write (or, with ``None``, remove) a node's step name, keeping the rest
     of its config blob as it is."""
-    from scidb.intent import check_step
+    from scidb.provenance.intent import check_step
 
     from scistack_gui.stores import pipeline_store
 

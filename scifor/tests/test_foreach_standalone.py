@@ -12,6 +12,7 @@ from scifor import (
     ColName,
     ColumnSelection,
     Fixed,
+    LoopHooks,
     Merge,
     PathOutput,
     for_each,
@@ -466,7 +467,7 @@ def test_column_selection_multirow_single_is_an_array():
 
 def test_iterate_one_row_text_columns_get_plain_strs():
     """for_columns over a one-row-per-subject text table: each call gets that
-    subject's cell as a str (the CSV-per-subject case from scidb.log
+    subject's cell as a str (the CSV-per-subject case from scidb.model.log
     2026-10-22, where every call raised on a StringArray)."""
     set_schema(["subject"])
     df = pd.DataFrame(
@@ -921,7 +922,7 @@ def test_iterate_function_failure_lists_all_bad_columns(capsys):
             )
         },
         subject=[1],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
 
     assert result is None or result.empty
@@ -951,7 +952,7 @@ def test_iterate_function_failure_fails_the_combo_not_the_run():
         lambda v: float(v),
         inputs={"v": ColumnSelection(df, ["a"], iterate=True)},
         subject=[1, 2],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
 
     s = _summary_event(events)
@@ -977,7 +978,7 @@ def test_iterate_column_failure_on_every_combo_is_one_summary_reason():
         lambda v: float(np.mean(np.asarray(v, dtype=float))),
         inputs={"v": ColumnSelection(df, ["label"], iterate=True)},
         subject=[1, 2, 3],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
 
     s = _summary_event(events)
@@ -1165,7 +1166,7 @@ def test_iterate_excl_columns_lets_run_succeed_after_failure():
         fn,
         inputs={"v": ColumnSelection(df, iterate=True)},
         subject=[1, 2],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
     assert failed is None or failed.empty
     s = _summary_event(events)
@@ -1924,14 +1925,14 @@ def test_restore_schema_column_dtypes_duplicate_labels():
 
 
 # ---------------------------------------------------------------------------
-# _mapping_inputs: dict-valued records
+# LoopHooks.mapping_inputs: dict-valued records
 # ---------------------------------------------------------------------------
 
 
 def test_mapping_input_single_row_is_delivered_as_a_dict():
     """A dict-valued variable is stored one column per key and loaded spread,
     so a single record is indistinguishable from a one-row table by the time
-    it reaches extraction. Marked via _mapping_inputs, it is rebuilt.
+    it reaches extraction. Marked via LoopHooks.mapping_inputs, it is rebuilt.
 
     Regression: the 1-row unwrap only fires for a SINGLE data column, and a
     dict has as many columns as keys, so the function received a 1xN frame
@@ -1954,7 +1955,7 @@ def test_mapping_input_single_row_is_delivered_as_a_dict():
     for_each(
         fn,
         inputs={"emg": df},
-        _mapping_inputs={"emg": ["RHAM", "RVL"]},
+        hooks=LoopHooks(mapping_inputs={"emg": ["RHAM", "RVL"]}),
         **{"pass": [1, 2, 3]},
     )
 
@@ -1982,7 +1983,7 @@ def test_mapping_input_multi_row_slice_stays_a_frame():
     for_each(
         lambda emg: received.append(emg) or 0.0,
         inputs={"emg": df},
-        _mapping_inputs={"emg": ["RHAM", "RVL"]},
+        hooks=LoopHooks(mapping_inputs={"emg": ["RHAM", "RVL"]}),
         **{"pass": [1]},
     )
 
@@ -2001,7 +2002,7 @@ def test_mapping_input_ignored_under_as_table():
         lambda emg: received.append(emg) or 0.0,
         inputs={"emg": df},
         as_table=True,
-        _mapping_inputs={"emg": ["RHAM", "RVL"]},
+        hooks=LoopHooks(mapping_inputs={"emg": ["RHAM", "RVL"]}),
         **{"pass": [1]},
     )
 
@@ -2017,7 +2018,7 @@ def test_mapping_input_ignored_under_column_selection():
     for_each(
         lambda emg: received.append(emg) or 0.0,
         inputs={"emg": ColumnSelection(df, ["RHAM"])},
-        _mapping_inputs={"emg": ["RHAM", "RVL"]},
+        hooks=LoopHooks(mapping_inputs={"emg": ["RHAM", "RVL"]}),
         **{"pass": [1]},
     )
 
@@ -2050,7 +2051,7 @@ def test_mapping_input_falls_back_when_no_declared_column_survives():
     for_each(
         lambda tbl: received.append(tbl) or 0.0,
         inputs={"tbl": df},
-        _mapping_inputs={"tbl": ["gone", "also_gone"]},
+        hooks=LoopHooks(mapping_inputs={"tbl": ["gone", "also_gone"]}),
         **{"pass": [1]},
     )
 
@@ -2287,12 +2288,12 @@ def test_spread_nested_results_ignores_absent_output_columns():
 
 
 # ---------------------------------------------------------------------------
-# _select_rows: the caller narrows a frame beyond the schema filter
+# LoopHooks.select_rows: the caller narrows a frame beyond the schema filter
 # ---------------------------------------------------------------------------
 
 
 class TestSelectRowsHook:
-    """``_select_rows(name, frame, metadata)`` runs after scifor's own
+    """``LoopHooks.select_rows(name, frame, metadata)`` runs after scifor's own
     schema-key filter and before extraction. It is how a caller that knows
     which ROWS a combination reads (scidb: which record ids) says so, instead
     of extending scifor's schema with private keys and stripping them back
@@ -2328,8 +2329,7 @@ class TestSelectRowsHook:
             fn,
             {"x": self._two_variants()},
             outputs=["out"],
-            _all_combos=combos,
-            _select_rows=select,
+            hooks=LoopHooks(all_combos=combos, select_rows=select),
             subject=[1, 2],
             session=["pre"],
         )
@@ -2352,7 +2352,7 @@ class TestSelectRowsHook:
             lambda x: x,
             {"x": self._two_variants()},
             outputs=["out"],
-            _select_rows=select,
+            hooks=LoopHooks(select_rows=select),
             subject=[1, 2],
             session=["pre"],
         )
@@ -2382,7 +2382,7 @@ class TestSelectRowsHook:
             lambda x: str(x),
             {"x": ColumnSelection(df, ["a", "b"], iterate=True)},
             outputs=["out"],
-            _select_rows=select,
+            hooks=LoopHooks(select_rows=select),
             subject=[1],
             session=["pre"],
         )

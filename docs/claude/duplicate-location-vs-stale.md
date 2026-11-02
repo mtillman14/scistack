@@ -13,7 +13,7 @@ plan `.claude/plan-duplicate-location-in-batch.md`.
 ## 1. How a DataFrame becomes many records
 
 When a saved DataFrame has schema-key columns, it is **distributed**:
-`BaseVariable.save` -> `save_from_dataframe` (`scidb/src/scidb/variable.py`)
+`BaseVariable.save` -> `save_from_dataframe` (`scidb/src/scidb/model/variable.py`)
 turns each row into one `(data, metadata)` item, and all items go to
 `DatabaseManager.save_batch` in one call. for_each outputs
 (`foreach.py`, `_batch_save_outputs`) and MATLAB (`scimatlab/bridge.py`,
@@ -123,8 +123,8 @@ and the §5 check refuses it. A list column must hold one kind of value
 | Concept | Owner |
 |---|---|
 | The rule (group, collapse-or-list, kinds, `CombineReport.output_row`) | `scifor.combine.combine_duplicate_rows` |
-| Which columns keep rows apart: every column that is not a value column (schema keys, `__rid_*`, `__vsig_*`, constants) | `scidb.combine.combine_key_columns` |
-| `on_duplicate` values | `scidb.combine.validate_on_duplicate` |
+| Which columns keep rows apart: every column that is not a value column (schema keys, `__rid_*`, `__vsig_*`, constants) | `scidb.run.combine.combine_key_columns` |
+| `on_duplicate` values | `scidb.run.combine.validate_on_duplicate` |
 | Row-list storage, unwrap, lazy conversion | `sciduckdb.row_lists` |
 | A save meeting a row-list column | `DatabaseManager._reconcile_row_lists` |
 | GUI reader of the node option | `run_failures.on_duplicate_from_config` |

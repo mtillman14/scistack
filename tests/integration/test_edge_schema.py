@@ -330,7 +330,7 @@ def test_ragged_data_plots_and_exports_without_the_gap(scratch_db, pipeline, rag
 
 
 def test_a_key_value_that_matches_nothing_fails_visibly_and_saves_nothing(scratch_db, pipeline):
-    """An EXPLICIT value the user typed is authoritative (scidb.foreach, Step
+    """An EXPLICIT value the user typed is authoritative (scidb.run.foreach, Step
     3): the Cartesian product drives the iteration and every combination with
     no file behind it fails at runtime, which is what the GUI shows as
     "missing". So `session=["week99"]` is not zero iterations — it is N

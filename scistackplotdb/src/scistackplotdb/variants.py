@@ -47,7 +47,7 @@ def _check_column_vocabulary() -> None:
     here would not raise anywhere: it would make every pin a no-op and quietly
     plot every variant at once.
     """
-    from scidb.variant import (
+    from scidb.model.variant import (
         CODE_COLUMN_PREFIX,
         LATEST_COLUMN_NAME,
         RUN_COLUMN_PREFIX,
@@ -123,7 +123,7 @@ def selection_for(
     become ``Run:fn``; branch params keep their namespaced name, which is
     already the column name.
     """
-    from scidb.variant import VariantAxes
+    from scidb.model.variant import VariantAxes
 
     # The three dimensions, parsed by their owner (docs/claude/variant-space.md
     # §2) rather than by re-reading the prefixes here — this was the fourth
@@ -159,7 +159,7 @@ def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
 
     Needed because the schema location picker asks **scidb** a question about a
     variant the plotting layer is holding: "which locations have this one?"
-    ``scidb.locations.location_states`` takes a ``branch_params_filter``, the
+    ``scidb.provenance.locations.location_states`` takes a ``branch_params_filter``, the
     same dict ``Variant`` builds and ``find_record_id`` matches on, so the
     picker's dots and a ``Variant(...).load()`` cannot disagree about which
     records a selection names.
@@ -182,7 +182,7 @@ def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
     ``CodeIsLatest: False`` has no scidb spelling — "not the latest" is not a
     pin — so it is dropped with a warning rather than silently inverted.
 
-    The mapping itself is **scidb's** (:func:`scidb.variant.normalize_selection`)
+    The mapping itself is **scidb's** (:func:`scidb.model.variant.normalize_selection`)
     rather than this module's, because three consumers now hand scidb a
     column-keyed selection — this picker, the GUI's provenance RPC and
     ``scidb trace --variant`` — and a second copy of the rule is how the two
@@ -190,7 +190,7 @@ def branch_params_for(selection: dict[str, Any]) -> dict[str, Any]:
     *check* that the two layers still spell the columns the same way: this
     module is the only place that can see both sides.
     """
-    from scidb.variant import normalize_selection
+    from scidb.model.variant import normalize_selection
 
     return normalize_selection(selection)
 
@@ -204,7 +204,7 @@ def _axes_of(table: LongTable | None) -> list[dict]:
 def _bare_code_column(code_axes: list[dict]) -> str:
     """The column a bare ``code_version=`` means, or a message naming the choice.
 
-    Same rule as ``scidb.database._filter_records_by_code_version``: exactly one
+    Same rule as ``scidb.store.database._filter_records_by_code_version``: exactly one
     versioned function is unambiguous, several are not.
     """
     if len(code_axes) == 1:
@@ -283,7 +283,7 @@ def variant_graph(db, variable_frame, functions: list[str] | None = None) -> dic
         function node on the canvas, so nodes outside this variable's chain can
         still say what they have run.
     """
-    from scidb.provenance_query import code_versions_batch, function_versions
+    from scidb.provenance.query import code_versions_batch, function_versions
 
     frame = variable_frame.frame
     record_ids = frame["record_id"].tolist() if "record_id" in frame.columns else []

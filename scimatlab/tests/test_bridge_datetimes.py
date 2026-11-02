@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from scicanonicalhash import canonical_hash
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 from scimatlab.bridge import (
     datetimes_from_matlab,
     datetimes_to_matlab,

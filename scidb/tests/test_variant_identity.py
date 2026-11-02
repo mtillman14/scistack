@@ -14,8 +14,8 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.provenance import SAVE_FUNCTION_NAME
-from scidb.provenance_query import (
+from scidb.provenance.graph import SAVE_FUNCTION_NAME
+from scidb.provenance.query import (
     code_version_ordinals,
     function_versions,
     producing_function_versions_batch,
@@ -46,7 +46,7 @@ class Loaded(BaseVariable):
 # Two source versions of ONE function.
 #
 # ``__name__`` is what lands in ``_invocation.function_name`` (via
-# ForEachConfig.to_version_keys' ``__fn``), while ``function_hash`` is an AST
+# ForEachConfig.to_config_keys' ``__fn``), while ``function_hash`` is an AST
 # hash of the source. Assigning both the same ``__name__`` therefore models
 # exactly the reported scenario: the user edited the body of one function and
 # re-ran it.

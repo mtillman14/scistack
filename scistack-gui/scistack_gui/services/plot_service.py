@@ -205,7 +205,7 @@ def invalidate(db=None) -> dict:
     # Deliberately NOT clearing scidb's discovery cache here. It is TTL-based
     # (a few seconds) by a documented decision — the filesystem changes behind
     # our back, so an event hook would only guess when — and that TTL already
-    # expires well inside any run. See ``scidb.state.DISCOVERY_CACHE_SECONDS``.
+    # expires well inside any run. See ``scidb.provenance.state.DISCOVERY_CACHE_SECONDS``.
     return {"ok": True}
 
 
@@ -362,7 +362,7 @@ def describe(
     """
     from contextlib import ExitStack
 
-    from scidb.log import Log
+    from scidb.model.log import Log
     from scistack_gui.runtime.db import db_connection
 
     # live=True: each phase logs as it starts, so a panel that never opens
@@ -782,7 +782,7 @@ def _location_tree(db, variable, *, selection, problems_only, csv_path) -> dict:
             "selection": {},
         }
 
-    from scidb.locations import location_states, prune_to_problems
+    from scidb.provenance.locations import location_states, prune_to_problems
     from scistackplotdb import branch_params_for
 
     source = get_source(db)
@@ -1182,7 +1182,7 @@ def save_figure(
     that only reported written files said nothing for the first twelve minutes.
     """
 
-    from scidb.log import Log
+    from scidb.model.log import Log
     from scistackplot import CustomFunctionError, RoleError, resolve, resolve_one, write_figure
 
     def report(stage: str, done: int, total: int, detail: str | None = None) -> None:
@@ -1397,7 +1397,7 @@ def save_plot_data(
     import time
     from pathlib import Path
 
-    from scidb.log import Log
+    from scidb.model.log import Log
     from scistackplot import plot_data
 
     def report(stage: str, done: int, total: int, detail: str | None = None) -> None:

@@ -6,8 +6,8 @@ function varargout = for_each(fn, inputs, varargin)
 %   [r1, r2] = scifor.for_each(@FN, INPUTS, Name, Value, ...)
 %
 %   OUTPUTS may be given positionally (third argument, as in
-%   scidb.for_each) or as outputs=. scidb-only options (save, db, ...; see
-%   db_only_kwargs below) are accepted, logged and ignored, so a call
+%   scidb.for_each) or as outputs=. scidb-only options (save, db, ...; listed by
+%   Python's scifor.options.matlab_discarded_options) are accepted, logged and ignored, so a call
 %   written for scidb.for_each runs here unchanged.
 %
 %   Pure loop orchestrator — works with MATLAB tables only, no I/O.
@@ -2983,7 +2983,6 @@ function [meta_args, opts] = split_options(varargin)
     opts.pathinput_loader = [];  % optional loader(pi, meta_nv) callback; the
                                  % scidb layer injects its schema-key-type
                                  % policy here so scifor stays policy-free
-    opts.log_fn = [];  % deprecated, ignored (kept so parsing stays stable)
     opts.summary_fn = [];  % optional summary_fn(struct) called once with the
                            % end-of-loop counts; scidb injects its run tally
     opts.on_error = 'continue';  % 'continue' | 'stop' (Python owns the values)
@@ -2998,170 +2997,119 @@ function [meta_args, opts] = split_options(varargin)
     opts.locations = '';   % JSON text; see the locations= doc above
     opts.project_root = "";  % "" = the pinned root (see project_root= above)
     opts.discarded = {};    % "name=<value>" of each scidb-only option seen
-    db_only = db_only_kwargs();
 
+    % Which names are options (and which scidb options this layer discards)
+    % is Python's call: scifor.option_pairs ->
+    % scifor.options.classify_for_each_args. This function only turns each
+    % value into the MATLAB type the loop reads.
+    [names, values, roles] = scifor.option_pairs(varargin, 'scifor');
     meta_args = {};
-    i = 1;
-    while i <= numel(varargin)
-        key = varargin{i};
-        % Only a single name can be an option: metadata VALUES are walked
-        % past here too, and a string-array value (e.g. ["1","2","3"])
-        % compared against db_only is a size mismatch (MATLAB:dimagree).
-        if (ischar(key) || (isstring(key) && isscalar(key))) ...
-                && any(lower(string(key)) == db_only)
-            opts.discarded{end+1} = sprintf('%s=%s', lower(string(key)), ...
-                short_value(varargin{i+1}));
-            i = i + 2;
-            continue;
+    for k = 1:numel(names)
+        val = values{k};
+        switch roles{k}
+            case 'axis'
+                meta_args(end+1:end+2) = {names{k}, val}; %#ok<AGROW>
+                continue;
+            case 'discard'
+                opts.discarded{end+1} = sprintf('%s=%s', names{k}, short_value(val));
+                continue;
         end
-        if (ischar(key) || isstring(key))
-            switch lower(string(key))
-                case "dry_run"
-                    opts.dry_run = logical(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "locations"
-                    val = varargin{i+1};
-                    if isstruct(val)
-                        val = jsonencode(val);
-                    end
-                    opts.locations = char(string(val));
-                    i = i + 2;
-                    continue;
-                case "as_table"
-                    val = varargin{i+1};
-                    if islogical(val)
-                        opts.as_table = val;
-                    elseif isstring(val)
-                        opts.as_table = val;
-                    elseif ischar(val)
-                        opts.as_table = string(val);
-                    elseif iscell(val)
-                        opts.as_table = string(val);
-                    end
-                    i = i + 2;
-                    continue;
-                case "distribute"
-                    opts.distribute = logical(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "categorical"
-                    opts.categorical = logical(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "where"
-                    opts.where = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "project_root"
-                    opts.project_root = string(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "outputs"
-                    val = varargin{i+1};
-                    if isnumeric(val) && isscalar(val)
-                        opts.outputs = val;
-                    elseif isstring(val) || ischar(val)
-                        opts.outputs = cellstr(val);
-                    elseif iscell(val)
-                        opts.outputs = val;
-                    elseif isobject(val)
-                        % One object, or an object array: one output each.
-                        opts.outputs = num2cell(val);
-                    end
-                    i = i + 2;
-                    continue;
-                case "_all_combos"
-                    opts.all_combos = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "_row_selection"
-                    % Per-combo row selection (see header). Python decides
-                    % which record ids each combination reads (its
-                    % Selection); this loop applies it — the same rule
-                    % Python's own loop applies through scifor's
-                    % _select_rows hook.
-                    opts.row_selection = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "_record_id_column"
-                    opts.record_id_column = string(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "_nest_table_outputs"
-                    opts.nest_table_outputs = logical(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "_resolve_pathinput"
-                    opts.resolve_pathinput = logical(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "_pathinput_loader"
-                    opts.pathinput_loader = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "on_error"
-                    opts.on_error = char(string(varargin{i+1}));
-                    % The one validation: Python's scifor.validate_on_error.
-                    py.scifor.validate_on_error(opts.on_error);
-                    i = i + 2;
-                    continue;
-                case "_defer_stop"
-                    opts.defer_stop = logical(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "_summary_fn"
-                    opts.summary_fn = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "_mapping_inputs"
-                    % {param -> string array of data column names} declaring
-                    % that the input's rows are struct records spread one
-                    % column per field, not the rows of a table. scifor
-                    % cannot infer this (a 1xN table looks identical), so
-                    % scidb states it -- see +scidb/for_each.m.
-                    opts.mapping_inputs = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "_resolved_path_outputs"
-                    % {param -> cellstr of per-combo paths}, aligned with
-                    % _all_combos. Python pre-resolves PathOutput templates
-                    % (incl. branch_param placeholders whose dotted names
-                    % cannot be MATLAB struct fields); MATLAB just applies.
-                    opts.resolved_path_outputs = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "share_limits"
-                    % struct: input name -> string array of schema keys to
-                    % hold fixed (MATLAB port of Python scifor's
-                    % _compute_shared_limits prepass).
-                    opts.share_limits = varargin{i+1};
-                    i = i + 2;
-                    continue;
-                case "schema_keys"
-                    % Schema key names to iterate — structural sugar,
-                    % expanded into meta_keys/meta_values below.
-                    opts.schema_keys = string(varargin{i+1});
-                    i = i + 2;
-                    continue;
-                case "schema_key_types"
-                    % struct: key -> 'numeric' | 'string'. Validated by
-                    % Python (scifor.schema_types.validate_key_types).
-                    opts.schema_key_types = varargin{i+1};
-                    py.scifor.schema_types.validate_key_types( ...
-                        scifor.key_types_to_py(opts.schema_key_types));
-                    i = i + 2;
-                    continue;
-                case "_log_fn"
-                    % Deprecated — ignored. scifor logs through scifor.Log
-                    % (scistacklog facade) directly; accepted so existing
-                    % call sites don't break.
-                    i = i + 2;
-                    continue;
-            end
+        switch string(names{k})
+            case "dry_run"
+                opts.dry_run = logical(val);
+            case "locations"
+                if isstruct(val)
+                    val = jsonencode(val);
+                end
+                opts.locations = char(string(val));
+            case "as_table"
+                if islogical(val) || isstring(val)
+                    opts.as_table = val;
+                elseif ischar(val) || iscell(val)
+                    opts.as_table = string(val);
+                end
+            case "distribute"
+                opts.distribute = logical(val);
+            case "categorical"
+                opts.categorical = logical(val);
+            case "where"
+                opts.where = val;
+            case "project_root"
+                opts.project_root = string(val);
+            case "outputs"
+                if isnumeric(val) && isscalar(val)
+                    opts.outputs = val;
+                elseif isstring(val) || ischar(val)
+                    opts.outputs = cellstr(val);
+                elseif iscell(val)
+                    opts.outputs = val;
+                elseif isobject(val)
+                    % One object, or an object array: one output each.
+                    opts.outputs = num2cell(val);
+                end
+            case "_all_combos"
+                opts.all_combos = val;
+            case "_row_selection"
+                % Per-combo row selection (see header). Python decides
+                % which record ids each combination reads (its
+                % Selection); this loop applies it — the same rule
+                % Python's own loop applies through scifor's
+                % _select_rows hook.
+                opts.row_selection = val;
+            case "_record_id_column"
+                opts.record_id_column = string(val);
+            case "_nest_table_outputs"
+                opts.nest_table_outputs = logical(val);
+            case "_resolve_pathinput"
+                opts.resolve_pathinput = logical(val);
+            case "_pathinput_loader"
+                opts.pathinput_loader = val;
+            case "on_error"
+                opts.on_error = char(string(val));
+                % The one validation: Python's scifor.validate_on_error.
+                py.scifor.validate_on_error(opts.on_error);
+            case "_defer_stop"
+                opts.defer_stop = logical(val);
+            case "_summary_fn"
+                opts.summary_fn = val;
+            case "_mapping_inputs"
+                % {param -> string array of data column names} declaring
+                % that the input's rows are struct records spread one
+                % column per field, not the rows of a table. scifor
+                % cannot infer this (a 1xN table looks identical), so
+                % scidb states it -- see +scidb/for_each.m.
+                opts.mapping_inputs = val;
+            case "_resolved_path_outputs"
+                % {param -> cellstr of per-combo paths}, aligned with
+                % _all_combos. Python pre-resolves PathOutput templates
+                % (incl. branch_param placeholders whose dotted names
+                % cannot be MATLAB struct fields); MATLAB just applies.
+                opts.resolved_path_outputs = val;
+            case "share_limits"
+                % struct: input name -> string array of schema keys to
+                % hold fixed (MATLAB port of Python scifor's
+                % _compute_shared_limits prepass).
+                opts.share_limits = val;
+            case "schema_keys"
+                % Schema key names to iterate — structural sugar,
+                % expanded into meta_keys/meta_values below.
+                opts.schema_keys = string(val);
+            case "schema_key_types"
+                % struct: key -> 'numeric' | 'string'. Validated by
+                % Python (scifor.schema_types.validate_key_types).
+                opts.schema_key_types = val;
+                py.scifor.schema_types.validate_key_types( ...
+                    scifor.key_types_to_py(opts.schema_key_types));
+            otherwise
+                if strcmp(roles{k}, 'option')
+                    % Python declares an option this file cannot read yet.
+                    error('scifor:for_each', ['for_each option "%s" has no ' ...
+                        'MATLAB handling in +scifor/for_each.m split_options.'], names{k});
+                end
+                % An unknown leading-underscore name stays an iteration
+                % axis, as it always has.
+                meta_args(end+1:end+2) = {names{k}, val}; %#ok<AGROW>
         end
-        meta_args{end+1} = varargin{i}; %#ok<AGROW>
-        i = i + 1;
     end
 end
 
@@ -3204,18 +3152,6 @@ function filepath = exact_string_key_loader(pi_obj, meta_nv, string_keys)
     keys = string(meta_nv(1:2:end));
     eligible = keys(~ismember(keys, string_keys));
     filepath = pi_obj.load_with_captures(meta_nv, eligible);
-end
-
-
-function names = db_only_kwargs()
-%DB_ONLY_KWARGS  scidb.for_each options scifor accepts and ignores.
-%   Python's owner is scifor.DB_ONLY_KWARGS; this is that set plus MATLAB
-%   scidb's legacy preload/parallel. scidb/tests/
-%   test_foreach_signature_parity.py parses this list and both option
-%   parsers, so a new scidb-only option must be added here.
-    names = ["save", "db", "introspect", "skip_computed", "schema_filter", ...
-             "finalized", "glue", "parameter_names", "step", "pipeline", ...
-             "on_duplicate", "preload", "parallel"];
 end
 
 

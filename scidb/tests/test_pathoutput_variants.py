@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pytest
-from scidb.database import _local
+from scidb.store.database import _local
 
 import scifor as _scifor
 from scidb import (

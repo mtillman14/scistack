@@ -17,9 +17,9 @@ import scifor as _scifor
 from scifor import EachOf, PathInput
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query as pq
-from scidb.database import aggregate_pipeline_variants, call_site_wiring_ids
-from scidb.parameter import (
+from scidb.provenance import query as pq
+from scidb.store.database import aggregate_pipeline_variants, call_site_wiring_ids
+from scidb.model.parameter import (
     Parameter,
     declared_input_names,
     path_input_declaration,

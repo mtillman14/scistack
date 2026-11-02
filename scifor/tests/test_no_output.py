@@ -11,7 +11,7 @@ import logging
 import pandas as pd
 import pytest
 
-from scifor import ColumnSelection, for_each, set_schema
+from scifor import ColumnSelection, LoopHooks, for_each, set_schema
 from scifor.outputs import NoOutput, is_no_output
 
 
@@ -53,7 +53,7 @@ def test_one_skipped_output_keeps_the_other(caplog):
             inputs={"x": ColumnSelection(DATA, ["x"])},
             outputs=["A", "B"],
             subject=[1, 2, 3],
-            _progress_fn=events.append,
+            hooks=LoopHooks(progress_fn=events.append),
         )
     by_subject = result.set_index("subject")
     # Standalone: the skipped cell is missing, the other output is kept.
@@ -76,7 +76,7 @@ def test_keep_no_output_leaves_the_marker_for_a_saving_caller():
         inputs={"x": ColumnSelection(DATA, ["x"])},
         outputs=["A", "B"],
         subject=[1, 2, 3],
-        _keep_no_output=True,
+        hooks=LoopHooks(keep_no_output=True),
     )
     cell = result.set_index("subject").loc[2, "A"]
     assert is_no_output(cell)
@@ -94,7 +94,7 @@ def test_every_output_no_data_is_one_no_data_combination():
         inputs={"x": ColumnSelection(DATA, ["x"])},
         outputs=["A", "B"],
         subject=[1],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
     summary = _summary(events)
     assert summary["completed"] == 0
@@ -114,7 +114,7 @@ def test_every_output_skipped_with_a_failure_is_one_failed_combination():
         inputs={"x": ColumnSelection(DATA, ["x"])},
         outputs=["A", "B"],
         subject=[1],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
     summary = _summary(events)
     assert summary["completed"] == 0

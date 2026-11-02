@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
-from .api import PickCandidate
+from scidb.inspect.api import PickCandidate
 
 Chooser = Callable[[str, Sequence[str]], int]
 """choose(title, labels) -> selected index. Raises PickAborted to cancel."""

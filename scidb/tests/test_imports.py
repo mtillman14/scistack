@@ -23,14 +23,20 @@ schema-string rule to ``schema_values``, the per-combo sentinels to
 
 from __future__ import annotations
 
-import ast
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+# Appended, not prepended: the repo root holds a directory per package, and
+# those must not shadow the installed packages.
+sys.path.append(str(Path(__file__).resolve().parents[2]))
+
+from tools.import_layers import module_imports  # noqa: E402
+
 PKG_DIR = Path(__import__("scidb").__file__).parent
+SRC = PKG_DIR.parent
 PKG = "scidb"
 
 
@@ -49,21 +55,21 @@ def _module_names() -> list[str]:
 
 MODULES = _module_names()
 
-# ``{importer: {target: reason}}`` — the cycle-dodging lazies we keep.
-# A target here is the top-level sibling module (``scidb.<target>``).
+# ``{importer: {target: reason}}`` — the cycle-dodging lazies we keep, by
+# full module name.
 ALLOWED_CYCLE_DODGES: dict[str, dict[str, str]] = {
-    "scidb.input_spec": {
-        "variant": "the leaf that names wrapper stacks must know the wrapper "
+    "scidb.model.input_spec": {
+        "scidb.model.variant": "the leaf that names wrapper stacks must know the wrapper "
         "types; the wrappers import it for their display names, so the "
         "types are imported at call time (documented in the module)",
-        "across_variants": "same as variant",
+        "scidb.model.across_variants": "same as variant",
     },
-    "scidb.variable": {
-        "database": "BaseVariable.load/save reach the ambient database at "
+    "scidb.model.variable": {
+        "scidb.store.database": "BaseVariable.load/save reach the ambient database at "
         "CALL time; database imports the variable registry at import time",
     },
-    "scidb.pipeline": {
-        "foreach": "a Pipeline RUNS for_each; for_each consults the active "
+    "scidb.run.pipeline": {
+        "scidb.run.foreach": "a Pipeline RUNS for_each; for_each consults the active "
         "pipeline at import time (registry direction), the run direction "
         "is resolved when a step executes",
     },
@@ -86,57 +92,37 @@ def test_every_module_imports_first(module):
 
 
 # --- static analysis -------------------------------------------------------
+#
+# Nodes are scidb's modules outside the ``inspect`` and ``project``
+# subpackages (the scope this test has always had: those two are checked by
+# the layer test, ``test_import_layers.py``). The package ``__init__`` files
+# are not nodes: the facade imports everything, and the cluster packages are
+# empty. Edges come from ``tools.import_layers`` (relative imports resolved,
+# ``if TYPE_CHECKING:`` blocks marked).
 
 
-def _sibling(node: ast.ImportFrom, importer: str) -> list[str]:
-    """Top-level sibling module names an import statement pulls in, or []."""
-    out = []
-    if node.level == 1 and node.module is None:
-        # ``from . import x, y``
-        out.extend(alias.name for alias in node.names)
-    elif node.level == 1 and node.module is not None:
-        out.append(node.module.split(".")[0])
-    elif node.level == 0 and node.module and node.module.split(".")[0] == PKG:
-        parts = node.module.split(".")
-        if len(parts) >= 2:
-            out.append(parts[1])
-        else:
-            out.extend(alias.name for alias in node.names)
-    elif node.level == 2 and importer.count(".") >= 2:
-        # ``from ..x import`` inside a subpackage
-        out.append(node.module.split(".")[0] if node.module else "")
-    return [o for o in out if (PKG_DIR / f"{o}.py").exists() or (PKG_DIR / o).is_dir()]
+def _in_scope(module: str) -> bool:
+    if module == PKG or not module.startswith(PKG + "."):
+        return False
+    if module.split(".")[1] in ("inspect", "project"):
+        return False
+    path = PKG_DIR.joinpath(*module.split(".")[1:])
+    return not path.is_dir()
 
 
-def _imports_of(module: str) -> tuple[set[str], set[str]]:
-    """(top-level sibling imports, function-level sibling imports)."""
-    rel = module.split(".")[1:]
-    path = PKG_DIR.joinpath(*rel)
-    path = path / "__init__.py" if path.is_dir() else path.with_suffix(".py")
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    top: set[str] = set()
-    lazy: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom):
-            top.update(_sibling(node, module))
-        elif isinstance(node, ast.If):
-            # ``if TYPE_CHECKING:`` blocks do not import at runtime
-            continue
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.ImportFrom):
-                    lazy.update(_sibling(sub, module))
-    return top, lazy
+def _edges():
+    return [
+        e
+        for e in module_imports(SRC, PKG)
+        if _in_scope(e.src) and _in_scope(e.dst) and e.dst != e.src and not e.type_only
+    ]
 
 
 def _top_level_graph() -> dict[str, set[str]]:
-    graph: dict[str, set[str]] = {}
-    for m in MODULES:
-        if m == PKG or m.count(".") > 1:
-            continue  # the package __init__ and subpackages are not nodes
-        name = m.split(".")[1]
-        graph[name] = _imports_of(m)[0]
+    graph: dict[str, set[str]] = {m: set() for m in MODULES if _in_scope(m)}
+    for e in _edges():
+        if not e.lazy:
+            graph[e.src].add(e.dst)
     return graph
 
 
@@ -148,6 +134,12 @@ def _reaches(graph, a, b, seen=None) -> bool:
         return False
     seen.add(a)
     return any(_reaches(graph, n, b, seen) for n in graph.get(a, ()))
+
+
+def test_scope_is_not_empty():
+    """The checks below are vacuous if the module walk finds nothing."""
+    graph = _top_level_graph()
+    assert "scidb.run.foreach" in graph and "scidb.store.database" in graph
 
 
 def test_no_top_level_import_cycles():
@@ -164,16 +156,9 @@ def test_no_top_level_import_cycles():
 def test_cycle_dodging_lazy_imports_are_all_on_the_allow_list():
     graph = _top_level_graph()
     found: dict[str, set[str]] = {}
-    for m in MODULES:
-        if m == PKG or m.count(".") > 1:
-            continue
-        name = m.split(".")[1]
-        _, lazy = _imports_of(m)
-        for target in lazy:
-            if target == name:
-                continue
-            if _reaches(graph, target, name):
-                found.setdefault(m, set()).add(target)
+    for e in _edges():
+        if e.lazy and _reaches(graph, e.dst, e.src):
+            found.setdefault(e.src, set()).add(e.dst)
     unexpected = {
         m: sorted(t for t in targets if t not in ALLOWED_CYCLE_DODGES.get(m, {}))
         for m, targets in found.items()

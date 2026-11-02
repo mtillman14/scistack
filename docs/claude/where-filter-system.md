@@ -194,7 +194,7 @@ This is checked at `resolve()` time (when `load()` is called), not at constructi
 
 | File | Role |
 |------|------|
-| `scidb/src/scidb/filters.py` | `SchemaKey`, `SchemaKeyCompareFilter`, `SchemaKeyInFilter`, `schema_key()` |
+| `scidb/src/scidb/model/filters.py` | `SchemaKey`, `SchemaKeyCompareFilter`, `SchemaKeyInFilter`, `schema_key()` |
 | `scidb/src/scidb/__init__.py` | Exports `schema_key` |
 | `sci-matlab/src/sci_matlab/matlab/+scidb/SchemaKey.m` | MATLAB builder class with operator overloads and `ismember` |
 | `sci-matlab/src/sci_matlab/matlab/+scidb/schema_key.m` | MATLAB factory function |
@@ -219,10 +219,10 @@ This is checked at `resolve()` time (when `load()` is called), not at constructi
 
 | File | Role |
 |------|------|
-| `scidb/src/scidb/filters.py` | All filter classes + `raw_sql()` + `schema_key()` factories |
-| `scidb/src/scidb/variable.py` | `VariableMeta` metaclass + `where=` in `load()` |
+| `scidb/src/scidb/model/filters.py` | All filter classes + `raw_sql()` + `schema_key()` factories |
+| `scidb/src/scidb/model/variable.py` | `VariableMeta` metaclass + `where=` in `load()` |
 | `scidb/src/scidb/__init__.py` | Exports `raw_sql`, `schema_key` |
-| `scidb/src/scidb/database.py` | `where=` in `DatabaseManager.load()` and `load_all_as_df()` — calls `resolve()` and filters the records DataFrame |
+| `scidb/src/scidb/store/database.py` | `where=` in `DatabaseManager.load()` and `load_all_as_df()` — calls `resolve()` and filters the records DataFrame |
 | `scirun-lib/src/scirun/column_selection.py` | Comparison operators on `ColumnSelection` |
 | `scidb/tests/test_filters.py` | Unit tests (no DB required), incl. `TestSchemaKeyConstruction` |
 | `scidb/tests/test_where.py` | Integration tests for variable-based filters |

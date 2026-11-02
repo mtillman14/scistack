@@ -9,7 +9,7 @@ on Merge). Coverage:
   works under scidb.for_each -- previously impossible to even construct
   meaningfully, since scidb's old classes only ever wrapped variable types.
   This exercises the DataFrame-passthrough fast paths added to
-  scidb.foreach._load_input / _resolve_per_combo_loader.
+  scidb.run.foreach._load_input / _resolve_per_combo_loader.
 - Version-key (call_id) stability: to_key() output for Fixed/Merge/
   ColumnSelection must not silently regress into repr()-based identity
   (which would be non-deterministic across processes and fork every
@@ -34,7 +34,7 @@ from scifor import Merge as SciforMerge
 
 from scidb import BaseVariable, ColName, ColumnSelection, EachOf, Fixed, Merge
 from scidb import configure_database, for_each
-from scidb.foreach_config import ForEachConfig
+from scidb.run.foreach_config import ForEachConfig
 
 
 class Measurement(BaseVariable):
@@ -139,7 +139,7 @@ class TestVersionKeyStability:
 
     def test_fixed_to_key_is_deterministic_not_repr(self):
         config = ForEachConfig(lambda x: x, {"x": Fixed(Measurement, subject=1)})
-        keys = config.to_version_keys()
+        keys = config.to_config_keys()
         assert keys["__inputs"]["x"] == "Fixed(Measurement, subject=1)"
         assert "0x" not in keys["__inputs"]["x"]  # not a memory-address repr()
 
@@ -153,7 +153,7 @@ class TestVersionKeyStability:
         config_a = ForEachConfig(lambda x: x, {"x": Fixed(Measurement, subject=1)})
         config_b = ForEachConfig(lambda x: x, {"x": Fixed(Measurement, subject=2)})
         assert config_a.to_call_id() == config_b.to_call_id()
-        assert config_a.to_version_keys() != config_b.to_version_keys()
+        assert config_a.to_config_keys() != config_b.to_config_keys()
 
     def test_same_fixed_metadata_shares_call_id_across_instances(self):
         config_a = ForEachConfig(lambda x: x, {"x": Fixed(Measurement, subject=1)})
@@ -163,6 +163,6 @@ class TestVersionKeyStability:
     def test_column_selection_to_key_reaches_inputs_not_constants(self):
         cs = ColumnSelection(Measurement, ["value"])
         config = ForEachConfig(lambda x: x, {"x": cs})
-        keys = config.to_version_keys()
+        keys = config.to_config_keys()
         assert keys["__inputs"]["x"] == cs.to_key()
         assert keys["__constants"] == {}

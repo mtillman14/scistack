@@ -40,10 +40,10 @@ from scicanonicalhash import compute_function_hash
 from scifor import Fixed, PathInput
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query as pq
-from scidb.foreach_config import ForEachConfig
-from scidb.provenance import compute_invocation_id, constant_record_id_from_hash
-from scidb.provenance_save import compute_input_selectors
+from scidb.provenance import query as pq
+from scidb.run.foreach_config import ForEachConfig
+from scidb.provenance.graph import compute_invocation_id, constant_record_id_from_hash
+from scidb.provenance.save import compute_input_selectors
 
 KEYS = ["subject", "trial", "cycle"]
 
@@ -244,9 +244,9 @@ class TestCallIdForwardEqualsBackward:
         backward = {v["call_id"] for v in variants}
         assert backward, "no variant recorded"
         forward_keys = {
-            "__fn": config.to_version_keys()["__fn"],
+            "__fn": config.to_config_keys()["__fn"],
             "__inputs": config.call_site_inputs(),
-            "__constants": config.to_version_keys().get("__constants"),
+            "__constants": config.to_config_keys().get("__constants"),
         }
         assert forward in backward, (
             f"forward call_id {forward} is not among pipeline_variants' {sorted(backward)}\n"
@@ -373,7 +373,7 @@ def _recorded_selectors(db, fn_name: str) -> dict:
 
 class TestSelectorAskedEqualsRecorded:
     def _check(self, db, fn, inputs, iterate):
-        from scidb.foreach import _resolve_for_columns
+        from scidb.run.foreach import _resolve_for_columns
 
         for_each(fn, inputs, [Out], **iterate)
         # What the call asked for, AFTER `for_columns()` has been resolved to
@@ -415,7 +415,7 @@ class TestAggregationIsWholeAgain:
     """The two consumers that broke while the vocabulary was split."""
 
     def test_an_aggregating_step_plans_green_after_its_run(self, db):
-        from scidb.state import check_node_state
+        from scidb.provenance.state import check_node_state
 
         _seed()
         for_each(pooled, {"value": Wide}, [Out], subject=[], trial=[], as_table=["value"])
@@ -466,7 +466,7 @@ def _seed_variants():
 
 class TestVariantSplitIsPredicted:
     """An aggregating call over variant records auto-splits: one invocation
-    per variant group per location (`scidb.bindings.RecordPool`). Until
+    per variant group per location (`scidb.run.bindings.RecordPool`). Until
     2026-09-20 the expected-invocation predictor pooled the groups into one
     invocation that was never written, so such a node could never plan
     green — the "known gap" both sides now close with ONE signature recipe
@@ -501,7 +501,7 @@ class TestVariantSplitIsPredicted:
         )
 
     def test_the_step_plans_green_after_its_run(self, db):
-        from scidb.state import check_node_state
+        from scidb.provenance.state import check_node_state
 
         _seed_variants()
         for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
@@ -524,7 +524,7 @@ class TestTheDeclarationOnlyPredictsForANeverRunCallSite:
     """
 
     def test_a_plain_aggregating_node_plans_green(self, db):
-        from scidb.state import check_node_state
+        from scidb.provenance.state import check_node_state
 
         _seed()
         for_each(pooled, {"value": Wide}, [Out], subject=[], trial=[])
@@ -535,7 +535,7 @@ class TestTheDeclarationOnlyPredictsForANeverRunCallSite:
     def test_a_never_run_node_still_predicts_from_its_declaration(self, db):
         """The fallback's real job: with no history there is nothing else to
         predict from, and the node must read red rather than green-by-default."""
-        from scidb.state import check_node_state
+        from scidb.provenance.state import check_node_state
 
         _seed()
         node = check_node_state(pooled, [Out], inputs={"value": Wide}, db=db)
@@ -617,7 +617,7 @@ class TestAcrossVariantsIsAFact:
 
     def test_the_step_plans_green_after_its_run(self, db):
         from scidb import AcrossVariants
-        from scidb.state import check_node_state
+        from scidb.provenance.state import check_node_state
 
         self._run()
         inputs = {"value": AcrossVariants(Scaled)}

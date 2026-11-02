@@ -9,10 +9,10 @@ written too, until P2). See
 """
 
 import numpy as np
-from scidb.provenance import SAVE_FUNCTION_NAME
+from scidb.provenance.graph import SAVE_FUNCTION_NAME
 
 from scidb import BaseVariable
-from scidb import provenance_query as pq
+from scidb.provenance import query as pq
 
 
 class DsgRaw(BaseVariable):

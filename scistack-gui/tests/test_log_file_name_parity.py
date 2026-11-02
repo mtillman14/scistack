@@ -1,7 +1,7 @@
-"""The log file's name has one owner: ``scidb.log.LOG_FILE_NAME``.
+"""The log file's name has one owner: ``scidb.model.log.LOG_FILE_NAME``.
 
-The file was renamed ``scidb.log`` -> ``scistack.log`` (2026-10-26). Python
-reaches the name through ``scidb.log.log_path_for``; two other languages need
+The file was renamed ``scidb.model.log`` -> ``scistack.log`` (2026-10-26). Python
+reaches the name through ``scidb.model.log.log_path_for``; two other languages need
 it too and cannot import it:
 
 - MATLAB's ``+scidb/configure_database.m`` calls ``attach_log_file`` through
@@ -15,7 +15,7 @@ If either drifts, MATLAB or the Failures panel reads a file nobody writes.
 import re
 from pathlib import Path
 
-from scidb.log import LOG_FILE_NAME, log_path_for
+from scidb.model.log import LOG_FILE_NAME, log_path_for
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -39,5 +39,5 @@ def test_matlab_configure_database_uses_owner():
         _REPO / "scimatlab" / "src" / "scimatlab" / "matlab" / "+scidb" / "configure_database.m"
     ).read_text(encoding="utf-8")
     code = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("%"))
-    assert "py.scidb.log.attach_log_file(" in code
+    assert "py.scidb.model.log.attach_log_file(" in code
     assert ".log'" not in code, "configure_database.m spells a log file name itself"

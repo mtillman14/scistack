@@ -91,7 +91,7 @@ function [py_obj, col_stats] = to_python(data)
             % to_db/from_db class owns that); it keeps its old form, ISO
             % strings, which carry no zone.
             if ~isempty(data.TimeZone)
-                scidb.Log.warn(['to_python: a %s datetime array saved as ONE value ' ...
+                scifor.Log.warn(['to_python: a %s datetime array saved as ONE value ' ...
                     'is stored as text without its TimeZone ''%s''; use a ' ...
                     'table column or a to_db/from_db class to keep it'], ...
                     num2str(size(data)), data.TimeZone);
@@ -110,7 +110,7 @@ function [py_obj, col_stats] = to_python(data)
             col = data.(col_names{i});
             orig_class = class(col);
             orig_size = size(col);
-            scidb.Log.debug('to_python: processing table column %d/%d "%s" (class=%s, size=[%s])', ...
+            scifor.Log.debug('to_python: processing table column %d/%d "%s" (class=%s, size=[%s])', ...
                 i, numel(col_names), col_names{i}, orig_class, num2str(orig_size));
             if isdatetime(col) && iscolumn(col)
                 % A datetime column -> a datetime64[ns(, zone)] Series in one
@@ -156,7 +156,7 @@ function [py_obj, col_stats] = to_python(data)
                             py_row_counts = py.numpy.array(row_counts_vec, ...
                                 pyargs('dtype', 'int64'));
 
-                            scidb.Log.debug('to_python: trying table concat for cell column "%s" (%d elems, %d total rows, %d cols each)', ...
+                            scifor.Log.debug('to_python: trying table concat for cell column "%s" (%d elems, %d total rows, %d cols each)', ...
                                 col_names{i}, numel(col), sum(row_counts_vec), width(concat_table));
 
                             % Convert concatenated table once, then split
@@ -168,9 +168,9 @@ function [py_obj, col_stats] = to_python(data)
 
                             concat_ok = true;
                             strategy = 'table_concat';
-                            scidb.Log.debug('to_python: table concat succeeded for column "%s"', col_names{i});
+                            scifor.Log.debug('to_python: table concat succeeded for column "%s"', col_names{i});
                         catch concat_err
-                            scidb.Log.debug('to_python: table concat failed for column "%s", falling back: %s', ...
+                            scifor.Log.debug('to_python: table concat failed for column "%s", falling back: %s', ...
                                 col_names{i}, concat_err.message);
                             concat_ok = false;
                         end
@@ -183,7 +183,7 @@ function [py_obj, col_stats] = to_python(data)
                         [can_flat, flat, lengths, flat_dtype] = scidb.internal.try_flatten_cell_column(col);
                         if can_flat
                             try
-                                scidb.Log.debug('to_python: trying fast path for cell column "%s" (dtype=%s, total_len=%d)', ...
+                                scifor.Log.debug('to_python: trying fast path for cell column "%s" (dtype=%s, total_len=%d)', ...
                                     col_names{i}, flat_dtype, numel(flat));
                                 % Fast path: 3 bridge crossings instead of N*3
                                 py_flat = py.numpy.array(flat, pyargs('dtype', flat_dtype));
@@ -191,16 +191,16 @@ function [py_obj, col_stats] = to_python(data)
                                 py_val = py.scimatlab.bridge.split_flat_to_lists(py_flat, py_lengths);
                                 fast_path_ok = true;
                                 strategy = 'flat';
-                                scidb.Log.debug('to_python: fast path succeeded for column "%s"', col_names{i});
+                                scifor.Log.debug('to_python: fast path succeeded for column "%s"', col_names{i});
                             catch fast_err
                                 % Fast path failed (e.g., numpy bridge error) — fall back
                                 % to element-by-element conversion
-                                scidb.Log.debug('to_python: fast path failed for column "%s", falling back: %s', ...
+                                scifor.Log.debug('to_python: fast path failed for column "%s", falling back: %s', ...
                                     col_names{i}, fast_err.message);
                                 fast_path_ok = false;
                             end
                         else
-                            scidb.Log.debug('to_python: cell column "%s" not flattenable, using element-by-element', ...
+                            scifor.Log.debug('to_python: cell column "%s" not flattenable, using element-by-element', ...
                                 col_names{i});
                         end
                     end
@@ -213,7 +213,7 @@ function [py_obj, col_stats] = to_python(data)
                         % Inner numpy arrays must become Python lists so that
                         % pandas creates an object column instead of trying to
                         % stack arrays into a 2-D ndarray.
-                        scidb.Log.debug('to_python: converting column "%s" element-by-element (%d elements)', ...
+                        scifor.Log.debug('to_python: converting column "%s" element-by-element (%d elements)', ...
                             col_names{i}, numel(col));
                         py_val = py.list();
                         for k = 1:numel(col)
@@ -237,7 +237,7 @@ function [py_obj, col_stats] = to_python(data)
                             if is_num && ~isempty(elem_data) && ~isscalar(elem_data) ...
                                     && ~isvector(elem_data)
                                 elem = scidb.internal.to_python(elem_data);
-                                scidb.Log.debug(['to_python: column "%s" elem %d is a ' ...
+                                scifor.Log.debug(['to_python: column "%s" elem %d is a ' ...
                                     '[%s] matrix, sent shaped'], col_names{i}, k, ...
                                     num2str(size(elem_data)));
                             elseif is_num && ~isscalar(elem_data)
@@ -255,7 +255,7 @@ function [py_obj, col_stats] = to_python(data)
                             end
                             py_val.append(elem);
                         end
-                        scidb.Log.debug('to_python: element-by-element conversion complete for column "%s"', ...
+                        scifor.Log.debug('to_python: element-by-element conversion complete for column "%s"', ...
                             col_names{i});
                     end
                 else

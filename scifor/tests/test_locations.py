@@ -227,7 +227,7 @@ class TestFilterCombos:
 
     def test_kept_combos_are_copies(self):
         """for_each mutates combo dicts downstream; handing back the caller's
-        own dicts would let that leak into _all_combos."""
+        own dicts would let that leak into hooks.all_combos."""
         combos = [combo("01", "BL", "1")]
         kept = filter_combos(combos, {"include": [[["subject", "01"]]]})
         kept[0]["subject"] = "99"

@@ -293,7 +293,7 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
             % Identity is read off the SAVED record (list_versions), not off an
             % introspect column of the returned table. introspect adds
             % _record_id_<input> columns -- one per DB-backed INPUT, see
-            % scidb/foreach.py:841 -- so there is no _record_id_ProcessedSignal
+            % scidb/run/foreach.py:841 -- so there is no _record_id_ProcessedSignal
             % to read, and the statement call has no returned table at all.
             % list_versions is the only place both call forms can be compared.
             RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');

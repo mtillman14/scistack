@@ -17,8 +17,8 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb.provenance import compute_invocation_id
-from scidb.provenance_query import run_options_label
+from scidb.provenance.graph import compute_invocation_id
+from scidb.provenance.query import run_options_label
 
 
 @pytest.fixture
@@ -113,7 +113,7 @@ class TestRecorded:
 
 class TestAcrossVariantsInTheLabel:
     def test_pooling_is_reported_like_its_siblings(self):
-        from scidb.provenance_query import run_options_label
+        from scidb.provenance.query import run_options_label
 
         assert run_options_label(False, None, None, ["value"]) == (
             "distribute=false, across_variants=[value]"

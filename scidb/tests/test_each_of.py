@@ -273,7 +273,7 @@ class TestEachOfWhere:
         _seed_data(db)
 
         # Use a raw_sql filter that matches all (just to test the machinery)
-        from scidb.filters import raw_sql
+        from scidb.model.filters import raw_sql
 
         all_filter = raw_sql("1=1")
 
@@ -320,7 +320,7 @@ class TestEachOfCombined:
         """EachOf on type + EachOf on where = cartesian product."""
         _seed_data(db)
 
-        from scidb.filters import raw_sql
+        from scidb.model.filters import raw_sql
 
         all_filter = raw_sql("1=1")
 
@@ -341,7 +341,7 @@ class TestEachOfCombined:
         """EachOf on type + constant + where = full cartesian product."""
         _seed_data(db)
 
-        from scidb.filters import raw_sql
+        from scidb.model.filters import raw_sql
 
         all_filter = raw_sql("1=1")
 

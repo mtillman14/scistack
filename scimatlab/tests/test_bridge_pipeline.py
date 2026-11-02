@@ -29,10 +29,10 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import numpy as np
 import pytest
-from scidb.database import _local, configure_database
-from scidb.pipeline import _reset_pipeline_state
+from scidb.store.database import _local, configure_database
+from scidb.run.pipeline import _reset_pipeline_state
+from scimatlab.bridge.pipeline import _pipeline_cache
 from scimatlab.bridge import (
-    _pipeline_cache,
     pipeline_active_name,
     pipeline_bind,
     pipeline_create,
@@ -142,7 +142,7 @@ class TestExecutionOrder:
 
         py_mean.calls = 0
 
-        from scidb.variable import BaseVariable
+        from scidb.model.variable import BaseVariable
 
         class PyMean(BaseVariable):
             schema_version = 1
@@ -182,7 +182,7 @@ class TestExecutionOrder:
             calls["n"] += 1
             return float(np.mean(np.asarray(x, dtype=float)))
 
-        from scidb.variable import BaseVariable
+        from scidb.model.variable import BaseVariable
 
         class PyMean2(BaseVariable):
             schema_version = 1

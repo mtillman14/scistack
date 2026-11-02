@@ -15,8 +15,8 @@ sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import pytest
-from scidb.database import configure_database
-from scidb.filters import (
+from scidb.store.database import configure_database
+from scidb.model.filters import (
     VariableFilter,
     raw_sql,
     schema_key,

@@ -100,7 +100,7 @@ def test_jsonable_converts_dataclasses_inside_lists():
     """Regression (2026-09-30): only the top level was converted, so a LIST of
     ``VariantPin`` (``pin_history``) became a list of repr strings and the
     popup indexed a string."""
-    from scidb.variant_pins import VariantPin
+    from scidb.store.variant_pins import VariantPin
 
     pin = VariantPin("p1", "X", {"f.k": 1}, "why", "2026-09-30T00:00:00")
     out = svc._jsonable([pin, {"nested": [pin]}])

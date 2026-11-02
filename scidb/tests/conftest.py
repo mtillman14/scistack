@@ -14,7 +14,7 @@ sys.path.insert(0, str(_root / "canonical-hash" / "src"))
 sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scifor" / "src"))
 
-from scidb.database import _local
+from scidb.store.database import _local
 
 from scidb import BaseVariable, configure_database
 

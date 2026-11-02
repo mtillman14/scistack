@@ -233,7 +233,7 @@ wrappers, glue application and option parsing.*
 | frame classification | `scifor.failures.frame_origin` | `frame_origin.m`: "The ONE MATLAB frame classifier" | **mirrored** |
 | output column naming | `scifor.output_column_name` | `output_column_name.m`: "same rule as Python's" | **mirrored** |
 | input wrappers | `scifor` `Fixed`, `Merge`, `ColumnSelection`, `ColName`, `EachOf` | pure-MATLAB classes, rebuilt in Python by `bridge.py` from wire form | **mirrored** value objects |
-| plot_/stat_ endpoint wrapping | `scidb.foreach._make_plot_wrapper` / `_make_stat_wrapper` | `plot_endpoint_call` / `stat_endpoint_call` in `for_each.m` | **mirrored**; `foreach.py` says "WRAPPING is language-specific" |
+| plot_/stat_ endpoint wrapping | `scidb.run.foreach._make_plot_wrapper` / `_make_stat_wrapper` | `plot_endpoint_call` / `stat_endpoint_call` in `for_each.m` | **mirrored**; `foreach.py` says "WRAPPING is language-specific" |
 | `for_each` options | `scidb.for_each` signature (28 params) | `split_options` in `for_each.m` | **mirrored** |
 | `PathGenerator` | `scipathgen` | `PathGenerator.m` (pure MATLAB) | mirrored, and both unused ([01](01-foundations.md#scipathgen)) |
 
@@ -272,7 +272,7 @@ wrappers, glue application and option parsing.*
    01), `+scihist` (shim of a shim), and `+scidb/Log.m` (204 lines) beside
    `+scifor/Log.m` (171 lines): two MATLAB logging facades over one Python
    `Log`.
-5. **`MatlabLineageFcn`** is a class named after the removed lineage-wrapper
+5. **`MatlabFunctionIdentity`** is a class named after the removed lineage-wrapper
    system. It is still used as an identity proxy for node colouring (the GUI
    imports it once).
 
@@ -284,9 +284,13 @@ wrappers, glue application and option parsing.*
 | M2 | Split `bridge.py` into `bridge/entry.py` (the RPCs MATLAB calls), `bridge/wire.py` (wrapper reconstruction), `bridge/convert.py` (data transfer) and `bridge/pipeline.py`. | weakness 3 |
 | M3 | Once scifor's R1 splits `for_each` into `plan` / `run_combo` / `assemble`, move **plan** and **assemble** to Python for MATLAB too. MATLAB would keep only the per-combo call (MATLAB must run the function) and the row slicing. That shrinks the mirror to the part that has to be in MATLAB. | weakness 1, most of it |
 | M4 | Move option parsing to Python: MATLAB passes the raw name/value pairs, and Python validates them against `scidb.for_each`'s signature. | `split_options` mirror |
-| M5 | Delete `PathGenerator.m` and `+scihist` with their Python twins (01, H1). Merge `+scidb/Log.m` into `+scifor/Log.m`, or make one a one-line alias. Rename `MatlabLineageFcn` to what it is (`MatlabFunctionIdentity`). | weaknesses 4, 5 |
+| M5 | Delete `PathGenerator.m` and `+scihist` with their Python twins (01, H1). Merge `+scidb/Log.m` into `+scifor/Log.m`, or make one a one-line alias. Rename `MatlabFunctionIdentity` to what it is (`MatlabFunctionIdentity`). | weaknesses 4, 5 |
+
+> **Done (2026-11-02, P5 stage 1, uncommitted):** M1 + M5 Log half — both .m files delegate to Python (`frame_origin` gained `extra_library_dirs` for `matlabroot`; `scifor.outputs.output_column_name_from` is the text rule). `+scidb/Log.m` is a member-free subclass of `scifor.Log`.
+> **Done (2026-11-02, P5 stage 2, uncommitted):** M4 — `scifor.options.classify_for_each_args` decides which names are options (from `FOR_EACH_OPTIONS` + `MATLAB_ONLY_OPTIONS`); MATLAB sends only names (values stay MATLAB-side for type coercion).
 
 > **Done (2026-11-01, e129c3bf):** M5, delete half — `PathGenerator.m` and `+scihist` deleted. The `Log.m` merge and the rename remain.
+> **Done (2026-11-01, P4 stage 9):** M2 — `scimatlab.bridge` is a package: `entry` (the two-pass for_each, batch save/load, entities, project root, batch cache), `wire` (spec -> wrapper reconstruction, the function sentinel, surrogates and codecs), `convert` (buffers, datetimes, nested values), `pipeline` (the registry by handle). `bridge/__init__.py` re-exports every `py.scimatlab.bridge.<name>`; `scimatlab/tests/test_bridge_entry_points.py` scans the .m sources and fails on any name without an export. `MatlabLineageFcn` -> `MatlabFunctionIdentity`.
 
 M3 is the large one, and it depends on scifor R1 landing first. M1, M2, M4
 and M5 are independent and small.

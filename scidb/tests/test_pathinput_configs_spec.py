@@ -6,7 +6,7 @@ folders and files spell a session differently (``Baseline`` / ``_BL_``)
 re-discovered 0 files. It now rebuilds through ``PathInput.from_spec``.
 """
 
-from scidb.locations import pathinput_configs
+from scidb.provenance.locations import pathinput_configs
 
 from scidb import BaseVariable, configure_database, for_each, scistack
 from scifor import PathInput

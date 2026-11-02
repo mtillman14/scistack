@@ -7,10 +7,10 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query as pq
-from scidb.database import aggregate_pipeline_variants
-from scidb.provenance import compute_wiring_id
-from scidb.wirings import RecordedWiring, non_cartesian_report, recorded_wirings
+from scidb.provenance import query as pq
+from scidb.store.database import aggregate_pipeline_variants
+from scidb.provenance.graph import compute_wiring_id
+from scidb.provenance.wirings import RecordedWiring, non_cartesian_report, recorded_wirings
 
 SUBJECTS = ["S01", "S02"]
 

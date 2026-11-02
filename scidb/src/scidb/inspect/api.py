@@ -19,18 +19,18 @@ import numpy as np
 import pandas as pd
 from sciduckdb import stored_tz_companions
 
-from ..exceptions import AmbiguousVersionError, NotFoundError
-from ..log import Log
+from scidb.model.exceptions import AmbiguousVersionError, NotFoundError
+from scidb.model.log import Log
 
 if TYPE_CHECKING:
-    from ..database import DatabaseManager
+    from scidb.store.database import DatabaseManager
 
 # Internal (non-variable) entity types in _record, excluded from user-facing
 # record counts everywhere. The glue types are virtual provenance nodes for a
 # glue chain's never-saved output — no data, no _record_save row and nothing
 # loadable, so counting them would inflate every record total. The set is
-# owned by scidb.provenance; never spell its members here.
-from ..provenance import INTERNAL_RECORD_TYPES as _INTERNAL_RECORD_TYPES
+# owned by scidb.provenance.graph; never spell its members here.
+from scidb.provenance.graph import INTERNAL_RECORD_TYPES as _INTERNAL_RECORD_TYPES
 
 _NOT_INTERNAL_SQL = (
     "type NOT IN (" + ", ".join(f"'{t}'" for t in _INTERNAL_RECORD_TYPES) + ")"
@@ -337,10 +337,10 @@ class Inspector:
         against read-only opens), so lock contention is mapped to
         DatabaseLockedError with a plain-language message.
         """
-        from ..sciduck import schema_keys_from_db
+        from scidb.store.sciduck import schema_keys_from_db
 
-        from ..database import DatabaseManager
-        from .mutate import lock_errors_mapped
+        from scidb.store.database import DatabaseManager
+        from scidb.inspect.mutate import lock_errors_mapped
 
         with lock_errors_mapped(db_path):
             keys = schema_keys_from_db(db_path)
@@ -563,7 +563,7 @@ class Inspector:
             node state detects source edits (state_basis="live_fn"); without,
             state uses the most recently run stored hash ("stored_hash").
         """
-        from .graph import build_pipeline_graph
+        from scidb.inspect.graph import build_pipeline_graph
 
         output_type = getattr(output_type, "__name__", output_type)
         return build_pipeline_graph(
@@ -579,7 +579,7 @@ class Inspector:
         ``name`` is matched as an output type first, then as a function name.
         A registered variable with no producing pipeline steps returns [].
         """
-        from .graph import VariantSummary, _value_str
+        from scidb.inspect.graph import VariantSummary, _value_str
 
         name = getattr(name, "__name__", name)
         raw = self._db.list_pipeline_variants()
@@ -708,27 +708,27 @@ class Inspector:
         See ``inspect/variant_cards.py`` and
         ``docs/claude/variant-pins-and-deletion.md``.
         """
-        from .variant_cards import build_variant_cards
+        from scidb.inspect.variant_cards import build_variant_cards
 
         return build_variant_cards(self._db, name, include_runs=include_runs)
 
     def delete_plan(self, targets: list[dict]):
-        """What deleting ``targets`` would remove (``scidb.variant_delete``).
+        """What deleting ``targets`` would remove (``scidb.store.variant_delete``).
         A dry run: read-only, so it works on an Inspector connection."""
-        from ..variant_delete import delete_plan
+        from scidb.store.variant_delete import delete_plan
 
         return delete_plan(self._db, targets)
 
     def tombstones(self, variable=None) -> list:
         """Every variant deletion ever made, oldest first."""
-        from ..variant_delete import tombstones
+        from scidb.store.variant_delete import tombstones
 
         return tombstones(self._db, getattr(variable, "__name__", variable))
 
     def variant_pins(self, variable=None, history: bool = False) -> list:
         """Active variant pins (the defaults), or every pin ever made with
-        ``history=True``. ``scidb.variant_pins`` owns them."""
-        from ..variant_pins import active_pins, pin_history
+        ``history=True``. ``scidb.store.variant_pins`` owns them."""
+        from scidb.store.variant_pins import active_pins, pin_history
 
         name = getattr(variable, "__name__", variable)
         if history:
@@ -758,8 +758,8 @@ class Inspector:
           ``subject=`` is the headline case rather than a mistake. It roots at
           the most recently saved match and returns every one.
         """
-        from .. import provenance_query
-        from ..variant import normalize_selection
+        from scidb.provenance import query as provenance_query
+        from scidb.model.variant import normalize_selection
 
         pins = normalize_selection(selection or {})
         if record_id:
@@ -837,7 +837,7 @@ class Inspector:
     def _candidate_label(self, rid: str, bp: dict, chains: dict) -> str:
         """One line describing a record in an ambiguity message: what tells it
         apart from the others (schema location, constants, code, run options)."""
-        from .. import provenance_query
+        from scidb.provenance import query as provenance_query
 
         node = (
             provenance_query._fetch_record_node(
@@ -878,8 +878,8 @@ class Inspector:
         ``include_audit`` appends the execution_audit rows for the root record;
         ``include_runs`` takes every node down to the runs that produced it.
         """
-        from .. import provenance_query
-        from .graph import _value_str
+        from scidb.provenance import query as provenance_query
+        from scidb.inspect.graph import _value_str
 
         duck = self._duck
         rid, matched, pins = self._resolve_pin(
@@ -1114,16 +1114,16 @@ class Inspector:
         """Intent, fact and the Decision for one function.
 
         Statements come from the intent store when the database has one
-        (``scidb.intent.load_statements_sql``; a database no GUI has opened
+        (``scidb.provenance.intent.load_statements_sql``; a database no GUI has opened
         has none, and the report then shows fact alone). Fact is what
         provenance recorded for the same fields — the ``columns`` selectors
         per parameter, the run options — and the resolver
-        (``scidb.intent.resolve``) says which wins under *origin* and what it
+        (``scidb.provenance.intent.resolve``) says which wins under *origin* and what it
         beat. A field whose winner carries nothing while history recorded a
         selection is flagged ``lost``: the shape of a dropped selection.
         """
-        from .. import intent as _intent
-        from .. import provenance_query as _pq
+        from scidb.provenance import intent as _intent
+        from scidb.provenance import query as _pq
 
         fn_name = getattr(fn, "__name__", fn)
         prefix = f"fn__{fn_name}__"
@@ -1190,7 +1190,7 @@ class Inspector:
         self, variable=None, record_id: str | None = None, **metadata
     ) -> list[RunRecord]:
         """Every run that (re)produced one record, oldest first."""
-        from .. import provenance_query
+        from scidb.provenance import query as provenance_query
 
         rid = self._resolve_record_id(variable, record_id, metadata)
         return [
@@ -1213,8 +1213,8 @@ class Inspector:
         recorded functions. Standalone (no callable/registry) uses the
         most-recently-run stored hash — see graph module docstring.
         """
-        from ..state import _schema_id_to_combo
-        from .graph import _node_states
+        from scidb.provenance.state import _schema_id_to_combo
+        from scidb.inspect.graph import _node_states
 
         registry = dict(fn_registry or {})
         if fn is not None and callable(fn):
@@ -1273,7 +1273,7 @@ class Inspector:
         **grid,
     ):
         """Per-location status for one variable under one variant (a
-        :class:`~scidb.locations.LocationTree`).
+        :class:`~scidb.provenance.locations.LocationTree`).
 
         The granularity ``node_state`` (per function, binary) and
         ``schema_tree`` (per location, all variables, counts only) leave
@@ -1283,7 +1283,7 @@ class Inspector:
         counted in neither the numerator nor the denominator). See
         ``docs/claude/schema-location-status.md``.
 
-        Nothing is computed here: ``scidb.locations.location_states`` owns the
+        Nothing is computed here: ``scidb.provenance.locations.location_states`` owns the
         rule, so this facade, the ``scidb locations`` command and the GUI's
         picker cannot disagree about what a colour means.
 
@@ -1296,7 +1296,7 @@ class Inspector:
         only live source for what *should* exist — which is what lets this
         surface see a file that was never loaded.
         """
-        from ..locations import location_states, prune_to_problems
+        from scidb.provenance.locations import location_states, prune_to_problems
 
         name = getattr(variable, "__name__", variable)
         known = self._scalar(
@@ -1324,9 +1324,9 @@ class Inspector:
         so run it where the data folders are reachable. grid values are lists
         (e.g. subject=["S01","S02"]); omitted keys are wildcards.
         """
-        from ..locations import pathinput_configs
-        from ..state import check_pathinput_node_state
-        from .graph import _value_str
+        from scidb.provenance.locations import pathinput_configs
+        from scidb.provenance.state import check_pathinput_node_state
+        from scidb.inspect.graph import _value_str
 
         fn_name = getattr(fn_name, "__name__", fn_name)
         duck = self._duck
@@ -1336,7 +1336,7 @@ class Inspector:
         if not inv_rows:
             raise NotFoundError(f"Function {fn_name!r} has no recorded invocations")
 
-        # One reconstruction, shared with scidb.locations — which needs exactly
+        # One reconstruction, shared with scidb.provenance.locations — which needs exactly
         # the same specs-to-live-PathInput step to derive the discovery-based
         # denominator for a loader-produced variable.
         configs = pathinput_configs(duck, fn_name)
@@ -1464,8 +1464,8 @@ class Inspector:
         metadata, enriched with branch params and producing function so
         coexisting variants are tellable apart. Batched enrichment
         (branch_params_batch / producing_invocation_batch — N+1 rule)."""
-        from .. import provenance_query
-        from .graph import _value_str
+        from scidb.provenance import query as provenance_query
+        from scidb.inspect.graph import _value_str
 
         recs = self.records(
             variable, latest=latest, include_excluded=include_excluded, **metadata
@@ -1493,9 +1493,9 @@ class Inspector:
     @_timed
     def schema_key_types(self, history: bool = False) -> list[dict]:
         """Each schema key's declared type, as stored in the database
-        (``scidb.schema_types``), with how it loads and how many values it
+        (``scidb.store.schema_types``), with how it loads and how many values it
         has. ``history=True`` returns every declaration ever written instead."""
-        from .. import schema_types
+        from scidb.store import schema_types
 
         if history:
             return schema_types.history(self._duck)
@@ -1514,7 +1514,7 @@ class Inspector:
     def exclusions(self) -> list[ExclusionRecord]:
         """Currently-excluded schema combinations (read side of the Phase 5
         write commands; the write side lives on mutate.Mutator)."""
-        from ..exclusions import list_exclusions
+        from scidb.store.exclusions import list_exclusions
 
         if not self._duck.table_exists("__scidb_schema_overrides"):
             return []
@@ -1542,8 +1542,8 @@ class Inspector:
     ):
         """Every combination of the chosen schema keys with its status
         (present / missing / excluded), optionally run separately within each
-        combination of the ``within`` keys. Owner: ``scidb.inventory``."""
-        from ..inventory import schema_inventory
+        combination of the ``within`` keys. Owner: ``scidb.provenance.inventory``."""
+        from scidb.provenance.inventory import schema_inventory
 
         return schema_inventory(self._db, keys, within)
 
@@ -1606,7 +1606,7 @@ class Inspector:
         verification, stats with parsed result JSON, per-entry warnings.
         Drafts never appear (no records). See inspect/report.py.
         """
-        from .report import collect_report
+        from scidb.inspect.report import collect_report
 
         return collect_report(self, fn=fn, variable=variable, all_versions=all_versions)
 
@@ -1625,7 +1625,7 @@ class Inspector:
         manifest.json + stats.csv (+ artifacts/ copies). Returns the path
         to index.html.
         """
-        from .report import write_report
+        from scidb.inspect.report import write_report
 
         return write_report(
             self,
@@ -1699,7 +1699,7 @@ def location_sample(db, schema_ids, limit: int = 4) -> dict:
         return out
     take = schema_ids if limit is None else schema_ids[: max(int(limit), 0)]
     try:
-        from ..state import _schema_id_to_combo
+        from scidb.provenance.state import _schema_id_to_combo
 
         combos = [_schema_id_to_combo(db, sid) for sid in take]
     except Exception:  # pragma: no cover - a label is never worth a failure

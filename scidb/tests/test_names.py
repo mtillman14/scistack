@@ -17,7 +17,7 @@ import pytest
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
 from scifor.project import names
-from scidb.variable import same_definition
+from scidb.model.variable import same_definition
 
 
 @pytest.fixture
@@ -63,9 +63,9 @@ class TestFunctionName:
         assert names.function_name(_fn("my_analysis")) == "double"
 
     def test_an_unlisted_installed_package_is_not_a_library(self, project):
-        """Opt-in: SciStack's own stubs (scidb.state, scimatlab) carry a user
+        """Opt-in: SciStack's own stubs (scidb.provenance.state, scimatlab) carry a user
         function's name with SciStack's module and must stay bare."""
-        assert names.function_name(_fn("scidb.state", "grSides")) == "grSides"
+        assert names.function_name(_fn("scidb.provenance.state", "grSides")) == "grSides"
         assert names.function_name(_fn("numpy", "mean")) == "mean"
 
     def test_an_already_qualified_name_is_kept(self, project):

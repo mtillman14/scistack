@@ -1,7 +1,7 @@
 """Lightweight filter classes for column-based DataFrame filtering in scifor.
 
 These operate directly on pandas DataFrames (no database required).
-For database-backed filtering, see scidb.filters.
+For database-backed filtering, see scidb.model.filters.
 """
 
 from typing import TYPE_CHECKING, Any

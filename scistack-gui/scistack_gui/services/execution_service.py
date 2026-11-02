@@ -26,8 +26,8 @@ import logging
 from itertools import product
 from pathlib import Path
 
-from scidb.foreach_config import RunOptions
-from scidb.provenance import constants_identity_key
+from scidb.run.foreach_config import RunOptions
+from scidb.provenance.graph import constants_identity_key
 from scifor.failures import ActionableError
 
 from scistack_gui.ids import (
@@ -231,7 +231,7 @@ def history_variant_wirings(
     db, function_name: str, variants: list[dict], pi_by_call: "dict | None" = None
 ) -> list[tuple[dict, str]]:
     """``[(variant, wiring_id), ...]`` — the wiring each DB-history variant of
-    *function_name* belongs to, as ``scidb.provenance.split_call_site_outputs``
+    *function_name* belongs to, as ``scidb.provenance.graph.split_call_site_outputs``
     decides it from the call site's recorded outputs and the wirings Runs have
     claimed. THE run path's answer; the canvas build asks the same owner
     (``graph_builder.split_call_sites_by_claims``), so a node's wiring and its
@@ -244,7 +244,7 @@ def history_variant_wirings(
     ("matches none of the 2 candidate variant(s)"). A variant appears once per
     wiring whose outputs include it (twice only where two claims overlap).
     """
-    from scidb.provenance import split_call_site_outputs
+    from scidb.provenance.graph import split_call_site_outputs
 
     from scistack_gui.stores import node_wiring as _node_wiring_store
 
@@ -294,7 +294,7 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
     unrunnable.
 
     Parameter bindings name the DECLARED Parameter each constant's run
-    recorded (``scidb.parameter.parameter_node_name``), so a history target
+    recorded (``scidb.model.parameter.parameter_node_name``), so a history target
     translates between declared name and argument exactly as an edge-derived
     one does (``edge_resolver.declared_by_argument``, cleanup-audit F20).
     They never look anything up: ``build_run_inputs`` skips a Parameter
@@ -302,7 +302,7 @@ def _attach_db_path_inputs(db, function_name: str, targets: list[dict]) -> list[
     """
     if not targets:
         return targets
-    from scidb.parameter import parameter_node_name
+    from scidb.model.parameter import parameter_node_name
 
     from scistack_gui.domain.edge_resolver import (
         parameter_binding,
@@ -1013,7 +1013,7 @@ def record_dispatch_wirings(
 
     scope = intent_store.scope_of_node(db, node_id)
     # ONE claim per input shape, covering EVERY output this Run writes for it:
-    # the claim is what `scidb.provenance.split_call_site_outputs` later splits
+    # the claim is what `scidb.provenance.graph.split_call_site_outputs` later splits
     # the call site's recorded outputs by, so a node run with outputs {A, B}
     # must claim hash(A, B) — two per-output claims would split it into two
     # nodes. Constants are not in a wiring, so constant variants of one shape
@@ -1816,10 +1816,10 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
 def _describe_input_value(value) -> str:
     """One input, in the spelling the canvas chip uses.
 
-    ``scidb.intent.describe_columns`` owns the selection half, so the log line
+    ``scidb.provenance.intent.describe_columns`` owns the selection half, so the log line
     and the node cannot disagree about what a run was fed.
     """
-    from scidb.intent import describe_columns
+    from scidb.provenance.intent import describe_columns
     from scifor import ColumnSelection, EachOf, Fixed, PathInput
 
     if isinstance(value, EachOf):
@@ -1958,7 +1958,7 @@ def default_schema_level(
     iterates. Every run route calls this, and so does the settings panel
     (``get_schema_level``), so what the panel shows is what a Run does.
 
-    The decision is scidb's (``scidb.schema_level.resolve_schema_level``:
+    The decision is scidb's (``scidb.run.schema_level.resolve_schema_level``:
     stated > where this node last ran > its inputs > every key). This
     function only gathers the GUI-side facts it needs:
 
@@ -1981,8 +1981,8 @@ def default_schema_level(
     Logs ONE ``[schema-level]`` line naming the route and the rule, so a run
     that iterates the wrong keys says why.
     """
-    from scidb import provenance_query as _pq
-    from scidb.schema_level import input_levels, resolve_schema_level
+    from scidb.provenance import query as _pq
+    from scidb.run.schema_level import input_levels, resolve_schema_level
     from scistack_gui.project import registry
     from scistack_gui.domain.edge_resolver import (
         BINDING_PATHINPUT,
@@ -2097,7 +2097,7 @@ def build_run_declared_names(target: dict) -> dict[str, str]:
     the name the canvas shows has to be stated or the run records only the
     argument — and the next graph build draws a second Parameter node named
     after it (cleanup-audit B1). The wiring is the only source; scidb merges
-    it with any named Parameter (``scidb.parameter.declared_input_names``).
+    it with any named Parameter (``scidb.model.parameter.declared_input_names``).
     """
     from scistack_gui.domain.edge_resolver import (
         BINDING_PARAMETER,
@@ -2121,7 +2121,7 @@ def build_run_declared_names(target: dict) -> dict[str, str]:
 def build_run_glue(target: dict, function_name: str) -> dict:
     """The for_each ``glue=`` dict for a derived target, or ``{}``.
 
-    ``{param: [scidb.glue.GlueSpec, ...]}`` — resolved from the target's
+    ``{param: [scidb.run.glue.GlueSpec, ...]}`` — resolved from the target's
     ``glue_chains`` (glue node names, in application order) against the
     registry, exactly as ``build_run_inputs`` resolves a PathInput or
     Parameter binding by declared name.
@@ -2133,7 +2133,7 @@ def build_run_glue(target: dict, function_name: str) -> dict:
     ``+scidb/for_each.m`` can run the body while Python still hashes it into
     the consumer's identity.
     """
-    from scidb.glue import GlueSpec
+    from scidb.run.glue import GlueSpec
     from scistack_gui.project import registry
 
     chains = target.get("glue_chains") or {}
@@ -2281,7 +2281,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
     children compile once per request (``_built`` memo), preserving the
     backend's diamond dedup by object identity.
     """
-    from scidb.pipeline import Pipeline
+    from scidb.run.pipeline import Pipeline
 
     from scidb import for_each
     from scistack_gui.stores import pipeline_store
@@ -2476,7 +2476,7 @@ def _as_placed(db, pipeline_id: str, pipe, built: dict):
     a binding, is one run; several different ones are several variants, as
     a run of their parent would make. A pipeline whose placements set no
     step values runs as it is (unchanged behaviour)."""
-    from scidb.pipeline import Pipeline
+    from scidb.run.pipeline import Pipeline
 
     from scistack_gui.stores import pipeline_store
 
@@ -2574,7 +2574,7 @@ def run_pipeline(
     returned "rendered" list of paths/payloads is the ONLY handle on the
     draft outputs).
     """
-    from scidb.intent import ORIGIN_GUI, run_origin
+    from scidb.provenance.intent import ORIGIN_GUI, run_origin
 
     from scistack_gui.services.library_service import missing_roots
 

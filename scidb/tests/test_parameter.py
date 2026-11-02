@@ -405,7 +405,7 @@ class TestNoValues:
             op(Parameter())
 
     def test_hasattr_is_false_and_does_not_raise_typeerror(self):
-        """scidb.input_spec.is_loadable probes with hasattr(spec, "load"),
+        """scidb.model.input_spec.is_loadable probes with hasattr(spec, "load"),
         which swallows AttributeError and NOTHING else -- a TypeError here
         would take down every for_each carrying an unvalued Parameter."""
         assert hasattr(Parameter(), "load") is False
@@ -510,7 +510,7 @@ class TestVersionKeyIdentity:
         assert Parameter("abc").upper() == "ABC"
 
     def _config(self, **inputs):
-        from scidb.foreach_config import ForEachConfig
+        from scidb.run.foreach_config import ForEachConfig
 
         def fn(**kwargs):
             return None
@@ -518,8 +518,8 @@ class TestVersionKeyIdentity:
         return ForEachConfig(fn=fn, inputs=inputs)
 
     def test_wrapped_and_bare_value_give_the_same_constants(self):
-        wrapped = self._config(window=Parameter(30)).to_version_keys()
-        bare = self._config(window=30).to_version_keys()
+        wrapped = self._config(window=Parameter(30)).to_config_keys()
+        bare = self._config(window=30).to_config_keys()
         assert wrapped["__constants"] == bare["__constants"] == {"window": 30}
 
     def test_wrapped_and_bare_value_give_the_same_call_id(self):
@@ -547,7 +547,7 @@ class TestVersionKeyIdentity:
         declared Parameter into for_each failed outright."""
         from scicanonicalhash.hashing import canonical_hash
 
-        keys = self._config(window=Parameter(30), label=Parameter("a")).to_version_keys()
+        keys = self._config(window=Parameter(30), label=Parameter("a")).to_config_keys()
         assert canonical_hash(keys["__constants"]) == canonical_hash(
             {"window": 30, "label": "a"}
         )

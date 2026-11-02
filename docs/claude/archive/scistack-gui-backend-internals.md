@@ -1352,7 +1352,7 @@ logger.info("Message")
 **scistack.log bridge** (`app.py` lines 50-80):
 ```python
 # Redirect Python logging → scistack.log
-from scidb.log import Log
+from scidb.model.log import Log
 logging.basicConfig(handlers=[LogHandler()])
 ```
 

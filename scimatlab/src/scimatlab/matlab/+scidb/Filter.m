@@ -15,7 +15,7 @@ classdef Filter
 %       StepLength().load(where=(Side() == "L") & (Speed() > 1.2))
 
     properties
-        py_filter   % Python Filter object (scidb.filters.Filter subclass)
+        py_filter   % Python Filter object (scidb.model.filters.Filter subclass)
     end
 
     methods

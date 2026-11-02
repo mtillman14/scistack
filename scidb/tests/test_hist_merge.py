@@ -3,7 +3,7 @@
 These run with NO database, which is what sends a Merge down the per-combo
 path (``PerComboLoaderMerge``: each constituent's own ``.load()``) that the
 mocks implement. Any db — even a mock — switches scidb to bulk-loading the
-constituents from it instead (``scidb.foreach._load_input``). Saving, though,
+constituents from it instead (``scidb.run.foreach._load_input``). Saving, though,
 needs a database, and since 2026-09-30 a failed save raises OutputSaveError
 instead of being logged and ignored. So the for_each calls here pass
 ``save=False``: they assert what the function RECEIVED, never what was saved.

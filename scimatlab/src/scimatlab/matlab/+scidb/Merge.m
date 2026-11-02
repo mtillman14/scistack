@@ -106,9 +106,9 @@ classdef Merge
             for i = 1:numel(obj.var_specs)
                 py_specs{i} = constituent_to_py(obj.var_specs{i});
             end
-            py_merge = py.scidb.merge.Merge(py_specs{:});
+            py_merge = py.scidb.model.merge.Merge(py_specs{:});
 
-            scidb.Log.info('[to_csv] Merge(%d) -> %s (version=%s)', ...
+            scifor.Log.info('[to_csv] Merge(%d) -> %s (version=%s)', ...
                 numel(obj.var_specs), string(filename), version);
 
             py_merge.to_csv(char(filename), pyargs(py_kwargs{:}));
@@ -173,7 +173,7 @@ function py_obj = constituent_to_py(spec)
     elseif isa(spec, 'scidb.Variant')
         inner = constituent_to_py(spec.var_type);
         kv = struct_to_pykwargs(spec.branch_params);
-        py_obj = py.scidb.variant.Variant(inner, pyargs(kv{:}));
+        py_obj = py.scidb.model.variant.Variant(inner, pyargs(kv{:}));
 
     elseif isa(spec, 'scidb.BaseVariable')
         py_class = scidb.internal.ensure_registered(class(spec));
@@ -181,7 +181,7 @@ function py_obj = constituent_to_py(spec)
             py_obj = py_class;
         else
             cols = cellstr(spec.selected_columns(:)');
-            py_obj = py.scidb.column_selection.ColumnSelection( ...
+            py_obj = py.scidb.model.column_selection.ColumnSelection( ...
                 py_class, py.list(cols));
         end
 

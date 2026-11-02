@@ -76,7 +76,7 @@ function c = codec(type_name)
     c.has_codec = true;
     c.encode = @(values) encode_values(type_name, values);
     c.decode = @(tables) decode_values(type_name, tables);
-    scidb.Log.debug('[codec] %s: custom to_db/from_db', type_name);
+    scifor.Log.debug('[codec] %s: custom to_db/from_db', type_name);
 end
 
 
@@ -114,10 +114,10 @@ end
 function log_timing(op, type_name, n, elapsed)
 %LOG_TIMING  One line per batch; single-value calls stay at DEBUG.
     if n > 1
-        scidb.Log.info('[codec] %s: %s on %d value(s) in %.3fs', ...
+        scifor.Log.info('[codec] %s: %s on %d value(s) in %.3fs', ...
             type_name, op, n, elapsed);
     else
-        scidb.Log.debug('[codec] %s: %s on %d value(s) in %.3fs', ...
+        scifor.Log.debug('[codec] %s: %s on %d value(s) in %.3fs', ...
             type_name, op, n, elapsed);
     end
 end

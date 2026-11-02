@@ -54,7 +54,7 @@ all numbers.
 The correct spelling, owned by scidb because identity is scidb's job:
 
 ```python
-from scidb.provenance import constants_identity_key
+from scidb.provenance.graph import constants_identity_key
 key = constants_identity_key(constants)
 ```
 
@@ -202,7 +202,7 @@ figure shows the overplotting signature.
 ## 4. If you are adding a consumer
 
 1. Grouping or de-duplicating by constants? Use
-   `scidb.provenance.constants_identity_key`. Do not write
+   `scidb.provenance.graph.constants_identity_key`. Do not write
    `tuple(sorted(constants.items()))`. The guard test
    (§2a) fails if you do.
 2. Rendering a constant into MATLAB or Python source? Use

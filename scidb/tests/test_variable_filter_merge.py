@@ -32,7 +32,7 @@ import pytest
 _root = Path(__file__).parent.parent
 sys.path.insert(0, str(_root / "src"))
 
-from scidb.foreach import Merge
+from scidb.run.foreach import Merge
 
 from scidb import BaseVariable, Variant, branch_param, configure_database, for_each
 
@@ -356,7 +356,7 @@ class TestMergeFilterNoFalsePositive:
 class TestValidateFilterCoverageOverride:
     def test_override_uses_provided_ids_not_table(self, tmp_path):
         """target_schema_ids_override replaces the table lookup for coverage target."""
-        from scidb.filters import (
+        from scidb.model.filters import (
             _get_all_schema_ids_for_variable,
             _validate_filter_coverage,
         )

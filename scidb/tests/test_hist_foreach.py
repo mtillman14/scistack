@@ -93,8 +93,8 @@ def no_graph_for_doubles(monkeypatch):
     graph in one transaction (P0), a graph write that fails fails the save;
     a double has no graph store, so its two graph writes are skipped here.
     A real database still records its graph."""
-    import scidb.foreach as foreach_mod
-    import scidb.provenance_save as provenance_save
+    import scidb.run.foreach as foreach_mod
+    import scidb.provenance.save as provenance_save
 
     record_run = provenance_save.record_run
     capture = foreach_mod._capture_function_source
@@ -664,7 +664,7 @@ class TestForEachAllLevels:
         # fixture leaves no database configured, so get_database() raises
         # DatabaseNotConfiguredError and for_each turns it into this message.
         # (Blanking scidb out of sys.modules stopped modelling it once scidb
-        # imported scidb.database at module load.)
+        # imported scidb.store.database at module load.)
         with pytest.raises(ValueError, match="no database is available"):
             for_each(
                 process,

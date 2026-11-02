@@ -38,8 +38,8 @@ def _is_spec(obj) -> bool:
     """True if ``obj`` is a variable spec (class, instance, or wrapper)."""
     from scifor import ColumnSelection, Fixed, Merge
 
-    from .variable import BaseVariable
-    from .variant import Variant
+    from scidb.model.variable import BaseVariable
+    from scidb.model.variant import Variant
 
     if isinstance(obj, (Merge, ColumnSelection, Fixed, Variant, BaseVariable)):
         return True
@@ -86,8 +86,8 @@ def _resolve_constituent(spec):
     """
     from scifor import ColumnSelection, Fixed
 
-    from .variable import BaseVariable
-    from .variant import Variant
+    from scidb.model.variable import BaseVariable
+    from scidb.model.variant import Variant
 
     if isinstance(spec, ColumnSelection):
         return spec.data, list(spec.columns), {}
@@ -166,7 +166,7 @@ def _constituent_flat_df(var_type, columns, *, where, version, db, metadata):
     variable used at a coarser level than the full schema) are dropped so the
     table reflects the variable's true schema level.
     """
-    from .database import get_database
+    from scidb.store.database import get_database
 
     _db = db or get_database()
 
@@ -202,7 +202,7 @@ def build_flat_table(spec, *, where, version, db, metadata):
     """
     from scifor import Merge
 
-    from .database import get_database
+    from scidb.store.database import get_database
 
     _db = db or get_database()
 
@@ -247,7 +247,7 @@ def export_csv(spec, filename, *args, **kwargs):
     branch-param metadata. ``as_df`` / ``introspect`` are ignored. Positional
     args after ``filename`` are rejected (see :func:`_reject_extra_args`).
     """
-    from .log import Log
+    from scidb.model.log import Log
 
     _reject_extra_args(spec, args)
 

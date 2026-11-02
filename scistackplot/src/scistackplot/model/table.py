@@ -247,7 +247,7 @@ class LongTable:
     #: silently leaving the figure.
     latest_column: str | None = None
     #: Locations the dataset HAS (schema-key columns, values as text) where
-    #: this table's variable has no record (`scidb.inventory.absent_locations`,
+    #: this table's variable has no record (`scidb.provenance.inventory.absent_locations`,
     #: attached by a database source). The "No record" reason of a figure's
     #: "Not plotted" list (`omissions`); None when the source cannot tell.
     absent: "pd.DataFrame | None" = None

@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scifor import ColName, ColumnSelection, for_each, set_schema
+from scifor import ColName, ColumnSelection, LoopHooks, for_each, set_schema
 from scifor.column_selection import (
     COMBINE,
     SPLIT,
@@ -223,7 +223,7 @@ def test_split_saves_each_group_as_its_output_and_skips_no_data(caplog):
             inputs={"g": ColumnSelection(DATA, [SIX, TEN], iterate=True)},
             outputs=["SixMWT", "TenMWT"],
             subject=[1, 2, 3],
-            _progress_fn=events.append,
+            hooks=LoopHooks(progress_fn=events.append),
         )
     rows = result.set_index("subject")
     assert rows.loc[1, "SixMWT"] == 12.0 and rows.loc[1, "TenMWT"] == 6.0
@@ -263,7 +263,7 @@ def test_split_group_that_raises_skips_only_its_output(caplog):
             inputs={"g": ColumnSelection(DATA, [SIX, TEN], iterate=True)},
             outputs=["SixMWT", "TenMWT"],
             subject=[1, 2],
-            _progress_fn=events.append,
+            hooks=LoopHooks(progress_fn=events.append),
         )
     rows = result.set_index("subject")
     assert rows.loc[1, "TenMWT"] == 6.0
@@ -287,7 +287,7 @@ def test_split_raise_with_another_group_saved():
         inputs={"g": ColumnSelection(data, [SIX, TEN], iterate=True)},
         outputs=["SixMWT", "TenMWT"],
         subject=[3],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
     rows = result.set_index("subject")
     assert pd.isna(rows.loc[3, "SixMWT"]) and rows.loc[3, "TenMWT"] == 2.0
@@ -303,7 +303,7 @@ def test_every_group_without_data_is_one_no_data_combination():
         inputs={"g": ColumnSelection(data, [SIX, TEN], iterate=True)},
         outputs=["SixMWT", "TenMWT"],
         subject=[2],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
     summary = _summary(events)
     assert summary["no_data"] == 1 and summary["completed"] == 0

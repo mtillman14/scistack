@@ -452,7 +452,7 @@ def write_library(
     path that would leave the package is refused in both modes. Nothing is
     written when anything is refused."""
     from scifor.project.entities_file import DEFAULT_ENTITIES_FILENAME
-    from .init import validate_project_name
+    from scidb.project.init import validate_project_name
 
     if existing not in ("create", "update"):
         raise ValueError(f"existing must be 'create' or 'update', not {existing!r}")

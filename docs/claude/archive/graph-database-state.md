@@ -26,7 +26,7 @@ Identity is content-addressed; re-running an identical pipeline reproduces every
 
 ## 2. Schema
 
-### Provenance graph (`scidb/provenance.py`)
+### Provenance graph (`scidb/provenance/graph.py`)
 
 - **`_record`** — every entity (variables, constants, PathInput specs). One
   immutable content-addressed row each (`ON CONFLICT DO NOTHING`).
@@ -74,7 +74,7 @@ Identity is content-addressed; re-running an identical pipeline reproduces every
 
 ---
 
-## 3. Identity model (`scidb/provenance.py`)
+## 3. Identity model (`scidb/provenance/graph.py`)
 
 ```
 constant record_id   = sha16("__constant__" | "content:" canonical_hash(value))
@@ -276,10 +276,10 @@ gap **on demand** (GUI right-click / programmatic), without the #6 identity drif
 - **`list_pipeline_variants`** → `provenance_query.pipeline_variants`: distinct
   `(output_type, function_name, input_types, constants, output_num)` config-level
   variants, with `record_count`, `output_num`, and `call_id`.
-- **`call_id`**: a stable for_each call-site hash — `scidb.foreach_config.CallSite`
+- **`call_id`**: a stable for_each call-site hash — `scidb.run.foreach_config.CallSite`
   filled from the graph (`(__fn, __inputs, __constants, __distribute, __as_table,
   __across_variants, __glue)`), the same type the forward `ForEachConfig.to_call_id`
-  fills from live inputs, so the two agree by construction. NOTE: `to_version_keys`
+  fills from live inputs, so the two agree by construction. NOTE: `to_config_keys`
   still exists as an **in-memory config carrier** (it builds `save_metadata`) — it
   is NOT the removed storage column.
 - **`get_aggregated_variants`** builds the GUI pipeline graph from
@@ -521,16 +521,16 @@ case. `where_clause` survives only as display/audit.
 
 ## 11. Key modules
 
-- `scidb/provenance.py` — schema (DDL) + identity helpers + entity inserts.
-- `scidb/provenance_save.py` — graph writers (`record_run`, `record_direct_save`,
+- `scidb/provenance/graph.py` — schema (DDL) + identity helpers + entity inserts.
+- `scidb/provenance/save.py` — graph writers (`record_run`, `record_direct_save`,
   `invocation_id_for_meta`, `_commit_graph`).
-- `scidb/provenance_query.py` — pure-SQL read side (`derived_branch_params`,
+- `scidb/provenance/query.py` — pure-SQL read side (`derived_branch_params`,
   `invocation_inputs`, `stored_invocation_signature`, `producing_invocation`,
   `pipeline_variants`, `record_where_clauses`, `upstream_provenance`,
   `expected_invocations_for_function`, `_producing_variant_key`, …).
-- `scidb/database.py` — save/load/find_record_id/save_batch/`_load_with_where`/
+- `scidb/store/database.py` — save/load/find_record_id/save_batch/`_load_with_where`/
   variant queries.
-- `scidb/foreach.py` — for_each orchestration, `_save_results`, `_build_skip_hook`.
-- `scidb/state.py` — node-state (binary) + `check_combo_state`.
-- `scidb/pipeline.py` — the `@scistack` marker (formerly `@pipeline`, replaces `@lineage_fcn`).
+- `scidb/run/foreach.py` — for_each orchestration, `_save_results`, `_build_skip_hook`.
+- `scidb/provenance/state.py` — node-state (binary) + `check_combo_state`.
+- `scidb/run/pipeline.py` — the `@scistack` marker (formerly `@pipeline`, replaces `@lineage_fcn`).
 - `scilineage/` — reduced to `hashing.py` (`compute_function_hash`, `canonical_hash`).

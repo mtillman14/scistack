@@ -25,12 +25,12 @@ import sys
 import time
 from pathlib import Path
 
-from ..exceptions import DatabaseLockedError
-from ..log import Log
-from . import render
-from .api import Inspector
-from .mutate import Mutator, lock_errors_mapped
-from .pick import PickAborted, drill_down
+from scidb.model.exceptions import DatabaseLockedError
+from scidb.model.log import Log
+from scidb.inspect import render
+from scidb.inspect.api import Inspector
+from scidb.inspect.mutate import Mutator, lock_errors_mapped
+from scidb.inspect.pick import PickAborted, drill_down
 
 
 class CLIError(Exception):
@@ -378,7 +378,7 @@ def _cmd_exclusions(insp: Inspector, args) -> None:
 
 
 def _cmd_inventory(insp: Inspector, args) -> None:
-    from ..inventory import write_inventory_csv
+    from scidb.provenance.inventory import write_inventory_csv
 
     def _split(text):
         return None if text is None else [k.strip() for k in text.split(",") if k.strip()]
@@ -504,7 +504,7 @@ def _literal(text: str):
 
 
 def _cmd_delete_variant(mut: Mutator, args) -> None:
-    from ..variant_delete import delete_plan
+    from scidb.store.variant_delete import delete_plan
 
     targets = _delete_targets(args)
     plan = delete_plan(mut._db, targets)
@@ -523,7 +523,7 @@ def _cmd_delete_variant(mut: Mutator, args) -> None:
 
 
 def _cmd_clear_data(mut: Mutator, args) -> None:
-    from ..clear_data import ClearRefused, clear_plan
+    from scidb.store.clear_data import ClearRefused, clear_plan
 
     plan = clear_plan(mut._db)
     if plan.has_canvas:
@@ -597,7 +597,7 @@ def _parse_variant(pairs: list[str]) -> dict:
     Keys are the pin vocabulary ``load()`` honours, in either spelling:
     ``Code:grSides`` / ``__code__.grSides``, ``Run:loader`` /
     ``__run__.loadGaitRiteOneFile``, or a branch param (``bandpass.low_hz``).
-    ``scidb.variant.normalize_selection`` canonicalizes them, so the display
+    ``scidb.model.variant.normalize_selection`` canonicalizes them, so the display
     spelling a user reads off the Plot Studio picker can be pasted here.
 
     Repeating a key accumulates a list, which scidb already reads as
@@ -608,7 +608,7 @@ def _parse_variant(pairs: list[str]) -> dict:
     ``low_hz=20`` matches the stored int, the same rule ``_coerce_non_schema``
     applies to a non-schema filter.
     """
-    from ..variant import (
+    from scidb.model.variant import (
         CODE_COLUMN_PREFIX,
         CODE_PIN_PREFIX,
         LATEST_COLUMN_NAME,
@@ -1425,7 +1425,7 @@ def dispatch(args: argparse.Namespace) -> int:
             raise CLIError(f"Database not found: {db_path} (from {source})")
         # Same convention as configure_database: scistack.log next to the db file.
         if Log.get_path() is None:
-            from scidb.log import attach_log_file
+            from scidb.model.log import attach_log_file
 
             attach_log_file(db_path)
         mode = "write" if write_handler else "read-only"

@@ -194,20 +194,29 @@ def _under(path: str, dirs: tuple[str, ...]) -> bool:
 
 
 @lru_cache(maxsize=4096)
-def frame_origin(filename: str) -> FrameOrigin:
+def frame_origin(
+    filename: str, extra_library_dirs: tuple[str, ...] = ()
+) -> FrameOrigin:
     """Classify a traceback frame's file. The ONLY frame classifier.
 
     Framework is checked first: an editable install of a SciStack package
     lives outside site-packages, and a regular install lives inside it.
     Pseudo-files (``<string>``, ``<lambda>`` sources exec'd by glue code) are
     the user's.
+
+    ``extra_library_dirs`` names another runtime's library roots. MATLAB
+    (``+scifor/frame_origin.m``) passes ``matlabroot`` so toolbox and
+    built-in frames classify as ``"library"``. MATLAB's own framework files
+    (``+scifor``, ``+scidb``) live inside the ``scimatlab`` package directory,
+    so the framework rule already covers them.
     """
     if not filename or filename.startswith("<"):
         return "user"
     path = _norm(filename)
     if _under(path, _framework_dirs()):
         return "framework"
-    if _under(path, _library_dirs()):
+    extra = tuple(_norm(d) for d in extra_library_dirs if d)
+    if _under(path, _library_dirs()) or _under(path, extra):
         return "library"
     return "user"
 

@@ -4,7 +4,7 @@ Unit tests for scistack_gui.domain.variant_resolver.
 All functions are pure — no DB or fixtures required.
 """
 
-from scidb.foreach_config import RunOptions
+from scidb.run.foreach_config import RunOptions
 
 from scistack_gui.domain.variant_resolver import (
     build_inferred_variants,
@@ -267,7 +267,7 @@ class TestComputeCallId:
         `compute_call_id == ForEachConfig.to_call_id`, not a hand-built
         payload that could drift along with the code under test."""
         from scidb import BaseVariable
-        from scidb.foreach_config import ForEachConfig
+        from scidb.run.foreach_config import ForEachConfig
 
         class RawEMG(BaseVariable):
             pass
@@ -295,7 +295,7 @@ class TestComputeCallId:
         call site: the GUI's id must equal `ForEachConfig.to_call_id`, and
         differ from the split call site's."""
         from scidb import AcrossVariants, BaseVariable
-        from scidb.foreach_config import ForEachConfig
+        from scidb.run.foreach_config import ForEachConfig
 
         class RawEMG(BaseVariable):
             pass

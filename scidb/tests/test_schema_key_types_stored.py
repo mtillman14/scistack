@@ -1,5 +1,5 @@
 """
-Declared schema-key types are STORED IN THE DATABASE (scidb.schema_types).
+Declared schema-key types are STORED IN THE DATABASE (scidb.store.schema_types).
 
 User decision 2026-10-21: a key's type decides how its values are stored, so
 it belongs with the dataset, not with the script that happens to open it. The
@@ -26,8 +26,8 @@ from scidb import (
     SchemaKeyTypeError,
     configure_database,
 )
-from scidb import schema_types
-from scidb.database import DatabaseManager
+from scidb.store import schema_types
+from scidb.store.database import DatabaseManager
 
 SCHEMA = ["subject", "trial"]
 

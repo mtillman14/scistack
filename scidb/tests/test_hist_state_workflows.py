@@ -1,4 +1,4 @@
-"""End-to-end workflow tests for scidb.state.
+"""End-to-end workflow tests for scidb.provenance.state.
 
 Complements test_state.py / test_state_realworld.py / test_state_pathinput.py
 by covering user workflows that previously had no explicit test:
@@ -35,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scidb.state import check_node_state
+from scidb.provenance.state import check_node_state
 
 from scidb import BaseVariable, scistack
 from scidb import for_each as scidb_for_each

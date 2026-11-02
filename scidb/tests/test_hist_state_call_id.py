@@ -10,7 +10,7 @@ detection still hold through the public ``check_node_state`` API.
 
 import numpy as np
 import pytest
-from scidb.state import check_node_state
+from scidb.provenance.state import check_node_state
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each

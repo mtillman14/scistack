@@ -27,7 +27,7 @@ import scifor as _scifor
 from scidb import BaseVariable, ColumnTypeChangedError, configure_database
 from sciduckdb import column_type_change
 
-from scidb.sciduck import SciDuck
+from scidb.store.sciduck import SciDuck
 from sciduckdb import infer_data_columns
 
 SCHEMA = ["subject"]

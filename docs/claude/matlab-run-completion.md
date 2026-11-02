@@ -196,7 +196,7 @@ run's own result. `test_every_verdict_announces_that_records_changed` asserts
 the ordering, not just the presence.
 
 `_notify_records_changed` gained a third job in the same pass:
-`scidb.state.clear_discovery_cache()`. That function's docstring has said
+`scidb.provenance.state.clear_discovery_cache()`. That function's docstring has said
 "For tests, and after a run" since it was written, and only tests called it.
 A loader's discovery cache holds "files on disk minus locations already
 realized" — a run changes the second half while the filesystem sits still, so

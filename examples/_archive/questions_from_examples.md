@@ -77,5 +77,5 @@ Traceback (most recent call last):
     raise NotRegisteredError(
     ...<2 lines>...
     )
-scidb.exceptions.NotRegisteredError: Variable type 'ndarray' is not registered. No data has been saved for this type yet.
+scidb.model.exceptions.NotRegisteredError: Variable type 'ndarray' is not registered. No data has been saved for this type yet.
 ```

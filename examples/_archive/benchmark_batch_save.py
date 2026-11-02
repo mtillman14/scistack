@@ -25,7 +25,7 @@ sys.path.insert(0, str(project_root / "src"))
 sys.path.insert(0, str(project_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(project_root / "thunk-lib" / "src"))
 
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 
 from scidb import BaseVariable
 

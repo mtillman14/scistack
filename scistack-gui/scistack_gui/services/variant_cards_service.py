@@ -7,7 +7,7 @@ The Variants popup's backend: a thin shell over scidb.
 * cards, from ``Inspector.variant_cards``, the same object
   ``scidb variants X --cards`` prints;
 * pins, from ``Mutator.pin_variant`` / ``release_pin`` and
-  ``scidb.variant_pins.pin_newest``;
+  ``scidb.store.variant_pins.pin_newest``;
 * deletion, from ``Inspector.delete_plan`` / ``Mutator.delete_variant``.
 
 Nothing about variants is decided here (CLAUDE.md NOTE 3/4). What this module
@@ -57,7 +57,7 @@ def _jsonable(obj):
 
 
 def _same_value(a, b) -> bool:
-    from scidb.bindings import variant_signature
+    from scidb.run.bindings import variant_signature
 
     if variant_signature({"v": a}) == variant_signature({"v": b}):
         return True
@@ -80,7 +80,7 @@ def parameter_offers(card) -> list[dict]:
     entities file is offered greyed out, with the reason, rather than failing
     at write time.
     """
-    from scidb.variant import is_code_or_run_pin
+    from scidb.model.variant import is_code_or_run_pin
 
     from scistack_gui.project import registry
     from scistack_gui.services.target_file_service import entity_editability
@@ -215,8 +215,8 @@ def release_pin(db, variable: str, reason: str) -> dict:
 
 def pin_newest_variant(db, variable: str, reason: str) -> dict:
     """The before-run dialog's "Move pin to the new output", once the run has
-    finished (``scidb.variant_pins.pin_newest``)."""
-    from scidb.variant_pins import pin_newest
+    finished (``scidb.store.variant_pins.pin_newest``)."""
+    from scidb.store.variant_pins import pin_newest
 
     pin = pin_newest(db, variable, reason)
     return {"ok": True, "pin": _jsonable(pin)}
@@ -327,7 +327,7 @@ def run_pin_conflicts(
     run, which names steps by function) about to run. The frontend asks before
     starting a run and shows the Keep pin / Move pin to the new output / Cancel
     dialog when this is non-empty."""
-    from scidb.variant_pins import active_pins
+    from scidb.store.variant_pins import active_pins
 
     from scistack_gui.runtime.db import db_connection
     from scistack_gui.services.execution_service import (

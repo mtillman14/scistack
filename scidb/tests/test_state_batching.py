@@ -11,7 +11,7 @@ import pytest
 import scifor as _scifor
 
 from scidb import BaseVariable, configure_database
-from scidb.state import _schema_id_to_combo, _schema_ids_to_combos
+from scidb.provenance.state import _schema_id_to_combo, _schema_ids_to_combos
 
 
 class Located(BaseVariable):

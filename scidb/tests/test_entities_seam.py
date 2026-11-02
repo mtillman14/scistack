@@ -10,8 +10,8 @@ with its line, without taking the rest of the file down (plan P3 stage 3).
 from __future__ import annotations
 
 from scidb import entities
-from scidb.parameter import Parameter
-from scidb.variable import BaseVariable
+from scidb.model.parameter import Parameter
+from scidb.model.variable import BaseVariable
 from scifor import EachOf, PathInput
 from scifor.project.entities_file import parse_entities
 

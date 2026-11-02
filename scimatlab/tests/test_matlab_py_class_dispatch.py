@@ -8,11 +8,11 @@ back to constructor semantics, and fails at runtime with::
 
     Dot indexing into the result of a function call requires parentheses
     after the function name. The supported syntax is
-    'py.scidb.log.Log().info'.
+    'py.scidb.model.log.Log().info'.
 
 That is exactly what broke ``scidb.Log`` when the ``Log`` implementation moved
-out of ``scidb/log.py`` into the ``scistacklog`` package: ``scidb.log`` became a
-re-export shim, so ``py.scidb.log.Log.info(...)`` in ``+scidb/Log.m`` started
+out of ``scidb/model/log.py`` into the ``scistacklog`` package: ``scidb.model.log`` became a
+re-export shim, so ``py.scidb.model.log.Log.info(...)`` in ``+scidb/Log.m`` started
 raising on the first MATLAB-originated log line of every run (``scidb.project.entities``
 in the reported case). ``+scifor/Log.m`` was migrated to ``py.scistacklog.Log``
 at the time; ``+scidb/Log.m`` was not.
@@ -24,7 +24,7 @@ call site in the MATLAB sources on every Python test run.
 Heuristic notes: whole-line and block ``%`` comments are stripped first (doc
 comments legitimately quote the broken form), and only chains that resolve to a
 *class* followed by a further attribute are checked — plain constructor calls
-such as ``py.scidb.filters.ColumnFilter(...)`` work through a re-export and are
+such as ``py.scidb.model.filters.ColumnFilter(...)`` work through a re-export and are
 deliberately not flagged.
 """
 
@@ -135,13 +135,23 @@ def test_py_class_static_calls_target_existing_attributes():
     assert not missing, "MATLAB calls a Python attribute that is gone:\n" + "\n".join(missing)
 
 
-@pytest.mark.parametrize("package", ["+scidb", "+scifor"])
-def test_matlab_log_delegates_to_scistacklog(package):
-    """Pin the specific regression: neither Log.m may route through scistack.log."""
+def test_matlab_log_delegates_to_scistacklog():
+    """Pin the specific regression: Log.m must not route through the scidb
+    re-export. scidb.Log is a subclass of scifor.Log (P5 stage 1), so the one
+    implementation is +scifor/Log.m."""
+    package = "+scifor"
     src = (_MATLAB_ROOTS[0] / package / "Log.m").read_text(encoding="utf-8")
     code = _strip_comments(src)
     assert "py.scistacklog.Log" in code, f"{package}/Log.m must delegate to py.scistacklog.Log"
-    assert "py.scidb.log.Log" not in code, (
-        f"{package}/Log.m routes logging through the scidb.log re-export shim; "
+    assert "py.scidb.model.log.Log" not in code, (
+        f"{package}/Log.m routes logging through the scidb.model.log re-export shim; "
         "MATLAB static dispatch requires the defining module (scistacklog)"
     )
+
+
+def test_scidb_log_is_a_member_free_subclass_of_scifor_log():
+    """+scidb/Log.m holds no logging code of its own (one owner: +scifor/Log.m)."""
+    src = (_MATLAB_ROOTS[0] / "+scidb" / "Log.m").read_text(encoding="utf-8")
+    code = _strip_comments(src)
+    assert "classdef Log < scifor.Log" in code
+    assert "function" not in code and "properties" not in code

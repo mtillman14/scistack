@@ -33,8 +33,8 @@ location, the newer save wins (same-invocation-latest).
 | Display dict → the MATLAB command's PathInput dict | `matlab_command_service._declared_path_input` |
 | Which PathInputs a MATLAB command binds (history + edges) | `matlab_command_service.resolve_path_input_params` (single-node AND pipeline routes) |
 | Dict → MATLAB expression (`scifor.EachOf(...)` when alternates) | `matlab_command_format._format_path_input` |
-| Expanding the axis at run time | `+scidb/for_each.m` Step 0 (MATLAB), `scidb.foreach` (Python) |
-| Schema level of an EachOf of PathInputs (union of placeholders) | `scidb.schema_level` |
+| Expanding the axis at run time | `+scidb/for_each.m` Step 0 (MATLAB), `scidb.run.foreach` (Python) |
+| Schema level of an EachOf of PathInputs (union of placeholders) | `scidb.run.schema_level` |
 
 ## Python vs MATLAB route
 

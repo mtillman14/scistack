@@ -2,7 +2,7 @@
 
 Modules: `codec` (values <-> DuckDB columns), `connection` (`DuckConnection`),
 `datetimes`, `row_lists`. The tables of a project database, `_schema`
-included, are scidb's (`scidb.tables`, `scidb.sciduck.SciDuck`). This file is the
+included, are scidb's (`scidb.store.tables`, `scidb.store.sciduck.SciDuck`). This file is the
 facade; import from `sciduckdb`, not from the modules.
 """
 

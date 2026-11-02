@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from scidb import BaseVariable
-from scidb.database import DatabaseManager, configure_database
+from scidb.store.database import DatabaseManager, configure_database
 from scimatlab.bridge import register_matlab_variable, save_batch_bridge
 
 SCHEMA = ["subject", "session"]

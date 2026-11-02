@@ -196,6 +196,7 @@ places, but also imports `provenance_query` (8 imports),
 | Q4 | Fix the `version_keys` docstrings as part of W5 ([04b](04b-scidb-write-path.md)). | weakness 4 |
 
 > **Done (2026-11-01, e129c3bf):** Q4 — `check_node_state` and `_get_latest_record_at_location` docstrings rewritten.
+> **Done (2026-11-01, P4 stage 4):** Q1 — `provenance_query.latest_at_location_batch` is THE staleness supersession rule; `get_latest_record_id_for_variant` and `state._get_latest_record_at_location` are deleted and `_has_superseded_ancestor` asks the owner (one call for both halves). It exports `LATEST_SAVE_PER_RECORD_SQL` (a record's newest save event), which it and `_find_record` share. NULL `schema_id` pinned by `scidb/tests/test_latest_null_schema_id.py` (only the any-variant half changed: raise -> None, on records it was never given). Finding, not changed: `_find_record`'s `ROW_NUMBER` was never a supersession rule (it dedups the save log per record); the LOAD rule (`version_id="latest"`) collapses on `(fn, constants, consumed input locations)` + run-option families + renames, while staleness uses `variant_keys_batch` (constants only). Two definitions of "variant" remain, deliberately left for a decision.
 
 ---
 

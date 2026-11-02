@@ -11,7 +11,7 @@ Tests verify that:
 import numpy as np
 import pandas as pd
 import pytest
-from scidb.exceptions import NotFoundError
+from scidb.model.exceptions import NotFoundError
 
 from scidb import BaseVariable, configure_database, raw_sql
 

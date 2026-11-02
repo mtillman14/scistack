@@ -97,10 +97,10 @@ Implementation: `_run_column_iteration` (Python) / `run_column_iteration`
 
 **Through `scidb.for_each`:** wiring is automatic — `scidb.for_each` loads the
 iterate input as a `scifor.ColumnSelection(loaded_spread_df, columns,
-iterate=True)` (`scidb/foreach.py` `_load_input` ~1710) and delegates to
+iterate=True)` (`scidb/run/foreach.py` `_load_input` ~1710) and delegates to
 `scifor.for_each` passing `as_table` (~438). The spread DataFrame carries the
 (stringified) schema-key columns, and `configure_database` propagates the
-dataset schema to scifor via `scifor.set_schema` (`scidb/database.py` ~548), so
+dataset schema to scifor via `scifor.set_schema` (`scidb/store/database.py` ~548), so
 `scifor.get_schema()` inside `_run_column_iteration` returns the right keys and
 the `df[schema_keys + [col]]` slice keeps them. To make a within-combo label
 (e.g. `intervention`) available for an argmax lookup in scidb, declare it as a
@@ -264,7 +264,7 @@ Before groups, >1 output was an error, so nothing existing changed meaning.
 | combine vs split, pairing, errors | `scifor.column_selection.resolve_column_groups` (MATLAB port in `+scifor/for_each.m`) |
 | "missing" for the no-data rule | `scifor.missing` (MATLAB `group_has_no_data`) |
 | wire form `[{"name"?, "columns"}]` (DB selector, GUI, bridge) | `scifor.column_selection.groups_to_wire` / `spec_from_wire` |
-| stored selection shape (`"groups"` only when grouped) | `scidb.intent.normalize_columns` / `selector_json`; `selection_spec` rebuilds the spec |
+| stored selection shape (`"groups"` only when grouped) | `scidb.provenance.intent.normalize_columns` / `selector_json`; `selection_spec` rebuilds the spec |
 | MATLAB literal for a spec | `scistack_gui.services.matlab_command_format.format_matlab_column_spec` |
 | GUI picker's answer | `scistack_gui.domain.column_selection.plan_groups` (RPC `plan_column_groups`) |
 
@@ -294,7 +294,7 @@ to the function. All groups empty → `NoDataError` (counted *no data*).
   failures keep the old rule (the location fails).
 
 **NoOutput** (internal, never user-returned): scifor keeps it in the result
-table when `_keep_no_output=True` (scidb), else replaces with missing.
+table when `LoopHooks(keep_no_output=True)` (scidb), else replaces with missing.
 `scidb._save_results` writes no record for it and `_report_no_output_skips`
 logs it; an output that saved nothing in the run gets an empty table
 (`DatabaseManager.ensure_variable_table`, `record_id` only, rebuilt by the
@@ -361,9 +361,9 @@ assembled `1 × N` row — the existing save path does the rest. No bespoke merg
 |-------|------|--------|
 | scifor | `scifor/column_selection.py` | `ColumnSelection.iterate` flag |
 | scifor | `scifor/foreach.py` | Step 6.5 detect iterate inputs + shared column set; per-combo `_run_column_iteration` (loop fn per column → 1×N DataFrame); `_prepare_iterate_df`, `_unwrap_column_selection`; hard drift error |
-| scidb | `scidb/column_selection.py` | `iterate` flag, `columns=None`, `to_key`/`__hash__`/`__name__` |
-| scidb | `scidb/variable.py` | `BaseVariable.for_columns()` classmethod |
-| scidb | `scidb/foreach.py` | Step 1.5 `_resolve_for_columns` (empty `[]`/falsy→all columns + zip-by-name validation, **before** version keys); pass `iterate` through `_load_input`; `_make_raw_value_wrapper` (lineage); dry-run display |
+| scidb | `scidb/model/column_selection.py` | `iterate` flag, `columns=None`, `to_key`/`__hash__`/`__name__` |
+| scidb | `scidb/model/variable.py` | `BaseVariable.for_columns()` classmethod |
+| scidb | `scidb/run/foreach.py` | Step 1.5 `_resolve_for_columns` (empty `[]`/falsy→all columns + zip-by-name validation, **before** version keys); pass `iterate` through `_load_input`; `_make_raw_value_wrapper` (lineage); dry-run display |
 | scifor | `scifor/foreach.py` | `_resolve_iterate_columns` / `_all_data_columns` expand empty `[]`→all columns at Step 6.5 (and non-iterate `_prepare_input`) for standalone use |
 | sci-matlab | `+scifor/ColumnSelection.m` | `iterate` property (3rd ctor arg) |
 | sci-matlab | `+scifor/for_each.m` | Step 6.5 detect iterate inputs + shared column set; `unwrap_column_selection`, `prepare_iterate_table`, `run_column_iteration` (loop fn per column → 1×N table, collapse per-column `scidb.LineageFcnResult` to `.data`); hard drift error |

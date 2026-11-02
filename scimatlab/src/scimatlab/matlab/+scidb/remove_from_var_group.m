@@ -14,6 +14,6 @@ function remove_from_var_group(group_name, variables)
 %       scidb.remove_from_var_group("kinematics", {StepLength(), StepWidth()})
 
     py_names = scidb.internal.resolve_var_names(variables);
-    db = py.scidb.database.get_database();
+    db = py.scidb.store.database.get_database();
     db.remove_from_var_group(char(group_name), py_names);
 end

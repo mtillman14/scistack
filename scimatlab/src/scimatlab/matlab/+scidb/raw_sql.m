@@ -10,6 +10,6 @@ function filt = raw_sql(sql)
 %   Example:
 %       StepLength().load(where=scidb.raw_sql('"value" > 0.70'))
 
-    py_filter = py.scidb.filters.raw_sql(char(sql));
+    py_filter = py.scidb.model.filters.raw_sql(char(sql));
     filt = scidb.Filter(py_filter);
 end

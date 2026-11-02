@@ -58,7 +58,7 @@ classdef TestCodec < matlab.unittest.TestCase
         function test_stored_as_custom_columnar_table(testCase)
             CodecTraj().save(CodecTrajectory([1; 2], "toe"), ...
                 'subject', 1, 'session', 'A');
-            dtype = py.scidb.database.get_database().get_dtype_meta('CodecTraj');
+            dtype = py.scidb.store.database.get_database().get_dtype_meta('CodecTraj');
             testCase.verifyTrue(logical(py.operator.contains(dtype, 'custom')));
         end
 
@@ -114,7 +114,7 @@ classdef TestCodec < matlab.unittest.TestCase
             r2 = CodecTraj().load('subject', 2, 'session', 'A');
             testCase.verifyEqual(r1.data, CodecTrajectory([1; 2; 3], "heel"));
             testCase.verifyEqual(r2.data, CodecTrajectory([4; 5], "heel"));
-            dtype = py.scidb.database.get_database().get_dtype_meta('CodecTraj');
+            dtype = py.scidb.store.database.get_database().get_dtype_meta('CodecTraj');
             testCase.verifyTrue(logical(py.operator.contains(dtype, 'custom')));
         end
 

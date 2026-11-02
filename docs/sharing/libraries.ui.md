@@ -7,7 +7,7 @@
      pyproject.toml, src/<lib>/, generated __init__.py re-exports,
      pipelines/*.json, entities file with [library] derived_from,
      matlab/+<lib>/), scifor.project.discovery authored_library_dirs (libs/<name>/),
-     scidb/rename.py rename_functions (results carried across a rename),
+     scidb/store/rename.py rename_functions (results carried across a rename),
      library_cli.py (`scistack library create|copy|build`),
      Sidebar/LibrariesSection.tsx (+ / ✎ copy under a new name / × / 🔒 and ✏
      rows), services/library_service.py (seed, re-sync only for installed

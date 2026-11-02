@@ -1,7 +1,7 @@
 # Variables API — `BaseVariable`
 
 <!-- Ground truth (source/tests win over prose). Verified against:
-     scidb/src/scidb/variable.py:
+     scidb/src/scidb/model/variable.py:
        schema_version: int = 1; _reserved_keys = {record_id,id,created_at,schema_version,
          index,loc,iloc};
        to_db(self)->DataFrame (default wraps {"value":[self.data]}); from_db(cls, df) (default
@@ -11,7 +11,7 @@
          ->list[str]; load(as_df=False, version="latest", where=None, db=None, introspect=False,
          **metadata)->BaseVariable|list|DataFrame (NotFoundError on miss); to_csv(filename, *args,
          **kwargs) classmethod (flat, one row per schema_id, .csv required);
-     scidb/src/scidb/database.py:1801-1809 loaded instance attrs (record_id, metadata,
+     scidb/src/scidb/store/database.py:1801-1809 loaded instance attrs (record_id, metadata,
        content_hash, lineage_hash, branch_params);
      scimatlab/.../+scidb (classdef MyVar < scidb.BaseVariable; MyVar().save/.load).
      NOTE: NO load_all, NO ThunkOutput, NO include_record_id; saving does NOT record lineage

@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 import sys
 
-from scidb.foreach_config import RunOptions
-from scidb.provenance import constants_identity_key
+from scidb.run.foreach_config import RunOptions
+from scidb.provenance.graph import constants_identity_key
 
 logger = logging.getLogger(__name__)
 

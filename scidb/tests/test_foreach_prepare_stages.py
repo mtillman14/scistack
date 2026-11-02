@@ -19,8 +19,8 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb import foreach as scidb_foreach
-from scidb.exclusions import exclude_schema
+from scidb.run import foreach as scidb_foreach
+from scidb.store.exclusions import exclude_schema
 
 SCHEMA = ["subject", "trial"]
 

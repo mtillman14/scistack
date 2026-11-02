@@ -31,7 +31,7 @@ function at a different level is a different computation.
 | | where |
 |---|---|
 | definition (the final iterated keys, after PathInput discovery, in dataset order; `[]` = one call) | `foreach._iteration_level_of` |
-| version key `__level` (so it reaches the record id via `__invocation_id`) | `ForEachConfig(level=)` → `to_version_keys` |
+| version key `__level` (so it reaches the record id via `__invocation_id`) | `ForEachConfig(level=)` → `to_config_keys` |
 | folded into `invocation_id` whenever not None | `provenance.compute_invocation_id(iteration_level=)` |
 | read on the save side (one reader) | `provenance_save._iteration_level` |
 | stored | `_invocation.iteration_level VARCHAR[]` (NULL for glue hops and `__save__`) |

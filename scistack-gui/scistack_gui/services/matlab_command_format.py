@@ -9,6 +9,15 @@ schema arguments — all formatted as MATLAB syntax.
 import logging
 from pathlib import Path
 
+from scifor import FOR_EACH_OPTIONS, OptionSpec
+
+from scistack_gui.services.run_failures import (
+    ON_DUPLICATE_KEY,
+    ON_ERROR_KEY,
+    on_duplicate_from_config,
+    on_error_from_config,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -668,7 +677,7 @@ def _variable_binding_parts(ref) -> "tuple[list[str], list[str], bool, bool]":
         if ref.get("groups"):
             # Column groups: the spec (list of column lists / dict of named
             # groups) is what MATLAB's for_columns takes.
-            from scidb.intent import selection_spec
+            from scidb.provenance.intent import selection_spec
 
             columns = selection_spec(ref)
         else:
@@ -850,12 +859,12 @@ def _run_origin_lines(step: "str | None" = None) -> list[str]:
     is a ``py.*`` call); ``setenv`` would not do, because Python's
     ``os.environ`` is a snapshot taken at interpreter start.
     """
-    lines = ["py.scidb.intent.set_ambient_origin('gui');"]
+    lines = ["py.scidb.provenance.intent.set_ambient_origin('gui');"]
     if step:
         # The node's step name (Q6): every run this script starts is named
         # like the node, so a later script run of that name is attributed
         # to it. Cleared again by _run_origin_reset_lines.
-        lines.append(f"py.scidb.intent.set_ambient_step({_matlab_char(step)});")
+        lines.append(f"py.scidb.provenance.intent.set_ambient_step({_matlab_char(step)});")
     return lines
 
 
@@ -867,9 +876,9 @@ def _run_origin_reset_lines(step: "str | None" = None) -> list[str]:
     prompt afterwards would be recorded as a GUI run. Emitted on BOTH the
     success path and the catch path, since the catch rethrows.
     """
-    lines = ["py.scidb.intent.set_ambient_origin('script');"]
+    lines = ["py.scidb.provenance.intent.set_ambient_origin('script');"]
     if step:
-        lines.append("py.scidb.intent.set_ambient_step(py.None);")
+        lines.append("py.scidb.provenance.intent.set_ambient_step(py.None);")
     return lines
 
 
@@ -1417,7 +1426,7 @@ def _group_variants(variants: list[dict]) -> list[dict]:
     outputs cell lists every output_type.
 
     The grouping key runs the constants through
-    :func:`scidb.provenance.constants_identity_key` rather than
+    :func:`scidb.provenance.graph.constants_identity_key` rather than
     ``tuple(sorted(constants.items()))``. A constant is not necessarily a
     scalar: an inline table under ``[parameters]`` in
     ``scistack_entities.toml`` *is* the value, so a project with e.g.
@@ -1428,7 +1437,7 @@ def _group_variants(variants: list[dict]) -> list[dict]:
     (``_format_matlab_value`` renders them as MATLAB structs); this key was
     the one place that did not.
     """
-    from scidb.provenance import constants_identity_key
+    from scidb.provenance.graph import constants_identity_key
 
     grouped: dict[tuple, dict] = {}
     for v in variants:
@@ -1626,7 +1635,7 @@ def _format_glue_struct(glue: dict[str, list[dict]] | None) -> str:
     An element is either a MATLAB function handle (``@glue_x``) or, for
     **Python** glue, a struct naming the body and its file. Python glue
     reaches a MATLAB run only on a constant-fed parameter, where
-    ``scidb.glue.apply_constant_glue`` applies it inside ``for_each_prepare``
+    ``scidb.run.glue.apply_constant_glue`` applies it inside ``for_each_prepare``
     — see ``build_glue_chains`` in ``+scidb/for_each.m``.
 
     A one-element cell must be written ``{{...}}`` inside ``struct()``:
@@ -2264,7 +2273,7 @@ def _format_matlab_cell(items: list[str]) -> str:
 
 def format_matlab_column_spec(spec) -> str:
     """The MATLAB argument of ``for_columns(...)`` for a column spec
-    (``scidb.intent.selection_spec``). THE renderer: the MATLAB command and
+    (``scidb.provenance.intent.selection_spec``). THE renderer: the MATLAB command and
     the code export both call it.
 
     - ``[]`` -> ``""`` (``for_columns()``: every column)
@@ -2298,17 +2307,68 @@ def format_matlab_string_array(items: list[str]) -> str:
     return "[" + ", ".join(escaped) + "]"
 
 
-#: MATLAB's own defaults for the four run options, from ``+scidb/for_each.m``
-#: (``opts.as_table = string.empty``, ``opts.distribute = false`` at :1723).
-#: A value equal to its default is NOT emitted: the generated call then says
-#: nothing about it and MATLAB applies the same value, which keeps scripts
-#: diffable against the ones generated before run options were plumbed.
-_RUN_OPTION_DEFAULTS = {
-    "dry_run": False,
-    "save": True,
-    "distribute": False,
-    "as_table": False,
+#: How each ``scifor.FOR_EACH_OPTIONS`` entry reaches a generated MATLAB
+#: ``for_each`` call. :data:`RUN_OPTION` entries are rendered from the node's
+#: run options by :func:`_format_run_option_pairs`, by iterating the
+#: declaration (its default decides omission); :data:`BINDING` entries by a
+#: dedicated formatter from the node's bindings; any other value is the
+#: reason the GUI never emits the option. ``tests/test_matlab_option_parity.py``
+#: holds this table to the declaration, so a new option must be placed here.
+RUN_OPTION = "run_option"
+BINDING = "binding"
+MATLAB_OPTION_EMISSION: dict[str, str] = {
+    "dry_run": RUN_OPTION,
+    "save": RUN_OPTION,
+    "as_table": RUN_OPTION,
+    "distribute": RUN_OPTION,
+    "on_error": RUN_OPTION,
+    "on_duplicate": RUN_OPTION,
+    "glue": BINDING,  # _format_glue_struct
+    "parameter_names": BINDING,  # _format_parameter_names_pair
+    "locations": BINDING,  # _format_locations_pair
+    "schema_filter": "projected onto the metadata iterables (_format_schema_kwargs)",
+    "schema_keys": "emitted as key=[] metadata iterables (_format_schema_kwargs)",
+    "skip_computed": "a Pipeline run option (pipe.run_all), not a for_each one",
+    "finalized": "a Pipeline run option (pipe.run_endpoints), not a for_each one",
+    "db": "the script opens the database with scidb.configure_database",
+    "where": "the GUI has no where= filter",
+    "introspect": "a Python-only debugging aid",
+    "schema_key_types": "the database already records key types",
+    "share_limits": "set in the user's own call, not from the canvas",
+    "project_root": "the script cds into the project root first",
+    "step": "not GUI-set: the node id names the step",
+    "pipeline": "generated calls run eagerly",
 }
+
+#: Readers for run options whose config value needs validating; any other
+#: option is read with ``run_options.get(name)``.
+_RUN_OPTION_READERS = {
+    ON_ERROR_KEY: on_error_from_config,
+    ON_DUPLICATE_KEY: on_duplicate_from_config,
+}
+
+
+def _run_option_pair(spec: OptionSpec, run_options: dict) -> "tuple[str, object] | None":
+    """``("'name', <matlab>", value)`` for one run option, or None when it is
+    absent or equal to its declared default (MATLAB then applies the same
+    value, which keeps scripts diffable)."""
+    reader = _RUN_OPTION_READERS.get(spec.name)
+    if reader is None and spec.name not in run_options:
+        return None
+    value = reader(run_options) if reader else run_options[spec.name]
+    if spec.kind == "names" and isinstance(value, (list, tuple)):
+        names = [str(v) for v in value if v]
+        if not names:
+            return None
+        return f"'{spec.name}', {format_matlab_string_array(names)}", names
+    if spec.kind in ("bool", "names"):
+        flag = bool(value)
+        if flag == bool(spec.default):
+            return None
+        return f"'{spec.name}', {'true' if flag else 'false'}", flag
+    if value == spec.default:
+        return None
+    return f"'{spec.name}', '{_escape_matlab_string(str(value))}'", value
 
 
 def _format_run_option_pairs(
@@ -2316,58 +2376,34 @@ def _format_run_option_pairs(
 ) -> str:
     """MATLAB ``'name', value`` pairs for the non-default run options, or ``""``.
 
-    These are the GUI's four ``for_each`` toggles (``dry_run``, ``save``,
-    ``distribute``, ``as_table``). They reach a Python run as keyword arguments
-    (``execution_service``) but reach a MATLAB run only as text in a generated
-    script, so an option this function does not render is an option MATLAB never
-    hears about -- and it fails **silently**, because the script is still
-    well-formed and the run still succeeds. That is exactly how ``distribute``
-    went missing until 2026-09-14: the request logged ``distribute: True``, the
-    generator never read the key, and the run saved 560 undistributed records.
-    See docs/claude/gui-run-options-flow.md.
+    The options come from :data:`scifor.FOR_EACH_OPTIONS`, in its order,
+    filtered to the :data:`RUN_OPTION` entries of
+    :data:`MATLAB_OPTION_EMISSION`. They reach a Python run as keyword
+    arguments (``execution_service``) but reach a MATLAB run only as text in a
+    generated script, so an option this function does not render is an option
+    MATLAB never hears about -- and it fails **silently**, because the script
+    is still well-formed and the run still succeeds. That is exactly how
+    ``distribute`` went missing until 2026-09-14. See
+    docs/claude/gui-run-options-flow.md.
 
-    ``as_table`` is the one with two shapes: ``for_each.m`` (:217-223) accepts a
-    logical scalar or a string array of parameter names, so a list round-trips
-    as ``["a", "b"]`` and a bool as ``true``.
+    ``as_table`` has two shapes: ``for_each.m`` accepts a logical scalar or a
+    string array of parameter names, so a list round-trips as ``["a", "b"]``
+    and a bool as ``true``.
     """
     if not run_options:
         return ""
 
     parts: list[str] = []
     emitted: dict[str, object] = {}
-    for name, default in _RUN_OPTION_DEFAULTS.items():
-        if name not in run_options:
+    run_option_names: set[str] = set()
+    for spec in FOR_EACH_OPTIONS:
+        if MATLAB_OPTION_EMISSION.get(spec.name) != RUN_OPTION:
             continue
-        value = run_options[name]
-        if name == "as_table" and isinstance(value, (list, tuple)):
-            names = [str(v) for v in value if v]
-            if not names:
-                continue
-            parts.append(f"'as_table', {format_matlab_string_array(names)}")
-            emitted[name] = names
-            continue
-        value = bool(value)
-        if value == default:
-            continue
-        parts.append(f"'{name}', {'true' if value else 'false'}")
-        emitted[name] = value
-
-    # Not identity, and not a bool: read through its one reader.
-    from scistack_gui.services.run_failures import ON_ERROR_KEY, on_error_from_config
-
-    on_error = on_error_from_config(run_options)
-    if on_error != "continue":
-        parts.append(f"'on_error', '{on_error}'")
-        emitted[ON_ERROR_KEY] = on_error
-    from scistack_gui.services.run_failures import (
-        ON_DUPLICATE_KEY,
-        on_duplicate_from_config,
-    )
-
-    on_duplicate = on_duplicate_from_config(run_options)
-    if on_duplicate != "error":
-        parts.append(f"'on_duplicate', '{on_duplicate}'")
-        emitted[ON_DUPLICATE_KEY] = on_duplicate
+        run_option_names.add(spec.name)
+        pair = _run_option_pair(spec, run_options)
+        if pair is not None:
+            parts.append(pair[0])
+            emitted[spec.name] = pair[1]
 
     if emitted:
         logger.info(
@@ -2380,9 +2416,7 @@ def _format_run_option_pairs(
     # A key the caller asked about that produced no pair is either a default
     # (fine, and the common case) or a value this renderer does not understand
     # (not fine -- it would be dropped exactly the way distribute was).
-    unknown = sorted(
-        set(run_options) - set(_RUN_OPTION_DEFAULTS) - {"on_error", "on_duplicate"}
-    )
+    unknown = sorted(set(run_options) - run_option_names)
     if unknown:
         logger.warning(
             "generate_matlab_command: %s: run option(s) %s are not recognised "
@@ -2403,7 +2437,7 @@ def _resolve_iterate_keys(
     """The keys the generated ``for_each`` iterates, ``[]`` for one
     dataset-level call (no schema kwargs emitted).
 
-    *schema_level* should be a RESOLVED ``scidb.schema_level.SchemaLevel``:
+    *schema_level* should be a RESOLVED ``scidb.run.schema_level.SchemaLevel``:
     both service routes resolve it with the one owner
     (``execution_service.default_schema_level``), the same decision a Python
     Run makes (cleanup-audit F22). This generator used to read a null level as
@@ -2415,7 +2449,7 @@ def _resolve_iterate_keys(
     ``[keys]`` those keys, as everywhere; an UNSET level cannot be resolved
     here, so it falls back to every key with a WARNING naming the caller bug.
     """
-    from scidb.schema_level import SchemaLevel
+    from scidb.run.schema_level import SchemaLevel
 
     level = SchemaLevel.from_stated(schema_level, schema_keys)
     if level.is_unset:

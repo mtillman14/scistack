@@ -1,4 +1,4 @@
-"""scidb.schema_level — the ONE owner of "which keys does a run iterate".
+"""scidb.run.schema_level — the ONE owner of "which keys does a run iterate".
 
 Regressions for docs/claude/cleanup-audit.md §4.2: F22 (MATLAB ignored the
 default), F24 (the recorded level was function-NAME scoped), F25 (alternate
@@ -13,8 +13,8 @@ import scifor as _scifor
 from scifor import EachOf, PathInput
 
 from scidb import BaseVariable, configure_database, for_each
-from scidb import provenance_query
-from scidb.schema_level import (
+from scidb.provenance import query as provenance_query
+from scidb.run.schema_level import (
     RULE_INPUTS,
     RULE_NOTHING,
     RULE_RECORDED,

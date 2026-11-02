@@ -40,7 +40,7 @@ Two audiences, so two files, fed by one emit stream:
 
 The debug file is a superset of the journal: each block is also logged there
 (as one `[journal]` record). `scidb.configure_database()` points both files
-beside the database (`scidb.log.attach_log_file`); directly:
+beside the database (`scidb.model.log.attach_log_file`); directly:
 
 ```python
 from scistacklog import Log
@@ -123,7 +123,7 @@ fast path without flooding it.
   captures everything regardless of sink levels. `Log.*(...)` with the
   default layer emits on logger `"scidb"`, unchanged from the historical
   implementation.
-- **MATLAB**: `scimatlab`'s `+scidb/Log.m` delegates to this class via
-  `py.scidb.log.Log.*` (a re-export shim in scidb). The numeric level scale
+- **MATLAB**: `scimatlab`'s `+scifor/Log.m` (and its member-free subclass `+scidb/Log.m`) delegates to this class via
+  `py.scistacklog.Log.*` (the defining module; MATLAB static dispatch cannot go through the `scidb.model.log` re-export). The numeric level scale
   (`DEBUG=0 … ERROR=3`) and positional call shapes are frozen for that
   bridge.

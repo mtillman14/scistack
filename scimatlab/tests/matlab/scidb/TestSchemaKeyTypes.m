@@ -70,7 +70,7 @@ classdef TestSchemaKeyTypes < matlab.unittest.TestCase
     methods (Test)
         function test_types_reach_python_db(testCase)
             testCase.configure(struct('trial', 'numeric'));
-            py_db = py.scidb.database.get_database();
+            py_db = py.scidb.store.database.get_database();
             kt = scidb.internal.pydict_to_struct(py_db.dataset_schema_key_types);
             testCase.verifyEqual(char(string(kt.trial)), 'numeric');
         end

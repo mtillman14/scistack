@@ -5,7 +5,7 @@ green). The
 declaration-shape decision landed on **Option D′** (ambient current
 pipeline + `pipeline=` kwarg override); see
 `.claude/plan-pipeline-registry-stage1.md` for the as-built record and
-`scidb/pipeline.py` for the implementation (`Pipeline`, `StepSpec`, `Step`,
+`scidb/run/pipeline.py` for the implementation (`Pipeline`, `StepSpec`, `Step`,
 `db.pipeline(name)`, `run_all`/`run_until`/`plan`). **Stage 2** (composition,
 `uses=`) implemented + verified same day. **Stage 3** (use-edge bindings +
 endpoint verbs) implemented + verified same day — see
@@ -19,7 +19,7 @@ type edges connect across languages via surrogate classes), MATLAB drives
 execution via `Pipeline.execution_order()` descriptors through its normal
 two-pass for_each; mixed pipelines run each step in its home language
 (`pipeline_run_python_step`); `scidb.Pipeline` MATLAB classdef
-(constructor creates+activates — no `scidb.pipeline` factory: it would
+(constructor creates+activates — no `scidb.run.pipeline` factory: it would
 case-collide with the classdef file on macOS), `pipeline=` seam in
 `+scidb/for_each.m`. MATLAB parity and the
 GUI surface remain future stages; Option E spec persistence is deliberately
@@ -410,7 +410,7 @@ name — a portably-written pipeline needs no `key_map` at all. `schema_keys`
 (renamed from `schema_level` — the old name read as numeric/positional but
 the value is a list of key names) is implemented once, in scifor
 (`expand_schema_keys()` in `scifor/src/scifor/schema.py`), and reused by
-scidb's DB-backed resolution (`scidb/src/scidb/foreach.py`) — in both
+scidb's DB-backed resolution (`scidb/src/scidb/run/foreach.py`) — in both
 Python and MATLAB (`+scifor/for_each.m`, `+scidb/for_each.m`).
 
 ## Elevating endpoints: the thin surface (2026-07-16)

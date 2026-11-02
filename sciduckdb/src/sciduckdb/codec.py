@@ -344,7 +344,7 @@ def count_nan_array_elements(values) -> int:
 
     The save-side twin of :func:`count_null_list_elements`: DuckDB's pandas
     scanner stores these as NULL, and the loader restores them as NaN. Logged
-    at save time so a NaN-vs-NULL question is answerable from scidb.log.
+    at save time so a NaN-vs-NULL question is answerable from scidb.model.log.
     """
     n = 0
     for v in values:
@@ -495,15 +495,47 @@ def restore_types(df: pd.DataFrame, dtype_meta: dict) -> pd.DataFrame:
             n_null = count_null_list_elements(df[col_name])
             if n_null:
                 null_counts[col_name] = n_null
-            df[col_name] = [
+            values = [
                 storage_to_python(df[col_name].iloc[i], col_meta)
                 for i in range(len(df))
             ]
+            if col_meta.get("python_type") in SCALAR_PTYPES:
+                # An object column keeps the Python scalars storage_to_python
+                # returned; a list assignment let pandas re-infer a numpy
+                # dtype, and a saved True / 42 loaded as np.True_ / np.int64
+                # (`x is True` False, json.dumps raising, a re-save hashing
+                # differently: scicanonicalhash takes the ndarray branch for
+                # numpy ints and bools).
+                df[col_name] = pd.Series(values, index=df.index, dtype=object)
+            else:
+                df[col_name] = values
     if null_counts:
         logger.debug(
             "restore_types: restored NULL list element(s) as NaN: %s", null_counts
         )
+    if logger.isEnabledFor(logging.DEBUG):
+        _log_scalar_kinds(df, columns_meta)
     return df
+
+
+#: ``python_type`` of a column holding one plain scalar per record.
+SCALAR_PTYPES = frozenset({"bool", "int", "float", "str"})
+
+
+def _log_scalar_kinds(df: pd.DataFrame, columns_meta: dict) -> None:
+    """How many restored scalar cells are Python scalars against numpy
+    scalars (P4 stage 10: a saved ``True`` / ``42`` loaded back as
+    ``np.True_`` / ``np.int64`` once pandas re-inferred the column's dtype)."""
+    counts = {}
+    for col_name, col_meta in columns_meta.items():
+        if col_name not in df.columns or col_meta.get("python_type") not in SCALAR_PTYPES:
+            continue
+        numpy_n = sum(1 for v in df[col_name] if isinstance(v, np.generic))
+        counts[col_name] = (len(df) - numpy_n, numpy_n)
+    if counts:
+        logger.debug(
+            "restore_types: scalar cells (python, numpy) per column: %s", counts
+        )
 
 
 def _flatten_dict(d, _prefix=()):

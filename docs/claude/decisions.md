@@ -533,7 +533,7 @@ the named/versioned/hidden storage rules.
   template setting (user, D3). Project database only (user, D1).
 - Apply = `restore_spec` + `reconcile` + kind fallback via `capabilities`.
   There is no preset-specific drift code.
-- `scidb.versioned_store.VersionedStore` owns the storage rules for
+- `scidb.store.versioned_store.VersionedStore` owns the storage rules for
   both `_saved_plot` and `_plot_preset`. `saved.py` was moved onto it with
   its API unchanged.
 
@@ -1034,7 +1034,7 @@ runtime inversions (`variable -> database`, `pipeline -> foreach`,
 result row and in scifor's global schema — a dict whose key prefix said what
 the value was, parsed back out in eight places in two languages.
 
-**Decision.** `scidb.bindings.Selection` (per input the rids; per split
+**Decision.** `scidb.run.bindings.Selection` (per input the rids; per split
 aggregated input the group signature), built once per combination and held
 on `RunBindings.selections`; the combo carries `__combo`, its index. scifor
 grew `_select_rows(param, frame, combo)`; the frame keeps `__record_id`;
@@ -1065,7 +1065,7 @@ id and the skip gate's run-option comparison.
 the GUI's `variant_resolver.compute_call_id`); every new run option touched
 all of them.
 
-**Decision.** `scidb.foreach_config.CallSite(fn_name, inputs, constants,
+**Decision.** `scidb.run.foreach_config.CallSite(fn_name, inputs, constants,
 options, glue)` with `version_keys()` / `call_id`; the forward path fills
 it from live inputs, the backward paths from the graph, the GUI imports it.
 Inputs are named by `input_spec.type_name` (one unwrap of the wrapper

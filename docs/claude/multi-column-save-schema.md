@@ -8,8 +8,8 @@ Relevant code:
 - `sciduckdb/src/sciduckdb/codec.py`: `infer_data_columns`,
   `_python_to_storage`, `value_to_storage_row`, `_storage_signature`,
   `record_schema_mismatch`
-- `scidb/src/scidb/database.py`: `save_batch`
-- `scidb/src/scidb/foreach.py`: `_batch_save_outputs` (the for_each save phase)
+- `scidb/src/scidb/store/database.py`: `save_batch`
+- `scidb/src/scidb/run/foreach.py`: `_batch_save_outputs` (the for_each save phase)
 
 ---
 

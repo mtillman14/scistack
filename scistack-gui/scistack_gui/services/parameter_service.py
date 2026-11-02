@@ -46,7 +46,7 @@ def create_parameter(
     any run started before the user noticed stamped ``0`` into records.
 
     Declared-but-unvalued is legal at rest and refused at execution — see
-    ``scidb.parameter`` and ``scifor.require_alternatives``.
+    ``scidb.model.parameter`` and ``scifor.require_alternatives``.
 
     Returns ``{"ok": True, "name": name}`` on success, ``{"ok": False,
     "error": ...}`` on failure (invalid name, name collision, no configured

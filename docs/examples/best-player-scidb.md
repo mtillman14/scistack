@@ -210,7 +210,7 @@ class BestPlayer(BaseVariable):
 import pandas as pd
 import scidb
 from scidb import EachOf
-from scidb.inventory import schema_inventory, write_inventory_csv
+from scidb.provenance.inventory import schema_inventory, write_inventory_csv
 
 from player_variables import GameStats, SeasonStats, BestPlayer
 
@@ -296,10 +296,10 @@ print(missing.groupby("player").size())  # games missed, per player
 The inventory is a Python function, so MATLAB calls it through `py.`:
 
 ```matlab
-inv = py.scidb.inventory.schema_inventory(py.scidb.get_database(), py.list({'player', 'game'}));
+inv = py.scidb.provenance.inventory.schema_inventory(py.scidb.get_database(), py.list({'player', 'game'}));
 disp(inv.counts)                        % how many combinations are present / missing / excluded
 
-py.scidb.inventory.write_inventory_csv(inv, "missing_games.csv", true);
+py.scidb.provenance.inventory.write_inventory_csv(inv, "missing_games.csv", true);
 missing = readtable("missing_games.csv", TextType="string");
 disp(groupcounts(missing, "player"))     % games missed, per player
 ```
@@ -663,7 +663,7 @@ from scistackplot import PlotKind, PlotSpec, Role
 from scistackstats import DV, Analysis, DescriptiveSpec, StatsSpec, describe_table, run
 from scistackstats import export_comparisons, export_descriptives
 from scistackstatsdb import load_stats_tables
-from scidb.inventory import schema_inventory, write_inventory_csv
+from scidb.provenance.inventory import schema_inventory, write_inventory_csv
 
 from player_variables import GameStats, SeasonStats, BestPlayer
 
@@ -816,9 +816,9 @@ scidb.configure_database("best_player.duckdb", ["player", "game"]);
 scidb.for_each(@load_game_stats, struct("csv_path", "game_stats.csv"), {GameStats()});
 
 % Who missed games?
-inv = py.scidb.inventory.schema_inventory(py.scidb.get_database(), py.list({'player', 'game'}));
+inv = py.scidb.provenance.inventory.schema_inventory(py.scidb.get_database(), py.list({'player', 'game'}));
 disp(inv.counts)
-py.scidb.inventory.write_inventory_csv(inv, "missing_games.csv", true);
+py.scidb.provenance.inventory.write_inventory_csv(inv, "missing_games.csv", true);
 disp(groupcounts(readtable("missing_games.csv", TextType="string"), "player"))
 
 % Morgan transferred: exclude (recorded once, applies to every later step)

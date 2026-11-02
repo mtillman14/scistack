@@ -8,11 +8,17 @@ INFO carries the run narrative (banner, periodic progress, end-of-run
 summary with failure reasons); DEBUG carries per-iteration detail
 ([run]/[skip]/[done] lines, internal flow). Dry-run output goes to stdout
 via print() — it is the requested result, not logging.
+
+Shape: ``for_each`` = ``plan_run`` (a frozen ``RunPlan``) -> ``run_combo``
+per combination (a ``ComboResult``; failures are returned, not raised) ->
+``assemble`` (summary + result table). Hooks from a layer above arrive as one
+``LoopHooks`` (``scifor.hooks``).
 """
 
 import copy
 import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -52,6 +58,7 @@ from .failures import (
     validate_on_error,
 )
 from .fixed import Fixed
+from .hooks import LoopHooks
 from .locations import LocationFilter, filter_combos
 from .merge import Merge
 from .outputs import NoOutput, discard_db_only_kwargs, is_no_output, output_column_name
@@ -146,6 +153,213 @@ def _skip_failure_payload(failure: ComboFailure) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class ForColumnsPlan:
+    """The column axis of a for_columns run (``column_selection`` owns the
+    grouping rules; this is their result for one run)."""
+
+    #: Inputs iterated column-wise (zipped by column name / group).
+    params: "list[str]"
+    #: Every source column the iterate inputs carry.
+    columns: "list[str]"
+    #: ``[(group name, [source columns])]`` the loop runs over.
+    groups: "list[tuple[str, list[str]]]"
+    #: ``COMBINE`` (one wide row per combo) or ``SPLIT`` (one output per group).
+    mode: str
+
+
+@dataclass(frozen=True)
+class RunPlan:
+    """Everything ``for_each`` decides before the first combination runs.
+
+    Built once by :func:`plan_run`; read by :func:`run_combo` and
+    :func:`assemble`. Nothing in it changes while the loop runs.
+    """
+
+    fn: Callable
+    fn_name: str
+    #: The call's inputs after PathInput binding and ColName resolution.
+    inputs: "dict[str, Any]"
+    #: Result column names, one per output slot.
+    output_names: "list[str]"
+    #: Iterated keys in iteration order, and their (resolved) value lists.
+    keys: "list[str]"
+    metadata_iterables: "dict[str, Any]"
+    #: The combinations to run, after ``locations=``.
+    combos: "list[dict]"
+    #: The dataset schema (``get_schema()``), read once at entry.
+    schema_keys: "list[str]"
+    #: Input schema-key column dtypes, restored on the output table.
+    schema_col_dtypes: dict
+    #: ``distribute=True``: the schema key the pieces land at.
+    distribute_key: "str | None"
+    data_inputs: "dict[str, Any]"
+    constant_inputs: "dict[str, Any]"
+    #: Data inputs that keep their schema-key columns (``as_table``).
+    as_table_set: "set[str]"
+    for_columns: "ForColumnsPlan | None"
+    #: ``share_limits``: ``{input: (group keys, {group: (lo, hi)})}`` and the
+    #: parameter names the function accepts them under (None: any).
+    shared_limits: dict
+    limits_accepted: "set[str] | None"
+    #: Per-combo PathInput resolver (hooks', or the exact-match one a
+    #: declared string key needs).
+    path_input_resolver: "Callable[[PathInput, dict], Any] | None"
+    where: Any
+    on_error: str
+    dry_run: bool
+    #: Non-default options, for the run banner.
+    option_parts: "tuple[str, ...]"
+
+    @property
+    def total(self) -> int:
+        return len(self.combos)
+
+    @property
+    def n_outputs(self) -> int:
+        return len(self.output_names)
+
+    @property
+    def iterate_params(self) -> "list[str]":
+        return self.for_columns.params if self.for_columns is not None else []
+
+    @property
+    def display_keys(self) -> "list[str]":
+        """Iterated keys shown to the user (``__`` keys are bookkeeping)."""
+        return [k for k in self.keys if not k.startswith("__")]
+
+
+@dataclass
+class RunTally:
+    """What the loop has accumulated so far; :func:`assemble` reads it."""
+
+    completed: int = 0
+    skipped: int = 0
+    cancelled: bool = False
+    #: ``(metadata, result tuple)`` per result row, in loop order.
+    rows: "list[tuple[dict, tuple]]" = field(default_factory=list)
+    #: Failure aggregation for the end-of-run summary: reason -> group
+    #: (``scifor.failures`` owns the record).
+    failure_groups: "dict[str, FailureGroup]" = field(default_factory=dict)
+    #: The (exception, failure) that ended an ``on_error="stop"`` run.
+    stop: "tuple[Exception, ComboFailure] | None" = None
+    #: Outputs skipped at a combination whose other outputs were kept
+    #: (NoOutput slots): output label -> [(combo text, NoOutput)].
+    output_skips: "dict[str, list[tuple[str, NoOutput]]]" = field(default_factory=dict)
+    #: for_columns combine: group name -> [combo text] where it had no data.
+    no_data_groups: "dict[str, list[str]]" = field(default_factory=dict)
+    #: for_columns combine: group name -> output columns, first-seen order.
+    group_columns: "dict[str, list[str]]" = field(default_factory=dict)
+    #: distribute: whether the "key column addresses the pieces" branch has
+    #: been reported yet. Once per run at INFO, then DEBUG per combo — the
+    #: ordinal-vs-column choice changes every saved address, so it must be
+    #: visible in scistack.log without flooding it.
+    distribute_column_reported: bool = False
+
+    @property
+    def no_data(self) -> int:
+        return _no_data_count(self.failure_groups)
+
+    @property
+    def failed(self) -> int:
+        return self.skipped - self.no_data
+
+
+@dataclass(frozen=True)
+class ComboResult:
+    """One combination's outcome.
+
+    A failure is returned, not raised: the loop decides what it means
+    (skip, or stop under ``on_error="stop"``). Only errors that would fail
+    every combination identically (``ForColumnsError``, column drift, a
+    ``scifor_fatal`` exception) propagate out of :func:`run_combo`.
+    """
+
+    rows: "list[tuple[dict, tuple]]" = field(default_factory=list)
+    failure: "ComboFailure | None" = None
+    #: The original exception behind ``failure``.
+    error: "Exception | None" = None
+
+
+_NO_VALUE = object()
+
+
+class ProgressReporter:
+    """Loop events for ``hooks.progress_fn`` and the periodic progress line.
+
+    The progress line is emitted when the outermost iterated key's value
+    changes, but never at the very first combo, never within the first
+    ``_PROGRESS_START_DELAY_S`` of the loop (fast runs emit none), and never
+    more often than ``_PROGRESS_MIN_INTERVAL_S``.
+    """
+
+    def __init__(self, plan: RunPlan, hooks: LoopHooks, tally: RunTally):
+        self._plan = plan
+        self._hooks = hooks
+        self._tally = tally
+        display_keys = plan.display_keys
+        self._key = display_keys[0] if display_keys else None
+        if self._key is not None:
+            try:
+                self._key_total = len(dict.fromkeys(c.get(self._key) for c in plan.combos))
+            except TypeError:  # unhashable values — fall back to declared list
+                self._key_total = len(plan.metadata_iterables.get(self._key, []))
+        else:
+            self._key_total = 0
+        self._last_value = _NO_VALUE
+        self._seen = 0
+        self._last_emit = 0.0
+        self._t0 = time.perf_counter()
+
+    def elapsed(self) -> float:
+        return time.perf_counter() - self._t0
+
+    def event(self, name: str, combo_idx: int, **extra: Any) -> None:
+        """Send one ``{event, current, total, completed, skipped, ...}`` dict."""
+        if self._hooks.progress_fn is None:
+            return
+        self._hooks.emit(
+            {
+                "event": name,
+                "current": combo_idx + 1,
+                "total": self._plan.total,
+                "completed": self._tally.completed,
+                "skipped": self._tally.skipped,
+                **extra,
+            }
+        )
+
+    def observe(self, combo_idx: int, metadata: dict) -> None:
+        """Log the periodic progress line if this combo starts a new
+        outermost-key value and the guards allow it."""
+        if self._key is None or self._plan.dry_run:
+            return
+        value = metadata.get(self._key, _NO_VALUE)
+        if value == self._last_value:
+            return
+        self._last_value = value
+        self._seen += 1
+        now = self.elapsed()
+        if not (
+            self._seen > 1
+            and now >= _PROGRESS_START_DELAY_S
+            and now - self._last_emit >= _PROGRESS_MIN_INTERVAL_S
+        ):
+            return
+        self._last_emit = now
+        total = self._plan.total
+        tally = self._tally
+        Log.info(
+            f"progress: {self._key}={value} "
+            f"({self._seen}/{self._key_total}) — "
+            f"{combo_idx}/{total} combos "
+            f"({100.0 * combo_idx / total:.1f}%), "
+            f"completed={tally.completed}, failed={tally.failed}, "
+            f"no_data={tally.no_data}, elapsed={now:.1f}s",
+            layer="scifor",
+        )
+
+
 @journaled
 def for_each(
     fn: Callable,
@@ -161,14 +375,7 @@ def for_each(
     schema_key_types: "dict[str, str] | None" = None,
     on_error: str = "continue",
     project_root: "str | Path | None" = None,
-    _all_combos: list[dict] | None = None,
-    _log_fn: "Callable[[str], None] | None" = None,
-    _progress_fn: "Callable[[dict], None] | None" = None,
-    _cancel_check: "Callable[[], bool] | None" = None,
-    _path_input_resolver: "Callable[['PathInput', dict], Any] | None" = None,
-    _mapping_inputs: "dict[str, list[str]] | None" = None,
-    _select_rows: "Callable[[str, 'pd.DataFrame', dict], 'pd.DataFrame'] | None" = None,
-    _keep_no_output: bool = False,
+    hooks: "LoopHooks | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | None":
     """
@@ -241,52 +448,22 @@ def for_each(
                     resolves its relative template against. Default: the
                     process-wide root (``scifor.project.root.project_root``:
                     the pinned root, else the cwd), read once here.
-        _all_combos: Pre-built list of metadata dicts; skips itertools.product().
-                     Used by DB wrappers that pre-filter schema combinations.
-        _log_fn: Deprecated — ignored. scifor now logs through the
-                 scistacklog facade (layer="scifor") directly; kept only so
-                 existing call sites don't break.
-        _path_input_resolver: Optional ``(pathinput, metadata) -> path``
-                 override for per-combo PathInput resolution. Used by DB
-                 wrappers that need schema-key-type-aware resolution;
-                 defaults to plain ``pathinput.load(**metadata)``.
-        _mapping_inputs: Optional ``{input_name: [data column names]}``
-                 declaring that the named input's rows are records of a
-                 *mapping-valued* variable — each row is one dict, spread one
-                 column per key — rather than the rows of a table. A single
-                 row of such an input is handed to the function as that dict
-                 (a struct, from MATLAB), not as a one-row frame. This cannot
-                 be inferred here: "one row, N data columns" is also exactly
-                 what a genuine table-valued variable looks like, so the
-                 caller that knows the storage layout has to say so (scidb's
-                 ``_resolve_mapping_inputs`` / ``DatabaseManager
-                 .mapping_data_columns``). Ignored for an input passed
-                 through ``as_table`` or with a column selection.
-        _select_rows: Optional ``(input_name, frame, metadata) -> frame``.
-                 Called on every per-combo DataFrame input AFTER this loop's
-                 own schema-key filter and BEFORE extraction / column
-                 selection, so a caller that knows more about which rows a
-                 combination reads than the schema keys say can narrow the
-                 frame further — and drop any bookkeeping column of its own
-                 before the function sees it. This loop filters by ITS
-                 schema; anything finer is the caller's, and it says so
-                 here rather than by extending the schema with private keys
-                 (which is what scidb did until 2026-09-20: it renamed its
-                 record-id column per input, pushed those names into
-                 ``set_schema`` so this filter would match on them, and
-                 stripped them back out in four places). A frame the caller
-                 has nothing to say about must be returned unchanged.
-        _keep_no_output: Leave ``NoOutput`` slots (an output with nothing
-                 to save at a combination whose other outputs were kept) in
-                 the returned table, for a caller that saves per output and
-                 skips them (scidb). Default: replaced with ``None``, a
-                 missing cell.
+        hooks: Optional :class:`scifor.LoopHooks`: how a layer above (scidb)
+                    drives the loop — pre-built combos, row selection,
+                    progress events, cancellation. Standalone use never needs
+                    it; each field is documented on the class.
         **metadata_iterables: Iterables of metadata values to combine.
 
     Returns:
         A pandas DataFrame of results, or None when dry_run=True.
+
+    The run is three phases: :func:`plan_run` decides everything up front
+    (a :class:`RunPlan`), :func:`run_combo` runs one combination, and
+    :func:`assemble` turns the collected rows into the result table.
     """
-    # Step -2: scidb-only kwargs (save=, db=, ...) arrive in **metadata_iterables
+    hooks = hooks if hooks is not None else LoopHooks()
+    _reject_private_kwargs(metadata_iterables)
+    # scidb-only kwargs (save=, db=, ...) arrive in **metadata_iterables
     # here. Set them aside before anything reads metadata_iterables as
     # iteration axes, so a call written for scidb.for_each runs unchanged.
     metadata_iterables = discard_db_only_kwargs(metadata_iterables)
@@ -295,132 +472,224 @@ def for_each(
     # The one place a rootless PathInput learns where it resolves: the
     # caller's root, else the process-wide one, decided once at entry and
     # bound into the inputs (PathInput.bound_to) -- not read again per combo.
-    project_root = (
-        Path(project_root).resolve() if project_root is not None else current_project_root()
-    )
-    inputs = bind_path_inputs(inputs, project_root)
+    root = Path(project_root).resolve() if project_root is not None else current_project_root()
+    inputs = bind_path_inputs(inputs, root)
 
-    # Step -1: EachOf expansion — must be first, before any other logic.
-    # Each alternative becomes an independent recursive for_each() call;
-    # results are concatenated. Mirrors scidb.for_each's own EachOf
-    # expansion (which additionally threads save/db/lineage per
-    # alternative — concepts this pure layer doesn't have), so a
-    # standalone/no-DB pipeline can use EachOf too.
-    each_of_axes = []
+    # EachOf expansion comes before any other logic: each alternative is an
+    # independent recursive for_each() call.
+    each_of_axes = _each_of_axes(inputs, where)
+    if each_of_axes:
+        return _for_each_alternatives(
+            fn,
+            inputs,
+            where,
+            each_of_axes,
+            hooks,
+            dict(
+                outputs=outputs,
+                dry_run=dry_run,
+                as_table=as_table,
+                distribute=distribute,
+                locations=locations,
+                share_limits=share_limits,
+                schema_keys=schema_keys,
+                schema_key_types=schema_key_types,
+                on_error=on_error,
+                project_root=root,
+                **metadata_iterables,
+            ),
+        )
+
+    plan = plan_run(
+        fn,
+        inputs,
+        outputs,
+        metadata_iterables,
+        hooks=hooks,
+        key_types=key_types,
+        dry_run=dry_run,
+        as_table=as_table,
+        distribute=distribute,
+        where=where,
+        locations=locations,
+        share_limits=share_limits,
+        schema_keys=schema_keys,
+        on_error=on_error,
+    )
+    _announce(plan)
+    tally = RunTally()
+    progress = ProgressReporter(plan, hooks, tally)
+    for combo_idx, metadata in enumerate(plan.combos):
+        # Cooperative cancel: check between combos (before any work for this combo).
+        if hooks.cancelled():
+            tally.cancelled = True
+            Log.info(
+                f"for_each({plan.fn_name}) cancelled at combo {combo_idx + 1}/{plan.total} "
+                f"(completed={tally.completed}, failed={tally.failed}, no_data={tally.no_data})",
+                layer="scifor",
+            )
+            progress.event("cancelled", combo_idx)
+            break
+        progress.observe(combo_idx, metadata)
+        progress.event("combo_start", combo_idx, metadata=metadata)
+        if plan.dry_run:
+            _print_dry_run_iteration(
+                plan.inputs, metadata, plan.constant_inputs, plan.distribute_key
+            )
+            tally.completed += 1
+            continue
+        outcome = run_combo(plan, metadata, hooks, tally)
+        if outcome.failure is not None:
+            tally.skipped += 1
+            progress.event(
+                "combo_skip",
+                combo_idx,
+                metadata=metadata,
+                failure=_skip_failure_payload(outcome.failure),
+            )
+            if (
+                plan.on_error == "stop"
+                and not outcome.failure.no_data
+                and outcome.error is not None
+            ):
+                tally.stop = (outcome.error, outcome.failure)
+                break
+            continue
+        tally.rows.extend(outcome.rows)
+        tally.completed += 1
+        progress.event("combo_done", combo_idx, metadata=metadata)
+    return assemble(plan, tally, hooks, elapsed=progress.elapsed())
+
+
+def _reject_private_kwargs(metadata_iterables: dict) -> None:
+    """A ``_name=`` keyword is never an iteration axis.
+
+    Loop hooks travel in ``hooks=LoopHooks(...)``. A leftover ``_progress_fn=``
+    (or any other single-underscore name) would otherwise become a silent
+    bogus metadata axis — the failure mode ``schema_level=`` had in the GUI.
+    ``__`` keys are left alone: they are bookkeeping axes some callers use.
+    """
+    private = sorted(
+        k for k in metadata_iterables if k.startswith("_") and not k.startswith("__")
+    )
+    if private:
+        raise TypeError(
+            f"for_each() got unexpected keyword argument(s) {private}. Schema keys "
+            f"cannot start with '_'; loop hooks are passed as hooks=LoopHooks(...)."
+        )
+
+
+def _each_of_axes(inputs: dict, where: Any) -> "list[tuple[str, str | None, list]]":
+    """``[(kind, param, alternatives)]`` for every EachOf in the call."""
+    axes: "list[tuple[str, str | None, list]]" = []
     for param, val in inputs.items():
         if isinstance(val, EachOf):
             require_alternatives(val, kind="input", param=param)
-            each_of_axes.append(("input", param, val.alternatives))
+            axes.append(("input", param, val.alternatives))
     if isinstance(where, EachOf):
         require_alternatives(where, kind="where")
-        each_of_axes.append(("where", None, where.alternatives))
+        axes.append(("where", None, where.alternatives))
+    return axes
 
-    if each_of_axes:
-        from itertools import product as _eachof_product
 
-        import pandas as pd
+def _for_each_alternatives(
+    fn: Callable,
+    inputs: dict,
+    where: Any,
+    each_of_axes: "list[tuple[str, str | None, list]]",
+    hooks: LoopHooks,
+    call_kwargs: dict,
+) -> "pd.DataFrame | None":
+    """Run one ``for_each`` per EachOf alternative and concatenate the results.
 
-        results = []
-        for combo in _eachof_product(*(axis[2] for axis in each_of_axes)):
-            concrete_inputs = dict(inputs)
-            concrete_where = where
-            for (kind, param, _alts), value in zip(each_of_axes, combo, strict=False):
-                if kind == "input":
-                    concrete_inputs[param] = value
-                elif kind == "where":
-                    concrete_where = value
-            try:
-                result = for_each(
-                    fn,
-                    concrete_inputs,
-                    outputs=outputs,
-                    dry_run=dry_run,
-                    as_table=as_table,
-                    distribute=distribute,
-                    where=concrete_where,
-                    # Every alternative runs over the same locations: a selection
-                    # is about which data exists, not which variant produced it.
-                    # (Dropping a kwarg here is a silent, well-worn failure —
-                    # `glue=` went missing from this same recursion in 2026-09-10.)
-                    locations=locations,
-                    share_limits=share_limits,
-                    schema_keys=schema_keys,
-                    schema_key_types=schema_key_types,
-                    on_error=on_error,
-                    project_root=project_root,
-                    _progress_fn=_progress_fn,
-                    _cancel_check=_cancel_check,
-                    _path_input_resolver=_path_input_resolver,
-                    _mapping_inputs=_mapping_inputs,
-                    _select_rows=_select_rows,
-                    _keep_no_output=_keep_no_output,
-                    **metadata_iterables,
-                )
-            except Exception as e:
-                stopped = stopped_run_of(e)
-                if stopped is None or not results:
-                    raise
-                # on_error="stop" in a later alternative: the earlier
-                # alternatives' results are part of the partial result too.
-                parts = [*results]
-                if stopped.partial_result is not None:
-                    parts.append(stopped.partial_result)
-                attach_stopped_run(
-                    e,
-                    StoppedRun(
-                        failure=stopped.failure,
-                        partial_result=pd.concat(parts, ignore_index=True),
-                        completed=stopped.completed + sum(len(r) for r in results),
-                    ),
-                    note=False,
-                )
+    Mirrors scidb.for_each's own EachOf expansion (which additionally threads
+    save/db/lineage per alternative — concepts this pure layer doesn't have),
+    so a standalone/no-DB pipeline can use EachOf too. Every alternative gets
+    the same ``call_kwargs`` and ``hooks``: a selection (``locations=``, the
+    pre-built combos) is about which data exists, not which variant produced
+    it. (Dropping a kwarg in this recursion is a silent, well-worn failure —
+    `glue=` went missing from it in 2026-09-10; one dict now carries them.)
+    """
+    import pandas as pd
+
+    results = []
+    for combo in product(*(axis[2] for axis in each_of_axes)):
+        concrete_inputs = dict(inputs)
+        concrete_where = where
+        for (kind, param, _alts), value in zip(each_of_axes, combo, strict=False):
+            if kind == "input":
+                concrete_inputs[param] = value
+            elif kind == "where":
+                concrete_where = value
+        try:
+            result = for_each(
+                fn, concrete_inputs, where=concrete_where, hooks=hooks, **call_kwargs
+            )
+        except Exception as e:
+            stopped = stopped_run_of(e)
+            if stopped is None or not results:
                 raise
-            if result is not None:
-                results.append(result)
-            # Cooperative cancel: stop iterating across EachOf alternatives
-            # as soon as the user cancels — don't start the next concrete run.
-            if _cancel_check is not None and _cancel_check():
-                break
-        return pd.concat(results, ignore_index=True) if results else None
+            # on_error="stop" in a later alternative: the earlier
+            # alternatives' results are part of the partial result too.
+            parts = [*results]
+            if stopped.partial_result is not None:
+                parts.append(stopped.partial_result)
+            attach_stopped_run(
+                e,
+                StoppedRun(
+                    failure=stopped.failure,
+                    partial_result=pd.concat(parts, ignore_index=True),
+                    completed=stopped.completed + sum(len(r) for r in results),
+                ),
+                note=False,
+            )
+            raise
+        if result is not None:
+            results.append(result)
+        # Cooperative cancel: stop iterating across EachOf alternatives
+        # as soon as the user cancels — don't start the next concrete run.
+        if hooks.cancelled():
+            break
+    return pd.concat(results, ignore_index=True) if results else None
 
+
+# ---------------------------------------------------------------------------
+# Phase 1: plan
+# ---------------------------------------------------------------------------
+
+
+def plan_run(
+    fn: Callable,
+    inputs: "dict[str, Any]",
+    outputs: "list[str] | int | None",
+    metadata_iterables: "dict[str, Any]",
+    *,
+    hooks: LoopHooks,
+    key_types: dict,
+    dry_run: bool = False,
+    as_table: "list[str] | bool | None" = None,
+    distribute: bool = False,
+    where: Any = None,
+    locations: "LocationFilter | dict | None" = None,
+    share_limits: "dict[str, list[str]] | None" = None,
+    schema_keys: "list[str] | None" = None,
+    on_error: str = "continue",
+) -> RunPlan:
+    """Decide everything about a run before its first combination.
+
+    ``inputs`` are already bound to the project root, ``metadata_iterables``
+    already stripped of scidb-only kwargs, ``key_types`` validated, and EachOf
+    already expanded (``for_each``'s entry does all four). Raises for a call
+    that cannot run at all (a distribute with no level below, a deferred
+    ColName with no for_columns input, mismatched for_columns inputs).
+    """
     full_schema_keys = get_schema()
+    inputs, bare_colname_params = _instantiate_bare_colnames(inputs)
+    output_names = _output_names(outputs)
 
-    # Step 0: Forgive a bare ColName class passed without parentheses.
-    # `scifor.ColName` (uninstantiated) can only mean the no-arg deferred form,
-    # since there is no DataFrame to attach. Normalize it to ColName() so all
-    # downstream isinstance(v, ColName) checks treat it uniformly. We remember
-    # which inputs arrived this way to give a clearer error if they turn out to
-    # lack a for_columns input to resolve against.
-    bare_colname_params = [
-        name
-        for name, v in inputs.items()
-        if isinstance(v, type) and issubclass(v, ColName)
-    ]
-    if bare_colname_params:
-        inputs = {
-            name: (v() if (isinstance(v, type) and issubclass(v, ColName)) else v)
-            for name, v in inputs.items()
-        }
-
-    # Step 1: Resolve outputs= into result column names
-    if outputs is None:
-        resolved_output_names = ["output"]
-    elif isinstance(outputs, int):
-        resolved_output_names = [f"output_{i + 1}" for i in range(outputs)]
-    else:
-        resolved_output_names = [output_column_name(o) for o in outputs]
-    n_outputs = len(resolved_output_names)
-    Log.debug(
-        "resolve_outputs: %d output name(s): %s (from %r)",
-        n_outputs,
-        resolved_output_names,
-        outputs,
-        layer="scifor",
-    )
-
-    # Step 1.5: schema_keys= structural sugar — seed metadata_iterables with
-    # an empty list per requested key, before the empty-list resolver below
-    # (Step 2) runs. Shared with scidb.for_each() via expand_schema_keys().
+    # schema_keys= structural sugar — seed metadata_iterables with an empty
+    # list per requested key, before the empty-list resolver runs. Shared
+    # with scidb.for_each() via expand_schema_keys().
     if schema_keys is not None:
         metadata_iterables = expand_schema_keys(schema_keys, metadata_iterables)
         Log.debug(
@@ -428,166 +697,26 @@ def for_each(
             schema_keys,
             layer="scifor",
         )
+    else:
+        metadata_iterables = dict(metadata_iterables)
 
-    # Step 2: Resolve empty lists [] in standalone mode. Pass 1 scans
-    # DataFrame inputs (non-raising); Pass 2 (Step 2.5) fills whatever's
-    # still empty from PathInput filesystem discovery. Keys the user passed
-    # with explicit (non-empty) values assert intent and are never
-    # overwritten.
     # Standalone = no caller pre-built the combos. scidb always does, after
-    # applying the DATABASE's key types itself, so the declaration below only
-    # ever governs a standalone loop.
-    standalone = _all_combos is None
-    if _all_combos is None:
-        user_explicit_keys = {
-            k
-            for k, v in metadata_iterables.items()
-            if not (isinstance(v, list) and len(v) == 0)
-        }
-        needs_resolve = [
-            k
-            for k, v in metadata_iterables.items()
-            if isinstance(v, list) and len(v) == 0
-        ]
-        if needs_resolve:
-            Log.debug(
-                "resolve_empty_lists: scanning DataFrame inputs for %s",
-                needs_resolve,
-                layer="scifor",
-            )
-            for key in needs_resolve:
-                values = _distinct_values_from_inputs(inputs, key)
-                if values:
-                    Log.debug(
-                        "resolved '%s' to %d values: %s",
-                        key,
-                        len(values),
-                        values,
-                        layer="scifor",
-                    )
-                metadata_iterables[key] = values
-
-        # Step 2.5: PathInput filesystem discovery for keys DataFrames
-        # didn't resolve. The Case A/B decision (and whether discovered
-        # combos drive iteration directly) is owned by
-        # PathInput.apply_discovery so scifor and scidb share one
-        # implementation.
-        pi = _find_pathinput(inputs)
-        if pi is not None and (
-            not metadata_iterables
-            or any(
-                isinstance(v, list) and len(v) == 0
-                for v in metadata_iterables.values()
-            )
-        ):
-            metadata_iterables, discovered_combos = resolve_pathinput_discovery(
-                pi,
-                metadata_iterables,
-                user_explicit_keys,
-                log=lambda msg: Log.debug(msg, layer="scifor"),
-                condense_numeric=True,
-                key_types=key_types,
-            )
-            if discovered_combos is not None:
-                _all_combos = discovered_combos
-                Log.debug(
-                    "pathinput_discovery: using %d disk combos",
-                    len(discovered_combos),
-                    layer="scifor",
-                )
-
-        # Any key still unresolved: warn (0 iterations) when a source
-        # exists but yields no values; error when no input provides the
-        # key at all. (A key a fully static PathInput can never supply was
-        # already dropped above by resolve_pathinput_discovery, so it
-        # won't reach this loop.)
-        for key in list(metadata_iterables.keys()):
-            v = metadata_iterables[key]
-            if isinstance(v, list) and len(v) == 0:
-                if _key_has_source(inputs, key, pi):
-                    Log.warn(
-                        f"no values found for '{key}' in inputs, 0 iterations",
-                        layer="scifor",
-                    )
-                else:
-                    raise ValueError(
-                        f"Empty list [] was passed for '{key}', but no input "
-                        f"DataFrame has that column and no PathInput template "
-                        f"has a {{{key}}} placeholder. Provide values "
-                        f"explicitly, add a DataFrame input with a '{key}' "
-                        f"column, or use a PathInput with a {{{key}}} "
-                        f"placeholder."
-                    )
-
-    # Step 2.6: declared key types (standalone only — see `standalone`).
-    # Explicit values of a numeric key collapse to one spelling, so trial=[1]
-    # and a discovered "001" are the same trial; discovered combos were
-    # already converted by apply_discovery. A string key turns off the
-    # zero-padding bridge when a PathInput is resolved per combo.
-    if standalone and key_types:
-        Log.info(
-            "schema key types: %s (declared in this call)",
-            describe_key_types(key_types),
-            layer="scifor",
+    # applying the DATABASE's key types itself, so declared key types only
+    # ever govern a standalone loop.
+    prebuilt = hooks.all_combos
+    path_input_resolver = hooks.path_input_resolver
+    if prebuilt is None:
+        metadata_iterables, prebuilt = _resolve_empty_iterables(
+            inputs, metadata_iterables, key_types
         )
-        for key, key_type in key_types.items():
-            values = metadata_iterables.get(key)
-            if isinstance(values, list) and values:
-                metadata_iterables[key] = canonicalize_values(key, values, key_type)
-        if _all_combos is not None:
-            _all_combos = canonicalize_combos(_all_combos, key_types)
-        if _path_input_resolver is None and any(t == "string" for t in key_types.values()):
-            _path_input_resolver = _exact_string_key_resolver(key_types)
+        if key_types:
+            prebuilt, path_input_resolver = _apply_declared_key_types(
+                metadata_iterables, prebuilt, key_types, path_input_resolver
+            )
 
-    # Step 3: Validate distribute parameter and resolve target key.
-    # (The schema is the caller's dataset schema. Until 2026-09-20 scidb
-    # extended it per run with private discriminator keys that had to be
-    # hidden here; row selection is the `_select_rows` hook now.)
-    #
-    # The resolved target is reported at INFO, not DEBUG. This line is the one
-    # observable difference between "distribute ran" and "distribute was
-    # silently dropped somewhere upstream", and the latter fails invisibly:
-    # the run still succeeds and still saves, just at the wrong granularity.
-    # At DEBUG the two were indistinguishable in scistack.log, which is how a
-    # MATLAB run with distribute=true went undiagnosed until the saved columns
-    # were inspected by hand (2026-09-14).
-    distribute_key = None
-    if distribute:
-        real_schema_keys = list(full_schema_keys)
-        if not real_schema_keys:
-            raise ValueError(
-                "distribute=True requires a schema. Call set_schema() or "
-                "configure_database() first."
-            )
-        iter_keys_in_schema = [k for k in real_schema_keys if k in metadata_iterables]
-        if not iter_keys_in_schema:
-            # Nothing is being iterated at a schema level (e.g. a fully
-            # static PathInput with no {key} placeholders, or no
-            # metadata_iterables at all) — distribute to the top of the
-            # schema rather than erroring.
-            distribute_key = real_schema_keys[0]
-            Log.info(
-                "resolve_distribute_target: '%s' (top of schema; nothing iterated)",
-                distribute_key,
-                layer="scifor",
-            )
-        else:
-            deepest_iterated = iter_keys_in_schema[-1]
-            deepest_idx = real_schema_keys.index(deepest_iterated)
-
-            if deepest_idx + 1 >= len(real_schema_keys):
-                raise ValueError(
-                    f"distribute=True but '{deepest_iterated}' is the deepest schema key. "
-                    f"There is no lower level to distribute to. "
-                    f"Schema order: {real_schema_keys}"
-                )
-            distribute_key = real_schema_keys[deepest_idx + 1]
-            Log.info(
-                "resolve_distribute_target: '%s' (one level below '%s')",
-                distribute_key,
-                deepest_iterated,
-                layer="scifor",
-            )
+    distribute_key = (
+        _distribute_target(full_schema_keys, metadata_iterables) if distribute else None
+    )
 
     # Capture input schema-key column dtypes for output round-trip: output
     # metadata columns must come back as EXACTLY the input column's dtype
@@ -603,15 +732,273 @@ def for_each(
     )
     schema_col_dtypes = _capture_schema_column_dtypes(inputs, type_keys)
 
-    # Resolve static ColName(df) wrappers before the data/constant split.
-    # Deferred ColName() markers (no DataFrame) are left in place — they resolve
-    # per-column inside the for_columns iteration loop (validated below).
-    static_count = sum(
-        1 for v in inputs.values() if isinstance(v, ColName) and not v.is_deferred
+    inputs = _resolve_static_colnames(inputs, full_schema_keys)
+    data_inputs, constant_inputs = _classify_inputs(inputs)
+    if distribute_key is not None and distribute_key in constant_inputs:
+        raise ValueError(
+            f"distribute target '{distribute_key}' conflicts with a constant input named '{distribute_key}'."
+        )
+    as_table_set = _as_table_set(as_table, data_inputs)
+    for_columns = _plan_for_columns(
+        data_inputs,
+        constant_inputs,
+        full_schema_keys,
+        output_names,
+        bare_colname_params=bare_colname_params,
+        distribute_key=distribute_key,
     )
-    deferred_count = sum(
-        1 for v in inputs.values() if isinstance(v, ColName) and v.is_deferred
+
+    fn_name = getattr(fn, "__name__", repr(fn))
+    keys = list(metadata_iterables.keys())
+    combos = _build_combos(keys, metadata_iterables, prebuilt)
+    # locations= narrows the combo list to the selected schema locations.
+    # Applied to pre-built combos too, on purpose: a filter that only touched
+    # the Cartesian branch would be silently ignored on every database-driven
+    # run, which is the path that has one (scidb hands its pre-filtered
+    # combos in through hooks.all_combos).
+    if locations is not None:
+        combos = filter_combos(combos, locations, context=f"for_each({fn_name})")
+
+    shared_limits, limits_accepted = _plan_shared_limits(
+        fn, share_limits, data_inputs, full_schema_keys
     )
+
+    return RunPlan(
+        fn=fn,
+        fn_name=fn_name,
+        inputs=inputs,
+        output_names=output_names,
+        keys=keys,
+        metadata_iterables=metadata_iterables,
+        combos=combos,
+        schema_keys=list(full_schema_keys),
+        schema_col_dtypes=schema_col_dtypes,
+        distribute_key=distribute_key,
+        data_inputs=data_inputs,
+        constant_inputs=constant_inputs,
+        as_table_set=as_table_set,
+        for_columns=for_columns,
+        shared_limits=shared_limits,
+        limits_accepted=limits_accepted,
+        path_input_resolver=path_input_resolver,
+        where=where,
+        on_error=on_error,
+        dry_run=dry_run,
+        option_parts=_option_parts(dry_run, distribute, as_table, where, locations),
+    )
+
+
+def _instantiate_bare_colnames(inputs: dict) -> "tuple[dict, list[str]]":
+    """Forgive a bare ColName class passed without parentheses.
+
+    `scifor.ColName` (uninstantiated) can only mean the no-arg deferred form,
+    since there is no DataFrame to attach. Normalize it to ColName() so all
+    downstream isinstance(v, ColName) checks treat it uniformly. Returns the
+    names that arrived this way too, for a clearer error if they turn out to
+    lack a for_columns input to resolve against.
+    """
+    bare = [name for name, v in inputs.items() if isinstance(v, type) and issubclass(v, ColName)]
+    if not bare:
+        return inputs, bare
+    return {
+        name: (v() if (isinstance(v, type) and issubclass(v, ColName)) else v)
+        for name, v in inputs.items()
+    }, bare
+
+
+def _output_names(outputs: "list[str] | int | None") -> "list[str]":
+    """Resolve ``outputs=`` into result column names."""
+    if outputs is None:
+        names = ["output"]
+    elif isinstance(outputs, int):
+        names = [f"output_{i + 1}" for i in range(outputs)]
+    else:
+        names = [output_column_name(o) for o in outputs]
+    Log.debug(
+        "resolve_outputs: %d output name(s): %s (from %r)",
+        len(names),
+        names,
+        outputs,
+        layer="scifor",
+    )
+    return names
+
+
+def _resolve_empty_iterables(
+    inputs: dict, metadata_iterables: dict, key_types: dict
+) -> "tuple[dict, list[dict] | None]":
+    """Resolve empty lists ``[]`` in standalone mode.
+
+    Pass 1 scans DataFrame inputs (non-raising); pass 2 fills whatever's
+    still empty from PathInput filesystem discovery. Keys the user passed
+    with explicit (non-empty) values assert intent and are never
+    overwritten. Returns ``(metadata_iterables, combos)``: combos are the
+    discovered ones when discovery drives the iteration directly, else None.
+    Mutates and returns the given dict (discovery may return a new one).
+    """
+    combos: "list[dict] | None" = None
+    user_explicit_keys = {
+        k
+        for k, v in metadata_iterables.items()
+        if not (isinstance(v, list) and len(v) == 0)
+    }
+    needs_resolve = [
+        k for k, v in metadata_iterables.items() if isinstance(v, list) and len(v) == 0
+    ]
+    if needs_resolve:
+        Log.debug(
+            "resolve_empty_lists: scanning DataFrame inputs for %s",
+            needs_resolve,
+            layer="scifor",
+        )
+        for key in needs_resolve:
+            values = _distinct_values_from_inputs(inputs, key)
+            if values:
+                Log.debug(
+                    "resolved '%s' to %d values: %s",
+                    key,
+                    len(values),
+                    values,
+                    layer="scifor",
+                )
+            metadata_iterables[key] = values
+
+    # PathInput filesystem discovery for keys DataFrames didn't resolve. The
+    # Case A/B decision (and whether discovered combos drive iteration
+    # directly) is owned by PathInput.apply_discovery so scifor and scidb
+    # share one implementation.
+    pi = _find_pathinput(inputs)
+    if pi is not None and (
+        not metadata_iterables
+        or any(isinstance(v, list) and len(v) == 0 for v in metadata_iterables.values())
+    ):
+        metadata_iterables, discovered_combos = resolve_pathinput_discovery(
+            pi,
+            metadata_iterables,
+            user_explicit_keys,
+            log=lambda msg: Log.debug(msg, layer="scifor"),
+            condense_numeric=True,
+            key_types=key_types,
+        )
+        if discovered_combos is not None:
+            combos = discovered_combos
+            Log.debug(
+                "pathinput_discovery: using %d disk combos",
+                len(discovered_combos),
+                layer="scifor",
+            )
+
+    # Any key still unresolved: warn (0 iterations) when a source exists but
+    # yields no values; error when no input provides the key at all. (A key a
+    # fully static PathInput can never supply was already dropped above by
+    # resolve_pathinput_discovery, so it won't reach this loop.)
+    for key in list(metadata_iterables.keys()):
+        v = metadata_iterables[key]
+        if isinstance(v, list) and len(v) == 0:
+            if _key_has_source(inputs, key, pi):
+                Log.warn(
+                    f"no values found for '{key}' in inputs, 0 iterations",
+                    layer="scifor",
+                )
+            else:
+                raise ValueError(
+                    f"Empty list [] was passed for '{key}', but no input "
+                    f"DataFrame has that column and no PathInput template "
+                    f"has a {{{key}}} placeholder. Provide values "
+                    f"explicitly, add a DataFrame input with a '{key}' "
+                    f"column, or use a PathInput with a {{{key}}} "
+                    f"placeholder."
+                )
+    return metadata_iterables, combos
+
+
+def _apply_declared_key_types(
+    metadata_iterables: dict,
+    combos: "list[dict] | None",
+    key_types: dict,
+    resolver: "Callable[[PathInput, dict], Any] | None",
+) -> "tuple[list[dict] | None, Callable[[PathInput, dict], Any] | None]":
+    """Declared key types (standalone only), applied in place.
+
+    Explicit values of a numeric key collapse to one spelling, so trial=[1]
+    and a discovered "001" are the same trial; discovered combos were
+    already converted by apply_discovery. A string key turns off the
+    zero-padding bridge when a PathInput is resolved per combo.
+    """
+    Log.info(
+        "schema key types: %s (declared in this call)",
+        describe_key_types(key_types),
+        layer="scifor",
+    )
+    for key, key_type in key_types.items():
+        values = metadata_iterables.get(key)
+        if isinstance(values, list) and values:
+            metadata_iterables[key] = canonicalize_values(key, values, key_type)
+    if combos is not None:
+        combos = canonicalize_combos(combos, key_types)
+    if resolver is None and any(t == "string" for t in key_types.values()):
+        resolver = _exact_string_key_resolver(key_types)
+    return combos, resolver
+
+
+def _distribute_target(schema_keys: "list[str]", metadata_iterables: dict) -> str:
+    """The schema key ``distribute=True`` expands outputs to.
+
+    The schema is the caller's dataset schema (row selection is the
+    ``select_rows`` hook, not extra schema keys).
+
+    The resolved target is reported at INFO, not DEBUG. This line is the one
+    observable difference between "distribute ran" and "distribute was
+    silently dropped somewhere upstream", and the latter fails invisibly:
+    the run still succeeds and still saves, just at the wrong granularity.
+    At DEBUG the two were indistinguishable in scistack.log, which is how a
+    MATLAB run with distribute=true went undiagnosed until the saved columns
+    were inspected by hand (2026-09-14).
+    """
+    real_schema_keys = list(schema_keys)
+    if not real_schema_keys:
+        raise ValueError(
+            "distribute=True requires a schema. Call set_schema() or "
+            "configure_database() first."
+        )
+    iter_keys_in_schema = [k for k in real_schema_keys if k in metadata_iterables]
+    if not iter_keys_in_schema:
+        # Nothing is being iterated at a schema level (e.g. a fully static
+        # PathInput with no {key} placeholders, or no metadata_iterables at
+        # all) — distribute to the top of the schema rather than erroring.
+        target = real_schema_keys[0]
+        Log.info(
+            "resolve_distribute_target: '%s' (top of schema; nothing iterated)",
+            target,
+            layer="scifor",
+        )
+        return target
+    deepest_iterated = iter_keys_in_schema[-1]
+    deepest_idx = real_schema_keys.index(deepest_iterated)
+    if deepest_idx + 1 >= len(real_schema_keys):
+        raise ValueError(
+            f"distribute=True but '{deepest_iterated}' is the deepest schema key. "
+            f"There is no lower level to distribute to. "
+            f"Schema order: {real_schema_keys}"
+        )
+    target = real_schema_keys[deepest_idx + 1]
+    Log.info(
+        "resolve_distribute_target: '%s' (one level below '%s')",
+        target,
+        deepest_iterated,
+        layer="scifor",
+    )
+    return target
+
+
+def _resolve_static_colnames(inputs: dict, schema_keys: "list[str]") -> dict:
+    """Resolve static ColName(df) wrappers before the data/constant split.
+
+    Deferred ColName() markers (no DataFrame) are left in place — they
+    resolve per-column inside the for_columns iteration loop.
+    """
+    static_count = sum(1 for v in inputs.values() if isinstance(v, ColName) and not v.is_deferred)
+    deferred_count = sum(1 for v in inputs.values() if isinstance(v, ColName) and v.is_deferred)
     if static_count or deferred_count:
         Log.debug(
             "resolve_colnames: %d static ColName(df) wrapper(s); deferring "
@@ -620,9 +1007,11 @@ def for_each(
             deferred_count,
             layer="scifor",
         )
-    inputs = _resolve_colnames(inputs, full_schema_keys)
+    return _resolve_colnames(inputs, schema_keys)
 
-    # Step 5: Separate data inputs from constants
+
+def _classify_inputs(inputs: dict) -> "tuple[dict, dict]":
+    """Split inputs into ``(data inputs, constants)``."""
     data_inputs = {}
     constant_inputs = {}
     for param_name, var_spec in inputs.items():
@@ -636,42 +1025,109 @@ def for_each(
         len(constant_inputs),
         layer="scifor",
     )
+    return data_inputs, constant_inputs
 
-    # Check distribute doesn't conflict with a constant input name
-    if distribute_key is not None and distribute_key in constant_inputs:
-        raise ValueError(
-            f"distribute target '{distribute_key}' conflicts with a constant input named '{distribute_key}'."
-        )
 
-    # Step 6: Build set of input names to keep as full DataFrames (with schema cols)
+def _as_table_set(as_table: "list[str] | bool | None", data_inputs: dict) -> "set[str]":
+    """Input names to keep as full DataFrames (with schema columns)."""
     if as_table is True:
-        as_table_set = set(data_inputs.keys())
+        names = set(data_inputs.keys())
     elif as_table:
-        as_table_set = set(as_table)
+        names = set(as_table)
     else:
-        as_table_set = set()
-    if as_table_set:
-        Log.debug("as_table inputs: %s", sorted(as_table_set), layer="scifor")
+        names = set()
+    if names:
+        Log.debug("as_table inputs: %s", sorted(names), layer="scifor")
+    return names
 
-    # Step 6.5: Detect iterate-mode ColumnSelection inputs (for_columns).
-    # These fan out column-wise: fn runs once per column and the per-column
-    # results are reassembled into one wide row per combo. All iterate inputs
-    # share a single column axis (zipped by name).
+
+def _plan_for_columns(
+    data_inputs: dict,
+    constant_inputs: dict,
+    schema_keys: "list[str]",
+    output_names: "list[str]",
+    *,
+    bare_colname_params: "list[str]",
+    distribute_key: "str | None",
+) -> "ForColumnsPlan | None":
+    """Detect iterate-mode ColumnSelection inputs (for_columns).
+
+    These fan out column-wise: fn runs once per column (or group) and the
+    per-column results are reassembled into one wide row per combo. All
+    iterate inputs share a single column axis (zipped by name).
+    """
     iterate_params = [
         name
         for name, spec in data_inputs.items()
         if getattr(_unwrap_column_selection(spec), "iterate", False)
     ]
+    _require_iterate_input(constant_inputs, iterate_params, bare_colname_params)
+    if not iterate_params:
+        return None
 
-    # Deferred ColName() markers resolve to the current iterated column, so they
-    # require at least one for_columns input. (Static ColName(df) was already
-    # resolved to a string at Step 4, so only no-arg markers remain here.)
+    col_sets = {
+        name: _resolve_iterate_columns(data_inputs[name], schema_keys)
+        for name in iterate_params
+    }
+    iterate_columns = col_sets[iterate_params[0]]
+    first_cs = _unwrap_column_selection(data_inputs[iterate_params[0]])
+    for name in iterate_params[1:]:
+        other_cs = _unwrap_column_selection(data_inputs[name])
+        if first_cs.groups is not None or other_cs.groups is not None:
+            if first_cs.groups != other_cs.groups:
+                raise ColumnGroupsError(
+                    f"for_columns inputs are zipped group by group, so they "
+                    f"must declare the same groups. '{iterate_params[0]}' has "
+                    f"{_groups_text(first_cs)} but '{name}' has "
+                    f"{_groups_text(other_cs)}."
+                )
+        elif set(col_sets[name]) != set(iterate_columns):
+            raise ValueError(
+                f"for_columns inputs must iterate over the same columns "
+                f"(zipped by name). '{iterate_params[0]}' has "
+                f"{iterate_columns} but '{name}' has {col_sets[name]}."
+            )
+    mode, column_groups = resolve_column_groups(
+        iterate_columns,
+        first_cs.groups,
+        output_names,
+        every_column=not first_cs.columns,
+    )
+    if distribute_key is not None:
+        raise ValueError("for_columns cannot be combined with distribute=True.")
+    Log.info(
+        _describe_for_columns_plan(iterate_params, mode, column_groups, output_names),
+        layer="scifor",
+    )
+    shared = overlapping_columns(column_groups)
+    if shared:
+        Log.warn(
+            "[for_columns] column(s) in more than one group: "
+            + "; ".join(f"{c} in {names}" for c, names in shared.items())
+            + " — each group still receives it",
+            layer="scifor",
+        )
+    return ForColumnsPlan(
+        params=iterate_params, columns=iterate_columns, groups=column_groups, mode=mode
+    )
+
+
+def _require_iterate_input(
+    constant_inputs: dict, iterate_params: "list[str]", bare_colname_params: "list[str]"
+) -> None:
+    """Deferred ColName() markers and ``{ColName}`` PathOutput templates
+    resolve to the current for_columns column, so they need an iterate input.
+
+    (Static ColName(df) was already resolved to a string, so only no-arg
+    markers remain here; metadata-only PathOutput templates resolve per
+    combo and are fine without one.)
+    """
+    if iterate_params:
+        return
     deferred_colname_params = [
-        name
-        for name, v in constant_inputs.items()
-        if isinstance(v, ColName) and v.is_deferred
+        name for name, v in constant_inputs.items() if isinstance(v, ColName) and v.is_deferred
     ]
-    if deferred_colname_params and not iterate_params:
+    if deferred_colname_params:
         bare_here = [p for p in deferred_colname_params if p in bare_colname_params]
         if bare_here:
             hint = (
@@ -690,16 +1146,12 @@ def for_each(
             f"Deferred ColName() input(s): {deferred_colname_params}. "
             f"{hint}"
         )
-
-    # A PathOutput template using {ColName} resolves per-column, so it likewise
-    # needs an iterate input. (Metadata-only PathOutput templates are fine
-    # without one — they resolve per-combo.)
     path_output_column_params = [
         name
         for name, v in constant_inputs.items()
         if isinstance(v, PathOutput) and v.has_column_token
     ]
-    if path_output_column_params and not iterate_params:
+    if path_output_column_params:
         raise ValueError(
             f"PathOutput template uses the {{ColName}} token, which resolves to "
             f"the current for_columns column, so it requires at least one iterate "
@@ -707,118 +1159,85 @@ def for_each(
             f"PathOutput input(s): {path_output_column_params}."
         )
 
-    iterate_columns: list[str] | None = None
-    # [(name, [source columns])] the loop runs over, and COMBINE / SPLIT
-    # (column_selection.resolve_column_groups owns both).
-    column_groups: "list[tuple[str, list[str]]] | None" = None
-    for_columns_mode: "str | None" = None
-    if iterate_params:
-        col_sets = {
-            name: _resolve_iterate_columns(data_inputs[name], full_schema_keys)
-            for name in iterate_params
-        }
-        iterate_columns = col_sets[iterate_params[0]]
-        first_cs = _unwrap_column_selection(data_inputs[iterate_params[0]])
-        for name in iterate_params[1:]:
-            other_cs = _unwrap_column_selection(data_inputs[name])
-            if first_cs.groups is not None or other_cs.groups is not None:
-                if first_cs.groups != other_cs.groups:
-                    raise ColumnGroupsError(
-                        f"for_columns inputs are zipped group by group, so they "
-                        f"must declare the same groups. '{iterate_params[0]}' has "
-                        f"{_groups_text(first_cs)} but '{name}' has "
-                        f"{_groups_text(other_cs)}."
-                    )
-            elif set(col_sets[name]) != set(iterate_columns):
-                raise ValueError(
-                    f"for_columns inputs must iterate over the same columns "
-                    f"(zipped by name). '{iterate_params[0]}' has "
-                    f"{iterate_columns} but '{name}' has {col_sets[name]}."
-                )
-        for_columns_mode, column_groups = resolve_column_groups(
-            iterate_columns,
-            first_cs.groups,
-            resolved_output_names,
-            every_column=not first_cs.columns,
-        )
-        if distribute_key is not None:
-            raise ValueError("for_columns cannot be combined with distribute=True.")
-        Log.info(
-            _describe_for_columns_plan(
-                iterate_params, for_columns_mode, column_groups, resolved_output_names
-            ),
-            layer="scifor",
-        )
-        shared = overlapping_columns(column_groups)
-        if shared:
-            Log.warn(
-                "[for_columns] column(s) in more than one group: "
-                + "; ".join(f"{c} in {names}" for c, names in shared.items())
-                + " — each group still receives it",
-                layer="scifor",
-            )
 
-    # Build combo list
-    if _all_combos is not None:
-        all_combos = _all_combos
-        keys = list(metadata_iterables.keys())
+def _build_combos(
+    keys: "list[str]", metadata_iterables: dict, prebuilt: "list[dict] | None"
+) -> "list[dict]":
+    """The combo list: pre-built (hooks / discovery), else the Cartesian product."""
+    if prebuilt is not None:
         Log.debug(
             "expand_combos: using %d pre-built combos (from DB wrapper)",
-            len(all_combos),
+            len(prebuilt),
             layer="scifor",
         )
-    else:
-        keys = list(metadata_iterables.keys())
-        value_lists = [metadata_iterables[k] for k in keys]
-        all_combos = [
-            dict(zip(keys, combo, strict=False)) for combo in product(*value_lists)
-        ]
-        Log.debug(
-            "expand_combos: built %d combos from Cartesian product of %s",
-            len(all_combos),
-            keys,
-            layer="scifor",
+        return prebuilt
+    value_lists = [metadata_iterables[k] for k in keys]
+    combos = [dict(zip(keys, combo, strict=False)) for combo in product(*value_lists)]
+    Log.debug(
+        "expand_combos: built %d combos from Cartesian product of %s",
+        len(combos),
+        keys,
+        layer="scifor",
+    )
+    return combos
+
+
+def _plan_shared_limits(
+    fn: Callable,
+    share_limits: "dict[str, list[str]] | None",
+    data_inputs: dict,
+    schema_keys: "list[str]",
+) -> "tuple[dict, set[str] | None]":
+    """share_limits prepass: per-group numeric extents, so all combos in a
+    group (e.g. all trials within a subject) can share axis limits. Returns
+    the map and the parameter names the function accepts the ``*_limits``
+    kwargs under (None: any, via ``**kwargs``)."""
+    if not share_limits:
+        return {}, None
+    shared = _compute_shared_limits(share_limits, data_inputs, schema_keys)
+    accepted = _accepted_param_names(fn)
+    Log.debug(
+        "compute_shared_limits: %s (fn accepts: %s)",
+        list(shared.keys()),
+        sorted(accepted) if accepted is not None else "any (**kwargs)",
+        layer="scifor",
+    )
+    return shared, accepted
+
+
+def _option_parts(
+    dry_run: bool,
+    distribute: bool,
+    as_table: "list[str] | bool | None",
+    where: Any,
+    locations: "LocationFilter | dict | None",
+) -> "tuple[str, ...]":
+    """The non-default options, as the banner's ``options:`` line shows them."""
+    parts = []
+    if dry_run:
+        parts.append("dry_run=True")
+    if distribute:
+        parts.append("distribute=True")
+    if as_table:
+        parts.append(f"as_table={as_table!r}")
+    if where is not None:
+        parts.append(f"where={where!r}")
+    if locations is not None and not LocationFilter.of(locations).is_empty():
+        location_filter = LocationFilter.of(locations)
+        parts.append(
+            f"locations={len(location_filter.include)} prefix(es), "
+            f"excluding {dict(location_filter.exclude_levels) or '{}'}"
         )
+    return tuple(parts)
 
-    fn_name = getattr(fn, "__name__", repr(fn))
 
-    # Step 6.5: locations= — narrow the combo list to the selected schema
-    # locations. Applied to BOTH branches above on purpose: a filter that only
-    # touched the Cartesian branch would be silently ignored on every
-    # database-driven run, which is the path that has one (scidb hands its
-    # pre-filtered combos in through _all_combos).
-    if locations is not None:
-        all_combos = filter_combos(all_combos, locations, context=f"for_each({fn_name})")
-
-    total = len(all_combos)
-
-    # Step 7.5: share_limits prepass — compute per-group numeric extents so all
-    # combos in a group (e.g. all trials within a subject) can share axis limits.
-    shared_limits_map: dict = {}
-    if share_limits:
-        shared_limits_map = _compute_shared_limits(
-            share_limits, data_inputs, full_schema_keys
-        )
-        # Param names the function will accept the *_limits kwargs under.
-        _limits_accepted = _accepted_param_names(fn)
-        Log.debug(
-            "compute_shared_limits: %s (fn accepts: %s)",
-            list(shared_limits_map.keys()),
-            sorted(_limits_accepted)
-            if _limits_accepted is not None
-            else "any (**kwargs)",
-            layer="scifor",
-        )
-    else:
-        _limits_accepted = None
-
-    # Run banner: one INFO line with a truncated per-key value preview; the
-    # full value lists and input details follow at DEBUG.
-    display_keys = [k for k in keys if not k.startswith("__")]
+def _announce(plan: RunPlan) -> None:
+    """The run banner: one INFO line with a truncated per-key value preview;
+    the full value lists and input details follow at DEBUG."""
+    display_keys = plan.display_keys
+    total = plan.total
     meta_summary = (
-        ", ".join(
-            f"{k}={_format_value_list(metadata_iterables[k])}" for k in display_keys
-        )
+        ", ".join(f"{k}={_format_value_list(plan.metadata_iterables[k])}" for k in display_keys)
         if display_keys
         else "no metadata"
     )
@@ -827,453 +1246,359 @@ def for_each(
     # (PathInput discovery dropping combos with no file on disk, where=,
     # skip_computed). Reporting "4 iterations: subject=3 values, session=2
     # values" without saying so reads as an arithmetic error.
-    _cartesian = 1
-    for _k in display_keys:
-        _cartesian *= len(metadata_iterables[_k])
-    _pruned_note = ""
-    if display_keys and _cartesian > total:
-        _pruned_note = (
-            f" (of {_cartesian} possible combination(s); "
-            f"{_cartesian - total} filtered out before iteration)"
+    cartesian = 1
+    for k in display_keys:
+        cartesian *= len(plan.metadata_iterables[k])
+    pruned_note = ""
+    if display_keys and cartesian > total:
+        pruned_note = (
+            f" (of {cartesian} possible combination(s); "
+            f"{cartesian - total} filtered out before iteration)"
         )
     Log.info(
-        f"for_each({fn_name}) — {total} iteration{'s' if total != 1 else ''}"
-        f"{_pruned_note}: {meta_summary}",
+        f"for_each({plan.fn_name}) — {total} iteration{'s' if total != 1 else ''}"
+        f"{pruned_note}: {meta_summary}",
         layer="scifor",
     )
     # Which combos were dropped is the actual diagnostic question. Only worth
     # materialising the product for a small one.
-    if _pruned_note and _cartesian <= 1000:
-        _kept = {tuple(str(c.get(k)) for k in display_keys) for c in all_combos}
-        _dropped = [
+    if pruned_note and cartesian <= 1000:
+        kept = {tuple(str(c.get(k)) for k in display_keys) for c in plan.combos}
+        dropped = [
             dict(zip(display_keys, combo, strict=False))
-            for combo in product(*(metadata_iterables[k] for k in display_keys))
-            if tuple(str(v) for v in combo) not in _kept
+            for combo in product(*(plan.metadata_iterables[k] for k in display_keys))
+            if tuple(str(v) for v in combo) not in kept
         ]
         Log.debug(
             "filtered out %d combination(s): %s",
-            len(_dropped),
-            _dropped,
+            len(dropped),
+            dropped,
             layer="scifor",
         )
 
-    _inputs_str = _format_inputs(inputs)
-    Log.info(f"inputs: {_inputs_str}", layer="scifor")
-    _warn_repeated_static_path_inputs(fn_name, inputs, total, display_keys)
-
+    Log.info(f"inputs: {_format_inputs(plan.inputs)}", layer="scifor")
+    _warn_repeated_static_path_inputs(plan.fn_name, plan.inputs, total, display_keys)
     for k in display_keys:
-        vals = metadata_iterables[k]
-        formatted = ", ".join(repr(v) for v in vals)
+        formatted = ", ".join(repr(v) for v in plan.metadata_iterables[k])
         Log.debug("%s=[%s]", k, formatted, layer="scifor")
+    if plan.option_parts:
+        Log.info(f"options: {', '.join(plan.option_parts)}", layer="scifor")
 
-    # Non-default options
-    _opts_parts = []
-    if dry_run:
-        _opts_parts.append("dry_run=True")
-    if distribute:
-        _opts_parts.append("distribute=True")
-    if as_table:
-        _opts_parts.append(f"as_table={as_table!r}")
-    if where is not None:
-        _opts_parts.append(f"where={where!r}")
-    if locations is not None and not LocationFilter.of(locations).is_empty():
-        _location_filter = LocationFilter.of(locations)
-        _opts_parts.append(
-            f"locations={len(_location_filter.include)} prefix(es), "
-            f"excluding {dict(_location_filter.exclude_levels) or '{}'}"
-        )
-    if _opts_parts:
-        Log.info(f"options: {', '.join(_opts_parts)}", layer="scifor")
-
-    if dry_run:
+    if plan.dry_run:
         # Dry-run output is the requested result, not logging: print to stdout.
-        print(f"[dry-run] for_each({fn_name})")
-        print(f"[dry-run] {total} iterations over: {keys}")
-        print(f"[dry-run] inputs: {_format_inputs(inputs)}")
-        if distribute_key is not None:
+        print(f"[dry-run] for_each({plan.fn_name})")
+        print(f"[dry-run] {total} iterations over: {plan.keys}")
+        print(f"[dry-run] inputs: {_format_inputs(plan.inputs)}")
+        if plan.distribute_key is not None:
             print(
-                f"[dry-run] distribute: '{distribute_key}' (split outputs by "
-                f"element/row; a returned '{distribute_key}' column addresses "
+                f"[dry-run] distribute: '{plan.distribute_key}' (split outputs by "
+                f"element/row; a returned '{plan.distribute_key}' column addresses "
                 f"the pieces, otherwise 1-based row ordinals)"
             )
         print()
 
-    completed = 0
-    skipped = 0
-    collected_rows: list[tuple[dict, tuple]] = []
-    was_cancelled = False
-    # distribute: whether the "key column addresses the pieces" branch has
-    # been reported yet. Once per run at INFO, then DEBUG per combo — the
-    # ordinal-vs-column choice changes every saved address, so it must be
-    # visible in scistack.log without flooding it.
-    distribute_column_reported = False
-    # Failure aggregation for the end-of-run summary: reason -> FailureGroup
-    # (scifor.failures owns the record). `stop` holds the (exception, failure)
-    # that ended an on_error="stop" run.
-    failure_groups: dict[str, FailureGroup] = {}
-    stop: "tuple[Exception, ComboFailure] | None" = None
-    # Outputs skipped at a combination whose other outputs were kept
-    # (NoOutput slots): output label -> [(combo text, NoOutput)].
-    output_skips: "dict[str, list[tuple[str, NoOutput]]]" = {}
-    # for_columns combine: groups left missing at a combination because they
-    # had no data there: group name -> [combo text].
-    no_data_groups: "dict[str, list[str]]" = {}
-    # for_columns combine: the output column names each group produced,
-    # first-seen order (group name -> [column]).
-    group_columns: "dict[str, list[str]]" = {}
 
-    # Periodic progress state: a line per outermost-key transition (guarded).
-    progress_key = display_keys[0] if display_keys else None
-    if progress_key is not None:
-        try:
-            progress_total = len(dict.fromkeys(c.get(progress_key) for c in all_combos))
-        except TypeError:  # unhashable values — fall back to declared list
-            progress_total = len(metadata_iterables.get(progress_key, []))
+# ---------------------------------------------------------------------------
+# Phase 2: one combination
+# ---------------------------------------------------------------------------
+
+
+def run_combo(plan: RunPlan, metadata: dict, hooks: LoopHooks, tally: RunTally) -> ComboResult:
+    """Run the function at one combination and return its result rows.
+
+    Prepares each input (schema filter, ``hooks.select_rows``, extraction),
+    calls the function (column-wise under for_columns), and splits the
+    result under ``distribute``. A failing input or call is recorded in
+    ``tally.failure_groups`` and returned as the result's ``failure``.
+    """
+    metadata_str = ", ".join(f"{k}={v}" for k, v in metadata.items())
+    prepared = _prepare_combo_inputs(plan, metadata, metadata_str, hooks, tally)
+    if isinstance(prepared, ComboResult):
+        return prepared
+    filtered_inputs, iterate_dfs = prepared
+    _check_column_drift(plan, iterate_dfs, metadata_str)
+    _log_empty_inputs(filtered_inputs, iterate_dfs, metadata_str)
+
+    all_param_names = (
+        list(filtered_inputs.keys()) + list(plan.iterate_params) + list(plan.constant_inputs.keys())
+    )
+    if plan.for_columns is not None:
+        msg = (
+            f"[run] {metadata_str}: {plan.fn_name} x {len(plan.for_columns.groups)} group(s) "
+            f"({', '.join(all_param_names)})"
+        )
     else:
-        progress_total = 0
-    _no_value = object()
-    progress_last_value = _no_value
-    progress_seen = 0
-    progress_last_emit = 0.0
-    loop_t0 = time.perf_counter()
+        msg = f"[run] {metadata_str}: {plan.fn_name}({', '.join(all_param_names)})"
+    Log.debug(msg, layer="scifor")
 
-    for combo_idx, metadata in enumerate(all_combos):
-        # Cooperative cancel: check between combos (before any work for this combo).
-        if _cancel_check is not None and _cancel_check():
-            was_cancelled = True
-            _nd = _no_data_count(failure_groups)
-            Log.info(
-                f"for_each({fn_name}) cancelled at combo {combo_idx + 1}/{total} "
-                f"(completed={completed}, failed={skipped - _nd}, no_data={_nd})",
-                layer="scifor",
+    filtered_inputs.update(plan.constant_inputs)
+    _inject_shared_limits(plan, filtered_inputs, metadata)
+
+    try:
+        result = _call_at_combo(plan, filtered_inputs, iterate_dfs, metadata, metadata_str, tally)
+    except ForColumnsError:
+        # Structural for_columns errors are deterministic across combos and
+        # indicate a return-contract bug — surface immediately, don't skip.
+        raise
+    except Exception as e:
+        if getattr(e, "scifor_fatal", False):
+            # Deterministic configuration errors marked fatal by a higher
+            # layer (e.g. scidb's SchemaKeyTypeError) would fail every combo
+            # identically — abort the run instead of skipping through N
+            # copies of the same failure.
+            Log.error(f"[fatal] {metadata_str}: {e}", layer="scifor", exc_info=True)
+            raise
+        failure = _record_iteration_failure(
+            tally.failure_groups,
+            e,
+            fn_name=plan.fn_name,
+            metadata=metadata,
+            metadata_str=metadata_str,
+            stage="call",
+            context=f"{plan.fn_name} raised",
+        )
+        return ComboResult(failure=failure, error=e)
+
+    if not isinstance(result, tuple):
+        result = (result,)
+    # Some (never all, see _raise_if_every_output_skipped) outputs have
+    # nothing to save here: tally them per output for the summary. The slots
+    # stay in the row; scidb's save writes no record for them.
+    for i, slot in enumerate(result):
+        if is_no_output(slot):
+            tally.output_skips.setdefault(_output_label(plan.output_names, i), []).append(
+                (metadata_str, slot)
             )
-            if _progress_fn is not None:
-                _progress_fn(
-                    {
-                        "event": "cancelled",
-                        "current": combo_idx + 1,
-                        "total": total,
-                        "completed": completed,
-                        "skipped": skipped,
-                    }
-                )
-            break
+    if plan.distribute_key is None:
+        return ComboResult(rows=[(metadata, result)])
+    return ComboResult(rows=_distribute_rows(plan.distribute_key, metadata, metadata_str, result, tally))
 
-        metadata_str = ", ".join(f"{k}={v}" for k, v in metadata.items())
 
-        # Periodic progress: emit on outermost-key transitions, but never at
-        # the very first combo, never inside the start delay (fast runs stay
-        # silent), and never more often than the minimum interval.
-        if progress_key is not None and not dry_run:
-            progress_value = metadata.get(progress_key, _no_value)
-            if progress_value != progress_last_value:
-                progress_last_value = progress_value
-                progress_seen += 1
-                elapsed_now = time.perf_counter() - loop_t0
-                if (
-                    progress_seen > 1
-                    and elapsed_now >= _PROGRESS_START_DELAY_S
-                    and elapsed_now - progress_last_emit >= _PROGRESS_MIN_INTERVAL_S
-                ):
-                    progress_last_emit = elapsed_now
-                    _nd = _no_data_count(failure_groups)
-                    Log.info(
-                        f"progress: {progress_key}={progress_value} "
-                        f"({progress_seen}/{progress_total}) — "
-                        f"{combo_idx}/{total} combos "
-                        f"({100.0 * combo_idx / total:.1f}%), "
-                        f"completed={completed}, failed={skipped - _nd}, "
-                        f"no_data={_nd}, elapsed={elapsed_now:.1f}s",
-                        layer="scifor",
-                    )
-
-        if _progress_fn is not None:
-            _progress_fn(
-                {
-                    "event": "combo_start",
-                    "current": combo_idx + 1,
-                    "total": total,
-                    "completed": completed,
-                    "skipped": skipped,
-                    "metadata": metadata,
-                }
-            )
-
-        if dry_run:
-            _print_dry_run_iteration(inputs, metadata, constant_inputs, distribute_key)
-            completed += 1
-            continue
-
-        # Filter/prepare inputs for this combo
-        filtered_inputs = {}
-        iterate_dfs: dict[str, Any] = {}
-        filter_failure: "ComboFailure | None" = None
-        filter_failed = False
-
-        for param_name, var_spec in data_inputs.items():
-            try:
-                if param_name in iterate_params:
-                    # Keep the full per-combo DataFrame; slice per column below.
-                    iterate_dfs[param_name] = _prepare_iterate_df(
-                        var_spec,
-                        metadata,
-                        full_schema_keys,
-                        where,
-                        select_rows=_select_rows,
-                        param_name=param_name,
-                    )
-                    continue
-                wants_table = param_name in as_table_set
-                filtered_inputs[param_name] = _prepare_input(
+def _prepare_combo_inputs(
+    plan: RunPlan, metadata: dict, metadata_str: str, hooks: LoopHooks, tally: RunTally
+) -> "tuple[dict, dict] | ComboResult":
+    """Filter/prepare every data input for this combo:
+    ``(per-combo inputs, {for_columns input: full per-combo frame})``, or the
+    failure of the first input that could not be prepared."""
+    filtered_inputs: dict = {}
+    iterate_dfs: "dict[str, Any]" = {}
+    for param_name, var_spec in plan.data_inputs.items():
+        try:
+            if param_name in plan.iterate_params:
+                # Keep the full per-combo DataFrame; sliced per column later.
+                iterate_dfs[param_name] = _prepare_iterate_df(
                     var_spec,
                     metadata,
-                    full_schema_keys,
-                    wants_table,
-                    where,
-                    mapping_cols=(_mapping_inputs or {}).get(param_name),
-                    select_rows=_select_rows,
+                    plan.schema_keys,
+                    plan.where,
+                    select_rows=hooks.select_rows,
                     param_name=param_name,
                 )
-            except Exception as e:
-                filter_failure = _record_iteration_failure(
-                    failure_groups,
-                    e,
-                    fn_name=fn_name,
-                    metadata=metadata,
-                    metadata_str=metadata_str,
-                    stage="prepare_inputs",
-                    context=f"failed to filter {param_name}",
-                )
-                if on_error == "stop" and not filter_failure.no_data:
-                    stop = (e, filter_failure)
-                filter_failed = True
-                break
-
-        if filter_failed:
-            skipped += 1
-            if _progress_fn is not None:
-                _progress_fn(
-                    {
-                        "event": "combo_skip",
-                        "current": combo_idx + 1,
-                        "total": total,
-                        "completed": completed,
-                        "skipped": skipped,
-                        "metadata": metadata,
-                        "failure": _skip_failure_payload(filter_failure),
-                    }
-                )
-            if stop is not None:
-                break
-            continue
-
-        # Column drift is a hard error (not a per-combo skip): the iterate
-        # column set is fixed up front, so a combo missing one of those
-        # columns means the stored data is inconsistent and must be surfaced.
-        if iterate_params:
-            for name in iterate_params:
-                missing = [
-                    c for c in iterate_columns if c not in iterate_dfs[name].columns
-                ]
-                if missing:
-                    raise ValueError(
-                        f"for_columns column drift: column(s) {missing} missing from "
-                        f"input '{name}' for combo {metadata_str}. The iterate column "
-                        f"set {iterate_columns} must be present in every combo."
-                    )
-
-        # Surface empty per-combo inputs explicitly. After upstream existence
-        # filtering an empty input usually means this combo has no backing data
-        # for that input — the function is still called (it may handle empties),
-        # but the emptiness must never be silent.
-        _empty_inputs = [
-            name
-            for name, val in (list(filtered_inputs.items()) + list(iterate_dfs.items()))
-            if _input_is_empty(val)
-        ]
-        if _empty_inputs:
-            Log.debug(
-                "[empty-combo] %s: input(s) %s had 0 rows",
-                metadata_str,
-                ", ".join(_empty_inputs),
-                layer="scifor",
+                continue
+            filtered_inputs[param_name] = _prepare_input(
+                var_spec,
+                metadata,
+                plan.schema_keys,
+                param_name in plan.as_table_set,
+                plan.where,
+                mapping_cols=(hooks.mapping_inputs or {}).get(param_name),
+                select_rows=hooks.select_rows,
+                param_name=param_name,
             )
-
-        # Call the function
-        all_param_names = (
-            list(filtered_inputs.keys())
-            + list(iterate_params)
-            + list(constant_inputs.keys())
-        )
-        if iterate_params:
-            msg = (
-                f"[run] {metadata_str}: {fn_name} x {len(column_groups)} group(s) "
-                f"({', '.join(all_param_names)})"
-            )
-        else:
-            msg = f"[run] {metadata_str}: {fn_name}({', '.join(all_param_names)})"
-        Log.debug(msg, layer="scifor")
-
-        # Merge constants into function arguments
-        filtered_inputs.update(constant_inputs)
-
-        # Inject shared axis limits for this combo's group (share_limits).
-        if shared_limits_map:
-            for input_name, (group_keys, limits) in shared_limits_map.items():
-                param = f"{input_name}_limits"
-                if _limits_accepted is not None and param not in _limits_accepted:
-                    continue  # fn signature doesn't accept it and has no **kwargs
-                gkey = tuple(str(metadata.get(k, "")) for k in group_keys)
-                if gkey in limits:
-                    filtered_inputs[param] = limits[gkey]
-
-        try:
-            fn_t0 = time.perf_counter()
-            if iterate_params:
-                iterated = _run_column_iteration(
-                    fn,
-                    filtered_inputs,
-                    iterate_dfs,
-                    column_groups,
-                    full_schema_keys,
-                    as_table_set,
-                    metadata,
-                    path_input_resolver=_path_input_resolver,
-                    mode=for_columns_mode,
-                    metadata_str=metadata_str,
-                    no_data_groups=no_data_groups,
-                    group_columns=group_columns,
-                )
-                # Split: one slot per output already. Combine: the one row.
-                result = iterated if for_columns_mode == SPLIT else (iterated,)
-            else:
-                # PathOutput/PathInput constants resolve to a finished path
-                # from this combo's metadata (no column outside for_columns).
-                call_inputs = _resolve_path_outputs(filtered_inputs, metadata, None)
-                call_inputs = _resolve_path_inputs(
-                    call_inputs, metadata, resolver=_path_input_resolver
-                )
-                result = _call_fn(fn, call_inputs, n_outputs)
-            fn_elapsed = time.perf_counter() - fn_t0
-            Log.debug(
-                "[done] %s: %s completed in %.3fs",
-                metadata_str,
-                fn_name,
-                fn_elapsed,
-                layer="scifor",
-            )
-            _raise_if_every_output_skipped(result, resolved_output_names)
-        except ForColumnsError:
-            # Structural for_columns errors are deterministic across combos and
-            # indicate a return-contract bug — surface immediately, don't skip.
-            raise
         except Exception as e:
-            if getattr(e, "scifor_fatal", False):
-                # Deterministic configuration errors marked fatal by a
-                # higher layer (e.g. scidb's SchemaKeyTypeError) would fail
-                # every combo identically — abort the run instead of
-                # skipping through N copies of the same failure.
-                Log.error(f"[fatal] {metadata_str}: {e}", layer="scifor", exc_info=True)
-                raise
-            call_failure = _record_iteration_failure(
-                failure_groups,
+            failure = _record_iteration_failure(
+                tally.failure_groups,
                 e,
-                fn_name=fn_name,
+                fn_name=plan.fn_name,
                 metadata=metadata,
                 metadata_str=metadata_str,
-                stage="call",
-                context=f"{fn_name} raised",
+                stage="prepare_inputs",
+                context=f"failed to filter {param_name}",
             )
-            if on_error == "stop" and not call_failure.no_data:
-                stop = (e, call_failure)
-            skipped += 1
-            if _progress_fn is not None:
-                _progress_fn(
-                    {
-                        "event": "combo_skip",
-                        "current": combo_idx + 1,
-                        "total": total,
-                        "completed": completed,
-                        "skipped": skipped,
-                        "metadata": metadata,
-                        "failure": _skip_failure_payload(call_failure),
-                    }
-                )
-            if stop is not None:
-                break
+            return ComboResult(failure=failure, error=e)
+    return filtered_inputs, iterate_dfs
+
+
+def _check_column_drift(plan: RunPlan, iterate_dfs: dict, metadata_str: str) -> None:
+    """Column drift is a hard error (not a per-combo skip): the iterate
+    column set is fixed up front, so a combo missing one of those columns
+    means the stored data is inconsistent and must be surfaced."""
+    if plan.for_columns is None:
+        return
+    columns = plan.for_columns.columns
+    for name in plan.for_columns.params:
+        missing = [c for c in columns if c not in iterate_dfs[name].columns]
+        if missing:
+            raise ValueError(
+                f"for_columns column drift: column(s) {missing} missing from "
+                f"input '{name}' for combo {metadata_str}. The iterate column "
+                f"set {columns} must be present in every combo."
+            )
+
+
+def _log_empty_inputs(filtered_inputs: dict, iterate_dfs: dict, metadata_str: str) -> None:
+    """Surface empty per-combo inputs explicitly. After upstream existence
+    filtering an empty input usually means this combo has no backing data
+    for that input — the function is still called (it may handle empties),
+    but the emptiness must never be silent."""
+    empty = [
+        name
+        for name, val in (list(filtered_inputs.items()) + list(iterate_dfs.items()))
+        if _input_is_empty(val)
+    ]
+    if empty:
+        Log.debug(
+            "[empty-combo] %s: input(s) %s had 0 rows",
+            metadata_str,
+            ", ".join(empty),
+            layer="scifor",
+        )
+
+
+def _inject_shared_limits(plan: RunPlan, call_inputs: dict, metadata: dict) -> None:
+    """Add this combo's group's shared axis limits (share_limits), in place."""
+    for input_name, (group_keys, limits) in plan.shared_limits.items():
+        param = f"{input_name}_limits"
+        if plan.limits_accepted is not None and param not in plan.limits_accepted:
+            continue  # fn signature doesn't accept it and has no **kwargs
+        gkey = tuple(str(metadata.get(k, "")) for k in group_keys)
+        if gkey in limits:
+            call_inputs[param] = limits[gkey]
+
+
+def _call_at_combo(
+    plan: RunPlan,
+    call_inputs: dict,
+    iterate_dfs: dict,
+    metadata: dict,
+    metadata_str: str,
+    tally: RunTally,
+) -> Any:
+    """Call the function once (or once per column group) at this combo."""
+    fn_t0 = time.perf_counter()
+    fc = plan.for_columns
+    if fc is not None:
+        iterated = _run_column_iteration(
+            plan.fn,
+            call_inputs,
+            iterate_dfs,
+            fc.groups,
+            plan.schema_keys,
+            plan.as_table_set,
+            metadata,
+            path_input_resolver=plan.path_input_resolver,
+            mode=fc.mode,
+            metadata_str=metadata_str,
+            no_data_groups=tally.no_data_groups,
+            group_columns=tally.group_columns,
+        )
+        # Split: one slot per output already. Combine: the one row.
+        result = iterated if fc.mode == SPLIT else (iterated,)
+    else:
+        # PathOutput/PathInput constants resolve to a finished path from
+        # this combo's metadata (no column outside for_columns).
+        resolved = _resolve_path_outputs(call_inputs, metadata, None)
+        resolved = _resolve_path_inputs(resolved, metadata, resolver=plan.path_input_resolver)
+        result = _call_fn(plan.fn, resolved, plan.n_outputs)
+    Log.debug(
+        "[done] %s: %s completed in %.3fs",
+        metadata_str,
+        plan.fn_name,
+        time.perf_counter() - fn_t0,
+        layer="scifor",
+    )
+    _raise_if_every_output_skipped(result, plan.output_names)
+    return result
+
+
+def _distribute_rows(
+    distribute_key: str, metadata: dict, metadata_str: str, result: tuple, tally: RunTally
+) -> "list[tuple[dict, tuple]]":
+    """Expand each output of one combo into one row per piece at
+    ``distribute_key``."""
+    rows: "list[tuple[dict, tuple]]" = []
+    for output_value in result:
+        try:
+            key_values, pieces, from_column = _distribute_pieces(output_value, distribute_key)
+        except TypeError as e:
+            Log.warn(f"{metadata_str}: cannot distribute: {e}", layer="scifor")
             continue
-
-        # Normalize single output to tuple
-        if not isinstance(result, tuple):
-            result = (result,)
-
-        # Some (never all, see _raise_if_every_output_skipped) outputs have
-        # nothing to save here: tally them per output for the summary. The
-        # slots stay in the row; scidb's save writes no record for them.
-        for i, slot in enumerate(result):
-            if is_no_output(slot):
-                output_skips.setdefault(_output_label(resolved_output_names, i), []).append(
-                    (metadata_str, slot)
-                )
-
-        # Handle distribute: expand result into multiple rows
-        if distribute_key is not None:
-            for output_value in result:
-                try:
-                    key_values, pieces, from_column = _distribute_pieces(
-                        output_value, distribute_key
-                    )
-                except TypeError as e:
-                    Log.warn(f"{metadata_str}: cannot distribute: {e}", layer="scifor")
-                    continue
-
-                if from_column:
-                    _msg = (
-                        "distribute: output carries a '%s' column — its values "
-                        "address the %d piece(s) and the column is removed from "
-                        "the data (row ordinals are not used)"
-                    )
-                    if not distribute_column_reported:
-                        Log.info(_msg, distribute_key, len(pieces), layer="scifor")
-                        distribute_column_reported = True
-                    else:
-                        Log.debug(_msg, distribute_key, len(pieces), layer="scifor")
-
-                for key_value, piece in zip(key_values, pieces, strict=True):
-                    dist_metadata = {**metadata, distribute_key: key_value}
-                    collected_rows.append((dist_metadata, (piece,)))
-        else:
-            collected_rows.append((metadata, result))
-
-        completed += 1
-        if _progress_fn is not None:
-            _progress_fn(
-                {
-                    "event": "combo_done",
-                    "current": combo_idx + 1,
-                    "total": total,
-                    "completed": completed,
-                    "skipped": skipped,
-                    "metadata": metadata,
-                }
+        if from_column:
+            msg = (
+                "distribute: output carries a '%s' column — its values "
+                "address the %d piece(s) and the column is removed from "
+                "the data (row ordinals are not used)"
             )
+            if not tally.distribute_column_reported:
+                Log.info(msg, distribute_key, len(pieces), layer="scifor")
+                tally.distribute_column_reported = True
+            else:
+                Log.debug(msg, distribute_key, len(pieces), layer="scifor")
+        for key_value, piece in zip(key_values, pieces, strict=True):
+            rows.append(({**metadata, distribute_key: key_value}, (piece,)))
+    return rows
 
-    # End-of-run summary
-    if dry_run:
-        print(f"[dry-run] would process {total} iterations")
+
+# ---------------------------------------------------------------------------
+# Phase 3: assemble
+# ---------------------------------------------------------------------------
+
+
+def assemble(
+    plan: RunPlan, tally: RunTally, hooks: LoopHooks, *, elapsed: float
+) -> "pd.DataFrame | None":
+    """End-of-run summary and the result table.
+
+    Logs the summary (counts, one line per failure reason), sends the
+    ``summary`` event to the journal and ``hooks.progress_fn``, and builds
+    the output DataFrame. Under ``on_error="stop"`` it re-raises the original
+    exception with the partial result attached instead of returning.
+    """
+    if plan.dry_run:
+        print(f"[dry-run] would process {plan.total} iterations")
         return None
 
-    elapsed = time.perf_counter() - loop_t0
-    cancelled_suffix = ", cancelled" if was_cancelled else ""
-    if stop is not None:
+    summary_event = _log_summary(plan, tally, elapsed)
+    # The same summary feeds the journal block of the run this loop belongs
+    # to (scifor.failures.journal_run, opened by for_each's entry).
+    journal = Log.current_run()
+    if journal is not None:
+        journal.add_summary(summary_event)
+    hooks.emit(summary_event)
+
+    result_df = _build_result_table(plan, tally)
+    if tally.output_skips and not hooks.keep_no_output:
+        result_df = _no_output_to_missing(result_df, plan.output_names)
+    if tally.stop is not None:
+        stop_exc, stop_failure = tally.stop
+        Log.info(
+            f"for_each({plan.fn_name}): on_error=stop — stopped at "
+            f"{stop_exc.__class__.__name__} {format_user_frame(stop_failure.user_frame)}; "
+            f"{tally.completed} combo(s) completed before it, re-raising the original exception",
+            layer="scifor",
+        )
+        attach_stopped_run(
+            stop_exc,
+            StoppedRun(failure=stop_failure, partial_result=result_df, completed=tally.completed),
+        )
+        raise stop_exc
+    return result_df
+
+
+def _log_summary(plan: RunPlan, tally: RunTally, elapsed: float) -> dict:
+    """Log the end-of-run summary and return the ``summary`` event."""
+    fn_name = plan.fn_name
+    total = plan.total
+    cancelled_suffix = ", cancelled" if tally.cancelled else ""
+    if tally.stop is not None:
         cancelled_suffix += ", stopped (on_error=stop)"
     # NoDataError means the combo simply has no backing data (expected in a
     # sparse schema-key cross-product) — split it out from genuine `fn`
     # failures so the summary doesn't cry "failed" over missing data.
-    no_data_count = _no_data_count(failure_groups)
-    failed_count = skipped - no_data_count
+    no_data_count = tally.no_data
+    failed_count = tally.failed
     Log.info(
-        f"for_each({fn_name}) done in {elapsed:.1f}s: completed={completed}, "
+        f"for_each({fn_name}) done in {elapsed:.1f}s: completed={tally.completed}, "
         f"failed={failed_count}, no_data={no_data_count}, total={total}"
         f"{cancelled_suffix}",
         layer="scifor",
@@ -1283,7 +1608,7 @@ def for_each(
     # have opposite causes and the same symptom, so this one is a WARNING —
     # found twice in one afternoon (2026-09-14), both times read as a discovery
     # or filter bug when in fact every call had raised the same TypeError.
-    if total and completed == 0 and failed_count and stop is None:
+    if total and tally.completed == 0 and failed_count and tally.stop is None:
         Log.warn(
             f"for_each({fn_name}): every one of the {total} iteration(s) "
             f"failed, so the result is EMPTY — this is not an empty schema. "
@@ -1292,11 +1617,9 @@ def for_each(
         )
     # One line per distinct failure reason, so the default (INFO) log always
     # answers "what failed and why" without per-iteration lines.
-    for group in failure_groups.values():
+    for group in tally.failure_groups.values():
         shown = group.combos[:_SUMMARY_COMBOS_MAX]
-        more = (
-            f" (+{group.count - len(shown)} more)" if group.count > len(shown) else ""
-        )
+        more = f" (+{group.count - len(shown)} more)" if group.count > len(shown) else ""
         if group.no_data:
             Log.info(
                 f'no data: {group.count} × "{group.reason}" — {"; ".join(shown)}{more}',
@@ -1308,9 +1631,9 @@ def for_each(
                 f"[{format_user_frame(group.example.user_frame)}]",
                 layer="scifor",
             )
-    for line in _describe_output_skips(output_skips):
+    for line in _describe_output_skips(tally.output_skips):
         Log.info(line, layer="scifor")
-    for name, combos in no_data_groups.items():
+    for name, combos in tally.no_data_groups.items():
         shown = combos[:_SUMMARY_COMBOS_MAX]
         more = f" (+{len(combos) - len(shown)} more)" if len(combos) > len(shown) else ""
         Log.info(
@@ -1318,40 +1641,36 @@ def for_each(
             f"{'; '.join(shown)}{more} (left missing in the row)",
             layer="scifor",
         )
-    summary_event = {
+    return {
         "event": "summary",
         "current": total,  # keeps positional consumers (GUI) safe
         "total": total,
-        "completed": completed,
+        "completed": tally.completed,
         "failed": failed_count,
         "no_data": no_data_count,
-        "skipped": skipped,  # legacy key: consumers that tally every event
-        "cancelled": was_cancelled,
-        "stopped": stop is not None,
-        "failures": groups_to_wire(failure_groups),
-        "output_skips": _output_skips_to_wire(output_skips),
+        "skipped": tally.skipped,  # every non-completed combo (failed + no_data)
+        "cancelled": tally.cancelled,
+        "stopped": tally.stop is not None,
+        "failures": groups_to_wire(tally.failure_groups),
+        "output_skips": _output_skips_to_wire(tally.output_skips),
     }
-    # The same summary feeds the journal block of the run this loop belongs
-    # to (scifor.failures.journal_run, opened by for_each's entry).
-    journal = Log.current_run()
-    if journal is not None:
-        journal.add_summary(summary_event)
-    if _progress_fn is not None:
-        _progress_fn(summary_event)
 
+
+def _build_result_table(plan: RunPlan, tally: RunTally) -> "pd.DataFrame":
+    """Combine every combo's result row into the output DataFrame."""
+    rows = tally.rows
     Log.debug(
         "building output DataFrame from %d result row(s)",
-        len(collected_rows),
+        len(rows),
         layer="scifor",
     )
-    if for_columns_mode is not None and for_columns_mode != SPLIT and collected_rows:
+    fc = plan.for_columns
+    if fc is not None and fc.mode != SPLIT and rows:
         # Every combination's row gets every group's columns, in group order:
         # a group with no data somewhere (or everywhere) is still a column,
         # so the output's column set does not depend on which data existed.
-        expected = _combine_output_columns(column_groups, group_columns)
-        collected_rows = [
-            (meta, (row.reindex(columns=expected),)) for meta, (row,) in collected_rows
-        ]
+        expected = _combine_output_columns(fc.groups, tally.group_columns)
+        rows = [(meta, (row.reindex(columns=expected),)) for meta, (row,) in rows]
 
     # Combining every combo's return into one table is where a function that
     # returns different kinds of value for different combos fails — inside
@@ -1359,31 +1678,13 @@ def for_each(
     # combos, via describe_value_kinds) instead of blaming SciStack.
     with user_value_seam(
         "combine_outputs",
-        fn_name=fn_name,
-        fn=fn,
-        diagnose=lambda: _describe_output_kinds(
-            collected_rows, resolved_output_names, fn_name
-        ),
+        fn_name=plan.fn_name,
+        fn=plan.fn,
+        diagnose=lambda: _describe_output_kinds(rows, plan.output_names, plan.fn_name),
     ):
-        result_df = _results_to_output_dataframe(
-            collected_rows, resolved_output_names, schema_col_dtypes, full_schema_keys
+        return _results_to_output_dataframe(
+            rows, plan.output_names, plan.schema_col_dtypes, plan.schema_keys
         )
-    if output_skips and not _keep_no_output:
-        result_df = _no_output_to_missing(result_df, resolved_output_names)
-    if stop is not None:
-        stop_exc, stop_failure = stop
-        Log.info(
-            f"for_each({fn_name}): on_error=stop — stopped at "
-            f"{stop_exc.__class__.__name__} {format_user_frame(stop_failure.user_frame)}; "
-            f"{completed} combo(s) completed before it, re-raising the original exception",
-            layer="scifor",
-        )
-        attach_stopped_run(
-            stop_exc,
-            StoppedRun(failure=stop_failure, partial_result=result_df, completed=completed),
-        )
-        raise stop_exc
-    return result_df
 
 
 def _call_fn(fn, kwargs, n_outputs):
@@ -2157,7 +2458,7 @@ def _extract_data(
     If as_table: return the full DataFrame (schema columns + data columns).
     Otherwise: drop schema key columns; if 1 row + 1 data col -> extract scalar.
 
-    ``mapping_cols`` (see ``for_each``'s ``_mapping_inputs``) says the rows are
+    ``mapping_cols`` (see ``LoopHooks.mapping_inputs``) says the rows are
     dict records spread one column per key. A single row is then rebuilt into
     that dict, which is the value the caller saved. Without it a dict-valued
     variable came back as a one-row frame, because the 1-row unwrap below only
@@ -2206,11 +2507,11 @@ def _prepare_input(
 ) -> Any:
     """Prepare a single data input for the current combo.
 
-    ``mapping_cols`` marks the input as dict-valued (see ``for_each``'s
-    ``_mapping_inputs``); it only reaches ``_extract_data``, so a column
-    selection or ``as_table`` still wins. ``select_rows`` is ``for_each``'s
-    ``_select_rows`` hook, applied to ``param_name``'s frame right after the
-    schema filter.
+    ``mapping_cols`` marks the input as dict-valued (see
+    ``LoopHooks.mapping_inputs``); it only reaches ``_extract_data``, so a
+    column selection or ``as_table`` still wins. ``select_rows`` is
+    ``LoopHooks.select_rows``, applied to ``param_name``'s frame right after
+    the schema filter.
     """
     if isinstance(var_spec, Merge):
         return _prepare_merge(var_spec, metadata, schema_keys, where)
@@ -2967,7 +3268,7 @@ def _results_to_output_dataframe(
             ]
         # max_rows is the LARGEST row count across the combinations, which each
         # returned their own DataFrame — quoting it bare read as though every
-        # combination returned that many rows (examples/vo2max/scidb.log
+        # combination returned that many rows (examples/vo2max/scidb.model.log
         # reported "372-row DataFrame" for combinations of 322/372/304/366).
         if spread and disc_keys:
             Log.info(

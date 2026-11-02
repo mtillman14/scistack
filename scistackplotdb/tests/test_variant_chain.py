@@ -99,7 +99,7 @@ def test_the_upstream_variable_itself_does_distinguish_them(upstream_code_versio
 def test_downstream_records_share_one_producing_hash(upstream_code_versions):
     """Why the discriminator goes missing: ``summarize`` was never edited, so
     the immediate producing invocation is the same for both records."""
-    from scidb.provenance_query import producing_function_versions_batch
+    from scidb.provenance.query import producing_function_versions_batch
 
     loaded = load_variable(upstream_code_versions, "Summarized")
     versions = producing_function_versions_batch(
@@ -331,7 +331,7 @@ class TestBranchParamsFor:
     """``selection_for`` run backwards, for the schema location picker.
 
     The picker holds a column-keyed selection and has to ask
-    ``scidb.locations.location_states`` — which takes a ``branch_params_filter``
+    ``scidb.provenance.locations.location_states`` — which takes a ``branch_params_filter``
     — which locations have that variant. Round-tripping is the guarantee that
     the dots and a ``Variant(...).load()`` name the same records.
     """
@@ -359,7 +359,7 @@ class TestBranchParamsFor:
     def test_the_latest_flag_becomes_the_per_location_code_pin(self):
         """Both spell the same rule: each location contributes its own newest
         record, NOT the global highest ordinal."""
-        from scidb.variant import CODE_PIN_PREFIX, LATEST_VERSION
+        from scidb.model.variant import CODE_PIN_PREFIX, LATEST_VERSION
         from scistackplotdb import branch_params_for
         from scistackplotdb.load import LATEST_COLUMN
 

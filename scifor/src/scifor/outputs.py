@@ -3,11 +3,11 @@
 Owns two rules shared by ``scifor.for_each`` and ``scidb.for_each`` so the two
 stay drop-in replacements for one another:
 
-* :data:`DB_ONLY_KWARGS` — the public ``scidb.for_each`` kwargs that only mean
-  something with a database behind the loop. ``scifor.for_each`` accepts them
-  and discards them (with one INFO line) instead of mistaking them for
-  metadata iterables. ``scidb/tests/test_foreach_signature_parity.py`` holds
-  scidb's signature to exactly this set.
+* :func:`discard_db_only_kwargs` — ``scifor.for_each`` accepts the public
+  ``scidb.for_each`` kwargs that only mean something with a database behind
+  the loop (:data:`scifor.options.DB_ONLY_KWARGS`, derived from the one
+  option declaration) and discards them with one INFO line, instead of
+  mistaking them for metadata iterables.
 * :func:`output_column_name` — the result-table column an output lands in.
   scidb names its result columns (and matches them back to the variable types
   it saves) through this same function, so the two layers cannot name one
@@ -18,22 +18,7 @@ from typing import Any
 
 from scistacklog import Log
 
-DB_ONLY_KWARGS: frozenset[str] = frozenset(
-    {
-        "save",
-        "db",
-        "introspect",
-        "skip_computed",
-        "schema_filter",
-        "finalized",
-        "glue",
-        "parameter_names",
-        "step",
-        "pipeline",
-        # scidb.combine: two result rows at one location saved as one record.
-        "on_duplicate",
-    }
-)
+from .options import DB_ONLY_KWARGS
 
 # Class attribute that overrides an output class's result-column name.
 COLUMN_NAME_ATTR = "column_name"
@@ -73,14 +58,29 @@ def output_column_name(output: Any) -> str:
     """
     if isinstance(output, str):
         return output
-    custom = getattr(output, COLUMN_NAME_ATTR, None)
-    if isinstance(custom, str) and custom:
-        return custom
     if hasattr(output, "view_name"):
-        return output.view_name()
-    if isinstance(output, type):
-        return output.__name__
-    return getattr(output, "__name__", type(output).__name__)
+        default_name = output.view_name()
+    elif isinstance(output, type):
+        default_name = output.__name__
+    else:
+        default_name = getattr(output, "__name__", type(output).__name__)
+    return output_column_name_from(
+        default_name, getattr(output, COLUMN_NAME_ATTR, None)
+    )
+
+
+def output_column_name_from(default_name: Any, column_name: Any) -> str:
+    """The column-name rule on plain text: a non-empty ``column_name`` wins,
+    otherwise ``default_name`` (a class name or a variable's view name).
+
+    MATLAB (``+scifor/output_column_name.m``) calls this directly with the
+    class name and its ``column_name`` Constant property, because Python
+    cannot look inside a MATLAB object. :func:`output_column_name` calls it
+    after extracting the same two values from a Python object.
+    """
+    if isinstance(column_name, str) and column_name:
+        return column_name
+    return str(default_name)
 
 
 def _short(value: Any, limit: int = 40) -> str:

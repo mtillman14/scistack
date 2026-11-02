@@ -122,7 +122,7 @@ def with_qualified_name(fn, canonical: str):
     reference (``pandas.read_csv``) — that is the node label, the persisted
     builtin-function entry, and the ``function_name`` a run request carries.
     scifor and scidb name a function by ``getattr(fn, "__name__")``
-    (``scifor/foreach.py``, ``scidb/foreach.py``, ``scidb/state.py``), and
+    (``scifor/foreach.py``, ``scidb/run/foreach.py``, ``scidb/provenance/state.py``), and
     ``pandas.read_csv.__name__`` is the bare ``"read_csv"``.
 
     Handing the raw callable to ``for_each`` therefore recorded the run
@@ -150,7 +150,7 @@ def with_qualified_name(fn, canonical: str):
     (``scicanonicalhash.compute_function_hash`` already unwraps, so the function hash is
     unaffected.)
 
-    Precedent: ``scidb.foreach``'s Merge wrapper exists for the same reason
+    Precedent: ``scidb.run.foreach``'s Merge wrapper exists for the same reason
     — to give scifor the ``__name__`` it should record.
     """
     if getattr(fn, "__name__", None) == canonical:

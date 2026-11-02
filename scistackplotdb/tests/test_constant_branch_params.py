@@ -58,7 +58,7 @@ def one_swept_one_fixed(seeded):
 def test_both_params_are_recorded_as_branch_params(one_swept_one_fixed):
     """Precondition. scidb records the constant too — this fix is about what
     the PLOTTING layer does with it, not about changing what scidb stores."""
-    from scidb.provenance_query import branch_params_batch
+    from scidb.provenance.query import branch_params_batch
 
     loaded = load_variable(one_swept_one_fixed, "Scaled")
     params = branch_params_batch(

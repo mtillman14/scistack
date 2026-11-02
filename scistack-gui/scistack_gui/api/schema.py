@@ -14,10 +14,10 @@ Database metadata — the handler table for both transports (``api/handlers.py``
     PUT  /api/schema/key-types/{key}    set_schema_key_type    — the Numeric checkbox
 
 The inventory statuses, the two views ("missing only" / "all") and the CSV
-layout are owned by ``scidb.inventory``; these handlers only cap the rows the
+layout are owned by ``scidb.provenance.inventory``; these handlers only cap the rows the
 popup is sent (docs/claude/data-inventory.md). A row becomes schema keys in
-``scidb.inventory.row_keyset`` and the exclusion rules are
-``scidb.exclusions``; the row handlers only wire them together.
+``scidb.provenance.inventory.row_keyset`` and the exclusion rules are
+``scidb.store.exclusions``; the row handlers only wire them together.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ class InventoryRequest(BaseModel):
     #: Schema keys to run the inventory within (one stratum per combination).
     within: list[str] | None = None
     missing_only: bool = True
-    #: Fold uniform blocks into one row with "(all)" (scidb.inventory).
+    #: Fold uniform blocks into one row with "(all)" (scidb.provenance.inventory).
     collapse: bool = True
     limit: int = INVENTORY_ROW_LIMIT
 
@@ -74,7 +74,7 @@ class ExportInventory(BaseModel):
     keys: list[str] | None = None
     within: list[str] | None = None
     missing_only: bool = True
-    #: Fold uniform blocks into one row with "(all)" (scidb.inventory).
+    #: Fold uniform blocks into one row with "(all)" (scidb.provenance.inventory).
     collapse: bool = True
     out_path: str
 
@@ -84,7 +84,7 @@ def _schema_inventory(db, req: InventoryRequest) -> dict:
 
     A size-guard refusal is a ValueError and reaches the popup as an RPC error.
     """
-    from scidb.inventory import schema_inventory
+    from scidb.provenance.inventory import schema_inventory
 
     inv = schema_inventory(db, req.keys, req.within)
     out = inv.to_dict(
@@ -100,7 +100,7 @@ def _schema_inventory(db, req: InventoryRequest) -> dict:
 
 def _export_schema_inventory(db, req: ExportInventory) -> dict:
     """Write the whole inventory (never truncated) as CSV to ``out_path``."""
-    from scidb.inventory import schema_inventory, write_inventory_csv
+    from scidb.provenance.inventory import schema_inventory, write_inventory_csv
 
     out = Path(req.out_path).expanduser()
     if not out.is_absolute():
@@ -117,7 +117,7 @@ def _export_schema_inventory(db, req: ExportInventory) -> dict:
 
 class InventoryRow(BaseModel):
     #: One view's header and row, exactly as ``schema_inventory`` sent them;
-    #: ``scidb.inventory.row_keyset`` turns them into schema keys.
+    #: ``scidb.provenance.inventory.row_keyset`` turns them into schema keys.
     columns: list[str]
     row: list[str]
 
@@ -129,8 +129,8 @@ class InventoryRowChange(InventoryRow):
 def _inventory_row_override(db, req: InventoryRow) -> dict:
     """The keys a row stands for and the override that decides it (the
     popup's confirm panel)."""
-    from scidb.exclusions import governing_overrides
-    from scidb.inventory import row_keyset
+    from scidb.store.exclusions import governing_overrides
+    from scidb.provenance.inventory import row_keyset
 
     keys = row_keyset(req.columns, req.row)
     (governing,) = governing_overrides([keys], db.dataset_schema_keys, db)
@@ -147,8 +147,8 @@ def _inventory_row_override(db, req: InventoryRow) -> dict:
 
 
 def _change_row(db, req: InventoryRowChange, *, exclude: bool) -> dict:
-    from scidb.exclusions import exclude_schema, include_schema
-    from scidb.inventory import row_keyset
+    from scidb.store.exclusions import exclude_schema, include_schema
+    from scidb.provenance.inventory import row_keyset
 
     reason = req.reason.strip()
     if not reason:

@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import duckdb
-from scidb.database import DatabaseManager
+from scidb.store.database import DatabaseManager
 
 import scidb
 
@@ -604,7 +604,7 @@ def close_db() -> "Path | None":
         _db, _db_path, _db_open = None, None, False
         _db_refcount, _external_holder = 0, None
     try:
-        from scidb.database import clear_current_database
+        from scidb.store.database import clear_current_database
 
         clear_current_database()
     except Exception:

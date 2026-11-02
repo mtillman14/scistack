@@ -22,7 +22,7 @@ Separately, ``execute(...).fetchone()`` fetches after the lock is released
 import pandas as pd
 import pytest
 from scidb import BaseVariable
-from scidb.foreach import _resolve_colname_from_db
+from scidb.run.foreach import _resolve_colname_from_db
 from scifor import ColName
 
 

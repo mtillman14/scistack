@@ -50,7 +50,7 @@ alone), so editing them is always safe.
 
 ## Aliases are not zero-padding ambiguity (2026-10-20 fix)
 
-`scidb.foreach._load_pathinput_checked`, and its MATLAB mirror
+`scidb.run.foreach._load_pathinput_checked`, and its MATLAB mirror
 `+scidb/+internal/load_pathinput_checked.m`, raise `SchemaKeyTypeError` when
 an undeclared schema key needed a spelling bridge. They used to treat **every**
 bridge that way. So an aliased `{session}` folder (`BL` resolved to

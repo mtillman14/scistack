@@ -173,7 +173,7 @@ def module_imports(
     Relative imports are resolved. ``from pkg import name`` resolves to
     ``pkg.name`` when that is a module of ``package`` or in ``other_modules``
     (pass another package's modules to see ``from scidb import intent`` as an
-    import of ``scidb.intent``), else to ``pkg``.
+    import of ``scidb.provenance.intent``), else to ``pkg``.
     """
     modules = package_modules(root, package)
     known = set(modules) | set(other_modules)

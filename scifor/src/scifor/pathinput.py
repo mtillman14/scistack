@@ -902,7 +902,7 @@ class PathInput:
         """Fill empty metadata iterables from filesystem discovery.
 
         Canonical PathInput discovery-orchestration shared by the scidb and
-        scifor layers (see scidb.foreach Step 3 and scifor.foreach standalone
+        scifor layers (see scidb.run.foreach Step 3 and scifor.foreach standalone
         resolution).  Runs ``discover()`` and decides how the discovered combos
         relate to the caller-supplied ``metadata_iterables``:
 

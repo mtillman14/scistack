@@ -14,7 +14,7 @@ function tbl = list_exclusions()
 %
 %   Returns an empty table if no exclusions are currently active.
 
-    py_df = py.scidb.exclusions.list_exclusions(py.None);
+    py_df = py.scidb.store.exclusions.list_exclusions(py.None);
 
     % Convert Python DataFrame → MATLAB table
     if py_df.empty

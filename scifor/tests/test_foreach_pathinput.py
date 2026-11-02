@@ -12,7 +12,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from scifor import ColumnSelection, PathInput, for_each, set_schema
+from scifor import ColumnSelection, LoopHooks, PathInput, for_each, set_schema
 
 
 def setup_function():
@@ -167,7 +167,7 @@ def test_per_combo_resolution_receives_path(discovery_tree):
 
 
 def test_path_input_resolver_override_hook(discovery_tree):
-    """A custom ``_path_input_resolver`` overrides the default
+    """A custom ``LoopHooks.path_input_resolver`` overrides the default
     ``pathinput.load(**metadata)`` resolution."""
     pi = PathInput("{subject}/6MWT-{trial}.mat", root_folder=str(discovery_tree), name="{subject}/6MWT-{trial}.mat")
     seen = []
@@ -181,7 +181,7 @@ def test_path_input_resolver_override_hook(discovery_tree):
         inputs={"filepath": pi},
         subject=["1"],
         trial=["001"],
-        _path_input_resolver=fake_resolver,
+        hooks=LoopHooks(path_input_resolver=fake_resolver),
     )
 
     assert result["output"].iloc[0] == "OVERRIDDEN"

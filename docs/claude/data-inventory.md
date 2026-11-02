@@ -1,6 +1,6 @@
 # Data inventory (missing schema-key combinations)
 
-Plan: `.claude/plan-data-inventory.md` (2026-10-15). Code: `scidb/inventory.py`.
+Plan: `.claude/plan-data-inventory.md` (2026-10-15). Code: `scidb/provenance/inventory.py`.
 
 ## The question
 
@@ -25,7 +25,7 @@ there is no per-Variable mode.
    `S01/T2/trial3/cycle5` makes `S01/T2/trial3` present when cycle is not
    chosen. A row that is NULL at any chosen key fills nothing. Record counts
    don't matter; one `_schema` row is enough.
-4. **Excluded.** `scidb.exclusions.exclusion_status` says an active exclusion
+4. **Excluded.** `scidb.store.exclusions.exclusion_status` says an active exclusion
    matches the combination. **Excluded wins over present.** The combination
    holds only the chosen keys, so an exclusion row that names an unchosen,
    deeper key (`trial=3`) does **not** exclude the coarser combination. This is
@@ -78,7 +78,7 @@ Details:
   totals; each `StratumSummary` has its own `values`, `levels`,
   `product_size` and `counts`. `to_dict` adds `within` and `strata`
   (values, product_size, counts per stratum).
-- Owner of the strata: `scidb.inventory._strata` (private, called only by
+- Owner of the strata: `scidb.provenance.inventory._strata` (private, called only by
   `schema_inventory`). It uses one `distinct_schema_combinations(within)` call
   plus one `distinct_schema_combinations(within + [key])` call per Cross key,
   grouped in Python. No new SQL or tables.
@@ -140,12 +140,12 @@ the per-stratum products, and the message names the largest strata. Tests pass
 |---|---|---|
 | Each key's values, in declared order | `DatabaseManager.distinct_schema_values` | inventory, `for_each` |
 | Combinations that exist | `DatabaseManager.distinct_schema_combinations` | inventory |
-| Which override decides a combination | `scidb.exclusions.governing_overrides` | `exclusion_status`, the `include_schema` guard, GUI `inventory_row_override` |
-| Is a combination excluded? | `scidb.exclusions.exclusion_status` (consumes `governing_overrides`) | `filter_excluded_combos` (`for_each`), inventory |
-| A displayed row -> schema keys (`status` and `(all)` dropped) | `scidb.inventory.row_keyset` | GUI Exclude… / Include… handlers |
-| Statuses | `scidb.inventory.schema_inventory` | `Inspector.inventory`, CLI, GUI handlers |
-| Which columns/rows a view shows, collapsed or not | `scidb.inventory.inventory_table` (collapse: `_collapse_rows`) | `SchemaInventory.to_dict`, `write_inventory_csv`, `render.render_inventory` |
-| CSV layout | `scidb.inventory.write_inventory_csv` | CLI `--csv`, GUI export |
+| Which override decides a combination | `scidb.store.exclusions.governing_overrides` | `exclusion_status`, the `include_schema` guard, GUI `inventory_row_override` |
+| Is a combination excluded? | `scidb.store.exclusions.exclusion_status` (consumes `governing_overrides`) | `filter_excluded_combos` (`for_each`), inventory |
+| A displayed row -> schema keys (`status` and `(all)` dropped) | `scidb.provenance.inventory.row_keyset` | GUI Exclude… / Include… handlers |
+| Statuses | `scidb.provenance.inventory.schema_inventory` | `Inspector.inventory`, CLI, GUI handlers |
+| Which columns/rows a view shows, collapsed or not | `scidb.provenance.inventory.inventory_table` (collapse: `_collapse_rows`) | `SchemaInventory.to_dict`, `write_inventory_csv`, `render.render_inventory` |
+| CSV layout | `scidb.provenance.inventory.write_inventory_csv` | CLI `--csv`, GUI export |
 
 There are two views. **Missing only** shows only the missing rows, with key
 columns and no status column (every row would say "missing"). **All** shows

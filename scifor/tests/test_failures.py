@@ -22,7 +22,7 @@ import pandas as pd
 import pytest
 
 import scifor
-from scifor import ColumnSelection, for_each, set_schema, stopped_run_of
+from scifor import ColumnSelection, LoopHooks, for_each, set_schema, stopped_run_of
 from scifor.failures import (
     FRAMES_MAX,
     MESSAGE_MAX_CHARS,
@@ -66,7 +66,7 @@ def test_user_frame_is_the_raising_line():
     def broken(value):
         raise KeyError("missing_channel")  # RAISE-HERE
 
-    for_each(broken, inputs={"value": _df(2)}, subject=[1, 2], _progress_fn=events.append)
+    for_each(broken, inputs={"value": _df(2)}, subject=[1, 2], hooks=LoopHooks(progress_fn=events.append))
 
     (group,) = _summary(events)["failures"]
     assert group["count"] == 2 and group["no_data"] is False
@@ -93,7 +93,7 @@ def test_library_error_is_attributed_to_the_user_call_site():
     def bad_concat(value):
         return pd.concat([value, 3])  # CALL-SITE
 
-    for_each(bad_concat, inputs={"value": _df(1)}, subject=[1], _progress_fn=events.append)
+    for_each(bad_concat, inputs={"value": _df(1)}, subject=[1], hooks=LoopHooks(progress_fn=events.append))
 
     (group,) = _summary(events)["failures"]
     frames = group["example"]["frames"]
@@ -108,7 +108,7 @@ def test_combo_skip_event_carries_the_small_failure_form():
     def broken(value):
         raise ValueError("nope")
 
-    for_each(broken, inputs={"value": _df(1)}, subject=[1], _progress_fn=events.append)
+    for_each(broken, inputs={"value": _df(1)}, subject=[1], hooks=LoopHooks(progress_fn=events.append))
 
     (skip,) = [e for e in events if e["event"] == "combo_skip"]
     assert skip["failure"]["reason"] == "ValueError: nope"
@@ -126,7 +126,7 @@ def test_prepare_inputs_failure_has_stage_and_no_crash():
         lambda v: v,
         inputs={"v": ColumnSelection(df, ["no_such_column"])},
         subject=[1],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
 
     (group,) = _summary(events)["failures"]
@@ -144,7 +144,7 @@ def test_no_data_group_is_marked_and_never_warns(caplog):
             lambda value: value,
             inputs={"value": df},
             subject=[1, 2],
-            _progress_fn=events.append,
+            hooks=LoopHooks(progress_fn=events.append),
         )
 
     s = _summary(events)
@@ -168,7 +168,7 @@ def test_for_columns_failure_points_at_the_user_line():
         to_float,
         inputs={"v": ColumnSelection(df, ["a"], iterate=True)},
         subject=[1],
-        _progress_fn=events.append,
+        hooks=LoopHooks(progress_fn=events.append),
     )
 
     (group,) = _summary(events)["failures"]
@@ -185,7 +185,7 @@ def test_one_group_per_reason_capped_and_json_safe():
         raise ValueError("x" * (MESSAGE_MAX_CHARS + 100))
 
     for_each(broken, inputs={"value": _df(n)}, subject=list(range(1, n + 1)),
-             _progress_fn=events.append)
+             hooks=LoopHooks(progress_fn=events.append))
 
     s = _summary(events)
     (group,) = s["failures"]
@@ -278,7 +278,7 @@ def test_stop_reraises_original_with_partial_result():
             inputs={"value": _value_is_subject(5)},
             subject=[1, 2, 3, 4, 5],
             on_error="stop",
-            _progress_fn=events.append,
+            hooks=LoopHooks(progress_fn=events.append),
         )
 
     stopped = stopped_run_of(info.value)

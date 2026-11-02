@@ -69,7 +69,7 @@ class TestVariantResolver:
 # ---------------------------------------------------------------------------
 
 #: The owner itself is the one place allowed to build the tuple.
-_OWNER = "scidb/src/scidb/provenance.py"
+_OWNER = "scidb/src/scidb/provenance/graph.py"
 _CONSTANTS = re.compile(r"\bconstants\b")
 
 
@@ -118,7 +118,7 @@ def test_no_hand_built_constants_key():
             continue
         hits += [f"{rel}:{line}: {src}" for line, src in found]
     assert not hits, (
-        "Group/dedup by constants through scidb.provenance.constants_identity_key "
+        "Group/dedup by constants through scidb.provenance.graph.constants_identity_key "
         "(a constant may be a dict, so this tuple is unhashable):\n" + "\n".join(hits)
     )
 

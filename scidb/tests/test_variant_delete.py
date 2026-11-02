@@ -24,11 +24,11 @@ import numpy as np
 import pytest
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb import variant_delete
-from scidb.exceptions import AmbiguousVersionError
+from scidb.store import variant_delete
+from scidb.model.exceptions import AmbiguousVersionError
 from scidb.inspect.cli import main as cli_main
-from scidb.variant_delete import delete_plan, delete_variant, tombstones
-from scidb.variant_pins import active_pins, pin_history, pin_variant
+from scidb.store.variant_delete import delete_plan, delete_variant, tombstones
+from scidb.store.variant_pins import active_pins, pin_history, pin_variant
 
 SCHEMA = ["subject", "trial"]
 SUBJECTS = ["01", "02"]
@@ -120,7 +120,7 @@ def _snapshot(db):
 
 
 def _low_hz_values(db, variable):
-    from scidb.provenance_query import branch_params_batch
+    from scidb.provenance.query import branch_params_batch
 
     rids = [r[0] for r in db._duck.fetchall(
         "SELECT record_id FROM _record WHERE type = ?", [variable]

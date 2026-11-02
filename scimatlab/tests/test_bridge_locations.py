@@ -13,7 +13,7 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 import json
 
 import pytest
-from scidb.database import configure_database
+from scidb.store.database import configure_database
 from scimatlab import bridge
 from scimatlab.bridge import _locations_from_matlab, for_each_prepare, register_matlab_variable
 

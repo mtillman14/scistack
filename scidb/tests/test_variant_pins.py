@@ -23,16 +23,16 @@ import numpy as np
 import pytest
 import scifor as _scifor
 from scidb import AcrossVariants, BaseVariable, Variant, configure_database, for_each
-from scidb.exceptions import AmbiguousVersionError, NotFoundError
-from scidb.foreach import _load_input
-from scidb.foreach_config import _compute_fn_hash
+from scidb.model.exceptions import AmbiguousVersionError, NotFoundError
+from scidb.run.foreach import _load_input
+from scidb.run.foreach_config import _compute_fn_hash
 from scidb.inspect.cli import main as cli_main
-from scidb.provenance_query import (
+from scidb.provenance.query import (
     branch_params_batch,
     expected_invocations_for_function,
     present_invocation_schema_pairs,
 )
-from scidb.variant_pins import (
+from scidb.store.variant_pins import (
     active_pins,
     effective_default,
     pin_history,
@@ -323,7 +323,7 @@ class TestLifecycle:
 
     def test_pin_newest_moves_to_the_latest_saved_card(self, db):
         _pin(db, "VpnFiltered", 10)
-        from scidb.variant_pins import pin_newest
+        from scidb.store.variant_pins import pin_newest
 
         pin = pin_newest(db, "VpnFiltered", "moved after run")
         assert pin.selection == {"vpn_bandpass.low_hz": 20}  # low_hz=20 ran second

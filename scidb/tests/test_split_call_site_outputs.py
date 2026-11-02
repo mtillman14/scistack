@@ -1,4 +1,4 @@
-"""scidb.provenance.split_call_site_outputs — THE owner of "which of a call
+"""scidb.provenance.graph.split_call_site_outputs — THE owner of "which of a call
 site's outputs form one wiring" (2026-09-29).
 
 A call site (call_id) excludes outputs, so a rewired node's old and new
@@ -10,8 +10,8 @@ by Runs decide the split.
 
 import logging
 
-from scidb.database import call_site_wiring_ids
-from scidb.provenance import (
+from scidb.store.database import call_site_wiring_ids
+from scidb.provenance.graph import (
     SPLIT_MAX_OUTPUTS,
     compute_wiring_id,
     split_call_site_outputs,

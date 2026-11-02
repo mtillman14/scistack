@@ -116,7 +116,7 @@ spread around the repo.
 > `bundle` (history / intent / data / none) and `cleared` or `kept_reason`;
 > `bundle.HISTORY_TABLES`, `INTENT_TABLES`, the data section's fixed tables,
 > and `clear_data.CLEARED_TABLES` / `KEPT_TABLES` are read from
-> `scidb.tables`. `declare` refuses a scidb table that is neither cleared nor
+> `scidb.store.tables`. `declare` refuses a scidb table that is neither cleared nor
 > kept with a reason.
 
 ### T3. The real interfaces are private

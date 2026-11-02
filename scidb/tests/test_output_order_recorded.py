@@ -12,7 +12,7 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.provenance_query import recorded_output_orders
+from scidb.provenance.query import recorded_output_orders
 
 SCHEMA = ["subject"]
 
@@ -79,7 +79,7 @@ def test_single_output_and_unknown_functions(db):
 
 def test_the_table_is_part_of_the_run_log():
     from scidb.project.bundle import HISTORY_TABLES
-    from scidb.clear_data import KEPT_TABLES
+    from scidb.store.clear_data import KEPT_TABLES
 
     assert "_run_outputs" in HISTORY_TABLES
     assert "_run_outputs" in KEPT_TABLES
@@ -100,7 +100,7 @@ def test_output_names_map_by_name_across_a_reordered_signature(db):
     """A MATLAB run records its signature's output names beside outputs=.
     After the signature is reordered, the names still map to the variables
     they saved to (test 6 of plan-output-order-owner)."""
-    from scidb.provenance_query import recorded_output_params
+    from scidb.provenance.query import recorded_output_params
 
     matlab_like.output_params = ["time", "force"]
     try:
@@ -116,7 +116,7 @@ def test_output_names_map_by_name_across_a_reordered_signature(db):
 
 
 def test_python_runs_record_no_names_and_a_split_maps_none(db):
-    from scidb.provenance_query import recorded_output_params
+    from scidb.provenance.query import recorded_output_params
 
     for_each(mean_and_max, inputs={"x": OrdIn}, outputs=[OrdB, OrdA], subject=[1, 2], db=db)
     assert recorded_output_params(db._duck, ["mean_and_max"]) == {}
@@ -131,9 +131,9 @@ def test_python_runs_record_no_names_and_a_split_maps_none(db):
 
 def test_a_gui_run_records_its_declared_python_port_names(db):
     """A canvas run of a Python node with declared output ports names its
-    outputs through scidb.intent.run_output_names (plan-python-output-ports)."""
-    from scidb.intent import run_output_names
-    from scidb.provenance_query import recorded_output_params
+    outputs through scidb.provenance.intent.run_output_names (plan-python-output-ports)."""
+    from scidb.provenance.intent import run_output_names
+    from scidb.provenance.query import recorded_output_params
 
     with run_output_names(["peak", "mean"]):
         for_each(mean_and_max, inputs={"x": OrdIn}, outputs=[OrdB, OrdA], subject=[1, 2], db=db)

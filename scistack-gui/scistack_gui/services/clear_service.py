@@ -6,7 +6,7 @@ canvas a stored document, a clear needs no canvas snapshot and no restore.
 
 1. Every canvas is built once, so adoption stores whatever history would
    draw that the document does not hold yet (nodes, edges, Parameter values).
-2. ``scidb.clear_data.clear_data(..., allow_canvas=True)`` deletes the
+2. ``scidb.store.clear_data.clear_data(..., allow_canvas=True)`` deletes the
    records and their run history. The document is untouched by construction.
 
 The run log ``_run`` is kept (user decision Q4), and so are the GUI's own
@@ -59,7 +59,7 @@ def clear_data_plan(db) -> dict:
 
     Adoption runs FIRST, so the plan the user confirms describes the
     database the clear will actually see (the fingerprint covers it)."""
-    from scidb.clear_data import clear_plan
+    from scidb.store.clear_data import clear_plan
 
     t0 = time.perf_counter()
     scopes = _adopt_every_canvas(db)
@@ -81,7 +81,7 @@ def clear_data(db, reason: str, fingerprint: str, backup: bool = False) -> dict:
 
     Refuses while a run is in progress (``run_service`` owns that state) and when
     the database changed since the plan was shown (``fingerprint``)."""
-    from scidb.clear_data import clear_data as _clear
+    from scidb.store.clear_data import clear_data as _clear
 
     if _run_in_progress():
         raise ValueError("a run is in progress; wait for it to finish before clearing")

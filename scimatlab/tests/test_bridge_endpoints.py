@@ -27,16 +27,16 @@ sys.path.insert(0, str(_root / "scimatlab" / "src"))
 import numpy as np
 import pandas as pd
 import pytest
-from scidb.database import configure_database
-from scidb.foreach import (
+from scidb.store.database import configure_database
+from scidb.run.foreach import (
     _endpoint_policy,
     normalize_stat_payload,
 )
-from scidb.foreach import (
+from scidb.run.foreach import (
     for_each as scidb_for_each,
 )
+from scimatlab.bridge.wire import _reconstruct_input_for_keys
 from scimatlab.bridge import (
-    _reconstruct_input_for_keys,
     for_each_prepare,
     for_each_save,
     normalize_stat_result,
@@ -156,7 +156,7 @@ class TestSpecReconstruction:
         assert str(po.template) == "plots/{subject}_{low_hz}.png"
 
     def test_across_variants_kind(self, db):
-        from scidb.across_variants import AcrossVariants
+        from scidb.model.across_variants import AcrossVariants
 
         register_matlab_variable("Filtered_EP")
         av = _reconstruct_input_for_keys(
