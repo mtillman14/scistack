@@ -274,3 +274,4 @@ scistackstatsdb 2, GUI 18. scidb also reads the GUI-created `_intent`.
     imports into 6; hoisted 4 scifor.project imports to module top
     (bundle_section, project/registry, services/library_authoring), so the
     count should be about 1376.
+- 2026-11-01: user re-ran all packages, all pass. Committed as 51116d07.

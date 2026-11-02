@@ -151,9 +151,9 @@ If a decision is changed, edit the affected plan's stage before starting it.
 | P1 | 1–8 (see plan) | ☑ 2026-11-01 | e129c3bf |
 | P2 | 1–3 | ☑ 2026-11-01 | 1d833d79 |
 | P2 | 4 | ☑ 2026-11-01 | 98d19e97 |
-| P2 | 5–6 | ☑ 2026-11-01 | (this commit) |
-| P2 | 7 | ☑ 2026-11-01 | (this commit) |
-| P3 | 1–7 | written 2026-11-01, awaiting test run (CLI move declined: U1) | |
+| P2 | 5–6 | ☑ 2026-11-01 | a5a1d359 |
+| P2 | 7 | ☑ 2026-11-01 | a5a1d359 |
+| P3 | 1–7 (CLI move declined: U1) | ☑ 2026-11-01 | 51116d07 |
 | P4 | 1–10 | ☐ | |
 | P5 | 1–6 | ☐ | |
 
