@@ -3,8 +3,8 @@
 Regression for scistack.log 2026-10-01: calculateSymmetryOneVector computed 420
 results, the GaitRiteSymmetry batch insert failed (the table had no
 ``A_Idx_GR`` column), _save_results logged ERROR and returned normally, and
-the MATLAB run was reported ``verdict=done``. It now raises OutputSaveError
-after every output has been attempted.
+the MATLAB run was reported ``verdict=done``. It now raises OutputSaveError,
+and (decision D9) the call's one save transaction rolls back every output.
 """
 
 import numpy as np
@@ -68,7 +68,9 @@ def test_a_failed_save_raises(db, monkeypatch):
     assert "A_Idx_GR" in str(err.value)
 
 
-def test_the_other_output_still_saves(db, monkeypatch):
+def test_a_failed_output_rolls_back_the_others(db, monkeypatch):
+    """Decision D9: a for_each save is all-or-nothing. SaveErrGood saved
+    first, but the call's one transaction rolls it back with SaveErrBad."""
     _fail_for(db, monkeypatch, SaveErrBad)
     with pytest.raises(OutputSaveError) as err:
         for_each(
@@ -78,9 +80,11 @@ def test_the_other_output_still_saves(db, monkeypatch):
             subject=[1, 2],
             db=db,
         )
-    assert err.value.saved == 2
+    assert err.value.saved == 0
     assert [f.split(":")[0] for f in err.value.failures] == ["SaveErrBad"]
-    assert len(db.load_all_as_df(SaveErrGood)) == 2
+    assert db._duck._fetchall(
+        "SELECT COUNT(*) FROM _record WHERE type = ?", ["SaveErrGood"]
+    )[0][0] == 0
 
 
 def test_a_clean_save_does_not_raise(db):

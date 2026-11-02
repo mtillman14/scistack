@@ -1223,8 +1223,9 @@ def _commit_graph(
         fn()
         timings[label] = _time.perf_counter() - _t
 
-    duck._begin()
-    try:
+    # Re-entrant: inside a for_each save this joins the call's one
+    # transaction, so the graph commits with the data rows it describes.
+    with duck.transaction(f"record_run({run_id})"):
         # Bulk vectorized inserts (see SciDuck._bulk_insert): per-row executemany
         # against these PK/composite-PK tables scaled to ~hundreds of seconds for
         # a for_each over thousands of records.
@@ -1407,11 +1408,5 @@ def _commit_graph(
                 conflict_cols=["run_id", "invocation_id"],
             ),
         )
-        _timed("3g_commit", lambda: duck._commit())
-    except Exception:
-        logger.exception("graph commit failed; rolling back for run_id=%s", run_id)
-        try:
-            duck._rollback()
-        except Exception:
-            pass
-        raise
+        _t_commit = _time.perf_counter()
+    timings["3g_commit"] = _time.perf_counter() - _t_commit

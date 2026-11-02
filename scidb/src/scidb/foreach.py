@@ -19,6 +19,8 @@ from scifor.column_selection import column_value as _column_value
 if TYPE_CHECKING:
     import pandas as pd
 
+    from .database import DatabaseManager
+
 import scifor as _scifor
 from scifor import ColName, ColumnSelection, EachOf, Fixed, Merge, require_alternatives
 from scifor import for_each as _scifor_for_each
@@ -5725,7 +5727,7 @@ def _save_results(
     result_tbl: "pd.DataFrame",
     outputs: list[Any],
     state: "_ForEachState",
-    db: Any | None,
+    db: "DatabaseManager | None",
 ) -> None:
     """Save results from the result table to output variable types using batch operations.
 
@@ -5756,6 +5758,10 @@ def _save_results(
     glue_virtual = state.glue_virtual
     glue_chains = state.glue_chains
     fn = state.fn
+    if db is None:
+        from .database import get_database
+
+        db = get_database()
 
     batch_start_time = time.perf_counter()
 
@@ -6061,351 +6067,337 @@ def _save_results(
         f"{len(batch_items)} batch group(s), {len(generated_items)} generates_file item(s)"
     )
 
-    # ===========================================================================
-    # PHASE 2: Execute batch saves
-    # ===========================================================================
-    time.perf_counter()
-    total_saved = 0
-    # One line per output that could not be saved. Raised as OutputSaveError
-    # after every output has been attempted and provenance written for what
-    # did save -- a logged ERROR alone let a run that saved nothing report
-    # success (scistack.log 2026-10-01, GaitRiteSymmetry 0 of 420).
-    save_failures: list[str] = []
-    # The exceptions behind save_failures, each passed through the save seam
-    # (as_user_value_error) so OutputSaveError can say who can fix it.
-    save_causes: list[BaseException] = []
+    # PHASES 2-4 are ONE transaction (decision D9, all-or-nothing): the data
+    # rows and the provenance graph that says where they came from commit
+    # together, or nothing from this call is saved. save_batch and record_run
+    # each open a level of their own; SciDuck.transaction nests them here.
+    with db.transaction(f"for_each_save({fn_name})"):
+        # ===========================================================================
+        # PHASE 2: Execute batch saves
+        # ===========================================================================
+        total_saved = 0
+        # One line per write that failed. Raised as OutputSaveError inside the
+        # transaction, which rolls the whole call back -- a logged ERROR alone
+        # let a run that saved nothing report success (scistack.log 2026-10-01,
+        # GaitRiteSymmetry 0 of 420).
+        save_failures: list[str] = []
+        # The exceptions behind save_failures; an output's failure is passed
+        # through the save seam (as_user_value_error) so OutputSaveError can
+        # say who can fix it.
+        save_causes: list[BaseException] = []
 
-    for (output_idx, save_path), items in batch_items.items():
-        output_obj = outputs[output_idx]
+        for (output_idx, save_path), items in batch_items.items():
+            output_obj = outputs[output_idx]
 
-        if len(items) == 0:
-            continue
-
-        # save_batch takes (data, meta) pairs; the typed edges ride beside them
-        # and rejoin their record below, by position.
-        edges_by_item = [_e for _d, _m, _e in items]
-        items = [(_d, _m) for _d, _m, _e in items]
-        # The combined columns this batch stores as row lists. Passed only
-        # when there are some, so a save that combined nothing makes exactly
-        # the call it always made (any save_batch stand-in keeps working).
-        _row_lists = (
-            [c for c in row_list_columns if c not in output_names]
-            if save_path == "flatten"
-            else [c for c in row_list_columns if c == output_names[output_idx]]
-        )
-        _row_list_kw = {"row_list_columns": _row_lists} if _row_lists else {}
-
-        Log.info(
-            f"[batch_save] Saving {len(items)} record(s) for {_output_type_label(output_obj)} ({save_path} path)"
-        )
-
-        try:
-            save_t0 = time.perf_counter()
-
-            # Use save_batch for efficiency
-            if db is not None:
-                record_ids = db.save_batch(
-                    type(output_obj)
-                    if not isinstance(output_obj, type)
-                    else output_obj,
-                    items,
-                    profile=False,
-                    **_row_list_kw,
+            if len(items) == 0:
+                continue
+            if save_failures:
+                # The transaction is doomed (and DuckDB has aborted it if the
+                # failure was SQL), so a later output's save could only fail
+                # with "transaction aborted" or be rolled back.
+                Log.warn(
+                    f"[batch_save] {_output_type_label(output_obj)}: not attempted — "
+                    f"an earlier output failed and this call's save rolls back"
                 )
-            else:
-                from .database import get_database
+                continue
 
-                _db = get_database()
-                record_ids = _db.save_batch(
-                    type(output_obj)
-                    if not isinstance(output_obj, type)
-                    else output_obj,
-                    items,
-                    profile=False,
-                    **_row_list_kw,
-                )
-
-            save_elapsed = time.perf_counter() - save_t0
-            # save_batch returns None in the slot of any record it skipped
-            # (schema-incompatible); count only the records actually persisted.
-            _n_saved = sum(1 for _r in record_ids if isinstance(_r, str))
-            _n_skipped = len(items) - _n_saved
-            total_saved += _n_saved
-            if _n_skipped:
-                _skip_msg = (
-                    f"[batch_save] {_output_type_label(output_obj)}: {_n_skipped} of "
-                    f"{len(items)} record(s) SKIPPED (schema-incompatible, e.g. "
-                    f"empty/missing-key results); the rest were saved. See the "
-                    f"per-record SKIPPED warning(s) in the log for details."
-                )
-                Log.warn(_skip_msg)
-
-            # Collect for the bipartite provenance graph. output_idx is the
-            # output slot (output_num); items align with record_ids in order.
-            _out_cls = (
-                type(output_obj) if not isinstance(output_obj, type) else output_obj
+            # save_batch takes (data, meta) pairs; the typed edges ride beside them
+            # and rejoin their record below, by position.
+            edges_by_item = [_e for _d, _m, _e in items]
+            items = [(_d, _m) for _d, _m, _e in items]
+            # The combined columns this batch stores as row lists. Passed only
+            # when there are some, so a save that combined nothing makes exactly
+            # the call it always made (any save_batch stand-in keeps working).
+            _row_lists = (
+                [c for c in row_list_columns if c not in output_names]
+                if save_path == "flatten"
+                else [c for c in row_list_columns if c == output_names[output_idx]]
             )
-            _out_sv = getattr(_out_cls, "schema_version", 1)
-            for (_data, _meta), _edges_for, _rid in zip(
-                items, edges_by_item, record_ids, strict=False
-            ):
-                if isinstance(_rid, str):
-                    graph_records.append(
-                        _GraphRecord(
-                            _out_cls.__name__,
-                            _out_sv,
-                            output_idx,
-                            _rid,
-                            _meta,
-                            bindings=_edges_for,
-                            invocation_id=_meta.get("__invocation_id"),
-                        )
-                    )
-                    # Endpoint artifact stamping (D4, record mode): the one
-                    # point where the artifact path (in _data), the consumed
-                    # rids (in _meta), and the saved record_id all coexist.
-                    if endpoint_kind:
-                        _apath = _endpoint_artifact_path(endpoint_kind, _data)
-                        if _apath:
-                            from .artifact_stamp import stamp_artifact
-
-                            _blob = _build_stamp_blob(
-                                fn_name=fn_name,
-                                inputs_map=_stamp_inputs_from_edges(_edges_for),
-                                schema={
-                                    k: v
-                                    for k, v in _meta.items()
-                                    if k in schema_keys_set
-                                    and v is not None
-                                    and not str(k).startswith("__")
-                                },
-                                db=db,
-                                record_id=_rid,
-                            )
-                            stamp_artifact(_apath, _blob)
-
-            # Log summary (first few records)
-            for _i, ((data, meta), rid) in enumerate(
-                zip(items[:3], record_ids[:3], strict=False)
-            ):
-                meta_str = ", ".join(
-                    f"{k}={v}" for k, v in meta.items() if not k.startswith("__")
-                )
-                data_desc = _describe_save_data(data)
-                rid_short = rid[:12] if isinstance(rid, str) else str(rid)
-                suffix = " [flatten]" if save_path == "flatten" else ""
-                msg = f"[save] {meta_str}: {_output_type_label(output_obj)} -> record_id={rid_short} ({data_desc}){suffix}"
-                Log.info(msg)
-
-            if len(items) > 3:
-                Log.info(f"[save] ... and {len(items) - 3} more record(s)")
+            _row_list_kw = {"row_list_columns": _row_lists} if _row_lists else {}
 
             Log.info(
-                f"[batch_save] Completed {len(items)} save(s) for {_output_type_label(output_obj)} in {save_elapsed:.3f}s "
-                f"({len(items) / save_elapsed:.1f} records/s)"
+                f"[batch_save] Saving {len(items)} record(s) for {_output_type_label(output_obj)} ({save_path} path)"
             )
 
-        except Exception as e:
-            import traceback
-
-            Log.error(
-                f"[batch_save] Failed to save batch for "
-                f"{_output_type_label(output_obj)} ({len(items)} record(s)): "
-                f"{type(e).__name__}: {e}"
-            )
-            # Full traceback pinpoints the failing operation; the per-record
-            # cause (if it is one record) is best surfaced by the schema
-            # validation in save_batch, which skips bad records individually.
-            Log.error("[batch_save] traceback:\n" + traceback.format_exc())
-            # NOTE: these are the FIRST rows of the batch for context — NOT
-            # necessarily the row that raised. A batch insert fails atomically,
-            # so the offending record is not identifiable from the exception
-            # alone; rely on the SKIPPED warnings above to find bad records.
-            Log.error(
-                f"failed to save {_output_type_label(output_obj)}: {type(e).__name__}: {e}"
-            )
-            save_failures.append(
-                f"{_output_type_label(output_obj)}: {len(items)} record(s) not saved "
-                f"({type(e).__name__}: {e})"
-            )
-            save_causes.append(
-                _save_seam_error(e, fn_name, state, output_obj, items)
-            )
-            for data, meta in items[:3]:
-                meta_str = ", ".join(
-                    f"{k}={v}" for k, v in meta.items() if not k.startswith("__")
-                )
-                Log.error(
-                    f"[error] (first batch rows, not necessarily the "
-                    f"culprit) {meta_str}: {_output_type_label(output_obj)}"
-                )
-
-    _report_no_output_skips(no_output_reasons, batch_items, outputs, db)
-
-    # ===========================================================================
-    # PHASE 3: generates_file outputs — lineage-only save (graph + metadata, no
-    # data row), keyed ``generated:{invocation_id}``. Built entirely from each
-    # row's save_metadata bindings; the function's return value is discarded.
-    # ===========================================================================
-    if generated_items:
-        from datetime import datetime
-
-        from .provenance import insert_record_entity
-        from .provenance_save import invocation_identity
-
-        _db = db
-        if _db is None:
-            from .database import get_database
-
-            _db = get_database()
-        Log.info(
-            f"[batch_save] Saving {len(generated_items)} generates_file item(s) (lineage-only)"
-        )
-        for output_obj, output_idx, gen_meta, gen_edges in generated_items:
             try:
-                cls = output_obj if isinstance(output_obj, type) else type(output_obj)
-                out_name = cls.__name__
-                sv = getattr(cls, "schema_version", 1)
-                gen_inv_id = invocation_identity(gen_meta, gen_edges)
-                generated_id = f"generated:{gen_inv_id}"
-                schema_keys = {
-                    k: v for k, v in gen_meta.items() if k in schema_keys_set
-                }
-                schema_level = _db._infer_schema_level(schema_keys)
-                schema_id = (
-                    _db._duck._get_or_create_schema_id(schema_level, schema_keys)
-                    if schema_level is not None and schema_keys
-                    else 0
+                save_t0 = time.perf_counter()
+
+                record_ids = db.save_batch(
+                    type(output_obj) if not isinstance(output_obj, type) else output_obj,
+                    items,
+                    profile=False,
+                    **_row_list_kw,
                 )
-                ts = datetime.now().isoformat()
-                # The generated record's producing invocation (written by record_run
-                # in PHASE 4) carries the function identity, so the graph-based
-                # skip_computed gate finds it — no version_keys needed.
-                _db._save_record_event(
-                    record_id=generated_id,
-                    timestamp=ts,
-                )
-                insert_record_entity(
-                    _db._duck,
-                    record_id=generated_id,
-                    created_at=ts,
-                    type_name=out_name,
-                    schema_id=schema_id,
-                    content_hash=None,
-                    schema_version=sv,
-                )
-                graph_records.append(
-                    _GraphRecord(
-                        out_name,
-                        sv,
-                        output_idx,
-                        generated_id,
-                        gen_meta,
-                        bindings=gen_edges,
-                        invocation_id=gen_inv_id,
+
+                save_elapsed = time.perf_counter() - save_t0
+                # save_batch returns None in the slot of any record it skipped
+                # (schema-incompatible); count only the records actually persisted.
+                _n_saved = sum(1 for _r in record_ids if isinstance(_r, str))
+                _n_skipped = len(items) - _n_saved
+                total_saved += _n_saved
+                if _n_skipped:
+                    _skip_msg = (
+                        f"[batch_save] {_output_type_label(output_obj)}: {_n_skipped} of "
+                        f"{len(items)} record(s) SKIPPED (schema-incompatible, e.g. "
+                        f"empty/missing-key results); the rest were saved. See the "
+                        f"per-record SKIPPED warning(s) in the log for details."
                     )
+                    Log.warn(_skip_msg)
+
+                # Collect for the bipartite provenance graph. output_idx is the
+                # output slot (output_num); items align with record_ids in order.
+                _out_cls = (
+                    type(output_obj) if not isinstance(output_obj, type) else output_obj
                 )
-                total_saved += 1
-                meta_str = ", ".join(
-                    f"{k}={v}" for k, v in gen_meta.items() if not k.startswith("__")
-                )
+                _out_sv = getattr(_out_cls, "schema_version", 1)
+                for (_data, _meta), _edges_for, _rid in zip(
+                    items, edges_by_item, record_ids, strict=False
+                ):
+                    if isinstance(_rid, str):
+                        graph_records.append(
+                            _GraphRecord(
+                                _out_cls.__name__,
+                                _out_sv,
+                                output_idx,
+                                _rid,
+                                _meta,
+                                bindings=_edges_for,
+                                invocation_id=_meta.get("__invocation_id"),
+                            )
+                        )
+                        # Endpoint artifact stamping (D4, record mode): the one
+                        # point where the artifact path (in _data), the consumed
+                        # rids (in _meta), and the saved record_id all coexist.
+                        if endpoint_kind:
+                            _apath = _endpoint_artifact_path(endpoint_kind, _data)
+                            if _apath:
+                                from .artifact_stamp import stamp_artifact
+
+                                _blob = _build_stamp_blob(
+                                    fn_name=fn_name,
+                                    inputs_map=_stamp_inputs_from_edges(_edges_for),
+                                    schema={
+                                        k: v
+                                        for k, v in _meta.items()
+                                        if k in schema_keys_set
+                                        and v is not None
+                                        and not str(k).startswith("__")
+                                    },
+                                    db=db,
+                                    record_id=_rid,
+                                )
+                                stamp_artifact(_apath, _blob)
+
+                # Log summary (first few records)
+                for _i, ((data, meta), rid) in enumerate(
+                    zip(items[:3], record_ids[:3], strict=False)
+                ):
+                    meta_str = ", ".join(
+                        f"{k}={v}" for k, v in meta.items() if not k.startswith("__")
+                    )
+                    data_desc = _describe_save_data(data)
+                    rid_short = rid[:12] if isinstance(rid, str) else str(rid)
+                    suffix = " [flatten]" if save_path == "flatten" else ""
+                    msg = f"[save] {meta_str}: {_output_type_label(output_obj)} -> record_id={rid_short} ({data_desc}){suffix}"
+                    Log.info(msg)
+
+                if len(items) > 3:
+                    Log.info(f"[save] ... and {len(items) - 3} more record(s)")
+
                 Log.info(
-                    f"[save] {meta_str}: {out_name} -> {generated_id[:20]} [generates_file]"
+                    f"[batch_save] Completed {len(items)} save(s) for {_output_type_label(output_obj)} in {save_elapsed:.3f}s "
+                    f"({len(items) / save_elapsed:.1f} records/s)"
                 )
+
             except Exception as e:
+                import traceback
+
                 Log.error(
-                    f"[error] failed generates_file save for {_output_type_label(output_obj)}: {e}"
+                    f"[batch_save] Failed to save batch for "
+                    f"{_output_type_label(output_obj)} ({len(items)} record(s)): "
+                    f"{type(e).__name__}: {e}"
+                )
+                # Full traceback pinpoints the failing operation; the per-record
+                # cause (if it is one record) is best surfaced by the schema
+                # validation in save_batch, which skips bad records individually.
+                Log.error("[batch_save] traceback:\n" + traceback.format_exc())
+                # NOTE: these are the FIRST rows of the batch for context — NOT
+                # necessarily the row that raised. A batch insert fails atomically,
+                # so the offending record is not identifiable from the exception
+                # alone; rely on the SKIPPED warnings above to find bad records.
+                Log.error(
+                    f"failed to save {_output_type_label(output_obj)}: {type(e).__name__}: {e}"
                 )
                 save_failures.append(
-                    f"{_output_type_label(output_obj)} (generates_file): 1 item not saved "
+                    f"{_output_type_label(output_obj)}: {len(items)} record(s) not saved "
                     f"({type(e).__name__}: {e})"
                 )
                 save_causes.append(
-                    _save_seam_error(e, fn_name, state, output_obj, [])
+                    _save_seam_error(e, fn_name, state, output_obj, items)
                 )
-
-    # ===========================================================================
-    # PHASE 4: Write the bipartite provenance graph + append-only _run audit.
-    #
-    # Runs additively alongside the legacy _lineage writes above (Phase 3 of the
-    # lineage-simplification migration). Idempotent for the graph; a fresh _run
-    # row is appended per execution.
-    # ===========================================================================
-    if graph_records:
-        try:
-            from .intent import current_output_names as _current_output_names
-            from .provenance_save import record_run
-
-            active_db = db
-            if active_db is None:
-                from .database import get_database
-
-                active_db = get_database()
-            where_clause = config_keys.get("__where")
-            run_id = record_run(
-                active_db,
-                graph_records,
-                function_name=fn_name,
-                where_clause=where_clause,
-                glue_virtual=glue_virtual,
-                glue_chains=glue_chains,
-                parameter_names=state.parameter_names,
-                path_input_specs=state.path_input_specs,
-                output_types=[_output_type_label(o) for o in outputs],
-                # A MATLAB function's signature output names (the bridge's
-                # sentinel carries them), or a GUI run's declared Python output
-                # ports (scidb.intent.run_output_names); otherwise none.
-                output_params=getattr(fn, "output_params", None) or _current_output_names(),
-            )
-            Log.info(
-                f"[provenance] recorded run_id={run_id} for {len(graph_records)} "
-                f"record(s) of fn={fn_name}"
-            )
-        except Exception as e:
-            # Provenance graph is additive during migration — never fail the save.
-            Log.error(f"[provenance] record_run failed for fn={fn_name}: {e}")
-
-        # Capture the SOURCE behind this run's function_hash. Once per run, not
-        # per record: every record of a run shares one hash.
-        #
-        # Write-time is the only time this is possible. The moment the file is
-        # edited the old body is gone from disk, so a version whose source was
-        # not captured as it ran can never be recovered — lazy capture "on first
-        # edit" would miss the baseline version, which is precisely the one a
-        # comparison needs. See docs/claude/variant-selection.md §3.
-        try:
-            from .foreach_config import function_sources_for
-            from .provenance import insert_function_sources
-
-            stored_hash = config_keys.get("__fn_hash")
-            if fn is not None and stored_hash:
-                derived_hash, entry, units = function_sources_for(fn)
-                if not units:
-                    # A digest with no text: a MATLAB run whose .m text did
-                    # not reach the bridge (a hash override, or text that did
-                    # not re-hash to the digest — the bridge warns then).
-                    Log.debug(f"[provenance] no source captured for fn={fn_name}")
-                elif derived_hash != stored_hash:
-                    # Filing source under the wrong key would be worse than not
-                    # storing it: it reads as captured and returns the wrong
-                    # code. Refuse, and say so loudly enough to be findable.
-                    Log.warn(
-                        f"[provenance] source NOT captured for fn={fn_name}: "
-                        f"derived hash {derived_hash[:12]} != stored "
-                        f"{str(stored_hash)[:12]}; the two recipes have drifted"
+                for data, meta in items[:3]:
+                    meta_str = ", ".join(
+                        f"{k}={v}" for k, v in meta.items() if not k.startswith("__")
                     )
-                else:
-                    written = insert_function_sources(
-                        active_db._duck, stored_hash, units, entry_name=entry
+                    Log.error(
+                        f"[error] (first batch rows, not necessarily the "
+                        f"culprit) {meta_str}: {_output_type_label(output_obj)}"
+                    )
+
+        _report_no_output_skips(no_output_reasons, batch_items, outputs, db)
+
+        # ===========================================================================
+        # PHASE 3: generates_file outputs — lineage-only save (graph + metadata, no
+        # data row), keyed ``generated:{invocation_id}``. Built entirely from each
+        # row's save_metadata bindings; the function's return value is discarded.
+        # ===========================================================================
+        if generated_items and not save_failures:
+            from datetime import datetime
+
+            from .provenance import insert_record_entity
+            from .provenance_save import invocation_identity
+
+            Log.info(
+                f"[batch_save] Saving {len(generated_items)} generates_file item(s) (lineage-only)"
+            )
+            for output_obj, output_idx, gen_meta, gen_edges in generated_items:
+                try:
+                    cls = output_obj if isinstance(output_obj, type) else type(output_obj)
+                    out_name = cls.__name__
+                    sv = getattr(cls, "schema_version", 1)
+                    gen_inv_id = invocation_identity(gen_meta, gen_edges)
+                    generated_id = f"generated:{gen_inv_id}"
+                    schema_keys = {
+                        k: v for k, v in gen_meta.items() if k in schema_keys_set
+                    }
+                    schema_level = db._infer_schema_level(schema_keys)
+                    schema_id = (
+                        db._duck._get_or_create_schema_id(schema_level, schema_keys)
+                        if schema_level is not None and schema_keys
+                        else 0
+                    )
+                    ts = datetime.now().isoformat()
+                    # The generated record's producing invocation (written by record_run
+                    # in PHASE 4) carries the function identity, so the graph-based
+                    # skip_computed gate finds it — no version_keys needed.
+                    db._save_record_event(
+                        record_id=generated_id,
+                        timestamp=ts,
+                    )
+                    insert_record_entity(
+                        db._duck,
+                        record_id=generated_id,
+                        created_at=ts,
+                        type_name=out_name,
+                        schema_id=schema_id,
+                        content_hash=None,
+                        schema_version=sv,
+                    )
+                    graph_records.append(
+                        _GraphRecord(
+                            out_name,
+                            sv,
+                            output_idx,
+                            generated_id,
+                            gen_meta,
+                            bindings=gen_edges,
+                            invocation_id=gen_inv_id,
+                        )
+                    )
+                    total_saved += 1
+                    meta_str = ", ".join(
+                        f"{k}={v}" for k, v in gen_meta.items() if not k.startswith("__")
                     )
                     Log.info(
-                        f"[provenance] captured {written} source unit(s) for "
-                        f"fn={fn_name} @ {stored_hash[:12]}"
+                        f"[save] {meta_str}: {out_name} -> {generated_id[:20]} [generates_file]"
                     )
-        except Exception as e:
-            # Strictly best-effort: losing source costs traceability, losing the
-            # run costs the user's work.
-            Log.warn(f"[provenance] source capture failed for fn={fn_name}: {e}")
+                except Exception as e:
+                    Log.error(
+                        f"[error] failed generates_file save for {_output_type_label(output_obj)}: {e}"
+                    )
+                    save_failures.append(
+                        f"{_output_type_label(output_obj)} (generates_file): 1 item not saved "
+                        f"({type(e).__name__}: {e})"
+                    )
+                    save_causes.append(
+                        _save_seam_error(e, fn_name, state, output_obj, [])
+                    )
+
+        # ===========================================================================
+        # PHASE 4: Write the bipartite provenance graph + append-only _run audit.
+        #
+        # The graph is the only source of truth, so failing to write it fails the
+        # save. Idempotent for the graph; a fresh _run row is appended per execution.
+        # ===========================================================================
+        if save_failures:
+            Log.warn(
+                f"[provenance] {fn_name}: graph not written — an output failed, "
+                f"so this call's save rolls back"
+            )
+        elif graph_records:
+            try:
+                from .intent import current_output_names as _current_output_names
+                from .provenance_save import record_run
+
+                where_clause = config_keys.get("__where")
+                run_id = record_run(
+                    db,
+                    graph_records,
+                    function_name=fn_name,
+                    where_clause=where_clause,
+                    glue_virtual=glue_virtual,
+                    glue_chains=glue_chains,
+                    parameter_names=state.parameter_names,
+                    path_input_specs=state.path_input_specs,
+                    output_types=[_output_type_label(o) for o in outputs],
+                    # A MATLAB function's signature output names (the bridge's
+                    # sentinel carries them), or a GUI run's declared Python output
+                    # ports (scidb.intent.run_output_names); otherwise none.
+                    output_params=getattr(fn, "output_params", None) or _current_output_names(),
+                )
+                Log.info(
+                    f"[provenance] recorded run_id={run_id} for {len(graph_records)} "
+                    f"record(s) of fn={fn_name}"
+                )
+            except Exception as e:
+                # The graph is the only source of truth for where a record came
+                # from, so failing to write it fails the save.
+                Log.error(
+                    f"[provenance] record_run failed for fn={fn_name}: "
+                    f"{type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                save_failures.append(
+                    f"provenance graph not recorded: {type(e).__name__}: {e}"
+                )
+                save_causes.append(e)
+            else:
+                # A failed INSERT aborts the DuckDB transaction, so it cannot be
+                # skipped and the rest committed: it fails the save like any write.
+                try:
+                    _capture_function_source(db, fn, fn_name, config_keys.get("__fn_hash"))
+                except Exception as e:
+                    Log.error(
+                        f"[provenance] function source not recorded for fn={fn_name}: "
+                        f"{type(e).__name__}: {e}",
+                        exc_info=True,
+                    )
+                    save_failures.append(
+                        f"function source not recorded: {type(e).__name__}: {e}"
+                    )
+                    save_causes.append(e)
+
+        if save_failures:
+            # Raised INSIDE the transaction, so it rolls back everything this
+            # call wrote, the outputs that did save included (decision D9).
+            from .exceptions import OutputSaveError
+
+            Log.error(
+                f"[batch_save] {fn_name}: rolled back — nothing from this call was "
+                f"saved ({total_saved} record(s) discarded); the run fails: "
+                + "; ".join(save_failures)
+            )
+            raise OutputSaveError(fn_name, save_failures, 0, causes=save_causes)
 
     # ===========================================================================
     # Summary
@@ -6415,22 +6407,68 @@ def _save_results(
     if _journal is not None:
         _journal.count("saved", total_saved)
     Log.info(
-        f"[batch_save] Total: saved {total_saved} record(s) in {batch_total_elapsed:.3f}s "
+        f"[batch_save] {fn_name}: committed {total_saved} record(s) + graph in one "
+        f"transaction in {batch_total_elapsed:.3f}s "
         f"({total_saved / batch_total_elapsed:.1f} records/s)"
     )
-    if save_failures:
-        from .exceptions import OutputSaveError
-
-        Log.error(
-            f"[batch_save] {fn_name}: {len(save_failures)} output(s) NOT saved; "
-            f"the run fails: " + "; ".join(save_failures)
-        )
-        raise OutputSaveError(fn_name, save_failures, total_saved, causes=save_causes)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _capture_function_source(
+    db: "DatabaseManager", fn: Any, fn_name: str, stored_hash: "str | None"
+) -> None:
+    """Store the SOURCE behind this run's function_hash. Once per run, not per
+    record: every record of a run shares one hash.
+
+    Write-time is the only time this is possible. The moment the file is
+    edited the old body is gone from disk, so a version whose source was not
+    captured as it ran can never be recovered — lazy capture "on first edit"
+    would miss the baseline version, which is precisely the one a comparison
+    needs. See docs/claude/variant-selection.md §3.
+
+    Reading the source back is best-effort (logged, never raised): losing it
+    costs traceability, losing the run costs the user's work. Writing it is
+    not: it runs inside the call's save transaction, so a failed INSERT
+    raises and fails the save like any other write.
+    """
+    from .foreach_config import function_sources_for
+    from .provenance import insert_function_sources
+
+    if fn is None or not stored_hash:
+        return
+    try:
+        derived_hash, entry, units = function_sources_for(fn)
+    except Exception as e:
+        Log.warn(
+            f"[provenance] source capture failed for fn={fn_name}: "
+            f"{type(e).__name__}: {e}"
+        )
+        return
+    if not units:
+        # A digest with no text: a MATLAB run whose .m text did not reach the
+        # bridge (a hash override, or text that did not re-hash to the digest
+        # — the bridge warns then).
+        Log.debug(f"[provenance] no source captured for fn={fn_name}")
+        return
+    if derived_hash != stored_hash:
+        # Filing source under the wrong key would be worse than not storing
+        # it: it reads as captured and returns the wrong code. Refuse, and say
+        # so loudly enough to be findable.
+        Log.warn(
+            f"[provenance] source NOT captured for fn={fn_name}: derived hash "
+            f"{derived_hash[:12]} != stored {stored_hash[:12]}; the two recipes "
+            f"have drifted"
+        )
+        return
+    written = insert_function_sources(db._duck, stored_hash, units, entry_name=entry)
+    Log.info(
+        f"[provenance] captured {written} source unit(s) for fn={fn_name} @ "
+        f"{stored_hash[:12]}"
+    )
 
 
 def _report_no_output_skips(

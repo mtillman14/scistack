@@ -261,10 +261,13 @@ error, logged ERROR, and returned normally. On 2026-10-01 a run computed 420
 `GaitRiteSymmetry` results, saved 0 (the table had no `A_Idx_GR` column), and
 was reported `done`.
 
-Now `_save_results` records every output whose batch save (or generates_file
-save) fails. It finishes the other outputs and writes provenance for what did
-save, then raises `scidb.OutputSaveError`. The error names each failed output,
-how many records were lost, and the cause. Nothing on either path catches it:
+Now `_save_results` runs its writes (data, generates_file records, the
+provenance graph, the function source) in ONE transaction. When any of them
+fails it raises `scidb.OutputSaveError` inside that transaction, so nothing
+from the call is kept: not even the outputs that saved before the failure
+(decision D-2026-11-01-2). Outputs after the first failure are not attempted.
+The error names the failed output (or "provenance graph not recorded"), how
+many records were lost, and the cause. Nothing on either path catches it:
 - **Python:** `for_each` → `_for_each_save_resolved` → `_save_results`;
 - **MATLAB:** `+scidb/for_each.m` calls `bridge.for_each_save` outside any
   `try`. The Python error becomes a MATLAB error, and the generated script's
@@ -275,8 +278,11 @@ which log WARN "N of M record(s) SKIPPED") are not a failure: the rest of that
 output saved. With an EachOf (several Parameter values), a failed save stops
 the remaining alternatives.
 
-scistack.log: `[batch_save] <fn>: N output(s) NOT saved; the run fails: ...`.
-Tests: `scidb/tests/test_output_save_error.py`.
+scistack.log: `[batch_save] <fn>: rolled back — nothing from this call was saved
+(N record(s) discarded); the run fails: ...`. A clean save logs
+`[batch_save] <fn>: committed N record(s) + graph in one transaction`.
+Tests: `scidb/tests/test_output_save_error.py`,
+`scidb/tests/test_save_provenance_failure.py`.
 
 ---
 

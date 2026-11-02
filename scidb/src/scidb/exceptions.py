@@ -121,14 +121,16 @@ class OutputSaveError(SciStackError):
     The function ran, but its results did not reach the database. The save
     used to log ERROR and return normally, so a MATLAB run that computed 420
     results and saved none was reported "done" (scistack.log 2026-10-01,
-    GaitRiteSymmetry). Raised after every output has been attempted and
-    provenance has been written for what did save, so one failing output
-    neither hides nor blocks the others.
+    GaitRiteSymmetry). Raised inside the call's one save transaction, so
+    nothing from the call is kept: not the outputs that did save, not their
+    provenance graph (decision D9, all-or-nothing). ``saved`` is therefore 0.
 
-    ``failures`` holds one line per failed output: its name, how many records
-    were lost, and the cause. ``causes`` holds the exceptions themselves, each
-    already passed through the save seam (``scifor.failures.as_user_value_error``),
-    so each is an ``ActionableError``; who can fix this error is read from them.
+    ``failures`` holds one line per failed write: an output's name, how many
+    records were lost and the cause, or the provenance graph / function source
+    that could not be recorded. ``causes`` holds the exceptions themselves. An
+    output's cause has passed through the save seam
+    (``scifor.failures.as_user_value_error``) and is an ``ActionableError``; a
+    provenance cause is not, and reads as ``internal`` (see :attr:`blame`).
     """
 
     def __init__(
@@ -149,9 +151,15 @@ class OutputSaveError(SciStackError):
 
     @property
     def blame(self) -> str:  # type: ignore[override]
-        """``user_value`` if any output failed on its values, else ``setup``."""
+        """``user_value`` if any output failed on its values; ``internal`` if a
+        cause is not an ``ActionableError`` (SciStack's own write broke, e.g.
+        the provenance graph); else ``setup``."""
         blames = {getattr(c, "blame", "setup") for c in self.causes}
-        return "user_value" if "user_value" in blames else "setup"
+        if "user_value" in blames:
+            return "user_value"
+        if any(not isinstance(c, ActionableError) for c in self.causes):
+            return "internal"
+        return "setup"
 
     @property
     def probable(self) -> bool:  # type: ignore[override]

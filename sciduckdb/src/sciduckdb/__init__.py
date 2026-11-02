@@ -2,6 +2,7 @@
 
 from .sciduckdb import (
     SciDuck,
+    TransactionRolledBackError,
     bulk_df_to_storage_rows,
     column_type_change,
     dataframe_to_storage_rows,
@@ -45,6 +46,7 @@ from .row_lists import (
 
 __all__ = [
     "SciDuck",
+    "TransactionRolledBackError",
     "schema_keys_from_db",
     "array_from_storage",
     "count_null_list_elements",

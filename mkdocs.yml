@@ -209,4 +209,5 @@ plugins:
 # loaded by `hooks:` above): kept in the repo but excluded from the published site.
 exclude_docs: |
   claude/
+  design-review/
   hooks/

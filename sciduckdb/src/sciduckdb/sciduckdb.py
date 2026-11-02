@@ -16,6 +16,7 @@ import json
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,16 @@ from .row_lists import (
 )
 
 logger = logging.getLogger("sciduck")
+
+
+class TransactionRolledBackError(RuntimeError):
+    """The outermost ``_commit`` found that an inner level had rolled back.
+
+    DuckDB has no savepoints, so a rollback at any nesting level dooms the
+    whole transaction: the outermost level rolls back instead of committing,
+    and raises this so a caller that swallowed the inner failure cannot
+    report a save that never happened.
+    """
 
 # A lock wait at least this long is logged by _log_contended; shorter,
 # uncontended statements are not (they flooded the debug log and the GUI output).
@@ -1115,6 +1126,16 @@ class SciDuck:
         # lets us log that interleaving instead of just seeing the downstream
         # "Current transaction is aborted" failure with no context.
         self._tx_owner: int | None = None
+        # Nesting depth of the open transaction (0 = none). Only the outermost
+        # _begin/_commit/_rollback issues SQL: DuckDB cannot nest BEGIN, and a
+        # for_each save wraps save_batch + record_run (each of which opens its
+        # own level) in one transaction. ``_tx_doomed``: an inner level rolled
+        # back, so the outermost must roll back too (no savepoints in DuckDB).
+        self._tx_depth: int = 0
+        self._tx_doomed: bool = False
+        # Called (no arguments) after the outermost ROLLBACK, so a layer above
+        # can drop Python-side caches filled by statements that never landed.
+        self._rollback_listeners: list = []
         logger.debug(
             "DuckDB lock ACQUIRED (read_only=%s): %s", self.read_only, self.db_path
         )
@@ -1371,11 +1392,63 @@ class SciDuck:
                 self._unregister_frame("_bulk_update_df")
         return len(rows)
 
+    def add_rollback_listener(self, callback) -> None:
+        """Call ``callback()`` after every outermost ROLLBACK on this
+        connection. A failing listener is logged, never raised."""
+        self._rollback_listeners.append(callback)
+
+    def _reset_tx_state(self) -> None:
+        self._tx_owner = None
+        self._tx_depth = 0
+        self._tx_doomed = False
+
+    def _notify_rollback(self) -> None:
+        for callback in list(self._rollback_listeners):
+            try:
+                callback()
+            except Exception:
+                logger.exception("rollback listener %r failed", callback)
+
+    @contextmanager
+    def transaction(self, label: str = ""):
+        """One transaction around the block; re-entrant on the owning thread.
+
+        Only the outermost level issues BEGIN/COMMIT/ROLLBACK. An exception
+        at any level rolls back the outermost (DuckDB has no savepoints); an
+        inner level that rolled back while the outer one finishes normally
+        makes the outer commit raise :class:`TransactionRolledBackError`.
+        """
+        self._begin()
+        depth = self._tx_depth
+        logger.debug("transaction(%s) BEGIN depth=%d", label, depth)
+        try:
+            yield self
+        except BaseException as exc:
+            logger.debug(
+                "transaction(%s) ROLLBACK depth=%d: %s: %s",
+                label, depth, type(exc).__name__, exc,
+            )
+            try:
+                self._rollback()
+            except Exception:
+                logger.exception("transaction(%s) ROLLBACK failed", label)
+            raise
+        else:
+            self._commit()
+            logger.debug("transaction(%s) COMMIT depth=%d", label, depth)
+
     def _begin(self):
         thread = threading.get_ident()
         wait_start = time.monotonic()
         with self._lock:
             waited = time.monotonic() - wait_start
+            if self._tx_depth > 0 and self._tx_owner == thread:
+                self._tx_depth += 1
+                logger.debug(
+                    "_begin thread=%d nested depth=%d (no SQL)",
+                    thread, self._tx_depth,
+                )
+                return
             if self._tx_owner is not None and self._tx_owner != thread:
                 logger.warning(
                     "_begin thread=%d waited=%.4fs OVERLAPPING existing "
@@ -1388,12 +1461,16 @@ class SciDuck:
                 logger.debug("_begin thread=%d waited=%.4fs", thread, waited)
             self.con.execute("BEGIN TRANSACTION")
             self._tx_owner = thread
+            self._tx_depth = 1
+            self._tx_doomed = False
 
     def _commit(self):
         thread = threading.get_ident()
+        rolled_back = False
         with self._lock:
             logger.debug(
-                "_commit thread=%d tx_owner=%s", thread, self._tx_owner,
+                "_commit thread=%d tx_owner=%s depth=%d doomed=%s",
+                thread, self._tx_owner, self._tx_depth, self._tx_doomed,
             )
             if self._tx_owner is not None and self._tx_owner != thread:
                 logger.warning(
@@ -1402,26 +1479,60 @@ class SciDuck:
                     "interleaved into it",
                     thread, self._tx_owner,
                 )
-            try:
-                self.con.execute("COMMIT")
-            except Exception:
-                logger.exception(
-                    "_commit FAILED thread=%d tx_owner=%s", thread, self._tx_owner,
+            if self._tx_depth > 1:
+                self._tx_depth -= 1
+                return
+            if self._tx_doomed:
+                logger.warning(
+                    "_commit thread=%d: an inner level rolled back; rolling "
+                    "back the whole transaction instead of committing",
+                    thread,
                 )
-                raise
-            finally:
-                self._tx_owner = None
+                try:
+                    self.con.execute("ROLLBACK")
+                finally:
+                    self._reset_tx_state()
+                rolled_back = True
+            else:
+                try:
+                    self.con.execute("COMMIT")
+                except Exception:
+                    logger.exception(
+                        "_commit FAILED thread=%d tx_owner=%s",
+                        thread, self._tx_owner,
+                    )
+                    raise
+                finally:
+                    self._reset_tx_state()
+        if rolled_back:
+            self._notify_rollback()
+            raise TransactionRolledBackError(
+                "an inner level of this transaction rolled back; nothing was committed"
+            )
 
     def _rollback(self):
         thread = threading.get_ident()
         with self._lock:
             logger.debug(
-                "_rollback thread=%d tx_owner=%s", thread, self._tx_owner,
+                "_rollback thread=%d tx_owner=%s depth=%d",
+                thread, self._tx_owner, self._tx_depth,
             )
+            if self._tx_depth > 1:
+                # No savepoints: mark the transaction doomed; the outermost
+                # level issues the ROLLBACK.
+                self._tx_depth -= 1
+                self._tx_doomed = True
+                logger.debug(
+                    "_rollback thread=%d inner level; outermost (depth=1) "
+                    "will roll back",
+                    thread,
+                )
+                return
             try:
                 self.con.execute("ROLLBACK")
             finally:
-                self._tx_owner = None
+                self._reset_tx_state()
+        self._notify_rollback()
 
     def _fetchall(self, sql: str, params=None) -> list:
         thread = threading.get_ident()

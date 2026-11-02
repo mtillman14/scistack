@@ -1324,6 +1324,7 @@ class DatabaseManager:
                     dataset_schema=dataset_schema_keys,
                     read_only=self.read_only,
                 )
+                self._duck.add_rollback_listener(self._forget_uncommitted_caches)
 
             # Create metadata tables for type registration (in DuckDB).
             # Skipped on read-only connections: the tables must already exist,
@@ -2731,8 +2732,9 @@ class DatabaseManager:
 
         # --- Batch inserts ---
         t6 = time.perf_counter()
-        self._duck._begin()
-        try:
+        # Re-entrant: inside a for_each save this joins the call's one
+        # transaction, so the data rows commit with their provenance graph.
+        with self._duck.transaction(f"save_batch({type_name})"):
             t6a = time.perf_counter()
             if _use_arrow and _arrow_record_ids:
                 # PyArrow fast path: numpy arrays → Arrow buffers → DuckDB (no Python list conversion)
@@ -2836,16 +2838,8 @@ class DatabaseManager:
                 [type_name, effective_level, json.dumps(dtype_meta), ""],
             )
             timings["variables_upsert"] = time.perf_counter() - t6d
-
             t6e = time.perf_counter()
-            self._duck._commit()
-            timings["commit"] = time.perf_counter() - t6e
-        except Exception:
-            try:
-                self._duck._execute("ROLLBACK")
-            except Exception:
-                pass
-            raise
+        timings["commit"] = time.perf_counter() - t6e
 
         timings["batch_inserts"] = time.perf_counter() - t6
         timings["total"] = time.perf_counter() - t0
@@ -5824,6 +5818,23 @@ class DatabaseManager:
         """Drop the per-key numeric/string cache — called after any save."""
         self.__dict__.pop("_schema_key_numeric_cache", None)
 
+    def transaction(self, label: str = ""):
+        """One transaction around the block (re-entrant; see
+        :meth:`sciduckdb.SciDuck.transaction`). Saves inside it commit
+        together or not at all."""
+        return self._duck.transaction(label)
+
+    def _forget_uncommitted_caches(self) -> None:
+        """Rollback listener: drop caches that statements rolled back may
+        have filled (a type registered inside the transaction, schema-key
+        kinds read from rows that are now gone). Both refill from the DB."""
+        Log.debug(
+            f"[transaction] rolled back; forgetting {len(self._registered_types)} "
+            f"registered-type cache entr(ies) and schema-key kinds"
+        )
+        self._registered_types.clear()
+        self._forget_schema_key_kinds()
+
     def distinct_schema_values(self, key: str) -> list:
         """Return all distinct values stored for a schema key.
 
@@ -5975,6 +5986,7 @@ class DatabaseManager:
                 dataset_schema=self.dataset_schema_keys,
                 read_only=getattr(self, "read_only", False),
             )
+            self._duck.add_rollback_listener(self._forget_uncommitted_caches)
         else:
             self._duck.reopen()
         self._closed = False

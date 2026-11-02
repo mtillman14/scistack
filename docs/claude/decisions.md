@@ -8,6 +8,33 @@ by adding a new entry that supersedes it, not by editing the old one.
 
 ---
 
+## D-2026-11-01-2 — A for_each save is atomic: data and graph commit together
+
+**Context.** `_save_results` saved each output in its own transaction, then
+wrote the provenance graph (`record_run`) in another one, inside
+`except Exception: Log.error(...)`, a leftover of the lineage migration
+(finished 2026-06). A failed graph write left records with no producing
+invocation, and the run reported success (design review 04b, W1).
+**Decision (user, D9 of `.claude/plan-tidy-00-index.md`).** All-or-nothing.
+Phases 2–4 of `_save_results` (data, generates_file records, graph, function
+source) run in ONE `DatabaseManager.transaction(...)`. Any failure raises
+`OutputSaveError` inside it, so the whole call rolls back. Its `saved` is 0,
+and its `blame` is `internal` when a cause is not an `ActionableError`.
+`SciDuck.transaction` is re-entrant on the owning thread. Only the outermost
+level issues SQL. DuckDB has no savepoints, so an inner rollback dooms the
+outer one, and a swallowed inner failure makes the outer commit raise
+`TransactionRolledBackError`. A rollback listener drops `DatabaseManager`'s
+`_registered_types` and schema-key caches.
+**Consequences.** One failed output discards the outputs that did save, and
+later outputs are not attempted (their statements would hit an aborted
+transaction). Each EachOf alternative is its own call, so earlier
+alternatives stay committed. `_begin`/`_commit`/`_rollback` nest too, so
+older writers join an outer transaction safely. **Doc:**
+[matlab-run-completion.md](matlab-run-completion.md) ("A failed save fails
+the run"); tests `sciduckdb/tests/test_transaction.py`,
+`scidb/tests/test_save_provenance_failure.py`.
+
+
 ## D-2026-10-22-1 — The canvas is a stored document; history annotates, never draws
 
 **Context.** Settings (intent-and-fact) and node ids (node-identity) had

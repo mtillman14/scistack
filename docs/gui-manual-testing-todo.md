@@ -11,6 +11,36 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzz. A failed output save keeps nothing from the run — added 2026-11-01
+
+**What changed:** a run's writes now go into the database together or not at
+all: every output's records, their provenance (where each one came from) and
+the function's source. Before, when one output failed, the other outputs were
+kept, and when provenance failed to write, the run reported success. Now
+either failure fails the run and saves nothing from it.
+Decision: `docs/claude/decisions.md` D-2026-11-01-2.
+
+Backend steps:
+1. Restart the GUI so the Python change loads (no frontend change).
+2. Use a two-output function whose SECOND output is set up to fail. The
+   easiest way is the duplicate-location case from item 0zzzzzzp: make output
+   2 a variable fed two different rows for one subject. Output 1 should save
+   normally.
+3. After the run, `scistack-debug.log` should contain
+   `[batch_save] <fn>: rolled back — nothing from this call was saved (N
+   record(s) discarded); the run fails: ...`.
+4. A clean re-run should log
+   `[batch_save] <fn>: committed N record(s) + graph in one transaction`.
+
+Frontend steps and what you should see:
+1. Click **▶ Run** on the function node. The node turns red, and the failure
+   popup (or the failures panel) names output 2.
+2. Output 1's variable node gains **no** new records: open its Data inventory
+   and check that its counts are unchanged from before the run. Before this
+   change, output 1 would have saved.
+3. Fix the data and re-run. Both outputs save, and both nodes turn green.
+
+
 ## 0zzzzzzu. Text (categorical) measures in Plot Studio — added 2026-11-01
 
 What changed: a variable holding text (or True/False) is plottable. It opens

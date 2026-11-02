@@ -139,7 +139,11 @@ def test_a_python_save_error_becomes_a_run_level_group_with_its_remedy():
     assert back["remedy"]["items"] == [
         {"location": "subject=S1", "count": 2, "differing_columns": ["age"]}
     ]
-    assert [s["action"] for s in back["remedy"]["steps"]] == [None, "reveal_function"]
+    assert [s["action"] for s in back["remedy"]["steps"]] == [
+        None,
+        "reveal_function",
+        "combine_rows",
+    ]
 
 
 def test_run_failure_group_json_ignores_non_exceptions():

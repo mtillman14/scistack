@@ -142,8 +142,7 @@ def _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, re
     order = sorted(records, key=lambda r: (saved_at[r[0]], r[0]))
     stamp = {r[1]: (start + timedelta(microseconds=i)).isoformat() for i, r in enumerate(order)}
     runs = {name: generate_run_id() for name in sorted(set(new_inv_of.values()))}
-    duck._begin()
-    try:
+    with duck.transaction("rename_functions"):
         for old_rid, new_rid, type_name, *_ in records:
             _copy_data_rows(duck, type_name, old_rid, new_rid)
         insert_record_entities(
@@ -185,13 +184,6 @@ def _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, re
                 "ON CONFLICT DO NOTHING",
                 [runs[name], inv],
             )
-        duck._commit()
-    except Exception:
-        try:
-            duck._execute("ROLLBACK")
-        except Exception:
-            pass
-        raise
     report.run_id = ", ".join(runs.values())
     logger.info(
         "[rename_functions] wrote %d invocation(s), %d record(s), %d input edge(s) "
