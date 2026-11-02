@@ -25,7 +25,7 @@ Design: ``docs/claude/statistics-design.md``; plan ``.claude/plan-statistics.md`
 
 from __future__ import annotations
 
-from .codegen import NotExportable, generate_stats_function, why_not_exportable
+from .codegen import NotExportable, embedded_spec, generate_stats_function, why_not_exportable
 from .catalog import TESTS, available_tests, select_tests, why_unavailable
 from .describe import CELL_LAYOUTS, STATISTICS, DescriptivesTable, describe_table
 from .design import Design, Factor, Tiers, comparison_tiers, derive_design
@@ -38,7 +38,7 @@ from .run import Comparison, StatsReport, run
 from .seed import SeedError, Seeded, seed_from_plot
 from .spec import GUIDE_STEPS, DV, Analysis, DescriptiveSpec, FormatSpec, GuideState, StatsSpec, StatsSpecError
 from .explain import CONCEPTS, Concept, StepGuide, build_steps
-from .guide import GuideFacts, guide, guide_facts
+from .guide import GuideFacts, guide, guide_facts, plot_guide
 from .tables import (ANALYSIS_KIND, UNIT, AnalysisFrame, AnalysisFrameError, CovariateValues, analysis_frame,
                      load_covariates, load_tables)
 
@@ -52,10 +52,10 @@ __all__ = [
     "use_engine", "why_unavailable",
     "FORMATS", "FormatSpec", "Grid", "Labels", "apa_sentence", "comparisons_grid", "descriptives_grids",
     "export_comparisons", "export_descriptives", "labels_for", "omnibus_grid", "render", "sweep_grid",
-    "NotExportable", "generate_stats_function", "why_not_exportable",
+    "NotExportable", "embedded_spec", "generate_stats_function", "why_not_exportable",
     "CovariateValues", "ModelCheck", "apply_to_design", "default_formula", "for_frame", "load_covariates",
     "CONCEPTS", "Concept", "GUIDE_STEPS", "GuideFacts", "GuideState", "StepGuide", "build_steps", "guide",
-    "guide_facts",
+    "guide_facts", "plot_guide",
 ]
 
 try:

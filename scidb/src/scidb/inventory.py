@@ -55,6 +55,8 @@ from typing import TYPE_CHECKING
 from .log import Log
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from .database import DatabaseManager
 
 PRESENT = "present"
@@ -460,6 +462,52 @@ def _all_of(levels: list[str]) -> str:
     """A collapsed cell: :data:`ALL_LEVELS`, or the value itself when the key
     has only one level in the stratum (nothing was folded, so say which)."""
     return levels[0] if len(levels) == 1 else ALL_LEVELS
+
+
+def absent_locations(
+    db: DatabaseManager,
+    keys: list[str],
+    present: "Iterable[tuple]",
+) -> list[tuple]:
+    """Locations the dataset HAS at these schema keys where a variable has no
+    record: the "No record" reason of a plot's "Not plotted" list
+    (`scistackplot.omissions`; user, 2026-11-01).
+
+    A location exists when some ``_schema`` row projects onto it with every
+    one of ``keys`` non-NULL — another variable saved there, at that depth or
+    deeper (`DatabaseManager.distinct_schema_combinations`). Not the Cartesian
+    product: a combination nobody ever saved at is not "missing a record", it
+    is not a place. Excluded locations (`scidb.exclusions.exclusion_status`)
+    are left out — an exclusion is the user's choice, never an omission.
+    ``present`` holds the variable's own locations (values as text). Returned
+    sorted, values as stored text.
+    """
+    from .exclusions import exclusion_status
+
+    t0 = time.perf_counter()
+    keys = list(keys)
+    if not keys:
+        return []
+    have = {tuple(str(v) for v in row) for row in present}
+    existing = [tuple(str(v) for v in row) for row in db.distinct_schema_combinations(keys)]
+    candidates = sorted(row for row in set(existing) if row not in have)
+    if candidates:
+        order = list(db.dataset_schema_keys)
+        excluded = exclusion_status([dict(zip(keys, row)) for row in candidates], order, db)
+        absent = [row for row, out in zip(candidates, excluded) if not out]
+    else:
+        excluded, absent = [], []
+    Log.info(
+        "absent_locations %s: %d location(s) exist, %d with a record, %d without "
+        "(%d excluded, left out) in %.3fs",
+        keys,
+        len(set(existing)),
+        len(set(existing)) - len(candidates),
+        len(absent),
+        sum(excluded),
+        time.perf_counter() - t0,
+    )
+    return absent
 
 
 def write_inventory_csv(

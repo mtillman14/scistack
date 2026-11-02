@@ -173,7 +173,8 @@ def test_every_role_has_a_label_and_a_hint_for_every_shape():
 def test_the_labels_read_as_a_family():
     assert role_label(Role.ITERATE, Shape.SCALAR) == "Separate figures"
     assert role_label(Role.FACET, Shape.SCALAR) == "Separate panels"
-    assert role_label(Role.COLLAPSE, Shape.SCALAR).startswith("Collapse")
+    assert role_label(Role.COLLAPSE, Shape.SCALAR) == "Average over"
+    assert role_label(Role.GROUP, Shape.SCALAR) == "Compare"
 
 
 def test_the_collapse_hint_names_the_sample():

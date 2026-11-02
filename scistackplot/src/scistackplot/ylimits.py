@@ -114,7 +114,7 @@ class ExtentMode:
         cls, spec: PlotSpec, roles: dict[str, Role], table: "LongTable | None" = None
     ) -> "ExtentMode":
         from .categorical import categorical_mode
-        from .roles import has_sample, overlay_unavailable
+        from .roles import has_sample, overlay_is_rug, overlay_unavailable
         from .stacking import stacks
 
         categorical = categorical_mode(spec, table) if table is not None else None
@@ -138,6 +138,8 @@ class ExtentMode:
                 tuple(spec.show_sample)
                 if spec.show_sample
                 and overlay_unavailable(spec, roles, Shape.SCALAR, categorical) is None
+                # A rug lies along x (`roles.overlay_is_rug`): no y extent.
+                and not overlay_is_rug(spec)
                 else ()
             ),
             compare=(

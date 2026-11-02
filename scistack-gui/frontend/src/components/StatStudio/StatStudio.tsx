@@ -6,25 +6,43 @@
  * nothing and knows no statistics vocabulary. Spec edits are pure helpers in
  * `statsSpec.ts`.
  *
- * The plot link (S11): with a linked saved plot, the banner lists how the two
- * designs differ (`stats_divergence`, from `scistackplot.design`), and
- * **Sync to PlotStudio** copies this design onto the figure. It saves a new
- * version of the saved plot and tells an open Plot Studio tab. A Plot Studio
- * "Sync to StatStudio" arrives here as a `plot_design_sync` notification.
+ * The same studio as Plot Studio (docs/claude/studio-unification.md):
+ *
+ * - **The same front half.** The rail's Data and Structure groups ARE Plot
+ *   Studio's, mounted in design-only mode on this table's design carrier
+ *   (`PlotStudio design={…}`). Only the output differs: Measures where the
+ *   figure has Chart, then Statistics (descriptives and tests) and Format.
+ * - **The same words.** Role names come from the backend
+ *   (`scistackplot.role_labels`, table surface); nothing here hardcodes one.
+ * - **The same shell.** Rail groups (`Studio/RailGroup`), the figure-style
+ *   toolbar (Format, Save to file, Copy, Export code, Add to pipeline) and
+ *   the right rail (Saved tables, Presets: Plot Studio's own components).
+ * - **One shared design** with a linked saved plot (`scistackplotdb.designs`):
+ *   a design edit here goes to `design_update` and is broadcast as
+ *   `design_changed`; the figure's edits arrive the same way. There is no
+ *   divergence banner and no Sync button, because there is one design.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { addNotificationHandler, callBackend, isVSCodeMode } from '../../api'
+import PlotStudio from '../PlotStudio/PlotStudio'
+import PresetsSection, { type PresetSaveResult } from '../PlotStudio/PresetsSection'
 import { plotThemeVars } from '../PlotStudio/plotTheme'
+import type { PresetInfo } from '../PlotStudio/presets'
+import SavedPlotsRail, { type SaveResult } from '../PlotStudio/SavedPlotsRail'
+import type { SavedPlotInfo } from '../PlotStudio/savedPlots'
 import { usePlotTheme } from '../PlotStudio/usePlotTheme'
+import { Group, Section } from '../Studio/RailGroup'
+import { DESIGN_CHANGED, designChangeFor, newDesignOrigin } from '../Studio/sharedDesign'
+import { reportStudioOpen } from '../Studio/studioOpen'
 import GridTable from './GridTable'
 import GuidedStudio from './Guided/GuidedStudio'
 import { clampToBlocked, currentStep, type GuidePayload } from './Guided/guideSteps'
 import ModelFormulaDialog from './ModelFormulaDialog'
 import { pendingActions, recommendedFor, type StratumSummary } from './statsActions'
 import {
-  addAnalysis, addDV, computeKey, guideState, moveGroup, removeAnalysis, removeDV, setCell, setFormatting,
-  setGuide, setOverlay, setOverride, setRole, targets, toggleStatistic, updateAnalysis,
+  addAnalysis, addDV, computeKey, guideState, removeAnalysis, removeDV, setCell, setFormatting,
+  setGuide, setOverlay, setOverride, targets, toggleStatistic, updateAnalysis,
   type Analysis, type Grid, type StatsSpec,
 } from './statsSpec'
 
@@ -35,6 +53,10 @@ export interface StatViewConfig {
   statsId?: string | null
   seed?: Record<string, unknown> | null
   linkedPlot?: string | null
+  /** Which way in (Studio/studioOpen.ts), logged once. */
+  from?: string | null
+  /** A stat_ node to open on: the spec its generated function embeds. */
+  statNode?: string | null
 }
 
 interface Catalog {
@@ -87,80 +109,125 @@ interface ComputeResult {
   catalog: Catalog
 }
 
-interface Difference { path: string; label: string; a: string; b: string }
+/** A saved table as the backend lists it (`SavedStatsInfo.to_dict`). */
+interface SavedStatsInfo { stats_id: string; name: string; version: number; saved_at: string; hidden: boolean; linked_plot?: string | null }
+interface StatsPresetInfo { preset_id: string; name: string; version: number; saved_at: string; hidden: boolean }
 
-const ROLE_CHOICES: { id: string; label: string }[] = [
-  { id: 'group', label: 'Group (columns)' },
-  { id: 'iterate', label: 'Separate tables' },
-  { id: 'facet', label: 'Separate sections' },
-  { id: 'collapse', label: 'Collapse (average)' },
-]
+interface OpenReply {
+  ok: boolean
+  error?: string
+  spec: StatsSpec
+  notes: { message: string }[]
+  seed_notes: string[]
+  info: SavedStatsInfo | null
+  role_labels?: Record<string, string>
+  design_linked?: boolean
+}
+
 const FORMATS = ['html', 'md', 'csv', 'latex', 'txt', 'json']
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const [open, setOpen] = useState(true)
-  return (
-    <div style={styles.railSection}>
-      <button type="button" style={styles.railHeader} onClick={() => setOpen(!open)}>
-        {open ? '▾' : '▸'} {title}
-      </button>
-      {open && <div style={styles.railBody}>{children}</div>}
-    </div>
-  )
+/** The saved-work rail is Plot Studio's; it lists items in its own shape. */
+const asRailItem = (s: SavedStatsInfo): SavedPlotInfo => ({
+  plot_id: s.stats_id, variable: '', name: s.name, version: s.version, saved_at: s.saved_at, hidden: s.hidden,
+})
+const asPresetItem = (p: StatsPresetInfo): PresetInfo => ({ ...p, made_on: null, made_on_shape: null })
+
+const SAVED_WORDS = {
+  noun: 'table',
+  title: 'Saved tables',
+  empty: 'No saved tables yet. Save one to reopen it later exactly as it is now.',
+}
+const PRESET_WORDS = {
+  noun: 'table',
+  hint: "This table's settings without its measures or design. Apply one to give another table the same treatment.",
+}
+
+// Which of StatStudio's own rail groups are open, per viewer. Storage may be
+// missing or throw (private window, preview); the defaults always render.
+type StatGroupId = 'measures' | 'statistics' | 'format'
+const OPEN_GROUPS_KEY = 'scistack.statStudio.openGroups'
+const DEFAULT_OPEN: Record<StatGroupId, boolean> = { measures: true, statistics: true, format: false }
+function readOpenGroups(): Record<StatGroupId, boolean> {
+  try {
+    const raw = window.localStorage.getItem(OPEN_GROUPS_KEY)
+    return raw ? { ...DEFAULT_OPEN, ...(JSON.parse(raw) as Partial<Record<StatGroupId, boolean>>) } : DEFAULT_OPEN
+  } catch {
+    return DEFAULT_OPEN
+  }
 }
 
 export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   const theme = usePlotTheme()
   const csvPath = initial.csvPath ?? undefined
   const [spec, setSpec] = useState<StatsSpec | null>(null)
-  const [savedInfo, setSavedInfo] = useState<{ stats_id: string; name: string; version: number } | null>(null)
+  const [savedInfo, setSavedInfo] = useState<SavedStatsInfo | null>(null)
   const [openNotes, setOpenNotes] = useState<string[]>([])
   const [result, setResult] = useState<ComputeResult | null>(null)
   const [guidePayload, setGuidePayload] = useState<GuidePayload | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [tab, setTab] = useState<'descriptives' | 'comparisons'>('descriptives')
-  const [factors, setFactors] = useState<{ name: string; is_field?: boolean; levels: unknown[] }[]>([])
   const [variables, setVariables] = useState<{ name: string; columns?: string[] }[]>([])
-  const [linkedPlot, setLinkedPlot] = useState<{ plot_id: string; variable: string; name: string; spec: Record<string, unknown>; view: unknown } | null>(null)
-  const [differences, setDifferences] = useState<Difference[]>([])
+  const [roleLabels, setRoleLabels] = useState<Record<string, string>>({})
   const [message, setMessage] = useState('')
-  const [saveName, setSaveName] = useState('')
   const [exportFormat, setExportFormat] = useState('html')
   const [newDV, setNewDV] = useState('')
   const [newColumns, setNewColumns] = useState<string[]>([])
-  const [savedList, setSavedList] = useState<{ stats_id: string; name: string; version: number }[]>([])
-  const [presets, setPresets] = useState<{ preset_id: string; name: string }[]>([])
+  const [savedList, setSavedList] = useState<SavedStatsInfo[]>([])
+  const [presets, setPresets] = useState<StatsPresetInfo[]>([])
+  const [savedBusy, setSavedBusy] = useState(false)
+  const [savedError, setSavedError] = useState('')
+  const [savedRailCollapsed, setSavedRailCollapsed] = useState(false)
+  const [appliedPreset, setAppliedPreset] = useState<PresetInfo | null>(null)
+  const [code, setCode] = useState<string | null>(null)
+  // `computeKey` of the table as last opened or saved: "modified" in the rail.
+  const [baseline, setBaseline] = useState<string | null>(null)
+  const [openGroups, setOpenGroups] = useState<Record<StatGroupId, boolean>>(readOpenGroups)
+  useEffect(() => {
+    try { window.localStorage.setItem(OPEN_GROUPS_KEY, JSON.stringify(openGroups)) } catch { /* not remembered */ }
+  }, [openGroups])
+  const toggleGroup = (id: StatGroupId) => setOpenGroups(prev => ({ ...prev, [id]: !prev[id] }))
   // The analysis whose Model formula popup is open (plan-statstudio-model-formula).
   const [formulaFor, setFormulaFor] = useState<string | null>(null)
   const generation = useRef(0)
   const sourceParams = useMemo(() => (csvPath ? { csv_path: csvPath } : {}), [csvPath])
+  // This tab's id in `design_changed` broadcasts, so it ignores its own.
+  const origin = useRef(newDesignOrigin('stat'))
 
   // --- open -------------------------------------------------------------------
   useEffect(() => {
+    reportStudioOpen(callBackend, 'stat', initial.from ?? (initial.statsId ? 'saved' : initial.seed ? 'plot-studio' : null),
+      initial.variable ?? initial.statNode ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
     callBackend('stats_open', {
       stats_id: initial.statsId ?? null, seed: initial.seed ?? null, plot_id: initial.linkedPlot ?? null,
-      variable: initial.variable ?? null, ...sourceParams,
+      variable: initial.variable ?? null, stat_function: initial.statNode ?? null, ...sourceParams,
     }).then(raw => {
-      const r = raw as { ok: boolean; error?: string; spec: StatsSpec; notes: { message: string }[]; seed_notes: string[]; info: typeof savedInfo }
+      const r = raw as OpenReply
       if (!r.ok) { setError(r.error ?? 'Could not open StatStudio.'); return }
-      console.info('[StatStudio] opened', { statsId: initial.statsId, seeded: !!initial.seed, notes: r.notes.length })
+      console.info('[StatStudio] opened', { statsId: initial.statsId, seeded: !!initial.seed, statNode: initial.statNode, notes: r.notes.length, linked: r.design_linked })
       setSpec(r.spec)
+      setBaseline(computeKey(r.spec))
       setSavedInfo(r.info)
-      if (r.info) setSaveName(r.info.name)
-      setOpenNotes([...r.seed_notes.map(n => `Set up from the figure: ${n}`), ...r.notes.map(n => n.message)])
+      setRoleLabels(r.role_labels ?? {})
+      setOpenNotes([...r.seed_notes.map(n => `Set up: ${n}`), ...r.notes.map(n => n.message)])
     }).catch(err => setError(String(err)))
-  }, [initial.statsId, initial.seed, initial.linkedPlot, initial.variable, sourceParams])
+  }, [initial.statsId, initial.seed, initial.linkedPlot, initial.variable, initial.statNode, sourceParams])
 
   const firstVariable = spec ? targets(spec)[0]?.variable : undefined
+  const designVariable = (spec?.design.measures?.[0] as string | undefined) ?? firstVariable
+  const mode = spec ? guideState(spec).mode : 'advanced'
+  // The Advanced rail's design controls hand the catalog up (onDescribe). The
+  // step-by-step view mounts none, so it asks once itself.
   useEffect(() => {
-    if (!firstVariable) return
+    if (!firstVariable || mode !== 'guided' || variables.length) return
     callBackend('plot_describe', { variable: firstVariable, ...sourceParams }).then(raw => {
-      const r = raw as { catalog?: { measures?: { name: string; columns?: string[] }[] }; table?: { factors: { name: string; is_field?: boolean; levels: unknown[] }[] } }
-      setFactors(r.table?.factors ?? [])
+      const r = raw as { catalog?: { measures?: { name: string; columns?: string[] }[] } }
       setVariables(r.catalog?.measures ?? [])
     }).catch(err => console.warn('[StatStudio] describe failed', err))
-  }, [firstVariable, sourceParams])
+  }, [firstVariable, sourceParams, mode, variables.length])
 
   // --- compute (debounced, latest wins) ----------------------------------------
   // The view state (spec.guide) is not part of the key: moving between steps
@@ -170,7 +237,6 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   const key = useMemo(() => (spec ? computeKey(spec) : ''), [spec])
   const specRef = useRef(spec)
   specRef.current = spec
-  const mode = spec ? guideState(spec).mode : 'advanced'
   const shownStep = spec && guidePayload ? currentStep(spec, guidePayload.steps) : null
   const wantResults = mode === 'advanced' || !!guidePayload?.steps.find(s => s.id === shownStep)?.needs_results
   const haveResultsFor = useRef('')
@@ -207,73 +273,117 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
     })
   }, [guidePayload])
 
-  // --- the plot link ---------------------------------------------------------------
+  // --- the shared design (scistackplotdb.designs) ----------------------------------
   const linkedId = spec?.linked_plot
-  useEffect(() => {
-    if (!linkedId || csvPath) { setLinkedPlot(null); return }
-    callBackend('plot_saved_open', { plot_id: linkedId }).then(raw => {
-      const r = raw as { plot?: { plot_id: string; variable: string; name: string; spec: Record<string, unknown>; view: unknown } }
-      setLinkedPlot(r.plot ?? null)
-    }).catch(err => { console.warn('[StatStudio] linked plot did not open', err); setLinkedPlot(null) })
-  }, [linkedId, csvPath])
-
+  const designJson = useMemo(() => (spec ? JSON.stringify(spec.design) : ''), [spec])
   useEffect(() => {
     const current = specRef.current
-    if (!current || !linkedPlot) { setDifferences([]); return }
-    callBackend('stats_divergence', { stats_spec: current, plot_spec: linkedPlot.spec }).then(raw => {
-      setDifferences((raw as { differences: Difference[] }).differences)
-    }).catch(() => setDifferences([]))
-  }, [key, linkedPlot])
+    if (!current || !linkedId || csvPath || !designJson) return
+    const timer = window.setTimeout(() => {
+      callBackend('design_update', { plot_id: linkedId, spec: current.design }).then(raw => {
+        const r = raw as { linked: boolean; changed: boolean; version: number | null }
+        if (!r.changed) return
+        console.info('[StatStudio] shared design changed', { plot: linkedId, version: r.version })
+        if (isVSCodeMode) {
+          callBackend('broadcast_panels', {
+            method: DESIGN_CHANGED, params: { plot_id: linkedId, version: r.version, origin: origin.current },
+          }).catch(() => undefined)
+        }
+      }).catch(err => console.warn('[StatStudio] design_update failed', err))
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [designJson, linkedId, csvPath])
 
   useEffect(() => addNotificationHandler(msg => {
-    if (msg.method !== 'plot_design_sync') return
-    const params = (msg.params ?? {}) as { plot_id?: string; plot_spec?: Record<string, unknown> }
-    if (!spec || !params.plot_id || params.plot_id !== spec.linked_plot || !params.plot_spec) return
-    callBackend('stats_sync', { stats_spec: spec, plot_spec: params.plot_spec, direction: 'to_stats' }).then(raw => {
-      const r = raw as { stats_spec: StatsSpec }
-      console.info('[StatStudio] design synced from Plot Studio', { plot: params.plot_id })
-      setSpec(r.stats_spec)
-      setLinkedPlot(prev => prev ? { ...prev, spec: params.plot_spec! } : prev)
-      setMessage('Design synced from Plot Studio.')
-    })
-  }), [spec])
-
-  const syncToPlot = useCallback(async () => {
-    if (!spec || !linkedPlot) return
-    const r = await callBackend('stats_sync', { stats_spec: spec, plot_spec: linkedPlot.spec, direction: 'to_plot' }) as { plot_spec: Record<string, unknown>; notes: { message: string }[] }
-    await callBackend('plot_saved_save', {
-      variable: linkedPlot.variable, name: linkedPlot.name, spec: r.plot_spec, view: linkedPlot.view,
-      overwrite: true, current_plot_id: linkedPlot.plot_id,
-    })
-    if (isVSCodeMode) {
-      await callBackend('broadcast_panels', { method: 'stats_design_sync', params: { plot_id: linkedPlot.plot_id, plot_spec: r.plot_spec } }).catch(() => undefined)
-    }
-    setLinkedPlot({ ...linkedPlot, spec: r.plot_spec })
-    console.info('[StatStudio] synced to Plot Studio', { plot: linkedPlot.plot_id, notes: r.notes.length })
-    setMessage(`Saved plot "${linkedPlot.name}" now has this design${r.notes.length ? ` (${r.notes.map(n => n.message).join('; ')})` : ''}.`)
-  }, [spec, linkedPlot])
+    const current = specRef.current
+    const change = designChangeFor(msg, current?.linked_plot, origin.current)
+    if (!change || !current) return
+    callBackend('design_apply', { plot_id: change.plot_id, spec: current.design }).then(raw => {
+      const r = raw as { spec: StatsSpec['design']; version: number | null }
+      console.info('[StatStudio] shared design taken from Plot Studio', { plot: change.plot_id, version: r.version })
+      setSpec(prev => (prev ? { ...prev, design: r.spec } : prev))
+      setMessage('Design updated from the linked figure.')
+    }).catch(err => console.warn('[StatStudio] design_apply failed', err))
+  }), [])
 
   // --- saved tables, presets, export, pipeline ---------------------------------------
   const refreshLists = useCallback(() => {
     if (csvPath) return
-    callBackend('stats_saved_list', {}).then(raw => setSavedList((raw as { items: typeof savedList }).items)).catch(() => undefined)
-    callBackend('stats_preset_list', {}).then(raw => setPresets((raw as { items: typeof presets }).items)).catch(() => undefined)
+    callBackend('stats_saved_list', {}).then(raw => setSavedList((raw as { items: SavedStatsInfo[] }).items)).catch(() => undefined)
+    callBackend('stats_preset_list', {}).then(raw => setPresets((raw as { items: StatsPresetInfo[] }).items)).catch(() => undefined)
   }, [csvPath])
   useEffect(() => { refreshLists() }, [refreshLists])
 
-  const save = async () => {
-    if (!spec || !saveName.trim()) return
-    const r = await callBackend('stats_saved_save', { name: saveName, spec, overwrite: true, current_stats_id: savedInfo?.stats_id ?? null }) as { ok: boolean; info: typeof savedInfo; error?: string }
-    if (!r.ok) { setMessage(r.error ?? 'Not saved.'); return }
-    setSavedInfo(r.info)
-    setMessage(`Saved "${r.info!.name}" (version ${r.info!.version}).`)
-    refreshLists()
+  const saveTable = async (name: string, overwrite: boolean): Promise<SaveResult> => {
+    if (!spec) return { ok: false }
+    setSavedBusy(true); setSavedError('')
+    try {
+      const r = await callBackend('stats_saved_save', { name, spec, overwrite, current_stats_id: savedInfo?.stats_id ?? null }) as
+        { ok: boolean; info?: SavedStatsInfo; exists?: SavedStatsInfo; error?: string }
+      if (!r.ok) {
+        if (r.exists) return { ok: false, exists: asRailItem(r.exists) }
+        setSavedError(r.error ?? 'Not saved.')
+        return { ok: false }
+      }
+      setSavedInfo(r.info!)
+      setBaseline(computeKey(spec))
+      setMessage(`Saved "${r.info!.name}" (version ${r.info!.version}).`)
+      refreshLists()
+      return { ok: true }
+    } finally {
+      setSavedBusy(false)
+    }
   }
 
   const openSaved = async (statsId: string) => {
-    const r = await callBackend('stats_open', { stats_id: statsId }) as { ok: boolean; spec: StatsSpec; info: typeof savedInfo; notes: { message: string }[] }
-    if (!r.ok) return
-    setSpec(r.spec); setSavedInfo(r.info); setSaveName(r.info?.name ?? ''); setOpenNotes(r.notes.map(n => n.message))
+    const r = await callBackend('stats_open', { stats_id: statsId }) as OpenReply
+    if (!r.ok) { setSavedError(r.error ?? 'Could not open.'); return }
+    setSpec(r.spec); setSavedInfo(r.info); setBaseline(computeKey(r.spec)); setOpenNotes(r.notes.map(n => n.message))
+  }
+
+  const renameSaved = async (statsId: string, name: string) => {
+    try {
+      await callBackend('stats_saved_rename', { stats_id: statsId, name })
+      refreshLists()
+      if (savedInfo?.stats_id === statsId) setSavedInfo({ ...savedInfo, name })
+      return true
+    } catch (err) {
+      setSavedError(String(err))
+      return false
+    }
+  }
+
+  const removeSaved = async (statsId: string) => {
+    await callBackend('stats_saved_hide', { stats_id: statsId, hidden: true }).catch(err => setSavedError(String(err)))
+    refreshLists()
+  }
+
+  const savePreset = async (name: string): Promise<PresetSaveResult> => {
+    if (!spec) return { ok: false }
+    await callBackend('stats_preset_save', { name, spec })
+    refreshLists()
+    return { ok: true }
+  }
+  const applyPreset = async (presetId: string) => {
+    if (!spec) return
+    const r = await callBackend('stats_preset_apply', { preset_id: presetId, spec }) as { spec: StatsSpec }
+    setSpec(r.spec)
+    const applied = presets.find(p => p.preset_id === presetId)
+    setAppliedPreset(applied ? asPresetItem(applied) : null)
+  }
+  const renamePreset = async (presetId: string, name: string) => {
+    try {
+      await callBackend('stats_preset_rename', { preset_id: presetId, name })
+      refreshLists()
+      return true
+    } catch (err) {
+      setSavedError(String(err))
+      return false
+    }
+  }
+  const removePreset = async (presetId: string) => {
+    await callBackend('stats_preset_hide', { preset_id: presetId, hidden: true }).catch(() => undefined)
+    refreshLists()
   }
 
   const exportTab = async (toFile: boolean, which: 'descriptives' | 'comparisons' = tab) => {
@@ -304,23 +414,37 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
     }
   }
 
+  const exportCode = async () => {
+    if (!spec) return
+    const r = await callBackend('stats_export_code', { spec, ...sourceParams }) as { ok: boolean; code?: string; error?: string }
+    if (r.ok && r.code) setCode(r.code)
+    else setMessage(r.error ?? 'Not exportable.')
+  }
+
   const addToPipeline = async () => {
     if (!spec) return
     const r = await callBackend('stats_add_to_pipeline', { spec }) as { ok: boolean; error?: string; function_name?: string; file?: string; foreach_source?: string }
     setMessage(r.ok ? `Added ${r.function_name} to ${r.file}. Wire it on the canvas, or run:\n${r.foreach_source}` : (r.error ?? 'Not added.'))
   }
 
+  // Plot Studio's design rail edits the design carrier; this tab owns it.
+  const onDesign = useCallback((design: Record<string, unknown>) => {
+    setSpec(prev => (prev ? { ...prev, design: design as StatsSpec['design'] } : prev))
+  }, [])
+  const onDescribe = useCallback((d: { catalog?: { measures?: { name: string; columns?: string[] }[] } }) => {
+    setVariables(d.catalog?.measures ?? [])
+  }, [])
+
   if (error && !spec) return <div style={{ ...plotThemeVars(theme), ...styles.root }}><div style={styles.error}>{error}</div></div>
   if (!spec) return <div style={{ ...plotThemeVars(theme), ...styles.root }}><div style={styles.muted}>Opening StatStudio…</div></div>
 
   const catalog = result?.catalog
-  const roles = (spec.design.roles ?? {}) as Record<string, string>
-  const groups = spec.design.groups ?? []
   const firstAnalysis = spec.comparisons[0]
   const readout = result?.readout ?? []
   // Decisions the user must make before comparisons run (Stage F).
   const actions = pendingActions(result?.comparisons)
   const addable = variables.find(v => v.name === newDV)
+  const title = `Stats — ${targets(spec).map(d => d.columns ? `${d.variable}[${d.columns.join(', ')}]` : d.variable).join(', ')}`
 
   // --- pieces both views show -----------------------------------------------------
   const switchMode = (next: 'guided' | 'advanced') => {
@@ -369,27 +493,13 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
 
   const notices = (
     <>
-      {linkedPlot && differences.length > 0 && (
-        <div style={styles.banner}>
-          <div><b>This table's design differs from the figure "{linkedPlot.name}":</b></div>
-          <ul style={styles.notes}>
-            {differences.map(d => <li key={d.path}>{d.label}: figure {d.a} · table {d.b}</li>)}
-          </ul>
-          <button type="button" style={styles.primaryButton} onClick={syncToPlot}>Sync to PlotStudio</button>
-        </div>
+      {linkedId && !csvPath && (
+        <div style={styles.muted}>This table and its saved figure share one design: a change in either shows in both.</div>
       )}
-      {spec.linked_plot && !linkedPlot && !csvPath && <div style={styles.muted}>Linked figure not found; save the plot to link it.</div>}
       {openNotes.length > 0 && <ul style={styles.notes}>{openNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
       {message && <pre style={styles.message}>{message}</pre>}
       {error && <div style={styles.error}>{error}</div>}
     </>
-  )
-
-  const saveBox = !csvPath && (
-    <div style={styles.row}>
-      <input value={saveName} placeholder="Table name" onChange={e => setSaveName(e.target.value)} style={styles.input} />
-      <button type="button" style={styles.primaryButton} onClick={save} disabled={!saveName.trim()}>Save</button>
-    </div>
   )
 
   const exportBar = (which: 'descriptives' | 'comparisons') => (
@@ -397,9 +507,49 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
       <select value={exportFormat} onChange={e => setExportFormat(e.target.value)} style={styles.select} title="html pastes into Word as a table">
         {FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
       </select>
-      <button type="button" style={styles.smallButton} onClick={() => exportTab(false, which)}>Copy</button>
       {isVSCodeMode && <button type="button" style={styles.smallButton} onClick={() => exportTab(true, which)}>Save to file…</button>}
+      <button type="button" style={styles.smallButton} onClick={() => exportTab(false, which)}>Copy</button>
     </div>
+  )
+
+  const codeOverlay = code !== null && (
+    <div style={styles.codeOverlay} onClick={() => setCode(null)}>
+      <pre style={styles.code} onClick={e => e.stopPropagation()}>{code}</pre>
+    </div>
+  )
+
+  const savedRail = !csvPath && (
+    <SavedPlotsRail
+      collapsed={savedRailCollapsed}
+      onToggle={() => setSavedRailCollapsed(v => !v)}
+      plots={savedList.map(asRailItem)}
+      loaded={savedInfo ? asRailItem(savedInfo) : null}
+      modified={baseline !== null && baseline !== key}
+      notes={[]}
+      busy={savedBusy}
+      error={savedError}
+      onSave={saveTable}
+      onOpen={openSaved}
+      onRename={renameSaved}
+      onRemove={removeSaved}
+      onDismissNotes={() => undefined}
+      words={SAVED_WORDS}
+      panelKey="statStudio.savedTables"
+    >
+      <PresetsSection
+        presets={presets.map(asPresetItem)}
+        applied={appliedPreset}
+        notes={[]}
+        busy={savedBusy}
+        error=""
+        onSave={savePreset}
+        onApply={applyPreset}
+        onRename={renamePreset}
+        onRemove={removePreset}
+        onDismissNotes={() => setAppliedPreset(null)}
+        words={PRESET_WORDS}
+      />
+    </SavedPlotsRail>
   )
 
   // The wizard's last step: the same grids as the Advanced tabs.
@@ -420,32 +570,34 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
       {exportBar('comparisons')}
       {result?.descriptives.map((g, i) => <GridTable key={i} grid={g} />)}
       {(result?.descriptives.length ?? 0) > 0 && exportBar('descriptives')}
-      {saveBox}
     </div>
   )
 
   if (mode === 'guided') {
     return (
-      <div style={{ ...plotThemeVars(theme), ...styles.guidedRoot }}>
-        <GuidedStudio
-          spec={spec}
-          onSpec={setSpec}
-          guide={guidePayload}
-          busy={busy}
-          header={(
-            <div>
-              <div style={styles.guidedHeader}>
-                <span style={styles.title}>StatStudio{busy ? ' · working…' : ''}</span>
-                <span style={styles.muted}>{savedInfo ? `saved as "${savedInfo.name}" v${savedInfo.version}` : ''}</span>
-                <span style={{ flex: 1 }} />
-                {modeSwitch}
+      <div style={{ ...plotThemeVars(theme), ...styles.root }}>
+        <div style={styles.guidedMain}>
+          <GuidedStudio
+            spec={spec}
+            onSpec={setSpec}
+            guide={guidePayload}
+            busy={busy}
+            header={(
+              <div>
+                <div style={styles.guidedHeader}>
+                  <span style={styles.title}>{title}{busy ? ' · working…' : ''}</span>
+                  <span style={{ flex: 1 }} />
+                  {modeSwitch}
+                </div>
+                {notices}
               </div>
-              {notices}
-            </div>
-          )}
-          measureEditor={measuresEditor}
-          results={resultsView}
-        />
+            )}
+            measureEditor={measuresEditor}
+            results={resultsView}
+          />
+        </div>
+        {savedRail}
+        {codeOverlay}
       </div>
     )
   }
@@ -554,148 +706,143 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
     )
   }
 
+  // StatStudio's own group, where Plot Studio has Chart: the output's first
+  // choice (what is measured), between Data and Structure.
+  const measuresGroup = (
+    <Group
+      title="Measures"
+      open={openGroups.measures}
+      onToggle={() => toggleGroup('measures')}
+      summary={targets(spec).map(d => d.variable).join(', ')}
+    >
+      <Section title="Measures" hint="Each measure is analysed on its own, with the same design. A table with several columns can add each column as its own measure.">
+        {measuresEditor}
+      </Section>
+    </Group>
+  )
+
   return (
     <div style={{ ...plotThemeVars(theme), ...styles.root }}>
       <aside style={styles.rail}>
-        <div style={styles.title}>StatStudio{busy ? ' · computing…' : ''}</div>
-        <div style={styles.muted}>{targets(spec).map(d => d.columns ? `${d.variable}[${d.columns.join(', ')}]` : d.variable).join(', ')}{savedInfo ? ` · saved as "${savedInfo.name}" v${savedInfo.version}` : ''}</div>
+        <div style={styles.title} title={title}>{title}{busy ? ' · computing…' : ''}</div>
+        <div style={styles.muted}>{savedInfo ? `saved as "${savedInfo.name}" v${savedInfo.version}` : ''}</div>
         {modeSwitch}
 
-        <Section title="Measures">
-          {measuresEditor}
-        </Section>
+        {/* Data and Structure: Plot Studio's own groups on this table's
+            design (one set of design controls for both studios). */}
+        {designVariable && (
+          <PlotStudio
+            variable={designVariable}
+            csvPath={csvPath}
+            onClose={() => undefined}
+            design={{ spec: spec.design, onChange: onDesign, roleLabels, between: measuresGroup, onDescribe }}
+          />
+        )}
 
-        <Section title="Design">
-          <div style={styles.muted}>Grouping layers are the table's columns (innermost = the primary comparison). The design syncs with the linked figure.</div>
-          {factors.map(f => (
-            <div key={f.name} style={styles.row}>
-              <span style={styles.factorName}>{f.name}</span>
-              <select value={roles[f.name] ?? 'iterate'} onChange={e => setSpec(setRole(spec, f.name, e.target.value))} style={styles.select}>
-                {ROLE_CHOICES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+        <Group
+          title="Statistics"
+          open={openGroups.statistics}
+          onToggle={() => toggleGroup('statistics')}
+          summary={`${spec.descriptives.cell}; ${spec.comparisons.length} analysis(es)`}
+        >
+          <Section title="Descriptives">
+            <div style={styles.field}>Cell
+              <select value={spec.descriptives.cell} onChange={e => setSpec(setCell(spec, e.target.value))} style={styles.select}>
+                {(catalog?.cells ?? []).map(c => <option key={c.id} value={c.id}>{c.header}</option>)}
               </select>
-              {roles[f.name] === 'group' && (
-                <>
-                  <button type="button" style={styles.smallButton} title="Outward" onClick={() => setSpec(moveGroup(spec, f.name, 1))}>↑</button>
-                  <button type="button" style={styles.smallButton} title="Inward" onClick={() => setSpec(moveGroup(spec, f.name, -1))}>↓</button>
-                </>
-              )}
             </div>
-          ))}
-          <div style={styles.field}>Variants
-            <select value={spec.variant_mode} onChange={e => setSpec({ ...spec, variant_mode: e.target.value })} style={styles.select}
-                    title="Sweep: every variant analysed separately, with a specification curve on the Comparisons tab">
-              {(catalog?.variant_modes ?? ['pinned', 'sweep']).map(m => <option key={m} value={m}>{m === 'sweep' ? 'Sweep every variant' : 'Pinned (the design\'s selection)'}</option>)}
-            </select>
-          </div>
-          {groups.length > 0 && <div style={styles.muted}>Columns, outermost first: {[...groups].reverse().join(' × ')}</div>}
-          {readout.map(r => (
-            <div key={r.dv} style={styles.readout}>
-              <div><b>{r.dv}</b>{r.error ? `: ${r.error}` : ''}</div>
-              {r.rows && <div style={styles.muted}>Unit: {r.rows.unit ?? 'none (rows independent)'}{r.rows.averaged.length ? `; ${r.rows.averaged.join(', ')} averaged first` : ''}{r.design?.n_units != null ? `; n = ${r.design.n_units}` : ''}</div>}
-              {r.design?.factors.map(f => (
-                <div key={f.name} style={styles.row}>
-                  <span style={f.kind === 'mixed_membership' ? styles.chipNeedsAction : styles.chip}
-                        title={`${f.units_multi} unit(s) at several levels, ${f.units_single} at one` + (f.basis === 'schema' ? '; within-subject because it is nested below the unit in the schema' : '')}>
-                    {f.name}: {f.kind === 'mixed_membership' ? 'needs a decision' : f.kind}{f.overridden ? ' (set)' : f.basis === 'schema' ? ' (schema)' : ''}
-                  </span>
-                  {firstAnalysis && (
-                    <select value={firstAnalysis.overrides?.[f.name] ?? ''} style={styles.select}
-                            onChange={e => setSpec(setOverride(spec, firstAnalysis.id, f.name, e.target.value || null))}>
-                      <option value="">derived ({f.derived})</option>
-                      <option value="within">within</option>
-                      <option value="between">between</option>
-                    </select>
-                  )}
-                </div>
+            <div style={styles.statGrid}>
+              {(catalog?.statistics ?? []).map(s => (
+                <label key={s.id} style={styles.check}>
+                  <input type="checkbox" checked={spec.descriptives.statistics.includes(s.id)}
+                         onChange={() => setSpec(toggleStatistic(spec, s.id, (catalog?.statistics ?? []).map(x => x.id)))} /> {s.label}
+                </label>
               ))}
-              {r.design?.warnings.map((w, i) => <div key={i} style={styles.warn}>{w.message}</div>)}
             </div>
-          ))}
-        </Section>
+          </Section>
 
-        <Section title="Descriptives">
-          <div style={styles.field}>Cell
-            <select value={spec.descriptives.cell} onChange={e => setSpec(setCell(spec, e.target.value))} style={styles.select}>
-              {(catalog?.cells ?? []).map(c => <option key={c.id} value={c.id}>{c.header}</option>)}
-            </select>
-          </div>
-          <div style={styles.statGrid}>
-            {(catalog?.statistics ?? []).map(s => (
-              <label key={s.id} style={styles.check}>
-                <input type="checkbox" checked={spec.descriptives.statistics.includes(s.id)}
-                       onChange={() => setSpec(toggleStatistic(spec, s.id, (catalog?.statistics ?? []).map(x => x.id)))} /> {s.label}
-              </label>
+          <Section title="What the tests see" hint="The unit each test counts once, and whether each compared factor is measured on the same units (within) or different ones (between). Worked out from the data; override one if your study says otherwise.">
+            {readout.map(r => (
+              <div key={r.dv} style={styles.readout}>
+                <div><b>{r.dv}</b>{r.error ? `: ${r.error}` : ''}</div>
+                {r.rows && <div style={styles.muted}>Unit: {r.rows.unit ?? 'none (rows independent)'}{r.rows.averaged.length ? `; ${r.rows.averaged.join(', ')} averaged first` : ''}{r.design?.n_units != null ? `; n = ${r.design.n_units}` : ''}</div>}
+                {r.design?.factors.map(f => (
+                  <div key={f.name} style={styles.row}>
+                    <span style={f.kind === 'mixed_membership' ? styles.chipNeedsAction : styles.chip}
+                          title={`${f.units_multi} unit(s) at several levels, ${f.units_single} at one` + (f.basis === 'schema' ? '; within-subject because it is nested below the unit in the schema' : '')}>
+                      {f.name}: {f.kind === 'mixed_membership' ? 'needs a decision' : f.kind}{f.overridden ? ' (set)' : f.basis === 'schema' ? ' (schema)' : ''}
+                    </span>
+                    {firstAnalysis && (
+                      <select value={firstAnalysis.overrides?.[f.name] ?? ''} style={styles.select}
+                              onChange={e => setSpec(setOverride(spec, firstAnalysis.id, f.name, e.target.value || null))}>
+                        <option value="">derived ({f.derived})</option>
+                        <option value="within">within</option>
+                        <option value="between">between</option>
+                      </select>
+                    )}
+                  </div>
+                ))}
+                {r.design?.warnings.map((w, i) => <div key={i} style={styles.warn}>{w.message}</div>)}
+              </div>
             ))}
-          </div>
-        </Section>
-
-        <Section title="Comparisons">
-          {spec.comparisons.map(analysisEditor)}
-          <button type="button" style={styles.smallButton} onClick={() => setSpec(addAnalysis(spec))}>+ Analysis</button>
-        </Section>
-
-        <Section title="Format">
-          <div style={styles.field}>Decimals
-            <select value={spec.formatting?.decimals ?? 'auto'} style={styles.select}
-                    onChange={e => setSpec(setFormatting(spec, { decimals: e.target.value === 'auto' ? undefined : Number(e.target.value) }))}>
-              <option value="auto">Automatic per measure</option>
-              {[0, 1, 2, 3, 4, 5].map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </div>
-          <div style={styles.field}>p decimals
-            <select value={spec.formatting?.p_decimals ?? 3} onChange={e => setSpec(setFormatting(spec, { p_decimals: Number(e.target.value) }))} style={styles.select}>
-              {[2, 3, 4].map(d => <option key={d} value={d}>{d}</option>)}
-            </select>
-          </div>
-          <label style={styles.check}><input type="checkbox" checked={!!spec.formatting?.stars} onChange={e => setSpec(setFormatting(spec, { stars: e.target.checked }))} /> Stars on adjusted p</label>
-        </Section>
-
-        {linkedId && (
-          <Section title="Brackets on the figure">
-            <label style={styles.check}><input type="checkbox" checked={!!spec.overlay?.show} onChange={e => setSpec(setOverlay(spec, { show: e.target.checked }))} /> Draw test brackets on the linked figure</label>
-            <div style={styles.field}>Pairs
-              <select value={spec.overlay?.pairs ?? 'significant'} onChange={e => setSpec(setOverlay(spec, { pairs: e.target.value }))} style={styles.select}>
-                {(catalog?.bar_pairs ?? []).map(p => <option key={p} value={p}>{p}</option>)}
+            <div style={styles.field}>Variants
+              <select value={spec.variant_mode} onChange={e => setSpec({ ...spec, variant_mode: e.target.value })} style={styles.select}
+                      title="Sweep: every variant analysed separately, with a specification curve on the Comparisons tab">
+                {(catalog?.variant_modes ?? ['pinned', 'sweep']).map(m => <option key={m} value={m}>{m === 'sweep' ? 'Sweep every variant' : 'Pinned (the design\'s selection)'}</option>)}
               </select>
             </div>
-            <div style={styles.field}>Label
-              <select value={spec.overlay?.label ?? 'stars'} onChange={e => setSpec(setOverlay(spec, { label: e.target.value }))} style={styles.select}>
-                {(catalog?.bar_labels ?? []).map(p => <option key={p} value={p}>{p === 'p' ? 'adjusted p' : 'stars'}</option>)}
+          </Section>
+
+          <Section title="Comparisons">
+            {spec.comparisons.map(analysisEditor)}
+            <button type="button" style={styles.smallButton} onClick={() => setSpec(addAnalysis(spec))}>+ Analysis</button>
+          </Section>
+        </Group>
+
+        <Group
+          title="Format"
+          open={openGroups.format}
+          onToggle={() => toggleGroup('format')}
+          summary={`${spec.formatting?.decimals ?? 'auto'} decimals${spec.overlay?.show ? '; brackets on' : ''}`}
+        >
+          <Section title="Numbers">
+            <div style={styles.field}>Decimals
+              <select value={spec.formatting?.decimals ?? 'auto'} style={styles.select}
+                      onChange={e => setSpec(setFormatting(spec, { decimals: e.target.value === 'auto' ? undefined : Number(e.target.value) }))}>
+                <option value="auto">Automatic per measure</option>
+                {[0, 1, 2, 3, 4, 5].map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
-            <div style={styles.muted}>Save this table, then the figure draws them (Plot Studio reads its linked table).</div>
-          </Section>
-        )}
-
-        {!csvPath && (
-          <Section title="Save">
-            <div style={styles.row}>
-              <input value={saveName} placeholder="Table name" onChange={e => setSaveName(e.target.value)} style={styles.input} />
-              <button type="button" style={styles.primaryButton} onClick={save} disabled={!saveName.trim()}>Save</button>
+            <div style={styles.field}>p decimals
+              <select value={spec.formatting?.p_decimals ?? 3} onChange={e => setSpec(setFormatting(spec, { p_decimals: Number(e.target.value) }))} style={styles.select}>
+                {[2, 3, 4].map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
             </div>
-            {savedList.length > 0 && <div style={styles.muted}>Saved tables:</div>}
-            {savedList.map(s => (
-              <button key={s.stats_id} type="button" style={styles.listButton} onClick={() => openSaved(s.stats_id)}>{s.name} (v{s.version})</button>
-            ))}
-            <div style={styles.muted}>Stats presets (settings only, any measure):</div>
-            {presets.map(p => (
-              <button key={p.preset_id} type="button" style={styles.listButton}
-                      onClick={async () => { const r = await callBackend('stats_preset_apply', { preset_id: p.preset_id, spec }) as { spec: StatsSpec }; setSpec(r.spec) }}>
-                Apply {p.name}
-              </button>
-            ))}
-            <button type="button" style={styles.smallButton} disabled={!saveName.trim()}
-                    onClick={async () => { await callBackend('stats_preset_save', { name: saveName, spec }); refreshLists() }}>
-              Save settings as preset "{saveName}"
-            </button>
+            <label style={styles.check}><input type="checkbox" checked={!!spec.formatting?.stars} onChange={e => setSpec(setFormatting(spec, { stars: e.target.checked }))} /> Stars on adjusted p</label>
           </Section>
-        )}
+
+          {linkedId && (
+            <Section title="Brackets on the figure">
+              <label style={styles.check}><input type="checkbox" checked={!!spec.overlay?.show} onChange={e => setSpec(setOverlay(spec, { show: e.target.checked }))} /> Draw test brackets on the linked figure</label>
+              <div style={styles.field}>Pairs
+                <select value={spec.overlay?.pairs ?? 'significant'} onChange={e => setSpec(setOverlay(spec, { pairs: e.target.value }))} style={styles.select}>
+                  {(catalog?.bar_pairs ?? []).map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div style={styles.field}>Label
+                <select value={spec.overlay?.label ?? 'stars'} onChange={e => setSpec(setOverlay(spec, { label: e.target.value }))} style={styles.select}>
+                  {(catalog?.bar_labels ?? []).map(p => <option key={p} value={p}>{p === 'p' ? 'adjusted p' : 'stars'}</option>)}
+                </select>
+              </div>
+              <div style={styles.muted}>Save this table, then the figure draws them (Plot Studio reads its linked table).</div>
+            </Section>
+          )}
+        </Group>
       </aside>
 
       <main style={styles.main}>
-        {notices}
-        {!spec.linked_plot && <div style={styles.muted}>Not linked to a saved plot.</div>}
-
+        {/* The same toolbar as the figure's: the view, then everything that
+            takes the result out of the panel, in the same order. */}
         <div style={styles.toolbar}>
           <button type="button" style={tab === 'descriptives' ? styles.tabOn : styles.tab} onClick={() => setTab('descriptives')}>Descriptives</button>
           <button type="button" style={tab === 'comparisons' ? styles.tabOn : styles.tab} onClick={() => setTab('comparisons')}
@@ -703,11 +850,17 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             Comparisons{actions.length > 0 && <span style={styles.badge}>!</span>}
           </button>
           <span style={{ flex: 1 }} />
-          <select value={exportFormat} onChange={e => setExportFormat(e.target.value)} style={styles.select} title="html pastes into Word as a table">
-            {FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
-          </select>
-          <button type="button" style={styles.smallButton} onClick={() => exportTab(false)}>Copy</button>
+          <label style={styles.field}>Format
+            <select value={exportFormat} onChange={e => setExportFormat(e.target.value)} style={styles.select} title="html pastes into Word as a table">
+              {FORMATS.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </label>
           {isVSCodeMode && <button type="button" style={styles.smallButton} onClick={() => exportTab(true)}>Save to file…</button>}
+          <button type="button" style={styles.smallButton} onClick={() => exportTab(false)}>Copy</button>
+          <button type="button" style={styles.smallButton} onClick={exportCode}
+                  disabled={!!result?.not_exportable} title={result?.not_exportable ?? 'The stat_ function that reproduces this table'}>
+            Export code
+          </button>
           {!csvPath && (
             <button type="button" style={styles.primaryButton} onClick={addToPipeline}
                     disabled={!!result?.not_exportable} title={result?.not_exportable ?? 'Write a stat_ endpoint into the project'}>
@@ -715,6 +868,9 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             </button>
           )}
         </div>
+
+        {notices}
+        {!spec.linked_plot && !csvPath && <div style={styles.muted}>Not linked to a saved plot.</div>}
 
         {/* Stage F: a decision the user must make is a banner with the
             choices, on both tabs, not a table of "not run" rows. The wording
@@ -750,6 +906,8 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             ))
         )}
       </main>
+      {savedRail}
+      {codeOverlay}
       {formulaFor && (
         <ModelFormulaDialog
           spec={spec}
@@ -767,26 +925,20 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
 
 const styles: Record<string, React.CSSProperties> = {
   root: { display: 'flex', height: '100%', background: 'var(--ps-bg)', color: 'var(--ps-text)', fontFamily: 'sans-serif', fontSize: 13 },
-  guidedRoot: { height: '100%', background: 'var(--ps-bg)', color: 'var(--ps-text)', fontFamily: 'sans-serif', fontSize: 13 },
+  guidedMain: { flex: 1, minWidth: 0, height: '100%', overflow: 'auto' },
   guidedHeader: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 },
   modeSwitch: { display: 'flex', gap: 4, margin: '6px 0' },
   rail: { width: 330, minWidth: 260, overflowY: 'auto', borderRight: '1px solid var(--ps-border)', padding: 10, background: 'var(--ps-surface)' },
   main: { flex: 1, overflow: 'auto', padding: 14 },
-  title: { fontSize: 16, fontWeight: 600, marginBottom: 4, color: 'var(--ps-text-strong)' },
+  title: { fontSize: 16, fontWeight: 600, marginBottom: 4, color: 'var(--ps-text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   muted: { color: 'var(--ps-text-muted)', fontSize: 12, margin: '4px 0' },
-  railSection: { borderTop: '1px solid var(--ps-border-faint)', marginTop: 8, paddingTop: 4 },
-  railHeader: { background: 'none', border: 'none', color: 'var(--ps-text-strong)', fontWeight: 600, cursor: 'pointer', padding: '4px 0', fontSize: 13 },
-  railBody: { display: 'flex', flexDirection: 'column', gap: 4, paddingLeft: 4 },
   row: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   field: { display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' },
   check: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 },
   select: { background: 'var(--ps-field)', color: 'var(--ps-text)', border: '1px solid var(--ps-border)', borderRadius: 3, padding: '2px 4px', fontSize: 12, maxWidth: 190 },
-  input: { background: 'var(--ps-field)', color: 'var(--ps-text)', border: '1px solid var(--ps-border)', borderRadius: 3, padding: '3px 6px', flex: 1 },
   number: { width: 60, background: 'var(--ps-field)', color: 'var(--ps-text)', border: '1px solid var(--ps-border)', borderRadius: 3 },
   smallButton: { background: 'var(--ps-control)', color: 'var(--ps-text-control)', border: '1px solid var(--ps-border)', borderRadius: 3, padding: '2px 8px', cursor: 'pointer', fontSize: 12 },
   primaryButton: { background: 'var(--ps-accent)', color: 'var(--ps-accent-fg)', border: '1px solid var(--ps-accent-border)', borderRadius: 3, padding: '3px 10px', cursor: 'pointer', fontSize: 12 },
-  listButton: { background: 'none', border: 'none', color: 'var(--ps-accent-text)', textAlign: 'left', cursor: 'pointer', padding: '1px 0', fontSize: 12 },
-  factorName: { minWidth: 70 },
   chip: { border: '1px solid var(--ps-border-soft)', borderRadius: 10, padding: '0 6px', fontSize: 11 },
   formulaRow: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   formula: { fontFamily: 'monospace', fontSize: 11, color: 'var(--ps-text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 },
@@ -798,20 +950,14 @@ const styles: Record<string, React.CSSProperties> = {
   analysis: { border: '1px solid var(--ps-border-faint)', borderRadius: 4, padding: 6, display: 'flex', flexDirection: 'column', gap: 4 },
   statGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 },
   columns: { paddingLeft: 8 },
-  toolbar: { display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--ps-border)', paddingBottom: 6, marginBottom: 10 },
+  toolbar: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', borderBottom: '1px solid var(--ps-border)', paddingBottom: 6, marginBottom: 10 },
   tab: { background: 'none', border: '1px solid var(--ps-border-faint)', color: 'var(--ps-text-secondary)', borderRadius: 3, padding: '3px 10px', cursor: 'pointer' },
   tabOn: { background: 'var(--ps-accent-bg-strong)', border: '1px solid var(--ps-accent-border)', color: 'var(--ps-text-strong)', borderRadius: 3, padding: '3px 10px', cursor: 'pointer' },
-  banner: { background: 'var(--ps-warn-bg)', border: '1px solid var(--ps-warn-border)', borderRadius: 4, padding: 8, marginBottom: 10 },
   message: { background: 'var(--ps-note-bg)', border: '1px solid var(--ps-note-border)', color: 'var(--ps-note-text)', borderRadius: 4, padding: 6, whiteSpace: 'pre-wrap', fontSize: 12 },
   error: { color: 'var(--ps-error)', margin: '6px 0' },
   warn: { color: 'var(--ps-warn)', fontSize: 12 },
-  gridBox: { background: 'var(--ps-surface)', border: '1px solid var(--ps-border-faint)', borderRadius: 4, padding: 10, marginBottom: 12 },
   gridTitle: { fontStyle: 'italic', marginBottom: 6, color: 'var(--ps-text-strong)' },
-  table: { borderCollapse: 'collapse', borderTop: '1px solid var(--ps-border-strong)', borderBottom: '1px solid var(--ps-border-strong)' },
-  th: { fontWeight: 'normal', padding: '3px 10px' },
-  thLast: { borderBottom: '1px solid var(--ps-border-strong)' },
-  td: { padding: '2px 10px', fontVariantNumeric: 'tabular-nums' },
-  section: { fontStyle: 'italic', padding: '4px 10px', color: 'var(--ps-text-secondary)' },
-  caption: { fontSize: 12, marginTop: 6, color: 'var(--ps-text-body)', maxWidth: 900 },
   notes: { fontSize: 12, color: 'var(--ps-text-secondary)', margin: '4px 0', paddingLeft: 18 },
+  codeOverlay: { position: 'fixed', inset: 0, background: 'var(--ps-scrim)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
+  code: { background: 'var(--ps-surface)', color: 'var(--ps-text)', border: '1px solid var(--ps-border)', borderRadius: 6, padding: 14, maxWidth: '85vw', maxHeight: '80vh', overflow: 'auto', fontSize: 12, whiteSpace: 'pre' },
 }

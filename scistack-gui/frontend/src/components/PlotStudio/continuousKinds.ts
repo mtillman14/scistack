@@ -25,6 +25,11 @@ export interface HistogramOptions {
   range_max?: number | string | null
   stat?: HistStat
   multiple?: HistMultiple
+  /** Values with a bar of their own, left of the range. Python parses a
+   *  typed "0, -1" (spec._as_exact_values) and reports the list back. */
+  exact_values?: number[] | string
+  /** The NaN bar, right of the range (on by default). */
+  show_nan?: boolean
 }
 
 /** `PlotSpec.regression` (scistackplot.spec.RegressionOptions). */
@@ -61,6 +66,12 @@ export interface BinsMeta {
   n_bins: number
   n_values: number
   notes: string[]
+  /** Single-value bins in effect, the NaN slot drawn, the figure's NaN
+   *  count (drawn or not), and the special slots' labels left to right. */
+  exact?: number[]
+  nan?: boolean
+  n_nan?: number
+  special?: string[]
 }
 
 /** One entry of `layout.meta.fits` (fits.PanelFit.to_dict, per panel). */
@@ -118,12 +129,15 @@ export function binText(value: number | string | null | undefined): string {
 /** "12 bins of 0.5, from 40 values" — what the drawn figure binned. */
 export function binsSummary(meta: BinsMeta | null | undefined, temporal: boolean): string {
   if (!meta) return ''
-  if (meta.n_bins === 0) return 'No values to bin.'
+  const special = meta.special ?? []
+  const own = special.length ? `; own bars: ${special.join(', ')}` : ''
+  const nan = meta.n_nan && !meta.nan ? `; ${meta.n_nan} NaN not drawn` : ''
+  if (meta.n_bins === 0) return special.length ? `No other values to bin${own}` : 'No values to bin.'
   const width =
     meta.width === null ? '' : ` of ${temporal ? durationText(meta.width) : formatNumber(meta.width)}`
   return `${meta.n_bins} bin${meta.n_bins === 1 ? '' : 's'}${width}, from ${meta.n_values} value${
     meta.n_values === 1 ? '' : 's'
-  }`
+  }` + own + nan
 }
 
 /** A duration in ms as the shortest exact unit: "1h", "7D", "90min". */
@@ -160,4 +174,36 @@ export function fitsSummary(panels: PanelFitsMeta[] | null | undefined): string[
     }
   }
   return lines
+}
+
+/** The single-value bins box's text: the list Python kept (`exact_values`,
+ *  spec._as_exact_values) or, before the next report, what was typed. */
+export function exactValuesText(value: HistogramOptions['exact_values']): string {
+  if (Array.isArray(value)) return value.map(formatNumber).join(', ')
+  return value ?? ''
+}
+
+/** `PlotSpec.kde` (scistackplot.spec.KdeOptions). */
+export interface KdeOptions {
+  /** Multiplies Scott's bandwidth: below 1 follows the data more closely. */
+  bandwidth_adjust?: number | null
+  /** How far past the data's ends the curve runs, in bandwidths. */
+  cut?: number | null
+  fill?: boolean
+}
+
+/** `capabilities.kde` (capability.kde_summary). */
+export interface KdeCapability {
+  applies: boolean
+  settings: KdeOptions
+  problem: string | null
+}
+
+/** A KDE number box as typed: a number, or null for the default. Python
+ *  validates it (`kde.kde_problem`, shipped as `capabilities.kde.problem`). */
+export function parseKdeNumber(text: string): number | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const value = Number(trimmed)
+  return Number.isFinite(value) ? value : null
 }

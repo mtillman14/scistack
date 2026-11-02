@@ -1446,7 +1446,8 @@ function readRunFailures(raw) {
 }
 function diagnosticMessage(g) {
   const example = g.combos?.length ? `, e.g. ${g.combos[0]}` : "";
-  return `${g.fn_name}: ${g.reason} \u2014 ${g.count} combo(s) failed${example}`;
+  const label = g.blame_label ? `${g.blame_label}. ` : "";
+  return `${label}${g.fn_name}: ${g.reason} \u2014 ${g.count} combo(s) failed${example}`;
 }
 function entriesFor(groups) {
   return groups.filter((g) => !g.no_data && g.user_frame).map((g) => ({
@@ -1497,7 +1498,7 @@ function failureNotice(failures, opts) {
   const more = groups.length > 1 ? ` (+${groups.length - 1} more reason(s))` : "";
   const nodeGroup = groups.find((g) => g.node_id);
   return {
-    message: `SciStack: ${combos} combo(s) failed in ${fns.join(", ") || "the run"}${stopped}: ${first}${where}${more}`,
+    message: `SciStack: ${combos} combo(s) failed in ${fns.join(", ") || "the run"}${stopped}: ${groups[0].blame_label ? groups[0].blame_label + " \u2014 " : ""}${first}${where}${more}`,
     nodeId: nodeGroup?.node_id ?? void 0
   };
 }
@@ -3182,6 +3183,7 @@ var PlotPanel = class _PlotPanel {
             seed: params.seed,
             linkedPlot: params.linkedPlot ?? void 0,
             statsId: params.statsId,
+            from: params.from ?? "plot-studio",
             csvPath: this.target.csvPath,
             sessionId: this.session.id
           });
@@ -3295,7 +3297,9 @@ var PlotPanel = class _PlotPanel {
       variable: this.target.variable ?? null,
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,
-      plotNode: this.target.plotNode ?? null
+      plotNode: this.target.plotNode ?? null,
+      from: this.target.from ?? null,
+      statNode: this.target.statNode ?? null
     });
     const session = JSON.stringify({
       id: this.session.id,
@@ -3518,6 +3522,9 @@ function activate(context) {
       const session = await sessionForPlot(target);
       if (!session)
         return;
+      session.log.appendLine(
+        `[Studio] open kind=${target.view ?? "plot"} from=${target.from ?? "unknown"} variable=${target.variable ?? target.plotFunction ?? target.statNode ?? (target.csvPath ? path8.basename(target.csvPath) : "-")}`
+      );
       PlotPanel.show(context, session, target);
     }
   );
@@ -3531,7 +3538,24 @@ function activate(context) {
       if (!variable)
         return;
       await vscode8.commands.executeCommand("scistack.openPlotPanel", {
-        variable: variable.trim()
+        variable: variable.trim(),
+        from: "palette"
+      });
+    }
+  );
+  const summarizeVariable = vscode8.commands.registerCommand(
+    "scistack.summarizeVariable",
+    async () => {
+      const variable = await vscode8.window.showInputBox({
+        prompt: "Variable type to summarize",
+        placeHolder: "e.g. StepLength"
+      });
+      if (!variable)
+        return;
+      await vscode8.commands.executeCommand("scistack.openPlotPanel", {
+        view: "stat",
+        variable: variable.trim(),
+        from: "palette"
       });
     }
   );
@@ -3554,7 +3578,8 @@ function activate(context) {
       if (!target)
         return;
       await vscode8.commands.executeCommand("scistack.openPlotPanel", {
-        csvPath: target
+        csvPath: target,
+        from: "csv"
       });
     }
   );
@@ -3566,6 +3591,7 @@ function activate(context) {
     showMatlabRuns,
     openPlotPanel,
     plotVariable,
+    summarizeVariable,
     plotCsv,
     importBundle,
     outputChannel

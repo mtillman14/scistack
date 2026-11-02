@@ -245,6 +245,11 @@ export function activate(context: vscode.ExtensionContext) {
     async (target: PlotTarget = {}) => {
       const session = await sessionForPlot(target);
       if (!session) return;
+      // One line per studio opened, naming its way in (studio-unification Stage 0).
+      session.log.appendLine(
+        `[Studio] open kind=${target.view ?? 'plot'} from=${target.from ?? 'unknown'} ` +
+        `variable=${target.variable ?? target.plotFunction ?? target.statNode ?? (target.csvPath ? path.basename(target.csvPath) : '-')}`,
+      );
       PlotPanel.show(context, session, target);
     }
   );
@@ -259,6 +264,25 @@ export function activate(context: vscode.ExtensionContext) {
       if (!variable) return;
       await vscode.commands.executeCommand('scistack.openPlotPanel', {
         variable: variable.trim(),
+        from: 'palette',
+      });
+    }
+  );
+
+  // The same way in for statistics (docs/claude/studio-unification.md):
+  // StatStudio opens on a variable exactly as Plot Studio does.
+  const summarizeVariable = vscode.commands.registerCommand(
+    'scistack.summarizeVariable',
+    async () => {
+      const variable = await vscode.window.showInputBox({
+        prompt: 'Variable type to summarize',
+        placeHolder: 'e.g. StepLength',
+      });
+      if (!variable) return;
+      await vscode.commands.executeCommand('scistack.openPlotPanel', {
+        view: 'stat',
+        variable: variable.trim(),
+        from: 'palette',
       });
     }
   );
@@ -293,6 +317,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!target) return;
       await vscode.commands.executeCommand('scistack.openPlotPanel', {
         csvPath: target,
+        from: 'csv',
       });
     }
   );
@@ -305,6 +330,7 @@ export function activate(context: vscode.ExtensionContext) {
     showMatlabRuns,
     openPlotPanel,
     plotVariable,
+    summarizeVariable,
     plotCsv,
     importBundle,
     outputChannel

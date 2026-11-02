@@ -6,8 +6,6 @@ StatStudio — the handler table for both transports (see ``api/plot.py``).
     POST /api/stats/preview             stats_preview
     POST /api/stats/guide-log           stats_guide_log
     POST /api/stats/export              stats_export
-    POST /api/stats/divergence          stats_divergence
-    POST /api/stats/sync                stats_sync
     POST /api/stats/overlay             stats_overlay_bars
     POST /api/stats/overlay-for-plot    stats_overlay_for_plot
     POST /api/stats/linked              stats_linked
@@ -20,13 +18,17 @@ StatStudio — the handler table for both transports (see ``api/plot.py``).
     POST /api/stats/presets/save        stats_preset_save
     POST /api/stats/presets/apply       stats_preset_apply
     POST /api/stats/presets/hide        stats_preset_hide
+    POST /api/stats/presets/rename      stats_preset_rename
+    POST /api/stats/export-code         stats_export_code
+    POST /api/stats/plot-guide          stats_plot_guide
     POST /api/stats/formula/check       stats_formula_check
     POST /api/stats/formula/apply       stats_formula_apply
     POST /api/stats/add-to-pipeline     stats_add_to_pipeline
 
 Lock policy, as for plots: every handler whose service loads tables takes
 the connection itself, only for the load (``holds_db_lock=False``).
-Divergence and sync compare two specs and never touch the database.
+A linked figure and table share one design (scistackplotdb.designs); there
+is no sync to run.
 """
 
 from __future__ import annotations
@@ -52,6 +54,8 @@ class OpenRequest(BaseModel):
     seed: dict | None = None
     plot_id: str | None = None
     variable: str | None = None
+    #: A stat_ function to open on: the spec its generated code embeds.
+    stat_function: str | None = None
     csv_path: str | None = None
 
 
@@ -106,6 +110,7 @@ class PresetIdRequest(BaseModel):
     preset_id: str
     spec: dict | None = None
     hidden: bool | None = True
+    name: str | None = None
 
 
 class GuideLogRequest(BaseModel):
@@ -141,7 +146,8 @@ class AddRequest(BaseModel):
 
 def _open(db, req: OpenRequest) -> dict:
     return stats_service.open_stats(db, stats_id=req.stats_id, version=req.version, seed=req.seed,
-                                    plot_id=req.plot_id, variable=req.variable, csv_path=req.csv_path)
+                                    plot_id=req.plot_id, variable=req.variable, stat_function=req.stat_function,
+                                    csv_path=req.csv_path)
 
 
 def _compute(db, req: ComputeRequest) -> dict:
@@ -154,14 +160,6 @@ def _preview(db, req: ComputeRequest) -> dict:
 
 def _export(db, req: ExportRequest) -> dict:
     return stats_service.export(db, req.spec, req.fmt, req.which, csv_path=req.csv_path, path=req.path)
-
-
-def _divergence(req: PairRequest) -> dict:
-    return stats_service.divergence(req.stats_spec, req.plot_spec)
-
-
-def _sync(req: PairRequest) -> dict:
-    return stats_service.sync(req.stats_spec, req.plot_spec, req.direction or "")
 
 
 def _overlay(db, req: PairRequest) -> dict:
@@ -213,6 +211,18 @@ def _preset_hide(db, req: PresetIdRequest) -> dict:
     return stats_service.presets_hide(db, req.preset_id, req.hidden is not False)
 
 
+def _preset_rename(db, req: PresetIdRequest) -> dict:
+    return stats_service.presets_rename(db, req.preset_id, req.name or "")
+
+
+def _plot_guide(db, req: ComputeRequest) -> dict:
+    return stats_service.plot_guide(db, req.spec, csv_path=req.csv_path)
+
+
+def _export_code(db, req: ComputeRequest) -> dict:
+    return stats_service.export_code(db, req.spec, csv_path=req.csv_path)
+
+
 def _formula_check(db, req: FormulaRequest) -> dict:
     return stats_service.formula_check(db, req.spec, analysis_id=req.analysis_id, text=req.text,
                                        covariates=req.covariates, csv_path=req.csv_path)
@@ -240,10 +250,6 @@ STATS_HANDLERS: tuple[Handler, ...] = (
             http_errors=_BAD_REQUEST, undoable=False),
     Handler("stats_export", "/stats/export", ExportRequest, _export, holds_db_lock=False,
             http_errors={**_BAD_REQUEST, OSError: 400}, db_optional=True, undoable=False),
-    Handler("stats_divergence", "/stats/divergence", PairRequest, _divergence, needs_db=False,
-            http_errors=_BAD_REQUEST, undoable=False),
-    Handler("stats_sync", "/stats/sync", PairRequest, _sync, needs_db=False,
-            http_errors=_BAD_REQUEST, undoable=False),
     Handler("stats_overlay_bars", "/stats/overlay", PairRequest, _overlay, holds_db_lock=False,
             http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
     Handler("stats_overlay_for_plot", "/stats/overlay-for-plot", OverlayForPlotRequest, _overlay_for_plot,
@@ -265,6 +271,14 @@ STATS_HANDLERS: tuple[Handler, ...] = (
             http_errors=_BAD_REQUEST, undoable=False),
     Handler("stats_preset_hide", "/stats/presets/hide", PresetIdRequest, _preset_hide,
             http_errors=_BAD_REQUEST, undoable=False),
+    Handler("stats_preset_rename", "/stats/presets/rename", PresetIdRequest, _preset_rename,
+            http_errors=_BAD_REQUEST, undoable=False),
+    # Plot Studio's step-by-step view: the screens it shares with the wizard.
+    Handler("stats_plot_guide", "/stats/plot-guide", ComputeRequest, _plot_guide, holds_db_lock=False,
+            http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
+    # Export code: the stat_ function as text (the same owner Add to pipeline writes from).
+    Handler("stats_export_code", "/stats/export-code", ComputeRequest, _export_code, holds_db_lock=False,
+            http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
     # The model-formula popup: read-only checks; Apply returns a new spec the
     # webview adopts (its own undo stack records the change, like any edit).
     Handler("stats_formula_check", "/stats/formula/check", FormulaRequest, _formula_check, holds_db_lock=False,

@@ -40,6 +40,140 @@ Frontend steps and what you should see:
    change, output 1 would have saved.
 3. Fix the data and re-run. Both outputs save, and both nodes turn green.
 
+## 0zzzzzzy. One studio flow: Process, Plot and Stats unified — added 2026-11-01
+
+**What changed:** Plot Studio and Stat Studio now take the same steps with
+the same words and the same controls, and a linked figure and table share
+ONE design. Doc: `docs/claude/studio-unification.md`; plan
+`.claude/plan-unify-process-plot-stats.md`.
+
+**Backend**
+- Restart the GUI (new RPCs: `design_update`, `design_apply`,
+  `report_studio_open`, `stats_plot_guide`, `stats_export_code`,
+  `stats_preset_rename`; `stats_sync` / `stats_divergence` are gone).
+- Reload the VS Code window so the rebuilt extension (`dist/extension.js`)
+  and webview bundle load.
+- `scistack.log` gets one `[Studio] open kind=… from=…` line per studio
+  opened; the extension's SciStack output channel gets the same.
+
+**Frontend**
+1. Role words: in Plot Studio > Structure > Factors the roles read
+   **Separate figures / Separate panels / Average over**; in Stat Studio's
+   Structure they read **Separate tables / Separate sections / Average
+   over**. The step-by-step screens use the same words.
+2. Canvas sidebar of a function: the sections read **Filters** and **Schema
+   keys**; under **Schema Level** a line says "Ticked: Separate (one run per
+   level). Unticked keys reach the function together."
+3. Ways in to Stat Studio: the variable sidebar has **Open Stat Studio →**
+   under Open Plot Studio →; right-click a variable shows **📊 Statistics**;
+   the palette has **SciStack: Summarize Variable…**; right-click a `stat_`
+   node made by Add to pipeline shows **📊 Open in Stat Studio**, which opens
+   the settings it was generated with. A hand-written `stat_` says it holds
+   no StatStudio settings.
+4. Open Stat Studio on a variable and Plot Studio on the same variable: both
+   start from the same roles.
+5. Stat Studio, Advanced: the rail shows **Data** and **Structure** exactly
+   as Plot Studio has them (variant rows with + Add, Schema keys picker,
+   Filters, Group by…, Combine, Factors, Layout), with **Measures** between
+   them, then **Statistics** and **Format**. Editing a role here recomputes
+   the tables.
+6. Stat Studio toolbar: Format, Save to file…, Copy, **Export code** (shows
+   the stat_ function in an overlay), Add to pipeline. Right rail: **Saved
+   tables** (Save table…, open, ✎ rename, ✕ remove) and **Presets**.
+7. Shared design: save a plot, click **StatStudio** in its toolbar. Change
+   a role in Plot Studio: within a second the Stat Studio tab shows the same
+   role and recomputes ("Design updated from the linked figure."). Change a
+   role in Stat Studio: the figure redraws with it. No banner, no Sync button.
+   Change only the plot type or colours: Stat Studio does not change.
+8. Close both, reopen the saved plot and the saved table: both open on the
+   last shared design.
+9. Plot Studio **Step by step | Advanced** switch at the top of the rail. A
+   fresh figure opens Step by step the first time: Measure, Independent unit,
+   What to compare (Compare / Separate figures / Average over), Your figure.
+   The figure redraws beside the questions as you choose. Pick Advanced,
+   close, plot another variable: it opens in Advanced. A saved plot always
+   opens in Advanced.
+
+---
+
+## 0zzzzzzx. "Not plotted" button + popup — added 2026-11-01
+
+**What changed:** the figure toolbar shows **Not plotted: N of M** (or
+**Partly plotted: N**) when the figure leaves something out. Clicking it opens
+a table of every left-out value. Doc: `docs/claude/not-plotted.md`.
+
+**Frontend**
+1. Plot a variable with some NaN values as a bar with trials collapsed. The
+   button should appear. Its popup should list the subjects with "Partly
+   averaged" ("3 of 4 records had a value") and any subject whose trials are
+   all NaN as "No value".
+2. Save another variable at a location the plotted one lacks. Reopen the plot:
+   that location should be listed as "No record".
+3. Exclude that location (Data inventory > Exclude…), or filter it out with
+   the location picker. It should disappear from the list.
+4. Histogram with the NaN bar ticked: no "No value" rows. Untick it: they
+   appear. Type a To value below the maximum: "Outside the bin range" rows.
+5. Tick "Show as a footnote on the figure": the sentence should appear under
+   the figure. Save image: it should be in the PNG. Untick it: it should be gone.
+6. Save as CSV: every row should be written, with variable, reason and detail
+   as the last columns.
+7. A plot with nothing left out shows no button.
+
+---
+
+## 0zzzzzzw. Show sample on a histogram / KDE = a crowding-shaded rug — added 2026-11-01
+
+**What changed:** on a histogram or Density (KDE) plot, Statistics > Show
+sample draws a rug: one tick per value along the bottom of each panel, one
+row per colour, light to dark by crowding. Plan: `.claude/plan-histogram-rug.md`.
+
+**Frontend**
+1. On a histogram with two colours, tick the sample key under Show sample.
+   Two rows of ticks should appear at the bottom, in the two colours. The note
+   should read "light = 1 value, darkest = N (A), M (B)".
+2. Join points, Colour points by, Show in legend and Appearance > Sample
+   weight should NOT be shown.
+3. Hovering over a tick should show its value and how many values share its
+   slot.
+4. Widen the bins: a bar covering values only at its two ends should show
+   two clusters of ticks with a gap between them.
+5. Add Own bar `0`: the zeros' ticks should sit under the `= 0` bar, dark.
+6. Switch to Density (KDE): the same rug under the curves.
+7. Export code and Save image: the same ticks and shades.
+
+---
+
+## 0zzzzzzv. Histogram single-value bars + NaN bar; Density (KDE) kind — added 2026-11-01
+
+**What changed:** Chart > Histogram has an **Own bar** box (e.g. `0`) and a
+**Show NaN bar (n)** checkbox. A new kind, **Density (KDE)**, has a Density
+curve section. Plan: `.claude/plan-histogram-special-bins-and-kde.md`. Owners:
+`scistackplot.bins.BARS_SOURCE` and `scistackplot.kde.KDE_SOURCE`.
+
+**Frontend**
+1. Open a histogram of a measure with zeros. Type `0` in **Own bar** and press
+   Enter. A hatched bar ticked `= 0` should appear LEFT of the regular bins,
+   after a one-bin gap. The bins next to it should no longer count the zeros.
+   Hovering over it should say `= 0`, not a number.
+2. On a measure with NaN values, the **Show NaN bar (n)** checkbox should
+   appear, already ticked. A hatched `NaN` bar should sit right of the range.
+   Untick it: the bar should go, and the summary should say `n NaN not drawn`.
+3. Set Height to **Percent**. All the bars of one colour, the special ones
+   included, should add up to 100%.
+4. Set Height to **Density**. The special bars should disappear, with the
+   note saying why.
+5. Try **Stacked** and **Side by side** with two colours: the special bars
+   should stack or split the same way the regular bars do.
+6. Save the image and Export code. The special bars should be hatched in both,
+   with the same ticks.
+7. Pick **Density (KDE)** in the kind grid. There should be one curve per
+   colour. Lowering **Smoothing** to `0.3` should make the curves wigglier.
+   **Extend** `3` should run the curves past the data. **Shade under the
+   curve** should fill them.
+8. Pick an X variable while on Density (KDE): the kind should move to
+   Regression.
+
+---
 
 ## 0zzzzzzu. Text (categorical) measures in Plot Studio — added 2026-11-01
 

@@ -60,14 +60,17 @@ from .roles import (
     overlay_join,
     overlay_steps,
     overlay_unavailable,
+    overlay_is_rug,
 )
 from .shape import Shape
 from .spec import (
     BAR_KINDS,
     CONTINUOUS_X_KINDS,
     SUMMARY_KINDS,
+    UNIVARIATE_KINDS,
     CategoricalStat,
     ErrorBand,
+    HistStat,
     FactorVariable,
     PlotKind,
     PlotSpec,
@@ -249,9 +252,9 @@ def _generate_plot_function(
     is_temporal = (
         spec.y_measure in table.measure_names and table.measure(spec.y_measure).temporal
     )
-    histogram = spec.kind is PlotKind.HISTOGRAM
-    # A histogram bins its datetime measure ALONG X; every other kind draws
-    # it on y.
+    histogram = spec.kind in UNIVARIATE_KINDS
+    # A histogram (or KDE) draws its datetime measure ALONG X; every other
+    # kind draws it on y.
     temporal = planned_temporal(spec, base) if is_temporal and not histogram else None
     compared = temporal is not None and plan_comparison(spec, roles, table) is not None
     x_is_temporal = (is_temporal and histogram) or (
@@ -992,7 +995,9 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
         )
 
     if spec.kind is PlotKind.HISTOGRAM:
-        lines.extend(_histogram_edge_lines(spec, table))
+        lines.extend(_histogram_edge_lines(spec, table, roles, shape))
+    if spec.kind is PlotKind.KDE:
+        lines.extend(_kde_curve_lines(spec, table, roles, shape))
 
     if spec.kind is PlotKind.SPAGHETTI:
         brackets = _nested_x_layers(spec, table, roles, shape)[:-1]
@@ -1010,35 +1015,274 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
     return lines
 
 
-def _histogram_edge_lines(spec, table: LongTable) -> list[str]:
-    """``_edges``: the preview's bin rule (``bins.EDGES_SOURCE``, verbatim)
-    over THIS figure's values, with the spec's settings — so under a fan-out
-    each exported figure bins its own values exactly as its preview did."""
-    from .bins import EDGES_SOURCE, edge_arguments
+def _histogram_edge_lines(spec, table: LongTable, roles, shape) -> list[str]:
+    """``_edges`` and the special slots' settings: the preview's rules
+    (``bins.EDGES_SOURCE`` and ``bins.BARS_SOURCE``, verbatim) over THIS
+    figure's values, with the spec's settings — so under a fan-out each
+    exported figure bins its own values exactly as its preview did.
+
+    ``_hist_regular`` marks the rows seaborn bins (finite, no exact value);
+    the special slots are drawn from every row by ``_histogram_special_lines``.
+    A percent histogram is drawn by seaborn as a weighted count, each row
+    weighing 100 / (every value its panel and colour level DRAWS — regular,
+    exact, NaN when shown), the preview's denominator (``_scistack_bar_heights``)."""
+    from .bins import BARS_SOURCE, EDGES_SOURCE, edge_arguments, special_arguments
 
     temporal = table.measure(spec.y_measure).temporal
     mode, count, width, lo, hi, max_bins = edge_arguments(spec.histogram, temporal=temporal)
-    return [
+    exact, show_nan, _notes = special_arguments(spec.histogram, temporal=temporal)
+    y = spec.y_measure
+    lines = [
         f"# histogram bins ({mode}): the interactive preview's rule, over this figure's values",
         *EDGES_SOURCE.strip("\n").splitlines(),
-        f"_edges = _scistack_bin_edges(df[{spec.y_measure!r}].to_numpy(dtype=float), "
+        "# the bar slots: single-value bins left of the range, NaN right of it",
+        *BARS_SOURCE.strip("\n").splitlines(),
+        f"_exact = {tuple(exact)!r}",
+        f"_stat = {str(spec.histogram.stat)!r}",
+        f"_hist_values = df[{y!r}].to_numpy(dtype=float)",
+        "_hist_regular = _scistack_regular(_hist_values, _exact)",
+        f"_nan_slot = {bool(show_nan)!r} and bool((~np.isfinite(_hist_values)).any())",
+        f"_edges = _scistack_bin_edges(_hist_values[_hist_regular], "
         f"{mode!r}, {count!r}, {width!r}, {lo!r}, {hi!r}, {max_bins!r})",
-        "",
     ]
+    if spec.histogram.stat is HistStat.PERCENT:
+        keys = [*_hist_panel_keys(spec, table, roles, shape)]
+        lines += [
+            "# percent as a weighted count: 100 / what each panel and colour level draws",
+            '_hist_w = pd.Series(0.0, index=df.index)',
+            *(
+                [f"for _k, _rows in df.groupby({keys!r}, dropna=False, sort=False):"]
+                if keys
+                else ["for _rows in [df]:"]
+            ),
+            f"    _c, _ = _scistack_bar_heights(_rows[{y!r}], _edges, _exact, _nan_slot, _stat)",
+            "    _hist_w[_rows.index] = 100.0 / _c.sum() if _c.sum() > 0 else 0.0",
+            'df["_hist_w"] = _hist_w',
+        ]
+    return [*lines, ""]
+
+
+def _hist_panel_keys(spec, table: LongTable, roles, shape) -> list[str]:
+    """The columns a histogram's bars are normalised within: its facets and
+    its colour (``bins.bin_table`` runs per panel, per colour level)."""
+    facets = [name for name, role in roles.items() if role is Role.FACET]
+    color = _color_of(spec, table, roles, shape)
+    return [*facets, *([color] if color else [])]
+
+
+def _histogram_special_lines(spec, table: LongTable, color: str | None, facets: list[str]) -> list[str]:
+    """The special slots ("= 0", "NaN") seaborn does not draw, per panel and
+    colour level, by the preview's own rules (``BARS_SOURCE``: slots,
+    heights, stacking / dodging), hatched as the preview hatches them, and
+    the ticks that name them. Before the limit lines, which read the bars."""
+    from .bins import EDGE_COLOR, EDGE_WIDTH, FILL_ALPHA
+    from .render.base import SPECIAL_BIN_HATCH
+
+    y = spec.y_measure
+    colour = "_hue_palette.get(_level)" if color else _mark_color(spec, table)
+    lines = [
+        "# the special slots: the preview's rule (bins.BARS_SOURCE)",
+        "_lefts, _rights, _kinds, _labels = _scistack_slots(_edges, _exact, _nan_slot, _stat)",
+        f"_slot_names = {'[str(v) for v in _hue_order]' if color else '[]'}",
+        *_panel_rows_lines(facets),
+    ]
+    if color:
+        lines += [
+            f"    _present = set(_rows[{color!r}].dropna().astype(str))",
+            f"    _groups = [(_level, _rows[_rows[{color!r}].astype(str) == str(_level)])"
+            " for _level in _hue_order if str(_level) in _present]",
+        ]
+    else:
+        lines.append("    _groups = [(None, _rows)]")
+    lines += [
+        "    _heights = {",
+        f"        _level: _scistack_bar_heights(_g[{y!r}], _edges, _exact, _nan_slot, _stat)[1]",
+        "        for _level, _g in _groups",
+        "    }",
+        f"    _placed = _scistack_arrange(_heights, _lefts, _rights, {str(spec.histogram.multiple)!r}, _slot_names)",
+        "    for _level, (_lo, _hi, _base) in _placed.items():",
+        "        for _i, _kind in enumerate(_kinds):",
+        '            if _kind != "range":',
+        "                _ax.bar(",
+        "                    _lo[_i], _heights[_level][_i], width=_hi[_i] - _lo[_i], bottom=_base[_i],",
+        f'                    align="edge", color={colour}, alpha={FILL_ALPHA}, '
+        f"edgecolor={EDGE_COLOR!r}, linewidth={EDGE_WIDTH}, hatch={SPECIAL_BIN_HATCH!r},",
+        "                )",
+        "_ticks = _scistack_hist_ticks(_lefts, _rights, _kinds, _labels)",
+        "if _ticks is not None:",
+        "    for _ax in g.axes.flat:",
+        "        _ax.set_xticks(_ticks[0], _ticks[1])",
+    ]
+    return lines
+
+
+def _panel_rows_lines(facets: list[str], frame: str = "df") -> list[str]:
+    """``for _key, _ax in _panels:`` with ``_rows`` = that panel's rows of
+    ``frame`` (``df``, or a KDE's ``_curves``): the facet grid's panels as the
+    export walks them (fits, the histogram's special slots, a KDE's fill)."""
+    return [
+        "_panels = list(g.axes_dict.items()) or [((), g.ax)]",
+        "for _key, _ax in _panels:",
+        "    _values = _key if isinstance(_key, tuple) else (_key,)",
+        f"    _rows = {frame}",
+        f"    for _f, _v in zip({facets!r}, reversed(_values)):",
+        "        _rows = _rows[_rows[_f] == _v]",
+    ]
+
+
+def _rug_lines(spec, table: LongTable, roles, shape, color: str | None, facets: list[str]) -> list[str]:
+    """A histogram / KDE "Show sample": the rug, by the preview's rule
+    (``bins.RUG_SOURCE``, verbatim) over ``_sample`` (the overlay's rows,
+    ``_sample_preamble_lines``) — each tick at its value (or its single-value
+    slot), counted per panel and colour level in 1/RUG_SLOTS of the axis,
+    shaded against the level's most crowded spot over the whole figure, one
+    row per colour level from the bottom of each panel. Before the limit
+    lines, which set both axes explicitly."""
+    if not overlay_is_rug(spec) or _overlay_of(spec, table, roles, shape) is None:
+        return []
+    from .bins import RUG_LINE_WIDTH, RUG_ROW_HEIGHT, RUG_SHADES, RUG_SLOTS, RUG_SOURCE
+
+    y = spec.y_measure
+    histogram = spec.kind is PlotKind.HISTOGRAM
+    x_range = (
+        "float(_lefts.min()), float(_rights.max())"
+        if histogram
+        else f"float(_curves[{_KDE_X!r}].min()), float(_curves[{_KDE_X!r}].max())"
+    )
+    slots = "_exact, _lefts, _rights, _kinds" if histogram else "(), [], [], []"
+    colour = "_hue_palette.get(_level)" if color else _mark_color(spec, table)
+    lines = [
+        "# show sample as a rug: the preview's rule (bins.RUG_SOURCE)",
+        *RUG_SOURCE.strip("\n").splitlines(),
+        f"_rug_lo, _rug_hi = {x_range}",
+        f"_rug_rows = {'{str(v): i for i, v in enumerate(_hue_order)}' if color else '{}'}",
+        "_rug_parts = []",
+        *_panel_rows_lines(facets, _SAMPLE_FRAME),
+    ]
+    if color:
+        lines.append(
+            f"    _groups = [(_level, _rows[_rows[{color!r}].astype(str) == str(_level)]) for _level in _hue_order]"
+        )
+    else:
+        lines.append("    _groups = [(None, _rows)]")
+    lines += [
+        "    for _level, _g in _groups:",
+        f"        _xs = _scistack_rug_positions(_g[{y!r}].to_numpy(dtype=float), {slots})",
+        f"        _n = _scistack_rug_counts(_xs, _rug_lo, _rug_hi, {RUG_SLOTS})",
+        "        if (_n > 0).any():",
+        "            _rug_parts.append((_ax, _level, _xs[_n > 0], _n[_n > 0]))",
+        "_rug_top = {}",
+        "for _ax, _level, _xs, _n in _rug_parts:",
+        "    _rug_top[str(_level)] = max(_rug_top.get(str(_level), 0), int(_n.max()))",
+        "for _ax, _level, _xs, _n in _rug_parts:",
+        f"    _shade = _scistack_rug_shade(_n, _rug_top[str(_level)], {RUG_SHADES})",
+        '    _o = np.argsort(_shade, kind="stable")  # lightest first, crowded on top',
+        f"    _row = _rug_rows.get(str(_level), 0)",
+        "    _ax.vlines(",
+        f"        _xs[_o], _row * {RUG_ROW_HEIGHT}, (_row + 1) * {RUG_ROW_HEIGHT},",
+        f"        colors=[_scistack_rug_color({colour}, int(_s), {RUG_SHADES}) for _s in _shade[_o]],",
+        f"        linewidth={RUG_LINE_WIDTH}, transform=_ax.get_xaxis_transform(), zorder=3,",
+        "    )",
+    ]
+    return lines
 
 
 def _histogram_limit_lines(spec, y_plan: _YLimitPlan) -> list[str]:
     """A histogram's ranges as the preview draws them: x exactly the outer
-    edges (``render.base.histogram_x_range``), y from zero to 5% above the
-    tallest bar (``bins.histogram_limits``) — shared, or per panel when the
+    slot edges, special slots included (``render.base.univariate_x_range``),
+    y from zero to 5% above the tallest bar (``bins.histogram_limits``) —
+    shared, or per panel when the scope names a facet — with a pinned end
+    (``y_axis``) winning."""
+    low, high = pinned_ends(spec.y_axis)
+    top = "max(_tops.values())" if y_plan.share_y else "_tops[id(_ax)]"
+    return [
+        "g.set(xlim=(float(_lefts.min()), float(_rights.max())))",
+        "# y: zero to 5% above the tallest bar (the bars' own tops, stacked or not)",
+        "_tops = {",
+        "    id(_ax): max([_p.get_y() + _p.get_height() for _p in _ax.patches] or [0.0])",
+        "    for _ax in g.axes.flat",
+        "}",
+        "for _ax in g.axes.flat:",
+        f"    _top = {top}",
+        "    _auto = (0.0, _top * 1.05 if _top > 0 else 1.0)",
+        f"    _ax.set_ylim({low!r} if {low!r} is not None else _auto[0], "
+        f"{high!r} if {high!r} is not None else _auto[1])",
+    ]
+
+
+#: The columns of the export's precomputed curve frame (`_curves`).
+_KDE_X = "_x"
+_KDE_Y = "_density"
+
+
+def _kde_curve_lines(spec, table: LongTable, roles, shape) -> list[str]:
+    """``_curves``: the preview's curves (``kde.KDE_SOURCE``, verbatim), one
+    per panel and colour level over THIS figure's rows — the groups
+    ``kde.curve_table`` draws — as a long frame seaborn draws as lines."""
+    from .kde import GRID_POINTS, KDE_SOURCE
+
+    keys = _hist_panel_keys(spec, table, roles, shape)
+    options = spec.kde
+    return [
+        "# density curves: the interactive preview's rule, per panel and colour level",
+        *KDE_SOURCE.strip("\n").splitlines(),
+        "_curve_parts = []",
+        *(
+            [f"for _k, _rows in df.groupby({keys!r}, dropna=False, sort=False):"]
+            if keys
+            else ["for _k, _rows in [((), df)]:"]
+        ),
+        f"    _c = _scistack_kde(_rows[{spec.y_measure!r}], {options.bandwidth_adjust!r}, "
+        f"{options.cut!r}, {GRID_POINTS!r})",
+        "    if _c is None:",
+        "        continue  # fewer than two different values: no curve",
+        f"    _part = pd.DataFrame({{{_KDE_X!r}: _c[0], {_KDE_Y!r}: _c[1]}})",
+        f"    for _name, _value in zip({keys!r}, _k if isinstance(_k, tuple) else (_k,)):",
+        "        _part[_name] = _value",
+        "    _curve_parts.append(_part)",
+        f"_curves = pd.concat(_curve_parts, ignore_index=True) if _curve_parts else "
+        f"pd.DataFrame(columns=[{_KDE_X!r}, {_KDE_Y!r}, *{keys!r}])",
+        "",
+    ]
+
+
+def _kde_fill_lines(spec, table: LongTable, color: str | None, facets: list[str]) -> list[str]:
+    """The shade under each curve when ``KdeOptions.fill``, per panel and
+    colour level, at the preview's opacity (``kde.FILL_ALPHA``)."""
+    if not spec.kde.fill:
+        return []
+    from .kde import FILL_ALPHA
+
+    colour = "_hue_palette.get(_level)" if color else _mark_color(spec, table)
+    lines = ["# the shade under each curve", *_panel_rows_lines(facets, "_curves")]
+    if color:
+        lines.append(
+            f"    _groups = [(_level, _rows[_rows[{color!r}].astype(str) == str(_level)]) for _level in _hue_order]"
+        )
+    else:
+        lines.append("    _groups = [(None, _rows)]")
+    lines += [
+        "    for _level, _g in _groups:",
+        "        if len(_g):",
+        f"            _ax.fill_between(_g[{_KDE_X!r}], 0.0, _g[{_KDE_Y!r}], color={colour}, "
+        f"alpha={FILL_ALPHA}, linewidth=0)",
+    ]
+    return lines
+
+
+def _kde_limit_lines(spec, y_plan: _YLimitPlan) -> list[str]:
+    """A KDE's ranges as the preview draws them: x exactly the curves'
+    extent (``render.base.univariate_x_range``), y from zero to 5% above the
+    highest point (``kde.density_limits``) — shared, or per panel when the
     scope names a facet — with a pinned end (``y_axis``) winning."""
     low, high = pinned_ends(spec.y_axis)
     top = "max(_tops.values())" if y_plan.share_y else "_tops[id(_ax)]"
     return [
-        "g.set(xlim=(float(_edges[0]), float(_edges[-1])))",
-        "# y: zero to 5% above the tallest bar (the bars' own tops, stacked or not)",
+        "if len(_curves):",
+        f"    g.set(xlim=(float(_curves[{_KDE_X!r}].min()), float(_curves[{_KDE_X!r}].max())))",
+        "# y: zero to 5% above the highest point of the curves",
         "_tops = {",
-        "    id(_ax): max([_p.get_y() + _p.get_height() for _p in _ax.patches] or [0.0])",
+        "    id(_ax): max([float(np.max(_l.get_ydata())) for _l in _ax.lines if len(_l.get_ydata())] or [0.0])",
         "    for _ax in g.axes.flat",
         "}",
         "for _ax in g.axes.flat:",
@@ -1084,12 +1328,7 @@ def _fit_lines(spec, table: LongTable, color: str | None, facets: list[str], ali
     lines = [
         "# lines of best fit: csvstats.regression.linear_fit, the preview's own fit",
         *STATS_TEXT_SOURCE.strip("\n").splitlines(),
-        "_panels = list(g.axes_dict.items()) or [((), g.ax)]",
-        "for _key, _ax in _panels:",
-        "    _values = _key if isinstance(_key, tuple) else (_key,)",
-        "    _rows = df",
-        f"    for _f, _v in zip({facets!r}, reversed(_values)):",
-        "        _rows = _rows[_rows[_f] == _v]",
+        *_panel_rows_lines(facets),
     ]
     if by_colour:
         lines += [
@@ -1496,6 +1735,9 @@ def _sample_draw_lines(
     )
     from .spaghetti import SPAGHETTI_SPREAD
 
+    if overlay_is_rug(spec):
+        # A histogram / KDE draws its sample as a rug (`_rug_lines`).
+        return []
     found = _overlay_of(spec, table, roles, shape)
     if found is None:
         return []
@@ -2083,10 +2325,16 @@ def _plot_call(
     # A histogram is univariate: `x` is the binned measure and there is no
     # `y` (displot with both would draw a 2-D histogram).
     args = (
-        [f"data=df", f"x={x_column!r}"]
+        # Only the rows the regular bins hold (`_hist_regular`): the special
+        # slots are drawn by `_histogram_special_lines`.
+        ["data=df[_hist_regular]", f"x={x_column!r}"]
         if kind is PlotKind.HISTOGRAM
         else [f"data=df", f"x={x_column!r}", f"y={spec.y_measure!r}"]
     )
+    if kind is PlotKind.KDE:
+        # The preview's curves, computed in the preamble (`_curves`,
+        # `kde.KDE_SOURCE`); seaborn only draws them.
+        args = ["data=_curves", f"x={_KDE_X!r}", f"y={_KDE_Y!r}"]
     if is_horizontal(kind):
         # The same bars turned (spec.is_horizontal): the categories on y,
         # the measure along x, and the orientation stated, not inferred.
@@ -2163,12 +2411,19 @@ def _plot_call(
 
         # The preview's bars, stated: its edges (`_edges`, the preamble), its
         # per-level normalisation, how levels share a bin, its fill and
-        # outline. seaborn's own defaults differ on every one of them.
+        # outline. seaborn's own defaults differ on every one of them. Percent
+        # is a weighted count (`_hist_w`, the preamble): seaborn's own percent
+        # would leave the exact and NaN slots out of the denominator.
+        #
+        # The edges go in as a LIST: with `weights=`, seaborn 0.13 tests
+        # `bins == "auto"`, which an ndarray answers element-wise ("truth
+        # value of an array is ambiguous"); a list compares False.
+        percent = spec.histogram.stat is HistStat.PERCENT
         args.extend(
             [
                 'kind="hist"',
-                "bins=_edges",
-                f"stat={str(spec.histogram.stat)!r}",
+                "bins=list(_edges)",
+                *(['stat="count"', 'weights="_hist_w"'] if percent else [f"stat={str(spec.histogram.stat)!r}"]),
                 f"multiple={str(spec.histogram.multiple)!r}",
                 "common_norm=False",
                 'element="bars"',
@@ -2179,6 +2434,13 @@ def _plot_call(
             ]
         )
         call = "sns.displot"
+    elif kind is PlotKind.KDE:
+        from .kde import LINE_WIDTH
+
+        # One line per curve, exactly the computed points: no aggregation,
+        # no re-sorting, the preview's line width.
+        args.extend(['kind="line"', "estimator=None", "sort=False", f"linewidth={LINE_WIDTH}"])
+        call = "sns.relplot"
     elif kind in (PlotKind.SCATTER, PlotKind.REGRESSION):
         if _x_is_categorical(spec, table, roles, shape):
             args.extend(['kind="strip"', "jitter=False"])
@@ -2243,7 +2505,7 @@ def _plot_call(
 
     # A histogram states its own fill above (`alpha=`; histplot takes no
     # `saturation`).
-    alpha = fill_alpha(kind, style) if kind is not PlotKind.HISTOGRAM else None
+    alpha = fill_alpha(kind, style) if kind not in UNIVARIATE_KINDS else None
     if alpha is not None:
         args.append("saturation=1")
         args.append(
@@ -2305,7 +2567,13 @@ def _plot_call(
 
         lines.extend(lone_point_marker_code("g.axes.flat"))
     if kind is PlotKind.HISTOGRAM:
+        lines.extend(_histogram_special_lines(spec, table, color, facets))
+        lines.extend(_rug_lines(spec, table, roles, shape, color, facets))
         lines.extend(_histogram_limit_lines(spec, y_plan))
+    if kind is PlotKind.KDE:
+        lines.extend(_kde_fill_lines(spec, table, color, facets))
+        lines.extend(_rug_lines(spec, table, roles, shape, color, facets))
+        lines.extend(_kde_limit_lines(spec, y_plan))
     if kind is PlotKind.REGRESSION:
         lines.extend(_fit_lines(spec, table, color, facets, aliases))
     if ylim is not None:
@@ -2340,6 +2608,14 @@ def _plot_call(
         from .bins import y_title as histogram_y_title
 
         y_label = style.y_label or histogram_y_title(spec.histogram.stat)
+        if style.x_label is None and x_label and table.measure(spec.y_measure).temporal:
+            x_label += zone_suffix
+    elif kind is PlotKind.KDE:
+        # What the curve's height is (kde.Y_TITLE); a datetime measure is on
+        # x, so x says the zone.
+        from .kde import Y_TITLE as KDE_Y_TITLE
+
+        y_label = style.y_label or KDE_Y_TITLE
         if style.x_label is None and x_label and table.measure(spec.y_measure).temporal:
             x_label += zone_suffix
     elif style.y_label is None and compared is None and table.measure(spec.y_measure).temporal:
@@ -3129,14 +3405,16 @@ def _y_limit_plan(
     than a reproducible one.
     """
     y_axis = spec.y_axis
-    if spec.kind is PlotKind.HISTOGRAM:
-        # The y axis counts bars, not the measure: its range comes from the
-        # drawn bars (`_histogram_limit_lines`, the preview's
-        # `bins.histogram_limits`), per panel when the scope names a facet.
+    if spec.kind in UNIVARIATE_KINDS:
+        # The y axis counts bars (or density), not the measure: its range
+        # comes from the drawn bars or curves (`_histogram_limit_lines`,
+        # `_kde_limit_lines`: the preview's `bins.histogram_limits` /
+        # `kde.density_limits`), per panel when the scope names a facet.
         facets = [name for name, role in roles.items() if role is Role.FACET]
         per_panel = any(name in y_axis.scope for name in facets)
         Log.info(
-            "export y limits: histogram — from the drawn bars%s",
+            "export y limits: %s — from the drawn marks%s",
+            spec.kind,
             ", per panel" if per_panel else ", shared",
             layer=LAYER,
         )
@@ -3354,8 +3632,8 @@ def _line_layers(spec, table, roles, shape) -> list[str]:
 
 
 def _x_expression(spec, table, roles, shape) -> str:
-    if spec.kind is PlotKind.HISTOGRAM:
-        # The measure itself is binned along x.
+    if spec.kind in UNIVARIATE_KINDS:
+        # The measure itself is binned (or smoothed) along x.
         return spec.y_measure
     if spec.x_measure:
         return spec.x_measure

@@ -80,6 +80,11 @@ def save(
         )
     except SavedPlotExists as exists:
         return {"ok": False, "exists": exists.existing.to_dict(), "message": str(exists)}
+    # A plot linked to a stats table shares ONE design with it
+    # (scistackplotdb.designs): saving the figure writes that design too.
+    from scistack_gui.services import design_service
+
+    design_service.write_if_linked(db, info.plot_id, spec, route="plot_saved_save")
     return {"ok": True, "plot": info.to_dict(), **list_plots(db, variable)}
 
 
@@ -106,6 +111,19 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
             return loaded["table"]
 
         saved = load_saved_plot(db, plot_id, version=version, table_for=table_for)
+        # The newest version of a plot linked to a stats table opens on the
+        # shared design (scistackplotdb.designs), not its own envelope's copy.
+        # An older version stays exactly as it was saved.
+        spec = saved.spec
+        design_version = None
+        design_notes: list = []
+        if version is None:
+            from scistackplotdb import apply_design
+
+            spec, design_notes, design_version = apply_design(db, plot_id, saved.spec)
+            if design_version is not None and spec != saved.spec:
+                # The shared design may name other variables or variants.
+                table_for(spec)
 
     caps = None
     table = loaded.get("table")
@@ -116,7 +134,7 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
         table = None
     if table is not None:
         try:
-            caps = capabilities(saved.spec, table)
+            caps = capabilities(spec, table)
         except Exception:
             # The panel re-asks for capabilities on its first resolve anyway.
             # A spec that cannot be reported on here will say why there, on
@@ -136,7 +154,12 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
         len(saved.notes),
         "" if caps is not None else " (no capability report)",
     )
-    return {"plot": saved.to_dict(), "capabilities": caps}
+    plot = saved.to_dict()
+    plot["spec"] = spec.to_dict()
+    plot["design_linked"] = design_version is not None
+    plot["design_version"] = design_version
+    plot["design_notes"] = [n.to_dict() for n in design_notes]
+    return {"plot": plot, "capabilities": caps}
 
 
 def follow_latest(db, plot_id: str) -> dict:

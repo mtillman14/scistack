@@ -17,6 +17,7 @@ import {
   joinTooltip,
   joinSetting,
   toggleShowSample,
+  rugScaleNote,
 } from './showSample.js'
 
 test('ticking adds, unticking removes, order is the user’s', () => {
@@ -62,4 +63,16 @@ test('the join tooltip names the span and the brackets a line never crosses', ()
   assert.match(joinTooltip({ ...join, span: 'ColName', brackets: ['session'] }), /never across session\./)
   assert.doesNotMatch(joinTooltip({ ...join, span: 'session', brackets: [] }), /never across/)
   assert.doesNotMatch(joinTooltip({ ...join, span: null, brackets: [] }), /\(/)
+})
+
+test('rugScaleNote states the shading scale per colour level', () => {
+  assert.equal(
+    rugScaleNote({ scale: { A: 7, B: 3 }, slots: 400 }),
+    'One tick per value, shaded by crowding: light = 1 value, darkest = 7 (A), 3 (B) value(s) in 1/400 of the axis.',
+  )
+  assert.equal(
+    rugScaleNote({ scale: { None: 4 }, slots: 400 }),
+    'One tick per value, shaded by crowding: light = 1 value, darkest = 4 value(s) in 1/400 of the axis.',
+  )
+  assert.equal(rugScaleNote(null), '')
 })

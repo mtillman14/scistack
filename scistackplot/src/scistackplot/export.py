@@ -58,6 +58,11 @@ LAYER = "scistackplot"
 #: they can never collide with one.
 BARS_DEPTH = "__bars"
 FITS_DEPTH = "__fits"
+#: The "Not plotted" list as CSV (the popup's Save button): every item of
+#: every figure's ``omissions.OmissionReport``, never truncated. Offered
+#: for every kind (it is not a depth of the sample), so it is not in
+#: :func:`data_export_options`.
+NOT_PLOTTED_DEPTH = "__not_plotted"
 
 
 @dataclass(frozen=True)
@@ -280,7 +285,7 @@ def data_export_options(
     # FROM the sample rows above, one row per bar or per fitted line.
     if str(spec.kind) == "histogram":
         stat = str(spec.histogram.stat)
-        bar_columns = ["bin_start", "bin_end", "count", *([stat] if stat != "count" else [])]
+        bar_columns = ["bin_kind", "bin_start", "bin_end", "count", *([stat] if stat != "count" else [])]
         depths.append(
             DataDepth(
                 key=BARS_DEPTH,
@@ -351,6 +356,8 @@ def plot_data(
     from .reduce import _collapse_levels, _plan, _sample_frame
     from .roles import CollapseSteps
 
+    if depth == NOT_PLOTTED_DEPTH:
+        return not_plotted_table(spec, table)
     with Log.timer("plot_data", layer=LAYER, extra=str(spec.kind)) as timing:
         with timing.phase("plan"):
             plan = _plan(spec, table)
@@ -509,7 +516,7 @@ def _derived_table(spec: PlotSpec, table: LongTable, which: str) -> pd.DataFrame
     recomputation. One row per bar / fit, keyed by the figure's ITERATE
     values, the panel's facet values and the colour level."""
     from .reduce import resolve
-    from .resolved import COLOR, COUNT, X_HIGH, X_LOW, Y, Y_BASE
+    from .resolved import BIN_KIND, BIN_LABEL, COLOR, COUNT, X_HIGH, X_LOW, Y, Y_BASE
 
     figures = resolve(spec, table)
     rows: list[dict] = []
@@ -520,6 +527,14 @@ def _derived_table(spec: PlotSpec, table: LongTable, which: str) -> pd.DataFrame
             keys = {**figure.figure_key, **panel.key}
             if which == BARS_DEPTH:
                 stat = str(spec.histogram.stat)
+                # A special slot is written by what it holds, not where it is
+                # drawn: an exact bin starts and ends at its value, the NaN
+                # bar has no range (bins.BinEdges owns the slots).
+                exact_at = {}
+                if figure.bins is not None:
+                    _l, _r, kinds, labels = figure.bins.slots()
+                    named = [lab for kind, lab in zip(kinds, labels) if kind == "exact"]
+                    exact_at = dict(zip(named, figure.bins.exact))
                 for record in panel.frame.to_dict(orient="records"):
                     row = dict(keys)
                     if color:
@@ -527,7 +542,12 @@ def _derived_table(spec: PlotSpec, table: LongTable, which: str) -> pd.DataFrame
                     start, end = record[X_LOW], record[X_HIGH]
                     if temporal_x is not None:
                         start, end = from_axis_ms(start).isoformat(), from_axis_ms(end).isoformat()
-                    row.update(bin_start=start, bin_end=end, count=int(record[COUNT]))
+                    kind = record.get(BIN_KIND, "range")
+                    if kind == "exact":
+                        start = end = exact_at.get(record.get(BIN_LABEL))
+                    elif kind == "nan":
+                        start = end = None
+                    row.update(bin_kind=kind, bin_start=start, bin_end=end, count=int(record[COUNT]))
                     if stat != "count":
                         row[stat] = float(record[Y]) - float(record[Y_BASE])
                     rows.append(row)
@@ -846,3 +866,34 @@ def sample_curves(spec: PlotSpec, table: LongTable) -> pd.DataFrame:
             y, dict(lengths), odd[:10], common, layer=LAYER,
         )
     return out
+
+
+def not_plotted_table(spec: PlotSpec, table: LongTable) -> pd.DataFrame:
+    """Every value the figures leave out (``omissions``, the owner), one row
+    each: the figure's ITERATE values, the item's location, the variable, the
+    reason (as the popup words it) and its detail. Read off the RESOLVED
+    figures, so the CSV is the popup, untruncated."""
+    from .omissions import REASON_LABELS
+    from .reduce import resolve
+
+    rows: list[dict] = []
+    for figure in resolve(spec, table):
+        report = figure.omissions
+        if report is None:
+            continue
+        for item in report.items:
+            rows.append(
+                {
+                    **{str(k): v for k, v in figure.figure_key.items()},
+                    **item.keys,
+                    "variable": item.variable,
+                    "reason": REASON_LABELS[item.reason],
+                    "detail": item.detail,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    if not frame.empty:
+        tail = ["variable", "reason", "detail"]
+        frame = frame[[c for c in frame.columns if c not in tail] + tail]
+    Log.info("[plot-data] not plotted of %r: %d row(s)", spec.y_measure, len(frame), layer=LAYER)
+    return frame

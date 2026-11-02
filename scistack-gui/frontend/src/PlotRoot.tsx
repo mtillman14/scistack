@@ -23,6 +23,8 @@ export interface PlotViewConfig {
   location: PathStep[] | null
   /** A plot_ node to open on: its own function draws the figure. */
   plotNode?: string | null
+  /** Which way in (components/Studio/studioOpen.ts), logged once. */
+  from?: string | null
 }
 
 export default function PlotRoot({ initial }: { initial: PlotViewConfig }) {
@@ -32,6 +34,7 @@ export default function PlotRoot({ initial }: { initial: PlotViewConfig }) {
       csvPath={initial.csvPath ?? undefined}
       initialLocation={initial.location ?? undefined}
       plotNode={initial.plotNode ?? undefined}
+      openedFrom={initial.from ?? undefined}
       embedded
       onClose={() => undefined}
     />

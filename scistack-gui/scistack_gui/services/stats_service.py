@@ -67,6 +67,62 @@ def _load(db, spec, *, csv_path: str | None, label: str) -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 
 
+def _opened(spec, *, notes=None, info=None, seed_notes=None, design_version=None) -> dict:
+    """The reply every way of opening StatStudio shares: the spec, its notes,
+    and the table's role words (``scistackplot.role_labels``, the one owner
+    shared with Plot Studio; the webview hardcodes none)."""
+    from scistackplot.role_labels import role_labels_payload
+
+    return {
+        "ok": True,
+        "spec": spec.to_dict(),
+        "notes": notes or [],
+        "info": info,
+        "seed_notes": seed_notes or [],
+        "role_labels": role_labels_payload("table"),
+        "design_linked": design_version is not None,
+        "design_version": design_version,
+    }
+
+
+def _with_shared_design(db, spec, *, csv_path: str | None):
+    """*spec* with its linked plot's shared design (``scistackplotdb.designs``)
+    on its design carrier. ``(spec, design_version or None)``."""
+    if csv_path or not spec.linked_plot:
+        return spec, None
+    from scistackplotdb import apply_design
+
+    design, notes, version = apply_design(db, spec.linked_plot, spec.design)
+    for note in notes:
+        logger.info("[stats] shared design note: %s", note.message)
+    return (spec.with_design(design) if version is not None else spec), version
+
+
+def _stat_function_spec(stat_function: str) -> dict:
+    """The spec a generated ``stat_`` function embeds (``scistackstats.embedded_spec``)."""
+    import inspect
+
+    from scistackstats import embedded_spec
+
+    from scistack_gui import registry
+
+    fn = registry.lookup_function(stat_function)
+    if fn is None:
+        raise ValueError(f"{stat_function} is not a known function; Refresh Code, then try again.")
+    inner = getattr(fn, "fcn", None)
+    try:
+        source = inspect.getsource(inner if callable(inner) else fn)
+    except (OSError, TypeError) as exc:
+        raise ValueError(f"The source of {stat_function} could not be read ({exc}).") from exc
+    payload = embedded_spec(source)
+    if payload is None:
+        raise ValueError(
+            f"{stat_function} was not made by StatStudio's Add to pipeline, so it holds no StatStudio "
+            f"settings to open. Open StatStudio on its input variable instead."
+        )
+    return payload
+
+
 def open_stats(
     db,
     *,
@@ -75,39 +131,65 @@ def open_stats(
     seed: dict | None = None,
     plot_id: str | None = None,
     variable: str | None = None,
+    stat_function: str | None = None,
     csv_path: str | None = None,
 ) -> dict:
-    """A stats spec to edit: a saved one, one seeded from a figure, or a
-    fresh one for a variable. Never runs the statistics (``compute`` does)."""
-    from scistackplot import PlotSpec, default_spec
-    from scistackstats import SeedError, seed_from_plot
+    """A stats spec to edit: a saved one, one seeded from a figure, one a
+    ``stat_`` function embeds, or a fresh one for a variable. Never runs the
+    statistics (``compute`` does).
+
+    A fresh table for a variable starts from the SAME design a fresh figure
+    of it does (``plot_service.opening_spec``, one owner). A table set up
+    from a saved plot links to it: the two then share one design
+    (``scistackplotdb.designs``).
+    """
+    from scistackplot import PlotSpec
+    from scistackstats import SeedError, StatsSpec, seed_from_plot
+
+    from scistack_gui.db import db_connection
 
     if stats_id:
         from scistackstatsdb import load_saved_stats
 
-        from scistack_gui.db import db_connection
-
         with db_connection("stats_open"):
             saved = load_saved_stats(db, stats_id, version=version)
-        logger.info("[stats] opened saved %r v%d: %d note(s)", saved.info.name, saved.info.version, len(saved.notes))
-        return {"ok": True, "spec": saved.spec.to_dict(), "notes": saved.notes, "info": saved.info.to_dict(),
-                "seed_notes": []}
+            spec, design_version = _with_shared_design(db, saved.spec, csv_path=csv_path)
+        logger.info("[stats] opened saved %r v%d: %d note(s), shared design %s", saved.info.name,
+                    saved.info.version, len(saved.notes), design_version)
+        return _opened(spec, notes=saved.notes, info=saved.info.to_dict(), design_version=design_version)
     if seed is not None:
         try:
-            seeded = seed_from_plot(PlotSpec.from_dict(seed), linked_plot=plot_id)
+            plot = PlotSpec.from_dict(seed)
+            seeded = seed_from_plot(plot, linked_plot=plot_id)
         except SeedError as exc:
             return {"ok": False, "error": str(exc)}
-        logger.info("[stats] seeded from a figure of %s (linked plot %s): %s",
-                    seeded.spec.design.y_measure, plot_id, "; ".join(seeded.notes))
-        return {"ok": True, "spec": seeded.spec.to_dict(), "notes": [], "info": None, "seed_notes": seeded.notes}
-    if variable:
-        from scistack_gui.db import db_connection
+        design_version = None
+        spec = seeded.spec
+        if plot_id and not csv_path:
+            from scistackplotdb import link_design
 
+            with db_connection("stats_open"):
+                stored = link_design(db, plot_id, plot)
+            design_version = stored.version
+        logger.info("[stats] seeded from a figure of %s (linked plot %s, shared design %s): %s",
+                    spec.design.y_measure, plot_id, design_version, "; ".join(seeded.notes))
+        return _opened(spec, seed_notes=seeded.notes, design_version=design_version)
+    if stat_function:
+        payload = _stat_function_spec(stat_function)
+        spec = StatsSpec.from_dict(payload)
+        with db_connection("stats_open", needed=not csv_path):
+            spec, design_version = _with_shared_design(db, spec, csv_path=csv_path)
+        logger.info("[stats] opened the spec embedded in %s (%d DV(s))", stat_function, len(spec.targets))
+        return _opened(spec, notes=[{"message": f"Opened the settings {stat_function} was generated with."}],
+                       design_version=design_version)
+    if variable:
         with db_connection("stats_open", needed=not csv_path):
             table = plot_service.get_source(db, csv_path=csv_path).get_table([variable])
-        seeded = seed_from_plot(default_spec(table, variable))
-        return {"ok": True, "spec": seeded.spec.to_dict(), "notes": [], "info": None, "seed_notes": seeded.notes}
-    raise ValueError("stats_open needs stats_id, seed or variable")
+            plot = plot_service.opening_spec(None if csv_path else db, table, variable)
+        seeded = seed_from_plot(plot)
+        logger.info("[stats] fresh table for %s from the opening design: %s", variable, "; ".join(seeded.notes))
+        return _opened(seeded.spec, seed_notes=seeded.notes)
+    raise ValueError("stats_open needs stats_id, seed, stat_function or variable")
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +452,28 @@ def preview(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
     return {"ok": True, "guide": payload}
 
 
+def plot_guide(db, plot_payload: dict, *, csv_path: str | None = None) -> dict:
+    """Plot Studio's step-by-step view (docs/claude/studio-unification.md):
+    the figure seeded as a table (``seed_from_plot``, the one plot-to-table
+    owner), then the screens it shares with StatStudio's wizard. No test runs."""
+    from scistackplot import PlotSpec
+    from scistackstats import SeedError, StatsSpecError, plot_guide as build
+    from scistackstats import seed_from_plot
+
+    try:
+        seeded = seed_from_plot(PlotSpec.from_dict(plot_payload))
+    except (SeedError, ValueError, KeyError, TypeError) as exc:
+        return {"ok": False, "error": str(exc)}
+    tables = _tables(db, seeded.spec, csv_path=csv_path, label="stats_plot_guide")
+    t0 = time.perf_counter()
+    try:
+        payload = build(seeded.spec, tables)
+    except (StatsSpecError, ValueError) as exc:
+        return {"ok": False, "error": str(exc)}
+    logger.info("[timing] stats_plot_guide: guide in %.3fs", time.perf_counter() - t0)
+    return {"ok": True, "guide": payload}
+
+
 def export(db, spec_payload: dict, fmt: str, which: str, *, csv_path: str | None = None,
            path: str | None = None) -> dict:
     """One tab as text (``txt md csv latex html json``), optionally written to *path*."""
@@ -394,38 +498,9 @@ def export(db, spec_payload: dict, fmt: str, which: str, *, csv_path: str | None
 
 
 # ---------------------------------------------------------------------------
-# Plot link: divergence, sync, brackets
+# Plot link: brackets. The design itself is shared, not synced
+# (scistackplotdb.designs, services/design_service.py).
 # ---------------------------------------------------------------------------
-
-
-def divergence(stats_payload: dict, plot_payload: dict) -> dict:
-    from scistackplot import PlotSpec
-    from scistackplot.design import design_diff, design_fingerprint
-
-    stats = _spec(stats_payload)
-    plot = PlotSpec.from_dict(plot_payload)
-    differences = design_diff(plot, stats.design)
-    logger.info("[stats] divergence: %d design field(s) differ%s", len(differences),
-                f" ({', '.join(d.path for d in differences)})" if differences else "")
-    return {"diverged": bool(differences), "differences": [d.to_dict() for d in differences],
-            "plot_digest": design_fingerprint(plot), "stats_digest": design_fingerprint(stats.design)}
-
-
-def sync(stats_payload: dict, plot_payload: dict, direction: str) -> dict:
-    """``to_stats``: the stats spec takes the figure's design. ``to_plot``: the
-    figure takes the stats design. One way, wholesale (P10)."""
-    from scistackplot import PlotSpec
-    from scistackplot.design import copy_design
-
-    stats = _spec(stats_payload)
-    plot = PlotSpec.from_dict(plot_payload)
-    if direction == "to_stats":
-        design, notes = copy_design(plot, stats.design)
-        return {"ok": True, "stats_spec": stats.with_design(design).to_dict(), "notes": [n.to_dict() for n in notes]}
-    if direction == "to_plot":
-        merged, notes = copy_design(stats.design, plot)
-        return {"ok": True, "plot_spec": merged.to_dict(), "notes": [n.to_dict() for n in notes]}
-    raise ValueError(f"direction must be to_stats or to_plot, got {direction!r}")
 
 
 def overlay_bars(db, stats_payload: dict, plot_payload: dict, *, csv_path: str | None = None) -> dict:
@@ -475,6 +550,14 @@ def saved_save(db, name: str, spec_payload: dict, *, overwrite: bool, current_st
         info = save_stats(db, name, spec_payload, overwrite=overwrite, current_stats_id=current_stats_id)
     except SavedStatsExists as exc:
         return {"ok": False, "exists": exc.existing.to_dict(), "error": str(exc)}
+    # A table linked to a saved plot shares ONE design with it
+    # (scistackplotdb.designs): saving the table writes that design too.
+    from scistack_gui.services import design_service
+
+    linked_plot = spec_payload.get("linked_plot") if isinstance(spec_payload, dict) else None
+    design = spec_payload.get("design") if isinstance(spec_payload, dict) else None
+    if linked_plot and isinstance(design, dict):
+        design_service.write_if_linked(db, linked_plot, design, route="stats_saved_save")
     return {"ok": True, "info": info.to_dict()}
 
 
@@ -521,10 +604,33 @@ def presets_apply(db, preset_id: str, spec_payload: dict) -> dict:
     return {"ok": True, "spec": spec.to_dict(), "notes": notes}
 
 
+def presets_rename(db, preset_id: str, name: str) -> dict:
+    from scistackstatsdb import rename_stats_preset
+
+    return {"ok": True, "info": rename_stats_preset(db, preset_id, name).to_dict()}
+
+
 def presets_hide(db, preset_id: str, hidden: bool) -> dict:
     from scistackstatsdb import hide_stats_preset
 
     return {"ok": True, "info": hide_stats_preset(db, preset_id, hidden).to_dict()}
+
+
+def export_code(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
+    """The ``stat_`` function this table would be, as text: StatStudio's
+    "Export code", the same button Plot Studio has (studio-unification Stage
+    4). The source is ``scistackstats.generate_stats_function``'s, the one
+    owner Add to pipeline also writes from."""
+    from scistackstats import NotExportable, generate_stats_function
+
+    spec = _spec(spec_payload)
+    tables = _tables(db, spec, csv_path=csv_path, label="stats_export_code")
+    try:
+        fn = generate_stats_function(spec, tables)
+    except NotExportable as exc:
+        return {"ok": False, "error": f"Not exportable yet: {exc}"}
+    logger.info("[stats] export_code: %s (%d line(s))", fn.name, fn.source.count("\n") + 1)
+    return {"ok": True, "code": fn.source, "function_name": fn.name}
 
 
 # ---------------------------------------------------------------------------

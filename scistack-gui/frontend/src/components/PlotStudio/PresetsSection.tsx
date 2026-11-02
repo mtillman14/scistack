@@ -38,6 +38,21 @@ interface Props {
   onRename: (presetId: string, name: string) => Promise<boolean>
   onRemove: (presetId: string) => Promise<void>
   onDismissNotes: () => void
+  /** What the presets are for: Plot Studio's words by default; StatStudio
+   *  passes its own (docs/claude/studio-unification.md). */
+  words?: PresetWords
+}
+
+export interface PresetWords {
+  /** "plot" / "table" */
+  noun: string
+  /** The explanation under the heading. */
+  hint: string
+}
+
+const PLOT_PRESET_WORDS: PresetWords = {
+  noun: 'plot',
+  hint: "This plot's settings without its data. Apply one to plot another variable the same way; its title, y label and y limits are kept.",
 }
 
 type Pending =
@@ -58,6 +73,7 @@ export default function PresetsSection({
   onRename,
   onRemove,
   onDismissNotes,
+  words = PLOT_PRESET_WORDS,
 }: Props) {
   const [pending, setPending] = useState<Pending>(null)
   const [showNotes, setShowNotes] = useState(false)
@@ -72,10 +88,7 @@ export default function PresetsSection({
   return (
     <div style={local.section}>
       <div style={local.heading}>Presets</div>
-      <div style={styles.hint}>
-        This plot's settings without its data. Apply one to plot another
-        variable the same way; its title, y label and y limits are kept.
-      </div>
+      <div style={styles.hint}>{words.hint}</div>
 
       {pending?.kind === 'naming' ? (
         <NameBox
@@ -124,7 +137,7 @@ export default function PresetsSection({
             <ul style={styles.noteList}>
               {notes.map((note, i) => (
                 <li key={i}>
-                  <code>{note.path || 'plot'}</code>: {note.message}
+                  <code>{note.path || words.noun}</code>: {note.message}
                 </li>
               ))}
             </ul>
@@ -162,7 +175,7 @@ export default function PresetsSection({
                 <div
                   style={styles.row}
                   title={
-                    `Apply "${preset.name}" (version ${preset.version}) to this plot` +
+                    `Apply "${preset.name}" (version ${preset.version}) to this ${words.noun}` +
                     (madeOn ? `\n${madeOn}` : '') +
                     (preset.shape_warning ? `\n${preset.shape_warning}` : '')
                   }

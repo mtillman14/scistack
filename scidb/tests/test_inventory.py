@@ -27,6 +27,7 @@ from scidb import (
 )
 from scidb.inventory import (
     ALL_LEVELS,
+    absent_locations,
     EXCLUDED,
     MISSING,
     PRESENT,
@@ -832,3 +833,33 @@ class TestRowKeyset:
         s = statuses(schema_inventory(db, ["subject", "session"]))
         assert s[("S02", "BL")] == PRESENT
         assert s[("S02", "POST")] == EXCLUDED
+
+
+class TestAbsentLocations:
+    """`absent_locations`: where the dataset HAS a location and a variable has
+    no record — the "No record" reason of a plot's "Not plotted" list."""
+
+    def test_a_location_another_variable_holds_is_absent_for_this_one(self, db):
+        class InvOther(BaseVariable):
+            pass
+
+        InvOther.save(9.0, subject="S02", session="POST", trial="1")
+        present = [("S01", "BL", "1"), ("S01", "BL", "2"), ("S01", "POST", "1"), ("S02", "BL", "1")]
+        assert absent_locations(db, SCHEMA, present) == [("S02", "POST", "1")]
+
+    def test_a_combination_nobody_saved_at_is_not_a_location(self, db):
+        # S02/POST/2 was never saved by anyone: not a place, not "missing".
+        present = [("S01", "BL", "1"), ("S01", "BL", "2"), ("S01", "POST", "1")]
+        assert absent_locations(db, SCHEMA, present) == [("S02", "BL", "1")]
+
+    def test_shallower_rows_do_not_make_deeper_locations(self, db):
+        # S03 exists only at subject level: no (subject, session) location.
+        assert absent_locations(db, ["subject", "session"], [("S01", "BL"), ("S01", "POST"), ("S02", "BL")]) == []
+        assert absent_locations(db, ["subject"], [("S01",), ("S02",)]) == [("S03",)]
+
+    def test_excluded_locations_are_left_out(self, db):
+        exclude_schema("bad subject", db=db, subject="S02")
+        assert absent_locations(db, SCHEMA, [("S01", "BL", "1")]) == [("S01", "BL", "2"), ("S01", "POST", "1")]
+
+    def test_no_keys_means_nothing(self, db):
+        assert absent_locations(db, [], []) == []

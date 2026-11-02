@@ -43,6 +43,29 @@ interface Props {
   onDismissNotes: () => void
   /** Shown below the saved plots, in the same column (the Presets section). */
   children?: ReactNode
+  /**
+   * What the items are called. Plot Studio's words by default; StatStudio
+   * passes its own, so both studios keep their saved work in the same rail
+   * (docs/claude/studio-unification.md).
+   */
+  words?: SavedWords
+  /** Width store key for the drag handle (one per studio). */
+  panelKey?: string
+}
+
+export interface SavedWords {
+  /** "plot" / "table" */
+  noun: string
+  /** "Saved plots" / "Saved tables" */
+  title: string
+  /** The empty-list hint. */
+  empty: string
+}
+
+const PLOT_WORDS: SavedWords = {
+  noun: 'plot',
+  title: 'Saved plots',
+  empty: 'No saved plots for this variable yet. Save one to reopen it later exactly as it looks now.',
 }
 
 type Pending =
@@ -68,6 +91,8 @@ export default function SavedPlotsRail({
   onRemove,
   onDismissNotes,
   children,
+  words = PLOT_WORDS,
+  panelKey = 'plotStudio.savedPlots',
 }: Props) {
   const [pending, setPending] = useState<Pending>(null)
   const [showNotes, setShowNotes] = useState(false)
@@ -76,16 +101,16 @@ export default function SavedPlotsRail({
   useEffect(() => { setShowNotes(false) }, [notes])
   // Drags from its left edge; the reserve keeps room for the figure and the
   // controls rail. Collapsed, it is only its vertical label.
-  const resize = useResizablePanel({ panel: 'plotStudio.savedPlots', edge: 'left', min: 180, reserve: 520 })
+  const resize = useResizablePanel({ panel: panelKey, edge: 'left', min: 180, reserve: 520 })
 
   if (collapsed) {
     return (
       <div style={railStyles.collapsed}>
-        <button type="button" style={railStyles.headerButton} onClick={onToggle} title="Show saved plots">
+        <button type="button" style={railStyles.headerButton} onClick={onToggle} title={`Show ${words.title.toLowerCase()}`}>
           ❮
         </button>
         <div style={railStyles.verticalLabel} onClick={onToggle}>
-          Saved plots{plots.length ? ` (${plots.length})` : ''}
+          {words.title}{plots.length ? ` (${plots.length})` : ''}
         </div>
         {loaded && modified && <span style={railStyles.modifiedDot} title="Unsaved changes">●</span>}
       </div>
@@ -113,8 +138,8 @@ export default function SavedPlotsRail({
     <ResizeHandle {...resize.handleProps} />
     <div ref={resize.panelRef} style={{ ...railStyles.rail, ...resize.widthStyle }}>
       <div style={railStyles.header}>
-        <span style={railStyles.title}>Saved plots</span>
-        <button type="button" style={railStyles.headerButton} onClick={onToggle} title="Hide saved plots">
+        <span style={railStyles.title}>{words.title}</span>
+        <button type="button" style={railStyles.headerButton} onClick={onToggle} title={`Hide ${words.title.toLowerCase()}`}>
           ❯
         </button>
       </div>
@@ -122,7 +147,7 @@ export default function SavedPlotsRail({
       <div style={railStyles.body}>
         <div style={railStyles.current}>
           <div style={railStyles.currentName} title={loaded ? `${loaded.name} (version ${loaded.version})` : ''}>
-            {loaded ? loaded.name : <span style={railStyles.unsaved}>Unsaved plot</span>}
+            {loaded ? loaded.name : <span style={railStyles.unsaved}>Unsaved {words.noun}</span>}
             {loaded && modified && <span style={railStyles.modifiedDot} title="Unsaved changes"> ●</span>}
           </div>
           {loaded && (
@@ -140,12 +165,12 @@ export default function SavedPlotsRail({
             />
           ) : (
             <button type="button" style={railStyles.primaryButton} onClick={startSaving} disabled={busy}>
-              {loaded ? 'Save…' : 'Save plot…'}
+              {loaded ? 'Save…' : `Save ${words.noun}…`}
             </button>
           )}
           {pending?.kind === 'replace' && (
             <Question
-              text={`"${pending.existing.name}" is another saved plot. Save this as its next version? Its earlier versions are kept.`}
+              text={`"${pending.existing.name}" is another saved ${words.noun}. Save this as its next version? Its earlier versions are kept.`}
               confirmLabel="Save as its version"
               onConfirm={() => save(pending.name, true)}
               onCancel={() => setPending({ kind: 'naming', text: pending.name })}
@@ -169,7 +194,7 @@ export default function SavedPlotsRail({
               <ul style={railStyles.noteList}>
                 {notes.map((note, i) => (
                   <li key={i}>
-                    <code>{note.path || 'plot'}</code>: {note.message}
+                    <code>{note.path || words.noun}</code>: {note.message}
                   </li>
                 ))}
               </ul>
@@ -191,8 +216,7 @@ export default function SavedPlotsRail({
 
         {plots.length === 0 ? (
           <div style={railStyles.hint}>
-            No saved plots for this variable yet. Save one to reopen it later
-            exactly as it looks now.
+            {words.empty}
           </div>
         ) : (
           <div style={railStyles.list}>

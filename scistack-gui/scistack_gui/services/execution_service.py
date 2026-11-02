@@ -2050,7 +2050,9 @@ def node_schema_level(
     db, node_id: "str | None", function_name: str, stated=None
 ) -> dict:
     """The level a Run of this node would iterate, for the settings panel:
-    ``{"state", "keys", "rule", "schema_keys"}``.
+    ``{"state", "keys", "rule", "schema_keys"}``, plus
+    ``iterate_label``: what the studios call this idea (the ticked keys), from
+    the one owner of role words (``scistackplot.role_labels``).
 
     Built from EXACTLY what a Run passes (``derive_target_for_node`` + staged
     pending overrides) through the same resolver, so the panel cannot show a level the run then ignores
@@ -2073,7 +2075,13 @@ def node_schema_level(
         node_id=node_id,
         route="settings panel",
     )
-    return {**level.to_json(rule), "schema_keys": list(db.dataset_schema_keys)}
+    from scistackplot.role_labels import role_label_for
+
+    return {
+        **level.to_json(rule),
+        "schema_keys": list(db.dataset_schema_keys),
+        "iterate_label": role_label_for("iterate", "process"),
+    }
 
 
 def build_run_declared_names(target: dict) -> dict[str, str]:

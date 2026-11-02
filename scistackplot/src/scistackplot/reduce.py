@@ -75,6 +75,7 @@ from .roles import (
     overlay_join,
     overlay_steps,
     overlay_unavailable,
+    overlay_is_rug,
     spaghetti_sample_repeats,
     validate,
 )
@@ -85,6 +86,7 @@ from .spec import (
     PlotSpec,
     Role,
     SUMMARY_KINDS,
+    UNIVARIATE_KINDS,
     Statistic,
     grid_shape_for,
     value_spellings,
@@ -174,6 +176,7 @@ _PLAN_IRRELEVANT_FIELDS = (
     "comparison",
     # Binned and fitted per figure, over rows the plan already holds.
     "histogram",
+    "kde",
     "regression",
     # Stacking moves bars already computed (`render.base.stack_offsets`).
     "bar",
@@ -593,7 +596,7 @@ def planned_temporal_x(spec: PlotSpec, table: LongTable):
     measure, or a histogram of a datetime measure (binned along x). Read off
     the plan like :func:`planned_temporal`. ``table`` is the BASE table."""
     plan = _plan(spec, table)
-    if spec.kind is PlotKind.HISTOGRAM:
+    if spec.kind in UNIVARIATE_KINDS:
         return plan.temporal
     return plan.temporal_x
 
@@ -1422,6 +1425,11 @@ def _build_figure(
                 spec.kind,
                 layer=LAYER,
             )
+        # What the figure leaves out (`omissions`): the rows going INTO the
+        # collapse chain and the sample coming out of it, or the 1-D records.
+        raw_frame: pd.DataFrame | None = None
+        sample_frame: pd.DataFrame | None = None
+        records_frame: pd.DataFrame | None = frame if explode else None
         pre_strided_from: int | None = None
         if explode and not summarize_nested:
             if steps.pre or steps.final:
@@ -1466,7 +1474,9 @@ def _build_figure(
             with timing.phase("collapse_levels", extra=_describe_steps(steps)):
                 # The sample rows — the SAME call "Save data" makes
                 # (`export.plot_data`), so the CSV is what the marks see.
+                raw_frame = frame
                 frame = _sample_frame(frame, steps, spec, table, index_column)
+                sample_frame = frame
                 if comparison is not None:
                     # Between the pre-collapse and `final`: the sample rows are
                     # what is compared (plan D3). A "Show sample" row joins the
@@ -1533,13 +1543,13 @@ def _build_figure(
         # A histogram counts every row and a regression fits every row: a
         # transport stride would change the counts and the line. Their
         # payload is the bars / the points anyway, so neither is strided.
-        counts_every_row = spec.kind in (PlotKind.HISTOGRAM, PlotKind.REGRESSION)
+        counts_every_row = spec.kind in (*UNIVARIATE_KINDS, PlotKind.REGRESSION)
         if counts_every_row and max_points is not None and original_rows > max_points:
             Log.info(
                 "%s: %d row(s) kept for transport (no stride: it would change the %s)",
                 spec.kind,
                 original_rows,
-                "counts" if spec.kind is PlotKind.HISTOGRAM else "fit",
+                "fit" if spec.kind is PlotKind.REGRESSION else ("counts" if spec.kind is PlotKind.HISTOGRAM else "curves"),
                 layer=LAYER,
             )
         if (
@@ -1640,6 +1650,21 @@ def _build_figure(
                     panels, spec, table, color, y_scope or [], facet_names
                 )
                 continuous_notes.extend(bin_notes)
+        # A KDE's panels become curve tables (`kde.curve_table`), one per colour
+        # level; their y range is the curves'.
+        kde_range = None
+        if spec.kind is PlotKind.KDE and shape is not Shape.MATRIX_2D:
+            with timing.phase("kde", extra=f"{len(panels)} panel(s)"):
+                kde_range, curve_notes = _kde_panels(
+                    panels, spec, table, color, y_scope or [], facet_names
+                )
+                continuous_notes.extend(curve_notes)
+        # "Show sample" on a histogram / KDE is a RUG (`roles.overlay_is_rug`):
+        # the overlay rows become ticks along x, over the axis just decided.
+        rug_scale: dict = {}
+        if overlay_frame is not None and overlay_is_rug(spec):
+            with timing.phase("rug", extra=f"{len(panels)} panel(s)"):
+                rug_scale = _rug_panels(panels, spec, table, color, figure_bins, kde_range)
 
         if summarize_nested:
             # The transport stride, over the SUMMARY rows of the whole figure —
@@ -1727,6 +1752,11 @@ def _build_figure(
                     _fit_panels(panels, spec, table, color, figure_text)
                 )
         layout_notes = [*layout_notes, *continuous_notes]
+
+        with timing.phase("omissions"):
+            omission_report = _omissions(
+                spec, table, figure_key, raw_frame, sample_frame, records_frame, figure_bins
+            )
 
         # The FIGURE's limits: the panels' own, when they all agree. Not a
         # second computation — every consumer that reads one number per figure
@@ -1867,6 +1897,9 @@ def _build_figure(
                 else None
             ),
             bins=figure_bins,
+            kde_range=kde_range,
+            rug_scale=rug_scale,
+            omissions=omission_report,
         )
         # Which difference bars land on which panel, once per figure, so a bar
         # that draws nowhere is explained in scistack.log (diffbars D3).
@@ -1926,8 +1959,8 @@ def _attach_temporal(figure: ResolvedPlot, plan: "_Plan") -> None:
     axis = plan.temporal
     if axis is None:
         return
-    if figure.kind is PlotKind.HISTOGRAM:
-        # The datetime measure is binned ALONG X; y counts bars.
+    if figure.kind in UNIVARIATE_KINDS:
+        # The datetime measure is binned (or smoothed) ALONG X; y counts it.
         figure.temporal_x = axis
         if figure.spec.style.x_label is None and figure.labels.x:
             figure.labels = replace(figure.labels, x=figure.labels.x + axis.title_suffix)
@@ -2008,6 +2041,143 @@ def _bin_panels(
     )
     return edges, list(edges.notes)
 
+
+def _rug_panels(
+    panels: list[Panel],
+    spec: PlotSpec,
+    table: LongTable,
+    color: str | None,
+    figure_bins: Any,
+    kde_range: tuple[float, float] | None,
+) -> dict:
+    """Turn each panel's "Show sample" rows into its rug (``bins.rug_tables``)
+    and clear ``Panel.sample``, which the point overlay would draw. The axis
+    is the figure's own (a histogram's slots, a KDE's curves). Returns the
+    darkest count per colour level (``ResolvedPlot.rug_scale``)."""
+    from .bins import rug_tables
+
+    x_range = figure_bins.x_range() if figure_bins is not None else kde_range
+    color_order = (
+        _level_order(table, color, [p.frame for p in panels], COLOR) if color else []
+    ) or []
+    frames, tops = rug_tables(
+        [panel.sample for panel in panels],
+        figure_bins,
+        x_range,
+        value=Y,
+        color=COLOR if color else None,
+        color_order=list(color_order),
+    )
+    for panel, frame in zip(panels, frames, strict=True):
+        panel.rug = frame
+        panel.sample = None
+    return tops
+
+
+def _omissions(
+    spec: PlotSpec,
+    table: LongTable,
+    figure_key: dict[str, Any],
+    raw: pd.DataFrame | None,
+    sample: pd.DataFrame | None,
+    records: pd.DataFrame | None,
+    figure_bins: Any,
+):
+    """This figure's "Not plotted" report (``omissions``, the owner of every
+    reason): ``raw`` / ``sample`` are the rows going into and out of the
+    collapse chain (scalar figures), ``records`` a 1-D figure's records
+    before they are exploded or summarised. Logged once per figure."""
+    from . import omissions as om
+
+    columns = (
+        sample.columns if sample is not None else records.columns if records is not None else []
+    )
+    keys = [
+        name
+        for name in dict.fromkeys([*table.schema_levels, *table.factor_names])
+        if name in columns
+    ]
+    measures = [spec.y_measure, *([spec.x_measure] if spec.x_measure else [])]
+    custom = spec.kind is PlotKind.CUSTOM
+    items: list = []
+    drawn = 0
+    if sample is not None:
+        # A histogram with its NaN bar shown DRAWS its NaNs (`bins`).
+        nan_drawn = figure_bins is not None and figure_bins.nan
+        empty = [] if nan_drawn else om.no_value(sample, measures, keys)
+        items.extend(empty)
+        lost_rows = len({tuple(sorted(i.keys.items())) for i in empty})
+        outside: list = []
+        if figure_bins is not None and figure_bins.edges and not custom:
+            from .bins import _source_function
+
+            regular = _source_function("_scistack_regular")
+            outside = om.outside_range(
+                sample,
+                spec.y_measure,
+                keys,
+                figure_bins.edges[0],
+                figure_bins.edges[-1],
+                lambda values: regular(values, figure_bins.exact),
+            )
+            items.extend(outside)
+        if raw is not None and not custom:
+            for measure in measures:
+                items.extend(om.partly_averaged(raw, sample, measure, keys))
+        drawn = max(len(sample) - lost_rows - len(outside), 0)
+    elif records is not None:
+        if not custom:
+            items.extend(om.nan_elements(records, spec.y_measure, keys))
+        drawn = len(records)
+    absent = table.absent
+    if absent is not None and not absent.empty:
+        items.extend(om.no_record(apply_filters(absent, spec), figure_key, spec.y_measure))
+    report = om.OmissionReport(drawn=drawn, items=items)
+    om.log_report(report, _figure_label(figure_key))
+    return report
+
+
+def _kde_panels(
+    panels: list[Panel],
+    spec: PlotSpec,
+    table: LongTable,
+    color: str | None,
+    y_scope: list[str],
+    facet_names: list[str],
+) -> tuple[Any, list[str]]:
+    """Replace each panel's frame with its curves (``kde.curve_table``).
+
+    The y range is the curves': figure-wide unless the y-limit scope names a
+    facet, when each panel gets its own; a pinned end wins as everywhere
+    else. The x range is the curves' extent over every panel
+    (``ResolvedPlot.kde_range``). Returns ``(x range, notes)``.
+    """
+    from .kde import curve_table, density_limits, log_curves, x_range
+
+    color_order = (
+        _level_order(table, color, [p.frame for p in panels], COLOR) if color else []
+    ) or []
+    notes: list[str] = []
+    for panel in panels:
+        panel.frame, panel_notes = curve_table(
+            panel.frame,
+            spec.kde,
+            value=Y,
+            color=COLOR if color else None,
+            color_order=list(color_order),
+        )
+        notes.extend(note for note in panel_notes if note not in notes)
+
+    per_panel = any(name in facet_names for name in y_scope)
+    tops = [float(panel.frame[Y].max()) if not panel.frame.empty else 0.0 for panel in panels]
+    shared = density_limits(tops)
+    for panel, top in zip(panels, tops, strict=True):
+        computed = density_limits([top]) if per_panel else shared
+        panel.y_limits = limits_for(
+            {(): computed}, {}, [], spec.y_axis, override_for(spec, panel.key)
+        )
+    log_curves(len(panels), spec.kde, notes)
+    return x_range([panel.frame for panel in panels]), notes
 
 def _fit_panels(
     panels: list[Panel],
@@ -2313,7 +2483,15 @@ def _panel_frame(
         if uncoloured:
             out[DASH] = _series_key(group, uncoloured)
 
-    out = out.dropna(subset=[Y])
+    if spec.kind is PlotKind.HISTOGRAM:
+        # Kept: the histogram COUNTS its NaN values (`bins`' NaN slot), so they
+        # reach `_bin_panels`, which never bins them.
+        Log.debug(
+            "histogram panel: %d NaN value(s) kept for the NaN slot",
+            int(out[Y].isna().sum()), layer=LAYER,
+        )
+    else:
+        out = out.dropna(subset=[Y])
 
     # --- summarize the sample into centre + error ------------------------
     if spec.kind in SUMMARY_KINDS:
@@ -3106,8 +3284,8 @@ def x_axis_title(
         return ""
     if text is None:
         text = display_text(spec, table)
-    if spec.kind is PlotKind.HISTOGRAM:
-        # The measure itself is binned along x; y counts it.
+    if spec.kind in UNIVARIATE_KINDS:
+        # The measure itself is binned (or smoothed) along x; y counts it.
         return text.name(spec.y_measure, table.measure(spec.y_measure).display)
     if spec.x_measure:
         return text.name(spec.x_measure, table.measure(spec.x_measure).display)
@@ -3144,6 +3322,10 @@ def _labels_for(
         from .bins import y_title as histogram_y_title
 
         y_label = histogram_y_title(spec.histogram.stat)
+    if spec.kind is PlotKind.KDE and not style.y_label:
+        from .kde import Y_TITLE as KDE_Y_TITLE
+
+        y_label = KDE_Y_TITLE
 
     title = style.title
     if title is None and figure_key:

@@ -38,6 +38,7 @@ from .roles import (
     overlay_join,
     overlay_steps,
     overlay_unavailable,
+    overlay_is_rug,
     kind_requirement,
     REGRESSION_NEEDS_X,
     SAMPLE_NEEDING_KINDS,
@@ -46,6 +47,7 @@ from .roles import (
     roles_for_kind,
     sample_key,
 )
+from .role_labels import role_label_for
 from .shape import Shape
 from .spec import (
     BAR_KINDS,
@@ -80,18 +82,6 @@ ROLE_ORDER: tuple[Role, ...] = (
     Role.COLLAPSE,
 )
 
-#: What each role is CALLED. The role names are the library's vocabulary;
-#: these are the user's — reported by the backend rather than hardcoded in the
-#: panel so the words and the behaviour stay together (CLAUDE.md NOTE 3).
-#: "Separate figures" / "Separate panels" read as a family with the Grouping
-#: section's "one bar per…"; "Collapse" says what happens to the levels.
-_ROLE_LABELS: dict[Role, str] = {
-    Role.GROUP: "Group",
-    Role.FACET: "Separate panels",
-    Role.ITERATE: "Separate figures",
-    Role.COLLAPSE: "Collapse (average)",
-}
-
 _ROLE_HINTS: dict[Role, str] = {
     Role.GROUP: "One mark per level — set in the Grouping section",
     Role.FACET: "One subplot per level — arrange them under Layout",
@@ -125,13 +115,14 @@ _GROUPING_HINTS: dict[PlotKind, str] = {
     PlotKind.BAND: "One band per combination",
     PlotKind.HEATMAP: "A heatmap cannot be grouped — separate panels or figures",
     PlotKind.HISTOGRAM: "One histogram per level, in its own colour — one layer at most",
+    PlotKind.KDE: "One density curve per level, in its own colour — one layer at most",
     PlotKind.REGRESSION: "One point set per combination; one fitted line per colour",
 }
 
 
 def role_label(role: Role, shape: Shape) -> str:
-    """What to call this role for a measure of this shape."""
-    return _ROLE_LABELS[role]
+    """What to call this role in Plot Studio (owner: :mod:`.role_labels`)."""
+    return role_label_for(role, "figure")
 
 
 def role_hint(role: Role, shape: Shape) -> str:
@@ -143,7 +134,7 @@ def grouping_hint(kind: PlotKind, shape: Shape, has_x_measure: bool = False) -> 
     """What the grouping list means for this kind, for the section header."""
     if shape is Shape.MATRIX_2D:
         return _GROUPING_HINTS[PlotKind.HEATMAP]
-    if kind in (PlotKind.HISTOGRAM, PlotKind.REGRESSION):
+    if kind in (PlotKind.HISTOGRAM, PlotKind.KDE, PlotKind.REGRESSION):
         return _GROUPING_HINTS[kind]
     if has_x_measure and kind is not PlotKind.LINE:
         return "One point set per combination (x comes from the x measure)"
@@ -269,6 +260,7 @@ def available_plots(
                 PlotKind.BOX,
                 PlotKind.VIOLIN,
                 PlotKind.HISTOGRAM,
+                PlotKind.KDE,
             )
             if kind_requirement(kind, Shape.SCALAR, roles, n_groups) is None
             and not (temporal and kind in BAR_KINDS)
@@ -365,10 +357,12 @@ def why_unavailable(
     if kind is PlotKind.REGRESSION and not has_x_measure:
         return REGRESSION_NEEDS_X
     if has_x_measure:
-        from .roles import HISTOGRAM_NO_X
+        from .roles import HISTOGRAM_NO_X, KDE_NO_X
 
         if kind is PlotKind.HISTOGRAM:
             return HISTOGRAM_NO_X
+        if kind is PlotKind.KDE:
+            return KDE_NO_X
         return "With an X variable, the kinds are scatter, line and regression; clear it for the others."
     if temporal and kind in BAR_KINDS:
         return BAR_REASON
@@ -577,6 +571,7 @@ def capabilities(spec: PlotSpec, table: LongTable) -> dict:
         # continuous_kind_problem — the message validate refuses with).
         "histogram": histogram_summary(spec, derived),
         "regression": regression_summary(spec, derived),
+        "kde": kde_summary(spec, derived),
         # The Categories section (a text measure): its mode, its categories
         # for the "one category" picker, and why it cannot be drawn at all.
         "categorical": categorical_summary(kind_spec, derived),
@@ -738,6 +733,17 @@ def histogram_summary(spec: PlotSpec, table: LongTable) -> dict:
     }
 
 
+def kde_summary(spec: PlotSpec, table: LongTable) -> dict:
+    """The Density curve section's data model: whether it applies, the
+    current settings and their problem (``kde.kde_problem``)."""
+    applies = spec.kind is PlotKind.KDE
+    return {
+        "applies": applies,
+        "settings": spec.kde.to_dict(),
+        "problem": continuous_kind_problem(spec, table) if applies else None,
+    }
+
+
 def regression_summary(spec: PlotSpec, table: LongTable) -> dict:
     """The Regression section's data model."""
     applies = spec.kind is PlotKind.REGRESSION
@@ -782,6 +788,9 @@ def sample_overlay_summary(
     return {
         "available": reason is None,
         "reason": reason,
+        # "points" beside the marks, or a "rug" along x on a histogram / KDE
+        # (`roles.overlay_is_rug`): the GUI hides Join and Colour points by.
+        "form": "rug" if overlay_is_rug(spec) else "points",
         "factors": [
             {
                 "name": name,

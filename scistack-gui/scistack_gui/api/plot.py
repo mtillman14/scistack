@@ -41,6 +41,9 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/client-build                  report_client_build
     POST /api/client-timing                 report_client_timing
     POST /api/client-canvas-refresh         report_canvas_refresh
+    POST /api/client-studio-open            report_studio_open
+    POST /api/design/update                 design_update
+    POST /api/design/apply                  design_apply
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
 time in pandas and matplotlib, with the database touched only while the
@@ -585,6 +588,46 @@ def _client_build(req: ClientBuildRequest) -> dict:
     return report_client_build(req.model_dump())
 
 
+class DesignRequest(BaseModel):
+    """A linked figure + table's shared design (scistackplotdb.designs)."""
+
+    plot_id: str
+    spec: dict
+
+
+def _design_update(db, req: DesignRequest) -> dict:
+    from scistack_gui.services import design_service
+
+    return design_service.update(db, req.plot_id, req.spec)
+
+
+def _design_apply(db, req: DesignRequest) -> dict:
+    from scistack_gui.services import design_service
+
+    return design_service.apply(db, req.plot_id, req.spec)
+
+
+class StudioOpenRequest(BaseModel):
+    """Which studio opened, and from which entry point (studio-unification
+    Stage 0): so scistack.log says which ways in people actually use."""
+
+    kind: str
+    opened_from: str | None = None
+    variable: str | None = None
+    detail: str | None = None
+
+
+def _studio_open(req: StudioOpenRequest) -> dict:
+    logger.info(
+        "[Studio] open kind=%s from=%s variable=%s%s",
+        req.kind,
+        req.opened_from or "unknown",
+        req.variable or "-",
+        f" {req.detail}" if req.detail else "",
+    )
+    return {"ok": True}
+
+
 def _client_timing(req: ClientTimingRequest) -> dict:
     """A webview timed a step (click to drawn); write it into the shared log."""
     return report_client_timing(req.model_dump())
@@ -775,6 +818,21 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "report_canvas_refresh", "/client-canvas-refresh", CanvasRefreshRequest,
         _canvas_refresh, holds_db_lock=False, needs_db=False, undoable=False,
+    ),
+    # The shared design of a linked figure + table (studio-unification Stage
+    # 6): one row set both studios read and write.
+    Handler(
+        "design_update", "/design/update", DesignRequest, _design_update,
+        http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    Handler(
+        "design_apply", "/design/apply", DesignRequest, _design_apply,
+        http_errors=_BAD_REQUEST, undoable=False,
+    ),
+    # One line per studio opened (Plot or Stat), naming its entry point.
+    Handler(
+        "report_studio_open", "/client-studio-open", StudioOpenRequest,
+        _studio_open, holds_db_lock=False, needs_db=False, undoable=False,
     ),
 )
 

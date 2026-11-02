@@ -246,6 +246,11 @@ class LongTable:
     #: under the newest code still contributes its own newest record instead of
     #: silently leaving the figure.
     latest_column: str | None = None
+    #: Locations the dataset HAS (schema-key columns, values as text) where
+    #: this table's variable has no record (`scidb.inventory.absent_locations`,
+    #: attached by a database source). The "No record" reason of a figure's
+    #: "Not plotted" list (`omissions`); None when the source cannot tell.
+    absent: "pd.DataFrame | None" = None
     #: How the per-sample reductions a plot needs should be performed — y
     #: extents, exploding a 1-D measure, striding for transport, averaging
     #: matrices. None means the pandas reference (``reducer.PandasReducer``).

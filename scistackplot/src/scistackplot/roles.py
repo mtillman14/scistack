@@ -37,6 +37,7 @@ from .stacking import stacks
 from .spec import (
     BAR_KINDS,
     CONTINUOUS_X_KINDS,
+    UNIVARIATE_KINDS,
     MAX_X_LAYERS,
     OVERLAY_KINDS,
     CategoricalStat,
@@ -468,7 +469,7 @@ UNIT_KINDS = (PlotKind.LINE, PlotKind.SPAGHETTI)
 #: Kinds drawn OVER a sample — a distribution, an error band, a histogram's
 #: counts — and so refused until some factor is collapsed
 #: (``kind_requirement``; ``with_requirements_for`` supplies one).
-SAMPLE_NEEDING_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAND, PlotKind.HISTOGRAM)
+SAMPLE_NEEDING_KINDS = (PlotKind.BOX, PlotKind.VIOLIN, PlotKind.BAND, *UNIVARIATE_KINDS)
 
 
 def line_recurrence(
@@ -679,11 +680,11 @@ def overlay_unavailable(
             "Stacked bars pile the colour levels on one tick, so a point could "
             "not sit beside its own bar. Unstack the bars to show the sample."
         )
-    if spec.kind not in OVERLAY_KINDS:
+    if spec.kind not in OVERLAY_KINDS and spec.kind not in UNIVARIATE_KINDS:
         return (
-            f"A {spec.kind} plot has no categorical mark to place sample points "
-            f"beside; the overlay is for bar, box, violin, scatter, strip and "
-            f"spaghetti."
+            f"A {spec.kind} plot has no mark to place sample points beside; the "
+            f"overlay is for bar, box, violin, scatter, strip, spaghetti, "
+            f"histogram and density curve."
         )
     if spec.x_measure is not None:
         return "An x-y plot has no categorical slot to place sample points in."
@@ -761,6 +762,15 @@ def overlay_steps(
     return steps
 
 
+def overlay_is_rug(spec: PlotSpec) -> bool:
+    """Whether "Show sample" draws a RUG rather than points (user, 2026-11-01):
+    on a univariate kind (histogram, KDE) the sample values go along x, one
+    tick each, shaded by crowding (`bins.RUG_SOURCE`). The ONE statement of
+    the overlay's form: reduce, the renderers, codegen and the capability
+    report read it. Joining and the overlay's own colour do not apply."""
+    return spec.kind in UNIVARIATE_KINDS
+
+
 def overlay_color(spec: PlotSpec, steps: OverlaySteps | None) -> str | None:
     """The shown key colouring the overlay (``PlotSpec.sample_color``), or
     None when the points take their mark's colour.
@@ -774,6 +784,10 @@ def overlay_color(spec: PlotSpec, steps: OverlaySteps | None) -> str | None:
     field.
     """
     if spec.sample_color is None or steps is None:
+        return None
+    if overlay_is_rug(spec):
+        # A rug is shaded by crowding in the mark's colour (`bins.RUG_SOURCE`):
+        # no colour of its own.
         return None
     if spec.sample_color not in steps.shown:
         Log.debug(
@@ -834,6 +848,10 @@ def overlay_join(
         steps = overlay_steps(spec, roles, table)
     if steps is None:
         return OverlayJoin(join=False, automatic=True, reason="No overlay.")
+    if overlay_is_rug(spec):
+        return OverlayJoin(
+            join=False, automatic=True, reason="A rug's ticks are never joined."
+        )
     if spec.join_sample is not None:
         return OverlayJoin(
             join=spec.join_sample,
@@ -1000,10 +1018,11 @@ def grouping_layers(
             spec, roles, table, sample
         )[0]:
             units = [name for name in sample if name not in groups]
-    if kind is PlotKind.HISTOGRAM:
-        # One histogram per level of the ONE grouping layer a histogram may
-        # have (`kind_requirement`), always painted: overlaid bars in one
-        # colour could not be told apart, so the layer is its colour.
+    if kind in UNIVARIATE_KINDS:
+        # One histogram (curve) per level of the ONE grouping layer a
+        # univariate kind may have (`kind_requirement`), always painted:
+        # overlaid bars or curves in one colour could not be told apart, so
+        # the layer is its colour.
         if color is None and len(groups) == 1:
             color = groups[0]
         return GroupingLayers(ticks=[], series=list(groups), color=color, units=units)
@@ -1102,14 +1121,16 @@ def kind_requirement(
         what = {
             PlotKind.BAND: "an error band",
             PlotKind.HISTOGRAM: "a histogram",
+            PlotKind.KDE: "a density curve",
         }.get(kind, "a distribution")
         return (
             f"Needs a sample: set at least one factor to 'collapse' — its "
             f"levels (after any inner collapse) are what {what} is drawn over."
         )
-    if kind is PlotKind.HISTOGRAM and n_groups > 1:
+    if kind in UNIVARIATE_KINDS and n_groups > 1:
+        what = "histogram" if kind is PlotKind.HISTOGRAM else "density curve"
         return (
-            "A histogram draws one histogram per level of ONE grouping layer "
+            f"A {what} plot draws one {what} per level of ONE grouping layer "
             "(its colour); move the other layers to 'Separate panels' or "
             "'Separate figures'."
         )
@@ -1185,18 +1206,22 @@ def custom_kind_problem(spec: PlotSpec) -> str | None:
 REGRESSION_NEEDS_X = (
     "A regression plots one measure against another: choose an X variable."
 )
-#: Why a histogram refuses an x measure.
+#: Why a histogram or a KDE refuses an x measure.
 HISTOGRAM_NO_X = (
     "A histogram bins its one measure along x; clear the X variable to draw it."
 )
+KDE_NO_X = (
+    "A density curve draws its one measure along x; clear the X variable to draw it."
+)
 
 
-#: Why a log axis is ignored on a histogram or a regression (user,
+#: Why a log axis is ignored on a histogram, a KDE or a regression (user,
 #: 2026-10-22): a fit of the raw values drawn on a log axis is not a straight
-#: line, and a histogram's bins are equal widths of the raw values.
+#: line, a histogram's bins are equal widths of the raw values, and a KDE's
+#: kernel is in raw units.
 CONTINUOUS_LOG_REASON = (
-    "Log axes are ignored on a histogram or a regression: the bins and the "
-    "fit are on the raw values."
+    "Log axes are ignored on a histogram, a density curve or a regression: "
+    "the bins, the curve and the fit are on the raw values."
 )
 
 
@@ -1225,6 +1250,14 @@ def continuous_kind_problem(spec: PlotSpec, table: LongTable) -> str | None:
         problem = histogram_problem(spec.histogram, temporal=temporal)
         if problem is not None:
             return f"Histogram bins: {problem}"
+    if spec.kind is PlotKind.KDE:
+        if spec.x_measure is not None:
+            return KDE_NO_X
+        from .kde import kde_problem
+
+        problem = kde_problem(spec.kde.bandwidth_adjust, spec.kde.cut)
+        if problem is not None:
+            return f"Density curve: {problem}"
     return None
 
 
@@ -1460,7 +1493,7 @@ def roles_for_kind(
         # per trial, nothing collapsed — so nothing to count. Picking it
         # collapses the grouped level, in the same click.
         if (
-            kind is PlotKind.HISTOGRAM
+            kind in UNIVARIATE_KINDS
             and Assignment(spec.roles, spec.groups, spec.color)
             == default_assignment(table, measure, shape=current)
             and not has_sample(spec.roles)
@@ -1503,7 +1536,7 @@ def with_requirements_for(
     plain = [f.name for f in _plain(table)]
     candidates = [n for n in plain if roles.get(n) is Role.ITERATE]
 
-    if kind is PlotKind.HISTOGRAM and not has_sample(roles):
+    if kind in UNIVARIATE_KINDS and not has_sample(roles):
         # A histogram counts the sample, so the opening state's own grouped
         # level (one mark per trial) IS the sample it wants: every grouping
         # layer becomes the collapse, and only a variant axis (never pooled,

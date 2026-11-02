@@ -70,6 +70,14 @@ export interface PlotTarget {
   statsId?: string;
   seed?: Record<string, unknown>;
   linkedPlot?: string;
+  /**
+   * Which way in opened this tab (`STUDIO_ENTRY_POINTS` in the frontend's
+   * Studio/studioOpen.ts): logged here and in scistack.log, so we can see
+   * which entry points are used (docs/claude/studio-unification.md).
+   */
+  from?: string;
+  /** A stat_ node to open StatStudio on: its generated function embeds the spec. */
+  statNode?: string;
 }
 
 export class PlotPanel {
@@ -202,13 +210,14 @@ export class PlotPanel {
         if (method === 'open_stat_panel') {
           // StatStudio, set up from this figure, as a sibling tab of the same
           // session (S10). Host-side: only the host can open a tab.
-          const params = (msg.params ?? {}) as { seed?: Record<string, unknown>; linkedPlot?: string | null; variable?: string; statsId?: string };
+          const params = (msg.params ?? {}) as { seed?: Record<string, unknown>; linkedPlot?: string | null; variable?: string; statsId?: string; from?: string };
           await vscode.commands.executeCommand('scistack.openPlotPanel', {
             view: 'stat',
             variable: params.variable ?? this.target.variable,
             seed: params.seed,
             linkedPlot: params.linkedPlot ?? undefined,
             statsId: params.statsId,
+            from: params.from ?? 'plot-studio',
             csvPath: this.target.csvPath,
             sessionId: this.session.id,
           });
@@ -329,6 +338,8 @@ export class PlotPanel {
       csvPath: this.target.csvPath ?? null,
       location: this.target.location ?? null,
       plotNode: this.target.plotNode ?? null,
+      from: this.target.from ?? null,
+      statNode: this.target.statNode ?? null,
     });
     // Which database this figure is drawn from, so the studio can say so —
     // a figure is only interpretable if you know its source.

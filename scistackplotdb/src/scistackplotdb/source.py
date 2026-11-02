@@ -809,7 +809,29 @@ class ScidbSource(BaseSource):
             layer=LAYER,
         )
         table.reducer = self._reducer()
+        if len(measures) == 1:
+            table.absent = self._absent_locations(frame, levels)
         return table
+
+    def _absent_locations(self, frame, levels: list[str]):
+        """The variable's "No record" locations (`scidb.inventory.
+        absent_locations`, the owner) as a frame of its schema-key columns:
+        places the dataset has where this variable has no record. None when
+        it cannot be told (no schema keys, or the query failed — said in the
+        log, never fatal: the figure draws either way)."""
+        import pandas as pd
+        from scidb.inventory import absent_locations
+
+        keys = [key for key in levels if key in frame.columns]
+        if not keys:
+            return None
+        try:
+            present = frame[keys].dropna().astype(str).drop_duplicates().itertuples(index=False, name=None)
+            rows = absent_locations(self._db, keys, present)
+        except Exception as exc:  # noqa: BLE001 - a readout, never a reason to fail the plot
+            Log.warn("absent locations for %s not known: %s", keys, exc, layer=LAYER)
+            return None
+        return pd.DataFrame(rows, columns=keys)
 
     def _own_column_groups(
         self, primary, factor_variables: list[FactorVariable]

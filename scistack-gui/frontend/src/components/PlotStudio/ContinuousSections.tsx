@@ -11,13 +11,17 @@ import { useEffect, useState } from 'react'
 
 import {
   binText,
+  exactValuesText,
   binsSummary,
   fitsSummary,
   parseBinCount,
   parseBinValue,
+  parseKdeNumber,
   type BinsMeta,
   type HistogramCapability,
   type HistogramOptions,
+  type KdeCapability,
+  type KdeOptions,
   type PanelFitsMeta,
   type RegressionCapability,
   type RegressionOptions,
@@ -192,6 +196,27 @@ export function HistogramSection({
           <option value="dodge">Side by side</option>
         </select>
       </div>
+      {!temporal && (
+        <div style={styles.row}>
+          <span style={styles.label}>Own bar</span>
+          <CommitInput
+            value={exactValuesText(settings.exact_values)}
+            placeholder="e.g. 0"
+            title="Values that get a bar of their own, left of the range (comma-separated). They are left out of the regular bins."
+            onCommit={text => onChange({ exact_values: text })}
+          />
+        </div>
+      )}
+      {!temporal && (meta?.n_nan ?? 0) > 0 && (
+        <label style={styles.row}>
+          <input
+            type="checkbox"
+            checked={settings.show_nan ?? true}
+            onChange={e => onChange({ show_nan: e.target.checked })}
+          />
+          <span style={{ fontSize: 11 }}>Show NaN bar ({meta?.n_nan})</span>
+        </label>
+      )}
       {meta && <div style={styles.note}>{binsSummary(meta, temporal)}</div>}
       {capability?.problem && <div style={styles.warn}>{capability.problem}</div>}
       {(meta?.notes ?? []).map(line => (
@@ -199,6 +224,49 @@ export function HistogramSection({
           {line}
         </div>
       ))}
+    </>
+  )
+}
+
+export function KdeSection({
+  options,
+  capability,
+  onChange,
+}: {
+  options: KdeOptions | undefined
+  capability: KdeCapability | undefined
+  onChange: (patch: KdeOptions) => void
+}) {
+  const settings = { ...(capability?.settings ?? {}), ...(options ?? {}) }
+  return (
+    <>
+      <div style={styles.row}>
+        <span style={styles.label}>Smoothing</span>
+        <CommitInput
+          value={binText(settings.bandwidth_adjust)}
+          placeholder="1"
+          title="Multiplies the automatic bandwidth (Scott's rule): below 1 follows the data more closely, above 1 smooths more."
+          onCommit={text => onChange({ bandwidth_adjust: parseKdeNumber(text) })}
+        />
+      </div>
+      <div style={styles.row}>
+        <span style={styles.label}>Extend</span>
+        <CommitInput
+          value={binText(settings.cut)}
+          placeholder="0"
+          title="How far past the smallest and largest value the curve runs, in bandwidths. 0 stops it at the data."
+          onCommit={text => onChange({ cut: parseKdeNumber(text) })}
+        />
+      </div>
+      <label style={styles.row}>
+        <input
+          type="checkbox"
+          checked={settings.fill ?? false}
+          onChange={e => onChange({ fill: e.target.checked })}
+        />
+        <span style={{ fontSize: 11 }}>Shade under the curve</span>
+      </label>
+      {capability?.problem && <div style={styles.warn}>{capability.problem}</div>}
     </>
   )
 }

@@ -58,6 +58,10 @@
         "title": "SciStack: Plot Variable…"
       },
       {
+        "command": "scistack.summarizeVariable",
+        "title": "SciStack: Summarize Variable…"
+      },
+      {
         "command": "scistack.plotCsv",
         "title": "SciStack: Plot CSV File"
       },

@@ -404,8 +404,6 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     stats_preview:          { path: '/api/stats/preview', method: 'POST', body: true },
     stats_guide_log:        { path: '/api/stats/guide-log', method: 'POST', body: true },
     stats_export:           { path: '/api/stats/export', method: 'POST', body: true },
-    stats_divergence:       { path: '/api/stats/divergence', method: 'POST', body: true },
-    stats_sync:             { path: '/api/stats/sync', method: 'POST', body: true },
     stats_overlay_bars:     { path: '/api/stats/overlay', method: 'POST', body: true },
     stats_overlay_for_plot: { path: '/api/stats/overlay-for-plot', method: 'POST', body: true },
     stats_linked:           { path: '/api/stats/linked', method: 'POST', body: true },
@@ -418,6 +416,10 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     stats_preset_save:      { path: '/api/stats/presets/save', method: 'POST', body: true },
     stats_preset_apply:     { path: '/api/stats/presets/apply', method: 'POST', body: true },
     stats_preset_hide:      { path: '/api/stats/presets/hide', method: 'POST', body: true },
+    stats_preset_rename:    { path: '/api/stats/presets/rename', method: 'POST', body: true },
+    stats_export_code:      { path: '/api/stats/export-code', method: 'POST', body: true },
+    // Plot Studio's step-by-step view: the shared first screens (scistackstats.guide.plot_guide).
+    stats_plot_guide:       { path: '/api/stats/plot-guide', method: 'POST', body: true },
     stats_add_to_pipeline:  { path: '/api/stats/add-to-pipeline', method: 'POST', body: true },
     stats_formula_check:    { path: '/api/stats/formula/check', method: 'POST', body: true },
     stats_formula_apply:    { path: '/api/stats/formula/apply', method: 'POST', body: true },
@@ -433,6 +435,11 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     report_client_timing:   { path: '/api/client-timing', method: 'POST', body: true },
     // Which canvas refresh wiped a just-placed item — see DAG/canvasRefreshLog.ts.
     report_canvas_refresh:  { path: '/api/client-canvas-refresh', method: 'POST', body: true },
+    // Which studio opened, from which entry point (docs/claude/studio-unification.md).
+    report_studio_open:     { path: '/api/client-studio-open', method: 'POST', body: true },
+    // A linked figure + table's shared design (scistackplotdb.designs).
+    design_update:          { path: '/api/design/update', method: 'POST', body: true },
+    design_apply:           { path: '/api/design/apply', method: 'POST', body: true },
     // Undo / redo (docs/claude/undo-redo.md). The change id is in the body;
     // a request's own undo metadata travels in the X-SciStack-Change header.
     history_status:         { path: '/api/history/status' },

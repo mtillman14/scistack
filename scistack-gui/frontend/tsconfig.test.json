@@ -60,6 +60,8 @@
     "src/components/PlotStudio/presets.test.ts",
     "src/components/PlotStudio/continuousKinds.ts",
     "src/components/PlotStudio/continuousKinds.test.ts",
+    "src/components/PlotStudio/notPlotted.ts",
+    "src/components/PlotStudio/notPlotted.test.ts",
     "src/components/PlotStudio/kindTiles.ts",
     "src/components/PlotStudio/kindTiles.test.ts",
     "src/components/PlotStudio/textSizes.ts",
@@ -120,6 +122,12 @@
     "src/components/StatStudio/statsSpec.ts",
     "src/components/StatStudio/statsSpec.test.ts",
     "src/components/StatStudio/Guided/guideSteps.ts",
-    "src/components/StatStudio/Guided/guideSteps.test.ts"
+    "src/components/StatStudio/Guided/guideSteps.test.ts",
+    "src/components/Studio/studioOpen.ts",
+    "src/components/Studio/studioOpen.test.ts",
+    "src/components/Studio/sharedDesign.ts",
+    "src/components/Studio/sharedDesign.test.ts",
+    "src/components/Studio/plotGuide.ts",
+    "src/components/Studio/plotGuide.test.ts"
   ]
 }

@@ -151,3 +151,43 @@ def generate_stats_function(stats_spec: StatsSpec, tables: dict[str, LongTable],
     Log.info("[stats codegen] %s: %d input(s), %d analysis(es), %d line(s)", name, len(params),
              len(stats_spec.comparisons), len(lines), layer=LAYER)
     return StatsFunction(name=name, source=source, inputs=params)
+
+
+def embedded_spec(function_source: str) -> dict[str, Any] | None:
+    """The spec a generated ``stat_`` function embeds, or None.
+
+    The inverse of :func:`generate_stats_function`, so a ``stat_`` node on
+    the canvas can open back into StatStudio the way a ``plot_`` node opens
+    into Plot Studio (docs/claude/studio-unification.md). It reads the
+    literal passed to ``StatsSpec.from_dict(...)`` with ``ast.literal_eval``
+    and never runs the function. A hand-written ``stat_`` function has no
+    such literal, and the answer is None.
+    """
+    import ast
+    import textwrap
+
+    try:
+        tree = ast.parse(textwrap.dedent(function_source))
+    except SyntaxError as exc:
+        Log.info("[stats codegen] embedded_spec: source does not parse (%s)", exc, layer=LAYER)
+        return None
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        target = node.func
+        if target.attr != "from_dict" or not (isinstance(target.value, ast.Name) and target.value.id == "StatsSpec"):
+            continue
+        if len(node.args) != 1:
+            continue
+        try:
+            value = ast.literal_eval(node.args[0])
+        except (ValueError, SyntaxError) as exc:
+            Log.info("[stats codegen] embedded_spec: StatsSpec.from_dict argument is not a literal (%s)", exc,
+                     layer=LAYER)
+            return None
+        if isinstance(value, dict):
+            Log.info("[stats codegen] embedded_spec: found a spec with %d key(s)", len(value), layer=LAYER)
+            return value
+    Log.info("[stats codegen] embedded_spec: no StatsSpec.from_dict literal (hand-written stat_ function?)",
+             layer=LAYER)
+    return None

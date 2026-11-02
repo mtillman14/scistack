@@ -2,7 +2,7 @@
 
 The statistics are tested where they live (scistackstats, scistackstatsdb).
 These check the GUI wiring: one round trip per tab, JSON-safe replies, the
-plot link (divergence, sync, brackets) and that derived bars reach a resolve
+plot link (one shared design, brackets) and that derived bars reach a resolve
 without being stored.
 """
 
@@ -42,8 +42,10 @@ def _seeded(db) -> dict:
 
 def test_handlers_are_registered():
     names = {h.name for h in ALL_HANDLERS}
-    assert {"stats_open", "stats_compute", "stats_export", "stats_sync", "stats_divergence",
-            "stats_overlay_bars", "stats_saved_save", "stats_add_to_pipeline"} <= names
+    assert {"stats_open", "stats_compute", "stats_export", "stats_overlay_bars", "stats_saved_save",
+            "stats_add_to_pipeline", "design_update", "design_apply", "report_studio_open"} <= names
+    # The design is shared, not synced (studio-unification Stage 6).
+    assert not {"stats_sync", "stats_divergence"} & names
 
 
 def test_open_from_a_figure_links_and_seeds(populated_db):
@@ -77,15 +79,43 @@ def test_export_text(populated_db):
     assert out["ok"] and "*Note.*" in out["text"]
 
 
-def test_divergence_and_sync_both_ways(populated_db):
-    stats = _seeded(populated_db)
-    plot = {**_plot(), "roles": {"session": "iterate", "subject": "collapse"}, "groups": []}
-    diff = stats_service.divergence(stats, plot)
-    assert diff["diverged"] and {d["path"] for d in diff["differences"]} >= {"roles", "groups"}
-    to_stats = stats_service.sync(stats, plot, "to_stats")
-    assert stats_service.divergence(to_stats["stats_spec"], plot)["diverged"] is False
-    to_plot = stats_service.sync(stats, plot, "to_plot")
-    assert stats_service.divergence(stats, to_plot["plot_spec"])["diverged"] is False
+def test_a_linked_table_and_figure_share_one_design(populated_db):
+    from scistack_gui.services import design_service
+
+    stats = _seeded(populated_db)  # linked to plot-1: the design row exists now
+    regrouped = {**_plot(), "roles": {"session": "iterate", "subject": "collapse"}, "groups": []}
+    written = design_service.update(populated_db, "plot-1", regrouped)
+    assert written == {"linked": True, "changed": True, "version": 2}
+    # An echo of the same design appends nothing, so two open studios stop.
+    assert design_service.update(populated_db, "plot-1", {**regrouped, "kind": "box"})["changed"] is False
+    # The stats side reads the shared design whatever its own copy said.
+    saved = stats_service.saved_save(populated_db, "Table", stats, overwrite=True, current_stats_id=None)
+    reopened = stats_service.open_stats(populated_db, stats_id=saved["info"]["stats_id"])
+    assert reopened["design_linked"] is True
+    assert reopened["spec"]["design"]["roles"]["session"] == "group", "saving the table wrote ITS design"
+    applied = design_service.apply(populated_db, "plot-1", {**regrouped, "kind": "box"})
+    assert applied["spec"]["kind"] == "box", "display settings stay with the artifact"
+
+
+def test_an_unlinked_design_is_never_written(populated_db):
+    from scistack_gui.services import design_service
+
+    assert design_service.update(populated_db, "never-linked", _plot()) == {
+        "linked": False, "changed": False, "version": None}
+    assert design_service.apply(populated_db, "never-linked", _plot())["version"] is None
+
+
+def test_open_carries_the_table_role_words(populated_db):
+    opened = stats_service.open_stats(populated_db, seed=_plot(), plot_id="plot-1")
+    assert opened["role_labels"] == {"group": "Compare", "facet": "Separate sections",
+                                     "iterate": "Separate tables", "collapse": "Average over"}
+
+
+def test_a_fresh_table_opens_on_the_figure_opening_design(populated_db):
+    # One owner of "the default design for a variable" (plot_service.opening_spec).
+    described = plot_service.describe(populated_db, "RawSignal")
+    opened = stats_service.open_stats(populated_db, variable="RawSignal")
+    assert opened["spec"]["design"]["roles"] == described["spec"]["roles"]
 
 
 def test_saved_tables_and_the_plot_link(populated_db):

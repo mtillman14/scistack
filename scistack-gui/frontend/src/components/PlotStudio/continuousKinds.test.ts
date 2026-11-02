@@ -5,10 +5,12 @@ import {
   binText,
   binsSummary,
   durationText,
+  exactValuesText,
   fitsSummary,
   kindForXMeasure,
   parseBinCount,
   parseBinValue,
+  parseKdeNumber,
 } from './continuousKinds.js'
 
 test('picking an X variable turns a categorical kind into a regression', () => {
@@ -77,4 +79,30 @@ test('fitsSummary: one line per fit, panel and level named, failures explained',
     'L · BL: R² = 0.50, p = 0.010, n = 10',
   ])
   assert.deepEqual(fitsSummary(null), [])
+})
+
+test('binsSummary names the special slots and an undrawn NaN count', () => {
+  const meta = { mode: 'width' as const, edges: [0, 1, 2], width: 1, n_bins: 2, n_values: 9, notes: [] }
+  assert.equal(
+    binsSummary({ ...meta, special: ['= 0', 'NaN'], nan: true, n_nan: 3 }, false),
+    '2 bins of 1, from 9 values; own bars: = 0, NaN',
+  )
+  assert.equal(binsSummary({ ...meta, nan: false, n_nan: 3 }, false), '2 bins of 1, from 9 values; 3 NaN not drawn')
+  assert.equal(
+    binsSummary({ ...meta, n_bins: 0, edges: [], special: ['= 0'] }, false),
+    'No other values to bin; own bars: = 0',
+  )
+})
+
+test('exactValuesText shows the kept list, or the typed text before the next report', () => {
+  assert.equal(exactValuesText([0, -1.5]), '0, -1.5')
+  assert.equal(exactValuesText('0, x'), '0, x')
+  assert.equal(exactValuesText(undefined), '')
+})
+
+test('parseKdeNumber: a number, or null for the default (Python validates it)', () => {
+  assert.equal(parseKdeNumber(' 0.5 '), 0.5)
+  assert.equal(parseKdeNumber(''), null)
+  assert.equal(parseKdeNumber('x'), null)
+  assert.equal(parseKdeNumber('-1'), -1)
 })

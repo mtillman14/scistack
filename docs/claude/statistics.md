@@ -26,7 +26,7 @@ for error bars.
 |---|---|
 | Every descriptive formula (mean, SD n−1, SEM, t-based CI, quartiles, skew G1, kurtosis G2, …) | `csvstats.descriptive` |
 | How a plot DRAWS "no interval" (n < 2 → zero width) | `scistackplot.spread` |
-| Which PlotSpec fields are "design" (sync) vs "display" | `scistackplot.design.DESIGN_FIELDS` |
+| Which PlotSpec fields are "design" (shared) vs "display" | `scistackplot.design.DESIGN_FIELDS` |
 | How two designs differ / copying one onto another | `scistackplot.design.design_diff` / `copy_design` |
 | Plot → table settings | `scistackstats.seed.seed_from_plot` |
 | The rows a statistic sees (scalar and 1-D) | `scistackstats.tables.analysis_frame` (via `plot_data` / `sample_curves`) |
@@ -48,7 +48,8 @@ for error bars.
 | Every number's text, every table, every caption | `scistackstats.format` (`Grid`) |
 | Text formats | `scistackstats.export` (renders `Grid`s only) |
 | Stats preset = which settings | `scistackstats.restore.STATS_SETTINGS` |
-| Plot ↔ stats link | `StatsSpec.linked_plot` only (no back-reference) |
+| Plot ↔ stats link | `StatsSpec.linked_plot` only (no back-reference); the linked pair's DESIGN lives in `scistackplotdb.designs` (studio-unification.md) |
+| What each role is called (figure / table / process) | `scistackplot.role_labels` |
 
 ## Data flow
 
@@ -132,7 +133,7 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
     the only csvstats import). The DESIGN owns the factors: a stored formula's
     fixed part is rebased onto it at run time (`check(rebase=True)`); the
     popup's Apply writes factor changes to the design (`apply_to_design`: add
-    → Group, drop → Collapse), so the divergence banner shows them. A formula
+    → Group, drop → Collapse), which the linked figure takes through the shared design. A formula
     is stored only when it says more than the design (covariates or a random
     part other than `(1 | unit)`), and then forces lmm / lmm_pairwise
     (`catalog.MIXED_FORMULA_REASON` greys the rest). Covariates are joined

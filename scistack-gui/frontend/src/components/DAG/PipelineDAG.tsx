@@ -334,9 +334,9 @@ export default function PipelineDAG() {
   // hands over when a row is clicked. It rides the same single funnel as every
   // other way of opening a plot, so "click a location, see that location" needs
   // no second path through the extension.
-  const openPlot = useCallback((variable: string, location?: PathStep[]) => {
+  const openPlot = useCallback((variable: string, location?: PathStep[], from = 'variable-menu') => {
     if (isVSCodeMode) {
-      callBackend('open_plot_panel', { variable, location }).catch(() =>
+      callBackend('open_plot_panel', { variable, location, from }).catch(() =>
         setPlotTarget({ variable, location })
       )
     } else {
@@ -348,12 +348,21 @@ export default function PipelineDAG() {
   // inputs (docs/claude/custom-plot-kinds.md). Same funnel as openPlot.
   const openPlotNode = useCallback((plotNode: string, plotFunction: string) => {
     if (isVSCodeMode) {
-      callBackend('open_plot_panel', { plotNode, plotFunction }).catch(() =>
+      callBackend('open_plot_panel', { plotNode, plotFunction, from: 'plot-node' }).catch(() =>
         setPlotTarget({ variable: '', plotNode })
       )
     } else {
       setPlotTarget({ variable: '', plotNode })
     }
+  }, [])
+
+  // StatStudio, by the same ways in as Plot Studio (docs/claude/studio-unification.md):
+  // a variable, or a stat_ node (the settings its generated code embeds). It
+  // is its own tab, so VS Code only; the menu item says so in a browser.
+  const openStats = useCallback((target: { variable?: string; statNode?: string }, from: string) => {
+    if (!isVSCodeMode) return
+    callBackend('open_plot_panel', { view: 'stat', ...target, from })
+      .catch(err => console.warn('[DAG] StatStudio did not open', err))
   }, [])
 
   // Re-center nodes queued by onDrop once React Flow has measured their
@@ -1155,6 +1164,20 @@ export default function PipelineDAG() {
               📈 Open in Plot Studio
             </button>
           )}
+          {contextMenu.fnLabel?.startsWith('stat_') && (
+            <button
+              style={styles.contextMenuItem}
+              disabled={!isVSCodeMode}
+              title={isVSCodeMode ? 'Open the settings this stat_ step was generated with' : 'StatStudio opens in its own VS Code tab'}
+              onClick={() => {
+                openStats({ statNode: contextMenu.fnLabel!, variable: contextMenu.fnLabel! }, 'stat-node')
+                setContextMenu(null)
+              }}
+              type="button"
+            >
+              📊 Open in Stat Studio
+            </button>
+          )}
         </div>
       )}
       {contextMenu && contextMenu.nodeType === 'variableNode' && (() => {
@@ -1169,6 +1192,15 @@ export default function PipelineDAG() {
               type="button"
             >
               📈 Plot
+            </button>
+            <button
+              style={styles.contextMenuItem}
+              disabled={!isVSCodeMode}
+              title={isVSCodeMode ? 'Descriptive statistics and tests for this variable' : 'StatStudio opens in its own VS Code tab'}
+              onClick={() => { openStats({ variable: varType }, 'variable-menu'); setContextMenu(null) }}
+              type="button"
+            >
+              📊 Statistics
             </button>
             <button
               style={styles.contextMenuItem}
@@ -1214,7 +1246,7 @@ export default function PipelineDAG() {
       {locationTarget && (
         <SchemaLocationPicker
           variable={locationTarget}
-          onPick={path => { openPlot(locationTarget, path); setLocationTarget(null) }}
+          onPick={path => { openPlot(locationTarget, path, 'location'); setLocationTarget(null) }}
           onClose={() => setLocationTarget(null)}
         />
       )}

@@ -233,7 +233,7 @@ Click `GameStats`, then **Open Plot Studio →** in the sidebar.
 
 1. **Data > Filters:** under `ColName`, click **Deselect all**, then tick only `points`.
 2. **Data > Schema keys:** click the button and leave out `Morgan` for the `player` key.
-3. **Structure:** group by `player`, and set `game` to **Collapse** under **Factors**. Each bar now averages one player's games.
+3. **Structure:** group by `player`, and set `game` to **Average over** under **Factors**. Each bar now averages one player's games.
 4. **Chart:** choose **Bar + error**. In **Statistics > Summary**, set **Spread** to **95% CI**.
 5. **Statistics > Show sample:** tick `game`, so each game appears as a point on its player's bar.
 

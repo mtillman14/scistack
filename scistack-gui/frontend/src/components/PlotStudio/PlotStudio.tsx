@@ -29,6 +29,13 @@ import { useBackendMessage } from '../../hooks/useBackendMessage'
 import VariantDagPopup from './VariantDagPopup'
 import GroupingDagPopup from './GroupingDagPopup'
 import SchemaLocationPicker, { type PathStep } from './SchemaLocationPicker'
+import { reportStudioOpen } from '../Studio/studioOpen'
+// The rail's Group and Section are shared with StatStudio (one look, one owner).
+import { Group, Section } from '../Studio/RailGroup'
+import { NEW_GUIDE, PLOT_VIEW_STORAGE_KEY, asGuideSpec, initialView, roleChanges, type StudioView } from '../Studio/plotGuide'
+import GuidedStudio from '../StatStudio/Guided/GuidedStudio'
+import { clampToBlocked, type GuidePayload } from '../StatStudio/Guided/guideSteps'
+import type { GuideState, StatsSpec } from '../StatStudio/statsSpec'
 import {
   type LocationSelection,
   asSelection,
@@ -64,6 +71,8 @@ import {
   type JoinChoice,
   type SampleOverlay,
   joinTooltip,
+  rugScaleNote,
+  type RugMeta,
 } from './showSample'
 import {
   type AspectPreset,
@@ -125,12 +134,16 @@ import PanelsSection from './PanelsSection'
 import DifferenceBarsSection from './DifferenceBarsSection'
 import CompareSection from './CompareSection'
 import TimeZoneSection from './TimeZoneSection'
-import { HistogramSection, RegressionSection, XMeasureSection } from './ContinuousSections'
+import { HistogramSection, KdeSection, RegressionSection, XMeasureSection } from './ContinuousSections'
+import NotPlottedPopup from './NotPlottedPopup'
+import { NOT_PLOTTED_DEPTH, type NotPlottedTotal, type OmissionReport } from './notPlotted'
 import {
   kindForXMeasure,
   type BinsMeta,
   type HistogramCapability,
   type HistogramOptions,
+  type KdeCapability,
+  type KdeOptions,
   type PanelFitsMeta,
   type RegressionCapability,
   type RegressionOptions,
@@ -271,6 +284,7 @@ const KIND_LABELS: Record<string, string> = {
   band: 'Mean + error band',
   heatmap: 'Heatmap',
   histogram: 'Histogram',
+  kde: 'Density (KDE)',
   regression: 'Regression (fit line)',
 }
 
@@ -590,6 +604,8 @@ interface Capabilities {
   /** Chart > Histogram / Regression (capability.histogram_summary / regression_summary). */
   histogram?: HistogramCapability
   regression?: RegressionCapability
+  /** Chart > Density curve (capability.kde_summary). */
+  kde?: KdeCapability
   /** Chart > Categories: a text measure's mode, its categories and why it
    *  cannot be drawn (`capability.categorical_summary`). */
   categorical?: {
@@ -751,6 +767,8 @@ interface StylePatch {
   tick_rotation?: number | null
   tick_every?: number | null
   hide_legend_ticks?: boolean
+  /** The "Not plotted" footnote under the figure (StyleOptions.not_plotted_note). */
+  not_plotted_note?: boolean
   /** Which panels draw their y title (StyleOptions.y_titles). */
   y_titles?: YTitles
 }
@@ -796,6 +814,8 @@ interface Spec {
   histogram?: HistogramOptions
   /** A regression's line and annotation (scistackplot.spec.RegressionOptions). */
   regression?: RegressionOptions
+  /** A KDE's bandwidth, reach and fill (scistackplot.spec.KdeOptions). */
+  kde?: KdeOptions
   /** How a TEXT measure is drawn (scistackplot.spec.CategoricalOptions): its
    *  count or %, and optionally one category only. Inert on a numeric one. */
   categorical?: { stat?: string; level?: string | null }
@@ -937,6 +957,8 @@ interface FigurePayload {
   custom_preview?: CustomPreviewPayload
   row_count: number
   downsampled_from: number | null
+  /** What this figure leaves out (scistackplot.omissions), for the popup. */
+  omissions?: OmissionReport | null
 }
 
 /** What `plot_resolve` returns. The fan-out is described in full (labels,
@@ -956,6 +978,8 @@ interface ResolveResponse {
   /** Problems with the DATA (e.g. every value NaN), each shown once as a
    *  VS Code popup — `scistackplot.cell.all_nan_warning`. */
   data_warnings?: string[]
+  /** The "Not plotted" button for the figures sent (omissions.combine). */
+  not_plotted?: NotPlottedTotal
 }
 
 interface Props {
@@ -981,7 +1005,29 @@ interface Props {
    * draws the figure, and the node's edges bind its inputs.
    */
   plotNode?: string
+  /**
+   * Design-only: just the Data and Structure groups, editing a spec the CALLER
+   * owns (StatStudio's rail; docs/claude/studio-unification.md). No figure,
+   * no toolbar, no saved-plots rail, and no resolve: only the capability
+   * report the controls read. One set of design controls for both studios.
+   */
+  design?: DesignBinding
+  /** Which way in opened this studio (Studio/studioOpen.ts), logged once. */
+  openedFrom?: string
   onClose: () => void
+}
+
+export interface DesignBinding {
+  /** The design carrier (a PlotSpec dict). The caller is its owner. */
+  spec: Record<string, unknown>
+  onChange: (spec: Record<string, unknown>) => void
+  /** The caller's role words, keyed by role id, from the backend. */
+  roleLabels?: Record<string, string>
+  /** Rendered between Data and Structure, where Plot Studio has Chart. */
+  between?: React.ReactNode
+  /** The describe payload, once: the caller reads the catalog from it rather
+   *  than asking for a second describe. */
+  onDescribe?: (describe: { catalog?: { measures?: { name: string; columns?: string[] }[] } }) => void
 }
 
 export default function PlotStudio({
@@ -990,8 +1036,19 @@ export default function PlotStudio({
   embedded = false,
   initialLocation,
   plotNode,
+  design,
+  openedFrom,
   onClose,
 }: Props) {
+  const designMode = design !== undefined
+  const designRef = useRef(design)
+  designRef.current = design
+  // Once per panel: which way in (Stage 0 diagnostics). A design-only rail is
+  // part of a StatStudio, which reports its own opening.
+  useEffect(() => {
+    if (!designMode) reportStudioOpen(callBackend, 'plot', openedFrom, openedVariable || plotNode || csvPath)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   // Threaded into every call: the backend picks CsvSource or ScidbSource from
   // it, and nothing else about the panel changes (one DataSource protocol).
   const sourceParams = useMemo(
@@ -1055,6 +1112,9 @@ export default function PlotStudio({
   // 1's last trial lands on subject 2's first — the backend orders it, this is
   // just a cursor into that list.
   const [figureIndex, setFigureIndex] = useState(0)
+  // "Not plotted" (scistackplot.omissions): the button's total and the popup.
+  const [notPlotted, setNotPlotted] = useState<NotPlottedTotal | null>(null)
+  const [notPlottedOpen, setNotPlottedOpen] = useState(false)
   // The cursor as of the latest render, for a resolve answer to compare its
   // request against (`adoptedFigureIndex`) — its closure holds the old one.
   const figureIndexRef = useRef(figureIndex)
@@ -1139,6 +1199,21 @@ export default function PlotStudio({
     { plotId: string; name: string; text: string } | null
   >(null)
   const [loadedPlot, setLoadedPlot] = useState<SavedPlotInfo | null>(null)
+  // The step-by-step view (studio-unification Stage 5): the screens a figure
+  // shares with a StatStudio table, from the backend (stats_plot_guide), in
+  // StatStudio's own GuidedStudio. View state only: nothing in the spec.
+  const [view, setView] = useState<StudioView>(() => {
+    let stored: string | null = null
+    try { stored = window.localStorage.getItem(PLOT_VIEW_STORAGE_KEY) } catch { /* the default */ }
+    return designMode ? 'advanced' : initialView(stored, { plotNode: !!plotNode })
+  })
+  const [plotGuide, setPlotGuide] = useState<GuideState>(NEW_GUIDE)
+  const [plotGuidePayload, setPlotGuidePayload] = useState<GuidePayload | null>(null)
+  const switchView = useCallback((next: StudioView) => {
+    setView(next)
+    try { window.localStorage.setItem(PLOT_VIEW_STORAGE_KEY, next) } catch { /* not remembered */ }
+    callBackend('stats_guide_log', { event: `view ${next}`, step: null, detail: 'figure' }).catch(() => undefined)
+  }, [])
   // StatStudio "Sync to PlotStudio": its design copied onto this spec (StatsLink).
   const applyLinkedSpec = useCallback(
     (next: Record<string, unknown>) => setSpec(next as unknown as Spec),
@@ -1202,6 +1277,7 @@ export default function PlotStudio({
     replaceSpec(null)
     undo.clear()
     setFigures([])
+    setNotPlotted(null)
     setLoadError('')
     setLoadedPlot(null)
     setRestoreNotes([])
@@ -1213,6 +1289,14 @@ export default function PlotStudio({
         if (cancelled) return
         const response = raw as DescribeResponse
         setDescribe(response)
+        // Design-only: the caller owns the spec; describe only supplies the
+        // factors, catalog and offers the controls read.
+        if (designRef.current) {
+          replaceSpec(designRef.current.spec as unknown as Spec)
+          designRef.current.onDescribe?.(response)
+          if (response.capabilities) setCapabilities(response.capabilities)
+          return
+        }
         // A location handed over from the canvas is applied to the OPENING
         // spec, not as a later edit: seeding it here means the first resolve
         // already draws that location, rather than drawing everything once and
@@ -1294,6 +1378,21 @@ export default function PlotStudio({
   // cost a second RPC per arrow press.
   const capsSpecRef = useRef<string | null>(null)
   const specKey = useMemo(() => JSON.stringify(spec ?? null), [spec])
+  // Design-only: the caller's spec comes in, edits go out. Compared as JSON
+  // so the round trip (edit, caller, prop) settles instead of looping.
+  const designKey = useMemo(() => (design ? JSON.stringify(design.spec) : null), [design])
+  useEffect(() => {
+    if (designKey === null || !describe) return
+    if (designKey !== specKey) replaceSpec(designRef.current!.spec as unknown as Spec)
+    // Only when the CALLER's spec changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [designKey, describe])
+  useEffect(() => {
+    if (designKey === null || !spec) return
+    if (specKey !== designKey) designRef.current?.onChange(spec as unknown as Record<string, unknown>)
+    // Only on this rail's own edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [specKey])
   // Monotonic id of the newest request. A reply whose id is not the current one
   // is stale and is DROPPED — see below for why that matters so much here.
   const generation = useRef(0)
@@ -1362,6 +1461,7 @@ export default function PlotStudio({
           setSpecError(result.ok ? '' : (result.error ?? 'Could not resolve this plot.'))
           setFigures(result.figures ?? [])
           setFigureLabels(result.figure_labels ?? [])
+          setNotPlotted(result.ok ? (result.not_plotted ?? null) : null)
           setFanoutNotes(result.notes ?? [])
           for (const message of unseenWarnings(shownWarnings.current, result.data_warnings)) {
             // Host-answered: only the extension can raise a VS Code popup.
@@ -1415,6 +1515,16 @@ export default function PlotStudio({
 
   useEffect(() => {
     if (!spec) return
+    if (designMode) {
+      // No figure to draw: only the capability report the controls read.
+      const capsTimer = window.setTimeout(() => {
+        if (capsSpecRef.current === specKey) return
+        callBackend('plot_capabilities', { spec, ...sourceParams })
+          .then(caps => { setCapabilities(caps as Capabilities); capsSpecRef.current = specKey })
+          .catch(err => console.warn('[Plot Studio] design rail: capabilities failed', err))
+      }, 250)
+      return () => window.clearTimeout(capsTimer)
+    }
     if (timer.current) window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => {
       if (inFlight.current) {
@@ -1537,6 +1647,40 @@ export default function PlotStudio({
     })
   }, [factorDepths])
 
+  // --- step by step (studio-unification Stage 5) ---------------------------
+  // The screens for THIS spec, from the backend (no test runs). A plot_
+  // node's own figure and the design-only rail have no step-by-step view.
+  const guided = view === 'guided' && !designMode && !plotNode
+  const [guideError, setGuideError] = useState('')
+  const guideSpecKey = useMemo(() => JSON.stringify(spec ?? null), [spec])
+  useEffect(() => {
+    if (!guided || !spec) return
+    const timer = window.setTimeout(() => {
+      const t0 = performance.now()
+      callBackend('stats_plot_guide', { spec, ...sourceParams }).then(raw => {
+        const r = raw as { ok: boolean; guide?: GuidePayload; error?: string }
+        console.info('[Plot Studio] step by step', { ms: Math.round(performance.now() - t0), ok: r.ok })
+        if (r.ok && r.guide) { setPlotGuidePayload(r.guide); setGuideError('') }
+        else setGuideError(r.error ?? 'The step-by-step view is not available for this figure.')
+      }).catch(err => setGuideError(String(err)))
+    }, 350)
+    return () => window.clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guided, guideSpecKey, sourceParams])
+  // A fresh guide that blocks a step before the one shown pulls the view back.
+  useEffect(() => {
+    if (!plotGuidePayload) return
+    setPlotGuide(prev => clampToBlocked(asGuideSpec({}, prev), plotGuidePayload.steps).guide ?? prev)
+  }, [plotGuidePayload])
+  // A wizard choice: its role edits go through setRole (so a new grouping
+  // layer is placed by depth), its navigation into the view state.
+  const onGuideSpec = useCallback((next: StatsSpec) => {
+    if (next.guide) setPlotGuide(next.guide)
+    for (const change of roleChanges(spec?.roles as Record<string, string> | undefined, next.design.roles)) {
+      setRole(change.factor, change.role as Role)
+    }
+  }, [spec?.roles, setRole])
+
   /** Move a grouping layer one step inward (-1, towards the first entry) or
    *  outward (+1). */
   const moveGroupLayer = useCallback((factor: string, delta: number) => {
@@ -1648,6 +1792,18 @@ export default function PlotStudio({
   }, [])
 
   /** Chart > Bars: stack the colour levels, or not. */
+  /** The "Not plotted" footnote (StyleOptions.not_plotted_note); absent = off. */
+  const setNotPlottedNote = useCallback((on: boolean) => {
+    console.info('[Plot Studio] not_plotted_note_set', on)
+    setSpec(prev => {
+      if (!prev) return prev
+      const style = { ...(prev.style ?? {}) }
+      if (on) style.not_plotted_note = true
+      else delete style.not_plotted_note
+      return { ...prev, style }
+    })
+  }, [])
+
   const setBarStack = useCallback((stack: boolean) => {
     console.info('[Plot Studio] bar_stack_set', stack)
     setSpec(prev => (prev ? { ...prev, bar: { ...(prev.bar ?? {}), stack } } : prev))
@@ -1657,6 +1813,12 @@ export default function PlotStudio({
   const setHistogram = useCallback((patch: HistogramOptions) => {
     console.info('[Plot Studio] histogram_set', patch)
     setSpec(prev => (prev ? { ...prev, histogram: { ...(prev.histogram ?? {}), ...patch } } : prev))
+  }, [])
+
+  /** Chart > Density curve: merge into `spec.kde`. */
+  const setKde = useCallback((patch: KdeOptions) => {
+    console.info('[Plot Studio] kde_set', patch)
+    setSpec(prev => (prev ? { ...prev, kde: { ...(prev.kde ?? {}), ...patch } } : prev))
   }, [])
 
   /** Chart > Regression: merge into `spec.regression`. */
@@ -2388,6 +2550,9 @@ export default function PlotStudio({
   // (bins.BinEdges) and fits (fits.PanelFit), never computed here.
   const binsMeta =
     (figures[0]?.figure?.layout?.meta as { bins?: BinsMeta | null } | undefined)?.bins ?? null
+  // A histogram / KDE rug's shading scale (bins.rug_tables), never computed here.
+  const rugMeta =
+    (figures[0]?.figure?.layout?.meta as { rug?: RugMeta | null } | undefined)?.rug ?? null
   const fitsMeta =
     (figures[0]?.figure?.layout?.meta as { fits?: PanelFitsMeta[] | null } | undefined)?.fits ??
     null
@@ -2942,6 +3107,8 @@ export default function PlotStudio({
         }
         setLoadedPlot(info as SavedPlotInfo)
         setRestoreNotes(notes)
+        // A saved figure reopens on every setting (as a saved table does).
+        setView('advanced')
         if (notes.length) {
           // Not in the current format until saved again: never clean.
           captureBaseline.current = false
@@ -3147,6 +3314,13 @@ export default function PlotStudio({
   ) : null
 
   // --- render -------------------------------------------------------------
+  if (designMode && (loadError || !describe || describe.eligible === false)) {
+    return (
+      <div style={styles.note}>
+        {loadError ? `Could not read the design: ${loadError}` : !describe ? 'Loading…' : describe.reason}
+      </div>
+    )
+  }
   if (loadError) {
     return (
       <Shell variable={title} shape={shapeBadge(capabilities)} source={sourceName} onClose={onClose} embedded={embedded}>
@@ -3181,20 +3355,38 @@ export default function PlotStudio({
   // its own tick labels and the next row's title.
   const figureHeight = Math.max(320, gridRows * 240, available)
 
-  return (
-    <Shell
-      variable={title}
-      // The measure's shape used to head its own sidebar section, which spent a
-      // whole block restating the title. It belongs to the title.
-      shape={shapeBadge(capabilities)}
-      source={sourceName}
-      onClose={onClose}
-      embedded={embedded}
-      panelRef={panelRef}
-      controlsHidden={controlsHidden}
-      onToggleControls={() => setControlsHidden(v => !v)}
-      rightRail={savedRail}
-      sidebar={
+  // The two views of one figure, as in StatStudio: Step by step and Advanced.
+  const viewSwitch = !designMode && !plotNode && (
+    <div style={styles.viewSwitch} role="group" aria-label="View">
+      <button type="button" style={view === 'guided' ? styles.viewOn : styles.viewOff}
+              onClick={() => switchView('guided')} title="One decision at a time, each explained">Step by step</button>
+      <button type="button" style={view === 'advanced' ? styles.viewOn : styles.viewOff}
+              onClick={() => switchView('advanced')} title="Every setting at once">Advanced</button>
+    </div>
+  )
+  // Step by step: the screens a figure shares with a StatStudio table, in
+  // StatStudio's own GuidedStudio, with the live figure beside them.
+  const guidedRail = (
+    <div ref={controlsRef} style={{ ...styles.controls, ...(controlsHidden ? styles.controlsHidden : null) }}>
+      {viewSwitch}
+      {guideError
+        ? <div style={styles.note}>{guideError}</div>
+        : spec && (
+          <GuidedStudio
+            spec={asGuideSpec(spec as unknown as Record<string, unknown>, plotGuide)}
+            onSpec={onGuideSpec}
+            guide={plotGuidePayload}
+            busy={busy}
+            header={null}
+            surface="figure"
+          />
+        )}
+    </div>
+  )
+  // The controls rail, as one value: the Shell mounts it beside the figure,
+  // and design-only mode (StatStudio's rail, docs/claude/studio-unification.md)
+  // mounts its Data and Structure groups on their own.
+  const sidebarRail = (
         <div
           ref={controlsRef}
           style={{
@@ -3202,6 +3394,7 @@ export default function PlotStudio({
             ...(controlsHidden ? styles.controlsHidden : null),
           }}
         >
+          {viewSwitch}
           {/* Five groups, in the order a figure is built
               (docs/claude/plot-studio-controls.md). A collapsed group says
               what it holds in one line, so the whole rail fits on a screen.
@@ -3345,6 +3538,11 @@ export default function PlotStudio({
           {/* Plot type is the first real decision: it decides what Grouping,
               Statistics and the mark weights offer, so it heads the rail's
               questions about the figure rather than sitting sixth. */}
+          {/* Design-only: the caller's own group sits where Chart would
+              (StatStudio's Measures), so both studios read Data, then the
+              output's first choice, then Structure. */}
+          {designMode && design?.between}
+          {!designMode && (
           <Group
             title="Chart"
             open={openGroups.chart}
@@ -3486,6 +3684,14 @@ export default function PlotStudio({
                 />
               </Section>
             )}
+            {spec?.kind === 'kde' && (
+              <Section
+                title="Density curve"
+                hint="A smoothed histogram: a Gaussian kernel density estimate of the measure, one curve per colour, each with area 1 so groups of different sizes compare by shape. Finer than bins, but it smooths over gaps and spikes (a pile of zeros reads as a bump)."
+              >
+                <KdeSection options={spec.kde} capability={capabilities?.kde} onChange={setKde} />
+              </Section>
+            )}
             {spec?.kind === 'regression' && (
               <Section
                 title="Regression"
@@ -3500,6 +3706,7 @@ export default function PlotStudio({
               </Section>
             )}
           </Group>
+          )}
 
           {/* Every role in one group: what groups the marks, what separates
               panels and figures, what collapses — and the facet grid right
@@ -3677,7 +3884,7 @@ export default function PlotStudio({
                         disabled={!option.available}
                         title={option.reason ?? option.hint}
                       >
-                        {option.label}
+                        {design?.roleLabels?.[option.role] ?? option.label}
                         {option.available ? '' : ' —'}
                       </option>
                     ))}
@@ -3742,7 +3949,7 @@ export default function PlotStudio({
           {/* "What is averaged, and how the average is shown": the centre and
               spread, and the collapsed keys' own data drawn over them. The
               collapse ROLE itself stays with the other roles in Structure. */}
-          {(summarizing || capabilities?.sample_overlay || capabilities?.difference_bars?.available) && (
+          {!designMode && (summarizing || capabilities?.sample_overlay || capabilities?.difference_bars?.available) && (
             <Group
               title="Statistics"
               open={openGroups.statistics}
@@ -3832,7 +4039,12 @@ export default function PlotStudio({
                           />
                         </label>
                       ))}
-                      {capabilities.sample_overlay.shown.length > 0 && (
+                      {capabilities.sample_overlay.shown.length > 0 &&
+                        capabilities.sample_overlay.form === 'rug' && (
+                          <div style={styles.hint}>{rugScaleNote(rugMeta)}</div>
+                        )}
+                      {capabilities.sample_overlay.shown.length > 0 &&
+                        capabilities.sample_overlay.form !== 'rug' && (
                         <>
                           <label
                             style={styles.factorRow}
@@ -3941,6 +4153,7 @@ export default function PlotStudio({
               axes, marks, text and labels — the old "Figure size" section held
               typography and tick behaviour too, and Preview at is a view
               setting, so it went to the toolbar over the figure. */}
+          {!designMode && (
           <Group
             title="Appearance"
             open={openGroups.appearance}
@@ -4156,6 +4369,7 @@ export default function PlotStudio({
                 (layout.meta.mark_weights, capabilities.sample_overlay). */}
             {(markWeights?.lines?.applies ||
               (capabilities?.sample_overlay?.available &&
+                capabilities.sample_overlay.form !== 'rug' &&
                 capabilities.sample_overlay.shown.length > 0)) && (
               <Section title="Marks">
                 {markWeights?.lines?.applies && (
@@ -4167,6 +4381,7 @@ export default function PlotStudio({
                   />
                 )}
                 {capabilities?.sample_overlay?.available &&
+                  capabilities.sample_overlay.form !== 'rug' &&
                   capabilities.sample_overlay.shown.length > 0 && (
                     <WeightInput
                       label="Sample weight"
@@ -4361,8 +4576,106 @@ export default function PlotStudio({
               />
             </Section>
           </Group>
+          )}
         </div>
-      }
+  )
+  // The pickers the Data and Structure groups open. Both modes need them.
+  const designPopups = (
+    <>
+      {variantEditor !== null && !csvPath && (
+        <VariantDagPopup
+          // The ROW's variable, not the panel's: a row plotting RawEMG must
+          // edit RawEMG's axes, or the popup offers versions from a variable
+          // this row does not draw.
+          variable={
+            variantRows[variantEditor]?.variable ?? describe?.variable ?? variable
+          }
+          selection={(spec?.variant_sets?.[variantEditor]?.selection ?? {}) as Record<string, unknown>}
+          name={variantRows[variantEditor]?.explicitName ?? ''}
+          placeholder={variantRows[variantEditor]?.autoLabel ?? ''}
+          onCancel={() => setVariantEditor(null)}
+          onApply={({ selection, name }) => {
+            // An empty name stays null so the label keeps following the
+            // selection; typing one pins it.
+            editVariantSet(variantEditor, { selection, name: name || null })
+            setVariantEditor(null)
+          }}
+        />
+      )}
+
+      {/* "+ Add variant": pick a variable on the canvas, then a variant of it.
+          Any plottable variable, not only the one being plotted — that is what
+          makes overlaying RawEMG on FilteredEMG reachable at all. */}
+      {addingVariant && !csvPath && (
+        <VariantDagPopup
+          pick
+          variable={describe?.variable ?? variable}
+          pickable={stackable}
+          refusals={describe?.stackable_refused ?? {}}
+          selection={{}}
+          name=""
+          onCancel={() => setAddingVariant(false)}
+          onApply={addVariantFromPicker}
+        />
+      )}
+
+      {/* "Group by…": pick a variable on the canvas, then its columns and the
+          variant of it that supplies the labels. Not offered on the CSV path —
+          a flat table has no separately-recorded variable to join in. */}
+      {groupPickerOpen && !csvPath && (
+        <GroupingDagPopup
+          measure={describe?.variable ?? variable}
+          candidates={groupableVariables}
+          refusals={describe?.groupable_refused ?? {}}
+          selected={(spec?.factor_variables ?? []).map(f => ({
+            variable: f.variable,
+            column: f.column ?? null,
+          }))}
+          sourceParams={sourceParams}
+          onCancel={() => setGroupPickerOpen(false)}
+          onApply={applyGroupings}
+        />
+      )}
+
+      {locationPickerOpen && (
+        <SchemaLocationPicker
+          variable={describe?.variable ?? variable}
+          selection={pickerSelection}
+          value={asSelection(spec?.location_filter)}
+          onChange={selection => setLocationSelection(selection, schemaKeyNames)}
+          onPick={path => {
+            pickLocation(path, schemaKeyNames)
+            setLocationPickerOpen(false)
+          }}
+          onClose={() => setLocationPickerOpen(false)}
+          csvPath={csvPath}
+        />
+      )}
+    </>
+  )
+  if (designMode) {
+    return (
+      <div style={styles.designRail}>
+        {sidebarRail}
+        {designPopups}
+      </div>
+    )
+  }
+
+  return (
+    <Shell
+      variable={title}
+      // The measure's shape used to head its own sidebar section, which spent a
+      // whole block restating the title. It belongs to the title.
+      shape={shapeBadge(capabilities)}
+      source={sourceName}
+      onClose={onClose}
+      embedded={embedded}
+      panelRef={panelRef}
+      controlsHidden={controlsHidden}
+      onToggleControls={() => setControlsHidden(v => !v)}
+      rightRail={savedRail}
+      sidebar={guided ? guidedRail : sidebarRail}
     >
       <div style={styles.figureColumn}>
       {/* The figure toolbar: how the preview is drawn, and everything that
@@ -4516,6 +4829,21 @@ export default function PlotStudio({
             }
           >
             {saving ? 'Saving…' : `Save all ${figureCount}`}
+          </button>
+        )}
+        {/* What the figure leaves out (scistackplot.omissions): shown only
+            when something is, with Python's own words. */}
+        {notPlotted?.button && (
+          <button
+            type="button"
+            style={styles.toolButton}
+            onClick={() => {
+              console.info('[Plot Studio] not_plotted_open', notPlotted.counts)
+              setNotPlottedOpen(true)
+            }}
+            title={notPlotted.sentence}
+          >
+            {notPlotted.button}
           </button>
         )}
         {/* The rows the figure is drawn from, for statistics that must
@@ -4674,6 +5002,17 @@ export default function PlotStudio({
             this state, so pointing at the canvas would mislead in the one case
             where this banner is the only signal
             (.claude/plan-pathinput-loader-staleness-gap.md). */}
+        {notPlottedOpen && notPlotted && (
+          <NotPlottedPopup
+            total={notPlotted}
+            figures={figures}
+            noteOn={spec?.style?.not_plotted_note === true}
+            saving={saving}
+            onToggleNote={setNotPlottedNote}
+            onSave={() => void saveData(NOT_PLOTTED_DEPTH, true)}
+            onClose={() => setNotPlottedOpen(false)}
+          />
+        )}
         {/* A reopened saved plot whose data now has newer code. The figure
             below already shows the version it was saved with; this asks
             whether to move the saved plot to latest for good. Modal because
@@ -4867,75 +5206,7 @@ export default function PlotStudio({
         </div>
       )}
 
-      {variantEditor !== null && !csvPath && (
-        <VariantDagPopup
-          // The ROW's variable, not the panel's: a row plotting RawEMG must
-          // edit RawEMG's axes, or the popup offers versions from a variable
-          // this row does not draw.
-          variable={
-            variantRows[variantEditor]?.variable ?? describe?.variable ?? variable
-          }
-          selection={(spec?.variant_sets?.[variantEditor]?.selection ?? {}) as Record<string, unknown>}
-          name={variantRows[variantEditor]?.explicitName ?? ''}
-          placeholder={variantRows[variantEditor]?.autoLabel ?? ''}
-          onCancel={() => setVariantEditor(null)}
-          onApply={({ selection, name }) => {
-            // An empty name stays null so the label keeps following the
-            // selection; typing one pins it.
-            editVariantSet(variantEditor, { selection, name: name || null })
-            setVariantEditor(null)
-          }}
-        />
-      )}
-
-      {/* "+ Add variant": pick a variable on the canvas, then a variant of it.
-          Any plottable variable, not only the one being plotted — that is what
-          makes overlaying RawEMG on FilteredEMG reachable at all. */}
-      {addingVariant && !csvPath && (
-        <VariantDagPopup
-          pick
-          variable={describe?.variable ?? variable}
-          pickable={stackable}
-          refusals={describe?.stackable_refused ?? {}}
-          selection={{}}
-          name=""
-          onCancel={() => setAddingVariant(false)}
-          onApply={addVariantFromPicker}
-        />
-      )}
-
-      {/* "Group by…": pick a variable on the canvas, then its columns and the
-          variant of it that supplies the labels. Not offered on the CSV path —
-          a flat table has no separately-recorded variable to join in. */}
-      {groupPickerOpen && !csvPath && (
-        <GroupingDagPopup
-          measure={describe?.variable ?? variable}
-          candidates={groupableVariables}
-          refusals={describe?.groupable_refused ?? {}}
-          selected={(spec?.factor_variables ?? []).map(f => ({
-            variable: f.variable,
-            column: f.column ?? null,
-          }))}
-          sourceParams={sourceParams}
-          onCancel={() => setGroupPickerOpen(false)}
-          onApply={applyGroupings}
-        />
-      )}
-
-      {locationPickerOpen && (
-        <SchemaLocationPicker
-          variable={describe?.variable ?? variable}
-          selection={pickerSelection}
-          value={asSelection(spec?.location_filter)}
-          onChange={selection => setLocationSelection(selection, schemaKeyNames)}
-          onPick={path => {
-            pickLocation(path, schemaKeyNames)
-            setLocationPickerOpen(false)
-          }}
-          onClose={() => setLocationPickerOpen(false)}
-          csvPath={csvPath}
-        />
-      )}
+      {designPopups}
     </Shell>
   )
 }
@@ -6344,66 +6615,6 @@ function GroupingList({
  * height. Notes that describe the CURRENT figure (refusals, layout notes,
  * limits read back) are children, and stay visible.
  */
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
-  const [explain, setExplain] = useState(false)
-  return (
-    <div style={styles.section}>
-      <div style={styles.sectionTitleRow}>
-        <div style={styles.sectionTitle}>{title}</div>
-        {hint && (
-          <button
-            type="button"
-            style={{ ...styles.hintToggle, ...(explain ? styles.hintToggleOn : null) }}
-            onClick={() => setExplain(v => !v)}
-            aria-pressed={explain}
-            title={explain ? 'Hide the explanation' : 'What is this?'}
-          >
-            ⓘ
-          </button>
-        )}
-      </div>
-      {hint && explain && <div style={styles.hint}>{hint}</div>}
-      {children}
-    </div>
-  )
-}
-
-/**
- * A collapsible group of Sections (sidebarGroups.ts). Collapsed, the header
- * carries the group's one-line summary. The body is hidden, not unmounted, so
- * an input mid-edit keeps its text.
- */
-function Group({
-  title,
-  summary,
-  open,
-  onToggle,
-  children,
-}: {
-  title: string
-  summary: string
-  open: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <div style={styles.group}>
-      <button
-        type="button"
-        style={styles.groupHeader}
-        onClick={onToggle}
-        aria-expanded={open}
-        title={summary}
-      >
-        <span style={styles.groupChevron}>{open ? '▾' : '▸'}</span>
-        <span style={styles.groupTitle}>{title}</span>
-        {!open && <span style={styles.groupSummary}>{summary}</span>}
-      </button>
-      <div style={{ ...styles.groupBody, display: open ? 'block' : 'none' }}>{children}</div>
-    </div>
-  )
-}
-
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'fixed', inset: 0, background: 'var(--ps-scrim)',
@@ -6447,6 +6658,12 @@ const styles: Record<string, React.CSSProperties> = {
   controls: {
     padding: 12, flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto',
   },
+  // Step by step | Advanced: StatStudio's switch, in the same place.
+  viewSwitch: { display: 'flex', gap: 4, margin: '0 0 8px' },
+  viewOff: { background: 'none', border: '1px solid var(--ps-border-faint)', color: 'var(--ps-text-secondary)', borderRadius: 3, padding: '3px 10px', cursor: 'pointer', fontSize: 12 },
+  viewOn: { background: 'var(--ps-accent-bg-strong)', border: '1px solid var(--ps-accent-border)', color: 'var(--ps-text-strong)', borderRadius: 3, padding: '3px 10px', cursor: 'pointer', fontSize: 12 },
+  // Design-only mode (StatStudio's rail): the groups flow in the host's column.
+  designRail: { display: 'flex', flexDirection: 'column' },
   // Collapsed rather than unmounted: the control state survives the toggle.
   //
   // These two objects must name exactly the same overflow properties. React

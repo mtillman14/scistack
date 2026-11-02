@@ -772,17 +772,47 @@ def fill_alpha(kind: PlotKind, style) -> float | None:
         from ..bins import FILL_ALPHA as HISTOGRAM_FILL_ALPHA
 
         return HISTOGRAM_FILL_ALPHA
+    if kind is PlotKind.KDE:
+        from ..kde import FILL_ALPHA as KDE_FILL_ALPHA
+
+        return KDE_FILL_ALPHA
     return None
 
 
-def histogram_x_range(resolved: ResolvedPlot) -> tuple[float, float] | None:
-    """A histogram's x range: exactly its outer bin edges, as seaborn's
-    histplot draws it (sticky edges, no margin). ONE rule for matplotlib,
-    plotly and the generated code; None for any other kind."""
+def univariate_x_range(resolved: ResolvedPlot) -> tuple[float, float] | None:
+    """A univariate kind's x range. A histogram: exactly its outer slot
+    edges, special slots included (``bins.BinEdges.x_range``), as seaborn's
+    histplot draws it (sticky edges, no margin). A KDE: exactly its curves'
+    extent (``ResolvedPlot.kde_range``, ``kde.x_range``). ONE rule for
+    matplotlib, plotly and the generated code; None for any other kind."""
+    if resolved.kind is PlotKind.KDE:
+        return resolved.kde_range
     bins = resolved.bins
-    if resolved.kind is not PlotKind.HISTOGRAM or bins is None or not bins.edges:
+    if resolved.kind is not PlotKind.HISTOGRAM or bins is None:
         return None
-    return (float(bins.edges[0]), float(bins.edges[-1]))
+    return bins.x_range()
+
+
+def histogram_ticks(resolved: ResolvedPlot) -> tuple[list[float], list[str]] | None:
+    """A histogram's x ticks when it draws a special slot (``bins.BinEdges.
+    ticks``: round numbers over the regular range, plus "= 0" / "NaN"), else
+    None and the axis keeps its own ticks. Both renderers read this."""
+    bins = resolved.bins
+    if resolved.kind is not PlotKind.HISTOGRAM or bins is None:
+        return None
+    return bins.ticks()
+
+
+def is_special_bin(kind: Any) -> bool:
+    """A bar-table row's slot is a special one (``resolved.BIN_KIND``): the
+    renderers hatch it."""
+    return kind in ("exact", "nan")
+
+
+#: The hatch a special slot's bar is drawn with: matplotlib's spelling,
+#: and plotly's ``marker.pattern.shape`` for the same diagonal lines.
+SPECIAL_BIN_HATCH = "//"
+SPECIAL_BIN_PATTERN = "/"
 
 
 #: How the overlay's points draw against the marks they sit on: the mark's
@@ -1194,3 +1224,61 @@ def sample_hover(rows: pd.DataFrame, resolved: ResolvedPlot) -> list[str]:
         " · ".join(f"{name}={record[name]}" for name in shown)
         for record in rows[shown].astype(str).to_dict(orient="records")
     ]
+
+
+@dataclass(frozen=True)
+class RugRow:
+    """One colour level's rug ticks in one panel, as both renderers draw them:
+    the row's band (axes fraction), and per tick its x, its colour (the
+    level's, at its crowding shade — ``bins.rug_color``), its shade, the
+    value and its crowding count (for hover). Ticks are ordered lightest
+    first, so a crowded tick is drawn on top."""
+
+    level: Any
+    y0: float
+    y1: float
+    xs: list[float]
+    colors: list[str]
+    shades: list[int]
+    values: list[float]
+    counts: list[int]
+
+
+def rug_rows(panel, resolved: ResolvedPlot) -> list[RugRow]:
+    """The panel's rug (``Panel.rug``, built by ``bins.rug_tables``) as rows —
+    the ONE reader matplotlib and plotly share, so both place and shade a
+    tick identically."""
+    from ..bins import RUG_ROW_HEIGHT, rug_color
+    from ..resolved import COUNT, RUG_ROW, RUG_SHADE, X, Y
+
+    rug = getattr(panel, "rug", None)
+    if rug is None or rug.empty:
+        return []
+    rows = []
+    for index, (level, subset) in enumerate(color_groups(rug, resolved)):
+        subset = subset.sort_values(RUG_SHADE, kind="stable")
+        base = palette_for(resolved, level, index)
+        row = int(subset[RUG_ROW].iloc[0])
+        rows.append(
+            RugRow(
+                level=level,
+                y0=row * RUG_ROW_HEIGHT,
+                y1=(row + 1) * RUG_ROW_HEIGHT,
+                xs=subset[X].astype(float).tolist(),
+                colors=[rug_color(base, s) for s in subset[RUG_SHADE]],
+                shades=subset[RUG_SHADE].astype(int).tolist(),
+                values=subset[Y].astype(float).tolist(),
+                counts=subset[COUNT].astype(int).tolist(),
+            )
+        )
+    return rows
+
+
+def not_plotted_note(resolved: ResolvedPlot) -> str | None:
+    """The "Not plotted" footnote both renderers draw under the figure, or
+    None: asked for (``StyleOptions.not_plotted_note``, off by default) and
+    something left out. The words are ``omissions.OmissionReport.sentence``."""
+    report = getattr(resolved, "omissions", None)
+    if not resolved.spec.style.not_plotted_note or report is None or not report.items:
+        return None
+    return report.sentence()

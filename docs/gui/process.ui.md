@@ -141,8 +141,8 @@ Click a node to see its settings in the sidebar.
 | **Variants** | Every combination of parameter values this function runs with. Click **hide** to stop running one combination without deleting its results. |
 | **Inputs** | For an input that's a table, which of its columns the function receives. **Run once per column** calls the function for each column; **Group columns** then passes columns that belong together (a score and its date) as one group. |
 | **Outputs** | Python functions only: the values the function returns, in order. Rename a port, add more with **+ output**, reorder with ↑ ↓, and connect each port to the variable it saves to. (MATLAB functions take their outputs from the function's signature.) |
-| **Data Filters** | Conditions a record must meet to be used, such as `Rating > 0`. |
-| **Schema Selection** | Which schema locations the function runs at. Everything runs unless you leave some out. |
+| **Filters** | Conditions a record must meet to be used, such as `Rating > 0`. |
+| **Schema keys** | Which schema locations the function runs at, chosen in the same picker as Plot Studio's and Stat Studio's **Schema keys**. Everything runs unless you leave some out. |
 | **Schema Level** | Which schema keys the function runs **once per**. See below. |
 | **Run Options** | Less common options: a dry run that only previews, or passing data to the function as a table that keeps its schema columns. |
 
@@ -153,6 +153,8 @@ Click a node to see its settings in the sidebar.
 - Tick **nothing**: it runs once, on the whole dataset. This is how you run a test that compares the brands.
 
 You rarely need to set it by hand. SciStack picks a sensible level from the step's inputs, and you change it only when you want something different.
+
+A ticked key is what Plot Studio and Stat Studio call **Separate**: one run per level, like one figure or one table per level. An unticked key isn't averaged: its rows all reach the function together, and the function decides what to do with them.
 
 #### Columns that belong together
 
@@ -169,11 +171,12 @@ The line under the rows says what will happen, or in red why it can't run yet; n
 
 ### Variables
 
-Clicking a variable shows a **quick plot** of its data, a table of its **variants** with how many records each one holds, and an **Open Plot Studio →** button for building a proper figure (see [Visualize](visualize.md)).
+Clicking a variable shows a **quick plot** of its data, a table of its **variants** with how many records each one holds, and two buttons: **Open Plot Studio →** for building a proper figure (see [Visualize](visualize.md)) and **Open Stat Studio →** for its statistics (see [Summarize](summarize.md)).
 
 Right-click a variable for more:
 
 - **📈 Plot** opens it in Plot Studio.
+- **📊 Statistics** opens it in Stat Studio.
 - **🗂 View Schema Locations** shows every location in your schema and whether this variable has data there. Click a location to plot it.
 - **🧬 Variants…** lists each version of this variable as a card: which settings and code produced it, and how many locations it covers. **Make current** picks which version plots and later steps use by default. **Delete** removes a version you're sure you don't need.
 

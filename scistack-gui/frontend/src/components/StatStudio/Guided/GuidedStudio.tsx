@@ -28,18 +28,25 @@ interface Props {
   /** Title bar, view switch, link banner and messages. */
   header: ReactNode
   /** The list of measures with "add" (the first step). */
-  measureEditor: ReactNode
+  measureEditor?: ReactNode
   /** The tables, sentences, export and save (the last step). */
-  results: ReactNode
+  results?: ReactNode
+  /**
+   * Whose view this is, for scistack.log: StatStudio's (`table`, the
+   * default) or Plot Studio's (`figure`), which shows the screens the two
+   * share (docs/claude/studio-unification.md).
+   */
+  surface?: 'table' | 'figure'
 }
 
-function log(event: string, step: string | null, detail?: string) {
-  callBackend('stats_guide_log', { event, step, detail: detail ?? null }).catch(() => undefined)
+function log(surface: string, event: string, step: string | null, detail?: string) {
+  const text = surface === 'table' ? (detail ?? null) : `${surface}${detail ? ` ${detail}` : ''}`
+  callBackend('stats_guide_log', { event, step, detail: text }).catch(() => undefined)
 }
 
 const STATUS_MARK: Record<StepStatus, string> = { done: '✓', current: '●', blocked: '!', open: '○', locked: '·' }
 
-export default function GuidedStudio({ spec, onSpec, guide, busy, header, measureEditor, results }: Props) {
+export default function GuidedStudio({ spec, onSpec, guide, busy, header, measureEditor, results, surface = 'table' }: Props) {
   const steps = useMemo(() => guide?.steps ?? [], [guide])
   const stepId = currentStep(spec, steps)
   const step = steps.find(s => s.id === stepId) ?? null
@@ -47,7 +54,7 @@ export default function GuidedStudio({ spec, onSpec, guide, busy, header, measur
   // The idea behind the choice the pointer is on, shown first in the panel.
   const [focusConcept, setFocusConcept] = useState<string | null>(null)
   useEffect(() => { setFocusConcept(null) }, [stepId])
-  useEffect(() => { if (stepId) log('show', stepId) }, [stepId])
+  useEffect(() => { if (stepId) log(surface, 'show', stepId) }, [stepId])
 
   if (!guide || !step) {
     return (
@@ -60,7 +67,7 @@ export default function GuidedStudio({ spec, onSpec, guide, busy, header, measur
 
   const choose = (choice: GuideChoice) => {
     if (choice.disabled || choice.selected) return
-    log('choose', step.id, choice.id)
+    log(surface, 'choose', step.id, choice.id)
     onSpec(applyAction(spec, choice.action))
   }
   const waiting = step.needs_results && !guide.has_results
@@ -79,7 +86,7 @@ export default function GuidedStudio({ spec, onSpec, guide, busy, header, measur
                                ...(status === 'locked' ? styles.railItemLocked : {}),
                                ...(status === 'blocked' ? styles.railItemBlocked : {}) }}
                       title={s.blocked ?? (reachable ? undefined : 'Finish the steps before this one first')}
-                      onClick={() => { log('jump', s.id); onSpec(goTo(spec, steps, s.id)) }}>
+                      onClick={() => { log(surface, 'jump', s.id); onSpec(goTo(spec, steps, s.id)) }}>
                 <span style={styles.railMark}>{STATUS_MARK[status]}</span>
                 <span>{i + 1}. {s.title}</span>
               </button>
@@ -107,7 +114,7 @@ export default function GuidedStudio({ spec, onSpec, guide, busy, header, measur
             <div style={styles.recommendation}><b>Recommended.</b> {step.recommendation}</div>
           )}
 
-          {step.id === 'measure' && <div style={styles.card}>{measureEditor}</div>}
+          {step.id === 'measure' && measureEditor && <div style={styles.card}>{measureEditor}</div>}
 
           {waiting && <div style={styles.muted}>Running the tests on your data…</div>}
 
@@ -142,12 +149,12 @@ export default function GuidedStudio({ spec, onSpec, guide, busy, header, measur
 
           <div style={styles.nav}>
             <button type="button" style={styles.button} disabled={index <= 0}
-                    onClick={() => { log('back', step.id); onSpec(previous(spec, steps)) }}>← Back</button>
+                    onClick={() => { log(surface, 'back', step.id); onSpec(previous(spec, steps)) }}>← Back</button>
             <span style={{ flex: 1 }} />
             {index < steps.length - 1 && (
               <button type="button" style={styles.primary} disabled={!!step.blocked || waiting}
                       title={step.blocked ?? undefined}
-                      onClick={() => { log('next', step.id); onSpec(next(spec, steps)) }}>Next →</button>
+                      onClick={() => { log(surface, 'next', step.id); onSpec(next(spec, steps)) }}>Next →</button>
             )}
           </div>
         </main>
@@ -216,7 +223,9 @@ const styles: Record<string, React.CSSProperties> = {
   railItemLocked: { color: 'var(--ps-text-muted)', cursor: 'default' },
   railItemBlocked: { color: 'var(--ps-warn)' },
   railMark: { width: 14, textAlign: 'center' },
-  main: { flex: '1 1 420px', minWidth: 300, maxWidth: 820, display: 'flex', flexDirection: 'column', gap: 10 },
+  // Narrow enough for Plot Studio's rail, where the figure's step-by-step
+  // view lives beside the figure (the columns wrap).
+  main: { flex: '1 1 420px', minWidth: 240, maxWidth: 820, display: 'flex', flexDirection: 'column', gap: 10 },
   stepCount: { color: 'var(--ps-text-muted)', fontSize: 12 },
   question: { fontSize: 22, fontWeight: 600, margin: '0 0 4px', color: 'var(--ps-text-strong)' },
   blocked: { border: '1px solid var(--ps-warn)', borderLeft: '4px solid var(--ps-warn)', borderRadius: 4, padding: '8px 10px' },
@@ -245,7 +254,7 @@ const styles: Record<string, React.CSSProperties> = {
   nav: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 },
   button: { background: 'var(--ps-control)', color: 'var(--ps-text-control)', border: '1px solid var(--ps-border)', borderRadius: 4, padding: '6px 14px', cursor: 'pointer', fontSize: 13 },
   primary: { background: 'var(--ps-accent)', color: 'var(--ps-accent-fg)', border: '1px solid var(--ps-accent-border)', borderRadius: 4, padding: '6px 18px', cursor: 'pointer', fontSize: 13, fontWeight: 600 },
-  explain: { flex: '1 1 280px', maxWidth: 380, minWidth: 260, background: 'var(--ps-note-bg)', border: '1px solid var(--ps-note-border)', borderRadius: 8, padding: 12, display: 'flex', flexDirection: 'column', gap: 10, position: 'sticky', top: 0 },
+  explain: { flex: '1 1 280px', maxWidth: 380, minWidth: 220, background: 'var(--ps-note-bg)', border: '1px solid var(--ps-note-border)', borderRadius: 8, padding: 12, display: 'flex', flexDirection: 'column', gap: 10, position: 'sticky', top: 0 },
   explainTitle: { fontSize: 16, fontWeight: 600, color: 'var(--ps-note-text)' },
   concept: { display: 'flex', flexDirection: 'column', gap: 3, fontSize: 13, lineHeight: 1.45, borderLeft: '3px solid transparent', paddingLeft: 8 },
   conceptOn: { borderLeft: '3px solid var(--ps-accent-border)' },

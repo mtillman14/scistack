@@ -65,6 +65,7 @@ from .saved import (
     save_plot,
     saved_plot_history,
 )
+from .designs import DesignError, StoredDesign, apply_design, is_linked, link_design, load_design, save_design
 from .presets import (
     AppliedPreset,
     Preset,
@@ -91,6 +92,13 @@ from .variants import (
 )
 
 __all__ = [
+    "DesignError",
+    "StoredDesign",
+    "apply_design",
+    "is_linked",
+    "link_design",
+    "load_design",
+    "save_design",
     "ScidbSource",
     # a wide variable's text fields as their own measure
     "TEXT_SUFFIX",

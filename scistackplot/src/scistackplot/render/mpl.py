@@ -57,7 +57,12 @@ from .base import (
     dash_levels,
     dash_style,
     grid_shape,
-    histogram_x_range,
+    univariate_x_range,
+    histogram_ticks,
+    is_special_bin,
+    not_plotted_note,
+    rug_rows,
+    SPECIAL_BIN_HATCH,
     is_categorical_x,
     legend_entry_labels,
     legend_levels,
@@ -257,6 +262,7 @@ def _render(resolved: ResolvedPlot):
                     _draw_fits(ax, panel, resolved)
                 t1 = time.perf_counter()
                 runs, drawn = _draw_sample(ax, panel, resolved)
+                drawn += _draw_rug(ax, panel, resolved)
                 sample_runs_drawn += runs
                 sample_artists += drawn
                 marks_s += t1 - t0
@@ -300,7 +306,8 @@ def _render(resolved: ResolvedPlot):
             # figure reading two different ways depending on how you looked at it.
             legend = _apply_legend(fig, resolved)
             labelled = _labelled_cells(axes, resolved, n_rows, n_cols)
-            rect = _arrange(fig, labelled, resolved, legend)
+            note_room = _draw_not_plotted_note(fig, resolved)
+            rect = _reserve_bottom(_arrange(fig, labelled, resolved, legend), note_room)
             fig.tight_layout(rect=rect)
             # The data's labels outrank the legend: if, with the legend at the
             # right, the x labels still cannot fit, the legend gives the width
@@ -313,7 +320,7 @@ def _render(resolved: ResolvedPlot):
                         legend,
                         f"at the right it left the x labels overlapping by {overlap:.1f}pt",
                     )
-                    rect = _arrange(fig, labelled, resolved, legend)
+                    rect = _reserve_bottom(_arrange(fig, labelled, resolved, legend), note_room)
                     fig.tight_layout(rect=rect)
             setattr(fig, LEGEND_ATTR, legend.describe() if legend is not None else None)
             lap("legend_and_layout")
@@ -379,16 +386,40 @@ def _draw_panel(ax, frame: pd.DataFrame, resolved: ResolvedPlot) -> None:
         _draw_distribution(ax, frame, resolved, violin=kind is PlotKind.VIOLIN)
     elif kind is PlotKind.HISTOGRAM:
         _draw_histogram(ax, frame, resolved)
+    elif kind is PlotKind.KDE:
+        _draw_kde(ax, frame, resolved)
     elif kind is PlotKind.REGRESSION:
         _draw_points(ax, frame, resolved, jitter=False)
 
 
+def _draw_kde(ax, frame, resolved) -> None:
+    """One curve per colour level from the curve table ``reduce`` built
+    (``kde.curve_table``), filled underneath when ``KdeOptions.fill``."""
+    from ..kde import LINE_WIDTH
+
+    alpha = fill_alpha(PlotKind.KDE, resolved.spec.style)
+    for index, (level, subset) in enumerate(color_groups(frame, resolved)):
+        xs = subset[resolved.encoding.x].to_numpy(dtype=float)
+        ys = subset[resolved.encoding.y].to_numpy(dtype=float)
+        colour = palette_for(resolved, level, index)
+        ax.plot(
+            xs,
+            ys,
+            color=colour,
+            linewidth=LINE_WIDTH,
+            label=resolved.text.color_level(level) if level is not None else None,
+        )
+        if resolved.spec.kde.fill:
+            ax.fill_between(xs, 0.0, ys, color=colour, alpha=alpha, linewidth=0)
+
+
 def _draw_histogram(ax, frame, resolved) -> None:
-    """One bar per (colour level, bin) from the bar table ``reduce`` built
+    """One bar per (colour level, slot) from the bar table ``reduce`` built
     (``bins.bin_table``): left edge, width, base and top already decided —
-    dodge and stack included — so this only draws them."""
+    dodge, stack and the special slots included — so this only draws them,
+    hatching the special ones (``base.is_special_bin``)."""
     from ..bins import EDGE_COLOR, EDGE_WIDTH
-    from ..resolved import X_HIGH, X_LOW, Y_BASE
+    from ..resolved import BIN_KIND, X_HIGH, X_LOW, Y_BASE
 
     alpha = fill_alpha(PlotKind.HISTOGRAM, resolved.spec.style)
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
@@ -396,7 +427,7 @@ def _draw_histogram(ax, frame, resolved) -> None:
         highs = subset[X_HIGH].to_numpy(dtype=float)
         bases = subset[Y_BASE].to_numpy(dtype=float)
         tops = subset[resolved.encoding.y].to_numpy(dtype=float)
-        ax.bar(
+        bars = ax.bar(
             lows,
             tops - bases,
             width=highs - lows,
@@ -408,6 +439,10 @@ def _draw_histogram(ax, frame, resolved) -> None:
             linewidth=EDGE_WIDTH,
             label=resolved.text.color_level(level) if level is not None else None,
         )
+        if BIN_KIND in subset.columns:
+            for patch, kind in zip(bars.patches, subset[BIN_KIND], strict=True):
+                if is_special_bin(kind):
+                    patch.set_hatch(SPECIAL_BIN_HATCH)
 
 
 def _draw_fits(ax, panel, resolved: ResolvedPlot) -> None:
@@ -712,6 +747,48 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
     ax.set_xticklabels([resolved.text.x_tick(v) for v in order])
 
 
+def _draw_not_plotted_note(fig, resolved: ResolvedPlot) -> float:
+    """The "Not plotted" footnote (``base.not_plotted_note``) at the bottom
+    left of the figure. Returns the figure fraction it takes, which the
+    layout keeps free (``_reserve_bottom``); 0 when there is none."""
+    note = not_plotted_note(resolved)
+    if not note:
+        return 0.0
+    size = sizes_for(resolved).legend
+    height_pt = fig.get_figheight() * 72.0
+    fig.text(0.01, 0.005, note, ha="left", va="bottom", fontsize=size, gid="not_plotted_note")
+    return min(size * 1.8 / height_pt, 0.25)
+
+
+def _reserve_bottom(rect, room: float):
+    """``rect`` (tight_layout's left, bottom, right, top) with at least
+    ``room`` kept free at the bottom for the footnote."""
+    if not room:
+        return rect
+    left, bottom, right, top = rect if rect is not None else (0.0, 0.0, 1.0, 1.0)
+    return (left, max(bottom, room), right, top)
+
+
+def _draw_rug(ax, panel, resolved: ResolvedPlot) -> int:
+    """A histogram / KDE "Show sample": one tick per value along the bottom,
+    one row per colour level, shaded by crowding (``base.rug_rows``). x in
+    data units, y in axes fraction, so the ticks never move the y range."""
+    from ..bins import RUG_LINE_WIDTH
+
+    rows = rug_rows(panel, resolved)
+    for row in rows:
+        ax.vlines(
+            row.xs,
+            row.y0,
+            row.y1,
+            colors=row.colors,
+            linewidth=RUG_LINE_WIDTH,
+            transform=ax.get_xaxis_transform(),
+            zorder=3,
+        )
+    return len(rows)
+
+
 def _draw_sample(ax, panel, resolved: ResolvedPlot) -> tuple[int, int]:
     """The "Show sample" overlay: one point per row of ``panel.sample`` inside
     the mark it belongs to, joined into a line per identity when
@@ -906,9 +983,14 @@ def _apply_axes_cosmetics(fig, axes, resolved: ResolvedPlot, n_rows, n_cols, at_
                 # A datetime x measure, or a histogram of a datetime: the same
                 # locator and format along x.
                 apply_mpl_date_axis(ax.xaxis, resolved.temporal_x)
-            x_range = histogram_x_range(resolved)
+            x_range = univariate_x_range(resolved)
             if x_range is not None:
                 ax.set_xlim(*x_range)
+            hist_ticks = histogram_ticks(resolved)
+            if hist_ticks is not None:
+                # Special slots ("= 0", "NaN"): their ticks name them, and the
+                # regular ticks stay inside the regular range.
+                ax.set_xticks(hist_ticks[0], hist_ticks[1])
             limits = panel_y_limits(resolved, panel) if panel else resolved.y_limits
             if limits and resolved.kind is not PlotKind.HEATMAP:
                 # Data units, but never a non-positive end on a log axis

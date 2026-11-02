@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from ..bins import RUG_SLOTS
 from ..figsize import describe_size
 from ..paper import (
     PAPER,
@@ -64,7 +65,12 @@ from .base import (
     dash_levels,
     dash_style,
     grid_shape,
-    histogram_x_range,
+    univariate_x_range,
+    histogram_ticks,
+    is_special_bin,
+    not_plotted_note,
+    rug_rows,
+    SPECIAL_BIN_PATTERN,
     is_categorical_x,
     legend_entry_labels,
     legend_levels,
@@ -220,6 +226,13 @@ def render(
                 # A histogram's bins as drawn (bins.BinEdges): the Histogram
                 # section shows "12 bins of 0.5" from this, never computes it.
                 "bins": resolved.bins.to_dict() if resolved.bins is not None else None,
+                # A histogram / KDE rug's darkest count per colour level
+                # (bins.rug_tables): the Show sample section's scale note.
+                "rug": (
+                    {"scale": dict(resolved.rug_scale), "slots": RUG_SLOTS}
+                    if resolved.rug_scale
+                    else None
+                ),
                 # A regression's fits per panel (fits.PanelFit), for the
                 # Regression section's readout.
                 "fits": [
@@ -309,6 +322,7 @@ def render(
                 )
             )
             traces.extend(_sample_traces(panel, resolved, x_axis, y_axis, seen_legend, legend_on))
+            traces.extend(_rug_traces(panel, resolved, x_axis, y_axis))
             traces.extend(_fit_traces(panel, resolved, x_axis, y_axis))
             _add_fit_annotations(layout, panel, resolved, x_axis, y_axis)
             if is_horizontal(resolved.kind):
@@ -367,6 +381,28 @@ def render(
         layout["font"]["family"] = PREVIEW_FONT_FAMILY
         if decisions is not None:
             _apply_decisions(layout, resolved, decisions)
+        note = not_plotted_note(resolved)
+        if note:
+            # The "Not plotted" footnote (base.not_plotted_note): bottom left,
+            # below everything, in a margin grown by its own line.
+            size = sizes.legend
+            margin = layout.setdefault("margin", {})
+            margin["b"] = float(margin.get("b", 0) or 0) + size * 2
+            layout["annotations"].append(
+                {
+                    "text": _html(note),
+                    "xref": "paper",
+                    "yref": "paper",
+                    "x": 0.0,
+                    "y": 0.0,
+                    "xanchor": "left",
+                    "yanchor": "top",
+                    "yshift": -float(margin["b"]) + size * 1.6,
+                    "showarrow": False,
+                    "font": {"size": size, "color": PAPER.text},
+                    "name": "not_plotted_note",
+                }
+            )
         if fixed_size_px is not None:
             width, height = (round(float(v)) for v in fixed_size_px)
             layout.update(width=width, height=height, autosize=False)
@@ -652,7 +688,7 @@ def _panel_traces(
 
         if kind is PlotKind.HISTOGRAM:
             from ..bins import EDGE_COLOR, EDGE_WIDTH
-            from ..resolved import COUNT, X_HIGH, X_LOW, Y_BASE
+            from ..resolved import BIN_KIND, BIN_LABEL, COUNT, X_HIGH, X_LOW, Y_BASE
 
             lows = subset[X_LOW].to_numpy(dtype=float)
             highs = subset[X_HIGH].to_numpy(dtype=float)
@@ -682,6 +718,50 @@ def _panel_traces(
                     ),
                 }
             )
+            if histogram_ticks(resolved) is not None and BIN_KIND in subset.columns:
+                # Special slots (never on a date axis, `bins.special_arguments`):
+                # hatched, and the hover names the slot ("= 0", "NaN") or the
+                # regular bin's range, not a centre number that means nothing
+                # left or right of the range.
+                special = [is_special_bin(k) for k in subset[BIN_KIND]]
+                names = [
+                    label if flag else f"{lo:g} to {hi:g}"
+                    for label, flag, lo, hi in zip(
+                        subset[BIN_LABEL], special, lows, highs, strict=True
+                    )
+                ]
+                trace = traces[-1]
+                trace["marker"]["pattern"] = {"shape": [SPECIAL_BIN_PATTERN if flag else "" for flag in special]}
+                trace["customdata"] = [
+                    [count, name] for count, name in zip(trace["customdata"], names, strict=True)
+                ]
+                trace["hovertemplate"] = (
+                    f"%{{customdata[1]}}<br>{resolved.labels.y}: %{{y}}"
+                    "<br>n = %{customdata[0]}<extra>%{fullData.name}</extra>"
+                )
+        elif kind is PlotKind.KDE:
+            from ..kde import LINE_WIDTH
+            from ..resolved import COUNT
+
+            # The curve table (`kde.curve_table`): one curve per colour level,
+            # filled to zero when `KdeOptions.fill`; points 1 pt = 1 px.
+            trace = {
+                **base,
+                "type": "scatter",
+                "mode": "lines",
+                "x": x_values,
+                "y": _values(subset[encoding.y]),
+                "line": {"color": color, "width": LINE_WIDTH},
+                "customdata": subset[COUNT].to_numpy(dtype=float).tolist(),
+                "hovertemplate": (
+                    f"%{{x}}<br>{resolved.labels.y}: %{{y:.4g}}<br>n = %{{customdata}}"
+                    "<extra>%{fullData.name}</extra>"
+                ),
+            }
+            if resolved.spec.kde.fill:
+                trace["fill"] = "tozeroy"
+                trace["fillcolor"] = _rgba(color, fill_alpha(kind, resolved.spec.style))
+            traces.append(trace)
         elif kind in (PlotKind.SCATTER, PlotKind.STRIP, PlotKind.REGRESSION):
             traces.append(
                 {
@@ -915,6 +995,66 @@ def _legend_title(resolved: ResolvedPlot) -> str:
         resolved.labels.sample if len(sample_legend_levels(resolved)) > 1 else None,
     )
     return " / ".join(t for t in blocks if t)
+
+
+def _rug_traces(panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> list[dict]:
+    """A histogram / KDE "Show sample": one tick per value along the bottom,
+    one row per colour level, shaded by crowding (``base.rug_rows``, the
+    reader matplotlib shares). One ``lines`` trace per (row, shade) — the
+    ticks as segments split by gaps, at most ``bins.RUG_SHADES`` traces a
+    row — placed in data units from the row's axes fraction of the panel's
+    own y range, plus one invisible markers trace a row for the hover
+    (value and how many values share its slot)."""
+    from ..bins import RUG_LINE_WIDTH
+
+    rows = rug_rows(panel, resolved)
+    limits = panel_y_limits(resolved, panel)
+    if not rows or not limits:
+        return []
+    low, high = limits
+    traces: list[dict] = []
+    for row in rows:
+        y0 = low + row.y0 * (high - low)
+        y1 = low + row.y1 * (high - low)
+        by_shade: dict[int, tuple[str, list[float]]] = {}
+        for x, colour, shade in zip(row.xs, row.colors, row.shades, strict=True):
+            by_shade.setdefault(shade, (colour, []))[1].append(x)
+        for shade in sorted(by_shade):
+            colour, xs = by_shade[shade]
+            traces.append(
+                {
+                    "type": "scatter",
+                    "mode": "lines",
+                    "x": [v for x in xs for v in (x, x, None)],
+                    "y": [v for _ in xs for v in (y0, y1, None)],
+                    "line": {"color": colour, "width": RUG_LINE_WIDTH},
+                    "xaxis": x_axis,
+                    "yaxis": y_axis,
+                    "hoverinfo": "skip",
+                    "showlegend": False,
+                    "name": "rug",
+                }
+            )
+        level = f"{resolved.text.color_level(row.level)}: " if row.level is not None else ""
+        traces.append(
+            {
+                "type": "scatter",
+                "mode": "markers",
+                "x": row.xs,
+                "y": [(y0 + y1) / 2.0] * len(row.xs),
+                "marker": {"size": 6, "opacity": 0},
+                "customdata": [[v, c] for v, c in zip(row.values, row.counts, strict=True)],
+                "hovertemplate": (
+                    f"{level}%{{customdata[0]:.6g}}<br>%{{customdata[1]}} value(s) in "
+                    f"this 1/{RUG_SLOTS} of the axis<extra>rug</extra>"
+                ),
+                "xaxis": x_axis,
+                "yaxis": y_axis,
+                "showlegend": False,
+                "name": "rug",
+            }
+        )
+    return traces
 
 
 def _sample_traces(
@@ -1316,10 +1456,16 @@ def _add_axes(
         # A datetime x (an x measure, or a histogram of a datetime): ms on a
         # date axis, formatted by the same owner as the export's.
         **(resolved.temporal_x.plotly_axis() if resolved.temporal_x is not None else {}),
-        # A histogram spans exactly its bins (base.histogram_x_range).
+        # A histogram spans exactly its bins (base.univariate_x_range).
         **(
             {"range": list(x_range)}
-            if (x_range := histogram_x_range(resolved)) is not None
+            if (x_range := univariate_x_range(resolved)) is not None
+            else {}
+        ),
+        # Special slots: ticks that name them (base.histogram_ticks).
+        **(
+            {"tickmode": "array", "tickvals": ticks[0], "ticktext": ticks[1]}
+            if (ticks := histogram_ticks(resolved)) is not None
             else {}
         ),
     }

@@ -53,3 +53,24 @@ def test_several_dvs_get_one_input_each():
     table = popcorn_table()
     fn = generate_stats_function(spec, {"Ratings": table, "Crunch": table})
     assert fn.inputs == {"df_ratings": "Ratings", "df_crunch": "Crunch"}
+
+
+def test_the_embedded_spec_reads_back_without_running_the_function():
+    # A stat_ node opens back into StatStudio from this (studio-unification Stage 2).
+    from scistackstats.codegen import embedded_spec
+
+    spec = _spec()
+    fn = generate_stats_function(spec, {"Ratings": popcorn_table()})
+    recovered = embedded_spec(fn.source)
+    expected = {k: v for k, v in spec.to_dict().items() if k != "guide"}
+    assert recovered == expected
+    assert StatsSpec.from_dict(recovered).to_dict()["design"] == spec.to_dict()["design"]
+
+
+def test_a_hand_written_stat_function_has_no_embedded_spec():
+    from scistackstats.codegen import embedded_spec
+
+    assert embedded_spec("def stat_mine(df):\n    return {'n': len(df)}\n") is None
+    assert embedded_spec("def broken(:\n") is None
+    # A non-literal argument is not evaluated.
+    assert embedded_spec("def stat_x(df):\n    return StatsSpec.from_dict(load())\n") is None

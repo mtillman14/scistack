@@ -269,4 +269,28 @@ def guide(spec: StatsSpec, tables: dict, report: StatsReport | None = None) -> d
             "has_results": report is not None}
 
 
-__all__ = ["DVFacts", "FactorFacts", "GuideFacts", "ResultFacts", "guide", "guide_facts"]
+def plot_guide(spec: StatsSpec, tables: dict) -> dict[str, Any]:
+    """Plot Studio's step-by-step payload (docs/claude/studio-unification.md):
+    the screens a figure shares with a table, from the SAME facts and
+    builders, worded with the figure's nouns, then the figure. *spec* is the
+    figure seeded as a table (``seed_from_plot``, the one plot-to-table owner).
+    Never runs a test."""
+    from .explain import build_plot_steps, concept_for
+    from .spec import PLOT_GUIDE_STEPS
+
+    t0 = time.perf_counter()
+    facts = guide_facts(spec, tables)
+    steps = build_plot_steps(facts)
+    if [s.id for s in steps] != list(PLOT_GUIDE_STEPS):
+        raise RuntimeError(f"explain.build_plot_steps returned {[s.id for s in steps]}, not PLOT_GUIDE_STEPS")
+    used = sorted({c for s in steps for c in s.concepts}
+                  | {ch.concept for s in steps for card in s.cards for ch in card.choices if ch.concept})
+    blocked = [s.id for s in steps if s.blocked]
+    Log.info("[plot guide] %d step(s), blocked %s, %.3fs", len(steps), blocked or "none",
+             time.perf_counter() - t0, layer=LAYER)
+    return {"steps": [s.to_dict() for s in steps],
+            "concepts": {c: concept_for(c, "figure").to_dict() for c in used},
+            "has_results": False}
+
+
+__all__ = ["DVFacts", "FactorFacts", "GuideFacts", "ResultFacts", "guide", "guide_facts", "plot_guide"]

@@ -28,6 +28,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from scistackplot.role_labels import role_label_for
+from scistackplot.spec import Role
+
 from .catalog import TESTS
 from .design import BETWEEN, MIXED, WITHIN, cells_text
 from .effects import EFFECT_SIZES, default_effect_size
@@ -81,13 +84,13 @@ _CONCEPT_LIST = (
        "Repeated recordings of the same condition, such as several trials, are averaged into one value per "
        "participant before any test, so each participant counts once."),
     # --- what each factor does --------------------------------------------
-    _c("role.compare", "Compare its levels", "factor (grouping layer)",
+    _c("role.compare", role_label_for(Role.GROUP, "table"), "factor (grouping layer)",
        "The groups or conditions you want to compare, such as treatment vs control, or before vs after."),
-    _c("role.separate", "Analyse separately for each", "stratum",
+    _c("role.separate", role_label_for(Role.ITERATE, "table"), "stratum",
        "Runs the whole analysis once for each level, as if each were its own small study. Use it for things "
        "you don't want to compare with each other.",
        "Levels analysed separately are never compared with each other, and each gets its own table section."),
-    _c("role.average", "Average over", "collapsed factor",
+    _c("role.average", role_label_for(Role.COLLAPSE, "table"), "collapsed factor",
        "Averages its levels together into one value, so they are not compared with each other. Use it for "
        "repeated recordings of the same condition, such as several trials.",
        "The participant is averaged over too: each participant's recordings become one value per condition, "
@@ -266,6 +269,33 @@ _CONCEPT_LIST = (
 
 CONCEPTS: dict[str, Concept] = {c.id: c for c in _CONCEPT_LIST}
 
+#: The concepts that NAME a role. Their titles are the role words
+#: (scistackplot.role_labels), so a figure's step-by-step view says "Separate
+#: figures" where a table's says "Separate tables".
+_ROLE_CONCEPTS: dict[str, Role] = {
+    "role.compare": Role.GROUP,
+    "role.separate": Role.ITERATE,
+    "role.average": Role.COLLAPSE,
+}
+
+#: A figure separates by drawing, not by analysing: the one lay sentence
+#: that differs on the figure surface.
+_FIGURE_LAY: dict[str, str] = {
+    "role.separate": "Draws one whole figure for each level, so its levels are never side by side. Use it for "
+                     "things you want to look at one at a time.",
+}
+
+
+def concept_for(concept_id: str, surface: str = "table") -> Concept:
+    """The concept as *surface* (``table`` or ``figure``) names it."""
+    from dataclasses import replace
+
+    concept = CONCEPTS[concept_id]
+    role = _ROLE_CONCEPTS.get(concept_id)
+    if role is None or surface == "table":
+        return concept
+    return replace(concept, title=role_label_for(role, surface), lay=_FIGURE_LAY.get(concept_id, concept.lay))
+
 
 # ---------------------------------------------------------------------------
 # Steps
@@ -424,14 +454,19 @@ def _step_unit(facts: "GuideFacts") -> StepGuide:
 # --- factors --------------------------------------------------------------------
 
 
+#: The wizard's three choices per factor. Their words are the table's role
+#: labels (scistackplot.role_labels, the one owner shared with Plot Studio).
 _ROLE_CHOICES = (
-    ("group", "Compare", "role.compare"),
-    ("separate", "Analyse separately", "role.separate"),
-    ("collapse", "Average over", "role.average"),
+    ("group", role_label_for(Role.GROUP, "table"), "role.compare"),
+    ("separate", role_label_for(Role.ITERATE, "table"), "role.separate"),
+    ("collapse", role_label_for(Role.COLLAPSE, "table"), "role.average"),
 )
 
 
-def _step_factors(facts: "GuideFacts") -> StepGuide:
+def _step_factors(facts: "GuideFacts", surface: str = "table") -> StepGuide:
+    """What each factor does. *surface* is whose nouns the choices use: a
+    table's ("Separate tables") or, in Plot Studio's step-by-step view, a
+    figure's ("Separate figures"); scistackplot.role_labels owns both."""
     dv = _first_dv(facts)
     step = StepGuide("factors", "What to compare", "What are you comparing?",
                      concepts=["role.compare", "role.separate", "role.average"])
@@ -443,7 +478,7 @@ def _step_factors(facts: "GuideFacts") -> StepGuide:
     if compared:
         step.facts.append(f"Comparing: {' × '.join(compared)}.")
     if dv.strata:
-        step.facts.append(f"Analysed separately for each: {_and(dv.strata)}.")
+        step.facts.append(f"{role_label_for(Role.ITERATE, surface)} for each: {_and(dv.strata)}.")
     averaged = [f.name for f in facts.factors if f.role == "collapse"]
     if averaged:
         step.facts.append(f"Averaged over: {_and(averaged)}.")
@@ -466,10 +501,11 @@ def _step_factors(facts: "GuideFacts") -> StepGuide:
         card = Card(f"role:{f.name}", f.name, f"Levels: {_levels(f.levels)}" if f.levels else "")
         if is_unit:
             card.lay = f"Your independent unit (previous step). {card.lay}".strip()
-        for role, label, concept in _ROLE_CHOICES:
+        for role, _label, concept in _ROLE_CHOICES:
             target = ("iterate" if f.role not in ("facet", "iterate") else f.role) if role == "separate" else role
             card.choices.append(Choice(
-                f"{f.name}:{role}", label, _first_sentence(CONCEPTS[concept].lay), selected=current == role,
+                f"{f.name}:{role}", role_label_for(target, surface),
+                _first_sentence(concept_for(concept, surface).lay), selected=current == role,
                 action={"op": "set_role", "factor": f.name, "role": target}, concept=concept,
                 disabled=(f"{f.name} is the independent unit; it is averaged over"
                           if is_unit and role != "collapse" else None),
@@ -887,3 +923,44 @@ def build_steps(facts: "GuideFacts") -> list[StepGuide]:
     from .spec import GUIDE_STEPS
 
     return [_BUILDERS[step_id](facts) for step_id in GUIDE_STEPS]
+
+
+# --- Plot Studio's step-by-step view (docs/claude/studio-unification.md) ------------
+
+
+def _step_figure(facts: "GuideFacts") -> StepGuide:
+    """The last screen of a FIGURE's step-by-step view: what the design now
+    says, then the figure itself (the webview shows it here) and the way on
+    to the full controls."""
+    step = StepGuide("figure", "Your figure", "Here is your figure.")
+    dv = _first_dv(facts)
+    if dv is None:
+        step.blocked = "Choose a measure first."
+        return step
+    compared = list(reversed(dv.compared))
+    if compared:
+        step.facts.append(f"{role_label_for(Role.GROUP, 'figure')}: {' × '.join(compared)}.")
+    if dv.strata:
+        step.facts.append(f"{role_label_for(Role.ITERATE, 'figure')} for each: {_and(dv.strata)}.")
+    averaged = [f.name for f in facts.factors if f.role == "collapse"]
+    if averaged:
+        step.facts.append(f"{role_label_for(Role.COLLAPSE, 'figure')}: {_and(averaged)}.")
+    step.recommendation = ("Choose the kind of chart and how it looks in Advanced, where every setting is. "
+                           "The same choices you made here are there too.")
+    return step
+
+
+def build_plot_steps(facts: "GuideFacts") -> list[StepGuide]:
+    """One :class:`StepGuide` per ``spec.PLOT_GUIDE_STEPS`` id: the screens a
+    figure shares with a table (``SHARED_GUIDE_STEPS``, worded with the
+    figure's nouns), then the figure."""
+    from .spec import PLOT_GUIDE_STEPS, SHARED_GUIDE_STEPS
+
+    builders = {
+        "measure": _step_measure,
+        "unit": _step_unit,
+        "factors": lambda f: _step_factors(f, surface="figure"),
+        "figure": _step_figure,
+    }
+    assert all(s in builders for s in SHARED_GUIDE_STEPS)
+    return [builders[step_id](facts) for step_id in PLOT_GUIDE_STEPS]

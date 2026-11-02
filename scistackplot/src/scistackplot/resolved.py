@@ -77,6 +77,17 @@ X_HIGH = "__x_hi"
 Y_BASE = "__y_base"
 #: A histogram bar's raw count, whatever ``HistogramOptions.stat`` draws.
 COUNT = "__count"
+#: A histogram bar's slot (``bins.BARS_SOURCE``): "range" for a regular bin,
+#: "exact" for a single-value bin, "nan" for the NaN bar; and the special
+#: slot's label ("= 0", "NaN"; empty for a regular bin). Renderers hatch the
+#: special ones and name them in the hover.
+BIN_KIND = "__bin_kind"
+BIN_LABEL = "__bin_label"
+#: A rug tick's (``bins.rug_tables``) shade index (0 lightest .. RUG_SHADES - 1
+#: darkest: the crowding) and its row, one per colour level in colour order,
+#: stacked upward from the bottom of the panel.
+RUG_SHADE = "__shade"
+RUG_ROW = "__rug_row"
 #: The one x level a categorical figure has when NO tick layer was chosen â
 #: a scalar measure grouped by its colour alone, or not grouped at all. The
 #: mark frame and the overlay frame both write it as their ``__x``
@@ -172,6 +183,10 @@ class Panel:
     #: identity when joined) and the shown key columns themselves, for hover.
     #: Built by ``reduce._overlay_frame``; drawn after the marks.
     sample: pd.DataFrame | None = None
+    #: HISTOGRAM / KDE "Show sample": the rug (``bins.rug_tables``) in place of
+    #: ``sample`` — ``__x`` (tick x), ``__y`` (the value), ``__count`` (crowding),
+    #: ``__shade``, ``__rug_row``, ``__color``. Drawn after the marks.
+    rug: pd.DataFrame | None = None
     #: REGRESSION only: one ``fits.PanelFit`` per fit group (colour level, or
     #: the pooled panel), in colour order. Built by ``reduce`` from the
     #: panel's own points; drawn as the line, band and annotation.
@@ -358,6 +373,15 @@ class ResolvedPlot:
     #: once per figure from every panel's values so the panels compare, and
     #: restated by the generated code (``bins.EDGES_SOURCE``).
     bins: Any = None
+    #: KDE only: the figure's x range, exactly the curves' extent over every
+    #: panel (`kde.x_range`), so the panels share one axis.
+    kde_range: tuple[float, float] | None = None
+    #: The rug's darkest shade per colour level (``{level: count}``, the most
+    #: values in 1/``bins.RUG_SLOTS`` of the axis): the GUI's scale note.
+    rug_scale: dict = field(default_factory=dict)
+    #: What the figure leaves out (``omissions.OmissionReport``): the "Not
+    #: plotted" button, its popup and the optional footnote read this.
+    omissions: Any = None
 
     @property
     def figure_label(self) -> str:
@@ -435,6 +459,8 @@ class ResolvedPlot:
             "temporal_x": self.temporal_x.to_dict() if self.temporal_x is not None else None,
             "y_categories": list(self.y_categories) if self.y_categories is not None else None,
             "bins": self.bins.to_dict() if self.bins is not None else None,
+            "rug": {"scale": dict(self.rug_scale)} if self.rug_scale else None,
+            "omissions": self.omissions.to_dict() if self.omissions is not None else None,
             "sample": {
                 "shown": list(self.sample_shown),
                 "join": self.sample_join,

@@ -86,6 +86,7 @@ class PlotKind(str, Enum):
     BAND = "band"            # statistic line + shaded error region (1-D)
     HEATMAP = "heatmap"      # 2-D matrix
     HISTOGRAM = "histogram"  # the measure's values binned on x; count (or %) on y
+    KDE = "kde"              # the measure's kernel density estimate along x; density on y
     REGRESSION = "regression"  # x measure vs y measure + line of best fit, R², p
     #: The user's own ``plot_`` function draws the figure
     #: (:attr:`PlotSpec.custom` names it). Never offered in the kind grid of a
@@ -120,6 +121,7 @@ SCALAR_KINDS = (
     PlotKind.BAR,
     PlotKind.HBAR,
     PlotKind.HISTOGRAM,
+    PlotKind.KDE,
     PlotKind.REGRESSION,
 )
 
@@ -128,7 +130,14 @@ SCALAR_KINDS = (
 #: the x measure. Grouping layers are series for these (``roles.grouping_
 #: layers``), and the categorical machinery (ticks, brackets, Show sample,
 #: compare, difference bars) does not apply.
-CONTINUOUS_X_KINDS = (PlotKind.HISTOGRAM, PlotKind.REGRESSION)
+CONTINUOUS_X_KINDS = (PlotKind.HISTOGRAM, PlotKind.KDE, PlotKind.REGRESSION)
+
+#: Kinds that draw the DISTRIBUTION of their one measure along x — binned
+#: (histogram) or smoothed (KDE) — with y saying how much of it lies there.
+#: The one statement of "univariate": each draws the sample, refuses an x
+#: measure, takes one grouping layer as its colour, and puts a datetime
+#: measure on a date x axis. Read wherever those rules are decided.
+UNIVARIATE_KINDS = (PlotKind.HISTOGRAM, PlotKind.KDE)
 
 #: Kinds that can carry a "Show sample" overlay (:attr:`PlotSpec.show_sample`):
 #: the categorical kinds — a bar, box or violin summarises its sample, scatter
@@ -711,6 +720,15 @@ class HistogramOptions:
     range_max: float | str | None = None
     stat: HistStat = HistStat.COUNT
     multiple: HistMultiple = HistMultiple.LAYER
+    #: Values that get a bar of their own (e.g. 0, often a special value):
+    #: taken out of the regular bins and drawn in their own hatched slot LEFT
+    #: of the range, ascending (user, 2026-11-01). Numbers; inert on a
+    #: datetime measure and under the density stat, with a note.
+    exact_values: tuple[float, ...] = ()
+    #: A bar counting the NaN values, in its own slot RIGHT of the range. On
+    #: by default (user, 2026-11-01: data is never dropped silently); drawn
+    #: only when the figure has NaNs. Inert like ``exact_values``.
+    show_nan: bool = True
 
     def to_dict(self) -> dict:
         return {
@@ -721,6 +739,8 @@ class HistogramOptions:
             "range_max": self.range_max,
             "stat": str(self.stat),
             "multiple": str(self.multiple),
+            "exact_values": list(self.exact_values),
+            "show_nan": self.show_nan,
         }
 
     @classmethod
@@ -735,6 +755,8 @@ class HistogramOptions:
             range_max=_as_limit(raw.get("range_max")),
             stat=HistStat(raw.get("stat", HistStat.COUNT)),
             multiple=HistMultiple(raw.get("multiple", HistMultiple.LAYER)),
+            exact_values=_as_exact_values(raw.get("exact_values")),
+            show_nan=bool(raw.get("show_nan", True)),
         )
 
 
@@ -870,6 +892,36 @@ class RegressionOptions:
 
 
 @dataclass(frozen=True)
+class KdeOptions:
+    """A KDE's curve (user, 2026-11-01). Inert on every other kind; the
+    curve is ``scistackplot.kde``'s (``KDE_SOURCE``, one Gaussian kernel,
+    Scott's bandwidth times ``bandwidth_adjust``), normalised per colour
+    level within a panel like a histogram's percent.
+
+    ``cut``: how far past the data's ends the curve runs, in bandwidths (0 =
+    it stops at the smallest and largest value). ``fill``: shade under it.
+    """
+
+    bandwidth_adjust: float = 1.0
+    cut: float = 0.0
+    fill: bool = False
+
+    def to_dict(self) -> dict:
+        return {"bandwidth_adjust": self.bandwidth_adjust, "cut": self.cut, "fill": self.fill}
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> "KdeOptions":
+        raw = raw or {}
+        adjust = _as_float(raw.get("bandwidth_adjust"))
+        cut = _as_float(raw.get("cut"))
+        return cls(
+            bandwidth_adjust=1.0 if adjust is None else adjust,
+            cut=0.0 if cut is None else cut,
+            fill=bool(raw.get("fill", False)),
+        )
+
+
+@dataclass(frozen=True)
 class FacetOptions:
     """
     How faceted panels are arranged: a grid of a known size, plus one ordering
@@ -994,6 +1046,20 @@ def _as_width(value: Any) -> float | str | None:
     if number is not None or not isinstance(value, str) or not value.strip():
         return number
     return value.strip()
+
+
+def _as_exact_values(value: Any) -> tuple[float, ...]:
+    """A histogram's single-value bins: numbers, ascending, each once. A
+    GUI box arrives as text (``"0, -1"``); an entry that is no number is
+    dropped here and never reaches ``bins`` (the box shows what was kept)."""
+    if value is None or value == "":
+        return ()
+    if isinstance(value, str):
+        value = value.replace(";", ",").split(",")
+    elif not isinstance(value, (list, tuple)):
+        value = [value]
+    numbers = {n for n in (_as_float(v) for v in value) if n is not None and n == n}
+    return tuple(sorted(numbers))
 
 
 def _as_float(value: Any) -> float | None:
@@ -1335,6 +1401,11 @@ class StyleOptions:
     #: the tick numbers' rule). A panel's own ``PanelOverride.y_label_hidden``
     #: beats it. ``panels.Y_TITLES`` lists the values.
     y_titles: str = Y_TITLES_EVERY_PANEL
+    #: The "Not plotted" footnote under the figure ("3 of 120 values not
+    #: plotted (2 no value, 1 no record)", ``omissions.OmissionReport.sentence``).
+    #: Off by default (user, 2026-11-01); the preview and the saved image draw
+    #: it. Inert when nothing is left out.
+    not_plotted_note: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict | None) -> "StyleOptions":
@@ -1458,6 +1529,9 @@ class PlotSpec:
     #: A regression's fit line and annotation (:class:`RegressionOptions`);
     #: inert on every other kind. Plan-irrelevant: fits run per figure.
     regression: RegressionOptions = field(default_factory=RegressionOptions)
+    #: A KDE's bandwidth, reach and fill (:class:`KdeOptions`); inert on
+    #: every other kind. Plan-irrelevant: curves are computed per figure.
+    kde: KdeOptions = field(default_factory=KdeOptions)
     #: How a text measure is drawn — count, proportion or the categories
     #: themselves (:class:`CategoricalOptions`). Inert on a numeric measure.
     #: NOT plan-irrelevant: the stat decides the derived table
@@ -1656,6 +1730,7 @@ class PlotSpec:
         raw["y_axis"] = self.y_axis.to_dict()
         raw["histogram"] = self.histogram.to_dict()
         raw["regression"] = self.regression.to_dict()
+        raw["kde"] = self.kde.to_dict()
         raw["categorical"] = self.categorical.to_dict()
         raw["bar"] = self.bar.to_dict()
         raw["location_filter"] = self.location_filter.to_dict()
@@ -1705,6 +1780,7 @@ class PlotSpec:
             time_zone=str(raw.get("time_zone") or "local"),
             histogram=HistogramOptions.from_dict(raw.get("histogram")),
             regression=RegressionOptions.from_dict(raw.get("regression")),
+            kde=KdeOptions.from_dict(raw.get("kde")),
             categorical=CategoricalOptions.from_dict(raw.get("categorical")),
             bar=BarOptions.from_dict(raw.get("bar")),
             facet=_facet_from_dict(raw.get("facet") or {}),

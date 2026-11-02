@@ -258,6 +258,14 @@ GUIDE_STEPS = (
     "test", "multiple_comparisons", "effect_size", "results",
 )
 
+#: The first screens a FIGURE's step-by-step view shares with a table's
+#: (docs/claude/studio-unification.md): the same questions, the same
+#: builders, only the role nouns differ. They lead GUIDE_STEPS, in order.
+SHARED_GUIDE_STEPS = ("measure", "unit", "factors")
+
+#: Plot Studio's step-by-step view: the shared screens, then the figure.
+PLOT_GUIDE_STEPS = (*SHARED_GUIDE_STEPS, "figure")
+
 
 @dataclass(frozen=True)
 class GuideState:

@@ -33,18 +33,27 @@ Each figure opens in its own tab, so the canvas stays visible beside it.
 
 Click **ⓘ** beside any setting for a short explanation.
 
+## Two views: Step by step and Advanced
+
+The switch at the top of the left rail has the same two views as [Stat Studio](summarize.md):
+
+- **Step by step** asks one question per screen: what you measured, what one independent thing is (usually a participant), and what each schema key does. These are the same first screens Stat Studio asks, with the same recommendations, so a figure and its statistics start from the same answers. The figure updates beside the questions, and the last screen, **Your figure**, sums up the choices.
+- **Advanced** shows every setting at once, in the five groups below.
+
+A new figure opens the way you left the last one (step by step the first time). A saved plot opens in Advanced.
+
 ## The key idea: every schema key has a role
 
 Plot Studio starts from your schema. Suppose each of 100 participants rated three brands of popcorn, so the schema is `participant, brand`. Each schema key gets one of four roles, and the roles decide the figure:
 
 | Role | What it does | With popcorn |
 |---|---|---|
-| **Grouping** | One mark (bar, box, point) per level, side by side along the x axis | `brand` in Grouping: one bar per brand |
+| **Compare** (Grouping) | One mark (bar, box, point) per level, side by side along the x axis | `brand` in Grouping: one bar per brand |
 | **Separate panels** | One small panel per level, in a grid | `brand` as panels: three panels |
 | **Separate figures** | One whole figure per level. Step through them with **←** and **→**. | `participant` as figures: 100 figures, one per person |
-| **Collapse** | Averaged away. The values are combined into a summary. | `participant` collapsed: each bar is the mean of 100 people |
+| **Average over** | Averaged away. The values are combined into a summary. | `participant` averaged over: each bar is the mean of 100 people |
 
-When Plot Studio first opens a variable, any key that isn't grouped is set to **Separate figures**, which shows the raw data one piece at a time. Change a key to **Collapse** when you want a summary across it.
+When Plot Studio first opens a variable, any key that isn't grouped is set to **Separate figures**, which shows the raw data one piece at a time. Change a key to **Average over** when you want a summary across it.
 
 /// tip | Why roles instead of chart settings?
 The same data can answer different questions. "How did *this person* rate each brand?" and "How did people rate each brand *on average*?" use the same three brands and 100 people. The only difference is whether `participant` is a separate figure or collapsed. Changing one role switches between the two figures.
@@ -83,7 +92,7 @@ A plot type that doesn't fit the data is greyed out. Hover over it to see why.
 - **Grouping.** Click **Group by…** to choose the keys that become marks along the x axis. With two or three keys, the axis is nested, for example sessions inside groups. Use the arrows to change which key is on the inside. Tick **colour** on one key to colour the marks by its levels. Colour never moves a mark: it only paints marks that are already in place.
 - **Combine.** Merge levels into new ones, such as combining `pre1` and `pre2` into `pre`. Levels you leave out are dropped from the figure.
 - **Compare.** Plot each value as a **difference** or **% change** from a reference level, such as the change from baseline.
-- **Factors.** Set the role of every key that isn't grouped: **Separate figures**, **Separate panels** or **Collapse**.
+- **Factors.** Set the role of every key that isn't grouped: **Separate figures**, **Separate panels** or **Average over**.
 - **Layout.** When a key makes panels, choose how many rows and columns the grid has, and where each panel goes.
 
 You can also group by a column inside your data rather than a schema key. For example, if each record has a `side` column holding left and right, you can group by `side`.
@@ -124,7 +133,7 @@ This group starts closed, because the defaults are usually good. Open it to adju
 | **Save data (CSV)** | The exact numbers the figure is drawn from. |
 | **Export code** | A stand-alone Python script that draws the same figure, for when you need to go beyond Plot Studio. |
 | **Add to pipeline** | Turns the figure into a `plot_` step on the canvas, so it's re-drawn whenever its data changes. |
-| **StatStudio** | Opens [Stat Studio](summarize.md), set up with the same design as this figure. |
+| **StatStudio** | Opens [Stat Studio](summarize.md), set up with the same design as this figure. If the figure is a saved plot, the two then share ONE design: a change in either shows in both. |
 
 ## Saving and reusing figures
 

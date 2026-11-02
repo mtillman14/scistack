@@ -3,8 +3,8 @@
  *
  * Sections:
  *   1. Variants — read-only Cartesian product of constant node values and multi-type inputs.
- *   2. Data Filters — where= filter definitions (structured form).
- *   3. Schema Selection — which schema locations the node runs at, chosen in
+ *   2. Filters — where= filter definitions (structured form).
+ *   3. Schema keys — which schema locations the node runs at, chosen in
  *      the same two-pane picker the plotting tab uses.
  *   4. Run Options — dry_run, save, distribute toggles.
  *
@@ -48,6 +48,8 @@ interface ResolvedSchemaLevel {
   keys: string[]
   rule: string
   schema_keys: string[]
+  /** What Plot and Stat Studio call the ticked keys (scistackplot.role_labels). */
+  iterate_label?: string
 }
 
 interface VariantRow {
@@ -1051,7 +1053,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
 
       {/* ---- Data Filters (where=) ---- */}
       <section style={styles.section}>
-        <div style={styles.sectionTitle}>Data Filters</div>
+        <div style={styles.sectionTitle}>Filters</div>
 
         {whereFilters.length === 0 && (
           <div style={styles.empty}>No data filters. All records will be used.</div>
@@ -1093,7 +1095,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
 
       {/* ---- Schema Selection ---- */}
       <section style={styles.section}>
-        <div style={styles.sectionTitle}>Schema Selection</div>
+        <div style={styles.sectionTitle}>Schema keys</div>
         <div style={styles.hint}>
           Which schema locations this node runs at. Omit a level everywhere
           (by key), or pick locations one by one. Everything runs until you
@@ -1126,6 +1128,11 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
                 : 'Set on this node'}
               {resolvedLevel?.state === 'one_call' && ' · one call over the whole dataset'}
             </div>
+            {resolvedLevel?.iterate_label && (
+              <div style={styles.hint}>
+                Ticked: {resolvedLevel.iterate_label} (one run per level). Unticked keys reach the function together.
+              </div>
+            )}
             <div style={styles.checkboxGrid}>
               {schema.keys.map(key => {
                 const automatic = schemaLevel === null

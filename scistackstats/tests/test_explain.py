@@ -181,3 +181,53 @@ def test_nothing_compared_blocks_the_factors_step():
     assert _choice(steps["factors"], "subject:group")["disabled"]
     assert _choice(steps["factors"], "subject:collapse")["selected"]
     assert subject["lay"].startswith("Your independent unit")
+
+
+# --- Plot Studio's step-by-step view (docs/claude/studio-unification.md) -------
+
+
+def _plot_steps(spec: StatsSpec, table) -> dict[str, dict]:
+    from scistackstats import plot_guide
+    from scistackstats.spec import PLOT_GUIDE_STEPS
+
+    payload = plot_guide(spec, {spec.targets[0].variable: table})
+    assert [s["id"] for s in payload["steps"]] == list(PLOT_GUIDE_STEPS)
+    assert payload["has_results"] is False
+    for s in payload["steps"]:
+        assert not s["needs_results"], s["id"]
+    return {s["id"]: s for s in payload["steps"]}, payload
+
+
+def test_a_figure_and_a_table_share_their_first_screens():
+    from scistackstats.spec import PLOT_GUIDE_STEPS, SHARED_GUIDE_STEPS
+
+    assert GUIDE_STEPS[: len(SHARED_GUIDE_STEPS)] == SHARED_GUIDE_STEPS
+    assert PLOT_GUIDE_STEPS[: len(SHARED_GUIDE_STEPS)] == SHARED_GUIDE_STEPS
+    table_steps = _steps(_cbrace_spec(), _cbrace_table())
+    plot_steps, _ = _plot_steps(_cbrace_spec(), _cbrace_table())
+    for step_id in ("measure", "unit"):
+        assert plot_steps[step_id] == table_steps[step_id], step_id
+    # The same cards and actions; only the role nouns differ.
+    table_factors, plot_factors = table_steps["factors"], plot_steps["factors"]
+    assert [c["id"] for c in plot_factors["cards"]] == [c["id"] for c in table_factors["cards"]]
+    assert ([ch["action"] for c in plot_factors["cards"] for ch in c["choices"]]
+            == [ch["action"] for c in table_factors["cards"] for ch in c["choices"]])
+
+
+def test_the_figure_screens_use_the_figure_nouns():
+    plot_steps, payload = _plot_steps(_cbrace_spec(), _cbrace_table())
+    labels = {ch["label"] for c in plot_steps["factors"]["cards"] for ch in c["choices"]}
+    assert {"Compare", "Separate figures", "Average over"} <= labels
+    assert "Separate tables" not in labels
+    assert payload["concepts"]["role.separate"]["title"] == "Separate figures"
+    table_labels = {ch["label"] for c in _steps(_cbrace_spec(), _cbrace_table())["factors"]["cards"]
+                    for ch in c["choices"]}
+    assert "Separate tables" in table_labels and "Separate figures" not in table_labels
+
+
+def test_the_last_figure_screen_restates_the_design():
+    plot_steps, _ = _plot_steps(_cbrace_spec(), _cbrace_table())
+    figure = plot_steps["figure"]
+    assert figure["blocked"] is None
+    assert any(f.startswith("Compare: ") for f in figure["facts"]), figure["facts"]
+    assert figure["recommendation"]

@@ -120,3 +120,24 @@ Right rail: Saved plots (`SavedPlotsRail.tsx`), then Presets (`PresetsSection.ts
 - **One panel is a 1 × 1 grid**, owned by `scistackplot.reduce.plan_layout`
   (pins and slots ignored, kept in the spec). The panel reads
   `layout.meta.panels` and locks N rows/cols to 1.
+
+## Shared with StatStudio (2026-11-01, docs/claude/studio-unification.md)
+
+- **Role words** come from `scistackplot.role_labels` (figure surface):
+  Compare · Separate panels · Separate figures · Average over. No `.tsx`
+  file may hold one (`Studio/studioOpen.test.ts`).
+- **Step by step | Advanced** switch at the top of the rail. Step by step
+  replaces the rail with StatStudio's `GuidedStudio` on the screens a figure
+  shares with a table (`stats_plot_guide`), with the live figure beside it.
+  View state only (per viewer `scistack.plotStudio.view`); a saved plot and
+  a `plot_` node open in Advanced.
+- **Design-only mode** (`<PlotStudio design={…}>`): only Data, the caller's
+  `between` group, and Structure, plus their pickers, on a spec the caller
+  owns. StatStudio's rail is this. No `plot_resolve`, only `plot_capabilities`.
+- `Group` / `Section` live in `Studio/RailGroup.tsx`; `SavedPlotsRail` and
+  `PresetsSection` take `words` so StatStudio uses them for tables.
+- **Shared design**: a saved plot linked to a stats table writes its design
+  to `scistackplotdb.designs` on every design edit (`StatsLink`, via
+  `design_update`) and takes the table's edits (`design_changed` →
+  `design_apply`). Opening the newest version of a linked plot applies the
+  stored design (`plot_saved_open` reply: `design_linked`, `design_version`).

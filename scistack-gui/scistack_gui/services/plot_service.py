@@ -318,6 +318,24 @@ def _with_stored_variant_sets(db, variable: str, spec):
     return replace(spec, variant_sets=sets)
 
 
+def opening_spec(db, table, variable: str):
+    """The design a fresh figure OR a fresh stats table opens on, for
+    *variable*: the one owner (docs/claude/studio-unification.md), so Plot
+    Studio and StatStudio opened on the same variable start from the same
+    design.
+
+    ``default_spec`` owns roles + kind + facet wrap together (a 13-field
+    struct opens as a wrapped grid of subplots, not one overplotted axis).
+    A plot's named pins over variant space are statements about the plotted
+    variable (``variant_selection`` aspect of the intent store), so they
+    survive the panel closing. Stored pins replace the default's: the
+    user's most recent statement wins over a computed default.
+    """
+    from scistackplot import default_spec
+
+    return _with_stored_variant_sets(db, variable, default_spec(table, variable))
+
+
 def save_variant_sets(db, variable: str, variant_sets: list) -> dict:
     """Persist a plot's pins as `variant_selection` statements about
     *variable* (the RPC behind every edit of the Variants section)."""
@@ -384,7 +402,7 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
     """
     from contextlib import nullcontext
 
-    from scistackplot import capabilities, default_spec, presets_payload
+    from scistackplot import capabilities, presets_payload
 
     def phase(name: str):
         return timing.phase(name) if timing is not None else nullcontext()
@@ -413,16 +431,8 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
             "table": table.describe(),
         }
 
-    # default_spec owns roles + kind + facet wrap together: a 13-field struct
-    # opens as a wrapped grid of subplots, not one overplotted axis.
-    with phase("default_spec"):
-        spec = default_spec(table, variable)
-    # A plot's named pins over variant space are statements about the plotted
-    # variable (`variant_selection` aspect of the intent store), so they
-    # survive the panel closing. Stored pins replace the default's — the
-    # user's most recent statement wins over a computed default.
-    with phase("stored_variant_sets"):
-        spec = _with_stored_variant_sets(db, variable, spec)
+    with phase("opening_spec"):
+        spec = opening_spec(db, table, variable)
 
     # Offers AND refusals: the variant picker draws every variable node on the
     # canvas, so one it cannot offer has to say why in place.
@@ -1003,6 +1013,9 @@ def resolve_figures(
                 "figure": _render_preview(figure, preview, render_plotly),
                 "row_count": figure.row_count,
                 "downsampled_from": figure.downsampled_from,
+                # What this figure leaves out (scistackplot.omissions): the
+                # "Not plotted" button and popup.
+                "omissions": figure.omissions.to_dict() if figure.omissions is not None else None,
             }
         ]
         logger.info(
@@ -1016,6 +1029,7 @@ def resolve_figures(
             "ok": True,
             "error": None,
             "figures": rendered,
+            "not_plotted": _not_plotted_total([figure]),
             "figure_labels": labels,
             "figure_count": len(labels),
             "figure_index": index,
@@ -1036,6 +1050,7 @@ def resolve_figures(
             "figure": _render_preview(item, preview, render_plotly),
             "row_count": item.row_count,
             "downsampled_from": item.downsampled_from,
+            "omissions": item.omissions.to_dict() if item.omissions is not None else None,
         }
         for position, item in selected
     ]
@@ -1051,6 +1066,7 @@ def resolve_figures(
         "ok": True,
         "error": None,
         "figures": figures,
+        "not_plotted": _not_plotted_total([item for _, item in selected]),
         # Every label, always: the navigator has to name the figures it is not
         # showing, and they are cheap next to the payloads.
         "figure_labels": labels,
@@ -2100,3 +2116,19 @@ def _spec_from_payload(payload: dict):
         raise ValueError("A plot spec needs at least one measure (variable name).")
     return PlotSpec.from_dict(payload)
 
+
+
+def _not_plotted_total(resolved: list) -> dict:
+    """The "Not plotted" toolbar button for the figures sent: their reports
+    combined (``scistackplot.omissions.combine``, which also owns the
+    wording). Each figure's own report rides on its payload for the popup."""
+    from scistackplot.omissions import combine
+
+    total = combine([getattr(figure, "omissions", None) for figure in resolved])
+    return {
+        "button": total.button_text(),
+        "sentence": total.sentence(),
+        "lost": total.lost,
+        "offered": total.offered,
+        "counts": total.counts(),
+    }

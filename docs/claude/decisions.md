@@ -34,6 +34,28 @@ older writers join an outer transaction safely. **Doc:**
 the run"); tests `sciduckdb/tests/test_transaction.py`,
 `scidb/tests/test_save_provenance_failure.py`.
 
+## D-2026-11-01-1 — One studio flow: shared design controls, one role vocabulary, one shared design
+
+**Context.** Making a figure and making a statistics table took different
+steps with different words: StatStudio opened only from Plot Studio, had its
+own Measures and Design controls, three sets of role words lived in three
+places, and a linked figure and table each kept a copy of the design, kept
+in step by Sync banners (a NOTE 4 violation by construction).
+**Decision (user).** Supersedes the "two-way design sync, banners in both
+studios" part of D-2026-10-17-1. (1) One role vocabulary, owner
+`scistackplot.role_labels`: Compare / Separate panels|sections / Separate
+ figures|tables / Average over. (2) StatStudio opens from every place Plot
+Studio does, plus `stat_` nodes. (3) StatStudio's Data and Structure groups
+ARE Plot Studio's (design-only mode), and both studios share the rail
+blocks, toolbar order and right rail. (4) A linked saved plot and its
+tables share ONE design row set, `scistackplotdb.designs`; edits broadcast
+live, and the divergence and sync RPCs are removed. (5) Plot Studio gets a
+Step by step view whose first screens are StatStudio's (`SHARED_GUIDE_STEPS`).
+**Consequences.** The link is still stored on the stats side
+(`linked_plot`), but the design is not: an unlinked plot keeps its design in
+its envelope. An older saved-plot version opens as saved, not with the shared
+design. **Doc:** [studio-unification.md](studio-unification.md), plan
+`.claude/plan-unify-process-plot-stats.md`.
 
 ## D-2026-10-22-1 — The canvas is a stored document; history annotates, never draws
 

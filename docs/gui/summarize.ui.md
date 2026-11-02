@@ -10,9 +10,18 @@ All the statistical calculations are done by the [csv-stats](https://pypi.org/pr
 
 ## Opening Stat Studio
 
-Open a figure in [Plot Studio](visualize.md) and click **StatStudio** in its toolbar. Stat Studio opens in its own tab, already set up from the figure: the same variable, the same grouping, the same collapsed keys, and a summary that matches the error bars (a figure with SD error bars starts with a mean (SD) table). A new table opens in the [Step by step](#the-step-by-step-view) view.
+Stat Studio opens from the same places as Plot Studio, each in its own tab:
 
-If the figure is a **saved plot**, the table and the figure are **linked**, and they can be kept in step (see [Figures and tables together](#figures-and-tables-together)). Save the figure first if you want this link.
+| From | How |
+|---|---|
+| A variable on the canvas | Click it, then **Open Stat Studio →** in the sidebar. Or right-click it and choose **📊 Statistics**. |
+| A figure | Click **StatStudio** in Plot Studio's toolbar. |
+| A `stat_` step | Right-click the node and choose **📊 Open in Stat Studio**, to change the table that step was made from. |
+| The Command Palette | **SciStack: Summarize Variable…** |
+
+Opened on a variable, Stat Studio starts from the same design a new figure of it would. Opened from a figure, it is already set up from the figure: the same variable, the same grouping, the same collapsed keys, and a summary that matches the error bars (a figure with SD error bars starts with a mean (SD) table). A new table opens in the [Step by step](#the-step-by-step-view) view.
+
+If the figure is a **saved plot**, the table and the figure are **linked** and share one design (see [Figures and tables together](#figures-and-tables-together)). Save the figure first if you want this link.
 
 ## Two views: Step by step and Advanced
 
@@ -45,7 +54,7 @@ Each screen answers one question:
 |---|---|---|
 | **Measure** | What did you measure? | Nothing: it shows how many values there are, and from how many participants. |
 | **Independent unit** | What is one independent thing you measured? | Usually nothing: the unit is the key you average over last (see [Why the unit of analysis matters](#design-what-youre-comparing-and-who-your-participants-are)). If nothing is averaged over, choose which key is the unit here. |
-| **What to compare** | What are you comparing? | For each key: **Compare** it, **Analyse separately** for each of its levels, or **Average over** it. These are the Plot Studio roles Grouping, Separate figures and Collapse. |
+| **What to compare** | What are you comparing? | For each key: **Compare** it, **Separate tables** for each of its levels, or **Average over** it. These are the same roles as in Plot Studio, where the middle one is called **Separate figures**. |
 | **Same or different people** | Was each participant measured at every level? | For each compared key: the same participants measured repeatedly (within), or different participants in each level (between). Stat Studio recommends the answer the data shows. |
 | **Missing data** | Is anything missing? | Shows who has data where. If some participants missed a level, choose whether to use every measurement (recommended: a mixed model keeps everyone) or only participants with complete data. |
 | **Main question** | What is your main question? | With two or more compared keys, which comparison matters most. Then whether to run an overall test before the pairs. |
@@ -66,8 +75,9 @@ The Advanced view shows every setting at once. It has everything the Step by ste
 
 | Area | What's there |
 |---|---|
-| **Left rail** | The settings, in sections: **Measures**, **Design**, **Descriptives**, **Comparisons**, **Format**, **Brackets on the figure** and **Save**. |
-| **Results** (right) | Two tabs, **Descriptives** and **Comparisons**, with the export controls above them. A banner at the top appears if the table's design has drifted from its linked figure. |
+| **Left rail** | The settings, in the same groups as Plot Studio's: **Data** and **Structure** are exactly Plot Studio's controls, then **Measures** (where a figure has Chart), **Statistics** (descriptives, what the tests see, comparisons) and **Format** (numbers, brackets on the figure). |
+| **Results** (centre) | Two tabs, **Descriptives** and **Comparisons**, with the toolbar above them: **Format**, **Save to file…**, **Copy**, **Export code** and **Add to pipeline**, in the same order as Plot Studio's. |
+| **Right rail** | **Saved tables** and **Presets**, as in Plot Studio. |
 
 The results update as you change settings.
 
@@ -77,18 +87,18 @@ A **measure** is a variable you want statistics for, such as `Rating` or `StepLe
 
 If a variable is a table with several columns, such as a CSV with one column per outcome, tick the columns you want. Each column becomes its own measure.
 
-### Design: what you're comparing, and who your participants are
+### Data and Structure: what you're comparing, and who your participants are
 
-The design uses the same roles as Plot Studio, under names that suit a table:
+These are Plot Studio's own Data and Structure groups (variants, schema keys, filters, grouping, combines, roles), with the same words. Only the noun changes where a table has sections instead of panels:
 
-| In Stat Studio | In Plot Studio | What it means for the statistics |
-|---|---|---|
-| **Group (columns)** | Grouping | A factor you're comparing. Its levels become the table's columns. |
-| **Separate tables** | Separate figures | A complete analysis for each level, such as one per site. |
-| **Separate sections** | Separate panels | The same, laid out as sections of one table. |
-| **Collapse (average)** | Collapse | Averaged away before testing. The last collapsed key is your **unit of analysis**. |
+| Role | In Stat Studio | In Plot Studio | What it means for the statistics |
+|---|---|---|---|
+| **Compare** | Compare | Compare | A factor you're comparing. Its levels become the table's columns. |
+| **Separate** | Separate tables | Separate figures | A complete analysis for each level, such as one per site. |
+| **Separate** | Separate sections | Separate panels | The same, laid out as sections of one table. |
+| **Average over** | Average over | Average over | Averaged away before testing. The last key you average over is your **unit of analysis**. |
 
-Under the roles, Stat Studio shows what it worked out from your data:
+Under **Statistics > What the tests see**, Stat Studio shows what it worked out from your data:
 
 - **The unit of analysis and *n***, for example *Unit: participant; trial averaged first; n = 12*. This is what each test counts as one independent observation.
 - **Whether each factor is within or between.** If every participant appears at every level of `brand`, then `brand` is **within** (a repeated measure). If each participant appears at only one level of `group`, then `group` is **between**. If the guess is wrong for your study, you can override it.
@@ -146,13 +156,13 @@ Every table also has a **caption** that states what a cell is, the unit of analy
 ## Formatting and exporting
 
 - **Format** (Advanced view only). The number of decimal places (automatic per measure by default), decimal places for p values, and optional significance stars on the adjusted p values.
-- **Export.** Choose a format, then click **Copy** or **Save to file…**. **html** pastes into Word as a real table with borders. **md**, **csv**, **latex**, **txt** and **json** are there for everything else.
+- **Export.** Choose a format, then click **Copy** or **Save to file…**. **Export code** shows the `stat_` function that reproduces the table. **html** pastes into Word as a real table with borders. **md**, **csv**, **latex**, **txt** and **json** are there for everything else.
 
 ## Figures and tables together
 
-When a table is linked to a saved figure, you can explore in either one. If they drift apart, for example because you grouped by something new in Plot Studio, both show a banner listing what's different, with a button to copy the design across: **Sync to PlotStudio** in Stat Studio, or **Sync to StatStudio** in Plot Studio.
+When a table is linked to a saved figure, the two share **one design**: the variables, roles, filters, versions and level order. Change it in either one, for example by grouping by something new in Plot Studio, and the other follows straight away. There's nothing to keep in step by hand.
 
-Only the **design** is synced: the variables, roles, filters, versions and level order. Figure styling (colours, sizes, plot type) and test settings are left alone.
+Only the design is shared. Figure styling (colours, sizes, plot type) and test settings stay with the figure and the table. An older version of a saved plot still opens exactly as it was saved.
 
 **Brackets on the figure** (Advanced view). Tick **Draw test brackets on the linked figure**, choose which pairs (for example, only the significant ones) and whether to label them with stars or adjusted p values, then save the table. The figure then draws the brackets from the test results. You can hide them, and they update when the results do.
 
@@ -162,8 +172,8 @@ Only the **design** is synced: the variables, roles, filters, versions and level
 
 ## Saving and reusing
 
-- **Save.** Name the table and click **Save**. Saved tables are listed underneath; click one to reopen it. Each save adds a new version.
-- **Presets.** **Save settings as preset** keeps every setting except the measures. Apply it to another table so all your outcomes get the same treatment.
+- **Save.** In the **Saved tables** rail on the right, click **Save table…** and name it. Click a saved table to reopen it, ✎ to rename it and ✕ to remove it from the list. Each save adds a new version.
+- **Presets.** Under the saved tables, a preset keeps every setting except the measures and the design. Apply it to another table so all your outcomes get the same treatment.
 
 ## Adding the analysis to your pipeline
 

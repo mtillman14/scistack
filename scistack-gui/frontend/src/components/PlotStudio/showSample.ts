@@ -21,6 +21,9 @@ export interface SampleFactor {
 export interface SampleOverlay {
   available: boolean
   reason: string | null
+  /** "points" beside the marks, or a "rug" along x on a histogram / KDE
+   *  (`roles.overlay_is_rug`): no Join, no own colour, no sample weight. */
+  form?: 'points' | 'rug'
   factors: SampleFactor[]
   /** Ticked names that are not collapsed right now (inert, kept). */
   ignored: string[]
@@ -103,4 +106,25 @@ export function joinTooltip(join: SampleOverlay['join']): string {
     'Auto joins the points when they are repeated measures: the shown key has a value ' +
     `at every level of the innermost grouping layer${span}. A line spans that layer only${brackets}.`
   )
+}
+
+/** `layout.meta.rug` (bins.rug_tables via ResolvedPlot.rug_scale). */
+export interface RugMeta {
+  /** The darkest shade per colour level: its most values in one slot. */
+  scale: Record<string, number>
+  /** The crowding window: 1/slots of the x axis. */
+  slots: number
+}
+
+/** The rug's shading scale in words, one level per clause:
+ *  "light = 1 value, darkest = 7 (A), 3 (B) values in 1/400 of the axis". */
+export function rugScaleNote(meta: RugMeta | null | undefined): string {
+  if (!meta) return ''
+  const entries = Object.entries(meta.scale)
+  if (!entries.length) return ''
+  const darkest =
+    entries.length === 1 && entries[0][0] === 'None'
+      ? `${entries[0][1]}`
+      : entries.map(([level, n]) => `${n} (${level})`).join(', ')
+  return `One tick per value, shaded by crowding: light = 1 value, darkest = ${darkest} value(s) in 1/${meta.slots} of the axis.`
 }

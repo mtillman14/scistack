@@ -68,7 +68,7 @@ export default function VariableSettingsPanel({ label }: Props) {
               onClick={() => {
                 // Own tab in VS Code (the canvas stays visible), modal in a browser.
                 if (isVSCodeMode) {
-                  callBackend('open_plot_panel', { variable: label })
+                  callBackend('open_plot_panel', { variable: label, from: 'variable-sidebar' })
                     .catch(() => setStudioOpen(true))
                 } else {
                   setStudioOpen(true)
@@ -76,6 +76,21 @@ export default function VariableSettingsPanel({ label }: Props) {
               }}
             >
               Open Plot Studio →
+            </button>
+            {/* The same way in for statistics (docs/claude/studio-unification.md):
+                StatStudio opens on this variable from the same design a new
+                figure of it would start from. Its own tab, so VS Code only. */}
+            <button
+              type="button"
+              style={styles.openStudio}
+              disabled={!isVSCodeMode}
+              title={isVSCodeMode ? 'Descriptive statistics and tests for this variable' : 'StatStudio opens in its own VS Code tab'}
+              onClick={() => {
+                callBackend('open_plot_panel', { view: 'stat', variable: label, from: 'variable-sidebar' })
+                  .catch(err => console.warn('[sidebar] StatStudio did not open', err))
+              }}
+            >
+              Open Stat Studio →
             </button>
           </section>
 

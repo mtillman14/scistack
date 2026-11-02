@@ -459,7 +459,7 @@ This is a good habit: look at individual data before averaging it. A participant
 
 ## Step 8: Summarise each brand in a figure
 
-To compare the brands across everyone, average over the participants. In **Structure > Factors**, change `participant` from **Separate figures** to **Collapse (average)**.
+To compare the brands across everyone, average over the participants. In **Structure > Factors**, change `participant` from **Separate figures** to **Average over**.
 
 There's now a single figure, with each brand summarising all 100 participants. Then:
 
