@@ -153,7 +153,7 @@ If a decision is changed, edit the affected plan's stage before starting it.
 | P2 | 4 | ☑ 2026-11-01 | 98d19e97 |
 | P2 | 5–6 | ☑ 2026-11-01 | a5a1d359 |
 | P2 | 7 | ☑ 2026-11-01 | a5a1d359 |
-| P3 | 1–7 (CLI move declined: U1); stage 6 step 7 + dataset intent follow-up | ☑ 2026-11-01 | 51116d07, (follow-up uncommitted) |
+| P3 | 1–7 (CLI move declined: U1); stage 6 step 7 + dataset intent follow-up | ☑ 2026-11-01 | 51116d07, 0e5c189d |
 | P4 | 1–10 | ☐ | |
 | P5 | 1–6 | ☐ | |
 
