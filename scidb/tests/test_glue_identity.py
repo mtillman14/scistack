@@ -114,7 +114,7 @@ def cfg_fn_hash(db):
 
 
 def _glue_records(db):
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT record_id, schema_id FROM _record WHERE type = ?", [prov.GLUE_TYPE]
     )
 
@@ -122,7 +122,7 @@ def _glue_records(db):
 def _analyzed_records(db):
     return [
         r[0]
-        for r in db._duck._fetchall(
+        for r in db._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = ?", ["Analyzed"]
         )
     ]
@@ -131,7 +131,7 @@ def _analyzed_records(db):
 def _analyzed_content_hashes(db):
     return {
         r[0]
-        for r in db._duck._fetchall(
+        for r in db._duck.fetchall(
             "SELECT DISTINCT content_hash FROM _record WHERE type = ?", ["Analyzed"]
         )
     }
@@ -242,7 +242,7 @@ class TestVirtualRecords:
 
         source_sids = {
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT schema_id FROM _record WHERE type = ?", ["RawEMG"]
             )
         }
@@ -255,7 +255,7 @@ class TestVirtualRecords:
 
         glue_rids = [r[0] for r in _glue_records(db)]
         placeholders = ", ".join(["?"] * len(glue_rids))
-        saves = db._duck._fetchall(
+        saves = db._duck.fetchall(
             f"SELECT record_id FROM _record_save WHERE record_id IN ({placeholders})",
             glue_rids,
         )
@@ -268,7 +268,7 @@ class TestVirtualRecords:
         _run(db, glue={"emg": _spec(glue_drop_baseline)})
         assert _glue_records(db), "no virtual records were written"
 
-        n_real = db._duck._fetchall(
+        n_real = db._duck.fetchall(
             "SELECT COUNT(*) FROM _record WHERE type IN ('RawEMG', 'Analyzed')"
         )[0][0]
         assert Inspector(db).overview().n_records == n_real
@@ -285,7 +285,7 @@ class TestVirtualRecords:
         glue_rids = {r[0] for r in _glue_records(db)}
         bound = {
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT ii.input_record_id FROM _invocation_input ii "
                 "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
                 "WHERE inv.function_name = ?",
@@ -359,7 +359,7 @@ class TestGraphReads:
         _seed(db, subjects=("1",))
         _run(db, glue={"emg": _spec(glue_drop_baseline)})
 
-        rid = db._duck._fetchall(
+        rid = db._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = ?", ["Analyzed"]
         )[0][0]
         chain = db.get_upstream_provenance(rid)
@@ -376,7 +376,7 @@ class TestGraphReads:
         _seed(db, subjects=("1",))
         _run(db, glue={"emg": _spec(glue_drop_baseline)})
 
-        inv_id = db._duck._fetchall(
+        inv_id = db._duck.fetchall(
             "SELECT invocation_id FROM _invocation WHERE function_name = ?",
             ["analyze"],
         )[0][0]

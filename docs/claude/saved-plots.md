@@ -92,8 +92,8 @@ PRIMARY KEY (plot_id, version)
   another visible plot has taken its name in the meantime.
 - **Reads never create the table.** Listing an untouched database does not
   write to it. Writes call `ensure_table`.
-- All reads go through `_fetchall`/`_fetchone`. `scistackplot` and
-  `scistackplotdb` are in the AST guard `sciduckdb/tests/test_fetch_locking.py`.
+- All reads go through `fetchall`/`fetchone`, which hold the connection lock
+  across execute and fetch (`sciduckdb/tests/test_fetch_locking.py`).
 
 The envelope:
 

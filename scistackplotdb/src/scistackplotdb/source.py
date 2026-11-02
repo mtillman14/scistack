@@ -279,7 +279,7 @@ class ScidbSource(BaseSource):
         return self._levels[variable]
 
     def _schema_levels(self, key: str) -> list[str]:
-        rows = self._db._duck._fetchall(
+        rows = self._db._duck.fetchall(
             f'SELECT DISTINCT s."{key}" FROM _schema s WHERE s."{key}" IS NOT NULL'
         )
         values = [str(row[0]) for row in rows]

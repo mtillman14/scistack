@@ -73,7 +73,7 @@ def make_rows():
 
 
 def _records(db, type_name: str) -> int:
-    return db._duck._fetchone(
+    return db._duck.fetchone(
         "SELECT COUNT(*) FROM _record WHERE type = ?", [type_name]
     )[0]
 
@@ -149,7 +149,7 @@ def test_both_runs_write_two_records_per_trial(both_runs):
 def test_run_options_are_read_off_the_chain(both_runs):
     rids = [
         r[0]
-        for r in both_runs._duck._fetchall(
+        for r in both_runs._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = 'Loaded'"
         )
     ]
@@ -231,7 +231,7 @@ class TestIsLatest:
     def _ident(self, db):
         rids = [
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = 'Loaded'"
             )
         ]
@@ -404,7 +404,7 @@ class TestCurrencyIsPerFunctionNotPerLocation:
     def _ident(self, db):
         rids = [
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = 'Loaded'"
             )
         ]

@@ -45,7 +45,7 @@ def make_val(c):
 
 def _edge_split(db):
     """{is_orphan: count} for Out records by producing-edge presence."""
-    rows = db._duck._fetchall("""
+    rows = db._duck.fetchall("""
         SELECT (io.output_record_id IS NULL) AS no_edge, COUNT(*)
         FROM _record r
         LEFT JOIN _invocation_output io ON io.output_record_id = r.record_id
@@ -67,7 +67,7 @@ def test_disjoint_reruns_keep_all_edges(db):
         f"expected both records linked (no orphans); got edge split {split}"
     )
     # And they occupy distinct output slots under the shared invocation.
-    slots = db._duck._fetchall("""
+    slots = db._duck.fetchall("""
         SELECT DISTINCT io.invocation_id, io.output_num
         FROM _invocation_output io
         JOIN _record r ON r.record_id = io.output_record_id
@@ -83,13 +83,13 @@ def test_identical_rerun_is_idempotent(db):
     """Re-running the identical save adds no new record and no new edge (the
     content-addressed record_id is unchanged) — only the save log grows."""
     for_each(make_val, {"c": 5.0}, [Out], subject=["S01"])
-    n_rec = db._duck._fetchall("SELECT COUNT(*) FROM _record WHERE type='Out'")[0][0]
-    n_edge = db._duck._fetchall("SELECT COUNT(*) FROM _invocation_output")[0][0]
+    n_rec = db._duck.fetchall("SELECT COUNT(*) FROM _record WHERE type='Out'")[0][0]
+    n_edge = db._duck.fetchall("SELECT COUNT(*) FROM _invocation_output")[0][0]
 
     for_each(make_val, {"c": 5.0}, [Out], subject=["S01"])  # identical
     assert (
-        db._duck._fetchall("SELECT COUNT(*) FROM _record WHERE type='Out'")[0][0]
+        db._duck.fetchall("SELECT COUNT(*) FROM _record WHERE type='Out'")[0][0]
         == n_rec
     )
-    assert db._duck._fetchall("SELECT COUNT(*) FROM _invocation_output")[0][0] == n_edge
+    assert db._duck.fetchall("SELECT COUNT(*) FROM _invocation_output")[0][0] == n_edge
     assert _edge_split(db) == {False: 1}

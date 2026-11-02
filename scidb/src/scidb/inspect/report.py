@@ -124,7 +124,7 @@ def collect_report(
     if variable:
         conds.append("r.type = ?")
         params.append(str(variable))
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT io.output_record_id, inv.function_name, r.type, "
         "rs.timestamp" + schema_cols + " "
         "FROM _invocation inv "
@@ -276,11 +276,11 @@ def _stored_values(inspector, entries) -> dict:
             [type_name],
             default=type_name,
         )
-        if not inspector._duck._table_exists(table):
+        if not inspector._duck.table_exists(table):
             continue
         placeholders = ", ".join(["?"] * len(rids))
         try:
-            df = inspector._duck._fetchdf(
+            df = inspector._duck.fetchdf(
                 f'SELECT * FROM "{table}" WHERE record_id IN ({placeholders})',
                 list(rids),
             )

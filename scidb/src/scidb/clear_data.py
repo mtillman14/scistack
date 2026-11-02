@@ -114,17 +114,17 @@ class ClearResult:
 
 
 def _data_tables(duck) -> list[str]:
-    if not duck._table_exists("_registered_types"):
+    if not duck.table_exists("_registered_types"):
         return []
     return sorted(
         t
-        for (t,) in duck._fetchall("SELECT DISTINCT table_name FROM _registered_types")
-        if duck._table_exists(t)
+        for (t,) in duck.fetchall("SELECT DISTINCT table_name FROM _registered_types")
+        if duck.table_exists(t)
     )
 
 
 def _count(duck, table: str) -> int:
-    return int(duck._fetchone(f'SELECT COUNT(*) FROM "{table}"')[0])
+    return int(duck.fetchone(f'SELECT COUNT(*) FROM "{table}"')[0])
 
 
 def clear_plan(db: "DatabaseManager") -> ClearPlan:
@@ -136,19 +136,19 @@ def clear_plan(db: "DatabaseManager") -> ClearPlan:
     t0 = time.perf_counter()
     table_rows: dict[str, int] = {}
     for table in list(CLEARED_TABLES) + _data_tables(duck):
-        if duck._table_exists(table):
+        if duck.table_exists(table):
             table_rows[table] = _count(duck, table)
 
     by_variable: dict[str, int] = {}
-    if duck._table_exists("_record"):
-        for rtype, n in duck._fetchall(
+    if duck.table_exists("_record"):
+        for rtype, n in duck.fetchall(
             "SELECT type, COUNT(*) FROM _record GROUP BY type ORDER BY type"
         ):
             if rtype not in INTERNAL_RECORD_TYPES:
                 by_variable[rtype] = int(n)
-    runs_kept = _count(duck, "_run") if duck._table_exists("_run") else 0
+    runs_kept = _count(duck, "_run") if duck.table_exists("_run") else 0
     pins = sorted(active_pins(db))
-    has_canvas = any(duck._table_exists(t) for t in CANVAS_TABLES)
+    has_canvas = any(duck.table_exists(t) for t in CANVAS_TABLES)
 
     fingerprint = hashlib.sha1(
         json.dumps([sorted(table_rows.items()), runs_kept, pins]).encode()
@@ -217,46 +217,41 @@ def clear_data(
     if backup:
         backup_path = backup_path_for(db.dataset_db_path)
         # Flush the write-ahead log into the file first, so the copy is complete.
-        duck._execute("CHECKPOINT")
+        duck.execute("CHECKPOINT")
         shutil.copy2(db.dataset_db_path, backup_path)
         Log.info(f"clear_data: backed up {db.dataset_db_path} -> {backup_path}")
 
-    duck._begin()
     try:
-        plan = clear_plan(db)
-        if expect_fingerprint is not None and plan.fingerprint != expect_fingerprint:
-            raise ValueError(
-                f"clear_data: the database changed since the plan was shown "
-                f"(fingerprint {expect_fingerprint} -> {plan.fingerprint}); "
-                f"nothing was deleted. Re-plan and confirm again."
+        with duck.transaction("clear_data"):
+            plan = clear_plan(db)
+            if expect_fingerprint is not None and plan.fingerprint != expect_fingerprint:
+                raise ValueError(
+                    f"clear_data: the database changed since the plan was shown "
+                    f"(fingerprint {expect_fingerprint} -> {plan.fingerprint}); "
+                    f"nothing was deleted. Re-plan and confirm again."
+                )
+            deleted: dict[str, int] = {}
+            for table, n in plan.table_rows.items():
+                t_table = time.perf_counter()
+                duck.execute(f'DELETE FROM "{table}"')
+                deleted[table] = n
+                Log.info(
+                    f"clear_data: emptied {table} ({n} row(s), "
+                    f"{(time.perf_counter() - t_table) * 1000:.1f} ms)"
+                )
+            tomb = write_tombstone(
+                duck,
+                reason,
+                [{"all": True}],
+                plan.by_variable,
+                [],  # every record: listing them would only copy the database
             )
-        deleted: dict[str, int] = {}
-        for table, n in plan.table_rows.items():
-            t_table = time.perf_counter()
-            duck._execute(f'DELETE FROM "{table}"')
-            deleted[table] = n
-            Log.info(
-                f"clear_data: emptied {table} ({n} row(s), "
-                f"{(time.perf_counter() - t_table) * 1000:.1f} ms)"
-            )
-        tomb = write_tombstone(
-            duck,
-            reason,
-            [{"all": True}],
-            plan.by_variable,
-            [],  # every record: listing them would only copy the database
-        )
-        released = []
-        for variable in plan.pins_to_release:
-            if release_pin(db, variable, f"database cleared (tombstone {tomb.tombstone_id})"):
-                released.append(variable)
-        duck._commit()
+            released = []
+            for variable in plan.pins_to_release:
+                if release_pin(db, variable, f"database cleared (tombstone {tomb.tombstone_id})"):
+                    released.append(variable)
     except Exception:
-        Log.warn("clear_data: failed; rolling back, nothing was deleted")
-        try:
-            duck._rollback()
-        except Exception:  # pragma: no cover - rollback of a dead txn
-            pass
+        Log.warn("clear_data: failed; rolled back, nothing was deleted")
         raise
     forget_type_graph(duck)
     forget = getattr(db, "_forget_schema_key_kinds", None)

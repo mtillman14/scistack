@@ -174,7 +174,7 @@ class TestIdentityIsStillPythons:
         }
         real_rids = {
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = ?", ["RawEmg_G4"]
             )
         }

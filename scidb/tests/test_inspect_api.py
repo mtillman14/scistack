@@ -168,11 +168,11 @@ class TestReadOnlyGuard:
 
     def test_ddl_rejected(self, insp):
         with pytest.raises(Exception, match="(?i)read.only"):
-            insp._db._duck._execute("CREATE TABLE _sneaky_write (i INTEGER)")
+            insp._db._duck.execute("CREATE TABLE _sneaky_write (i INTEGER)")
 
     def test_dml_rejected(self, insp):
         with pytest.raises(Exception, match="(?i)read.only"):
-            insp._db._duck._execute("DELETE FROM _record_save")
+            insp._db._duck.execute("DELETE FROM _record_save")
 
     def test_read_only_flag_set(self, insp):
         assert insp._db.read_only is True

@@ -107,7 +107,7 @@ class TestThroughNodeConfig:
             NODE,
             {"columnSelections": {"cycles": _sel("ankle")}, "schemaLevel": ["subject"]},
         )
-        raw = pipeline_store._duck(populated_db)._fetchone(
+        raw = pipeline_store._duck(populated_db).fetchone(
             "SELECT config FROM _node_config WHERE node_id = ?", [NODE]
         )
         assert raw[0] == "{}"
@@ -236,7 +236,7 @@ class TestRunOptionsAndSchemaLocation:
             "distribute": True,
             "as_table": False,
         }
-        raw = pipeline_store._duck(populated_db)._fetchone(
+        raw = pipeline_store._duck(populated_db).fetchone(
             "SELECT config FROM _node_config WHERE node_id = ?", [NODE]
         )
         assert "runOptions" not in (raw[0] if raw else "")
@@ -266,7 +266,7 @@ class TestRunOptionsAndSchemaLocation:
             NODE,
             {"columnSelections": {"a": _sel("x")}, "runOptions": {"save": True}, "schemaLevel": ["subject"]},
         )
-        raw = pipeline_store._duck(populated_db)._fetchone(
+        raw = pipeline_store._duck(populated_db).fetchone(
             "SELECT config FROM _node_config WHERE node_id = ?", [NODE]
         )
         assert raw[0] == "{}"

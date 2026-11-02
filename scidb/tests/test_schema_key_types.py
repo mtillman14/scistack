@@ -167,13 +167,13 @@ class TestForEachNumericDeclared:
         )
         for_each(read_name, {"filepath": pi}, [PathName], subject=[], trial=[])
         n_after_first = len(
-            db_numeric._duck._fetchall(
+            db_numeric._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type='PathName'"
             )
         )
         for_each(read_name, {"filepath": pi}, [PathName], subject=[1], trial=[1, 2])
         n_after_second = len(
-            db_numeric._duck._fetchall(
+            db_numeric._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type='PathName'"
             )
         )
@@ -243,7 +243,7 @@ class TestForEachStringDeclared:
             subject=[1],
             trial=[1],
         )
-        rows = db_string._duck._fetchall(
+        rows = db_string._duck.fetchall(
             "SELECT COUNT(*) FROM _record WHERE type='PathName'"
         )
         assert rows[0][0] == 0

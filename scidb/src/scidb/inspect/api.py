@@ -368,7 +368,7 @@ class Inspector:
     def _scalar(self, sql: str, params=None, default=0):
         """One-value query; returns default if a referenced table is missing."""
         try:
-            rows = self._duck._fetchall(sql, params)
+            rows = self._duck.fetchall(sql, params)
         except Exception as e:  # missing table on a pre-provenance database
             Log.debug(f"inspect scalar query failed ({e}); returning {default!r}")
             return default
@@ -377,7 +377,7 @@ class Inspector:
 
     def _variant_counts(self) -> dict[str, int]:
         """output_type → number of distinct pipeline variants (single batch query)."""
-        if not self._duck._table_exists("_invocation"):
+        if not self._duck.table_exists("_invocation"):
             return {}
         counts: dict[str, int] = {}
         for entry in self._db.list_pipeline_variants():
@@ -427,7 +427,7 @@ class Inspector:
 
     @_timed
     def variables(self) -> list[VariableSummary]:
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT v.variable_name, v.schema_level, v.dtype, v.description, "
             "COUNT(DISTINCT CASE WHEN NOT COALESCE(r.excluded, FALSE) "
             "                    THEN r.record_id END) AS record_count, "
@@ -470,7 +470,7 @@ class Inspector:
             [name],
             default=name,
         )
-        col_rows = self._duck._fetchall(
+        col_rows = self._duck.fetchall(
             "SELECT column_name, data_type FROM information_schema.columns "
             "WHERE table_name = ? ORDER BY ordinal_position",
             [table_name],
@@ -480,7 +480,7 @@ class Inspector:
         zone_cols = stored_tz_companions({r[0]: r[1] for r in col_rows})
         col_rows = [r for r in col_rows if r[0] not in zone_cols]
 
-        level_rows = self._duck._fetchall(
+        level_rows = self._duck.fetchall(
             "SELECT s.schema_level, COUNT(DISTINCT r.record_id) "
             "FROM _record r JOIN _schema s ON r.schema_id = s.schema_id "
             "WHERE r.type = ? AND NOT COALESCE(r.excluded, FALSE) "
@@ -498,17 +498,17 @@ class Inspector:
     def schema_tree(self) -> SchemaTree:
         keys = list(self._db.dataset_schema_keys)
         tree = SchemaTree(schema_keys=keys)
-        if not self._duck._table_exists("_schema"):
+        if not self._duck.table_exists("_schema"):
             return tree
 
         key_cols = ", ".join(f'"{k}"' for k in keys)
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             f"SELECT schema_id, schema_level, {key_cols} FROM _schema"
         )
         counts = {}
-        if self._duck._table_exists("_record"):
+        if self._duck.table_exists("_record"):
             counts = dict(
-                self._duck._fetchall(
+                self._duck.fetchall(
                     f"SELECT schema_id, COUNT(*) FROM _record "
                     f"WHERE {_NOT_INTERNAL_SQL} "
                     f"AND NOT COALESCE(excluded, FALSE) AND schema_id IS NOT NULL "
@@ -763,7 +763,7 @@ class Inspector:
 
         pins = normalize_selection(selection or {})
         if record_id:
-            rows = self._duck._fetchall(
+            rows = self._duck.fetchall(
                 "SELECT type FROM _record WHERE record_id = ?", [record_id]
             )
             if not rows:
@@ -1049,7 +1049,7 @@ class Inspector:
         if not rids:
             return {}
         placeholders = ", ".join(["?"] * len(rids))
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             f"SELECT record_id, timestamp FROM ("
             f"SELECT rs.*, ROW_NUMBER() OVER ("
             f"PARTITION BY record_id ORDER BY timestamp DESC) AS rn "
@@ -1064,7 +1064,7 @@ class Inspector:
         if not rids:
             return {}
         placeholders = ", ".join(["?"] * len(rids))
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             f"SELECT io.output_record_id, COUNT(*), MAX(run.timestamp) "
             f"FROM _invocation_output io "
             f"JOIN _run_invocation ri ON ri.invocation_id = io.invocation_id "
@@ -1084,7 +1084,7 @@ class Inspector:
             where = "WHERE r.function_name = ? "
             params.append(getattr(fn, "__name__", fn))
         params.append(int(limit))
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT r.run_id, r.timestamp, r.function_name, "
             "r.where_clause, r.origin, COUNT(ri.invocation_id) "
             "FROM _run r "
@@ -1233,7 +1233,7 @@ class Inspector:
         else:
             names = sorted(
                 r[0]
-                for r in self._duck._fetchall(
+                for r in self._duck.fetchall(
                     "SELECT DISTINCT function_name FROM _invocation "
                     "WHERE function_name <> '__save__'"
                 )
@@ -1330,7 +1330,7 @@ class Inspector:
 
         fn_name = getattr(fn_name, "__name__", fn_name)
         duck = self._duck
-        inv_rows = duck._fetchall(
+        inv_rows = duck.fetchall(
             "SELECT invocation_id FROM _invocation WHERE function_name = ?", [fn_name]
         )
         if not inv_rows:
@@ -1426,11 +1426,11 @@ class Inspector:
             [type_name],
             default=type_name,
         )
-        if not self._duck._table_exists(table):
+        if not self._duck.table_exists(table):
             return {}
         placeholders = ", ".join(["?"] * len(rids))
         try:
-            data = self._duck._fetchdf(
+            data = self._duck.fetchdf(
                 f'SELECT * FROM "{table}" WHERE record_id IN ({placeholders})',
                 list(rids),
             )
@@ -1516,7 +1516,7 @@ class Inspector:
         write commands; the write side lives on mutate.Mutator)."""
         from ..exclusions import list_exclusions
 
-        if not self._duck._table_exists("__scidb_schema_overrides"):
+        if not self._duck.table_exists("__scidb_schema_overrides"):
             return []
         df = list_exclusions(db=self._db)
         keys = self._db.dataset_schema_keys
@@ -1587,10 +1587,10 @@ class Inspector:
                 pass
             return str(value)
 
-        # _fetch_table, not _fetchdf: pandas turns a NULL DOUBLE into NaN, so a
+        # fetch_table, not fetchdf: pandas turns a NULL DOUBLE into NaN, so a
         # NULL would be reported as the number `nan` by the one command whose
         # job is to say what the database actually holds.
-        columns, rows = self._duck._fetch_table(query)
+        columns, rows = self._duck.fetch_table(query)
         return SqlResult(
             columns=[str(c) for c in columns],
             rows=[[cell(v) for v in row] for row in rows],

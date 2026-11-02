@@ -97,7 +97,7 @@ def ensure_tables(db) -> None:
     Called from ``pipeline_store._ensure_tables``, so every path that touches
     the GUI database gets it — exactly like ``_intent``.
     """
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _node_wiring (
             node_id    VARCHAR NOT NULL,
             wiring_id  VARCHAR NOT NULL,
@@ -120,7 +120,7 @@ def ensure_tables(db) -> None:
 
 
 def _rows(db, sql: str, params=None) -> list:
-    return _duck(db)._fetchall(sql, params or [])
+    return _duck(db).fetchall(sql, params or [])
 
 
 def associations(db) -> list[dict]:
@@ -288,7 +288,7 @@ def record(
         [bare, wiring_id],
     )
     if existing:
-        _duck(db)._execute(
+        _duck(db).execute(
             "UPDATE _node_wiring SET last_seen = ?, run_id = COALESCE(run_id, ?) "
             "WHERE node_id = ? AND wiring_id = ?",
             [stamp, run_id, bare, wiring_id],
@@ -297,7 +297,7 @@ def record(
             "[node_wiring] %s ran as %s again (run_id=%s)", bare, wiring_id, run_id
         )
         return False
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _node_wiring (node_id, wiring_id, run_id, first_seen, "
         "last_seen, scope) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
         [bare, wiring_id, run_id, stamp, stamp, scope or ROOT_SCOPE],
@@ -371,7 +371,7 @@ def forget_node(db, node_id: str) -> int:
     rows = _rows(db, "SELECT COUNT(*) FROM _node_wiring WHERE node_id = ?", [bare])
     n = int(rows[0][0]) if rows else 0
     if n:
-        _duck(db)._execute("DELETE FROM _node_wiring WHERE node_id = ?", [bare])
+        _duck(db).execute("DELETE FROM _node_wiring WHERE node_id = ?", [bare])
         logger.info("[node_wiring] forgot %d association(s) for %s", n, bare)
     return n
 
@@ -401,13 +401,13 @@ def rekey_node(db, old_id: str, new_id: str) -> int:
             [new, wiring],
         )
         if not clash:
-            _duck(db)._execute(
+            _duck(db).execute(
                 "INSERT INTO _node_wiring (node_id, wiring_id, run_id, first_seen, "
                 "last_seen, scope) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 [new, wiring, run_id, first_seen, last_seen, scope],
             )
             moved += 1
-    _duck(db)._execute("DELETE FROM _node_wiring WHERE node_id = ?", [old])
+    _duck(db).execute("DELETE FROM _node_wiring WHERE node_id = ?", [old])
     if moved:
         logger.info(
             "[node_wiring] moved %d association(s) from %s to %s", moved, old, new
@@ -425,7 +425,7 @@ def forget_all(db) -> int:
     """
     rows = _rows(db, "SELECT COUNT(*) FROM _node_wiring")
     n = int(rows[0][0]) if rows else 0
-    _duck(db)._execute("DELETE FROM _node_wiring")
+    _duck(db).execute("DELETE FROM _node_wiring")
     logger.warning(
         "[node_wiring] dropped the whole association table (%d row(s)) — the "
         "next graph build mints a fresh id for every function node, and every "
@@ -454,7 +454,7 @@ ADOPTED_TABLE = "_adopted"
 
 def ensure_adopted_table(db) -> None:
     """Create ``_adopted`` if absent (from ``pipeline_store._ensure_tables``)."""
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _adopted (
             subject    VARCHAR PRIMARY KEY,
             node_id    VARCHAR NOT NULL DEFAULT '',
@@ -474,7 +474,7 @@ def mark_adopted(db, rows) -> int:
     now = _now()
     n = 0
     for subject, node_id, scope in rows:
-        _duck(db)._execute(
+        _duck(db).execute(
             "INSERT INTO _adopted (subject, node_id, scope, adopted_at) "
             "VALUES (?, ?, ?, ?) ON CONFLICT (subject) DO NOTHING",
             [subject, node_id or "", scope or ROOT_SCOPE, now],

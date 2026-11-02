@@ -429,7 +429,7 @@ def insert_record_entity(
     excluded: bool = False,
 ) -> None:
     """Insert one ``_record`` entity row (idempotent)."""
-    duck._execute(
+    duck.execute(
         _RECORD_INSERT,
         [
             record_id,
@@ -458,10 +458,10 @@ def insert_record_entities(duck, rows: list[tuple]) -> None:
     """Bulk-insert ``_record`` rows. Each row is
     ``(record_id, created_at, type, schema_id, content_hash, schema_version, excluded)``.
 
-    Uses a single vectorized ``INSERT ... SELECT`` (see ``SciDuck._bulk_insert``);
+    Uses a single vectorized ``INSERT ... SELECT`` (see ``SciDuck.bulk_insert``);
     the previous per-row ``executemany`` cost ~497s for 8k rows into this
     PK-indexed table."""
-    duck._bulk_insert("_record", _RECORD_COLUMNS, rows, conflict_cols=["record_id"])
+    duck.bulk_insert("_record", _RECORD_COLUMNS, rows, conflict_cols=["record_id"])
 
 
 # ---------------------------------------------------------------------------
@@ -487,7 +487,7 @@ def insert_function_sources(
         (function_hash, name, source, name == entry_name)
         for name, source in units.items()
     ]
-    duck._bulk_insert(
+    duck.bulk_insert(
         "_function_source",
         ("function_hash", "unit_name", "unit_source", "is_entry"),
         rows,
@@ -505,7 +505,7 @@ def insert_function_sources(
 def ensure_provenance_tables(duck) -> None:
     """Create the bipartite provenance tables if absent.
 
-    ``duck`` is a ``SciDuck`` instance (exposes ``_execute``). Tables:
+    ``duck`` is a ``SciDuck`` instance (exposes ``execute``). Tables:
 
     Identity/data: ``_record``, ``_constant``, ``_invocation``,
     ``_invocation_input``, ``_invocation_output``.
@@ -520,7 +520,7 @@ def ensure_provenance_tables(duck) -> None:
     # (class name) and their data lives in the per-type "<Type>_data" tables.
     # Constants have schema_id NULL, type '__constant__', value in _constant.
     # Content-addressed and immutable → ONE row, ON CONFLICT DO NOTHING.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _record (
             record_id      VARCHAR PRIMARY KEY,
             created_at     VARCHAR NOT NULL,
@@ -533,7 +533,7 @@ def ensure_provenance_tables(duck) -> None:
     """)
 
     # Constant values (parallel to a variable's "<Type>_data" table).
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _constant (
             record_id    VARCHAR PRIMARY KEY,
             value_repr   VARCHAR,
@@ -563,7 +563,7 @@ def ensure_provenance_tables(duck) -> None:
     # per subject and run once write identical edges. Stored so the run-option
     # label, the predictor and the skip gate can rebuild it
     # (docs/claude/iteration-level-identity.md).
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _invocation (
             invocation_id VARCHAR PRIMARY KEY,
             function_name VARCHAR NOT NULL,
@@ -591,7 +591,7 @@ def ensure_provenance_tables(duck) -> None:
     # globally, which is duplication — but source is kilobytes, the dedup would
     # cost a second table and a join on every read, and nothing in the read path
     # is hot. Revisit only if a real database shows the size mattering.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _function_source (
             function_hash VARCHAR NOT NULL,
             unit_name     VARCHAR NOT NULL,
@@ -612,7 +612,7 @@ def ensure_provenance_tables(duck) -> None:
     # Descriptive only, NOT part of invocation_id: the value is the identity,
     # the name is what the canvas calls it. NULL = not recorded (older rows,
     # a bare value in a script); readers fall back to ``param_name``.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _invocation_input (
             invocation_id   VARCHAR NOT NULL,
             param_name      VARCHAR NOT NULL,
@@ -624,7 +624,7 @@ def ensure_provenance_tables(duck) -> None:
     """)
 
     # What a call produced. Multiple rows for multi-output functions.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _invocation_output (
             invocation_id    VARCHAR NOT NULL,
             output_num       INTEGER NOT NULL,
@@ -638,7 +638,7 @@ def ensure_provenance_tables(duck) -> None:
     # ``origin`` on _run — which surfaces the run read (rule 3 of
     # docs/claude/intent-and-fact.md): ``gui`` / ``script`` / ``replay``. NULL
     # is treated by every consumer as "unknown", never as any origin.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _run (
             run_id        VARCHAR PRIMARY KEY,
             timestamp     VARCHAR NOT NULL,
@@ -651,7 +651,7 @@ def ensure_provenance_tables(duck) -> None:
     # The step name a run was given (`for_each(..., step="filter")`), when it
     # was given one. Its own table rather than a `_run` column: an existing
     # database gains it on open, with no migration (beta rule). Not identity.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _run_step (
             run_id VARCHAR PRIMARY KEY,
             step   VARCHAR NOT NULL
@@ -675,19 +675,19 @@ def ensure_provenance_tables(duck) -> None:
     # to, which survives a later reordering of the signature; NULL for Python
     # (its functions declare no outputs). Added the same day as the table, so
     # an ADD COLUMN IF NOT EXISTS keeps a store opened in between working.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _run_outputs (
             run_id        VARCHAR PRIMARY KEY,
             outputs       VARCHAR[] NOT NULL,
             output_params VARCHAR[]
         )
     """)
-    duck._execute(
+    duck.execute(
         "ALTER TABLE _run_outputs ADD COLUMN IF NOT EXISTS output_params VARCHAR[]"
     )
 
     # Many-to-many: which invocations a run (re)produced.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _run_invocation (
             run_id        VARCHAR NOT NULL,
             invocation_id VARCHAR NOT NULL,
@@ -701,7 +701,7 @@ def ensure_provenance_tables(duck) -> None:
     # a different variant from the new name's; this fact is what makes the
     # old name's records saved before ``renamed_at`` stale for "current"
     # (``provenance_query.renamed_superseded_records``) -- kept, never latest.
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _function_rename (
             old_name   VARCHAR NOT NULL,
             new_name   VARCHAR NOT NULL,
@@ -712,11 +712,11 @@ def ensure_provenance_tables(duck) -> None:
 
     # Indexes for upward/downward traversal (the recursive CTEs in §6/§8 join
     # output_record_id → invocation_id → input_record_id repeatedly).
-    duck._execute(
+    duck.execute(
         "CREATE INDEX IF NOT EXISTS idx_inv_output_rid "
         "ON _invocation_output (output_record_id)"
     )
-    duck._execute(
+    duck.execute(
         "CREATE INDEX IF NOT EXISTS idx_inv_input_inv "
         "ON _invocation_input (invocation_id)"
     )

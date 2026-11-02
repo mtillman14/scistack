@@ -155,7 +155,7 @@ def _step_id(fn_name: str, wiring_id: str) -> str:
 def _stored_function_hashes(duck) -> dict[str, str]:
     """fn_name → most recently *run* function_hash (falls back to any stored
     hash for invocations that never got a _run row)."""
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT i.function_name, i.function_hash, MAX(r.timestamp) AS ts "
         "FROM _invocation i "
         "LEFT JOIN _run_invocation ri ON ri.invocation_id = i.invocation_id "
@@ -238,7 +238,7 @@ def _node_states(db, fn_names, fn_registry=None) -> dict[str, dict]:
 def _variable_record_counts(duck) -> dict[str, int]:
     from ..provenance import INTERNAL_RECORD_TYPES
 
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT type, COUNT(*) FROM _record "
         f"WHERE type NOT IN ({', '.join('?' for _ in INTERNAL_RECORD_TYPES)}) "
         "AND NOT COALESCE(excluded, FALSE) "

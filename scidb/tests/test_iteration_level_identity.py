@@ -82,7 +82,7 @@ def db(tmp_path):
 
 
 def _invocations(db, fn_name):
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT invocation_id, iteration_level FROM _invocation WHERE function_name = ? "
         "ORDER BY invocation_id",
         [fn_name],

@@ -108,7 +108,7 @@ class TestTheNameIsDeclaredOnce:
 class TestRecorded:
     def test_the_run_records_the_declared_path_input(self, db, tmp_path):
         _run(_pi(tmp_path, "a", "gait_files"), 1.0)
-        rows = db._duck._fetchall(
+        rows = db._duck.fetchall(
             "SELECT DISTINCT ii.param_name, ii.declared_name "
             "FROM _invocation_input ii JOIN _record r "
             "ON r.record_id = ii.input_record_id WHERE r.type = ?",

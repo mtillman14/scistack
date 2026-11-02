@@ -137,7 +137,7 @@ GUARDED_WRITES: tuple[str, ...] = (
 def _ensure_tables(db) -> None:
     """Create pipeline tables if they don't already exist, each with its
     final schema (no migrations — see the module docstring)."""
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_nodes (
             node_id     VARCHAR PRIMARY KEY,
             node_type   VARCHAR NOT NULL,
@@ -159,13 +159,13 @@ def _ensure_tables(db) -> None:
     #
     # A table with no lifecycle coupling to node placement has neither
     # problem. See docs/claude/gui-run-options-flow.md.
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _node_config (
             node_id VARCHAR PRIMARY KEY,
             config  VARCHAR NOT NULL DEFAULT '{}'
         )
     """)
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_builtin_functions (
             name     VARCHAR PRIMARY KEY,
             language VARCHAR NOT NULL
@@ -198,7 +198,7 @@ def _ensure_tables(db) -> None:
     #
     # Not scoped by pipeline_id: what a Parameter's values ARE does not vary
     # by scope, the same reasoning as _pipeline_path_input_history below.
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_parameter_value_groups (
             param_name    VARCHAR PRIMARY KEY,
             kind          VARCHAR NOT NULL,
@@ -230,7 +230,7 @@ def _ensure_tables(db) -> None:
     # of the primary key, and a NULL in a PK is both rejected by some engines
     # and never equal to itself, which would silently defeat the ON CONFLICT
     # dedup. Normalised in record_path_input_value/lookup_path_input_name.
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_path_input_history (
             name        VARCHAR NOT NULL,
             template    VARCHAR NOT NULL,
@@ -246,7 +246,7 @@ def _ensure_tables(db) -> None:
     # the renamed one. Written from ONE place (layout_service.
     # rename_path_input); read through path_input_rename_index and resolved
     # only by graph_builder.resolve_renamed_path_input. Append-only.
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_path_input_renames (
             old_name   VARCHAR NOT NULL,
             new_name   VARCHAR NOT NULL,
@@ -258,7 +258,7 @@ def _ensure_tables(db) -> None:
     # domain.scope_filter.document_interface); this table is a per-scope
     # manual override suppressing one type's port, toggled by right-
     # clicking a variable node inside the subpipeline's own canvas.
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_hidden_ports (
             pipeline_id VARCHAR NOT NULL DEFAULT 'main',
             direction   VARCHAR NOT NULL,
@@ -268,14 +268,14 @@ def _ensure_tables(db) -> None:
     """)
 
     # --- Nested-pipeline scoping (GUI stage) ---
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipelines (
             pipeline_id VARCHAR PRIMARY KEY,
             name        VARCHAR NOT NULL,
             hidden      BOOLEAN DEFAULT FALSE
         )
     """)
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_uses (
             use_id             VARCHAR PRIMARY KEY,
             parent_pipeline_id VARCHAR NOT NULL,
@@ -284,14 +284,14 @@ def _ensure_tables(db) -> None:
         )
     """)
     # The root scope always exists.
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipelines (pipeline_id, name) VALUES (?, ?) "
         "ON CONFLICT DO NOTHING",
         [ROOT_SCOPE, ROOT_SCOPE],
     )
 
     # --- Hypothesis tabs (a hypothesis is a tagged top-level pipeline) ---
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _hypotheses (
             pipeline_id          VARCHAR PRIMARY KEY,
             research_question    VARCHAR DEFAULT '',
@@ -302,13 +302,13 @@ def _ensure_tables(db) -> None:
     """)
     # The root pipeline is the default hypothesis, tagged the same as any
     # other.
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _hypotheses (pipeline_id) VALUES (?) ON CONFLICT DO NOTHING",
         [ROOT_SCOPE],
     )
 
     # --- Library-owned pipelines (portability Stage 10) ---
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _library_pipelines (
             pipeline_id     VARCHAR PRIMARY KEY,
             library         VARCHAR NOT NULL,
@@ -364,7 +364,7 @@ def manual_node_scope(db, node_id: str) -> "str | None":
     ``_pipeline_nodes`` yet has no manual nodes, which is the ``None`` answer.
     """
     try:
-        row = _duck(db)._fetchone(
+        row = _duck(db).fetchone(
             "SELECT pipeline_id FROM _pipeline_nodes WHERE node_id = ?", [node_id]
         )
     except Exception:  # the table does not exist yet
@@ -382,11 +382,11 @@ def get_manual_nodes(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
     """
     _ensure_tables(db)
     if pipeline_id is None:
-        rows = _duck(db)._fetchall(
+        rows = _duck(db).fetchall(
             "SELECT node_id, node_type, label, pipeline_id FROM _pipeline_nodes"
         )
     else:
-        rows = _duck(db)._fetchall(
+        rows = _duck(db).fetchall(
             "SELECT node_id, node_type, label, pipeline_id "
             "FROM _pipeline_nodes WHERE pipeline_id = ?",
             [pipeline_id],
@@ -432,7 +432,7 @@ def write_builtin_function(db, name: str, language: str) -> None:
         language,
     )
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipeline_builtin_functions (name, language) VALUES (?, ?) "
         "ON CONFLICT (name) DO UPDATE SET language = excluded.language",
         [name, language],
@@ -443,7 +443,7 @@ def get_builtin_functions(db) -> list[dict]:
     """Return every persisted built-in/library function reference as
     ``[{"name": ..., "language": ...}, ...]``."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall("SELECT name, language FROM _pipeline_builtin_functions")
+    rows = _duck(db).fetchall("SELECT name, language FROM _pipeline_builtin_functions")
     return [{"name": row[0], "language": row[1]} for row in rows]
 
 
@@ -496,7 +496,7 @@ def update_node_config(db, node_id: str, config: dict) -> None:
 
     config = intent_store.split_node_config(db, node_id, dict(config))
 
-    _duck(db)._execute(
+    _duck(db).execute(
         """
         INSERT INTO _node_config (node_id, config) VALUES (?, ?)
         ON CONFLICT (node_id) DO UPDATE SET config = excluded.config
@@ -508,7 +508,7 @@ def update_node_config(db, node_id: str, config: dict) -> None:
 def get_node_config(db, node_id: str) -> dict:
     """One node's saved config, or ``{}``."""
     _ensure_tables(db)
-    row = _duck(db)._fetchone(
+    row = _duck(db).fetchone(
         "SELECT config FROM _node_config WHERE node_id = ?", [node_id]
     )
     config: dict = {}
@@ -556,7 +556,7 @@ def get_node_configs(db, pipeline_id: "str | None" = None) -> dict[str, dict]:
     """
     _ensure_tables(db)
     configs: dict[str, dict] = {}
-    for node_id, raw in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
+    for node_id, raw in _duck(db).fetchall("SELECT node_id, config FROM _node_config"):
         if not raw:
             continue
         try:
@@ -592,7 +592,7 @@ def delete_node(db, node_id: str) -> None:
     from scistack_gui import library_lock
 
     library_lock.check_node(db, node_id, "removing a node")
-    _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [node_id])
+    _duck(db).execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [node_id])
     logger.info("[pipeline_store] Node deleted from _pipeline_nodes table")
 
 
@@ -612,7 +612,7 @@ def move_pipeline_use_parent(db, use_id: str, new_parent_pipeline_id: str) -> No
 
     library_lock.check_scope(db, _use_parent(db, use_id), "moving a submodule out")
     library_lock.check_scope(db, new_parent_pipeline_id, "moving a submodule in")
-    _duck(db)._execute(
+    _duck(db).execute(
         "UPDATE _pipeline_uses SET parent_pipeline_id = ? WHERE use_id = ?",
         [new_parent_pipeline_id, use_id],
     )
@@ -629,7 +629,7 @@ def move_node_scope(db, node_id: str, new_pipeline_id: str) -> None:
 
     library_lock.check_node(db, node_id, "moving a node out")
     library_lock.check_scope(db, new_pipeline_id, "moving a node in")
-    _duck(db)._execute(
+    _duck(db).execute(
         "UPDATE _pipeline_nodes SET pipeline_id = ? WHERE node_id = ?",
         [new_pipeline_id, node_id],
     )
@@ -686,13 +686,13 @@ def migrate_node_config(db, old_id: str, new_id: str) -> dict:
 
     merged: dict = {}
     source_rows: list[str] = []
-    for nid, raw in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
+    for nid, raw in _duck(db).fetchall("SELECT node_id, config FROM _node_config"):
         if strip_placement(nid) != old_bare:
             continue
         source_rows.append(nid)
     # Bare first, qualified after, so a scope-specific save wins over a bare one.
     for nid in sorted(source_rows, key=lambda n: (n != old_bare, n)):
-        raw = _duck(db)._fetchone(
+        raw = _duck(db).fetchone(
             "SELECT config FROM _node_config WHERE node_id = ?", [nid]
         )
         merged.update(_parse(raw[0] if raw else None, f"config row {nid!r}"))
@@ -709,7 +709,7 @@ def migrate_node_config(db, old_id: str, new_id: str) -> dict:
     replaced = {k: target[k] for k in merged if k in target and target[k] != merged[k]}
     update_node_config(db, new_id, {**target, **merged})
     for nid in source_rows:
-        _duck(db)._execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
+        _duck(db).execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
 
     logger.info(
         "[pipeline_store] graduation: config keys %s moved from %s to %s",
@@ -759,13 +759,13 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
     # (adopted, or folded into before) is left as it is.
     from scistack_gui.ids import strip_placement
 
-    row = _duck(db)._fetchone(
+    row = _duck(db).fetchone(
         "SELECT node_type, label, pipeline_id FROM _pipeline_nodes WHERE node_id = ?",
         [old_id],
     )
     canonical = str(strip_placement(new_id))
     if row is not None:
-        created = _duck(db)._fetchone(
+        created = _duck(db).fetchone(
             "SELECT 1 FROM _pipeline_nodes WHERE node_id = ?", [canonical]
         ) is None
         if created:
@@ -776,7 +776,7 @@ def graduate_manual_node(db, old_id: str, new_id: str) -> None:
             canonical,
             "canonical row created" if created else "canonical row already stored",
         )
-    _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id])
+    _duck(db).execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [old_id])
     rename_edge_endpoints(db, old_id, new_id)
 
 
@@ -812,25 +812,25 @@ def rebase_node(db, old_bare: str, new_bare: str, new_label: "str | None" = None
 
     # Insert-then-delete rather than UPDATE: node_id is the PRIMARY KEY, and
     # DuckDB's handling of key updates has varied between versions.
-    for nid, node_type, label, pipeline_id in _duck(db)._fetchall(
+    for nid, node_type, label, pipeline_id in _duck(db).fetchall(
         "SELECT node_id, node_type, label, pipeline_id FROM _pipeline_nodes"
     ):
         new_id = _rebased(nid)
         if new_id is None:
             continue
-        _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [nid])
-        _duck(db)._execute(
+        _duck(db).execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [nid])
+        _duck(db).execute(
             "INSERT INTO _pipeline_nodes (node_id, node_type, label, pipeline_id) "
             "VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
             [new_id, node_type, new_label or label, pipeline_id],
         )
         counts["nodes"] += 1
-    for nid, config in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
+    for nid, config in _duck(db).fetchall("SELECT node_id, config FROM _node_config"):
         new_id = _rebased(nid)
         if new_id is None:
             continue
-        _duck(db)._execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
-        _duck(db)._execute(
+        _duck(db).execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
+        _duck(db).execute(
             "INSERT INTO _node_config (node_id, config) VALUES (?, ?) ON CONFLICT DO NOTHING",
             [new_id, config],
         )
@@ -859,12 +859,12 @@ def relabel_manual_nodes(db, node_type: str, old_label: str, new_label: str) -> 
     :func:`rebase_node` cannot find by id. Their label is what graduation
     matches on (``graph_builder.merge_manual_nodes``)."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT node_id FROM _pipeline_nodes WHERE node_type = ? AND label = ?",
         [node_type, old_label],
     )
     if rows:
-        _duck(db)._execute(
+        _duck(db).execute(
             "UPDATE _pipeline_nodes SET label = ? WHERE node_type = ? AND label = ?",
             [new_label, node_type, old_label],
         )
@@ -983,7 +983,7 @@ def list_pipelines(db) -> list[dict]:
     Hidden pipelines (see hide_pipeline) are excluded — use
     list_hidden_pipelines for those."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT pipeline_id, name FROM _pipelines WHERE NOT hidden "
         "ORDER BY (pipeline_id != ?), name",
         [ROOT_SCOPE],
@@ -998,7 +998,7 @@ def list_all_pipelines(db) -> list[dict]:
     ``list_pipelines``'s docstring and ``create_pipeline``'s uniqueness
     check, which already does this)."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT pipeline_id, name, hidden FROM _pipelines "
         "ORDER BY (pipeline_id != ?), name",
         [ROOT_SCOPE],
@@ -1011,7 +1011,7 @@ def get_pipeline(db, pipeline_id: str) -> "dict | None":
     {"pipeline_id", "name", "hidden"}, or None if no such pipeline
     exists locally."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT pipeline_id, name, hidden FROM _pipelines WHERE pipeline_id = ?",
         [pipeline_id],
     )
@@ -1039,7 +1039,7 @@ def create_pipeline(db, name: str, pipeline_id: "str | None" = None) -> str:
     # label. Reserving names, hidden ones included, meant "main copy" could
     # never be made again after it was deleted. rename_pipeline never checked.
     pipeline_id = pipeline_id or f"pipe_{uuid.uuid4().hex[:12]}"
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipelines (pipeline_id, name) VALUES (?, ?)",
         [pipeline_id, name],
     )
@@ -1057,12 +1057,12 @@ def rename_pipeline(db, pipeline_id: str, name: str) -> None:
     name = str(name).strip()
     if not name:
         raise ValueError("pipeline name must be non-empty")
-    _duck(db)._execute(
+    _duck(db).execute(
         "UPDATE _pipelines SET name = ? WHERE pipeline_id = ?",
         [name, pipeline_id],
     )
     # Pipeline-node labels on parent canvases display the child's name.
-    _duck(db)._execute(
+    _duck(db).execute(
         "UPDATE _pipeline_nodes SET label = ? WHERE node_id IN "
         "(SELECT use_id FROM _pipeline_uses WHERE child_pipeline_id = ?)",
         [name, pipeline_id],
@@ -1079,7 +1079,7 @@ def _hard_delete_pipeline(db, pipeline_id: str) -> None:
     user-visible content to preserve, so a real delete is correct here.
     """
     _ensure_tables(db)
-    node_rows = _duck(db)._fetchall(
+    node_rows = _duck(db).fetchall(
         "SELECT node_id FROM _pipeline_nodes WHERE pipeline_id = ?",
         [pipeline_id],
     )
@@ -1088,13 +1088,13 @@ def _hard_delete_pipeline(db, pipeline_id: str) -> None:
 
     for nid in node_ids:
         intent_store.delete_edges_touching(db, nid)
-    _duck(db)._execute(
+    _duck(db).execute(
         "DELETE FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id]
     )
-    _duck(db)._execute(
+    _duck(db).execute(
         "DELETE FROM _pipeline_uses WHERE parent_pipeline_id = ?", [pipeline_id]
     )
-    _duck(db)._execute("DELETE FROM _pipelines WHERE pipeline_id = ?", [pipeline_id])
+    _duck(db).execute("DELETE FROM _pipelines WHERE pipeline_id = ?", [pipeline_id])
     logger.info(
         "[pipeline_store] _hard_delete_pipeline: %s (%d node(s) removed)",
         pipeline_id,
@@ -1115,7 +1115,7 @@ def hide_pipeline(db, pipeline_id: str) -> None:
     intact so unhide_pipeline fully restores the canvas.
     """
     _ensure_tables(db)
-    consumers = _duck(db)._fetchall(
+    consumers = _duck(db).fetchall(
         "SELECT p.name FROM _pipeline_uses u JOIN _pipelines p "
         "ON p.pipeline_id = u.parent_pipeline_id WHERE u.child_pipeline_id = ?",
         [pipeline_id],
@@ -1125,12 +1125,12 @@ def hide_pipeline(db, pipeline_id: str) -> None:
         raise ValueError(
             f"pipeline is still used by {names} — remove those pipeline nodes first"
         )
-    visible_count = _duck(db)._fetchall(
+    visible_count = _duck(db).fetchall(
         "SELECT COUNT(*) FROM _pipelines WHERE NOT hidden"
     )[0][0]
     if visible_count <= 1:
         raise ValueError("cannot hide the last remaining pipeline")
-    _duck(db)._execute(
+    _duck(db).execute(
         "UPDATE _pipelines SET hidden = TRUE WHERE pipeline_id = ?", [pipeline_id]
     )
     logger.info("[pipeline_store] hide_pipeline: %s", pipeline_id)
@@ -1138,7 +1138,7 @@ def hide_pipeline(db, pipeline_id: str) -> None:
 
 def unhide_pipeline(db, pipeline_id: str) -> None:
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "UPDATE _pipelines SET hidden = FALSE WHERE pipeline_id = ?", [pipeline_id]
     )
     logger.info("[pipeline_store] unhide_pipeline: %s", pipeline_id)
@@ -1149,7 +1149,7 @@ def list_hidden_pipelines(db) -> list[dict]:
     restore panel's data (both the hypothesis-tab strip and the plain
     Submodules list draw from this same set)."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT p.pipeline_id, p.name, h.pipeline_id IS NOT NULL "
         "FROM _pipelines p LEFT JOIN _hypotheses h ON h.pipeline_id = p.pipeline_id "
         "WHERE p.hidden ORDER BY p.name"
@@ -1171,7 +1171,7 @@ def _uses_reachable(db, start_id: str) -> set:
     frontier = [start_id]
     while frontier:
         current = frontier.pop()
-        rows = _duck(db)._fetchall(
+        rows = _duck(db).fetchall(
             "SELECT child_pipeline_id FROM _pipeline_uses WHERE parent_pipeline_id = ?",
             [current],
         )
@@ -1214,7 +1214,7 @@ def add_pipeline_use(
             f"('{child_pipeline_id}' already reaches '{parent_pipeline_id}')"
         )
     use_id = use_id or f"use_{uuid.uuid4().hex[:12]}"
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipeline_uses "
         "(use_id, parent_pipeline_id, child_pipeline_id, binding_json) "
         "VALUES (?, ?, ?, ?)",
@@ -1241,8 +1241,8 @@ def remove_pipeline_use(db, use_id: str) -> None:
     from scistack_gui import library_lock
 
     library_lock.check_scope(db, _use_parent(db, use_id), "removing a submodule")
-    _duck(db)._execute("DELETE FROM _pipeline_uses WHERE use_id = ?", [use_id])
-    _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [use_id])
+    _duck(db).execute("DELETE FROM _pipeline_uses WHERE use_id = ?", [use_id])
+    _duck(db).execute("DELETE FROM _pipeline_nodes WHERE node_id = ?", [use_id])
     from scistack_gui import intent_store
 
     intent_store.delete_edges_touching(db, use_id)
@@ -1250,7 +1250,7 @@ def remove_pipeline_use(db, use_id: str) -> None:
 
 
 def _use_parent(db, use_id: str) -> "str | None":
-    row = _duck(db)._fetchone(
+    row = _duck(db).fetchone(
         "SELECT parent_pipeline_id FROM _pipeline_uses WHERE use_id = ?", [use_id]
     )
     return row[0] if row else None
@@ -1261,12 +1261,12 @@ def get_pipeline_uses(db, parent_pipeline_id: "str | None" = None) -> list[dict]
     "binding"}] — all of them, or one parent's."""
     _ensure_tables(db)
     if parent_pipeline_id is None:
-        rows = _duck(db)._fetchall(
+        rows = _duck(db).fetchall(
             "SELECT use_id, parent_pipeline_id, child_pipeline_id, "
             "binding_json FROM _pipeline_uses"
         )
     else:
-        rows = _duck(db)._fetchall(
+        rows = _duck(db).fetchall(
             "SELECT use_id, parent_pipeline_id, child_pipeline_id, "
             "binding_json FROM _pipeline_uses WHERE parent_pipeline_id = ?",
             [parent_pipeline_id],
@@ -1302,7 +1302,7 @@ def update_use_binding(db, use_id: str, binding: dict) -> None:
     # The binding of a placement ON the project's canvas is the project's to
     # set; only a submodule placed INSIDE a library pipeline is refused.
     library_lock.check_scope(db, _use_parent(db, use_id), "changing a submodule binding")
-    _duck(db)._execute(
+    _duck(db).execute(
         "UPDATE _pipeline_uses SET binding_json = ? WHERE use_id = ?",
         [json.dumps(binding), use_id],
     )
@@ -1328,7 +1328,7 @@ def list_hypotheses(db) -> list[dict]:
     their _hypotheses metadata row is left untouched so unhide_pipeline
     brings the tab back with research question/evidence intact."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT p.pipeline_id, p.name, h.research_question, "
         "h.hypothesis_statement, h.evidence_for, h.evidence_against "
         "FROM _hypotheses h JOIN _pipelines p ON p.pipeline_id = h.pipeline_id "
@@ -1352,7 +1352,7 @@ def tag_as_hypothesis(db, pipeline_id: str) -> None:
     """Tag an EXISTING pipeline as a hypothesis (e.g. after duplicating
     one) — a no-op if it's already tagged."""
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _hypotheses (pipeline_id) VALUES (?) ON CONFLICT DO NOTHING",
         [pipeline_id],
     )
@@ -1363,7 +1363,7 @@ def create_hypothesis(db, name: str) -> str:
     """Create a new pipeline and tag it as a hypothesis; returns its pipeline_id."""
     _ensure_tables(db)
     pipeline_id = create_pipeline(db, name)
-    _duck(db)._execute("INSERT INTO _hypotheses (pipeline_id) VALUES (?)", [pipeline_id])
+    _duck(db).execute("INSERT INTO _hypotheses (pipeline_id) VALUES (?)", [pipeline_id])
     logger.info("[pipeline_store] create_hypothesis: '%s' -> %s", name, pipeline_id)
     return pipeline_id
 
@@ -1378,7 +1378,7 @@ def update_hypothesis(
 ) -> None:
     """Update whichever fields are provided; ``None`` leaves a field unchanged."""
     _ensure_tables(db)
-    known = _duck(db)._fetchall(
+    known = _duck(db).fetchall(
         "SELECT 1 FROM _hypotheses WHERE pipeline_id = ?", [pipeline_id]
     )
     if not known:
@@ -1399,7 +1399,7 @@ def update_hypothesis(
     if not fields:
         return
     values.append(pipeline_id)
-    _duck(db)._execute(
+    _duck(db).execute(
         f"UPDATE _hypotheses SET {', '.join(fields)} WHERE pipeline_id = ?", values
     )
     logger.info("[pipeline_store] update_hypothesis: %s", pipeline_id)
@@ -1526,7 +1526,7 @@ def record_path_input_value(
     a template.
     """
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipeline_path_input_history "
         "(name, template, root_folder) VALUES (?, ?, ?) "
         "ON CONFLICT DO NOTHING",
@@ -1541,7 +1541,7 @@ def lookup_path_input_name(
     ``None`` — the fallback ``resolve_path_input_name`` consults when a
     recorded template matches no CURRENT declaration."""
     _ensure_tables(db)
-    row = _duck(db)._fetchone(
+    row = _duck(db).fetchone(
         "SELECT name FROM _pipeline_path_input_history "
         "WHERE template = ? AND root_folder = ? LIMIT 1",
         [template, root_folder or ""],
@@ -1576,7 +1576,7 @@ def list_path_input_history(db, name: "str | None" = None) -> list[dict]:
     sql += " ORDER BY name, template"
     return [
         {"name": r[0], "template": r[1], "root_folder": r[2] or None}
-        for r in _duck(db)._fetchall(sql, params)
+        for r in _duck(db).fetchall(sql, params)
     ]
 
 
@@ -1587,7 +1587,7 @@ def record_path_input_rename(db, old_name: str, new_name: str) -> None:
     after the entities file has been rewritten.
     """
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipeline_path_input_renames (old_name, new_name) VALUES (?, ?)",
         [old_name, new_name],
     )
@@ -1600,7 +1600,7 @@ def path_input_rename_index(db) -> dict[str, str]:
     """``{old_name: new_name}``, the latest rename of each old name winning —
     the shape ``graph_builder.resolve_renamed_path_input`` follows."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT old_name, new_name FROM _pipeline_path_input_renames "
         "ORDER BY renamed_at, rowid"
     )
@@ -1695,7 +1695,7 @@ def set_parameter_value_group(
     """Record *values* as one generated set for *param_name*, replacing any
     previous one (one group per Parameter — see the table comment)."""
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipeline_parameter_value_groups "
         "(param_name, kind, spec, member_values) VALUES (?, ?, ?, ?) "
         "ON CONFLICT (param_name) DO UPDATE SET "
@@ -1715,7 +1715,7 @@ def clear_parameter_value_group(db, param_name: str) -> None:
     """Forget the generated set for *param_name*, if any. The values
     themselves live in source and are untouched — only the grouping goes."""
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "DELETE FROM _pipeline_parameter_value_groups WHERE param_name = ?",
         [param_name],
     )
@@ -1730,7 +1730,7 @@ def get_parameter_value_groups(db) -> dict:
     take down the whole graph build.
     """
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT param_name, kind, spec, member_values "
         "FROM _pipeline_parameter_value_groups"
     )
@@ -1899,7 +1899,7 @@ def hide_port(db, pipeline_id: str, direction: str, var_type: str) -> None:
     from scistack_gui import library_lock
 
     library_lock.check_scope(db, pipeline_id, "hiding a port")
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipeline_hidden_ports (pipeline_id, direction, var_type) "
         "VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
         [pipeline_id, direction, var_type],
@@ -1917,7 +1917,7 @@ def unhide_port(db, pipeline_id: str, direction: str, var_type: str) -> None:
     from scistack_gui import library_lock
 
     library_lock.check_scope(db, pipeline_id, "showing a port")
-    _duck(db)._execute(
+    _duck(db).execute(
         "DELETE FROM _pipeline_hidden_ports "
         "WHERE pipeline_id = ? AND direction = ? AND var_type = ?",
         [pipeline_id, direction, var_type],
@@ -1928,7 +1928,7 @@ def get_hidden_ports(db, pipeline_id: str) -> dict:
     """One scope's hidden ports: ``{"input": {type, ...}, "output": {type, ...}}``
     — what the right-click context menu needs to decide Show vs Hide."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT direction, var_type FROM _pipeline_hidden_ports WHERE pipeline_id = ?",
         [pipeline_id],
     )
@@ -1944,7 +1944,7 @@ def get_hidden_ports_by_scope(db) -> dict[str, dict[str, set[str]]]:
     scopes via nested ``uses``, so it needs every scope's own hides on
     hand at once, not just the scope being asked about)."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT pipeline_id, direction, var_type FROM _pipeline_hidden_ports"
     )
     result: dict[str, dict[str, set[str]]] = {}
@@ -1962,7 +1962,7 @@ def get_hidden_ports_by_scope(db) -> dict[str, dict[str, set[str]]]:
 def _upsert_node(
     db, node_id: str, node_type: str, label: str, pipeline_id: str = ROOT_SCOPE
 ) -> None:
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _pipeline_nodes (node_id, node_type, label, pipeline_id) "
         "VALUES (?, ?, ?, ?) "
         "ON CONFLICT (node_id) DO UPDATE SET node_type = excluded.node_type, "
@@ -1980,7 +1980,7 @@ def library_owner(db, pipeline_id: str) -> "dict | None":
     """``{"library", "pipeline_name", "doc_pipeline_id", "definition_hash"}``
     when *pipeline_id* is owned by a library, else ``None``."""
     _ensure_tables(db)
-    row = _duck(db)._fetchone(
+    row = _duck(db).fetchone(
         "SELECT library, pipeline_name, doc_pipeline_id, definition_hash "
         "FROM _library_pipelines WHERE pipeline_id = ?",
         [pipeline_id],
@@ -1999,7 +1999,7 @@ def list_library_pipelines(db) -> list[dict]:
     """Every library-owned pipeline: ``[{"pipeline_id", "name", "library",
     "pipeline_name", "doc_pipeline_id", "definition_hash", "hidden"}]``."""
     _ensure_tables(db)
-    rows = _duck(db)._fetchall(
+    rows = _duck(db).fetchall(
         "SELECT l.pipeline_id, p.name, l.library, l.pipeline_name, l.doc_pipeline_id, "
         "l.definition_hash, p.hidden FROM _library_pipelines l "
         "JOIN _pipelines p ON p.pipeline_id = l.pipeline_id "
@@ -2025,7 +2025,7 @@ def set_library_owner(
 ) -> None:
     """Record that *library*'s *pipeline_name* owns *pipeline_id*."""
     _ensure_tables(db)
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _library_pipelines "
         "(pipeline_id, library, pipeline_name, doc_pipeline_id, definition_hash) "
         "VALUES (?, ?, ?, ?, ?) ON CONFLICT (pipeline_id) DO UPDATE SET "
@@ -2040,7 +2040,7 @@ def release_library_owner(db, pipeline_id: str) -> None:
     """*pipeline_id* is no longer library-owned (Make my own copy, 10c): it
     becomes an ordinary, editable pipeline. Its content is untouched."""
     _ensure_tables(db)
-    _duck(db)._execute("DELETE FROM _library_pipelines WHERE pipeline_id = ?", [pipeline_id])
+    _duck(db).execute("DELETE FROM _library_pipelines WHERE pipeline_id = ?", [pipeline_id])
     logger.info("[pipeline_store] release_library_owner: %s is editable now", pipeline_id)
 
 
@@ -2055,13 +2055,13 @@ def clear_pipeline_content(db, pipeline_id: str) -> dict:
 
     node_ids = [
         r[0]
-        for r in _duck(db)._fetchall(
+        for r in _duck(db).fetchall(
             "SELECT node_id FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id]
         )
     ]
     use_ids = [
         r[0]
-        for r in _duck(db)._fetchall(
+        for r in _duck(db).fetchall(
             "SELECT use_id FROM _pipeline_uses WHERE parent_pipeline_id = ?", [pipeline_id]
         )
     ]
@@ -2077,13 +2077,13 @@ def clear_pipeline_content(db, pipeline_id: str) -> dict:
         if any(e in use_ids or intent_store.scope_of_node(db, e) == pipeline_id for e in ends if e):
             n_edges += intent_store.delete_manual_edge(db, st.subject_ref)
     for nid in node_ids:
-        _duck(db)._execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
+        _duck(db).execute("DELETE FROM _node_config WHERE node_id = ?", [nid])
     n_statements = intent_store.delete_scope(db, pipeline_id)
-    _duck(db)._execute("DELETE FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id])
-    _duck(db)._execute(
+    _duck(db).execute("DELETE FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id])
+    _duck(db).execute(
         "DELETE FROM _pipeline_uses WHERE parent_pipeline_id = ?", [pipeline_id]
     )
-    _duck(db)._execute(
+    _duck(db).execute(
         "DELETE FROM _pipeline_hidden_ports WHERE pipeline_id = ?", [pipeline_id]
     )
     out = {

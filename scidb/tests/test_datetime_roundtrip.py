@@ -126,7 +126,7 @@ def test_dtype_meta_never_lists_the_companion(db):
 
 def test_stored_instant_is_utc_and_zone_is_kept(db):
     When.save(pd.Timestamp("2026-07-01 14:00", tz="Europe/Berlin"), subject="S01")
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         f'SELECT CAST("value" AS VARCHAR), "value__tz" FROM "{When.table_name()}"'
     )
     assert rows == [("2026-07-01 12:00:00", "Europe/Berlin")]

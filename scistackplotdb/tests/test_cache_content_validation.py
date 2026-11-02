@@ -167,7 +167,7 @@ class TestSharedStorageRule:
         assert out[1] == 0.5
 
     def test_both_layers_agree_on_a_null_bearing_cell(self):
-        from sciduckdb.sciduckdb import storage_to_python
+        from sciduckdb import storage_to_python
         from scistackplotdb.load import _float_row
 
         cell = np.ma.MaskedArray([0.0, 0.49, 0.45], mask=[True, False, False])
@@ -179,7 +179,7 @@ class TestSharedStorageRule:
         np.testing.assert_allclose(via_storage[1:], via_plot[1:])
 
     def test_a_real_zero_survives_both_layers(self):
-        from sciduckdb.sciduckdb import storage_to_python
+        from sciduckdb import storage_to_python
         from scistackplotdb.load import _float_row
 
         cell = np.array([0.0, 0.49])

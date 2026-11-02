@@ -119,29 +119,29 @@ class TestRows:
 class TestRecording:
     def test_pk_table_row_update_and_insert(self, populated_db):
         duck = populated_db._duck
-        duck._execute("INSERT INTO _node_config VALUES ('n1', '{\"a\": 1}')")
+        duck.execute("INSERT INTO _node_config VALUES ('n1', '{\"a\": 1}')")
         with history.recording("t1", label="x", method="m"):
-            duck._execute("UPDATE _node_config SET config = '{\"a\": 2}' WHERE node_id = 'n1'")
-            duck._execute("INSERT INTO _node_config VALUES ('n2', '{}')")
+            duck.execute("UPDATE _node_config SET config = '{\"a\": 2}' WHERE node_id = 'n1'")
+            duck.execute("INSERT INTO _node_config VALUES ('n2', '{}')")
 
         assert history.undo("t1")["status"] == "ok"
-        rows = dict(duck._fetchall("SELECT node_id, config FROM _node_config"))
+        rows = dict(duck.fetchall("SELECT node_id, config FROM _node_config"))
         assert rows == {"n1": '{"a": 1}'}
 
         assert history.redo("t1")["status"] == "ok"
-        rows = dict(duck._fetchall("SELECT node_id, config FROM _node_config"))
+        rows = dict(duck.fetchall("SELECT node_id, config FROM _node_config"))
         assert rows == {"n1": '{"a": 2}', "n2": "{}"}
 
     def test_table_without_primary_key(self, populated_db):
         duck = populated_db._duck
         with history.recording("t2", label="x", method="m"):
-            duck._execute(
+            duck.execute(
                 "INSERT INTO _pipeline_path_input_renames (old_name, new_name) VALUES ('a', 'b')"
             )
         assert history.undo("t2")["status"] == "ok"
-        assert duck._fetchall("SELECT * FROM _pipeline_path_input_renames") == []
+        assert duck.fetchall("SELECT * FROM _pipeline_path_input_renames") == []
         assert history.redo("t2")["status"] == "ok"
-        assert [r[:2] for r in duck._fetchall("SELECT * FROM _pipeline_path_input_renames")] == [
+        assert [r[:2] for r in duck.fetchall("SELECT * FROM _pipeline_path_input_renames")] == [
             ("a", "b")
         ]
 
@@ -154,20 +154,20 @@ class TestRecording:
     def test_a_raising_block_records_nothing(self, populated_db):
         with pytest.raises(RuntimeError):
             with history.recording("t4", label="x", method="m"):
-                populated_db._duck._execute("INSERT INTO _node_config VALUES ('n9', '{}')")
+                populated_db._duck.execute("INSERT INTO _node_config VALUES ('n9', '{}')")
                 raise RuntimeError("boom")
         assert history.get_record("t4") is None
 
     def test_same_id_merges_earliest_before_latest_after(self, populated_db):
         duck = populated_db._duck
         with history.recording("t5", label="x", method="m"):
-            duck._execute("INSERT INTO _node_config VALUES ('m', '1')")
+            duck.execute("INSERT INTO _node_config VALUES ('m', '1')")
         with history.recording("t5", label="x", method="m"):
-            duck._execute("UPDATE _node_config SET config = '2' WHERE node_id = 'm'")
+            duck.execute("UPDATE _node_config SET config = '2' WHERE node_id = 'm'")
         record = history.get_record("t5")
         assert record.rows["_node_config"][("m",)] == (None, ("m", "2"))
         assert history.undo("t5")["status"] == "ok"
-        assert duck._fetchall("SELECT * FROM _node_config WHERE node_id = 'm'") == []
+        assert duck.fetchall("SELECT * FROM _node_config WHERE node_id = 'm'") == []
 
     def test_records_are_bounded(self, populated_db, monkeypatch):
         monkeypatch.setattr(history, "MAX_RECORDS", 3)
@@ -475,7 +475,7 @@ def test_record_json_round_trip_keeps_types():
 class TestRecentChanges:
     def _edit(self, db, cid, surface="page"):
         with history.recording(cid, label=f"L{cid}", method="m", surface=surface):
-            db._duck._execute(f"INSERT INTO _node_config VALUES ('{cid}', '{{}}')")
+            db._duck.execute(f"INSERT INTO _node_config VALUES ('{cid}', '{{}}')")
 
     def test_applied_steps_come_back_in_order_and_undone_ones_as_redo(self, populated_db):
         for cid in ("r1", "r2", "r3"):

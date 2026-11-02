@@ -5,7 +5,7 @@ mode), what happens when records in a batch disagree on shape, and a subtle
 length-1-array normalization that must be kept symmetric between two functions.
 
 Relevant code:
-- `sciduckdb/src/sciduckdb/sciduckdb.py`: `infer_data_columns`,
+- `sciduckdb/src/sciduckdb/codec.py`: `infer_data_columns`,
   `_python_to_storage`, `value_to_storage_row`, `_storage_signature`,
   `record_schema_mismatch`
 - `scidb/src/scidb/database.py`: `save_batch`

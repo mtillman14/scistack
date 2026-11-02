@@ -2529,12 +2529,12 @@ class TestDeriveTargetForNode:
         from scistack_gui.services.execution_service import run_pipeline
 
         db = get_db()
-        n_inv_before = db._duck._fetchall("SELECT COUNT(*) FROM _invocation")[0][0]
+        n_inv_before = db._duck.fetchall("SELECT COUNT(*) FROM _invocation")[0][0]
 
         result = run_pipeline(db, "main", mode="until", target="bandpass_filter")
 
         assert result["ok"] is True
-        n_inv_after = db._duck._fetchall("SELECT COUNT(*) FROM _invocation")[0][0]
+        n_inv_after = db._duck.fetchall("SELECT COUNT(*) FROM _invocation")[0][0]
         assert n_inv_after == n_inv_before  # all combos skipped
 
     def test_run_endpoint_validation(self, client):

@@ -227,7 +227,7 @@ class TestAdoption:
 
     def test_adoption_writes_an_audit_event(self, client, populated_db):
         _graph(client)
-        rows = populated_db._duck._fetchall(
+        rows = populated_db._duck.fetchall(
             "SELECT method, state FROM _canvas_change WHERE method = 'adopt'"
         )
         assert rows and rows[0][1] == "event"

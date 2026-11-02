@@ -114,7 +114,7 @@ def test_fresh_database_has_no_who_columns_and_stores_no_identity(db):
     for_each(_double, {"x": IdentityRaw}, [IdentityOut], subject=["S01"])
     exclude_schema("identity test", db=db, subject="S02")
 
-    columns = db._duck._fetchall(
+    columns = db._duck.fetchall(
         "SELECT table_name, column_name FROM information_schema.columns"
     )
     tables = sorted({t for t, _ in columns})
@@ -127,7 +127,7 @@ def test_fresh_database_has_no_who_columns_and_stores_no_identity(db):
     for table in tables:
         text_cols = [
             c
-            for t, c, dtype in db._duck._fetchall(
+            for t, c, dtype in db._duck.fetchall(
                 "SELECT table_name, column_name, data_type "
                 "FROM information_schema.columns WHERE table_name = ?",
                 [table],
@@ -135,7 +135,7 @@ def test_fresh_database_has_no_who_columns_and_stores_no_identity(db):
             if "CHAR" in dtype.upper() or dtype.upper() in ("TEXT", "STRING")
         ]
         for col in text_cols:
-            n = db._duck._fetchone(
+            n = db._duck.fetchone(
                 f'SELECT COUNT(*) FROM "{table}" WHERE CAST("{col}" AS VARCHAR) LIKE ?',
                 [f"%{SENTINEL}%"],
             )[0]

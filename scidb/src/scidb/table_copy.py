@@ -26,7 +26,7 @@ TABLES_FILE = "tables.json"
 
 
 def _ddl(duck, name: str) -> "str | None":
-    row = duck._fetchone(
+    row = duck.fetchone(
         "SELECT sql FROM duckdb_tables() WHERE schema_name = 'main' AND table_name = ?",
         [name],
     )
@@ -34,7 +34,7 @@ def _ddl(duck, name: str) -> "str | None":
 
 
 def _view_ddl(duck, name: str) -> "str | None":
-    row = duck._fetchone(
+    row = duck.fetchone(
         "SELECT sql FROM duckdb_views() WHERE schema_name = 'main' AND view_name = ?",
         [name],
     )
@@ -44,7 +44,7 @@ def _view_ddl(duck, name: str) -> "str | None":
 def _columns(duck, name: str) -> list[str]:
     return [
         r[0]
-        for r in duck._fetchall(
+        for r in duck.fetchall(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_name = ? ORDER BY ordinal_position",
             [name],
@@ -68,9 +68,9 @@ def dump(duck, tables: list[str], views: "list[str] | None" = None) -> "dict[str
             if ddl is None:
                 continue
             path = Path(tmp) / f"{name}.parquet"
-            duck._execute(f"COPY (SELECT * FROM {_q(name)}) TO '{path.as_posix()}' (FORMAT PARQUET)")
+            duck.execute(f"COPY (SELECT * FROM {_q(name)}) TO '{path.as_posix()}' (FORMAT PARQUET)")
             files[f"{name}.parquet"] = path.read_bytes()
-            count = duck._fetchone(f"SELECT count(*) FROM {_q(name)}")[0]
+            count = duck.fetchone(f"SELECT count(*) FROM {_q(name)}")[0]
             spec["tables"][name] = {"ddl": ddl, "rows": count}
     for name in views or []:
         ddl = _view_ddl(duck, name)
@@ -94,16 +94,16 @@ def load(duck, files: "dict[str, bytes]") -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         for name, info in spec.get("tables", {}).items():
             if _ddl(duck, name) is None:
-                duck._execute(info["ddl"])
+                duck.execute(info["ddl"])
             else:
-                duck._execute(f"DELETE FROM {_q(name)}")
+                duck.execute(f"DELETE FROM {_q(name)}")
             path = Path(tmp) / f"{name}.parquet"
             path.write_bytes(files[f"{name}.parquet"])
             src = path.as_posix()
             # Top-level columns only (parquet_schema() would also list nested
             # list/struct fields, which can share a name with a real column).
             bundle_cols = [
-                r[0] for r in duck._fetchall(f"DESCRIBE SELECT * FROM read_parquet('{src}')")
+                r[0] for r in duck.fetchall(f"DESCRIBE SELECT * FROM read_parquet('{src}')")
             ]
             target_cols = _columns(duck, name)
             shared = [c for c in bundle_cols if c in target_cols]
@@ -111,12 +111,12 @@ def load(duck, files: "dict[str, bytes]") -> dict:
             if dropped:
                 out["dropped_columns"][name] = dropped
             cols = ", ".join(_q(c) for c in shared)
-            duck._execute(
+            duck.execute(
                 f"INSERT INTO {_q(name)} ({cols}) SELECT {cols} FROM read_parquet('{src}')"
             )
-            out["tables"][name] = duck._fetchone(f"SELECT count(*) FROM {_q(name)}")[0]
+            out["tables"][name] = duck.fetchone(f"SELECT count(*) FROM {_q(name)}")[0]
     for name, ddl in spec.get("views", {}).items():
-        duck._execute(ddl.replace("CREATE VIEW", "CREATE OR REPLACE VIEW", 1))
+        duck.execute(ddl.replace("CREATE VIEW", "CREATE OR REPLACE VIEW", 1))
         out["views"].append(name)
     Log.info(
         f"[table_copy] load: {len(out['tables'])} table(s), "

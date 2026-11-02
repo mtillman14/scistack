@@ -97,7 +97,7 @@ def record_direct_save(
         input_edges.append((save_inv_id, str(name), crid, None))
 
     con = duck.con
-    duck._bulk_insert(
+    duck.bulk_insert(
         "_record",
         (
             "record_id",
@@ -111,7 +111,7 @@ def record_direct_save(
         entity_rows,
         conflict_cols=["record_id"],
     )
-    duck._bulk_insert(
+    duck.bulk_insert(
         "_constant",
         ("record_id", "value_repr", "value_type", "content_hash"),
         constant_rows,
@@ -123,7 +123,7 @@ def record_direct_save(
         "VALUES (?, ?, ?, ?, ?) ON CONFLICT (invocation_id) DO NOTHING",
         [save_inv_id, SAVE_FUNCTION_NAME, "", [], False],
     )
-    duck._bulk_insert(
+    duck.bulk_insert(
         "_invocation_input",
         ("invocation_id", "param_name", "input_record_id", "selector"),
         input_edges,
@@ -372,7 +372,7 @@ def _log_moved_path_inputs(duck, pathinput_spec_rows: dict[str, str]) -> None:
 
     ids = list(pathinput_spec_rows)
     stored = dict(
-        duck._fetchall(
+        duck.fetchall(
             f"SELECT record_id, value_repr FROM _constant WHERE record_id IN "
             f"({', '.join(['?'] * len(ids))})",
             ids,
@@ -515,7 +515,7 @@ def _fetch_record_meta(duck, rids: list[str]) -> dict[str, dict]:
     if not uniq:
         return {}
     placeholders = ", ".join(["?"] * len(uniq))
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         f"""
         SELECT r.record_id, r.content_hash, r.schema_id, r.schema_version,
                MAX(rs.timestamp) AS timestamp
@@ -842,7 +842,7 @@ def record_run(
         # DO NOTHING no-op).
         if inv_id not in seeded_invs:
             seeded_invs.add(inv_id)
-            for _onum, _orid in duck._fetchall(
+            for _onum, _orid in duck.fetchall(
                 "SELECT output_num, output_record_id FROM _invocation_output "
                 "WHERE invocation_id = ?",
                 [inv_id],
@@ -1148,7 +1148,7 @@ def _write_glue_nodes(
     schema_by_rid: dict[str, Any] = {}
     if source_rids:
         placeholders = ", ".join(["?"] * len(source_rids))
-        for rid, sid in duck._fetchall(
+        for rid, sid in duck.fetchall(
             f"SELECT record_id, schema_id FROM _record "
             f"WHERE record_id IN ({placeholders})",
             source_rids,
@@ -1226,12 +1226,12 @@ def _commit_graph(
     # Re-entrant: inside a for_each save this joins the call's one
     # transaction, so the graph commits with the data rows it describes.
     with duck.transaction(f"record_run({run_id})"):
-        # Bulk vectorized inserts (see SciDuck._bulk_insert): per-row executemany
+        # Bulk vectorized inserts (see SciDuck.bulk_insert): per-row executemany
         # against these PK/composite-PK tables scaled to ~hundreds of seconds for
         # a for_each over thousands of records.
         _timed(
             "3a_record",
-            lambda: duck._bulk_insert(
+            lambda: duck.bulk_insert(
                 "_record",
                 (
                     "record_id",
@@ -1248,7 +1248,7 @@ def _commit_graph(
         )
         _timed(
             "3b_constant",
-            lambda: duck._bulk_insert(
+            lambda: duck.bulk_insert(
                 "_constant",
                 ("record_id", "value_repr", "value_type", "content_hash"),
                 constant_rows.values(),
@@ -1261,7 +1261,7 @@ def _commit_graph(
         if pathinput_spec_rows:
             _timed(
                 "3b_pathinput_spec",
-                lambda: duck._bulk_update(
+                lambda: duck.bulk_update(
                     "_constant",
                     ("record_id",),
                     ("value_repr",),
@@ -1270,7 +1270,7 @@ def _commit_graph(
             )
         _timed(
             "3c_invocation",
-            lambda: duck._bulk_insert(
+            lambda: duck.bulk_insert(
                 "_invocation",
                 (
                     "invocation_id",
@@ -1288,7 +1288,7 @@ def _commit_graph(
         )
         _timed(
             "3d_invocation_input",
-            lambda: duck._bulk_insert(
+            lambda: duck.bulk_insert(
                 "_invocation_input",
                 (
                     "invocation_id",
@@ -1310,7 +1310,7 @@ def _commit_graph(
         if declared_edges:
             _timed(
                 "declared_names",
-                lambda: duck._bulk_update(
+                lambda: duck.bulk_update(
                     "_invocation_input",
                     ("invocation_id", "param_name", "input_record_id"),
                     ("declared_name",),
@@ -1331,7 +1331,7 @@ def _commit_graph(
             _ph = ", ".join(["?"] * len(_inv_list))
             _existing = {
                 (row[0], row[1]): row[2]
-                for row in duck._fetchall(
+                for row in duck.fetchall(
                     f"SELECT invocation_id, output_num, output_record_id "
                     f"FROM _invocation_output WHERE invocation_id IN ({_ph})",
                     _inv_list,
@@ -1357,7 +1357,7 @@ def _commit_graph(
 
         _timed(
             "3e_invocation_output",
-            lambda: duck._bulk_insert(
+            lambda: duck.bulk_insert(
                 "_invocation_output",
                 ("invocation_id", "output_num", "output_record_id"),
                 [(inv, onum, rid) for (inv, onum), rid in run_output_edges.items()],
@@ -1401,7 +1401,7 @@ def _commit_graph(
             )
         _timed(
             "3f_run_invocation",
-            lambda: duck._bulk_insert(
+            lambda: duck.bulk_insert(
                 "_run_invocation",
                 ("run_id", "invocation_id"),
                 [(run_id, inv) for inv in run_inv_ids],

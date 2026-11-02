@@ -1443,7 +1443,7 @@ class DatabaseManager:
         # Registered types table (remains in DuckDB for data type discovery)
         # Note: Only type_name is unique (PRIMARY KEY). table_name is not unique
         # to avoid DuckDB's ON CONFLICT ambiguity with multiple unique constraints.
-        self._duck._execute("""
+        self._duck.execute("""
             CREATE TABLE IF NOT EXISTS _registered_types (
                 type_name VARCHAR PRIMARY KEY,
                 table_name VARCHAR NOT NULL,
@@ -1464,7 +1464,7 @@ class DatabaseManager:
         inserted ``ON CONFLICT DO NOTHING`` so its ``created_at`` is frozen at the
         first save and cannot track re-saves).
         """
-        self._duck._execute("""
+        self._duck.execute("""
             CREATE TABLE IF NOT EXISTS _record_save (
                 record_id VARCHAR NOT NULL,
                 timestamp VARCHAR NOT NULL,
@@ -1539,7 +1539,7 @@ class DatabaseManager:
         here: when this save turns a still-empty column into a datetime one,
         ``_reconcile_column_types`` adds the companion.
         """
-        if not self._duck._table_exists(table_name):
+        if not self._duck.table_exists(table_name):
             return
         stored_types = self.stored_data_column_types(table_name)
         existing = list(stored_types)
@@ -1562,7 +1562,7 @@ class DatabaseManager:
             return
         added = [c for c in new if c not in set(existing)]
         removed = [c for c in existing if c not in set(new)]
-        n_existing = self._duck._fetchall(
+        n_existing = self._duck.fetchall(
             f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
         )[0][0]
         type_name = variable_class.__name__
@@ -1571,10 +1571,10 @@ class DatabaseManager:
                 f"[save] {type_name}: its table is empty, so it is rebuilt with "
                 f"this save's columns ({len(added)} new, {len(removed)} dropped)"
             )
-            self._duck._execute(
+            self._duck.execute(
                 f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
             )
-            self._duck._execute(f'DROP TABLE "{table_name}"')
+            self._duck.execute(f'DROP TABLE "{table_name}"')
             return
         from .exceptions import ColumnSetChangedError
 
@@ -1592,7 +1592,7 @@ class DatabaseManager:
         table_name = variable_class.table_name()
         view_name = variable_class.view_name()
         schema_cols = ", ".join(f's."{col}"' for col in self.dataset_schema_keys)
-        self._duck._execute(f"""
+        self._duck.execute(f"""
             CREATE OR REPLACE VIEW "{view_name}" AS
             SELECT
                 t.*,
@@ -1649,7 +1649,7 @@ class DatabaseManager:
         Log.debug(
             f"_save_record_event: record_id={record_id[:12]}, timestamp={timestamp}"
         )
-        self._duck._execute(
+        self._duck.execute(
             """
             INSERT INTO _record_save (record_id, timestamp)
             VALUES (?, ?)
@@ -1683,7 +1683,7 @@ class DatabaseManager:
         # New schema rows can change a key's numeric/string answer.
         self._forget_schema_key_kinds()
         schema_id = (
-            self._duck._get_or_create_schema_id(schema_level, schema_keys)
+            self._duck.get_or_create_schema_id(schema_level, schema_keys)
             if schema_level is not None and schema_keys
             else 0
         )
@@ -1710,7 +1710,7 @@ class DatabaseManager:
             )
         else:
             dtype_json = json.dumps({"custom": True})
-        self._duck._execute(
+        self._duck.execute(
             "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
             "VALUES (?, ?, ?, ?) "
             "ON CONFLICT (variable_name) DO UPDATE SET dtype = excluded.dtype",
@@ -1735,11 +1735,11 @@ class DatabaseManager:
         stored order (``record_id`` excluded); ``{}`` when it does not exist.
         The one reader of the stored columns (``stored_data_columns`` is its
         key view)."""
-        if not self._duck._table_exists(table_name):
+        if not self._duck.table_exists(table_name):
             return {}
         return {
             row[0]: row[1]
-            for row in self._duck._fetchall(
+            for row in self._duck.fetchall(
                 "SELECT column_name, data_type FROM information_schema.columns "
                 "WHERE table_name = ? AND column_name <> 'record_id' "
                 "ORDER BY ordinal_position",
@@ -1762,7 +1762,7 @@ class DatabaseManager:
             if ddb_type.strip().upper() in ("DOUBLE", "FLOAT", "REAL"):
                 cond += f' AND NOT isnan("{col}")'
             exprs.append(f"COUNT(*) FILTER (WHERE {cond})")
-        counts = self._duck._fetchall(
+        counts = self._duck.fetchall(
             f'SELECT {", ".join(exprs)} FROM "{table_name}"'
         )[0]
         return {col for col, n in zip(col_types, counts) if n == 0}
@@ -1840,7 +1840,7 @@ class DatabaseManager:
         if conflicts:
             from .exceptions import ColumnTypeChangedError
 
-            n_existing = self._duck._fetchall(
+            n_existing = self._duck.fetchall(
                 f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
             )[0][0]
             err = ColumnTypeChangedError(type_name, conflicts, n_existing)
@@ -1849,12 +1849,11 @@ class DatabaseManager:
 
         if conversions:
             t0 = time.perf_counter()
-            self._duck._execute(
+            self._duck.execute(
                 f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
             )
             try:
-                self._duck._begin()
-                try:
+                with self._duck.transaction("row-list conversion"):
                     for col, elem, from_rl in conversions:
                         convert_column_to_row_list(
                             self._duck, table_name, col, elem, from_row_list=from_rl
@@ -1865,14 +1864,10 @@ class DatabaseManager:
                             **stored_metas,
                             **{c: row_list_meta(e) for c, e, _ in conversions},
                         }
-                        self._duck._execute(
+                        self._duck.execute(
                             "UPDATE _variables SET dtype = ? WHERE variable_name = ?",
                             [json.dumps(updated), type_name],
                         )
-                    self._duck._commit()
-                except Exception:
-                    self._duck._rollback()
-                    raise
             finally:
                 self._create_variable_view(variable_class)
             Log.info(
@@ -1975,7 +1970,7 @@ class DatabaseManager:
         if conflicts:
             from .exceptions import ColumnTypeChangedError
 
-            n_existing = self._duck._fetchall(
+            n_existing = self._duck.fetchall(
                 f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
             )[0][0]
             err = ColumnTypeChangedError(type_name, conflicts, n_existing)
@@ -1983,12 +1978,12 @@ class DatabaseManager:
             raise err
 
         if alters:
-            self._duck._execute(
+            self._duck.execute(
                 f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
             )
             for col, new_type, was_empty in alters:
                 using = f" USING CAST(NULL AS {new_type})" if was_empty else ""
-                self._duck._execute(
+                self._duck.execute(
                     f'ALTER TABLE "{table_name}" ALTER COLUMN "{col}" '
                     f"SET DATA TYPE {new_type}{using}"
                 )
@@ -2011,11 +2006,11 @@ class DatabaseManager:
         # column has had one since its first save.
         missing_tz = [c for c in tz_companions(merged_meta) if c not in stored_types]
         if missing_tz:
-            self._duck._execute(
+            self._duck.execute(
                 f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
             )
             for comp in missing_tz:
-                self._duck._execute(
+                self._duck.execute(
                     f'ALTER TABLE "{table_name}" ADD COLUMN "{comp}" VARCHAR'
                 )
             self._create_variable_view(variable_class)
@@ -2046,7 +2041,7 @@ class DatabaseManager:
         ``save_batch`` so both paths store a custom-serialized variable alike.
         """
         self._check_column_set(table_name, variable_class, list(df.columns))
-        if self._duck._table_exists(table_name):
+        if self._duck.table_exists(table_name):
             return
         col_defs = []
         for col in df.columns:
@@ -2084,7 +2079,7 @@ class DatabaseManager:
             col_defs.append(f'"{col}" {ddb_type}')
 
         data_cols_sql = ", ".join(col_defs)
-        self._duck._execute(f"""
+        self._duck.execute(f"""
             CREATE TABLE "{table_name}" (
                 record_id VARCHAR NOT NULL,
                 {data_cols_sql}
@@ -2111,7 +2106,7 @@ class DatabaseManager:
         placeholders = ", ".join(["?"] * len(rids))
         existing = {
             r[0]
-            for r in self._duck._fetchall(
+            for r in self._duck.fetchall(
                 f'SELECT DISTINCT record_id FROM "{table_name}" '
                 f"WHERE record_id IN ({placeholders})",
                 rids,
@@ -2189,7 +2184,7 @@ class DatabaseManager:
         """
         if schema_level is not None and schema_keys:
             self._forget_schema_key_kinds()
-            schema_id = self._duck._get_or_create_schema_id(
+            schema_id = self._duck.get_or_create_schema_id(
                 schema_level, {k: schema_str(v) for k, v in schema_keys.items()}
             )
         else:
@@ -2208,7 +2203,7 @@ class DatabaseManager:
         data_col_types, dtype_meta = self._reconcile_column_types(
             table_name, variable_class, data_col_types, dtype_meta, [data]
         )
-        if not self._duck._table_exists(table_name):
+        if not self._duck.table_exists(table_name):
             data_cols_sql = ", ".join(
                 f'"{col}" {dtype}' for col, dtype in data_col_types.items()
             )
@@ -2217,7 +2212,7 @@ class DatabaseManager:
                 record_id_col = "record_id VARCHAR NOT NULL"
             else:
                 record_id_col = "record_id VARCHAR PRIMARY KEY"
-            self._duck._execute(f'''
+            self._duck.execute(f'''
                 CREATE TABLE "{table_name}" (
                     {record_id_col},
                     {data_cols_sql}
@@ -2228,7 +2223,7 @@ class DatabaseManager:
 
         if is_dataframe:
             # Idempotency: skip all inserts if this record_id already exists.
-            existing_count = self._duck._fetchall(
+            existing_count = self._duck.fetchall(
                 f'SELECT COUNT(*) FROM "{table_name}" WHERE record_id = ?',
                 [record_id],
             )[0][0]
@@ -2237,7 +2232,7 @@ class DatabaseManager:
                 col_str = ", ".join(f'"{c}"' for c in col_names)
                 placeholders = ", ".join(["?"] * len(col_names))
                 for storage_row in dataframe_to_storage_rows(data, dtype_meta):
-                    self._duck._execute(
+                    self._duck.execute(
                         f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders})',
                         [record_id] + storage_row,
                     )
@@ -2253,7 +2248,7 @@ class DatabaseManager:
             col_names = ["record_id"] + list(data_col_types.keys())
             col_str = ", ".join(f'"{c}"' for c in col_names)
             placeholders = ", ".join(["?"] * len(col_names))
-            self._duck._execute(
+            self._duck.execute(
                 f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders}) '
                 f"ON CONFLICT (record_id) DO NOTHING",
                 [record_id] + storage_values,
@@ -2264,7 +2259,7 @@ class DatabaseManager:
 
         # Upsert into _variables (one row per variable)
         effective_level = schema_level or self.dataset_schema_keys[-1]
-        self._duck._execute(
+        self._duck.execute(
             "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
             "VALUES (?, ?, ?, ?) "
             "ON CONFLICT (variable_name) DO UPDATE SET dtype = excluded.dtype",
@@ -2488,7 +2483,7 @@ class DatabaseManager:
                 table_name, variable_class, data_col_types, dtype_meta,
                 [d for d, _ in data_items],
             )
-        if not is_custom and not self._duck._table_exists(table_name):
+        if not is_custom and not self._duck.table_exists(table_name):
             data_cols_sql = ", ".join(
                 f'"{col}" {dtype}' for col, dtype in data_col_types.items()
             )
@@ -2496,7 +2491,7 @@ class DatabaseManager:
                 record_id_col = "record_id VARCHAR NOT NULL"
             else:
                 record_id_col = "record_id VARCHAR PRIMARY KEY"
-            self._duck._execute(f'''
+            self._duck.execute(f'''
                 CREATE TABLE "{table_name}" (
                     {record_id_col},
                     {data_cols_sql}
@@ -2713,7 +2708,7 @@ class DatabaseManager:
                 placeholders_rids = ", ".join(["?"] * len(all_new_rids))
                 existing_rids = {
                     r[0]
-                    for r in self._duck._fetchall(
+                    for r in self._duck.fetchall(
                         f'SELECT DISTINCT record_id FROM "{table_name}" '
                         f"WHERE record_id IN ({placeholders_rids})",
                         all_new_rids,
@@ -2788,9 +2783,9 @@ class DatabaseManager:
 
                 t6b = time.perf_counter()
                 if is_dataframe:
-                    self._duck._bulk_insert(table_name, all_columns, new_data_rows)
+                    self._duck.bulk_insert(table_name, all_columns, new_data_rows)
                 else:
-                    self._duck._bulk_insert(
+                    self._duck.bulk_insert(
                         table_name,
                         all_columns,
                         new_data_rows,
@@ -2806,7 +2801,7 @@ class DatabaseManager:
             # content_hash, schema_version); _record_save keeps only the
             # (record_id, timestamp) save-event columns.
             t6c = time.perf_counter()
-            self._duck._bulk_insert(
+            self._duck.bulk_insert(
                 "_record_save",
                 ["record_id", "timestamp"],
                 [(r[0], r[1]) for r in metadata_rows],
@@ -2831,7 +2826,7 @@ class DatabaseManager:
                 self._infer_schema_level(all_nested[0].get("schema", {}))
                 or self.dataset_schema_keys[-1]
             )
-            self._duck._execute(
+            self._duck.execute(
                 "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
                 "VALUES (?, ?, ?, ?) "
                 "ON CONFLICT (variable_name) DO UPDATE SET dtype = excluded.dtype",
@@ -3084,7 +3079,7 @@ class DatabaseManager:
 
     def _any_records_exist(self, type_name: str) -> bool:
         """Return True if any records of this type have ever been saved."""
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT 1 FROM _record WHERE type = ? LIMIT 1",
             [type_name],
         )
@@ -3151,7 +3146,7 @@ class DatabaseManager:
                 f"{meta_from}"
                 f"WHERE rm.record_id = ? AND r.type = ?{excluded_clause}"
             )
-            df = self._duck._fetchdf(sql, [record_id, type_name])
+            df = self._duck.fetchdf(sql, [record_id, type_name])
             return self._sort_by_schema_keys(df)
 
         # Unrecognized version_id → treat as record_id lookup
@@ -3164,7 +3159,7 @@ class DatabaseManager:
                 f"{meta_from}"
                 f"WHERE rm.record_id = ? AND r.type = ?{excluded_clause}"
             )
-            df = self._duck._fetchdf(sql, [version_id, type_name])
+            df = self._duck.fetchdf(sql, [version_id, type_name])
             return self._sort_by_schema_keys(df)
 
         # By metadata
@@ -3217,7 +3212,7 @@ class DatabaseManager:
             f") SELECT * FROM ranked WHERE rn = 1"
         )
         _t_sql = time.perf_counter()
-        df = self._duck._fetchdf(sql, params)
+        df = self._duck.fetchdf(sql, params)
         t_sql = time.perf_counter() - _t_sql
         Log.debug(
             f"_find_record({type_name}): SQL returned {len(df)} records, version_id={version_id}"
@@ -3592,12 +3587,12 @@ class DatabaseManager:
         schema_version = variable_class.schema_version
 
         # Register in metadata table (skip if already registered)
-        existing = self._duck._fetchall(
+        existing = self._duck.fetchall(
             "SELECT 1 FROM _registered_types WHERE type_name = ?",
             [type_name],
         )
         if not existing:
-            self._duck._execute(
+            self._duck.execute(
                 """
                 INSERT INTO _registered_types (type_name, table_name, schema_version)
                 VALUES (?, ?, ?)
@@ -3621,9 +3616,9 @@ class DatabaseManager:
         .claude/plan-for-columns-groups.md, 2026-10-28).
         """
         table_name = self._ensure_registered(variable_class)
-        if self._duck._table_exists(table_name):
+        if self._duck.table_exists(table_name):
             return False
-        self._duck._execute(
+        self._duck.execute(
             f'CREATE TABLE "{table_name}" (record_id VARCHAR NOT NULL)'
         )
         self._create_variable_view(variable_class)
@@ -3645,7 +3640,7 @@ class DatabaseManager:
             return variable_class.table_name()
 
         # Check database
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT table_name FROM _registered_types WHERE type_name = ?",
             [type_name],
         )
@@ -3771,91 +3766,83 @@ class DatabaseManager:
         # Wrap all writes in a single transaction to avoid repeated
         # WAL checkpoints (each auto-committed statement can trigger a
         # checkpoint/fsync, causing random multi-second stalls).
-        self._duck._begin()
-
         try:
-            schema_keys = nested_metadata.get("schema", {})
-            version_keys = nested_metadata.get("version", {})
-            schema_level = self._infer_schema_level(schema_keys)
-            created_at = datetime.now().isoformat()
+            with self._duck.transaction("save"):
+                schema_keys = nested_metadata.get("schema", {})
+                version_keys = nested_metadata.get("version", {})
+                schema_level = self._infer_schema_level(schema_keys)
+                created_at = datetime.now().isoformat()
 
-            if is_custom:
-                # Custom serialization: the to_db() frame computed for the hash
-                df = custom_df
+                if is_custom:
+                    # Custom serialization: the to_db() frame computed for the hash
+                    df = custom_df
 
-                if index is not None:
-                    index_list = list(index) if not isinstance(index, list) else index
-                    if len(index_list) != len(df):
-                        raise ValueError(
-                            f"Index length ({len(index_list)}) does not match "
-                            f"DataFrame row count ({len(df)})"
-                        )
-                    df.index = index
+                    if index is not None:
+                        index_list = list(index) if not isinstance(index, list) else index
+                        if len(index_list) != len(df):
+                            raise ValueError(
+                                f"Index length ({len(index_list)}) does not match "
+                                f"DataFrame row count ({len(df)})"
+                            )
+                        df.index = index
 
-                schema_id = self._save_columnar(
-                    record_id,
-                    table_name,
-                    type(variable),
-                    df,
-                    schema_level,
-                    schema_keys,
-                    content_hash,
+                    schema_id = self._save_columnar(
+                        record_id,
+                        table_name,
+                        type(variable),
+                        df,
+                        schema_level,
+                        schema_keys,
+                        content_hash,
+                    )
+                else:
+                    # ALL other data: scalars, arrays, lists, dicts, dict-of-arrays,
+                    # and native DataFrames (stored as a single record with array-typed
+                    # columns, e.g. DOUBLE[], BIGINT[], VARCHAR[]).
+                    schema_id = self._save_native(
+                        record_id,
+                        table_name,
+                        type(variable),
+                        variable.data,
+                        content_hash,
+                        schema_level=schema_level,
+                        schema_keys=schema_keys,
+                    )
+
+                self._save_record_event(
+                    record_id=record_id,
+                    timestamp=created_at,
                 )
-            else:
-                # ALL other data: scalars, arrays, lists, dicts, dict-of-arrays,
-                # and native DataFrames (stored as a single record with array-typed
-                # columns, e.g. DOUBLE[], BIGINT[], VARCHAR[]).
-                schema_id = self._save_native(
-                    record_id,
-                    table_name,
-                    type(variable),
-                    variable.data,
-                    content_hash,
-                    schema_level=schema_level,
-                    schema_keys=schema_keys,
+
+                # Mirror into the bipartite entities table (_record). Covers raw /
+                # manually saved records, which have no producing invocation.
+                from .provenance import insert_record_entity
+
+                insert_record_entity(
+                    self._duck,
+                    record_id=record_id,
+                    created_at=created_at,
+                    type_name=type_name,
+                    schema_id=schema_id,
+                    content_hash=content_hash,
+                    schema_version=variable.schema_version,
                 )
 
-            self._save_record_event(
-                record_id=record_id,
-                timestamp=created_at,
-            )
+                # A save carrying non-schema kwargs: anchor those kwargs in the graph
+                # as a synthetic save invocation so they are graph-derivable branch
+                # params.
+                if version_keys:
+                    save_kwargs = {
+                        k: v for k, v in version_keys.items() if not str(k).startswith("__")
+                    }
+                    if save_kwargs:
+                        from .provenance_save import record_direct_save
 
-            # Mirror into the bipartite entities table (_record). Covers raw /
-            # manually saved records, which have no producing invocation.
-            from .provenance import insert_record_entity
-
-            insert_record_entity(
-                self._duck,
-                record_id=record_id,
-                created_at=created_at,
-                type_name=type_name,
-                schema_id=schema_id,
-                content_hash=content_hash,
-                schema_version=variable.schema_version,
-            )
-
-            # A save carrying non-schema kwargs: anchor those kwargs in the graph
-            # as a synthetic save invocation so they are graph-derivable branch
-            # params.
-            if version_keys:
-                save_kwargs = {
-                    k: v for k, v in version_keys.items() if not str(k).startswith("__")
-                }
-                if save_kwargs:
-                    from .provenance_save import record_direct_save
-
-                    record_direct_save(self._duck, record_id, save_kwargs, created_at)
-
-            self._duck._commit()
-            Log.debug(f"save({type_name}): transaction committed")
-
+                        record_direct_save(self._duck, record_id, save_kwargs, created_at)
         except Exception as e:
             Log.error(f"save({type_name}): transaction rolled back: {e}")
-            try:
-                self._duck._rollback()
-            except Exception:
-                pass  # Connection may already be closed
             raise
+        Log.debug(f"save({type_name}): transaction committed")
 
         return record_id
 
@@ -4376,7 +4363,7 @@ class DatabaseManager:
         Read-only accessor; the same query is inlined at three other call
         sites that predate it.
         """
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT dtype FROM _variables WHERE variable_name = ?",
             [variable_name],
         )
@@ -4437,7 +4424,7 @@ class DatabaseManager:
         column): they are metadata, not data (cleanup-audit F28).
         """
         type_name = variable_class.__name__
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT dtype FROM _variables WHERE variable_name = ?", [type_name]
         )
         if not rows:
@@ -4535,7 +4522,7 @@ class DatabaseManager:
         table_name = type_name + "_data"
 
         # Look up dtype metadata — needed for dispatch and deserialisation.
-        dtype_rows = self._duck._fetchall(
+        dtype_rows = self._duck.fetchall(
             "SELECT dtype FROM _variables WHERE variable_name = ?",
             [type_name],
         )
@@ -4655,7 +4642,7 @@ class DatabaseManager:
                 f"WHERE record_id IN ({placeholders})"
             )
             _t = time.perf_counter()
-            chunk_df = self._duck._fetchdf(sql, chunk)
+            chunk_df = self._duck.fetchdf(sql, chunk)
             t_sql += time.perf_counter() - _t
             if not chunk_df.empty:
                 chunks.append(chunk_df)
@@ -4790,7 +4777,7 @@ class DatabaseManager:
 
         # 1. Get dtype from _variables (one row per variable)
         _t_dtype = time.perf_counter()
-        dtype_rows = self._duck._fetchall(
+        dtype_rows = self._duck.fetchall(
             "SELECT dtype FROM _variables WHERE variable_name = ?",
             [variable_class.__name__],
         )
@@ -4822,7 +4809,7 @@ class DatabaseManager:
                     f'SELECT * FROM "{table_name}" WHERE record_id IN ({placeholders})'
                 )
                 _t = time.perf_counter()
-                chunk_df = self._duck._fetchdf(sql, chunk)
+                chunk_df = self._duck.fetchdf(sql, chunk)
                 t_chunk_sql += time.perf_counter() - _t
 
                 if len(chunk_df) > 0:
@@ -4850,7 +4837,7 @@ class DatabaseManager:
                     f"WHERE record_id IN ({placeholders})"
                 )
                 _t = time.perf_counter()
-                chunk_df = self._duck._fetchdf(sql, chunk)
+                chunk_df = self._duck.fetchdf(sql, chunk)
                 t_chunk_sql += time.perf_counter() - _t
                 merge_tz_columns(chunk_df, dtype_meta, where=f"load({type_name})")
 
@@ -5114,7 +5101,7 @@ class DatabaseManager:
         """
         if isinstance(record_id_or_type, str):
             # Direct record_id provided - exclude just that one
-            self._duck._execute(
+            self._duck.execute(
                 "UPDATE _record SET excluded = TRUE WHERE record_id = ?",
                 [record_id_or_type],
             )
@@ -5145,7 +5132,7 @@ class DatabaseManager:
         # Exclude all matching records
         record_ids = records["record_id"].tolist()
         for rid in record_ids:
-            self._duck._execute(
+            self._duck.execute(
                 "UPDATE _record SET excluded = TRUE WHERE record_id = ?",
                 [rid],
             )
@@ -5177,7 +5164,7 @@ class DatabaseManager:
         """
         if isinstance(record_id_or_type, str):
             # Direct record_id provided - include just that one
-            self._duck._execute(
+            self._duck.execute(
                 "UPDATE _record SET excluded = FALSE WHERE record_id = ?",
                 [record_id_or_type],
             )
@@ -5208,7 +5195,7 @@ class DatabaseManager:
         # Re-include all matching records
         record_ids = records["record_id"].tolist()
         for rid in record_ids:
-            self._duck._execute(
+            self._duck.execute(
                 "UPDATE _record SET excluded = FALSE WHERE record_id = ?",
                 [rid],
             )
@@ -5264,7 +5251,7 @@ class DatabaseManager:
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
 
         # Output records produced by an invocation at this schema location.
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             f"SELECT DISTINCT io.output_record_id, r.type "
             f"FROM _invocation_output io "
             f"JOIN _record r ON r.record_id = io.output_record_id "
@@ -5445,7 +5432,7 @@ class DatabaseManager:
             ph = ", ".join("?" for _ in types)
             counts = {
                 t: n
-                for t, n in self._duck._fetchall(
+                for t, n in self._duck.fetchall(
                     "SELECT type, COUNT(DISTINCT record_id) FROM _record "  # noqa: S608
                     f"WHERE type IN ({ph}) AND COALESCE(excluded, FALSE) = FALSE "
                     "GROUP BY type",
@@ -5634,7 +5621,7 @@ class DatabaseManager:
         rows are written together, so *invocation present ⇒ outputs present*.
         ``skip_computed`` and node-completeness both use this.
         """
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT 1 FROM _invocation WHERE invocation_id = ? LIMIT 1",
             [invocation_id],
         )
@@ -5694,7 +5681,7 @@ class DatabaseManager:
         the record no longer exists.
         """
 
-        rows = self._duck._fetchall(
+        rows = self._duck.fetchall(
             "SELECT type, schema_id FROM _record WHERE record_id = ? LIMIT 1",
             [used_record_id],
         )
@@ -5708,7 +5695,7 @@ class DatabaseManager:
 
         # Candidates at the same (variable_name, schema_id), newest first. Recency
         # comes from the save-event log; type/schema/excluded from the _record entity.
-        candidates = self._duck._fetchall(
+        candidates = self._duck.fetchall(
             "SELECT rm.record_id FROM _record_save rm "
             "JOIN _record r ON r.record_id = rm.record_id "
             "WHERE r.type = ? AND r.schema_id IS NOT DISTINCT FROM ? "

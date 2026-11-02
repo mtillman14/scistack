@@ -3,11 +3,11 @@
 Background (2026-08-25): ``_resolve_colname_from_db`` queried the
 ``_variables`` table via::
 
-    row = resolved_db._execute(...).fetchone()   # inside try/except Exception
+    row = resolved_db.execute(...).fetchone()   # inside try/except Exception
 
 Two defects in one line:
 
-1. ``resolved_db`` is a ``DatabaseManager``, which defines no ``_execute``
+1. ``resolved_db`` is a ``DatabaseManager``, which defines no ``execute``
    (the method lives on ``SciDuck``, reached via ``._duck``) and has no
    ``__getattr__`` delegation — so this raised ``AttributeError`` every time.
 2. The bare ``except Exception: row = None`` swallowed it, silently turning
@@ -15,7 +15,7 @@ Two defects in one line:
    below was therefore dead code and the ``view_name()`` fallback was the only
    path ever taken.
 
-Separately, ``_execute(...).fetchone()`` fetches after the lock is released
+Separately, ``execute(...).fetchone()`` fetches after the lock is released
 — see sciduckdb/tests/test_fetch_locking.py.
 """
 
@@ -73,7 +73,7 @@ class TestResolveColnameFromDb:
         """
 
         class Boom:
-            def _fetchone(self, *a, **kw):
+            def fetchone(self, *a, **kw):
                 raise RuntimeError("connection exploded")
 
             dataset_schema_keys = ["subject", "trial"]

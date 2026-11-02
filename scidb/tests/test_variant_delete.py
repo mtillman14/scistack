@@ -107,7 +107,7 @@ def _target(db, low_hz, variable="VdFiltered"):
 
 
 def _count(db, table, where="", params=None):
-    return db._duck._fetchone(f'SELECT COUNT(*) FROM "{table}" {where}', params or [])[0]
+    return db._duck.fetchone(f'SELECT COUNT(*) FROM "{table}" {where}', params or [])[0]
 
 
 def _snapshot(db):
@@ -122,7 +122,7 @@ def _snapshot(db):
 def _low_hz_values(db, variable):
     from scidb.provenance_query import branch_params_batch
 
-    rids = [r[0] for r in db._duck._fetchall(
+    rids = [r[0] for r in db._duck.fetchall(
         "SELECT record_id FROM _record WHERE type = ?", [variable]
     )]
     return sorted(bp.get("vd_bandpass.low_hz") for bp in branch_params_batch(db._duck, rids).values())
@@ -178,7 +178,7 @@ class TestDelete:
         assert after["VdRaw_data"] == before["VdRaw_data"]
         # The low_hz=10 bandpass run produced only deleted records: gone. The
         # detect run also produced the surviving low_hz=20 steps: kept.
-        runs = {r[0] for r in db._duck._fetchall("SELECT function_name FROM _run")}
+        runs = {r[0] for r in db._duck.fetchall("SELECT function_name FROM _run")}
         assert runs == {"vd_bandpass", "vd_detect"}
         assert after["_run"] == before["_run"] - 1
 
@@ -204,7 +204,7 @@ class TestRecordTarget:
         assert [loc["subject"] for loc in left.locations] == ["01"]
 
     def test_a_record_of_another_variable_is_refused(self, db):
-        raw = db._duck._fetchone("SELECT record_id FROM _record WHERE type = 'VdRaw'")[0]
+        raw = db._duck.fetchone("SELECT record_id FROM _record WHERE type = 'VdRaw'")[0]
         with pytest.raises(ValueError, match="not VdFiltered"):
             delete_plan(db, [{"variable": "VdFiltered", "record_ids": [raw]}])
 

@@ -149,7 +149,7 @@ def row_list_to_storage(value: Any, meta: dict) -> "list | None":
     """The stored form of one cell of a row_list column: a scalar -> ``[v]``,
     a list -> itself; missing elements -> NULL. A missing scalar cell is a
     NULL cell (loads back as missing)."""
-    from .sciduckdb import _str_to_storage
+    from .codec import _str_to_storage
 
     if not isinstance(value, (list, tuple, np.ndarray)) and _is_missing(
         _python_scalar(value)
@@ -235,7 +235,7 @@ def _elem_type(ddb_type: str) -> str:
     """A scalar DuckDB type as a row list's element type: every integer type
     is BIGINT and every float or decimal DOUBLE (the only numeric elements a
     row list has), so a stored INTEGER or FLOAT column can still become one."""
-    from .sciduckdb import _FLOAT_DDB_TYPES, _INTEGER_DDB_TYPES
+    from .codec import _FLOAT_DDB_TYPES, _INTEGER_DDB_TYPES
 
     t = ddb_type.strip().upper()
     if t in _INTEGER_DDB_TYPES:
@@ -268,7 +268,7 @@ def row_list_change(
     The element types are judged by sciduckdb's ``column_type_change``
     (same / widen / as_text / refuse), exactly as for scalar columns.
     """
-    from .sciduckdb import column_type_change
+    from .codec import column_type_change
 
     s_rl = is_row_list_meta(stored_meta)
     i_rl = is_row_list_meta(in_meta)
@@ -310,7 +310,7 @@ def convert_column_to_row_list(
     Returns how many stored rows held a value.
     """
     t0 = time.perf_counter()
-    n = duck._fetchall(f'SELECT COUNT("{col}") FROM "{table}"')[0][0]
+    n = duck.fetchall(f'SELECT COUNT("{col}") FROM "{table}"')[0][0]
     if from_row_list:
         using = f'CAST("{col}" AS {elem_type}[])'
     else:
@@ -318,7 +318,7 @@ def convert_column_to_row_list(
             f'CASE WHEN "{col}" IS NULL THEN NULL '
             f'ELSE [CAST("{col}" AS {elem_type})] END'
         )
-    duck._execute(
+    duck.execute(
         f'ALTER TABLE "{table}" ALTER COLUMN "{col}" '
         f"SET DATA TYPE {elem_type}[] USING {using}"
     )

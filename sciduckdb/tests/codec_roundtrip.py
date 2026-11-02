@@ -36,7 +36,7 @@ def store(duck: SciDuck, table: str, value: Any) -> dict:
     """
     col_types, dtype_meta = infer_data_columns(value)
     cols_sql = ", ".join(f'"{c}" {t}' for c, t in col_types.items())
-    duck._execute(f'CREATE TABLE "{table}" ({cols_sql})')
+    duck.execute(f'CREATE TABLE "{table}" ({cols_sql})')
     col_str = ", ".join(f'"{c}"' for c in col_types)
     placeholders = ", ".join(["?"] * len(col_types))
     insert = f'INSERT INTO "{table}" ({col_str}) VALUES ({placeholders})'
@@ -45,8 +45,8 @@ def store(duck: SciDuck, table: str, value: Any) -> dict:
     else:
         rows = [value_to_storage_row(value, dtype_meta)]
     for row in rows:
-        duck._execute(insert, row)
-    duck._execute(
+        duck.execute(insert, row)
+    duck.execute(
         "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
         "VALUES (?, ?, ?, '')",
         [table, duck.dataset_schema[-1], json.dumps(dtype_meta)],
@@ -57,7 +57,7 @@ def store(duck: SciDuck, table: str, value: Any) -> dict:
 def fetch(duck: SciDuck, table: str, dtype_meta: dict) -> Any:
     """Read the value :func:`store` wrote, restored to its Python types."""
     select = ", ".join(f'"{c}"' for c in storage_column_names(dtype_meta))
-    df = duck._fetchdf(f'SELECT {select} FROM "{table}"')
+    df = duck.fetchdf(f'SELECT {select} FROM "{table}"')
     merge_tz_columns(df, dtype_meta, where=f"fetch({table})")
     mode = dtype_meta.get("mode", "single_column")
     columns_meta = dtype_meta.get("columns", {})
@@ -89,7 +89,7 @@ def roundtrip(duck: SciDuck, table: str, value: Any) -> Any:
 
 def column_types(duck: SciDuck, table: str) -> dict:
     """``{column: DuckDB type}`` of ``table``."""
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT column_name, data_type FROM information_schema.columns "
         "WHERE table_name = ? ORDER BY ordinal_position",
         [table],

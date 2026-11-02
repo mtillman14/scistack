@@ -85,11 +85,11 @@ def _live_side(db) -> _Side:
     duck = db._duck
 
     def table(sql, params=None):
-        cols, rows = duck._fetch_table(sql, params) if params else duck._fetch_table(sql)
+        cols, rows = duck.fetch_table(sql, params) if params else duck.fetch_table(sql)
         return list(cols), [tuple(r) for r in rows]
 
     def has(name):
-        return bool(duck._fetchall(
+        return bool(duck.fetchall(
             "SELECT 1 FROM duckdb_tables() WHERE schema_name = 'main' AND table_name = ?", [name]
         ))
 

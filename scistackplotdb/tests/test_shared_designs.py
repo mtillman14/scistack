@@ -70,7 +70,7 @@ def test_nothing_is_ever_deleted(db):
     link_design(db, PLOT, _spec())
     save_design(db, PLOT, _spec(groups=[], roles={"session": Role.ITERATE, "subject": Role.COLLAPSE,
                                                   "trial": Role.COLLAPSE}))
-    rows = db._duck._fetchall(f"SELECT version FROM {TABLE} ORDER BY version")
+    rows = db._duck.fetchall(f"SELECT version FROM {TABLE} ORDER BY version")
     assert [r[0] for r in rows] == [1, 2]
 
 

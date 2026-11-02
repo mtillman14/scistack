@@ -973,7 +973,7 @@ def fetch_intent_rows(duck, sql: str, params=None) -> list:
     from the canvas for as long as the lock lasted, with no message.
     """
     try:
-        return duck._fetchall(sql, list(params or []))
+        return duck.fetchall(sql, list(params or []))
     except Exception as exc:
         if is_missing_table(exc):
             logger.debug("[intent] store not created yet: %s", exc)
@@ -997,7 +997,7 @@ def is_missing_table(exc: Exception) -> bool:
 
 
 def load_statements_sql(duck, *, aspect: str | None = None) -> list[Statement]:
-    """Read the store through any object with ``_fetchall(sql, params)`` —
+    """Read the store through any object with ``fetchall(sql, params)`` —
     ``[]`` when the table does not exist (a database no GUI has opened);
     any other failure raises (:func:`fetch_intent_rows`)."""
     cols = ", ".join(INTENT_COLUMNS)

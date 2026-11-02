@@ -961,7 +961,7 @@ def _get_latest_record_at_location(db, record_id: str) -> str | None:
     ancestor's location supersedes a pipeline-produced record there even
     though it has no producing invocation.
     """
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT type, schema_id FROM _record WHERE record_id = ? LIMIT 1",
         [record_id],
     )
@@ -969,7 +969,7 @@ def _get_latest_record_at_location(db, record_id: str) -> str | None:
         return None
     vn, sid = rows[0]
     # Recency from the save-event log; type/schema/excluded from the _record entity.
-    latest = db._duck._fetchall(
+    latest = db._duck.fetchall(
         "SELECT rm.record_id FROM _record_save rm "
         "JOIN _record r ON r.record_id = rm.record_id "
         "WHERE r.type = ? AND r.schema_id = ? "

@@ -54,7 +54,7 @@ def _box(**changes) -> PlotSpec:
 
 
 def _stored(db, preset_id: str, version: int) -> dict:
-    row = db._duck._fetchone(
+    row = db._duck.fetchone(
         f"SELECT envelope_json FROM {TABLE} WHERE preset_id = ? AND version = ?",
         [preset_id, version],
     )
@@ -170,7 +170,7 @@ def test_a_damaged_row_still_lists_and_applies_on_defaults(db):
     from scistackplotdb.presets import ensure_table
 
     ensure_table(db)
-    db._duck._execute(
+    db._duck.execute(
         f"INSERT INTO {TABLE} VALUES ('bad1', 'Broken', 1, '2026-01-01', FALSE, 'not json')"
     )
     (info,) = list_presets(db)

@@ -43,10 +43,10 @@ class TestVariantTableCarriesNoPayload:
         the whole point is that the payload columns never enter the SELECT.
         """
         seen: list[str] = []
-        # Both fetch doors: the load query goes through `_fetchdf` since the
+        # Both fetch doors: the load query goes through `fetchdf` since the
         # payload fetch stopped boxing (test_load_fetch.py), and a payload
         # column reaching either one is the regression this guards.
-        for name in ("_fetchall", "_fetchdf"):
+        for name in ("fetchall", "fetchdf"):
             original = getattr(source._db._duck, name)
 
             def spy(sql, params=None, _original=original):

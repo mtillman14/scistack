@@ -36,7 +36,7 @@ def double(x):
 
 def _stored_invocation(db, fn_name):
     """(function_name, function_hash) of the latest invocation for fn_name."""
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT function_name, function_hash FROM _invocation WHERE function_name = ?",
         [fn_name],
     )
@@ -209,7 +209,7 @@ class TestRowSelectionAlignsWithSkippedCombos:
             # ...and it is subject 2's record that the surviving combo reads.
             (subject2_rid,) = [
                 r[0]
-                for r in db._duck._fetchall(
+                for r in db._duck.fetchall(
                     "SELECT r.record_id FROM _record r JOIN _schema s ON s.schema_id = r.schema_id "
                     "WHERE r.type = ? AND s.subject = '2'",
                     ["RawSignal_Align"],

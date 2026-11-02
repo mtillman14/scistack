@@ -1,19 +1,19 @@
-"""SciDuck — A thin DuckDB layer for managing versioned scientific data."""
+"""SciDuck: the codec, the locked connection, and the `_schema` table.
 
-from .sciduckdb import (
-    SciDuck,
-    TransactionRolledBackError,
+Modules: `codec` (values <-> DuckDB columns), `connection` (`DuckConnection`),
+`schema` (`SciDuck`, schema ids), `datetimes`, `row_lists`. This file is the
+facade; import from `sciduckdb`, not from the modules.
+"""
+
+from .connection import DuckConnection, TransactionRolledBackError
+from .schema import SciDuck, schema_keys_from_db
+from .codec import (
     bulk_df_to_storage_rows,
     column_type_change,
     dataframe_to_storage_rows,
-    _flatten_dict,
     infer_data_columns,
-    _infer_duckdb_type,
-    _numpy_dtype_to_duckdb,
-    _python_to_storage,
     record_schema_mismatch,
     restore_types,
-    _storage_signature,
     storage_to_python,
     storage_to_python_column,
     unflatten_dict,
@@ -21,7 +21,6 @@ from .sciduckdb import (
     array_from_storage,
     count_nan_array_elements,
     count_null_list_elements,
-    schema_keys_from_db,
 )
 from .datetimes import (
     DatetimeStorageError,
@@ -46,26 +45,22 @@ from .row_lists import (
 )
 
 __all__ = [
+    "DuckConnection",
     "SciDuck",
     "TransactionRolledBackError",
     "schema_keys_from_db",
     "array_from_storage",
     "count_null_list_elements",
     "count_nan_array_elements",
-    "_infer_duckdb_type",
-    "_numpy_dtype_to_duckdb",
-    "_python_to_storage",
     "restore_types",
     "storage_to_python",
     "storage_to_python_column",
     "infer_data_columns",
     "record_schema_mismatch",
     "column_type_change",
-    "_storage_signature",
     "value_to_storage_row",
     "dataframe_to_storage_rows",
     "bulk_df_to_storage_rows",
-    "_flatten_dict",
     "unflatten_dict",
     "DatetimeStorageError",
     "is_datetime_meta",

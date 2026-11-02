@@ -54,7 +54,7 @@ def _sum(signal):
 
 
 def _schema_id_of(db, record_id):
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT schema_id FROM _record WHERE record_id = ?", [record_id]
     )[0][0]
 
@@ -129,7 +129,7 @@ def test_input_coarser_than_the_iterated_level_records_its_edge(db):
     )
     params = {
         p
-        for (p,) in db._duck._fetchall(
+        for (p,) in db._duck.fetchall(
             "SELECT DISTINCT ii.param_name FROM _invocation_input ii "
             "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
             "WHERE inv.function_name = ?",

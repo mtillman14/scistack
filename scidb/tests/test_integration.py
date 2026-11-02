@@ -186,7 +186,7 @@ class TestIdempotentSaves:
         assert record_id1 == record_id2 == record_id3
 
         # Should only have one unique record_id in database
-        rows = db._duck._fetchall(
+        rows = db._duck.fetchall(
             "SELECT DISTINCT record_id FROM _record WHERE type = 'ScalarValue'"
         )
         assert len(rows) == 1
@@ -426,13 +426,13 @@ class TestVariableViews:
         """A view with the class name should be created on first save."""
         scalar_class.save(42, subject=1, trial=1)
         # View should be queryable by the clean class name
-        rows = db._duck._fetchall('SELECT * FROM "ScalarValue"')
+        rows = db._duck.fetchall('SELECT * FROM "ScalarValue"')
         assert len(rows) == 1
 
     def test_view_includes_schema_columns(self, db, scalar_class):
         """View should include expanded schema columns from _schema."""
         scalar_class.save(42, subject=1, trial=1)
-        df = db._duck._fetchdf('SELECT * FROM "ScalarValue"')
+        df = db._duck.fetchdf('SELECT * FROM "ScalarValue"')
         assert "subject" in df.columns
         assert "trial" in df.columns
         assert df.iloc[0]["subject"] == "1"
@@ -441,14 +441,14 @@ class TestVariableViews:
     def test_view_includes_schema_level(self, db, scalar_class):
         """View should include the schema_level from _schema."""
         scalar_class.save(42, subject=1, trial=1)
-        df = db._duck._fetchdf('SELECT * FROM "ScalarValue"')
+        df = db._duck.fetchdf('SELECT * FROM "ScalarValue"')
         assert "schema_level" in df.columns
         assert df.iloc[0]["schema_level"] == "trial"
 
     def test_view_includes_variable_value(self, db, scalar_class):
         """View should still include the actual data value."""
         scalar_class.save(42, subject=1, trial=1)
-        df = db._duck._fetchdf('SELECT * FROM "ScalarValue"')
+        df = db._duck.fetchdf('SELECT * FROM "ScalarValue"')
         assert "value" in df.columns
         assert df.iloc[0]["value"] == 42
 
@@ -458,7 +458,7 @@ class TestVariableViews:
         scalar_class.save(20, subject=1, trial=2)
         scalar_class.save(30, subject=2, trial=1)
 
-        df = db._duck._fetchdf('SELECT * FROM "ScalarValue" ORDER BY "value"')
+        df = db._duck.fetchdf('SELECT * FROM "ScalarValue" ORDER BY "value"')
         assert len(df) == 3
 
         row1 = df[df["value"] == 10].iloc[0]
@@ -476,7 +476,7 @@ class TestVariableViews:
     def test_view_subject_level_save(self, db, scalar_class):
         """Saving at subject level should show NULLs for deeper schema keys."""
         scalar_class.save(99, subject=1)
-        df = db._duck._fetchdf('SELECT * FROM "ScalarValue"')
+        df = db._duck.fetchdf('SELECT * FROM "ScalarValue"')
         assert df.iloc[0]["subject"] == "1"
         assert df.iloc[0]["schema_level"] == "subject"
         assert df.iloc[0]["trial"] is None or pd.isna(df.iloc[0]["trial"])
@@ -486,7 +486,7 @@ class TestVariableViews:
         original_df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
         dataframe_class.save(original_df, subject=1, trial=1)
 
-        df = db._duck._fetchdf('SELECT * FROM "DataFrameValue"')
+        df = db._duck.fetchdf('SELECT * FROM "DataFrameValue"')
         assert len(df) == 2  # Two rows from the DataFrame
         assert "subject" in df.columns
         assert "schema_level" in df.columns
@@ -497,8 +497,8 @@ class TestVariableViews:
         scalar_class.save(42, subject=1, trial=1)
         array_class.save(np.array([1, 2, 3]), subject=1, trial=1)
 
-        scalar_df = db._duck._fetchdf('SELECT * FROM "ScalarValue"')
-        array_df = db._duck._fetchdf('SELECT * FROM "ArrayValue"')
+        scalar_df = db._duck.fetchdf('SELECT * FROM "ScalarValue"')
+        array_df = db._duck.fetchdf('SELECT * FROM "ArrayValue"')
 
         assert len(scalar_df) == 1
         assert len(array_df) == 1

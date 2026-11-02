@@ -225,7 +225,7 @@ def test_ensure_tables_runs_from_pipeline_store(populated_db):
     from scistack_gui import pipeline_store
 
     pipeline_store._ensure_tables(populated_db)
-    rows = populated_db._duck._fetchall(
+    rows = populated_db._duck.fetchall(
         "SELECT table_name FROM information_schema.tables "
         "WHERE table_name = '_node_wiring'"
     )

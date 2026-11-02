@@ -31,7 +31,7 @@ def _schema_ids(db):
     for s in (1, 2):
         for sess in ("A", "B"):
             Located.save(np.arange(2.0), db=db, subject=s, session=sess)
-    return [r[0] for r in db._duck._fetchall("SELECT schema_id FROM _schema")]
+    return [r[0] for r in db._duck.fetchall("SELECT schema_id FROM _schema")]
 
 
 def test_batched_lookup_matches_the_single_lookup(db):
@@ -44,13 +44,13 @@ def test_batched_lookup_matches_the_single_lookup(db):
 def test_many_locations_cost_one_query(db, monkeypatch):
     sids = _schema_ids(db)
     calls = []
-    real = db._duck._fetchall
+    real = db._duck.fetchall
 
     def counting(sql, params=None):
         calls.append(sql)
         return real(sql, params)
 
-    monkeypatch.setattr(db._duck, "_fetchall", counting)
+    monkeypatch.setattr(db._duck, "fetchall", counting)
     _schema_ids_to_combos(db, sids * 50)
     assert len(calls) == 1
 

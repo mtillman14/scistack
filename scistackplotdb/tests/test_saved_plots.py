@@ -44,7 +44,7 @@ VIEW = {"previewMode": "pane", "aspectChoice": "16:9", "figureIndex": 2}
 
 
 def _stored_json(db, plot_id: str, version: int) -> str:
-    row = db._duck._fetchone(
+    row = db._duck.fetchone(
         f"SELECT envelope_json FROM {TABLE} WHERE plot_id = ? AND version = ?",
         [plot_id, version],
     )
@@ -56,7 +56,7 @@ def _insert_raw(db, envelope_text: str, *, variable="StepLength", name="old") ->
     from scistackplotdb.saved import ensure_table
 
     ensure_table(db)
-    db._duck._execute(
+    db._duck.execute(
         f"INSERT INTO {TABLE} VALUES (?, ?, ?, 1, '2026-01-01T00:00:00+00:00', FALSE, ?)",
         ["legacy0001", variable, name, envelope_text],
     )

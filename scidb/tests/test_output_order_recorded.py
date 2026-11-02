@@ -49,7 +49,7 @@ def just_mean(x):
 
 
 def _invocation_ids(db):
-    return {r[0] for r in db._duck._fetchall("SELECT invocation_id FROM _invocation")}
+    return {r[0] for r in db._duck.fetchall("SELECT invocation_id FROM _invocation")}
 
 
 def test_a_run_records_its_outputs_order(db):

@@ -55,7 +55,7 @@ def _inject_orphan(db, type_name, subject, distribute=None):
         schema_level = "subject"
         key_values = {"subject": "9999"}
 
-    schema_id = duck._get_or_create_schema_id(schema_level, key_values)
+    schema_id = duck.get_or_create_schema_id(schema_level, key_values)
 
     # Insert a phantom record (entity + save-event, no corresponding data row)
     import hashlib

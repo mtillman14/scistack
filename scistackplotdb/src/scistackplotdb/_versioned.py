@@ -12,7 +12,7 @@ rules (docs/claude/saved-plots.md, docs/claude/plot-presets.md):
 * **Nothing is ever deleted** (feedback_never_delete_mark_hidden): "remove"
   sets ``hidden`` on every version.
 * **Reads never create the table.** Writes call :meth:`ensure_table`.
-* All reads go through ``_fetchall``/``_fetchone`` (the fetch-locking guard).
+* All reads go through ``fetchall``/``fetchone`` (the fetch-locking guard).
 
 This module owns those rules once, so the two stores cannot drift apart
 (CLAUDE.md NOTE 4). A store with a *scope column* (saved plots: ``variable``)
@@ -61,7 +61,7 @@ class VersionedStore:
 
     def ensure_table(self, db) -> None:
         scope = f"{self.scope_column} VARCHAR NOT NULL," if self.scope_column else ""
-        db._duck._execute(f"""
+        db._duck.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.table} (
                 {self.id_column} VARCHAR NOT NULL,
                 {scope}
@@ -75,7 +75,7 @@ class VersionedStore:
         """)
 
     def table_exists(self, db) -> bool:
-        row = db._duck._fetchone(
+        row = db._duck.fetchone(
             "SELECT count(*) FROM information_schema.tables WHERE table_name = ?",
             [self.table],
         )
@@ -150,7 +150,7 @@ class VersionedStore:
         scope_val = [scope] if self.scope_column else []
         # One statement: the next version number is decided inside the insert,
         # so two saves racing on one item cannot both claim the same version.
-        db._duck._execute(
+        db._duck.execute(
             f"""
             INSERT INTO {self.table}
                 ({self.id_column}, {scope_col}name, version, saved_at, hidden, envelope_json)
@@ -179,7 +179,7 @@ class VersionedStore:
         clash = self.visible_by_name(db, row[1], new_name)
         if clash is not None and clash[0] != item_id:
             raise self.error(self.clash_message(row[1], new_name))
-        db._duck._execute(
+        db._duck.execute(
             f"UPDATE {self.table} SET name = ? WHERE {self.id_column} = ?",
             [new_name, item_id],
         )
@@ -201,7 +201,7 @@ class VersionedStore:
                 raise self.error(
                     f"{self.clash_message(row[1], row[2])[:-1]}; rename one of them first."
                 )
-        db._duck._execute(
+        db._duck.execute(
             f"UPDATE {self.table} SET hidden = ? WHERE {self.id_column} = ?",
             [bool(hidden), item_id],
         )
@@ -238,7 +238,7 @@ class VersionedStore:
         if not self.table_exists(db):
             return []
         where = f"{self.scope_column} = ? AND " if self.scope_column else ""
-        rows = db._duck._fetchall(
+        rows = db._duck.fetchall(
             f"""
             SELECT {self._columns()}{envelope}
             FROM {self.table} AS t
@@ -266,7 +266,7 @@ class VersionedStore:
         if not self.table_exists(db):
             return []
         envelope = ", envelope_json" if with_envelope else ""
-        return list(db._duck._fetchall(
+        return list(db._duck.fetchall(
             f"""
             SELECT {self._columns()}{envelope}
             FROM {self.table} WHERE {self.id_column} = ? ORDER BY version DESC
@@ -279,7 +279,7 @@ class VersionedStore:
         if not self.table_exists(db):
             raise self.error(f"No {self.noun} {item_id!r}: nothing has been saved yet.")
         if version is None:
-            row = db._duck._fetchone(
+            row = db._duck.fetchone(
                 f"""
                 SELECT {self._columns()}, envelope_json
                 FROM {self.table} WHERE {self.id_column} = ?
@@ -288,7 +288,7 @@ class VersionedStore:
                 [item_id],
             )
         else:
-            row = db._duck._fetchone(
+            row = db._duck.fetchone(
                 f"""
                 SELECT {self._columns()}, envelope_json
                 FROM {self.table} WHERE {self.id_column} = ? AND version = ?
@@ -304,7 +304,7 @@ class VersionedStore:
         if not self.table_exists(db):
             return None
         where = f"{self.scope_column} = ? AND " if self.scope_column else ""
-        row = db._duck._fetchone(
+        row = db._duck.fetchone(
             f"""
             SELECT {self._columns()}
             FROM {self.table}
@@ -316,7 +316,7 @@ class VersionedStore:
         return tuple(row) if row else None
 
     def latest(self, db, item_id: str) -> Row:
-        row = db._duck._fetchone(
+        row = db._duck.fetchone(
             f"""
             SELECT {self._columns()}
             FROM {self.table} WHERE {self.id_column} = ?
@@ -366,7 +366,7 @@ class VersionedStore:
         if not self.table_exists(db):
             return []
         cols = self._all_columns()
-        rows = db._duck._fetchall(
+        rows = db._duck.fetchall(
             f"SELECT {', '.join(cols)} FROM {self.table} ORDER BY {self.id_column}, version"
         )
         Log.info("[%s] dump_rows: %d row(s)", self.tag, len(rows), layer=LAYER)
@@ -379,14 +379,14 @@ class VersionedStore:
             return 0
         self.ensure_table(db)
         cols = self._all_columns()
-        before = db._duck._fetchone(f"SELECT count(*) FROM {self.table}")[0]
+        before = db._duck.fetchone(f"SELECT count(*) FROM {self.table}")[0]
         for row in rows:
-            db._duck._execute(
+            db._duck.execute(
                 f"INSERT INTO {self.table} ({', '.join(cols)}) "
                 f"VALUES ({', '.join('?' for _ in cols)}) ON CONFLICT DO NOTHING",
                 [row.get(c) for c in cols],
             )
-        after = db._duck._fetchone(f"SELECT count(*) FROM {self.table}")[0]
+        after = db._duck.fetchone(f"SELECT count(*) FROM {self.table}")[0]
         Log.info("[%s] load_rows: %d of %d row(s) inserted", self.tag, after - before,
                  len(rows), layer=LAYER)
         return after - before

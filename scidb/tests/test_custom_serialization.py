@@ -104,14 +104,14 @@ def _traj(i: int) -> Trajectory:
 
 
 def _dtype(db, name: str) -> dict:
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT dtype FROM _variables WHERE variable_name = ?", [name]
     )
     return json.loads(rows[0][0])
 
 
 def _stored_rows(db, name: str) -> int:
-    return db._duck._fetchall(f'SELECT COUNT(*) FROM "{name}_data"')[0][0]
+    return db._duck.fetchall(f'SELECT COUNT(*) FROM "{name}_data"')[0][0]
 
 
 class TestDirectSave:
@@ -274,7 +274,7 @@ class TestFixedTableInputRecordsItsEdge:
         assert StepLen.load(subject="S01", trial="1").data == 2.0
         params = {
             p
-            for (p,) in db._duck._fetchall(
+            for (p,) in db._duck.fetchall(
                 "SELECT DISTINCT ii.param_name FROM _invocation_input ii "
                 "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
                 "WHERE inv.function_name = ?",

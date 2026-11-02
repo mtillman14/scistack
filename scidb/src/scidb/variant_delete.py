@@ -121,7 +121,7 @@ class DeleteResult:
 
 
 def ensure_tombstone_table(duck) -> None:
-    duck._execute(f"""
+    duck.execute(f"""
         CREATE TABLE IF NOT EXISTS {TOMBSTONE_TABLE} (
             tombstone_id    VARCHAR PRIMARY KEY,
             deleted_at      VARCHAR NOT NULL,
@@ -148,7 +148,7 @@ def write_tombstone(
         by_variable=dict(by_variable),
         record_ids=list(record_ids),
     )
-    duck._execute(
+    duck.execute(
         f"INSERT INTO {TOMBSTONE_TABLE} (tombstone_id, deleted_at, "
         "reason, targets_json, counts_json, record_ids_json) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -168,9 +168,9 @@ def tombstones(db: "DatabaseManager", variable: str | None = None) -> list[Tombs
     """Every deletion ever made, oldest first (only those that touched
     ``variable`` when given)."""
     duck = db._duck
-    if not duck._table_exists(TOMBSTONE_TABLE):
+    if not duck.table_exists(TOMBSTONE_TABLE):
         return []
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT tombstone_id, deleted_at, reason, targets_json, "
         f"counts_json, record_ids_json FROM {TOMBSTONE_TABLE} ORDER BY deleted_at"
     )
@@ -262,7 +262,7 @@ def _seed_records(db, targets: list[dict]) -> tuple[set, list[str]]:
                 seeds.update(card.record_ids)
         elif "function" in target or "parameter" in target:
             if "function" in target:
-                rows = duck._fetchall(
+                rows = duck.fetchall(
                     "SELECT ii.invocation_id, c.value_repr FROM _invocation_input ii "
                     "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
                     "JOIN _constant c ON c.record_id = ii.input_record_id "
@@ -279,7 +279,7 @@ def _seed_records(db, targets: list[dict]) -> tuple[set, list[str]]:
                 from .parameter import parameter_node_name
 
                 name = target["parameter"]
-                candidates = duck._fetchall(
+                candidates = duck.fetchall(
                     "SELECT ii.invocation_id, c.value_repr, ii.param_name, "
                     "ii.declared_name FROM _invocation_input ii "
                     "JOIN _constant c ON c.record_id = ii.input_record_id "
@@ -499,7 +499,7 @@ def _delete_in(duck, table: str, column: str, ids) -> int:
     for start in range(0, len(ids), 900):
         chunk = ids[start : start + 900]
         ph = ", ".join(["?"] * len(chunk))
-        duck._execute(f'DELETE FROM "{table}" WHERE {column} IN ({ph})', chunk)
+        duck.execute(f'DELETE FROM "{table}" WHERE {column} IN ({ph})', chunk)
     return int(n)
 
 
@@ -519,70 +519,65 @@ def delete_variant(
         raise ValueError("delete_variant needs a reason; it goes on the tombstone")
     duck = db._duck
     t0 = time.perf_counter()
-    duck._begin()
     try:
-        plan = delete_plan(db, targets)
-        if expect_fingerprint is not None and plan.fingerprint != expect_fingerprint:
-            raise ValueError(
-                f"delete_variant: the database changed since the plan was shown "
-                f"(fingerprint {expect_fingerprint} → {plan.fingerprint}); "
-                f"nothing was deleted. Re-plan and confirm again."
+        with duck.transaction("delete_variant"):
+            plan = delete_plan(db, targets)
+            if expect_fingerprint is not None and plan.fingerprint != expect_fingerprint:
+                raise ValueError(
+                    f"delete_variant: the database changed since the plan was shown "
+                    f"(fingerprint {expect_fingerprint} → {plan.fingerprint}); "
+                    f"nothing was deleted. Re-plan and confirm again."
+                )
+            if not plan.record_ids:
+                raise ValueError("delete_variant: the targets match no records")
+
+            from .provenance_query import _chunked_in
+
+            types = {
+                t
+                for (t,) in _chunked_in(
+                    duck,
+                    "SELECT DISTINCT type FROM _record WHERE record_id IN ({ph})",
+                    plan.record_ids,
+                )
+            }
+
+            deleted: dict = {}
+            deleted["_invocation_output"] = _delete_in(
+                duck, "_invocation_output", "output_record_id", plan.record_ids
             )
-        if not plan.record_ids:
-            raise ValueError("delete_variant: the targets match no records")
-
-        from .provenance_query import _chunked_in
-
-        types = {
-            t
-            for (t,) in _chunked_in(
-                duck,
-                "SELECT DISTINCT type FROM _record WHERE record_id IN ({ph})",
-                plan.record_ids,
+            deleted["_invocation_input"] = _delete_in(
+                duck, "_invocation_input", "input_record_id", plan.record_ids
+            ) + _delete_in(duck, "_invocation_input", "invocation_id", plan.invocation_ids)
+            deleted["_invocation_output"] += _delete_in(
+                duck, "_invocation_output", "invocation_id", plan.invocation_ids
             )
-        }
+            deleted["_run_invocation"] = _delete_in(
+                duck, "_run_invocation", "invocation_id", plan.invocation_ids
+            )
+            deleted["_invocation"] = _delete_in(
+                duck, "_invocation", "invocation_id", plan.invocation_ids
+            )
+            deleted["_run_outputs"] = _delete_in(duck, "_run_outputs", "run_id", plan.run_ids)
+            deleted["_run"] = _delete_in(duck, "_run", "run_id", plan.run_ids)
+            for t in sorted(types):
+                if t in GLUE_RECORD_TYPES:
+                    continue
+                table = f"{t}_data"
+                if duck.table_exists(table):
+                    deleted[table] = _delete_in(duck, table, "record_id", plan.record_ids)
+            deleted["_record_save"] = _delete_in(
+                duck, "_record_save", "record_id", plan.record_ids
+            )
+            deleted["_record"] = _delete_in(duck, "_record", "record_id", plan.record_ids)
 
-        deleted: dict = {}
-        deleted["_invocation_output"] = _delete_in(
-            duck, "_invocation_output", "output_record_id", plan.record_ids
-        )
-        deleted["_invocation_input"] = _delete_in(
-            duck, "_invocation_input", "input_record_id", plan.record_ids
-        ) + _delete_in(duck, "_invocation_input", "invocation_id", plan.invocation_ids)
-        deleted["_invocation_output"] += _delete_in(
-            duck, "_invocation_output", "invocation_id", plan.invocation_ids
-        )
-        deleted["_run_invocation"] = _delete_in(
-            duck, "_run_invocation", "invocation_id", plan.invocation_ids
-        )
-        deleted["_invocation"] = _delete_in(
-            duck, "_invocation", "invocation_id", plan.invocation_ids
-        )
-        deleted["_run_outputs"] = _delete_in(duck, "_run_outputs", "run_id", plan.run_ids)
-        deleted["_run"] = _delete_in(duck, "_run", "run_id", plan.run_ids)
-        for t in sorted(types):
-            if t in GLUE_RECORD_TYPES:
-                continue
-            table = f"{t}_data"
-            if duck._table_exists(table):
-                deleted[table] = _delete_in(duck, table, "record_id", plan.record_ids)
-        deleted["_record_save"] = _delete_in(
-            duck, "_record_save", "record_id", plan.record_ids
-        )
-        deleted["_record"] = _delete_in(duck, "_record", "record_id", plan.record_ids)
-
-        tomb = write_tombstone(duck, reason, targets, plan.by_variable, plan.record_ids)
-        released = []
-        for variable in plan.pins_to_release:
-            if release_pin(db, variable, f"variant deleted (tombstone {tomb.tombstone_id})"):
-                released.append(variable)
-        duck._commit()
+            tomb = write_tombstone(duck, reason, targets, plan.by_variable, plan.record_ids)
+            released = []
+            for variable in plan.pins_to_release:
+                if release_pin(db, variable, f"variant deleted (tombstone {tomb.tombstone_id})"):
+                    released.append(variable)
     except Exception:
-        Log.warn("delete_variant: failed; rolling back, nothing was deleted")
-        try:
-            duck._rollback()
-        except Exception:  # pragma: no cover - rollback of a dead txn
-            pass
+        Log.warn("delete_variant: failed; rolled back, nothing was deleted")
         raise
     from .variant_pins import forget_type_graph
 

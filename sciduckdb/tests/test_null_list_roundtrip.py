@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from sciduckdb import SciDuck
-from sciduckdb.sciduckdb import (
+from sciduckdb.codec import (
     storage_to_python,
     count_nan_array_elements,
     count_null_list_elements,
@@ -176,7 +176,7 @@ class TestRoundTrip:
         """A NULL written by SQL into a BIGINT[] column — no in-memory NaN
         could have produced it — still reloads as NaN, in float64."""
         meta = store(duck, "ints", {"ids": np.array([1, 2, 3], dtype=np.int64)})
-        duck._execute('UPDATE "ints" SET ids = [1, NULL, 3]')
+        duck.execute('UPDATE "ints" SET ids = [1, NULL, 3]')
         out = fetch(duck, "ints", meta)["ids"]
         assert out.dtype == np.float64
         assert out[0] == 1 and np.isnan(out[1]) and out[2] == 3

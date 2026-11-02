@@ -212,7 +212,7 @@ def _assert_selection_round_trips(db, variable):
         # Every location of the card, not just some of them.
         got_sids = {
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT schema_id FROM _record WHERE record_id IN ("
                 + ", ".join("?" * len(got))
                 + ")",
@@ -335,18 +335,18 @@ class TestBatching:
         def count(path, subjects):
             db = build_upstream_split(path, subjects)
             duck = db._duck
-            original = duck._fetchall
+            original = duck.fetchall
             seen: list = []
 
             def counting(sql, params=None):
                 seen.append(sql)
                 return original(sql, params)
 
-            duck._fetchall = counting
+            duck.fetchall = counting
             try:
                 db.inspect.variant_cards("VcSteps")
             finally:
-                duck._fetchall = original
+                duck.fetchall = original
                 db.close()
                 _scifor.set_schema([])
             return len(seen)

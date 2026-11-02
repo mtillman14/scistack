@@ -44,14 +44,14 @@ def _run(step=None, k=2.0):
 def _counts(db):
     duck = db._duck
     return (
-        duck._fetchone("SELECT COUNT(*) FROM _invocation")[0],
-        duck._fetchone("SELECT COUNT(*) FROM _record")[0],
+        duck.fetchone("SELECT COUNT(*) FROM _invocation")[0],
+        duck.fetchone("SELECT COUNT(*) FROM _record")[0],
     )
 
 
 def test_the_step_name_is_recorded_on_the_run(db):
     _run("filter")
-    rows = db._duck._fetchall("SELECT step FROM _run_step")
+    rows = db._duck.fetchall("SELECT step FROM _run_step")
     assert rows == [("filter",)]
     [variant] = [v for v in pq.pipeline_variants(db._duck) if v["function_name"] == "double"]
     assert variant["steps"] == ["filter"]
@@ -68,7 +68,7 @@ def test_it_is_not_identity(db):
 
 def test_an_unnamed_run_records_none(db):
     _run()
-    assert db._duck._fetchall("SELECT * FROM _run_step") == []
+    assert db._duck.fetchall("SELECT * FROM _run_step") == []
     [variant] = [v for v in pq.pipeline_variants(db._duck) if v["function_name"] == "double"]
     assert variant.get("steps", []) == []
 
@@ -95,7 +95,7 @@ def test_the_ambient_entry_point_names_and_clears(db):
     _run()
     set_ambient_step(None)
     _run(k=3.0)
-    assert sorted(r[0] for r in db._duck._fetchall("SELECT step FROM _run_step")) == ["from_matlab"]
+    assert sorted(r[0] for r in db._duck.fetchall("SELECT step FROM _run_step")) == ["from_matlab"]
 
 
 def test_run_step_context_manager(db):

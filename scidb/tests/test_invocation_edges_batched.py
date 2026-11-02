@@ -53,7 +53,7 @@ def _run(n_subjects: int, k: float = 3.0) -> None:
 
 def _count_queries(db, monkeypatch, fn) -> int:
     calls = []
-    real_all, real_one = db._duck._fetchall, db._duck._fetchone
+    real_all, real_one = db._duck.fetchall, db._duck.fetchone
 
     def counting_all(sql, params=None):
         calls.append(sql)
@@ -63,20 +63,20 @@ def _count_queries(db, monkeypatch, fn) -> int:
         calls.append(sql)
         return real_one(sql, params)
 
-    monkeypatch.setattr(db._duck, "_fetchall", counting_all)
-    monkeypatch.setattr(db._duck, "_fetchone", counting_one)
+    monkeypatch.setattr(db._duck, "fetchall", counting_all)
+    monkeypatch.setattr(db._duck, "fetchone", counting_one)
     try:
         fn()
     finally:
-        monkeypatch.setattr(db._duck, "_fetchall", real_all)
-        monkeypatch.setattr(db._duck, "_fetchone", real_one)
+        monkeypatch.setattr(db._duck, "fetchall", real_all)
+        monkeypatch.setattr(db._duck, "fetchone", real_one)
     return len(calls)
 
 
 def _invocation_ids(db) -> list[str]:
     return [
         r[0]
-        for r in db._duck._fetchall(
+        for r in db._duck.fetchall(
             "SELECT invocation_id FROM _invocation WHERE function_name = ?",
             ["scale"],
         )
@@ -160,7 +160,7 @@ def test_realized_inputless_is_one_query_and_skips_variable_input_calls(
     inv_ids = {inv for inv, _sid in realized}
     produced = {
         (inv, sid)
-        for inv, sid in db._duck._fetchall(
+        for inv, sid in db._duck.fetchall(
             "SELECT DISTINCT io.invocation_id, r.schema_id "
             "FROM _invocation_output io "
             "JOIN _record r ON r.record_id = io.output_record_id "

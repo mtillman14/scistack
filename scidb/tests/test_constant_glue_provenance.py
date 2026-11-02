@@ -120,7 +120,7 @@ def _weighted_variants(db):
 
 def _consumer_cfg_edges(db):
     """(input_record_id, record type) of every ``weighted`` call's cfg edge."""
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT ii.input_record_id, r.type FROM _invocation_input ii "
         "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
         "JOIN _record r ON r.record_id = ii.input_record_id "
@@ -253,7 +253,7 @@ class TestOneOwner:
 
         [rid, *_] = [
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = ?", ["Weighted"]
             )
         ]
@@ -266,7 +266,7 @@ class TestOneOwner:
         _run(db, _config(_write_cfg(tmp_path / "cfg.json", 3)))
         rids = [
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = ?", ["Weighted"]
             )
         ]

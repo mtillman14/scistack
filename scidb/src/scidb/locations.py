@@ -648,7 +648,7 @@ def _producing_functions(duck, variable_name: str) -> set:
     typed ``__glue__``, so the ``r.type = variable_name`` filter has already
     dropped it.
     """
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT DISTINCT inv.function_name FROM _invocation inv "
         "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
         "JOIN _record r ON r.record_id = io.output_record_id "
@@ -674,7 +674,7 @@ def pathinput_configs(duck, fn_name: str) -> list[tuple[dict, dict]]:
 
     from .inspect.graph import parse_path_input
 
-    inv_rows = duck._fetchall(
+    inv_rows = duck.fetchall(
         "SELECT invocation_id FROM _invocation WHERE function_name = ?", [fn_name]
     )
     configs: dict = {}
@@ -826,11 +826,11 @@ def _schema_ids_by_combo(db) -> dict:
     as an annotation rather than the other way round.
     """
     schema_keys = list(db.dataset_schema_keys)
-    if not schema_keys or not db._duck._table_exists("_schema"):
+    if not schema_keys or not db._duck.table_exists("_schema"):
         return {}
     cols = ", ".join(f'"{k}"' for k in schema_keys)
     out: dict = {}
-    for row in db._duck._fetchall(f"SELECT schema_id, {cols} FROM _schema"):
+    for row in db._duck.fetchall(f"SELECT schema_id, {cols} FROM _schema"):
         mapping = dict(zip(schema_keys, row[1:], strict=False))
         out[_as_combo(mapping, schema_keys)] = int(row[0])
     return out

@@ -49,7 +49,7 @@ def db(tmp_path):
 
 
 def _count(db, sql: str, params=None) -> int:
-    return db._duck._fetchall(sql, params or [])[0][0]
+    return db._duck.fetchall(sql, params or [])[0][0]
 
 
 def _records_of(db, type_name: str) -> int:
@@ -85,14 +85,14 @@ def test_record_run_failure_rolls_back_data(db, monkeypatch):
 def test_graph_write_failure_inside_the_transaction_rolls_back_data(db, monkeypatch):
     """A failure deep inside record_run's own (nested) transaction: its
     rollback only dooms the outer one, which then discards the data too."""
-    real = db._duck._bulk_insert
+    real = db._duck.bulk_insert
 
     def bulk_insert(table, *args, **kwargs):
         if table == "_run_invocation":
             raise RuntimeError("graph insert failed")
         return real(table, *args, **kwargs)
 
-    monkeypatch.setattr(db._duck, "_bulk_insert", bulk_insert)
+    monkeypatch.setattr(db._duck, "bulk_insert", bulk_insert)
     with pytest.raises(OutputSaveError) as err:
         _run(db)
     assert "graph insert failed" in str(err.value)
@@ -125,7 +125,7 @@ def test_no_record_without_output_edge(db):
         subject=[1, 2],
         db=db,
     )
-    orphans = db._duck._fetchall(
+    orphans = db._duck.fetchall(
         "SELECT r.record_id, r.type FROM _record r "
         "WHERE r.type IN ('ProvFailOut', 'ProvFailOther') AND NOT EXISTS ("
         "  SELECT 1 FROM _invocation_output o WHERE o.output_record_id = r.record_id)"

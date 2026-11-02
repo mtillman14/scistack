@@ -42,7 +42,7 @@ class QueryInterface:
         Returns:
             List of table names (variable types that have been registered)
         """
-        rows = self.db._duck._fetchall(
+        rows = self.db._duck.fetchall(
             "SELECT table_name FROM _registered_types ORDER BY table_name"
         )
         return [row[0] for row in rows]
@@ -57,7 +57,7 @@ class QueryInterface:
         Returns:
             DataFrame with column names and types
         """
-        rows = self.db._duck._fetchall(
+        rows = self.db._duck.fetchall(
             """
             SELECT column_name, data_type
             FROM information_schema.columns
@@ -98,7 +98,7 @@ class QueryInterface:
                 JOIN StepWidth w ON s.subject = w.subject AND s.session = w.session
             ''')
         """
-        return self.db._duck._fetchdf(sql)
+        return self.db._duck.fetchdf(sql)
 
     def close(self):
         """Close the query interface (no-op, db manages connection)."""

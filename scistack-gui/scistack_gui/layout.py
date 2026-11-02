@@ -92,7 +92,7 @@ def ensure_tables(db) -> None:
     ``pipeline_store._ensure_tables``, so every path that touches the GUI
     database gets them, like ``_intent`` and ``_node_wiring``."""
     duck = db._duck
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_node_positions (
             pipeline_id VARCHAR NOT NULL,
             node_id     VARCHAR NOT NULL,
@@ -101,13 +101,13 @@ def ensure_tables(db) -> None:
             PRIMARY KEY (pipeline_id, node_id)
         )
     """)
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_palette_parameters (
             name VARCHAR PRIMARY KEY,
             seq  INTEGER NOT NULL
         )
     """)
-    duck._execute("""
+    duck.execute("""
         CREATE TABLE IF NOT EXISTS _pipeline_notes (
             note_key VARCHAR PRIMARY KEY,
             text     VARCHAR NOT NULL
@@ -127,7 +127,7 @@ def _duck():
 
 
 def _upsert_position(duck, pipeline_id: str, node_id: str, x: float, y: float) -> None:
-    duck._execute(
+    duck.execute(
         f"INSERT INTO {POSITIONS_TABLE} (pipeline_id, node_id, x, y) VALUES (?, ?, ?, ?) "
         "ON CONFLICT (pipeline_id, node_id) DO UPDATE SET x = excluded.x, y = excluded.y",
         [pipeline_id, node_id, float(x), float(y)],
@@ -135,7 +135,7 @@ def _upsert_position(duck, pipeline_id: str, node_id: str, x: float, y: float) -
 
 
 def _delete_position(duck, pipeline_id: str, node_id: str) -> None:
-    duck._execute(
+    duck.execute(
         f"DELETE FROM {POSITIONS_TABLE} WHERE pipeline_id = ? AND node_id = ?",
         [pipeline_id, node_id],
     )
@@ -143,7 +143,7 @@ def _delete_position(duck, pipeline_id: str, node_id: str) -> None:
 
 def _positions_by_scope(duck) -> dict:
     out: dict = {}
-    for pid, nid, x, y in duck._fetchall(
+    for pid, nid, x, y in duck.fetchall(
         f"SELECT pipeline_id, node_id, x, y FROM {POSITIONS_TABLE} "
         "ORDER BY pipeline_id, node_id"
     ):
@@ -168,14 +168,14 @@ def read_positions_by_scope() -> dict:
 
 def drop_scope_positions(pipeline_id: str) -> None:
     """Remove a deleted scope's positions (scope teardown)."""
-    _duck()._execute(f"DELETE FROM {POSITIONS_TABLE} WHERE pipeline_id = ?", [pipeline_id])
+    _duck().execute(f"DELETE FROM {POSITIONS_TABLE} WHERE pipeline_id = ?", [pipeline_id])
     logger.info("[layout] drop_scope_positions: scope %r", pipeline_id)
 
 
 def drop_node_positions(node_id: str) -> None:
     """Remove one node's position from every scope (position only — no
     manual-node/hide side effects, unlike delete_node)."""
-    _duck()._execute(f"DELETE FROM {POSITIONS_TABLE} WHERE node_id = ?", [node_id])
+    _duck().execute(f"DELETE FROM {POSITIONS_TABLE} WHERE node_id = ?", [node_id])
 
 
 def move_node_position(
@@ -205,7 +205,7 @@ def move_node_position(
     """
     with _layout_write("move_node_position"):
         duck = _duck()
-        row = duck._fetchone(
+        row = duck.fetchone(
             f"SELECT pipeline_id, x, y FROM {POSITIONS_TABLE} WHERE node_id = ? "
             "ORDER BY pipeline_id LIMIT 1",
             [node_id],
@@ -369,7 +369,7 @@ def delete_node(node_id: str) -> None:
 
 def read_constants() -> list[str]:
     """Palette Parameter names, in the order they were added."""
-    return [n for (n,) in _duck()._fetchall(f"SELECT name FROM {PALETTE_TABLE} ORDER BY seq")]
+    return [n for (n,) in _duck().fetchall(f"SELECT name FROM {PALETTE_TABLE} ORDER BY seq")]
 
 
 def read_all_constant_names() -> list[str]:
@@ -400,7 +400,7 @@ def read_all_constant_names() -> list[str]:
 
 def write_constant(name: str) -> None:
     duck = _duck()
-    duck._execute(
+    duck.execute(
         f"INSERT INTO {PALETTE_TABLE} (name, seq) "
         f"SELECT ?, COALESCE(MAX(seq), 0) + 1 FROM {PALETTE_TABLE} "
         "ON CONFLICT (name) DO NOTHING",
@@ -411,7 +411,7 @@ def write_constant(name: str) -> None:
 def delete_parameter_from_palette(name: str) -> None:
     """Remove a name from the palette list. Distinct from
     layout_service.delete_parameter, which hides the NODE."""
-    _duck()._execute(f"DELETE FROM {PALETTE_TABLE} WHERE name = ?", [name])
+    _duck().execute(f"DELETE FROM {PALETTE_TABLE} WHERE name = ?", [name])
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +420,7 @@ def delete_parameter_from_palette(name: str) -> None:
 
 
 def read_notes() -> dict[str, str]:
-    return {k: t for k, t in _duck()._fetchall(f"SELECT note_key, text FROM {NOTES_TABLE}")}
+    return {k: t for k, t in _duck().fetchall(f"SELECT note_key, text FROM {NOTES_TABLE}")}
 
 
 def write_note(key: str, text: str) -> None:
@@ -435,13 +435,13 @@ def write_note(key: str, text: str) -> None:
     logger.info("[layout] write_note called (key=%r, len(text)=%d)", key, len(text))
     duck = _duck()
     if text.strip():
-        duck._execute(
+        duck.execute(
             f"INSERT INTO {NOTES_TABLE} (note_key, text) VALUES (?, ?) "
             "ON CONFLICT (note_key) DO UPDATE SET text = excluded.text",
             [key, text],
         )
     else:
-        duck._execute(f"DELETE FROM {NOTES_TABLE} WHERE note_key = ?", [key])
+        duck.execute(f"DELETE FROM {NOTES_TABLE} WHERE note_key = ?", [key])
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +479,7 @@ def rebase_node_positions(
             old_key, new_key = note_keys
             notes = read_notes()
             if old_key in notes:
-                duck._execute(f"DELETE FROM {NOTES_TABLE} WHERE note_key = ?", [old_key])
+                duck.execute(f"DELETE FROM {NOTES_TABLE} WHERE note_key = ?", [old_key])
                 if new_key not in notes:
                     write_note(new_key, notes[old_key])
                 note_moved = True

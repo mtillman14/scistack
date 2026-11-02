@@ -206,7 +206,7 @@ _loaded_for: "str | None" = None
 
 def ensure_tables(db) -> None:
     """Create ``_canvas_change`` if absent (from ``pipeline_store._ensure_tables``)."""
-    db._duck._execute("""
+    db._duck.execute("""
         CREATE TABLE IF NOT EXISTS _canvas_change (
             change_id   VARCHAR PRIMARY KEY,
             seq         BIGINT NOT NULL,
@@ -351,9 +351,9 @@ def _ensure_loaded() -> None:
     try:
         with db_connection("history load"):
             duck = _duck()
-            if not duck._table_exists(AUDIT_TABLE):
+            if not duck.table_exists(AUDIT_TABLE):
                 return
-            rows = duck._fetchall(
+            rows = duck.fetchall(
                 f"SELECT change_id, label, method, state, created_at, record_json "
                 f"FROM {AUDIT_TABLE} ORDER BY seq DESC LIMIT ?",
                 [MAX_RECORDS],
@@ -394,10 +394,10 @@ def _persist(rec: ChangeRecord) -> None:
     try:
         with db_connection("history persist"):
             duck = _duck()
-            if not duck._table_exists(AUDIT_TABLE):
+            if not duck.table_exists(AUDIT_TABLE):
                 ensure_tables(get_db())
             now = time.time()
-            duck._execute(
+            duck.execute(
                 f"INSERT INTO {AUDIT_TABLE} (change_id, seq, created_at, updated_at, "
                 "label, method, state, summary, record_json) "
                 f"SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM {AUDIT_TABLE} "
@@ -438,9 +438,9 @@ def list_changes(limit: int = 50) -> list[dict]:
         return []
     with db_connection("history list"):
         duck = _duck()
-        if not duck._table_exists(AUDIT_TABLE):
+        if not duck.table_exists(AUDIT_TABLE):
             return []
-        rows = duck._fetchall(
+        rows = duck.fetchall(
             f"SELECT change_id, created_at, updated_at, label, method, state, summary "
             f"FROM {AUDIT_TABLE} ORDER BY seq DESC LIMIT ?",
             [int(limit)],
@@ -478,9 +478,9 @@ def recent_changes(surface: str, limit: int = 200) -> dict:
         return out
     with db_connection("history recent"):
         duck = _duck()
-        if not duck._table_exists(AUDIT_TABLE):
+        if not duck.table_exists(AUDIT_TABLE):
             return out
-        rows = duck._fetchall(
+        rows = duck.fetchall(
             f"SELECT change_id, label, state, created_at, updated_at, record_json "
             f"FROM {AUDIT_TABLE} WHERE state != ? ORDER BY seq DESC LIMIT ?",
             [EVENT_STATE, int(limit) * 4],
@@ -538,10 +538,10 @@ def log_event(db, label: str, method: str, summary: str) -> "str | None":
     empty = ChangeRecord(change_id, label, method)
     try:
         duck = db._duck
-        if not duck._table_exists(AUDIT_TABLE):
+        if not duck.table_exists(AUDIT_TABLE):
             ensure_tables(db)
         now = time.time()
-        duck._execute(
+        duck.execute(
             f"INSERT INTO {AUDIT_TABLE} (change_id, seq, created_at, updated_at, "
             "label, method, state, summary, record_json) "
             f"SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM {AUDIT_TABLE}",
@@ -572,7 +572,7 @@ def _pk_columns(duck, table: str, columns: tuple[str, ...]) -> tuple[str, ...]:
     """The table's primary key as DuckDB reports it; all columns when it has
     none (the row itself is then its identity)."""
     if table not in _pk_cache:
-        rows = duck._fetchall(
+        rows = duck.fetchall(
             "SELECT constraint_column_names FROM duckdb_constraints() "
             "WHERE table_name = ? AND constraint_type = 'PRIMARY KEY'",
             [table],
@@ -591,7 +591,7 @@ class _TableSnap:
 def _snapshot(duck, tables: "tuple[str, ...] | None" = None) -> dict[str, _TableSnap]:
     existing = {
         r[0]
-        for r in duck._fetchall(
+        for r in duck.fetchall(
             "SELECT table_name FROM duckdb_tables() WHERE schema_name = 'main'"
         )
     }
@@ -599,7 +599,7 @@ def _snapshot(duck, tables: "tuple[str, ...] | None" = None) -> dict[str, _Table
     for table in tables or tracked_tables():
         if table not in existing:
             continue
-        cols, rows = duck._fetch_table(f'SELECT * FROM "{table}"')
+        cols, rows = duck.fetch_table(f'SELECT * FROM "{table}"')
         cols = tuple(cols)
         key_cols = _pk_columns(duck, table, cols)
         idx = [cols.index(c) for c in key_cols]
@@ -880,8 +880,7 @@ def _write_rows(rec: ChangeRecord, direction: str) -> None:
 
     with db_connection("history write"):
         duck = _duck()
-        duck._begin()
-        try:
+        with duck.transaction("history write"):
             for table, diff in rec.rows.items():
                 cols = rec.columns[table]
                 key_cols = rec.keys[table]
@@ -899,20 +898,13 @@ def _write_rows(rec: ChangeRecord, direction: str) -> None:
                 for key, pair in diff.items():
                     target = _side(pair, direction, target=True)
                     if target is None:
-                        duck._execute(f'DELETE FROM "{table}" WHERE {where}', list(key))
+                        duck.execute(f'DELETE FROM "{table}" WHERE {where}', list(key))
                         continue
                     verb = "INSERT OR REPLACE" if has_pk else "INSERT"
-                    duck._execute(
+                    duck.execute(
                         f'{verb} INTO "{table}" ({col_sql}) VALUES ({marks})',
                         list(target),
                     )
-            duck._commit()
-        except Exception:
-            try:
-                duck._rollback()
-            except Exception:
-                logger.exception("[history] rollback failed")
-            raise
 
 
 def _write_files(rec: ChangeRecord, direction: str) -> None:

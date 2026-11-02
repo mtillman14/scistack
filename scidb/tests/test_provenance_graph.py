@@ -46,7 +46,7 @@ def bandpass(signal, low_hz):
 # Helpers
 # ---------------------------------------------------------------------------
 def _count(db, table):
-    return db._duck._fetchall(f"SELECT COUNT(*) FROM {table}")[0][0]
+    return db._duck.fetchall(f"SELECT COUNT(*) FROM {table}")[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ def _count(db, table):
 # ---------------------------------------------------------------------------
 def test_raw_save_creates_record_entity(db):
     RawSignal.save(np.array([1.0, 2.0]), subject="S01", session="1")
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT type, schema_version FROM _record WHERE type = 'RawSignal'"
     )
     assert len(rows) == 1
@@ -75,7 +75,7 @@ def test_for_each_writes_bipartite_graph(db):
     )
 
     # One invocation for bandpass.
-    inv = db._duck._fetchall(
+    inv = db._duck.fetchall(
         "SELECT invocation_id, function_name, function_hash, distribute FROM _invocation"
     )
     assert len(inv) == 1
@@ -87,7 +87,7 @@ def test_for_each_writes_bipartite_graph(db):
     # Inputs: the variable 'signal' plus the constant 'low_hz'.
     inputs = {
         (p, r)
-        for (p, r) in db._duck._fetchall(
+        for (p, r) in db._duck.fetchall(
             "SELECT param_name, input_record_id FROM _invocation_input WHERE invocation_id = ?",
             [inv_id],
         )
@@ -100,33 +100,33 @@ def test_for_each_writes_bipartite_graph(db):
     assert ("low_hz", const_rid) in inputs
 
     # Constant entity + value rows exist.
-    crow = db._duck._fetchall(
+    crow = db._duck.fetchall(
         "SELECT value_repr, value_type FROM _constant WHERE record_id = ?", [const_rid]
     )
     assert crow and crow[0][0] == "20" and crow[0][1] == "int"
-    crec = db._duck._fetchall(
+    crec = db._duck.fetchall(
         "SELECT type FROM _record WHERE record_id = ?", [const_rid]
     )
     assert crec and crec[0][0] == CONSTANT_TYPE
 
     # Output edge → a Filtered record present in _record.
-    out = db._duck._fetchall(
+    out = db._duck.fetchall(
         "SELECT output_num, output_record_id FROM _invocation_output WHERE invocation_id = ?",
         [inv_id],
     )
     assert len(out) == 1
     assert out[0][0] == 0
     out_rid = out[0][1]
-    rtype = db._duck._fetchall(
+    rtype = db._duck.fetchall(
         "SELECT type FROM _record WHERE record_id = ?", [out_rid]
     )
     assert rtype and rtype[0][0] == "Filtered"
 
     # Run audit: one run linked to the invocation.
     assert _count(db, "_run") == 1
-    ri = db._duck._fetchall("SELECT run_id, invocation_id FROM _run_invocation")
+    ri = db._duck.fetchall("SELECT run_id, invocation_id FROM _run_invocation")
     assert len(ri) == 1 and ri[0][1] == inv_id
-    run = db._duck._fetchall("SELECT function_name FROM _run")
+    run = db._duck.fetchall("SELECT function_name FROM _run")
     assert run[0][0] == "bandpass"
 
 
@@ -229,7 +229,7 @@ def test_distribute_fanout_one_invocation_unique_slots(db):
     # n distinct output edges, each with a unique (invocation_id, output_num).
     assert _count(db, "_invocation_output") == n
     onums = [
-        r[0] for r in db._duck._fetchall("SELECT output_num FROM _invocation_output")
+        r[0] for r in db._duck.fetchall("SELECT output_num FROM _invocation_output")
     ]
     assert len(set(onums)) == n
 

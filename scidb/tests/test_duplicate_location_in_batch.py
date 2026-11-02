@@ -45,7 +45,7 @@ def db(tmp_path):
 
 
 def _n_records(db, type_name="Demo") -> int:
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT COUNT(*) FROM _record WHERE type = ?", [type_name]
     )[0][0]
 

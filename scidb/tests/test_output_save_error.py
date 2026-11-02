@@ -82,7 +82,7 @@ def test_a_failed_output_rolls_back_the_others(db, monkeypatch):
         )
     assert err.value.saved == 0
     assert [f.split(":")[0] for f in err.value.failures] == ["SaveErrBad"]
-    assert db._duck._fetchall(
+    assert db._duck.fetchall(
         "SELECT COUNT(*) FROM _record WHERE type = ?", ["SaveErrGood"]
     )[0][0] == 0
 

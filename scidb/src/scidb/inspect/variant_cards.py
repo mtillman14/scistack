@@ -331,8 +331,8 @@ def build_variant_cards(
 
     # -- the records ---------------------------------------------------------
     t0 = time.perf_counter()
-    known = duck._fetchall("SELECT 1 FROM _variables WHERE variable_name = ?", [name])
-    rows = duck._fetchall(
+    known = duck.fetchall("SELECT 1 FROM _variables WHERE variable_name = ?", [name])
+    rows = duck.fetchall(
         "SELECT r.record_id, r.schema_id, MIN(rm.timestamp), MAX(rm.timestamp), "
         "COALESCE(r.excluded, FALSE) "
         "FROM _record r JOIN _record_save rm ON rm.record_id = r.record_id "

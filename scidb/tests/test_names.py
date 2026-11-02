@@ -86,7 +86,7 @@ class TestFunctionName:
             Out = _var("NamesOut", "test_names", project[1])
             Raw.save(np.array([1.0, 2.0]), subject="S01")
             for_each(_fn("fakelib.math"), {"x": Raw}, [Out], subject=["S01"])
-            recorded = {r[0] for r in db._duck._fetchall("SELECT function_name FROM _invocation")}
+            recorded = {r[0] for r in db._duck.fetchall("SELECT function_name FROM _invocation")}
             assert recorded == {"fakelib.double"}
         finally:
             db.close()

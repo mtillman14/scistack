@@ -85,7 +85,7 @@ def _nested_frame(combo, out_name, value):
 
 
 def _n_records(db, var_name):
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT COUNT(*) FROM _record WHERE type = ?", [var_name]
     )[0][0]
 

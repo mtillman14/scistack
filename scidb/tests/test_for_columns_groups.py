@@ -111,7 +111,7 @@ def test_split_output_with_no_data_anywhere_gets_an_empty_table(db, caplog):
             db=db,
         )
     assert "[save] SixMWT: 0 records this run (1 no data); created empty table" in caplog.text
-    assert len(db._duck._fetchdf(f'SELECT * FROM "{SixMWT.view_name()}"')) == 0
+    assert len(db._duck.fetchdf(f'SELECT * FROM "{SixMWT.view_name()}"')) == 0
 
 
 def test_identical_grouped_rerun_is_cached(db):

@@ -64,7 +64,7 @@ def _count_rows(db, **filters) -> int:
         where_parts.append(f'"{k}" = ?')
         params.append(str(v))
     where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         f"SELECT COUNT(*) FROM {_TABLE} {where_clause}", params or None
     )
     return rows[0][0]

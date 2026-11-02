@@ -133,7 +133,7 @@ def _pin(db, variable, low_hz, reason="test"):
 def _low_hz_of(db, variable):
     rids = [
         r[0]
-        for r in db._duck._fetchall(
+        for r in db._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = ?", [variable]
         )
     ]
@@ -268,7 +268,7 @@ class TestDownstream:
 def _present_for(db, fn_name):
     inv_ids = [
         r[0]
-        for r in db._duck._fetchall(
+        for r in db._duck.fetchall(
             "SELECT invocation_id FROM _invocation WHERE function_name = ?", [fn_name]
         )
     ]

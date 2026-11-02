@@ -71,7 +71,7 @@ def _value(db, cls, subject, col=None):
 
 
 def _n_records(db, type_name) -> int:
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT COUNT(*) FROM _record WHERE type = ?", [type_name]
     )[0][0]
 
@@ -219,7 +219,7 @@ def test_d1_scenario_lazy_conversion(db):
 
 def test_old_content_hashes_unchanged_by_conversion(db):
     Stay.save(pd.DataFrame({"subject": ["S1"], "x": [7.0]}), db=db)
-    before = db._duck._fetchall(
+    before = db._duck.fetchall(
         "SELECT record_id, content_hash FROM _record WHERE type = 'Stay'"
     )
     Stay.save(
@@ -228,7 +228,7 @@ def test_old_content_hashes_unchanged_by_conversion(db):
         on_duplicate="combine",
     )
     after = dict(
-        db._duck._fetchall("SELECT record_id, content_hash FROM _record WHERE type = 'Stay'")
+        db._duck.fetchall("SELECT record_id, content_hash FROM _record WHERE type = 'Stay'")
     )
     for rid, h in before:
         assert after[rid] == h

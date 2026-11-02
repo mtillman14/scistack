@@ -197,7 +197,7 @@ def _load(step: dict) -> dict:
 
 
 def _invocations(db) -> dict:
-    rows = db._duck._fetchall("SELECT function_name FROM _invocation")
+    rows = db._duck.fetchall("SELECT function_name FROM _invocation")
     return {"function_names": sorted({r[0] for r in rows}), "count": len(rows)}
 
 
@@ -223,7 +223,7 @@ def _latest(db, step: dict) -> dict:
     NEWEST record of *variable* at each schema location (newest save event,
     ``_record_save``): what a load returns today. (Version keys are not
     stored since the lineage simplification; the graph names the producer.)"""
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT r.record_id, inv.function_name FROM _record r "
         "JOIN _record_save s ON s.record_id = r.record_id "
         "LEFT JOIN _invocation_output io ON io.output_record_id = r.record_id "

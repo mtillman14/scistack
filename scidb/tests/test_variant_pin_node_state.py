@@ -75,7 +75,7 @@ def _present_for(db, fn_name: str) -> set:
     """
     inv_ids = [
         row[0]
-        for row in db._duck._fetchall(
+        for row in db._duck.fetchall(
             "SELECT invocation_id FROM _invocation WHERE function_name = ?",
             [fn_name],
         )
@@ -112,8 +112,8 @@ def test_the_pin_actually_narrowed_the_run(two_variants_then_a_pinned_consumer):
     have produced one output per subject rather than two."""
     db = two_variants_then_a_pinned_consumer
 
-    scaled = db._duck._fetchone("SELECT COUNT(*) FROM _record WHERE type = 'Scaled'")
-    consumed = db._duck._fetchone(
+    scaled = db._duck.fetchone("SELECT COUNT(*) FROM _record WHERE type = 'Scaled'")
+    consumed = db._duck.fetchone(
         "SELECT COUNT(*) FROM _record WHERE type = 'Consumed'"
     )
 

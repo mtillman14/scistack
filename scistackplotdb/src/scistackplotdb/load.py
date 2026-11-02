@@ -7,9 +7,9 @@ columns once a variable is joined to ``_schema``, which is the same shape
 part a flat CSV never needed: attaching branch params as columns, and knowing
 which schema keys a given variable actually occupies.
 
-Queries go through ``_fetchall``/``_fetchone``/``_fetchdf`` (never
-``_execute(...).fetchall()`` — see docs/claude on DuckDB fetch locking); the
-payload itself only ever through ``_fetchdf``, which is what keeps a sample from
+Queries go through ``fetchall``/``fetchone``/``fetchdf`` (never
+``execute(...).fetchall()`` — see docs/claude on DuckDB fetch locking); the
+payload itself only ever through ``fetchdf``, which is what keeps a sample from
 becoming a Python float (see ``load_variable``) and batch the branch-params walk
 rather than asking per record (the N+1 trap).
 """
@@ -113,7 +113,7 @@ def schema_keys(db) -> list[str]:
 
 
 def registered_variables(db) -> list[str]:
-    rows = db._duck._fetchall("SELECT variable_name FROM _variables ORDER BY variable_name")
+    rows = db._duck.fetchall("SELECT variable_name FROM _variables ORDER BY variable_name")
     return [row[0] for row in rows]
 
 
@@ -126,7 +126,7 @@ def table_name_for(db, variable: str) -> str:
     filters on ``_record.type`` — reading a shared table without that filter
     would silently mix two variables' records into one plot.
     """
-    row = db._duck._fetchone(
+    row = db._duck.fetchone(
         "SELECT table_name FROM _registered_types WHERE type_name = ?", [variable]
     )
     return row[0] if row and row[0] else f"{variable}_data"
@@ -140,7 +140,7 @@ def _stored_column_types(db, variable: str) -> dict[str, str]:
     """``{column: DuckDB type}`` of the variable's table as stored (zone
     companions included), in ordinal order."""
     table = table_name_for(db, variable)
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT column_name, data_type FROM information_schema.columns "
         "WHERE table_name = ? AND column_name != 'record_id' "
         "ORDER BY ordinal_position",
@@ -284,7 +284,7 @@ def sample_value(db, variable: str) -> Any:
     if not columns:
         return None
     table = table_name_for(db, variable)
-    row = db._duck._fetchone(
+    row = db._duck.fetchone(
         f'SELECT t."{columns[0]}" FROM "{table}" t '
         f"JOIN _record r ON t.record_id = r.record_id "
         f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
@@ -309,7 +309,7 @@ def sample_column_value(db, variable: str, column: str) -> Any:
     group a figure".
     """
     table = table_name_for(db, variable)
-    row = db._duck._fetchone(
+    row = db._duck.fetchone(
         f'SELECT t."{column}" FROM "{table}" t '
         f"JOIN _record r ON t.record_id = r.record_id "
         f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
@@ -362,7 +362,7 @@ def column_levels(db, variable: str, column: str, *, limit: int) -> list[str]:
     ``1.0``, which nothing downstream matches.
     """
     table = table_name_for(db, variable)
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         f'SELECT DISTINCT CAST(t."{column}" AS VARCHAR) AS level FROM "{table}" t '
         f"JOIN _record r ON t.record_id = r.record_id "
         f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE "
@@ -386,7 +386,7 @@ def variable_levels(db, variable: str) -> list[str]:
     if not keys:
         return []
     counts = ", ".join(f'COUNT(s."{key}")' for key in keys)
-    row = db._duck._fetchone(
+    row = db._duck.fetchone(
         f"SELECT {counts} FROM _record r "
         f"LEFT JOIN _schema s ON r.schema_id = s.schema_id "
         f"WHERE r.type = ? AND r.excluded IS DISTINCT FROM TRUE",
@@ -566,7 +566,7 @@ def load_variable(
         # whatever the caller intends to plot (pushdown is a later stage of
         # .claude/plan-plot-minimal-load-examples.md).
         #
-        # `_fetchdf`, never `_fetchall`, for the data columns. Measured on the
+        # `fetchdf`, never `fetchall`, for the data columns. Measured on the
         # real database 2026-09-13 (plan §7): one DOUBLE[] column of 17.4 M
         # samples took 4.7 s through `fetchall` — a Python float per sample —
         # and 0.26 s through `.df()`, which hands each cell over as one numpy
@@ -574,7 +574,7 @@ def load_variable(
         # timed out. The "loaded" line below says `ndarray` or `boxed` so a
         # regression to per-sample boxing is visible in the log, not inferred.
         with timer.phase("fetch"):
-            frame = db._duck._fetchdf(query, [variable])
+            frame = db._duck.fetchdf(query, [variable])
         if zone_meta["columns"]:
             with timer.phase("datetime_zones"):
                 merge_tz_columns(frame, zone_meta, where=f"load_variable({variable})")

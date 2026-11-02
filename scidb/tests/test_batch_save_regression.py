@@ -247,22 +247,22 @@ class TestBulkInsertProvenance:
     with ``con.executemany`` — DuckDB re-runs the single-row statement once per
     row, which against these PK/indexed tables cost ~497s for an 8k-record
     for_each (the `6c2_record_entities_insert` blowup). They now go through
-    ``SciDuck._bulk_insert`` (one ``INSERT ... SELECT`` per table). These tests
+    ``SciDuck.bulk_insert`` (one ``INSERT ... SELECT`` per table). These tests
     fail if any of them reverts to the per-row path.
     """
 
     def test_record_entities_use_bulk_insert(self, db, monkeypatch):
-        """save_batch's _record insert must go through _bulk_insert, not per-row."""
-        from sciduckdb.sciduckdb import SciDuck
+        """save_batch's _record insert must go through bulk_insert, not per-row."""
+        from sciduckdb import SciDuck
 
         tables = []
-        orig = SciDuck._bulk_insert
+        orig = SciDuck.bulk_insert
 
         def _spy(self, table, columns, rows, conflict_cols=None):
             tables.append(table)
             return orig(self, table, columns, rows, conflict_cols=conflict_cols)
 
-        monkeypatch.setattr(SciDuck, "_bulk_insert", _spy)
+        monkeypatch.setattr(SciDuck, "bulk_insert", _spy)
 
         for subj in ["S01", "S02", "S03"]:
             Input.save(np.array([1.0, 2.0]), subject=subj, trial="1")
@@ -281,7 +281,7 @@ class TestBulkInsertProvenance:
 
     def test_no_per_row_executemany_in_provenance(self, db, monkeypatch):
         """No provenance table may be written via con.executemany (the slow path)."""
-        from sciduckdb.sciduckdb import SciDuck
+        from sciduckdb import SciDuck
 
         offenders = []
         orig = SciDuck._executemany

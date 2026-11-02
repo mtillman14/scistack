@@ -35,8 +35,33 @@ under one lock, so a concurrent `close()` cannot land mid-statement. Group
 paired work with `with duck.transaction("label"):`; it is re-entrant on the
 owning thread and rolls back on any exception.
 
+The supported interface of a connection (`DuckConnection`, which `SciDuck`
+extends). Other packages call these and nothing with a leading underscore:
+
+| Method | Does |
+|---|---|
+| `transaction(label)` | context manager: one transaction around the block |
+| `execute(sql, params)` | a statement that returns no rows; returns `None` |
+| `fetchall` / `fetchone` | rows as tuples (few rows) / the first row or `None` |
+| `fetchdf` | rows as a DataFrame (many rows; NULL floats become NaN) |
+| `fetch_table` | `(columns, rows)` with NULL kept as `None` (diagnostics) |
+| `fetchdf_if_open` | `fetchdf`, or `None` when the connection is closed |
+| `table_exists(name)` | whether a table or view exists |
+| `bulk_insert` / `bulk_update` | vectorized multi-row writes (one statement) |
+| `add_rollback_listener(fn)` | call `fn()` after every outermost ROLLBACK |
+| `query(sql)` | `fetchdf` under its user-facing name |
+| `is_open`, `close()`, `reopen()` | connection lifetime; also a context manager |
+
+Every fetch holds the lock across execute *and* fetch. `execute` returns
+nothing so a result can never be fetched after the lock is released.
+
+Modules: `codec.py` (conversion functions), `connection.py`
+(`DuckConnection`), `schema.py` (`SciDuck`, `_schema`, groups),
+`datetimes.py`, `row_lists.py`. Import from `sciduckdb`, not from the modules.
+
 ## Schema ids
 
+`get_or_create_schema_id(level, keys)` resolves one location;
 `batch_get_or_create_schema_ids` maps schema locations
 (`{"subject": "S01", "session": "A"}`) to integer `schema_id`s in `_schema`,
 creating missing rows. A key left out is NULL in its row, so non-contiguous

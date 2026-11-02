@@ -92,7 +92,7 @@ def test_output_skipped_everywhere_leaves_an_empty_table(db, caplog):
         )
 
     assert "[save] NoOutA: 0 records this run (3 no data); created empty table" in caplog.text
-    view = db._duck._fetchdf(f'SELECT * FROM "{NoOutA.view_name()}"')
+    view = db._duck.fetchdf(f'SELECT * FROM "{NoOutA.view_name()}"')
     assert len(view) == 0
     assert "subject" in view.columns
     assert db.load_all_as_df(NoOutA).empty

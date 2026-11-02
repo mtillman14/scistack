@@ -8,14 +8,14 @@ connection. They overlapped by 1ms::
     17:40:54.003  Starting graph build    <- thread B
     17:40:54.028  CRASH in list_path_input_history
 
-``list_path_input_history`` fetched *after* ``_execute`` had released the
+``list_path_input_history`` fetched *after* ``execute`` had released the
 lock, so DuckDB tore the pending result down mid-fetch::
 
     _duckdb.InternalException: INTERNAL Error:
         Attempted to dereference shared_ptr that is NULL!
 
-The static guard lives in sciduckdb/tests/test_fetch_locking.py; this test
-exercises the real store functions through real threads.
+The connection-level guard (``execute`` returns nothing) lives in
+sciduckdb/tests/test_fetch_locking.py; this test exercises the real store functions through real threads.
 """
 
 import threading
@@ -119,7 +119,7 @@ class TestPathInputHistoryConcurrency:
 
 
 class TestPathInputHistoryBehaviourUnchanged:
-    """The _fetchall/_fetchone conversion must not alter results."""
+    """The fetchall/fetchone conversion must not alter results."""
 
     def test_list_returns_recorded_rows(self, db_with_history):
         rows = pipeline_store.list_path_input_history(db_with_history)

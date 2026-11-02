@@ -142,9 +142,9 @@ def test_nothing_to_verify_against_says_how(bundles, tmp_path):
 def test_the_exporters_history_never_enters_the_live_database(bundles, tmp_path):
     root, db = _recipient(bundles[0], tmp_path)
     _run({"S01": RAW["S01"]})
-    before = db._duck._fetchone("SELECT count(*) FROM _record")[0]
+    before = db._duck.fetchone("SELECT count(*) FROM _record")[0]
     verify(db, root=root)
-    assert db._duck._fetchone("SELECT count(*) FROM _record")[0] == before
+    assert db._duck.fetchone("SELECT count(*) FROM _record")[0] == before
 
 
 def test_the_cli_exits_2_on_differences_and_prints_json(bundles, tmp_path, capsys):

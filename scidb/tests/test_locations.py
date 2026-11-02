@@ -286,7 +286,7 @@ class TestBatchHelpersMatchPerRecord:
 
         rids = [
             row[0]
-            for row in variant_db._duck._fetchall(
+            for row in variant_db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = ?", ["LocFilt"]
             )
         ]
@@ -301,7 +301,7 @@ class TestBatchHelpersMatchPerRecord:
 
         rids = [
             row[0]
-            for row in states_db._duck._fetchall(
+            for row in states_db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = ?", ["LocFilt"]
             )
         ]

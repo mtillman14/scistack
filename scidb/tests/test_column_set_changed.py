@@ -93,7 +93,7 @@ def test_fewer_columns_are_refused_too(db):
 def test_an_emptied_variable_takes_the_new_columns(db):
     _save(db, _frame("L_Idx", "R_Idx"))
     # What the Variants popup Delete leaves behind: the table, with no rows.
-    db._duck._execute(f'DELETE FROM "{ColSetOut.table_name()}"')
+    db._duck.execute(f'DELETE FROM "{ColSetOut.table_name()}"')
     _save(db, _frame("A_Idx", "U_Idx"), subject=2)
     # Only the _data rows were deleted here (the real Delete also removes the
     # _record entries), so assert on the new record alone.

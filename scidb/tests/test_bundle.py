@@ -439,7 +439,7 @@ def _with_history(project):
 
 
 def _count(db, table):
-    return db._duck._fetchone(f'SELECT count(*) FROM "{table}"')[0]
+    return db._duck.fetchone(f'SELECT count(*) FROM "{table}"')[0]
 
 
 def test_table_copy_keeps_rows_keys_and_views(tmp_path):
@@ -447,9 +447,9 @@ def test_table_copy_keeps_rows_keys_and_views(tmp_path):
     from scidb.database import clear_current_database
 
     a = configure_database(tmp_path / "a.duckdb", SCHEMA)
-    a._duck._execute("CREATE TABLE t_copy (k VARCHAR PRIMARY KEY, v DOUBLE[])")
-    a._duck._execute("INSERT INTO t_copy VALUES ('x', [1.0, 2.0]), ('y', [])")
-    a._duck._execute("CREATE VIEW t_view AS SELECT k FROM t_copy")
+    a._duck.execute("CREATE TABLE t_copy (k VARCHAR PRIMARY KEY, v DOUBLE[])")
+    a._duck.execute("INSERT INTO t_copy VALUES ('x', [1.0, 2.0]), ('y', [])")
+    a._duck.execute("CREATE VIEW t_view AS SELECT k FROM t_copy")
     files = table_copy.dump(a._duck, ["t_copy", "missing_table"], ["t_view"])
     a.close()
 
@@ -457,12 +457,12 @@ def test_table_copy_keeps_rows_keys_and_views(tmp_path):
     try:
         out = table_copy.load(b._duck, files)
         assert out["tables"] == {"t_copy": 2}
-        assert b._duck._fetchall("SELECT k, v FROM t_copy ORDER BY k") == [
+        assert b._duck.fetchall("SELECT k, v FROM t_copy ORDER BY k") == [
             ("x", [1.0, 2.0]), ("y", []),
         ]
-        assert b._duck._fetchall("SELECT k FROM t_view ORDER BY k") == [("x",), ("y",)]
+        assert b._duck.fetchall("SELECT k FROM t_view ORDER BY k") == [("x",), ("y",)]
         with pytest.raises(Exception):  # the primary key survived the copy
-            b._duck._execute("INSERT INTO t_copy VALUES ('x', [])")
+            b._duck.execute("INSERT INTO t_copy VALUES ('x', [])")
     finally:
         b.close()
         clear_current_database()

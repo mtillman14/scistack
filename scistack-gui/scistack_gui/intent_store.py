@@ -97,7 +97,7 @@ def ensure_tables(db) -> None:
     Called from ``pipeline_store._ensure_tables`` so every path that touches
     the GUI database gets it, exactly like the tables it replaces.
     """
-    _duck(db)._execute("""
+    _duck(db).execute("""
         CREATE TABLE IF NOT EXISTS _intent (
             subject_kind VARCHAR NOT NULL,
             subject_ref  VARCHAR NOT NULL,
@@ -141,7 +141,7 @@ def put_statements(db, statements) -> int:
         for st in statements
     ]
     for row in rows:
-        _duck(db)._execute(
+        _duck(db).execute(
             """
             INSERT INTO _intent (subject_kind, subject_ref, scope, aspect,
                                  aspect_key, value_json, origin, stated_at)
@@ -206,7 +206,7 @@ def load_statements(
         sql += " WHERE " + " AND ".join(clauses)
 
     out: list[Statement] = []
-    for kind, ref, scope, asp, akey, raw, origin, stated_at in _duck(db)._fetchall(
+    for kind, ref, scope, asp, akey, raw, origin, stated_at in _duck(db).fetchall(
         sql, params
     ):
         try:
@@ -245,7 +245,7 @@ def _check_deletion(db, where: str, params: list, what: str) -> None:
 
     if not library_lock._active():
         return
-    for kind, ref, scope, value_json in _duck(db)._fetchall(
+    for kind, ref, scope, value_json in _duck(db).fetchall(
         f"SELECT subject_kind, subject_ref, scope, value_json FROM _intent WHERE {where}", params
     ):
         try:
@@ -259,8 +259,8 @@ def delete_scope(db, scope: str) -> int:
     """Every statement made at *scope* (a library pipeline's re-sync clears
     its canvas before re-seeding it). Returns the count."""
     _check_deletion(db, "scope = ?", [scope], "clearing the canvas")
-    before = _duck(db)._fetchone("SELECT count(*) FROM _intent WHERE scope = ?", [scope])
-    _duck(db)._execute("DELETE FROM _intent WHERE scope = ?", [scope])
+    before = _duck(db).fetchone("SELECT count(*) FROM _intent WHERE scope = ?", [scope])
+    _duck(db).execute("DELETE FROM _intent WHERE scope = ?", [scope])
     return int(before[0]) if before else 0
 
 
@@ -270,11 +270,11 @@ def clear_aspect(db, subject_ref: str, aspect: str, scope: str = GLOBAL_SCOPE) -
         db, "subject_ref = ? AND aspect = ? AND scope = ?", [subject_ref, aspect, scope],
         f"clearing {aspect}",
     )
-    before = _duck(db)._fetchone(
+    before = _duck(db).fetchone(
         "SELECT count(*) FROM _intent WHERE subject_ref = ? AND aspect = ? AND scope = ?",
         [subject_ref, aspect, scope],
     )
-    _duck(db)._execute(
+    _duck(db).execute(
         "DELETE FROM _intent WHERE subject_ref = ? AND aspect = ? AND scope = ?",
         [subject_ref, aspect, scope],
     )
@@ -316,8 +316,8 @@ def delete_statements(
         params.append(ref_prefix.replace("%", "\\%") + "%")
     where = " AND ".join(clauses)
     _check_deletion(db, where, params, f"removing {aspect}")
-    before = _duck(db)._fetchone(f"SELECT count(*) FROM _intent WHERE {where}", params)
-    _duck(db)._execute(f"DELETE FROM _intent WHERE {where}", params)
+    before = _duck(db).fetchone(f"SELECT count(*) FROM _intent WHERE {where}", params)
+    _duck(db).execute(f"DELETE FROM _intent WHERE {where}", params)
     return int(before[0]) if before else 0
 
 def rekey_subject(db, old_ref: str, new_ref: str, *, old_wins: bool = True) -> int:
@@ -342,7 +342,7 @@ def rekey_subject(db, old_ref: str, new_ref: str, *, old_wins: bool = True) -> i
 
     moved = 0
     for st in load_statements(db, subject_refs=[old_ref]):
-        existing = _duck(db)._fetchone(
+        existing = _duck(db).fetchone(
             "SELECT value_json FROM _intent WHERE subject_kind = ? AND subject_ref = ? "
             "AND scope = ? AND aspect = ? AND aspect_key = ?",
             [st.subject_kind, new_ref, st.scope, st.aspect, st.key or ""],
@@ -365,7 +365,7 @@ def rekey_subject(db, old_ref: str, new_ref: str, *, old_wins: bool = True) -> i
             )
         put_statements(db, [replace(st, subject_ref=new_ref)])
         moved += 1
-    _duck(db)._execute("DELETE FROM _intent WHERE subject_ref = ?", [old_ref])
+    _duck(db).execute("DELETE FROM _intent WHERE subject_ref = ?", [old_ref])
     if moved:
         logger.info(
             "[intent_store] rekeyed %d statement(s): %s -> %s",
@@ -528,7 +528,7 @@ def scope_of_node(db, node_id: str) -> str:
 
 def scopes(db) -> list[str]:
     """Every scope any statement is made at, ``global`` first."""
-    rows = _duck(db)._fetchall("SELECT DISTINCT scope FROM _intent ORDER BY scope")
+    rows = _duck(db).fetchall("SELECT DISTINCT scope FROM _intent ORDER BY scope")
     found = {r[0] for r in rows if r[0]}
     return [GLOBAL_SCOPE, *sorted(found - {GLOBAL_SCOPE})]
 

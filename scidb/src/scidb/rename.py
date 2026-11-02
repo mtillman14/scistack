@@ -61,7 +61,7 @@ def _old_invocations(duck, names) -> list[tuple]:
     if not names:
         return []
     ph = ", ".join("?" for _ in names)
-    return duck._fetchall(
+    return duck.fetchall(
         "SELECT invocation_id, function_name, function_hash, as_table, distribute, "
         "for_columns, across_variants, iteration_level FROM _invocation "
         f"WHERE function_name IN ({ph}) ORDER BY invocation_id",
@@ -70,7 +70,7 @@ def _old_invocations(duck, names) -> list[tuple]:
 
 
 def _inputs(duck, inv_id: str) -> list[tuple]:
-    return duck._fetchall(
+    return duck.fetchall(
         "SELECT ii.param_name, ii.input_record_id, ii.selector, ii.declared_name, r.type "
         "FROM _invocation_input ii LEFT JOIN _record r ON r.record_id = ii.input_record_id "
         "WHERE ii.invocation_id = ? ORDER BY ii.param_name, ii.input_record_id",
@@ -79,7 +79,7 @@ def _inputs(duck, inv_id: str) -> list[tuple]:
 
 
 def _outputs(duck, inv_id: str) -> list[tuple]:
-    return duck._fetchall(
+    return duck.fetchall(
         "SELECT io.output_num, io.output_record_id, r.type, r.schema_id, r.content_hash, "
         "r.schema_version, COALESCE(r.excluded, FALSE) FROM _invocation_output io "
         "JOIN _record r ON r.record_id = io.output_record_id "
@@ -93,7 +93,7 @@ def _schema_keys_of(db, schema_id) -> dict:
         return {}
     keys = list(db.dataset_schema_keys)
     cols = ", ".join(f'"{k}"' for k in keys)
-    row = db._duck._fetchone(f"SELECT {cols} FROM _schema WHERE schema_id = ?", [schema_id])
+    row = db._duck.fetchone(f"SELECT {cols} FROM _schema WHERE schema_id = ?", [schema_id])
     return {k: v for k, v in zip(keys, row or ()) if v is not None}
 
 
@@ -102,25 +102,25 @@ def _copy_data_rows(duck, type_name: str, old_rid: str, new_rid: str) -> int:
     custom codec stores several rows per record). ``0`` when the record has
     no data row (a ``generates_file`` output) or *new_rid* already has some."""
     table = f"{type_name}_data"
-    if not duck._table_exists(table):
+    if not duck.table_exists(table):
         return 0
-    if duck._fetchone(f'SELECT 1 FROM "{table}" WHERE record_id = ? LIMIT 1', [new_rid]):
+    if duck.fetchone(f'SELECT 1 FROM "{table}" WHERE record_id = ? LIMIT 1', [new_rid]):
         return 0
     cols = [
         r[0]
-        for r in duck._fetchall(
+        for r in duck.fetchall(
             "SELECT column_name FROM information_schema.columns WHERE table_name = ? "
             "AND column_name <> 'record_id' ORDER BY ordinal_position",
             [table],
         )
     ]
     quoted = ", ".join(f'"{c}"' for c in cols)
-    duck._execute(
+    duck.execute(
         f'INSERT INTO "{table}" (record_id{", " if cols else ""}{quoted}) '
         f'SELECT ?{", " if cols else ""}{quoted} FROM "{table}" WHERE record_id = ?',
         [new_rid, old_rid],
     )
-    row = duck._fetchone(f'SELECT COUNT(*) FROM "{table}" WHERE record_id = ?', [new_rid])
+    row = duck.fetchone(f'SELECT COUNT(*) FROM "{table}" WHERE record_id = ?', [new_rid])
     return int(row[0]) if row else 0
 
 
@@ -136,7 +136,7 @@ def _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, re
     duck = db._duck
     saved_at = {}
     for old_rid, *_ in records:
-        row = duck._fetchone("SELECT max(timestamp) FROM _record_save WHERE record_id = ?", [old_rid])
+        row = duck.fetchone("SELECT max(timestamp) FROM _record_save WHERE record_id = ?", [old_rid])
         saved_at[old_rid] = (row[0] if row else None) or ""
     start = datetime.now()
     order = sorted(records, key=lambda r: (saved_at[r[0]], r[0]))
@@ -149,37 +149,37 @@ def _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, re
             duck,
             [(new, stamp[new], t, sid, ch, sv, ex) for _old, new, t, sid, ch, sv, ex in records],
         )
-        duck._bulk_insert("_record_save", ["record_id", "timestamp"],
+        duck.bulk_insert("_record_save", ["record_id", "timestamp"],
                           [(r[1], stamp[r[1]]) for r in records],
                           conflict_cols=["record_id", "timestamp"])
         for row in invocation_rows:
-            duck._execute(
+            duck.execute(
                 "INSERT INTO _invocation (invocation_id, function_name, function_hash, as_table, "
                 "distribute, for_columns, across_variants, iteration_level) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 list(row),
             )
         for row in input_rows:
-            duck._execute(
+            duck.execute(
                 "INSERT INTO _invocation_input (invocation_id, param_name, input_record_id, "
                 "selector, declared_name) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
                 list(row),
             )
         for row in output_rows:
-            duck._execute(
+            duck.execute(
                 "INSERT INTO _invocation_output (invocation_id, output_num, output_record_id) "
                 "VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
                 list(row),
             )
         now = start.isoformat()
         for name, run_id in runs.items():
-            duck._execute(
+            duck.execute(
                 "INSERT INTO _run (run_id, timestamp, function_name, where_clause, origin) "
                 "VALUES (?, ?, ?, ?, ?)",
                 [run_id, now, name, None, ORIGIN_REPLAY],
             )
         for inv, name in new_inv_of.items():
-            duck._execute(
+            duck.execute(
                 "INSERT INTO _run_invocation (run_id, invocation_id) VALUES (?, ?) "
                 "ON CONFLICT DO NOTHING",
                 [runs[name], inv],
@@ -347,7 +347,7 @@ def rename_functions(db, mapping: "dict[str, str]", hashes: "dict[str, str | Non
     # second variant beside the new name's -- an ambiguous load).
     renamed_at = datetime.now().isoformat()
     for old, new in sorted(mapping.items()):
-        duck._execute(
+        duck.execute(
             "INSERT INTO _function_rename (old_name, new_name, renamed_at) VALUES (?, ?, ?) "
             "ON CONFLICT DO NOTHING",
             [old, new, renamed_at],

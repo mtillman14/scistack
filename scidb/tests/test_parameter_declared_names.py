@@ -175,7 +175,7 @@ class TestRecordedDeclaredName:
 
         result = db.get_aggregated_variants()
         assert len(result["functions"]) == 1
-        n_inv = db._duck._fetchall(
+        n_inv = db._duck.fetchall(
             "SELECT COUNT(*) FROM _invocation WHERE function_name = ?",
             ["bandpass_filter"],
         )[0][0]
@@ -214,7 +214,7 @@ class TestRecordedDeclaredName:
     def test_the_declared_name_column_exists_on_a_fresh_database(self, db):
         cols = {
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = '_invocation_input'"
             )

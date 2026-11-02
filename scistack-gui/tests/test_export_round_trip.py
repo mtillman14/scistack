@@ -58,9 +58,9 @@ SOURCE = textwrap.dedent(
 def _counts(db) -> dict:
     duck = db._duck
     return {
-        "records": duck._fetchone("SELECT COUNT(*) FROM _record")[0],
-        "invocations": duck._fetchone("SELECT COUNT(*) FROM _invocation")[0],
-        "invocation_ids": sorted(r[0] for r in duck._fetchall("SELECT invocation_id FROM _invocation")),
+        "records": duck.fetchone("SELECT COUNT(*) FROM _record")[0],
+        "invocations": duck.fetchone("SELECT COUNT(*) FROM _invocation")[0],
+        "invocation_ids": sorted(r[0] for r in duck.fetchall("SELECT invocation_id FROM _invocation")),
     }
 
 

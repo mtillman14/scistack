@@ -128,7 +128,7 @@ class TestAcquireReleaseCycle:
         acquire_db_connection()
         assert db_mod._db_open is True
         # Can query the table MATLAB created
-        rows = db._duck._fetchall("SELECT * FROM _test")
+        rows = db._duck.fetchall("SELECT * FROM _test")
         assert rows is not None
         release_db_connection()
 

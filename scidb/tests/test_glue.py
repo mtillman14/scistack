@@ -538,7 +538,7 @@ class TestFusionThroughForEach:
         )
 
         # Only the consumer's output landed; glue produced no variable.
-        rows = db._duck._fetchall(
+        rows = db._duck.fetchall(
             "SELECT DISTINCT type FROM _record WHERE type IS NOT NULL"
         )
         types = {r[0] for r in rows}

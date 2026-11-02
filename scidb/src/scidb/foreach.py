@@ -1437,7 +1437,7 @@ def _find_skip_gate_record(
     # silently drop it from the gate, forcing eternal recompute. With no
     # schema_combo conds the record passes; with conds, NULL schema columns
     # fail the equality naturally.
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT io.output_record_id FROM _invocation inv "
         "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
         "JOIN _record r ON r.record_id = io.output_record_id "
@@ -4181,14 +4181,14 @@ def _resolve_colname_from_db(colname: "ColName", db: Any | None) -> str:
     schema_keys = list(resolved_db.dataset_schema_keys)
 
     # Query the _variables table for dtype metadata.
-    # Goes through SciDuck._fetchone so execute+fetch stay under one lock.
+    # Goes through SciDuck.fetchone so execute+fetch stay under one lock.
     # `resolved_db` is a DatabaseManager (the dataset_schema_keys read above
     # already requires one); the SciDuck it wraps is ._duck — DatabaseManager
-    # itself has no _execute/_fetchone. Errors are NOT swallowed here: this used
+    # itself has no execute/fetchone. Errors are NOT swallowed here: this used
     # to be a bare `except Exception: row = None`, which silently turned an
     # AttributeError into "variable not saved" and made the fallback below
     # the only path ever taken.
-    row = resolved_db._duck._fetchone(
+    row = resolved_db._duck.fetchone(
         "SELECT dtype FROM _variables WHERE variable_name = ?",
         [var_name],
     )
@@ -4651,7 +4651,7 @@ def _get_schema_level_idx(db, schema_ids: set) -> int:
     if not schema_ids:
         return -1
     placeholders = ", ".join(["?"] * len(schema_ids))
-    rows = db._duck._fetchdf(
+    rows = db._duck.fetchdf(
         f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
         list(schema_ids),
     )
@@ -6269,7 +6269,7 @@ def _save_results(
                     }
                     schema_level = db._infer_schema_level(schema_keys)
                     schema_id = (
-                        db._duck._get_or_create_schema_id(schema_level, schema_keys)
+                        db._duck.get_or_create_schema_id(schema_level, schema_keys)
                         if schema_level is not None and schema_keys
                         else 0
                     )

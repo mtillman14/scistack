@@ -84,11 +84,11 @@ def db(tmp_path):
 
 
 def _n(db, sql: str) -> int:
-    return int(db._duck._fetchone(sql)[0])
+    return int(db._duck.fetchone(sql)[0])
 
 
 def _rids(db, type_name: str) -> set:
-    return {r for (r,) in db._duck._fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name])}
+    return {r for (r,) in db._duck.fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name])}
 
 
 def _snapshot(db) -> dict:
@@ -96,7 +96,7 @@ def _snapshot(db) -> dict:
     return {
         t: _n(db, f'SELECT COUNT(*) FROM "{t}"')
         for t in list(CLEARED_TABLES) + ["_run", CdRaw.table_name(), CdFiltered.table_name()]
-        if duck._table_exists(t)
+        if duck.table_exists(t)
     }
 
 
@@ -115,14 +115,14 @@ class TestPlan:
 class TestClear:
     def test_records_and_history_go_the_run_log_stays(self, db):
         runs_before = _n(db, "SELECT COUNT(*) FROM _run")
-        variables_before = db._duck._fetchall("SELECT * FROM _variables ORDER BY 1")
+        variables_before = db._duck.fetchall("SELECT * FROM _variables ORDER BY 1")
         clear_data(db, "debugging")
         for table in CLEARED_TABLES:
-            if db._duck._table_exists(table):
+            if db._duck.table_exists(table):
                 assert _n(db, f'SELECT COUNT(*) FROM "{table}"') == 0, table
         assert _n(db, f'SELECT COUNT(*) FROM "{CdFiltered.table_name()}"') == 0
         assert _n(db, "SELECT COUNT(*) FROM _run") == runs_before
-        assert db._duck._fetchall("SELECT * FROM _variables ORDER BY 1") == variables_before
+        assert db._duck.fetchall("SELECT * FROM _variables ORDER BY 1") == variables_before
         # The views are still queryable.
         assert _n(db, f'SELECT COUNT(*) FROM "{CdFiltered.view_name()}"') == 0
 
@@ -185,7 +185,7 @@ class TestAtomic:
 
 class TestCanvasAndBackup:
     def test_a_gui_project_is_refused(self, db):
-        db._duck._execute("CREATE TABLE _pipelines (pipeline_id VARCHAR)")
+        db._duck.execute("CREATE TABLE _pipelines (pipeline_id VARCHAR)")
         before = _snapshot(db)
         assert clear_plan(db).has_canvas
         with pytest.raises(ClearRefused, match="GUI canvas"):
@@ -210,10 +210,10 @@ class TestClassification:
         pin_variant(db, CdFiltered, {"cd_bandpass.low_hz": 10}, "x")
         clear_data(db, "x")  # creates the tombstone table too
         duck = db._duck
-        data_tables = {t for (t,) in duck._fetchall("SELECT DISTINCT table_name FROM _registered_types")}
+        data_tables = {t for (t,) in duck.fetchall("SELECT DISTINCT table_name FROM _registered_types")}
         tables = {
             t
-            for (t,) in duck._fetchall(
+            for (t,) in duck.fetchall(
                 "SELECT table_name FROM duckdb_tables() WHERE schema_name = 'main'"
             )
         }

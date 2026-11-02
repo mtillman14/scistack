@@ -62,7 +62,7 @@ def _table(db):
 
 
 def _stored_envelope(db, plot_id: str, version: int) -> dict:
-    row = db._duck._fetchone(
+    row = db._duck.fetchone(
         "SELECT envelope_json FROM _saved_plot WHERE plot_id = ? AND version = ?",
         [plot_id, version],
     )

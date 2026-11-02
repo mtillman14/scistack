@@ -194,3 +194,22 @@ Move files, fix imports, and change nothing else:
     `other_modules`). `._duck` baseline is 27 (grep count), not 26.
     `scidb/tests/test_supported_modules.py` checks the tuple has no stale
     names.
+- 2026-11-01: stage 4 done; all six package suites green (after fixing three lazy `from .sciduckdb` imports in row_lists.py).
+  - Split: `codec.py`, `connection.py` (`DuckConnection`: lock, transaction,
+    execute/fetch, bulk, lifetime), `schema.py` (`SciDuck(DuckConnection)`:
+    `_schema`, `_variables`, groups). `sciduckdb.py` deleted. Inheritance so
+    P3 (D4) can move `schema.py`'s tables to scidb and leave only
+    `DuckConnection`.
+  - Renamed per the table; `fetchall`/`fetchone` aliases deleted.
+    `_restore_types` needed nothing (the module function was already public).
+    `_executemany`, `_fetchall_with_frame`, `_fetchdf_with_frame` stay private:
+    no caller outside sciduckdb's tests.
+  - Deviation: `execute` now returns `None`. The repo-wide AST guard for
+    `_execute(...).fetchall()` could not survive the rename (the name
+    collides with raw DuckDB `con.execute`), so the bug class is made
+    unwritable instead; `test_fetch_locking.py` tests that.
+  - `_begin`/`_commit`/`_rollback` in source (GUI `history.py`, scidb
+    `database.py` x2, `clear_data.py`, `variant_delete.py`) now use
+    `transaction()`. Only sciduckdb's own tests call the private trio.
+  - Underscore codec names (`_infer_duckdb_type` etc.) dropped from the
+    facade: no consumer outside sciduckdb.

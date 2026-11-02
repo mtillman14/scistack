@@ -71,7 +71,7 @@ def test_opening_salvages_and_never_rewrites(db):
     row, text = STORE.load(db, info.stats_id)
     envelope = json.loads(text)
     envelope["spec"]["comparisons"][0]["family"] = "bayesian"
-    db._duck._execute(f"UPDATE {STORE.table} SET envelope_json = ? WHERE stats_id = ?",
+    db._duck.execute(f"UPDATE {STORE.table} SET envelope_json = ? WHERE stats_id = ?",
                       [json.dumps(envelope), info.stats_id])
     opened = load_saved_stats(db, info.stats_id)
     assert opened.spec.comparisons[0].family == "auto"  # the default since 2026-10-19

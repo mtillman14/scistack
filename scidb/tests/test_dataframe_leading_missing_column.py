@@ -26,7 +26,7 @@ import pytest
 import scifor as _scifor
 from scidb import BaseVariable, ColumnTypeChangedError, configure_database
 from sciduckdb import SciDuck, column_type_change
-from sciduckdb.sciduckdb import infer_data_columns
+from sciduckdb import infer_data_columns
 
 SCHEMA = ["subject"]
 
@@ -171,7 +171,7 @@ def test_all_empty_column_round_trips_as_nan(db):
 
 def test_text_column_never_stores_the_text_nan(db):
     _save(db, _csv_like_frame(), 1)
-    n = db._duck._fetchall(
+    n = db._duck.fetchall(
         f'SELECT COUNT(*) FROM "{LeadingBlankTable.table_name()}" '
         f"WHERE \"IP_SPINAL_STIMULATION\" = 'nan'"
     )[0][0]
@@ -252,10 +252,9 @@ def test_single_save_path_reconciles_too(db):
 def test_failed_bulk_insert_in_transaction_raises_the_real_error(tmp_path):
     duck = SciDuck(str(tmp_path / "mask.duckdb"), dataset_schema=["subject"])
     try:
-        duck._execute('CREATE TABLE t ("record_id" VARCHAR, "x" DOUBLE)')
-        duck._begin()
+        duck.execute('CREATE TABLE t ("record_id" VARCHAR, "x" DOUBLE)')
         with pytest.raises(duckdb.ConversionException):
-            duck._bulk_insert("t", ["record_id", "x"], [("r1", "Y")])
-        duck._rollback()
+            with duck.transaction("bulk insert"):
+                duck.bulk_insert("t", ["record_id", "x"], [("r1", "Y")])
     finally:
         duck.close()

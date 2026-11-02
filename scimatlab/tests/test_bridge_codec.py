@@ -42,7 +42,7 @@ def db(tmp_path):
 
 
 def _dtype(db, name):
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT dtype FROM _variables WHERE variable_name = ?", [name]
     )
     return json.loads(rows[0][0])

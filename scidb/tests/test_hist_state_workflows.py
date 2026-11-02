@@ -500,7 +500,7 @@ class TestMultiOutputSingleFunction:
         greyed on a single excluded output was dropped.)"""
         self._run_multi(db)
 
-        db._duck._execute(
+        db._duck.execute(
             "UPDATE _record SET excluded = TRUE "
             "WHERE type = ? AND schema_id IN ("
             "  SELECT schema_id FROM _schema WHERE subject = ? AND trial = ?"

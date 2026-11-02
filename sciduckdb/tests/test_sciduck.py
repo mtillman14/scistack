@@ -40,7 +40,7 @@ class TestInit:
         """Should create _schema, _variables, and _variable_groups tables."""
         tables = [
             row[0]
-            for row in duck._fetchall(
+            for row in duck.fetchall(
                 "SELECT table_name FROM information_schema.tables "
                 "WHERE table_schema = 'main'"
             )
@@ -200,7 +200,7 @@ class TestPerColumnStorage:
         # Check the actual DuckDB table columns
         cols = [
             row[0]
-            for row in duck._fetchall(
+            for row in duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'df_cols' ORDER BY ordinal_position"
             )
@@ -227,7 +227,7 @@ class TestPerColumnStorage:
         # Verify per-column layout in DuckDB
         cols = [
             row[0]
-            for row in duck._fetchall(
+            for row in duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'params' ORDER BY ordinal_position"
             )
@@ -246,7 +246,7 @@ class TestPerColumnStorage:
 
         cols = [
             row[0]
-            for row in duck._fetchall(
+            for row in duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'mixed_dict' ORDER BY ordinal_position"
             )
@@ -289,7 +289,7 @@ class TestPerColumnStorage:
         # Verify per-column layout in DuckDB
         cols = [
             row[0]
-            for row in duck._fetchall(
+            for row in duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'columnar' ORDER BY ordinal_position"
             )
@@ -319,7 +319,7 @@ class TestPerColumnStorage:
         # Verify per-column layout
         cols = [
             row[0]
-            for row in duck._fetchall(
+            for row in duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'matlab_struct' ORDER BY ordinal_position"
             )
@@ -342,7 +342,7 @@ class TestPerColumnStorage:
 
         cols = [
             row[0]
-            for row in duck._fetchall(
+            for row in duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'nested_cols' ORDER BY ordinal_position"
             )
@@ -485,7 +485,7 @@ class TestDictDuckDBTypes:
         assert types["velocity"] == "DOUBLE[]"
 
         # Must be exactly one row in the table
-        count = duck._fetchall('SELECT COUNT(*) FROM "vectors"')[0][0]
+        count = duck.fetchall('SELECT COUNT(*) FROM "vectors"')[0][0]
         assert count == 1
 
         loaded = fetch(duck, "vectors", meta)
@@ -685,28 +685,28 @@ class TestAutocommitFailureRecovery:
     transaction state, so the next statement on the shared connection --
     unrelated to the migration -- failed too with TransactionException
     ("Current transaction is aborted"), and every statement after that did
-    as well, for the remaining life of the process. `_execute` et al. now
+    as well, for the remaining life of the process. `execute` et al. now
     issue a best-effort ROLLBACK after any autocommit failure so a caught
     exception can't cascade like this.
     """
 
     def test_execute_failure_does_not_poison_next_statement(self, duck):
         with pytest.raises(Exception):
-            duck._execute("SELECT * FROM this_table_does_not_exist")
+            duck.execute("SELECT * FROM this_table_does_not_exist")
         # Must succeed -- would raise TransactionException before the fix.
-        duck._execute("CREATE TABLE IF NOT EXISTS _recovery_probe (x INTEGER)")
+        duck.execute("CREATE TABLE IF NOT EXISTS _recovery_probe (x INTEGER)")
 
     def test_repeated_failures_do_not_poison_connection(self, duck):
         for _ in range(5):
             with pytest.raises(Exception):
-                duck._execute("ALTER TABLE this_table_does_not_exist ADD COLUMN y INTEGER")
-        duck._execute("CREATE TABLE IF NOT EXISTS _recovery_probe (x INTEGER)")
-        assert duck._fetchall("SELECT COUNT(*) FROM _recovery_probe") == [(0,)]
+                duck.execute("ALTER TABLE this_table_does_not_exist ADD COLUMN y INTEGER")
+        duck.execute("CREATE TABLE IF NOT EXISTS _recovery_probe (x INTEGER)")
+        assert duck.fetchall("SELECT COUNT(*) FROM _recovery_probe") == [(0,)]
 
     def test_fetchall_failure_does_not_poison_next_statement(self, duck):
         with pytest.raises(Exception):
-            duck._fetchall("SELECT * FROM this_table_does_not_exist")
-        assert duck._fetchall("SELECT 1") == [(1,)]
+            duck.fetchall("SELECT * FROM this_table_does_not_exist")
+        assert duck.fetchall("SELECT 1") == [(1,)]
 
     def test_failure_inside_explicit_transaction_does_not_clear_tx_owner(self, duck):
         """An explicit transaction's rollback is the caller's call, not ours
@@ -725,11 +725,11 @@ class TestAutocommitFailureRecovery:
         thread = threading.get_ident()
         assert duck._tx_owner == thread
         with pytest.raises(Exception):
-            duck._execute("SELECT * FROM this_table_does_not_exist")
+            duck.execute("SELECT * FROM this_table_does_not_exist")
         assert duck._tx_owner == thread
         duck._rollback()
         assert duck._tx_owner is None
-        duck._execute("SELECT 1")  # connection still usable afterward
+        duck.execute("SELECT 1")  # connection still usable afterward
 
 
 # ---------------------------------------------------------------------------
@@ -882,15 +882,15 @@ class TestSchemaIds:
             dict([_speed_combo("S01", "SSV"), _speed_combo("S01", "FV")])
         )
         _, new_keys = _speed_combo("S02", "FV")
-        new_id = wide_duck._get_or_create_schema_id("speed", new_keys)
+        new_id = wide_duck.get_or_create_schema_id("speed", new_keys)
         assert new_id not in batch_ids.values()
         key, existing_keys = _speed_combo("S01", "SSV")
-        existing_id = wide_duck._get_or_create_schema_id("speed", existing_keys)
+        existing_id = wide_duck.get_or_create_schema_id("speed", existing_keys)
         assert existing_id == batch_ids[key]
 
     def test_single_then_batch_schema_id_no_collision(self, wide_duck):
         key, keys = _speed_combo("S01", "SSV")
-        id1 = wide_duck._get_or_create_schema_id("speed", keys)
+        id1 = wide_duck.get_or_create_schema_id("speed", keys)
         batch_ids = wide_duck.batch_get_or_create_schema_ids(
             dict([_speed_combo("S01", "SSV"), _speed_combo("S01", "FV")])
         )
@@ -901,7 +901,7 @@ class TestSchemaIds:
 def test_is_open_follows_close_and_reopen(tmp_path):
     """SciDuck owns its connection state: a best-effort reader (scidb's
     display-only alias validation) asks is_open instead of querying a closed
-    connection, which _fetchdf would log as an ERROR."""
+    connection, which fetchdf would log as an ERROR."""
     from sciduckdb import SciDuck
 
     db = SciDuck(str(tmp_path / "open.duckdb"), dataset_schema=["subject"])
@@ -957,11 +957,11 @@ def test_close_waits_for_an_in_flight_statement(tmp_path):
 
 
 _STATEMENT_CALLS = {
-    "_execute": lambda db: db._execute("SELECT 1"),
-    "_fetch_table": lambda db: db._fetch_table("SELECT 1"),
-    "_fetchall": lambda db: db._fetchall("SELECT 1"),
-    "_fetchone": lambda db: db._fetchone("SELECT 1"),
-    "_fetchdf": lambda db: db._fetchdf("SELECT 1"),
+    "execute": lambda db: db.execute("SELECT 1"),
+    "fetch_table": lambda db: db.fetch_table("SELECT 1"),
+    "fetchall": lambda db: db.fetchall("SELECT 1"),
+    "fetchone": lambda db: db.fetchone("SELECT 1"),
+    "fetchdf": lambda db: db.fetchdf("SELECT 1"),
     "_fetchall_with_frame": lambda db: db._fetchall_with_frame(
         "SELECT * FROM _query_frame", pd.DataFrame({"a": [1]})
     ),

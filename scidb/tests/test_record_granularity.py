@@ -42,7 +42,7 @@ def db(tmp_path):
 
 
 def _n_records(db, var_name: str) -> int:
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT COUNT(*) FROM _record WHERE type = ?", [var_name]
     )[0][0]
 
@@ -92,7 +92,7 @@ class TestWholeTablePerCombo:
 
         for_each(read_table, {}, [CpetRaw], subject=["SS01"], session=["01"])
 
-        n_edges = db._duck._fetchall("SELECT COUNT(*) FROM _invocation_output")[0][0]
+        n_edges = db._duck.fetchall("SELECT COUNT(*) FROM _invocation_output")[0][0]
         assert n_edges == 1, f"expected 1 output edge, got {n_edges}"
 
 

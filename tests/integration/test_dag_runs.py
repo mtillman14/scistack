@@ -318,7 +318,7 @@ def _producing_invocations(db, type_name: str) -> dict:
 
     duck = db._duck
     out: dict = {}
-    for (rid,) in duck._fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name]):
+    for (rid,) in duck.fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name]):
         inv = pq.producing_invocation(duck, rid)
         if inv is None:
             continue
@@ -329,7 +329,7 @@ def _producing_invocations(db, type_name: str) -> dict:
                 "function_hash": sig.get("function_hash"),
                 "var_inputs": sig.get("var_inputs"),
                 "const_hashes": sig.get("const_hashes"),
-                "run_options": duck._fetchone(
+                "run_options": duck.fetchone(
                     "SELECT distribute, as_table, for_columns FROM _invocation WHERE invocation_id = ?",
                     [inv_id],
                 ),

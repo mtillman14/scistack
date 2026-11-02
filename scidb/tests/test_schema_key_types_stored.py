@@ -211,7 +211,7 @@ class TestOtherProcesses:
 
     def test_read_only_database_without_the_table_reads_empty(self, db_path):
         db = _open(db_path)
-        db._duck._execute(f"DROP TABLE {schema_types.TABLE}")
+        db._duck.execute(f"DROP TABLE {schema_types.TABLE}")
         db.close()
 
         ro = DatabaseManager(db_path, SCHEMA, read_only=True)

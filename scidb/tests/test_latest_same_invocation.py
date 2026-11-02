@@ -54,7 +54,7 @@ def db(tmp_path):
 
 def _latest_by_subject(db, type_name):
     """{subject: {record_id: is_latest}} over every non-excluded record."""
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT r.record_id, s.subject FROM _record r "
         "LEFT JOIN _schema s ON s.schema_id = r.schema_id "
         "WHERE r.type = ? AND COALESCE(r.excluded, FALSE) = FALSE",

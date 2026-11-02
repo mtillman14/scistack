@@ -131,12 +131,12 @@ def _add_second_producer(db, record_id: str) -> str:
     be silently halved back to one producer.
     """
     inv_id = "ffffffffffffffff"
-    db._duck._execute(
+    db._duck.execute(
         "INSERT INTO _invocation (invocation_id, function_name, function_hash, "
         "as_table, distribute) VALUES (?, 'vp_same', 'deadbeefdeadbeef', NULL, FALSE)",
         [inv_id],
     )
-    db._duck._execute(
+    db._duck.execute(
         "INSERT INTO _invocation_output (invocation_id, output_num, output_record_id) "
         "VALUES (?, 0, ?)",
         [inv_id, record_id],
@@ -213,7 +213,7 @@ def _scaled(tree):
 def _record_ids(db, type_name):
     return [
         r[0]
-        for r in db._duck._fetchall(
+        for r in db._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = ?", [type_name]
         )
     ]
@@ -361,8 +361,8 @@ class TestAllProducingInvocations:
         rids = _record_ids(db, "VpScaled")
 
         assert len(rids) == len(SUBJECTS)
-        assert db._duck._fetchone("SELECT COUNT(*) FROM _invocation")[0] == len(SUBJECTS)
-        assert db._duck._fetchone("SELECT COUNT(*) FROM _run")[0] == 2
+        assert db._duck.fetchone("SELECT COUNT(*) FROM _invocation")[0] == len(SUBJECTS)
+        assert db._duck.fetchone("SELECT COUNT(*) FROM _run")[0] == 2
 
     def test_trace_node_lists_both_runs(self, reproduced_record):
         """Two for_each executions, two `_run` rows, both reachable from the
@@ -414,7 +414,7 @@ class TestAllProducingInvocations:
         rid = next(
             r
             for r in _record_ids(db, "VpScaled")
-            if db._duck._fetchone(
+            if db._duck.fetchone(
                 "SELECT s.subject FROM _record r JOIN _schema s ON s.schema_id = "
                 "r.schema_id WHERE r.record_id = ?",
                 [r],
@@ -503,7 +503,7 @@ class TestBatching:
     def test_runs_helper_issues_one_query(self, reproduced_record):
         db = reproduced_record
         inv_ids = [
-            r[0] for r in db._duck._fetchall("SELECT invocation_id FROM _invocation")
+            r[0] for r in db._duck.fetchall("SELECT invocation_id FROM _invocation")
         ]
         assert len(inv_ids) >= 2, "need several invocations for this to mean anything"
 
@@ -518,7 +518,7 @@ class TestBatching:
         input edges, glue sources, glue ids."""
         db = reproduced_record
         inv_ids = [
-            r[0] for r in db._duck._fetchall("SELECT invocation_id FROM _invocation")
+            r[0] for r in db._duck.fetchall("SELECT invocation_id FROM _invocation")
         ]
 
         calls = _count_fetchall(
@@ -549,20 +549,20 @@ class TestBatching:
 
 
 def _count_fetchall(db, body) -> int:
-    """Run ``body`` and return how many ``_fetchall`` calls it made."""
+    """Run ``body`` and return how many ``fetchall`` calls it made."""
     duck = db._duck
-    original = duck._fetchall
+    original = duck.fetchall
     seen: list[str] = []
 
     def counting(sql, params=None):
         seen.append(sql)
         return original(sql, params)
 
-    duck._fetchall = counting
+    duck.fetchall = counting
     try:
         body()
     finally:
-        duck._fetchall = original
+        duck.fetchall = original
     return len(seen)
 
 

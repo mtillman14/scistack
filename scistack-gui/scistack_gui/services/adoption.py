@@ -299,7 +299,7 @@ def write(db, plan: AdoptionPlan, combos: list[dict]) -> "str | None":
     with library_lock.library_writes():
         duck = db._duck
         for node_id, node_type, label, scope in plan.nodes:
-            duck._execute(
+            duck.execute(
                 "INSERT INTO _pipeline_nodes (node_id, node_type, label, pipeline_id) "
                 "VALUES (?, ?, ?, ?) ON CONFLICT (node_id) DO NOTHING",
                 [node_id, node_type, label, scope],

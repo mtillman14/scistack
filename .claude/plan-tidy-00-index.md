@@ -149,8 +149,9 @@ If a decision is changed, edit the affected plan's stage before starting it.
 | P0 | 1 stop swallowing `record_run` failures | ☑ 2026-11-01 | (this commit) |
 | P0 | 2 one transaction for data + graph | ☑ 2026-11-01 | (this commit) |
 | P1 | 1–8 (see plan) | ☑ 2026-11-01 | e129c3bf |
-| P2 | 1–3 | ☑ 2026-11-01 | (this commit) |
-| P2 | 4–7 | ☐ | |
+| P2 | 1–3 | ☑ 2026-11-01 | 1d833d79 |
+| P2 | 4 | ☑ 2026-11-01 | (this commit) |
+| P2 | 5–7 | ☐ | |
 | P3 | 1–7 | ☐ | |
 | P4 | 1–10 | ☐ | |
 | P5 | 1–6 | ☐ | |

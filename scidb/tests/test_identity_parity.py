@@ -126,13 +126,13 @@ def _recompute_invocation_ids(db, type_name: str) -> list[tuple[str, str]]:
     """``[(stored, recomputed)]`` for every record of *type_name*."""
     duck = db._duck
     out = []
-    for (rid,) in duck._fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name]):
+    for (rid,) in duck.fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name]):
         inv = pq.producing_invocation(duck, rid)
         if inv is None:
             continue
         inv_id, fn_name, fn_hash = inv
         sig = pq.stored_invocation_signature(duck, rid)
-        as_table, distribute, across_variants, iteration_level = duck._fetchone(
+        as_table, distribute, across_variants, iteration_level = duck.fetchone(
             "SELECT as_table, distribute, across_variants, iteration_level "
             "FROM _invocation WHERE invocation_id = ?",
             [inv_id],
@@ -212,7 +212,7 @@ class TestInvocationIdIsReconstructible:
             cycle=[],
         )
         self._assert_parity(db)
-        edges = db._duck._fetchall(
+        edges = db._duck.fetchall(
             "SELECT DISTINCT param_name FROM _invocation_input ii "
             "JOIN _invocation inv ON inv.invocation_id = ii.invocation_id "
             "WHERE inv.function_name = ?",
@@ -476,7 +476,7 @@ class TestVariantSplitIsPredicted:
         _seed_variants()
         for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
         # 2 subjects x 2 trials x 2 variant groups
-        n = db._duck._fetchone(
+        n = db._duck.fetchone(
             "SELECT COUNT(DISTINCT invocation_id) FROM _invocation WHERE function_name = ?",
             ["pooled"],
         )[0]
@@ -490,7 +490,7 @@ class TestVariantSplitIsPredicted:
         )
         written = {
             inv
-            for (inv,) in db._duck._fetchall(
+            for (inv,) in db._duck.fetchall(
                 "SELECT invocation_id FROM _invocation WHERE function_name = ?", ["pooled"]
             )
         }
@@ -578,7 +578,7 @@ class TestAcrossVariantsIsAFact:
 
     def test_the_run_writes_one_invocation_per_location(self, db):
         self._run()
-        rows = db._duck._fetchall(
+        rows = db._duck.fetchall(
             "SELECT across_variants FROM _invocation WHERE function_name = ?", ["pooled"]
         )
         assert len(rows) == 4, rows  # 2 subjects x 2 trials, both groups pooled
@@ -605,7 +605,7 @@ class TestAcrossVariantsIsAFact:
         )
         written = {
             inv
-            for (inv,) in db._duck._fetchall(
+            for (inv,) in db._duck.fetchall(
                 "SELECT invocation_id FROM _invocation WHERE function_name = ?", ["pooled"]
             )
         }

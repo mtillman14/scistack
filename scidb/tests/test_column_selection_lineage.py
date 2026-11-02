@@ -67,7 +67,7 @@ def _seed(n_subjects=2):
 
 def _input_edges(db, variable: str) -> list[tuple]:
     """(output_record_id, param_name, input_record_id) for a variable's records."""
-    return db._duck._fetchall(
+    return db._duck.fetchall(
         "SELECT io.output_record_id, ii.param_name, ii.input_record_id "
         "FROM _record r "
         "JOIN _invocation_output io ON io.output_record_id = r.record_id "
@@ -120,7 +120,7 @@ def test_edges_point_at_the_records_actually_consumed(db):
 
     gait_ids = {
         row[0]
-        for row in db._duck._fetchall(
+        for row in db._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = 'Gait'"
         )
     }
@@ -286,7 +286,7 @@ def test_full_iteration_column_selection_binds_lineage(db):
 
     cycle_ids = {
         row[0]
-        for row in db._duck._fetchall(
+        for row in db._duck.fetchall(
             "SELECT record_id FROM _record WHERE type = 'Cycle'"
         )
     }

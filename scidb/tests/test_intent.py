@@ -351,7 +351,7 @@ class _Duck:
     def __init__(self, exc=None, rows=()):
         self.exc, self.rows = exc, list(rows)
 
-    def _fetchall(self, sql, params):
+    def fetchall(self, sql, params):
         if self.exc is not None:
             raise self.exc
         return self.rows

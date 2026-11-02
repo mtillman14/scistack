@@ -5,7 +5,7 @@ Would it be beneficial to factor out the data type conversion to/from `pd.DataFr
 
 ## Where Conversion Code Lives
 
-### `sciduck/src/sciduckdb/sciduckdb.py` (primary location)
+### `sciduckdb/src/sciduckdb/codec.py` (primary location)
 All the substantive conversion logic lives here as module-level functions:
 - `_infer_duckdb_type()` — maps Python/numpy types to DuckDB column type strings (`DOUBLE[]`, `JSON`, `LIST`, etc.)
 - `_python_to_storage()` / `storage_to_python()` — serialize/deserialize individual cell values

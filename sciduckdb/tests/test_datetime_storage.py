@@ -27,7 +27,7 @@ from sciduckdb.datetimes import (
     datetime_to_storage,
     restore_datetime_series,
 )
-from sciduckdb.sciduckdb import _storage_signature, value_to_storage_row
+from sciduckdb.codec import _storage_signature, value_to_storage_row
 
 from .codec_roundtrip import fetch, store
 

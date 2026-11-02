@@ -65,7 +65,7 @@ def test_a_drifted_row_opens_with_notes(populated_db):
     spec["kind"] = "pie"
     spec["x_layers"] = ["session"]
     ensure_table(populated_db)
-    populated_db._duck._execute(
+    populated_db._duck.execute(
         f"INSERT INTO {TABLE} VALUES ('old00001', 'RawSignal', 'Old', 1, "
         f"'2026-01-01T00:00:00+00:00', FALSE, ?)",
         [json.dumps({"format": 0, "spec": spec, "view": VIEW})],

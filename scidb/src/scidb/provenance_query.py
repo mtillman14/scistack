@@ -65,7 +65,7 @@ def _safe_literal(value_repr):
 def producing_invocation(duck, record_id: str):
     """The invocation that produced ``record_id`` → ``(inv_id, fn_name, fn_hash)``
     or ``None`` for raw/manual records (no producing invocation)."""
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT io.invocation_id, inv.function_name, inv.function_hash "
         "FROM _invocation_output io "
         "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
@@ -80,7 +80,7 @@ def output_num_for(duck, record_id: str):
     """The ``output_num`` slot this record occupies on its producing invocation,
     or ``None`` if it has no producing invocation. Distinguishes the multiple
     records a single flatten/distribute call emits."""
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT output_num FROM _invocation_output WHERE output_record_id = ? LIMIT 1",
         [record_id],
     )
@@ -107,7 +107,7 @@ def _chunked_in(duck, sql_template: str, ids, tail_params=None, chunk: int = 900
         chunk_ids = ids[start : start + chunk]
         placeholders = ", ".join(["?"] * len(chunk_ids))
         sql = sql_template.format(ph=placeholders)
-        out.extend(duck._fetchall(sql, chunk_ids + tail_params))
+        out.extend(duck.fetchall(sql, chunk_ids + tail_params))
     return out
 
 
@@ -815,7 +815,7 @@ def renamed_superseded_records(duck, record_ids, *, inv_map: dict | None = None)
     if not rids:
         return set()
     renamed = dict(
-        duck._fetchall("SELECT old_name, MAX(renamed_at) FROM _function_rename GROUP BY old_name")
+        duck.fetchall("SELECT old_name, MAX(renamed_at) FROM _function_rename GROUP BY old_name")
     )
     if not renamed:
         return set()
@@ -1046,7 +1046,7 @@ def function_source(duck, function_hash: str) -> dict:
     """
     if not function_hash:
         return {"entry": None, "units": {}}
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT unit_name, unit_source, is_entry FROM _function_source "
         "WHERE function_hash = ? ORDER BY unit_name",
         [function_hash],
@@ -1667,7 +1667,7 @@ def glue_source(duck, virtual_record_id: str) -> dict | None:
     structure, expected-invocation prediction) go through here, so glue never
     leaks into them as a pseudo variable type named ``__glue__``.
     """
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT ii.input_record_id, inv.function_name, inv.function_hash, r.type "
         "FROM _invocation_output io "
         "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
@@ -1700,7 +1700,7 @@ def glue_invocation_ids(duck) -> set:
     """
     return {
         row[0]
-        for row in duck._fetchall(
+        for row in duck.fetchall(
             "SELECT DISTINCT io.invocation_id FROM _invocation_output io "
             "JOIN _record r ON r.record_id = io.output_record_id "
             f"WHERE r.type IN {_types_sql(GLUE_RECORD_TYPES)}",
@@ -1882,7 +1882,7 @@ def invocation_id_is_current(duck, invocation_id: str) -> bool:
     ``True`` for an id that is not found (nothing to judge)."""
     from .provenance import compute_invocation_id
 
-    row = duck._fetchone(
+    row = duck.fetchone(
         "SELECT function_name, function_hash, as_table, distribute, across_variants, "
         "iteration_level FROM _invocation WHERE invocation_id = ?",
         [invocation_id],
@@ -1890,7 +1890,7 @@ def invocation_id_is_current(duck, invocation_id: str) -> bool:
     if row is None:
         return True
     fn_name, fn_hash, as_table, distribute, across, level = row
-    edges = duck._fetchall(
+    edges = duck.fetchall(
         "SELECT param_name, input_record_id, selector FROM _invocation_input "
         "WHERE invocation_id = ?",
         [invocation_id],
@@ -1936,12 +1936,12 @@ def stored_invocation_signature(duck, record_id: str):
     if inv is None:
         return None
     inv_id, _fn_name, fn_hash = inv
-    opts = duck._fetchone(
+    opts = duck.fetchone(
         "SELECT distribute, as_table, for_columns, across_variants, iteration_level "
         "FROM _invocation WHERE invocation_id = ?",
         [inv_id],
     )
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT ii.param_name, ii.input_record_id, ii.selector, r.type, c.content_hash "
         "FROM _invocation_input ii "
         "LEFT JOIN _record r ON r.record_id = ii.input_record_id "
@@ -1989,7 +1989,7 @@ def _fetch_record_node(duck, record_id: str, schema_keys: list[str], restore=Non
     restore = restore or (lambda _key, value: from_schema_str(value))
     schema_cols = ", ".join(f's."{k}"' for k in schema_keys)
     select_extra = (", " + schema_cols) if schema_keys else ""
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         f"SELECT r.type{select_extra} "
         f"FROM _record r LEFT JOIN _schema s ON r.schema_id = s.schema_id "
         f"WHERE r.record_id = ?",
@@ -2197,7 +2197,7 @@ def execution_audit(duck, record_id: str) -> list[dict]:
     re-runs append ``_run`` rows, a changed ``where=`` filter shows up as
     distinct audit rows rather than being lost to first-wins.
     """
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT run.timestamp, run.where_clause, inv.function_name "
         "FROM _invocation_output io "
         "JOIN _invocation inv ON inv.invocation_id = io.invocation_id "
@@ -2246,7 +2246,7 @@ def pipeline_structure(duck) -> list[dict]:
     """
     # Exclude synthetic save invocations — they anchor direct-save kwargs, not
     # pipeline functions, and must not appear as nodes in the structure.
-    inv_rows = duck._fetchall(
+    inv_rows = duck.fetchall(
         "SELECT invocation_id, function_name, function_hash FROM _invocation "
         "WHERE function_name != ?",
         [SAVE_FUNCTION_NAME],
@@ -2259,7 +2259,7 @@ def pipeline_structure(duck) -> list[dict]:
             continue  # a glue hop is not a pipeline step (D5)
         out_types = [
             r[0]
-            for r in duck._fetchall(
+            for r in duck.fetchall(
                 "SELECT DISTINCT r.type FROM _invocation_output io "
                 "JOIN _record r ON r.record_id = io.output_record_id "
                 "WHERE io.invocation_id = ?",
@@ -2289,7 +2289,7 @@ def pipeline_structure(duck) -> list[dict]:
 
 def has_producing_invocation(duck, record_id: str) -> bool:
     """True if ``record_id`` was produced by a recorded invocation."""
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT 1 FROM _invocation_output WHERE output_record_id = ? LIMIT 1",
         [record_id],
     )
@@ -2316,7 +2316,7 @@ def consumed_input_schema_ids(duck, record_ids) -> dict[str, frozenset]:
     if not ids:
         return {}
     placeholders = ", ".join(["?"] * len(ids))
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         f"SELECT io.output_record_id, r.schema_id "
         f"FROM _invocation_output io "
         f"JOIN _invocation_input ii ON ii.invocation_id = io.invocation_id "
@@ -2349,7 +2349,7 @@ def present_invocation_schema_pairs(duck, inv_ids) -> set:
     if not ids:
         return set()
     placeholders = ", ".join(["?"] * len(ids))
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         f"SELECT DISTINCT io.invocation_id, r.schema_id "
         f"FROM _invocation_output io "
         f"JOIN _record r ON r.record_id = io.output_record_id "
@@ -2373,7 +2373,7 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
     not have been run yet, and (via :func:`config_call_id` +
     ``invocation_ids``) to scope node-state checks to one call site.
     """
-    inv_rows = duck._fetchall(
+    inv_rows = duck.fetchall(
         "SELECT invocation_id, as_table, distribute, across_variants, iteration_level "
         "FROM _invocation WHERE function_name = ?",
         [fn_name],
@@ -2664,7 +2664,7 @@ def recorded_schema_keys(
         if not inv_ids:
             return None
         ph = ", ".join("?" for _ in inv_ids)
-        latest = duck._fetchall(
+        latest = duck.fetchall(
             "SELECT ri.run_id FROM _run_invocation ri "  # noqa: S608 - placeholders only
             "JOIN _run r ON r.run_id = ri.run_id "
             f"WHERE ri.invocation_id IN ({ph}) "
@@ -2673,14 +2673,14 @@ def recorded_schema_keys(
         )
         if not latest:
             return None
-        rows = duck._fetchall(
+        rows = duck.fetchall(
             base + f" AND ri.invocation_id IN ({ph})", [latest[0][0], *inv_ids]
         )
     else:
         last = latest_runs(duck, [fn_name]).get(fn_name)
         if last is None:
             return None
-        rows = duck._fetchall(base, [last["run_id"]])
+        rows = duck.fetchall(base, [last["run_id"]])
     if not rows:
         return None
     populated: set[str] = set()
@@ -2798,7 +2798,7 @@ def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
         timings[phase] = timings.get(phase, 0.0) + (_time.perf_counter() - t0)
 
     _t_all = _time.perf_counter()
-    inv_rows = duck._fetchall(
+    inv_rows = duck.fetchall(
         "SELECT invocation_id, function_name, as_table, distribute, across_variants, "
         "function_hash FROM _invocation WHERE function_name != ?",
         [SAVE_FUNCTION_NAME],
@@ -3007,10 +3007,10 @@ def run_steps_by_invocation(duck) -> dict[str, list[str]]:
     (``for_each(step=...)``, ``_run_step``) of every run that produced each
     invocation, oldest run first. One query. Empty on a database with no
     named runs."""
-    if not duck._table_exists("_run_step"):
+    if not duck.table_exists("_run_step"):
         return {}
     out: dict[str, list[str]] = {}
-    for inv_id, step in duck._fetchall(
+    for inv_id, step in duck.fetchall(
         "SELECT ri.invocation_id, rs.step FROM _run_invocation ri "
         "JOIN _run_step rs ON rs.run_id = ri.run_id "
         "JOIN _run r ON r.run_id = ri.run_id ORDER BY r.timestamp"
@@ -3034,11 +3034,11 @@ def recorded_output_orders(duck, function_names) -> dict[str, list[list[str]]]:
     alphabetical. One query.
     """
     names = sorted({str(n) for n in (function_names or []) if n})
-    if not names or not duck._table_exists("_run_outputs"):
+    if not names or not duck.table_exists("_run_outputs"):
         return {}
     ph = ", ".join(["?"] * len(names))
     out: dict[str, list[list[str]]] = {}
-    for fn, outputs in duck._fetchall(
+    for fn, outputs in duck.fetchall(
         "SELECT r.function_name, ro.outputs FROM _run_outputs ro "
         f"JOIN _run r ON r.run_id = ro.run_id WHERE r.function_name IN ({ph}) "
         "ORDER BY r.timestamp DESC, r.run_id DESC",
@@ -3064,11 +3064,11 @@ def recorded_output_params(duck, function_names) -> dict[str, dict[str, str]]:
     Python functions record no names and are absent. One query.
     """
     names = sorted({str(n) for n in (function_names or []) if n})
-    if not names or not duck._table_exists("_run_outputs"):
+    if not names or not duck.table_exists("_run_outputs"):
         return {}
     ph = ", ".join(["?"] * len(names))
     out: dict[str, dict[str, str]] = {}
-    for fn, outputs, params in duck._fetchall(
+    for fn, outputs, params in duck.fetchall(
         "SELECT r.function_name, ro.outputs, ro.output_params FROM _run_outputs ro "
         f"JOIN _run r ON r.run_id = ro.run_id WHERE r.function_name IN ({ph}) "
         "AND ro.output_params IS NOT NULL "
@@ -3225,7 +3225,7 @@ def current_records_by_schema_batch(duck, variable_name: str) -> dict:
     reproduction is ``test_run_option_variants.py::
     TestNodeStateAgreesWithTheLoadPath``).
     """
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT rm.record_id, r.schema_id, rm.timestamp FROM _record_save rm "
         "JOIN _record r ON r.record_id = rm.record_id "
         "WHERE r.type = ? AND COALESCE(r.excluded, FALSE) = FALSE",
@@ -3527,7 +3527,7 @@ def _schema_ids_at_level(duck, iterated, schema_keys) -> dict:
         return {}
     cols = ", ".join(f'"{k}"' for k in keys)
     try:
-        rows = duck._fetchall(f"SELECT schema_id, {cols} FROM _schema", [])  # noqa: S608
+        rows = duck.fetchall(f"SELECT schema_id, {cols} FROM _schema", [])  # noqa: S608
     except Exception:
         return {}
     out: dict = {}
@@ -3911,7 +3911,7 @@ def realized_inputless_invocations(
     # with a variable input is left to live prediction (the NOT EXISTS).
     hash_clause = "" if fn_hash is None else "AND inv.function_hash = ? "
     params = [fn_name] + ([] if fn_hash is None else [fn_hash])
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT DISTINCT inv.invocation_id, r.schema_id "
         "FROM _invocation inv "
         "JOIN _invocation_output io ON io.invocation_id = inv.invocation_id "
@@ -3941,7 +3941,7 @@ def is_inputless_function(duck, fn_name: str) -> bool:
     has no variable inputs in the trivial sense. Callers that act on this must
     check for invocations separately; "never run" is not "inputless".
     """
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT 1 FROM _invocation inv "
         "JOIN _invocation_input ii ON ii.invocation_id = inv.invocation_id "
         "JOIN _record r ON r.record_id = ii.input_record_id "
@@ -3961,7 +3961,7 @@ def function_versions_recorded(duck, fn_name: str) -> set:
     """
     return {
         row[0]
-        for row in duck._fetchall(
+        for row in duck.fetchall(
             "SELECT DISTINCT function_hash FROM _invocation WHERE function_name = ?",
             [fn_name],
         )
@@ -3986,7 +3986,7 @@ def realized_inputless_schema_ids(duck, fn_name: str, const_rids: dict) -> set:
         by_inv.setdefault(inv_id, set()).add(sid)
     out: set = set()
     for inv_id, sids in by_inv.items():
-        rows = duck._fetchall(
+        rows = duck.fetchall(
             "SELECT ii.param_name, ii.input_record_id, r.type "
             "FROM _invocation_input ii "
             "JOIN _record r ON r.record_id = ii.input_record_id "
@@ -4175,7 +4175,7 @@ def variable_content_fingerprint(duck, variable: str) -> tuple[int, int]:
     ``bit_xor`` over per-id hashes is order-independent and needs no sort, so
     this stays one aggregate scan whatever the row count.
     """
-    row = duck._fetchone(
+    row = duck.fetchone(
         "SELECT count(*), coalesce(bit_xor(hash(record_id)), 0) "
         "FROM _record WHERE type = ? AND excluded IS DISTINCT FROM TRUE",
         [variable],
@@ -4185,7 +4185,7 @@ def variable_content_fingerprint(duck, variable: str) -> tuple[int, int]:
     # Folded in: the schema-exclusion registry. A plot leaves excluded
     # locations out (scistackplotdb.load), so excluding or re-including a
     # trial must invalidate a cached frame exactly as a new record does.
-    overrides = duck._fetchone(
+    overrides = duck.fetchone(
         "SELECT coalesce(bit_xor(hash(CAST(changed_at AS VARCHAR) || CAST(status AS VARCHAR))), 0) "
         "FROM __scidb_schema_overrides"
     )

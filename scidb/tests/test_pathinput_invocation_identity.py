@@ -73,7 +73,7 @@ def root(tmp_path):
 
 
 def _invocations_by_output(db, fn_name: str) -> dict[str, set[str]]:
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT r.type, io.invocation_id FROM _invocation_output io "
         "JOIN _invocation i ON i.invocation_id = io.invocation_id "
         "JOIN _record r ON r.record_id = io.output_record_id "
@@ -89,7 +89,7 @@ def _invocations_by_output(db, fn_name: str) -> dict[str, set[str]]:
 def _record_ids(db, type_name: str) -> set[str]:
     return {
         r[0]
-        for r in db._duck._fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name])
+        for r in db._duck.fetchall("SELECT record_id FROM _record WHERE type = ?", [type_name])
     }
 
 
@@ -184,12 +184,12 @@ class TestMovedDataKeepsItsIdentity:
 
     def test_skip_computed_skips_moved_files(self, db, root, tmp_path):
         self._run(root)
-        saves = db._duck._fetchone("SELECT COUNT(*) FROM _record_save")[0]
+        saves = db._duck.fetchone("SELECT COUNT(*) FROM _record_save")[0]
         # Different CONTENT under the new root: a skip that looked at the
         # location would recompute and save 5.0.
         moved = _tree(tmp_path / "moved", {"a.txt": "5"})
         self._run(moved, skip_computed=True)
-        assert db._duck._fetchone("SELECT COUNT(*) FROM _record_save")[0] == saves
+        assert db._duck.fetchone("SELECT COUNT(*) FROM _record_save")[0] == saves
         assert TableA.load(subject="01").data == 1.0
 
     def test_the_stored_spec_follows_the_files(self, db, root, tmp_path):

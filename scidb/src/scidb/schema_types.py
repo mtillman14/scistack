@@ -59,7 +59,7 @@ _PREVIEW = 5
 
 def ensure_table(duck) -> None:
     """Create ``_schema_key_type`` if missing (idempotent; skipped read-only)."""
-    duck._execute(f"""
+    duck.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE} (
             key         VARCHAR NOT NULL,
             key_type    VARCHAR,
@@ -76,9 +76,9 @@ def read_types(duck) -> dict[str, str]:
     out. ``{}`` when the table does not exist yet — a database created before
     2026-10-21 opened read-only, where :func:`ensure_table` cannot run.
     """
-    if not duck._table_exists(TABLE):
+    if not duck.table_exists(TABLE):
         return {}
-    rows = duck._fetchall(f"""
+    rows = duck.fetchall(f"""
         SELECT key, key_type FROM (
             SELECT key, key_type,
                    ROW_NUMBER() OVER (
@@ -92,10 +92,10 @@ def read_types(duck) -> dict[str, str]:
 
 def history(duck, key: "str | None" = None) -> list[dict]:
     """Every declaration ever written, oldest first (optionally one key)."""
-    if not duck._table_exists(TABLE):
+    if not duck.table_exists(TABLE):
         return []
     where, params = ("WHERE key = ?", [key]) if key is not None else ("", None)
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         f"SELECT key, key_type, declared_at, source FROM {TABLE} {where} "
         f"ORDER BY declared_at, rowid",
         params,
@@ -107,7 +107,7 @@ def history(duck, key: "str | None" = None) -> list[dict]:
 
 
 def _write(duck, key: str, key_type: "str | None", source: str) -> None:
-    duck._execute(
+    duck.execute(
         f"INSERT INTO {TABLE} (key, key_type, declared_at, source) VALUES (?, ?, ?, ?)",
         [key, key_type, datetime.now(timezone.utc).isoformat(), source],
     )

@@ -266,7 +266,7 @@ def test_provenance_tables_created(tmp_path):
     try:
         names = {
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT table_name FROM information_schema.tables"
             )
         }
@@ -289,7 +289,7 @@ def test_record_table_columns(tmp_path):
     try:
         cols = {
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = '_record'"
             )

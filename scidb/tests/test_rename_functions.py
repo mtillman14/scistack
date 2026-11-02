@@ -60,11 +60,11 @@ def _var(name: str, created: list):
 
 
 def _names(db) -> set:
-    return {r[0] for r in db._duck._fetchall("SELECT function_name FROM _invocation")}
+    return {r[0] for r in db._duck.fetchall("SELECT function_name FROM _invocation")}
 
 
 def _latest_fn(db, type_name: str) -> set:
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT inv.function_name FROM _record r "
         "JOIN _record_save s ON s.record_id = r.record_id "
         "JOIN _invocation_output io ON io.output_record_id = r.record_id "
@@ -93,11 +93,11 @@ def test_an_unchanged_function_is_carried_and_not_run_again(db):
     assert _names(database) == {"double", "fakelib.double"}
     assert _latest_fn(database, "RenOut") == {"fakelib.double"}
 
-    n_inv = len(database._duck._fetchall("SELECT 1 FROM _invocation"))
+    n_inv = len(database._duck.fetchall("SELECT 1 FROM _invocation"))
     CALLS.clear()
     for_each(new, {"x": Raw}, [Out], subject=[], skip_computed=True)
     assert CALLS == [], "the carried results were not current: the function ran"
-    assert len(database._duck._fetchall("SELECT 1 FROM _invocation")) == n_inv
+    assert len(database._duck.fetchall("SELECT 1 FROM _invocation")) == n_inv
     assert list(Out.load(subject="S01").data) == [2.0, 4.0]
 
     again = rename_functions(database, {"double": "fakelib.double"},
@@ -157,11 +157,11 @@ def test_an_invocation_from_an_older_id_recipe_runs_once_more(db):
     fn = _counted("my_analysis", "double")
     for_each(fn, {"x": Raw}, [Out], subject=[])
     duck = database._duck
-    (inv,) = duck._fetchone("SELECT invocation_id FROM _invocation WHERE function_name = 'double'")
+    (inv,) = duck.fetchone("SELECT invocation_id FROM _invocation WHERE function_name = 'double'")
     # What an old database holds: an invocation id the current recipe does
     # not produce, AND a record id that differs too (a record id includes the
     # invocation id), so a re-run writes NEW rows rather than the same ones.
-    (rid,) = duck._fetchone(
+    (rid,) = duck.fetchone(
         "SELECT output_record_id FROM _invocation_output WHERE invocation_id = ?", [inv])
     _rekey(duck, ("_invocation", "_invocation_input", "_invocation_output", "_run_invocation"),
            "invocation_id", inv, "0" * 16)
@@ -181,15 +181,15 @@ def _rekey(duck, tables, column: str, old: str, new: str) -> None:
     them, insert them re-keyed (an UPDATE of a key column is unreliable in
     DuckDB, and inserting first can clash with the row still there)."""
     for table in tables:
-        cols = [r[0] for r in duck._fetchall(
+        cols = [r[0] for r in duck.fetchall(
             "SELECT column_name FROM information_schema.columns WHERE table_name = ? "
             "ORDER BY ordinal_position", [table])]
         quoted = ", ".join(f'"{c}"' for c in cols)
-        rows = duck._fetchall(f'SELECT {quoted} FROM "{table}" WHERE "{column}" = ?', [old])
-        duck._execute(f'DELETE FROM "{table}" WHERE "{column}" = ?', [old])
+        rows = duck.fetchall(f'SELECT {quoted} FROM "{table}" WHERE "{column}" = ?', [old])
+        duck.execute(f'DELETE FROM "{table}" WHERE "{column}" = ?', [old])
         at = cols.index(column)
         marks = ", ".join("?" for _ in cols)
         for row in rows:
             values = list(row)
             values[at] = new
-            duck._execute(f'INSERT INTO "{table}" ({quoted}) VALUES ({marks})', values)
+            duck.execute(f'INSERT INTO "{table}" ({quoted}) VALUES ({marks})', values)

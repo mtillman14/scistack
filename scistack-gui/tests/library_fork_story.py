@@ -223,7 +223,7 @@ def runner_script(package: str, with_rectify: bool) -> str:
         if {with_rectify!r}:
             out["EmgRectified"] = {{s: [float(x) for x in EmgRectified.load(subject=s).data]
                                     for s in {SUBJECTS!r}}}
-        rows = db._duck._fetchall("SELECT DISTINCT function_name FROM _invocation")
+        rows = db._duck.fetchall("SELECT DISTINCT function_name FROM _invocation")
         out["function_names"] = sorted(r[0] for r in rows)
         print("RESULT " + json.dumps(out))
         """)

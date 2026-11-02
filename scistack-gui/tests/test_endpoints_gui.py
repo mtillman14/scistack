@@ -157,7 +157,7 @@ class TestShowMode:
         client, db, _ = endpoint_client
         from scistack_gui.services.execution_service import run_pipeline
 
-        n_stat_before = db._duck._fetchall(
+        n_stat_before = db._duck.fetchall(
             "SELECT COUNT(*) FROM _record WHERE type = 'StatSummary'"
         )[0][0]
 
@@ -167,7 +167,7 @@ class TestShowMode:
 
         assert len(result["rendered"]) > 0
         assert "mean" in str(result["rendered"][0])
-        n_stat_after = db._duck._fetchall(
+        n_stat_after = db._duck.fetchall(
             "SELECT COUNT(*) FROM _record WHERE type = 'StatSummary'"
         )[0][0]
         assert n_stat_after == n_stat_before  # draft: endpoint saves nothing

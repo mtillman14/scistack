@@ -10,7 +10,7 @@ two paths are indistinguishable by clock:
 
 * a loaded 1-D cell is an ``np.ndarray`` of float64, a 2-D cell a 2-D ndarray, a
   scalar column numeric;
-* no data column of the variable is ever selected through ``_fetchall``;
+* no data column of the variable is ever selected through ``fetchall``;
 * schema keys are text (zero-padded ``"01"`` survives) and a NULL key is None,
   not ``"nan"`` and not ``"1.0"``;
 * the "loaded" log line says ``ndarray`` — the word a regression to boxing
@@ -114,31 +114,31 @@ class TestNaNSamplesSurviveTheFetch:
 class TestNoDataColumnPassesThroughFetchall:
     def test_payload_columns_are_never_in_a_fetchall(self, seeded, monkeypatch):
         """Assert on the SQL, not the clock: the payload must only ever go
-        through ``_fetchdf``. ``_fetchall`` is where a sample becomes a Python
+        through ``fetchdf``. ``fetchall`` is where a sample becomes a Python
         float."""
         seen: list[str] = []
-        original = seeded._duck._fetchall
+        original = seeded._duck.fetchall
 
         def spy(sql, params=None):
             seen.append(sql)
             return original(sql, params)
 
-        monkeypatch.setattr(seeded._duck, "_fetchall", spy)
+        monkeypatch.setattr(seeded._duck, "fetchall", spy)
         load_variable(seeded, "Emg")
 
         for sql in seen:
             for muscle in ("RHAM", "RTA", "LMG"):
-                assert f'"{muscle}"' not in sql, f"payload column through _fetchall: {sql}"
+                assert f'"{muscle}"' not in sql, f"payload column through fetchall: {sql}"
 
     def test_the_load_query_goes_through_fetchdf(self, seeded, monkeypatch):
         seen: list[str] = []
-        original = seeded._duck._fetchdf
+        original = seeded._duck.fetchdf
 
         def spy(sql, params=None):
             seen.append(sql)
             return original(sql, params)
 
-        monkeypatch.setattr(seeded._duck, "_fetchdf", spy)
+        monkeypatch.setattr(seeded._duck, "fetchdf", spy)
         load_variable(seeded, "Emg")
 
         selects = [s for s in seen if "SELECT t.record_id" in s]
@@ -168,13 +168,13 @@ class TestSchemaKeysStayText:
         """The cast happens in SQL so a numeric key with a NULL in the column
         cannot arrive as float64 and stringify as "1.0"."""
         seen: list[str] = []
-        original = seeded._duck._fetchdf
+        original = seeded._duck.fetchdf
 
         def spy(sql, params=None):
             seen.append(sql)
             return original(sql, params)
 
-        monkeypatch.setattr(seeded._duck, "_fetchdf", spy)
+        monkeypatch.setattr(seeded._duck, "fetchdf", spy)
         load_variable(seeded, "StepLength")
         query = [s for s in seen if "SELECT t.record_id" in s][0]
         assert 'CAST(s."subject" AS VARCHAR)' in query

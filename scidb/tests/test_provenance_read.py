@@ -137,7 +137,7 @@ def _multi_record_pipeline(db):
         subject=["S01", "S02"],
         session=["1"],
     )
-    rows = db._duck._fetchall("SELECT record_id FROM _record")
+    rows = db._duck.fetchall("SELECT record_id FROM _record")
     return [r[0] for r in rows]
 
 
@@ -241,7 +241,7 @@ def test_consumed_input_schema_ids(db):
 
     # Filtered's producing invocation consumed the one RawSignal input; the
     # consumed set is that input's schema location.
-    raw_sid = db._duck._fetchall(
+    raw_sid = db._duck.fetchall(
         "SELECT schema_id FROM _record WHERE record_id = ?", [raw.record_id]
     )[0][0]
     consumed = provenance_query.consumed_input_schema_ids(db._duck, [f.record_id])

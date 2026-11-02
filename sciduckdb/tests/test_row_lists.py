@@ -29,7 +29,7 @@ from sciduckdb import (
     storage_to_python_column,
     unwrap_row_list,
 )
-from sciduckdb.sciduckdb import (
+from sciduckdb.codec import (
     _python_to_storage,
     bulk_df_to_storage_rows,
     record_schema_mismatch,
@@ -44,10 +44,10 @@ class _Duck:
     def __init__(self):
         self.con = duckdb.connect(":memory:")
 
-    def _execute(self, sql, params=None):
-        return self.con.execute(sql, params or [])
+    def execute(self, sql, params=None):
+        self.con.execute(sql, params or [])
 
-    def _fetchall(self, sql, params=None):
+    def fetchall(self, sql, params=None):
         return self.con.execute(sql, params or []).fetchall()
 
 
@@ -262,12 +262,12 @@ class TestConvertInPlace:
     )
     def test_every_old_value_loads_unchanged(self, ddb_type, values, elem):
         duck = _Duck()
-        duck._execute(f'CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" {ddb_type})')
+        duck.execute(f'CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" {ddb_type})')
         for i, v in enumerate(values):
-            duck._execute('INSERT INTO "T_data" VALUES (?, ?)', [f"r{i}", v])
+            duck.execute('INSERT INTO "T_data" VALUES (?, ?)', [f"r{i}", v])
         n = convert_column_to_row_list(duck, "T_data", "c", elem)
         assert n == sum(v is not None for v in values)
-        stored = duck._fetchall('SELECT "c" FROM "T_data" ORDER BY record_id')
+        stored = duck.fetchall('SELECT "c" FROM "T_data" ORDER BY record_id')
         meta = row_list_meta(elem)
         for (cell,), original in zip(stored, values):
             loaded = unwrap_row_list(cell, meta)
@@ -278,10 +278,10 @@ class TestConvertInPlace:
 
     def test_bigint_row_list_widens(self):
         duck = _Duck()
-        duck._execute('CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" BIGINT[])')
-        duck._execute('INSERT INTO "T_data" VALUES (\'r\', [5, 12])')
+        duck.execute('CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" BIGINT[])')
+        duck.execute('INSERT INTO "T_data" VALUES (\'r\', [5, 12])')
         convert_column_to_row_list(duck, "T_data", "c", "DOUBLE", from_row_list=True)
-        types = duck._fetchall(
+        types = duck.fetchall(
             "SELECT data_type FROM information_schema.columns "
             "WHERE table_name = 'T_data' AND column_name = 'c'"
         )
@@ -297,10 +297,10 @@ class TestConvertInPlace:
             {"python_type": "int"}, ddb_type, row_list_meta(elem), f"{elem}[]"
         ) == ("convert", elem)
         duck = _Duck()
-        duck._execute(f'CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" {ddb_type})')
-        duck._execute('INSERT INTO "T_data" VALUES (?, ?)', ["r", value])
+        duck.execute(f'CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" {ddb_type})')
+        duck.execute('INSERT INTO "T_data" VALUES (?, ?)', ["r", value])
         convert_column_to_row_list(duck, "T_data", "c", elem)
-        (cell,) = duck._fetchall('SELECT "c" FROM "T_data"')[0]
+        (cell,) = duck.fetchall('SELECT "c" FROM "T_data"')[0]
         assert unwrap_row_list(cell, row_list_meta(elem)) == value
 
     def test_narrow_scalars_into_row_list_are_same(self):
@@ -310,12 +310,12 @@ class TestConvertInPlace:
 
     def test_failed_transaction_rolls_back(self):
         duck = _Duck()
-        duck._execute('CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" DOUBLE)')
-        duck._execute('INSERT INTO "T_data" VALUES (\'r\', 7.0)')
-        duck._execute("BEGIN TRANSACTION")
+        duck.execute('CREATE TABLE "T_data" (record_id VARCHAR PRIMARY KEY, "c" DOUBLE)')
+        duck.execute('INSERT INTO "T_data" VALUES (\'r\', 7.0)')
+        duck.execute("BEGIN TRANSACTION")
         convert_column_to_row_list(duck, "T_data", "c", "DOUBLE")
-        duck._execute("ROLLBACK")
-        types = duck._fetchall(
+        duck.execute("ROLLBACK")
+        types = duck.fetchall(
             "SELECT data_type FROM information_schema.columns "
             "WHERE table_name = 'T_data' AND column_name = 'c'"
         )

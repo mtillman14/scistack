@@ -110,10 +110,10 @@ class TestPinning:
         )
 
         db = two_code_versions
-        scaled = db._duck._fetchone(
+        scaled = db._duck.fetchone(
             "SELECT COUNT(*) FROM _record WHERE type = 'Scaled'"
         )
-        consumed = db._duck._fetchone(
+        consumed = db._duck.fetchone(
             "SELECT COUNT(*) FROM _record WHERE type = 'Consumed'"
         )
         assert scaled[0] == 2 * len(SUBJECTS)

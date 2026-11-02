@@ -46,7 +46,7 @@ def step_names(db) -> dict[str, str]:
 
     pipeline_store._ensure_tables(db)
     out: dict[str, str] = {}
-    for node_id, raw in _duck(db)._fetchall("SELECT node_id, config FROM _node_config"):
+    for node_id, raw in _duck(db).fetchall("SELECT node_id, config FROM _node_config"):
         try:
             step = (json.loads(raw) or {}).get(STEP_KEY) if raw else None
         except (TypeError, ValueError):
@@ -69,7 +69,7 @@ def set_step_name(db, node_id: str, step: "str | None") -> None:
 
     pipeline_store._ensure_tables(db)
     bare = str(strip_placement(node_id))
-    row = _duck(db)._fetchone("SELECT config FROM _node_config WHERE node_id = ?", [bare])
+    row = _duck(db).fetchone("SELECT config FROM _node_config WHERE node_id = ?", [bare])
     blob = {}
     if row and row[0]:
         try:
@@ -80,7 +80,7 @@ def set_step_name(db, node_id: str, step: "str | None") -> None:
         blob[STEP_KEY] = check_step(step)
     else:
         blob.pop(STEP_KEY, None)
-    _duck(db)._execute(
+    _duck(db).execute(
         "INSERT INTO _node_config (node_id, config) VALUES (?, ?) "
         "ON CONFLICT (node_id) DO UPDATE SET config = excluded.config",
         [bare, json.dumps(blob)],

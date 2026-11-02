@@ -399,7 +399,7 @@ def _data_tables(duck) -> list[str]:
     save events, and the variable metadata tables."""
     tables = ["_registered_types", "_variables", "_variable_groups", "_record_save"]
     try:
-        tables += [r[0] for r in duck._fetchall("SELECT table_name FROM _registered_types")]
+        tables += [r[0] for r in duck.fetchall("SELECT table_name FROM _registered_types")]
     except Exception as e:  # no variable was ever saved
         Log.info(f"[bundle] no _registered_types ({e}); no variable tables")
     return tables
@@ -409,7 +409,7 @@ def _views(duck) -> list[str]:
     """Every user view (scidb's per-variable views over the data)."""
     return [
         r[0]
-        for r in duck._fetchall(
+        for r in duck.fetchall(
             "SELECT view_name FROM duckdb_views() WHERE schema_name = 'main' AND NOT internal"
         )
     ]

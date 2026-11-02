@@ -203,7 +203,7 @@ class TestCaptureDuringForEach:
 
         for_each(double_it, inputs={"raw": Raw}, outputs=[Doubled], subject=[])
 
-        row = db._duck._fetchone(
+        row = db._duck.fetchone(
             "SELECT inv.function_hash FROM _invocation inv "
             "WHERE inv.function_name = 'double_it'"
         )
@@ -232,7 +232,7 @@ class TestCaptureDuringForEach:
 
         hashes = [
             r[0]
-            for r in db._duck._fetchall(
+            for r in db._duck.fetchall(
                 "SELECT DISTINCT function_hash FROM _invocation "
                 "WHERE function_name = 'summarize'"
             )

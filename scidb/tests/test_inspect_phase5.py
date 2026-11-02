@@ -95,7 +95,7 @@ class TestMutatorRoundTrip:
         with Inspector.open(db_path) as insp:
             assert not hasattr(insp, "exclude_schema")
             with pytest.raises(Exception, match="(?i)read.only"):
-                insp._db._duck._execute("DELETE FROM __scidb_schema_overrides")
+                insp._db._duck.execute("DELETE FROM __scidb_schema_overrides")
 
 
 class TestLockContention:

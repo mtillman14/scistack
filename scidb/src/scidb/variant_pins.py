@@ -69,7 +69,7 @@ class VariantPin:
 
 def ensure_variant_pin_table(duck) -> None:
     """Create ``_variant_pin`` if missing (idempotent; skipped read-only)."""
-    duck._execute(f"""
+    duck.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE} (
             pin_id         VARCHAR PRIMARY KEY,
             variable       VARCHAR NOT NULL,
@@ -108,9 +108,9 @@ def active_pins(db: "DatabaseManager") -> dict[str, VariantPin]:
     process miss a pin another wrote between its sessions.
     """
     duck = db._duck
-    if not duck._table_exists(TABLE):
+    if not duck.table_exists(TABLE):
         return {}
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         f"SELECT {_COLUMNS} FROM {TABLE} WHERE released_at IS NULL "
         f"ORDER BY pinned_at"
     )
@@ -131,12 +131,12 @@ def active_pins(db: "DatabaseManager") -> dict[str, VariantPin]:
 def pin_history(db: "DatabaseManager", variable: str | None = None) -> list[VariantPin]:
     """Every pin ever made (active and released), oldest first."""
     duck = db._duck
-    if not duck._table_exists(TABLE):
+    if not duck.table_exists(TABLE):
         return []
     if variable is None:
-        rows = duck._fetchall(f"SELECT {_COLUMNS} FROM {TABLE} ORDER BY pinned_at")
+        rows = duck.fetchall(f"SELECT {_COLUMNS} FROM {TABLE} ORDER BY pinned_at")
     else:
-        rows = duck._fetchall(
+        rows = duck.fetchall(
             f"SELECT {_COLUMNS} FROM {TABLE} WHERE variable = ? ORDER BY pinned_at",
             [variable],
         )
@@ -192,7 +192,7 @@ def pin_variant(
         reason=str(reason),
         pinned_at=_now(),
     )
-    db._duck._execute(
+    db._duck.execute(
         f"INSERT INTO {TABLE} ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, NULL, NULL)",
         [
             pin.pin_id,
@@ -249,7 +249,7 @@ def release_pin(db: "DatabaseManager", variable, reason: str) -> VariantPin | No
 
 def _release(db, pin: VariantPin, reason: str) -> VariantPin:
     released_at = _now()
-    db._duck._execute(
+    db._duck.execute(
         f"UPDATE {TABLE} SET released_at = ?, release_reason = ? WHERE pin_id = ?",
         [released_at, reason, pin.pin_id],
     )
@@ -292,13 +292,13 @@ def _type_parents(duck) -> dict[str, set]:
     from . import provenance_query as pq
     from .provenance import GLUE_TYPE, NON_VARIABLE_INPUT_TYPES
 
-    (count,) = duck._fetchone("SELECT COUNT(*) FROM _invocation")
+    (count,) = duck.fetchone("SELECT COUNT(*) FROM _invocation")
     cached = getattr(duck, _TYPE_GRAPH_ATTR, None)
     if cached is not None and cached[0] == count:
         Log.debug(f"variant_pins: type graph cache hit ({count} invocations)")
         return cached[1]
     t0 = time.perf_counter()
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         "SELECT DISTINCT ro.type, ri.type, "
         "CASE WHEN ri.type = ? THEN ii.input_record_id END "
         "FROM _invocation_input ii "

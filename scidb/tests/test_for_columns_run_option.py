@@ -105,8 +105,8 @@ class TestRecorded:
         ]
         assert variants, (
             "no variant recorded for total; runs="
-            f"{db._duck._fetchall('SELECT function_name, run_id FROM _run')} "
-            f"records={db._duck._fetchall('SELECT type, count(*) FROM _record GROUP BY type')}"
+            f"{db._duck.fetchall('SELECT function_name, run_id FROM _run')} "
+            f"records={db._duck.fetchall('SELECT type, count(*) FROM _record GROUP BY type')}"
         )
         assert "for_columns" not in variants[0]["run_options"]
 

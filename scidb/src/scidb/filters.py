@@ -191,7 +191,7 @@ def _resolve_variable_schema_ids(
     """
     params = [filter_table_name.removesuffix("_data")] + list(condition_params)
     try:
-        rows = db._duck._fetchall(sql, params)
+        rows = db._duck.fetchall(sql, params)
     except Exception as e:
         raise ValueError(f"Invalid where= filter condition: {e}") from e
 
@@ -209,7 +209,7 @@ def _get_all_schema_ids_for_variable(
     # Distinct schema locations that have at least one record of this type — read
     # straight from the content-addressed _record entity (one row per record_id).
     sql = "SELECT DISTINCT schema_id FROM _record WHERE type = ? AND schema_id IS NOT NULL"
-    rows = db._duck._fetchall(sql, [table_name.removesuffix("_data")])
+    rows = db._duck.fetchall(sql, [table_name.removesuffix("_data")])
     return {int(row[0]) for row in rows}
 
 
@@ -253,7 +253,7 @@ def _validate_filter_schema_level(
     # Get schema rows for filter
     if filter_schema_ids:
         placeholders = ", ".join(["?"] * len(filter_schema_ids))
-        filter_schema_rows = db._duck._fetchdf(
+        filter_schema_rows = db._duck.fetchdf(
             f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
             list(filter_schema_ids),
         )
@@ -269,7 +269,7 @@ def _validate_filter_schema_level(
 
             # Get target schema rows
             placeholders2 = ", ".join(["?"] * len(target_schema_ids))
-            target_schema_rows = db._duck._fetchdf(
+            target_schema_rows = db._duck.fetchdf(
                 f"SELECT * FROM _schema WHERE schema_id IN ({placeholders2})",
                 list(target_schema_ids),
             )
@@ -324,7 +324,7 @@ def _expand_coarse_to_fine_schema_ids(
 
     # Get the coarse schema rows
     placeholders = ", ".join(["?"] * len(coarse_schema_ids))
-    coarse_rows = db._duck._fetchdf(
+    coarse_rows = db._duck.fetchdf(
         f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
         list(coarse_schema_ids),
     )
@@ -353,7 +353,7 @@ def _expand_coarse_to_fine_schema_ids(
 
     # Get schema rows for all target schema_ids
     placeholders2 = ", ".join(["?"] * len(target_all_ids))
-    target_rows = db._duck._fetchdf(
+    target_rows = db._duck.fetchdf(
         f"SELECT * FROM _schema WHERE schema_id IN ({placeholders2})",
         list(target_all_ids),
     )
@@ -832,7 +832,7 @@ class RawFilter(Filter):
                 WHERE rn = 1
                   AND ({sql_with_casts})
             """
-            rows = db._duck._fetchall(query, [target_table_name.removesuffix("_data")])
+            rows = db._duck.fetchall(query, [target_table_name.removesuffix("_data")])
         except Exception as e:
             raise ValueError(f"Invalid where= SQL: {e}") from e
 
@@ -970,7 +970,7 @@ class SchemaKeyCompareFilter(Filter):
             param = schema_str(self.value)
 
         try:
-            rows = db._duck._fetchall(
+            rows = db._duck.fetchall(
                 f"SELECT schema_id FROM _schema WHERE {col_expr} {sql_op} ?",
                 [param],
             )
@@ -1030,7 +1030,7 @@ class SchemaKeyInFilter(Filter):
         str_values = [schema_str(v) for v in self.values]
         placeholders = ", ".join(["?"] * len(str_values))
         try:
-            rows = db._duck._fetchall(
+            rows = db._duck.fetchall(
                 f'SELECT schema_id FROM _schema WHERE "{self.key}" IN ({placeholders})',
                 str_values,
             )
@@ -1097,7 +1097,7 @@ def _get_variable_level_idx(db: DatabaseManager, table_name: str) -> int:
     if not ids:
         return -1
     placeholders = ", ".join(["?"] * len(ids))
-    rows = db._duck._fetchdf(
+    rows = db._duck.fetchdf(
         f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
         list(ids),
     )
@@ -1179,7 +1179,7 @@ def _validate_filter_coverage(
         # Get coarse key tuples from filter
         if filter_ids:
             placeholders = ", ".join(["?"] * len(filter_ids))
-            filter_rows = db._duck._fetchdf(
+            filter_rows = db._duck.fetchdf(
                 f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
                 list(filter_ids),
             )
@@ -1195,7 +1195,7 @@ def _validate_filter_coverage(
 
         # Get coarse key tuples from target
         placeholders2 = ", ".join(["?"] * len(target_ids))
-        target_rows = db._duck._fetchdf(
+        target_rows = db._duck.fetchdf(
             f"SELECT * FROM _schema WHERE schema_id IN ({placeholders2})",
             list(target_ids),
         )

@@ -85,7 +85,7 @@ def get_variable_records(variable_name: str, db: DatabaseManager) -> dict:
     # variables return the empty shape (and the {name}_data interpolation
     # below only ever receives a known-registered name).
     known = {
-        row[0] for row in db._duck._fetchall("SELECT variable_name FROM _variables")
+        row[0] for row in db._duck.fetchall("SELECT variable_name FROM _variables")
     }
     if variable_name not in known:
         logger.info("get_variable_records: unknown variable %r", variable_name)
@@ -103,7 +103,7 @@ def get_variable_records(variable_name: str, db: DatabaseManager) -> dict:
         ORDER BY {", ".join(f's."{k}"' for k in schema_keys) or "t.record_id"}
     """
     try:
-        rows = db._duck._fetchall(query)
+        rows = db._duck.fetchall(query)
     except Exception as exc:
         logger.warning("get_variable_records(%s) query failed: %s", variable_name, exc)
         raise HTTPException(status_code=404, detail=str(exc))
@@ -256,14 +256,14 @@ def get_variable_plot_data(variable_name: str, db: DatabaseManager) -> dict:
              "schema_keys": schema_keys, "points": []}
 
     known = {
-        row[0] for row in db._duck._fetchall("SELECT variable_name FROM _variables")
+        row[0] for row in db._duck.fetchall("SELECT variable_name FROM _variables")
     }
     if variable_name not in known:
         logger.info("get_variable_plot_data: unknown variable %r", variable_name)
         return {**empty, "reason": "unknown variable"}
 
     data_table = f"{variable_name}_data"
-    cols = db._duck._fetchall(
+    cols = db._duck.fetchall(
         "SELECT column_name FROM information_schema.columns "
         "WHERE table_name = ? AND column_name != 'record_id' "
         "ORDER BY ordinal_position",
@@ -284,7 +284,7 @@ def get_variable_plot_data(variable_name: str, db: DatabaseManager) -> dict:
         WHERE r.excluded IS DISTINCT FROM TRUE
     """
     try:
-        rows = db._duck._fetchall(query)
+        rows = db._duck.fetchall(query)
     except Exception as exc:
         logger.warning("get_variable_plot_data(%s) query failed: %s", variable_name, exc)
         raise HTTPException(status_code=404, detail=str(exc))

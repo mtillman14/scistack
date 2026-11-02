@@ -143,7 +143,7 @@ def list_exclusions(db: DatabaseManager | None = None):
     schema_keys = db.dataset_schema_keys
     key_cols = ", ".join(f'"{k}"' for k in schema_keys)
 
-    rows = db._duck._fetchdf(
+    rows = db._duck.fetchdf(
         f"""
         WITH latest AS (
             SELECT *,
@@ -187,7 +187,7 @@ def get_schema_overrides_hash(db: DatabaseManager) -> str:
     else:
         schema_keys = db.dataset_schema_keys
         key_cols = ", ".join(f'"{k}"' for k in schema_keys)
-        rows = duck._fetchall(
+        rows = duck.fetchall(
             f"SELECT {key_cols}, status, reason, changed_at "
             f"FROM {_TABLE} "
             f"ORDER BY changed_at, {key_cols}, CAST(status AS INTEGER)"
@@ -246,14 +246,14 @@ def governing_overrides(
     duck = _overrides_backend(db)
     if duck is None:
         return [None] * len(combos)
-    table_exists = getattr(duck, "_table_exists", None)
+    table_exists = getattr(duck, "table_exists", None)
     if table_exists is not None and not table_exists(_TABLE):
         from .log import Log
 
         Log.debug(f"[scidb] schema overrides: no {_TABLE} table; no exclusions")
         return [None] * len(combos)
     key_cols_sql = ", ".join(f'"{k}"' for k in schema_keys_order)
-    rows = duck._fetchall(
+    rows = duck.fetchall(
         f"SELECT {key_cols_sql}, status, reason, changed_at FROM {_TABLE} "
         f"ORDER BY changed_at DESC"
     )
@@ -371,7 +371,7 @@ def ensure_overrides_table(db: DatabaseManager) -> None:
     schema_cols = ",\n            ".join(
         f'"{k}" VARCHAR' for k in db.dataset_schema_keys
     )
-    db._duck._execute(f"""
+    db._duck.execute(f"""
         CREATE TABLE IF NOT EXISTS {_TABLE} (
             {schema_cols},
             status     BOOLEAN   NOT NULL,
@@ -446,7 +446,7 @@ def _current_status(db: DatabaseManager, keyset: dict) -> bool | None:
             where_parts.append(f'"{k}" IS NULL')
 
     where_clause = " AND ".join(where_parts)
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         f"SELECT status FROM {_TABLE} "
         f"WHERE {where_clause} "
         f"ORDER BY changed_at DESC LIMIT 1",
@@ -473,7 +473,7 @@ def _insert_row(
 
     placeholders = ", ".join(["?"] * len(col_names))
     col_str = ", ".join(f'"{c}"' for c in col_names)
-    db._duck._execute(
+    db._duck.execute(
         f"INSERT INTO {_TABLE} ({col_str}) VALUES ({placeholders})",
         values,
     )

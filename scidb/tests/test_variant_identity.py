@@ -86,7 +86,7 @@ def _run(body, db):
 
 
 def _loaded_record_ids(db):
-    rows = db._duck._fetchall(
+    rows = db._duck.fetchall(
         "SELECT record_id FROM _record WHERE type = ? "
         "AND COALESCE(excluded, FALSE) = FALSE",
         ["Loaded"],
@@ -154,7 +154,7 @@ def _inject(
 
 
 def _schema_id(db, subject="1", session="A"):
-    return db._duck._get_or_create_schema_id(
+    return db._duck.get_or_create_schema_id(
         "session", {"subject": subject, "session": session}
     )
 
@@ -264,7 +264,7 @@ class TestRawRecords:
         _seed_raw(db)
         rids = [
             row[0]
-            for row in db._duck._fetchall(
+            for row in db._duck.fetchall(
                 "SELECT record_id FROM _record WHERE type = ?", ["RawSignal"]
             )
         ]
