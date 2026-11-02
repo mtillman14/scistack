@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from scistack_gui import pipeline_store as ps
+from scistack_gui.stores import pipeline_store as ps
 
 
 def _graph(db, pid):
@@ -50,7 +50,7 @@ def _assert_consistent(db, pid, labels):
 
 def _canvas(db, pid, *, positions: bool):
     """RawSignal (has history in populated_db) -> custom_proc (never run)."""
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     ps.write_manual_node(db, "var__RawSignal__edgetest1", "variableNode", "RawSignal", pid)
     ps.write_manual_node(db, "fn__custom_proc__edgetest2", "functionNode", "custom_proc", pid)
@@ -77,7 +77,7 @@ def test_a_bare_positioned_twin_keeps_its_position_and_its_edge(populated_db):
     BARE id; a position-less manual twin graduates (to ``var__RawSignal::main``)
     and its edge is rewritten to that spelling. The node must stay the
     positioned one, and the edge must reach it."""
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     db = populated_db
     layout_store.write_node_position("var__RawSignal", 50.0, 60.0, pipeline_id="main")
@@ -92,7 +92,7 @@ def test_a_source_pipeline_using_an_already_run_variable(populated_db):
     """The real-world path: a scidb.Pipeline in code, seeded by discovery."""
     from scidb import BaseVariable, Pipeline
 
-    from scistack_gui.pipeline_discovery import discover_and_seed_pipelines
+    from scistack_gui.project.pipeline_discovery import discover_and_seed_pipelines
     from tests.conftest import RawSignal
 
     class EdgeTestOut(BaseVariable):

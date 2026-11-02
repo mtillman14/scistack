@@ -51,9 +51,9 @@ from scistackplot import (  # noqa: E402
     resolve,
 )
 from scistackplot.render.base import MARK_OFFSET_GROUP, MARK_SPAN  # noqa: E402
-from scistackplot.resolved import COLOR, X  # noqa: E402
-from scistackplot.roles import grouping_layers  # noqa: E402
-from scistackplot.xaxis import LEAF_SEPARATOR  # noqa: E402
+from scistackplot.reduce.resolved import COLOR, X  # noqa: E402
+from scistackplot.model.roles import grouping_layers  # noqa: E402
+from scistackplot.text.xaxis import LEAF_SEPARATOR  # noqa: E402
 
 # subject x session x trial, plus `group` — a subject property with no schema
 # depth. Unbalanced on purpose, and every value distinct, so a mark in the

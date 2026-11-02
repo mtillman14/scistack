@@ -80,8 +80,8 @@ In project mode, `refresh_module` (RPC) clears all registered functions and re-r
 
 ## Key Implementation Files
 
-- `scistack_gui/config.py` — `SciStackConfig` dataclass and `load_config()` parser
-- `scistack_gui/registry.py` — `load_from_config()`, `refresh_all()`, sub-loaders for each source type
+- `scistack_gui/project/config.py` — `SciStackConfig` dataclass and `load_config()` parser
+- `scistack_gui/project/registry.py` — `load_from_config()`, `refresh_all()`, sub-loaders for each source type
 - `scistack_gui/server.py` — `--project` CLI arg, startup dispatch between modes
 - `scistack_gui/__main__.py` — Same `--project` arg for standalone FastAPI mode
 - `extension/src/extension.ts` — UI flow with "Select a project" option

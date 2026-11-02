@@ -663,7 +663,7 @@ def resolve_entities_path(
 
     The rule itself, factored out of :func:`entities_path` so that a caller
     which has *already* located the project config and parsed its section --
-    ``scistack_gui.config.load_config`` -- asks this function rather than
+    ``scistack_gui.project.config.load_config`` -- asks this function rather than
     reimplementing it. The two used to disagree: only this side had the
     conventional fallback, so a project whose entities file sat at
     ``src/scistack_entities.toml`` with no ``entities_file`` key was read by

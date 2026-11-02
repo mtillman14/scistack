@@ -30,8 +30,8 @@ from scistackplot import (  # noqa: E402
     generate_plot_function,
     resolve,
 )
-from scistackplot.reduce import clear_plan_cache  # noqa: E402
-from scistackplot.resolved import Y  # noqa: E402
+from scistackplot.reduce.resolve import clear_plan_cache  # noqa: E402
+from scistackplot.reduce.resolved import Y  # noqa: E402
 
 ROWS = [
     ("01", "s1", "1", 1.0),

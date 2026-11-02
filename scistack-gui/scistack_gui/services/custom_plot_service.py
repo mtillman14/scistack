@@ -2,7 +2,7 @@
 Plot Studio opened on a ``plot_`` node: the GUI half of custom plot kinds.
 
 The figure is drawn by the user's own ``plot_`` function
-(``scistackplot.custom`` owns every rule about calling it). This module only
+(``scistackplot.export.custom`` owns every rule about calling it). This module only
 adapts the canvas to it:
 
 * :func:`node_wiring` reads the node's input edges through the same owners a
@@ -54,7 +54,9 @@ def node_wiring(db, node_id: str) -> NodeWiring:
     """The function and input bindings of the ``plot_`` node ``node_id``."""
     from scidb import function_role
 
-    from scistack_gui import pipeline_store, registry
+    from scistack_gui.stores import pipeline_store
+
+    from scistack_gui.project import registry
     from scistack_gui.domain.edge_resolver import (
         BINDING_PATHINPUT,
         BINDING_PARAMETER,
@@ -182,7 +184,7 @@ def build_call(db, source, spec, *, wiring: NodeWiring | None = None):
     """
     from scistackplot import CustomCall, inspect_function
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     if spec.custom is None or not spec.custom.node:
         raise CustomPlotError(
@@ -235,7 +237,7 @@ def build_call(db, source, spec, *, wiring: NodeWiring | None = None):
 def _load(db, spec_payload: dict, *, label: str):
     """``(source, spec, call, notes)``, holding the database only for the load
     (the same narrow hold as ``plot_service._load``)."""
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
     from scistack_gui.services import plot_service
 
     with db_connection(label, needed=True):
@@ -259,7 +261,7 @@ def describe_function(db, node_id: str, *, refresh: bool = False) -> dict:
     """
     from scistackplot import CustomPlot, PlotKind, PlotSpec, custom_capabilities
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
     from scistack_gui.services import plot_service
 
     with db_connection("plot_describe_function", needed=True):
@@ -436,7 +438,7 @@ def resolve_figures(
 
 def resolve_for_save(db, spec_payload: dict, *, figure_index: int | None, narrate: bool, on_figure):
     """``(spec, figures)`` for ``plot_service.save_figure``. ``write_figure``
-    draws a custom figure with its function (``scistackplot.custom.draw``)."""
+    draws a custom figure with its function (``scistackplot.export.custom.draw``)."""
     from scistackplot import resolve_custom, resolve_custom_one
 
     _, spec, call, _notes = _load(db, spec_payload, label="plot_save_start")

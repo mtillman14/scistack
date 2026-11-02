@@ -1,5 +1,5 @@
 """
-Tests for scistack_gui.matlab_sidecar (Stage 3,
+Tests for scistack_gui.matlab.sidecar (Stage 3,
 plan-matlab-pipeline-execution.md).
 
 No real MATLAB in this sandbox — subprocess.Popen is mocked with a fake
@@ -16,7 +16,7 @@ import threading
 import time
 
 import pytest
-from scistack_gui import matlab_sidecar as ms
+from scistack_gui.matlab import sidecar as ms
 
 
 class FakeStdin:

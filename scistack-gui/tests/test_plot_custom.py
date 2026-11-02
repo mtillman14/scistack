@@ -18,7 +18,7 @@ pytest.importorskip("scistackplotdb")
 matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg")
 
-from scistack_gui import registry as _registry
+from scistack_gui.project import registry as _registry
 from scistack_gui.services import custom_plot_service, layout_service, plot_service
 
 NODE = "fn__plot_signals__a1b2c3"

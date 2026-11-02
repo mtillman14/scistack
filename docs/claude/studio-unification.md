@@ -31,8 +31,8 @@ Right rail  —                            Saved plots · Presets  Saved tables 
 
 | Concept | Owner | Consumers |
 |---|---|---|
-| What each role is CALLED, per surface (`figure`, `table`, `process`) | `scistackplot.role_labels` (`ROLE_LABELS`, `role_label_for`, `role_labels_payload`) | `capability.role_label` (Plot Studio's role options), `scistackstats.explain` (wizard titles and choices, via `concept_for` and `_step_factors(surface=)`), `stats_open` reply `role_labels` (StatStudio's design rail), `node_schema_level` reply `iterate_label` (function sidebar) |
-| Which PlotSpec fields are the DESIGN | `scistackplot.design.DESIGN_FIELDS` | `copy_design`, `design_fingerprint`, the shared design store |
+| What each role is CALLED, per surface (`figure`, `table`, `process`) | `scistackplot.model.role_labels` (`ROLE_LABELS`, `role_label_for`, `role_labels_payload`) | `capability.role_label` (Plot Studio's role options), `scistackstats.explain` (wizard titles and choices, via `concept_for` and `_step_factors(surface=)`), `stats_open` reply `role_labels` (StatStudio's design rail), `node_schema_level` reply `iterate_label` (function sidebar) |
+| Which PlotSpec fields are the DESIGN | `scistackplot.model.design.DESIGN_FIELDS` | `copy_design`, `design_fingerprint`, the shared design store |
 | The design a fresh figure or table opens on, for a variable | `scistack_gui.services.plot_service.opening_spec` (default_spec + stored variant pins) | `plot_describe`, `stats_open {variable}` |
 | Plot → table settings | `scistackstats.seed.seed_from_plot` | every StatStudio opening, `stats_plot_guide` |
 | The shared design of a linked saved plot + its stats tables | `scistackplotdb.designs` (`_plot_design`, a `VersionedStore` keyed by plot id; `link_design`, `save_design`, `load_design`, `apply_design`) | `saved_plot_service.open_plot/save`, `stats_service.open_stats/saved_save`, `design_service.update/apply` (RPCs `design_update`, `design_apply`), the plots bundle section |

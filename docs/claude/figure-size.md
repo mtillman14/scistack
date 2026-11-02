@@ -29,7 +29,7 @@ Consequences worth remembering:
   at INFO. A figure that "came out squashed" is diagnosed from `scistack.log`,
   not from the panel.
 
-## One vocabulary: `scistackplot.figsize`
+## One vocabulary: `scistackplot.text.figsize`
 
 Ratios, not sizes. In practice the width is dictated by the destination — a
 journal single column is 3.5 in (89 mm), 1.5 column 5.5 in, double column
@@ -114,7 +114,7 @@ dpi control is added, the readout must read from it.
 
 ## Files
 
-- `scistackplot/src/scistackplot/figsize.py`, `tests/test_figsize.py`
+- `scistackplot/src/scistackplot/text/figsize.py`, `tests/test_figsize.py`
 - `scistackplot/src/scistackplot/render/mpl.py` (INFO log),
   `render/plotly_.py` (`meta.figure_size`)
 - `scistack-gui/scistack_gui/services/plot_service.py` (`figure_presets`),
@@ -133,7 +133,7 @@ per-element sizes (`StyleOptions.text`). The notes below are what still holds.*
 default since 2026-10-06; a fixed 14 was the default before, matplotlib's 10
 being "far too small" at 8 x 6 in). Every other element is either fixed or
 reference x its ratio (`textsize.DEFAULT_TEXT_RATIOS`, since 2026-10-14), by
-the one owner `scistackplot.textsize`. The single `font_size` / `tick_font_size` fields were
+the one owner `scistackplot.text.textsize`. The single `font_size` / `tick_font_size` fields were
 replaced as a clean break.
 
 How it is applied:

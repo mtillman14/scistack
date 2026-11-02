@@ -25,7 +25,7 @@ from scistackplot import (
     make_template,
     validate,
 )
-from scistackplot.roles import custom_kind_problem
+from scistackplot.model.roles import custom_kind_problem
 
 
 def _custom(**changes) -> PlotSpec:

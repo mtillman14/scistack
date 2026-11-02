@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from scistack_gui import pipeline_store as ps
-from scistack_gui.db import get_db
+from scistack_gui.stores import pipeline_store as ps
+from scistack_gui.runtime.db import get_db
 
 LIB = "gaitlib_t10"
 
@@ -79,7 +79,7 @@ def library(client, tmp_path, monkeypatch):
     from scidb import names
     from scifor.pathinput import clear_project_root, set_project_root
 
-    from scistack_gui.config import add_package
+    from scistack_gui.project.config import add_package
 
     set_project_root(tmp_path)
     db = get_db()
@@ -213,7 +213,7 @@ def _invoke(method: str, **params):
 
 
 def test_user_edits_inside_a_library_pipeline_are_refused(library):
-    from scistack_gui.library_lock import LibraryPipelineReadOnly
+    from scistack_gui.stores.library_lock import LibraryPipelineReadOnly
     from scistack_gui.services.library_service import sync_libraries
 
     db = get_db()
@@ -266,7 +266,7 @@ def test_graduation_inside_an_unrelated_user_edit_is_not_refused(library):
     seeded library node onto its history twin (migrate_node_config, which
     writes through the guarded update_node_config). That is bookkeeping, not
     an edit of the library pipeline: library_lock.internal lets it through."""
-    from scistack_gui import library_lock
+    from scistack_gui.stores import library_lock
     from scistack_gui.services.library_service import sync_libraries
 
     db = get_db()
@@ -283,7 +283,7 @@ def test_every_guarded_write_checks_the_lock():
     lock; the intent store's choke points do too."""
     import inspect
 
-    from scistack_gui import intent_store
+    from scistack_gui.stores import intent_store
 
     for name in ps.GUARDED_WRITES:
         src = inspect.getsource(getattr(ps, name))
@@ -323,7 +323,7 @@ def test_the_libraries_list_and_the_handlers(library):
 
 
 def test_add_package_lists_once_and_refuses_bad_names(tmp_path):
-    from scistack_gui.config import add_package, remove_package
+    from scistack_gui.project.config import add_package, remove_package
 
     (tmp_path / "scistack.toml").write_text('modules = ["."]\n')
     add_package(None, "gait_tools", project=tmp_path)
@@ -368,8 +368,8 @@ def test_the_library_cli_lists_adds_and_removes(tmp_path, capsys, monkeypatch):
 
 
 def test_a_librarys_matlab_functions_are_discovered_and_on_the_path(library, tmp_path):
-    from scistack_gui.config import load_config
-    from scistack_gui.matlab_parser import parse_matlab_function
+    from scistack_gui.project.config import load_config
+    from scistack_gui.matlab.parser import parse_matlab_function
 
     lib_root, doc, _ = library
     _write_library(lib_root, {"preprocessing": doc}, schema_keys=["participant", "session"],

@@ -26,12 +26,12 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.capability import available_plots
-from scistackplot.kde import GRID_POINTS, KDE_SOURCE, kde_problem
-from scistackplot.reduce import clear_plan_cache
-from scistackplot.resolved import COUNT, X, Y
-from scistackplot.roles import KDE_NO_X, RoleError
-from scistackplot.shape import Shape
+from scistackplot.model.capability import available_plots
+from scistackplot.reduce.kde import GRID_POINTS, KDE_SOURCE, kde_problem
+from scistackplot.reduce.resolve import clear_plan_cache
+from scistackplot.reduce.resolved import COUNT, X, Y
+from scistackplot.model.roles import KDE_NO_X, RoleError
+from scistackplot.model.shape import Shape
 
 
 @pytest.fixture(autouse=True)

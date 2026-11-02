@@ -6,7 +6,7 @@ A **library function** is a function the user did not write —
 `pandas.read_csv`, `numpy.mean`, a stdlib call — pinned to the canvas as an
 ordinary function node. Unlike a discovered function, it has no file in the
 user's project and never lives in `registry._functions`; it is imported on
-demand at every use site (`scistack_gui/library_functions.py`, whose module
+demand at every use site (`scistack_gui/project/library_functions.py`, whose module
 docstring explains why caching it in the registry was a bug).
 
 That import-on-demand design leaves one thing to get right, and it is the

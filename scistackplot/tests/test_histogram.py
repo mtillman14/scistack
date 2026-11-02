@@ -28,7 +28,7 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.bins import (
+from scistackplot.reduce.bins import (
     EDGES_SOURCE,
     MAX_BINS,
     BinError,
@@ -37,12 +37,12 @@ from scistackplot.bins import (
     histogram_limits,
     parse_width,
 )
-from scistackplot.capability import available_plots, why_unavailable
-from scistackplot.reduce import clear_plan_cache
-from scistackplot.resolved import COUNT, X_HIGH, X_LOW, Y, Y_BASE
-from scistackplot.roles import CONTINUOUS_LOG_REASON, RoleError, roles_for_kind
-from scistackplot.shape import Shape
-from scistackplot.spec import YAxis
+from scistackplot.model.capability import available_plots, why_unavailable
+from scistackplot.reduce.resolve import clear_plan_cache
+from scistackplot.reduce.resolved import COUNT, X_HIGH, X_LOW, Y, Y_BASE
+from scistackplot.model.roles import CONTINUOUS_LOG_REASON, RoleError, roles_for_kind
+from scistackplot.model.shape import Shape
+from scistackplot.model.spec import YAxis
 
 
 @pytest.fixture(autouse=True)
@@ -153,7 +153,7 @@ def test_one_grouping_layer_at_most(scalar_table):
 
 
 def test_picking_it_on_the_opening_state_collapses_the_grouped_level(scalar_table):
-    from scistackplot.roles import default_assignment
+    from scistackplot.model.roles import default_assignment
 
     opening = default_assignment(scalar_table, "StepLength")
     spec = PlotSpec(

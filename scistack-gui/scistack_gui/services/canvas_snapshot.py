@@ -143,7 +143,7 @@ def _blob_leftovers(config: dict) -> dict:
     (``intent_store.NODE_CONFIG_KEYS``, ``SCHEMA_LOCATION_KEYS``): those are
     captured as statements, resolved for the source scope, and replaying the
     blob's overlay too could write a different scope's value."""
-    from scistack_gui.intent_store import NODE_CONFIG_KEYS, SCHEMA_LOCATION_KEYS
+    from scistack_gui.stores.intent_store import NODE_CONFIG_KEYS, SCHEMA_LOCATION_KEYS
 
     graduated = set(NODE_CONFIG_KEYS.values()) | set(SCHEMA_LOCATION_KEYS)
     return {k: v for k, v in (config or {}).items() if k not in graduated}
@@ -169,9 +169,9 @@ def capture(db, pipeline_ids: list[str], node_ids: "list[str] | None" = None) ->
     hide only when both its endpoints are among the captured nodes.
     """
     from scistack_gui import ids
-    from scistack_gui import intent_store
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import intent_store
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.services.pipeline_service import get_pipeline_graph
 
     if node_ids is not None and len(pipeline_ids) != 1:
@@ -312,9 +312,9 @@ def apply(
     from scidb.intent import SURFACE_STORE, Statement
 
     from scistack_gui import ids
-    from scistack_gui import intent_store
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import intent_store
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
 
     dx, dy = translation
     old_to_new: dict[str, str] = {}
@@ -470,7 +470,11 @@ def table_portability() -> dict[str, str]:
     ``UNDOABLE_TABLES``). The guard test ``test_every_gui_table_is_classified``
     fails when a new table is not classified, so nothing is left out of an
     export by accident."""
-    from scistack_gui import history, intent_store, layout, node_wiring, pipeline_store
+    from scistack_gui.stores import history
+    from scistack_gui.stores import intent_store
+    from scistack_gui.stores import layout
+    from scistack_gui.stores import node_wiring
+    from scistack_gui.stores import pipeline_store
 
     out: dict[str, str] = {}
     for module in (pipeline_store, intent_store, node_wiring, layout, history):

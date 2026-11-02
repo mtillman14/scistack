@@ -14,8 +14,8 @@ import pytest
 from scidb import BaseVariable, for_each
 
 from conftest import RawSignal
-from scistack_gui import history
-from scistack_gui import registry as _registry
+from scistack_gui.stores import history
+from scistack_gui.project import registry as _registry
 
 
 class PortTen(BaseVariable):
@@ -136,7 +136,7 @@ def test_an_empty_list_returns_to_automatic(client):
 
 
 def test_rename_repoints_the_ports_manual_edges(client, populated_db):
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     _code_run([PortTen, PortSix])
     nid = _fn_node(client)["id"]
@@ -203,7 +203,7 @@ def test_declared_order_note():
 def test_canvas_run_writes_ports_in_port_order_and_records_their_names(
     client, monkeypatch, populated_db
 ):
-    from scistack_gui.api import run as run_api
+    from scistack_gui.services import run_service as run_api
 
     _code_run([PortTen, PortSix])
     nid = _fn_node(client)["id"]

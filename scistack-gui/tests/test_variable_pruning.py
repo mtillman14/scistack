@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 from scidb import BaseVariable
 
-import scistack_gui.registry as _registry
+import scistack_gui.project.registry as _registry
 
 
 @pytest.fixture(autouse=True)
@@ -48,7 +48,7 @@ def _project(tmp_path, variables: list[str]):
     from scidb import entities
 
     entities.clear_cache()
-    from scistack_gui.config import load_config
+    from scistack_gui.project.config import load_config
 
     return load_config(tmp_path, tmp_path / "test.duckdb")
 
@@ -158,7 +158,7 @@ class TestSourceAttribution:
         (tmp_path / "scistack.toml").write_text(
             'modules = ["src/owner.py", "src/importer.py"]\n', encoding="utf-8"
         )
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         config = load_config(tmp_path, tmp_path / "test.duckdb")
         _registry.load_from_config(config)

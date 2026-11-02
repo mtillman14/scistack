@@ -18,8 +18,8 @@ import numpy as np
 import pandas as pd
 
 from scistackplot import LongTable
-from scistackplot.roles import WIDE_FIELD_LIMIT, default_spec
-from scistackplot.ylimits import ExtentMode, _cell_extents, _raw_extents, hashable
+from scistackplot.model.roles import WIDE_FIELD_LIMIT, default_spec
+from scistackplot.reduce.ylimits import ExtentMode, _cell_extents, _raw_extents, hashable
 
 
 def _reference(frame, measure, scope, mode):

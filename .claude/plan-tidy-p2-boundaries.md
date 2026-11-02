@@ -213,3 +213,98 @@ Move files, fix imports, and change nothing else:
     `transaction()`. Only sciduckdb's own tests call the private trio.
   - Underscore codec names (`_infer_duckdb_type` etc.) dropped from the
     facade: no consumer outside sciduckdb.
+- 2026-11-01: stage 4 committed (98d19e97). Stage 5 code written, awaiting
+  the GUI allow-list bootstrap and the user's test run.
+  - Moved unchanged: `api/ws.py` hub -> `ws_hub.py` (api/ws.py keeps the
+    /ws route, calling `ws_hub.serve`); `api/variables.py` queries ->
+    `services/variable_service.py`; `api/project.py` scan ->
+    `services/project_service.py` (its 7 wrappers had no callers);
+    `api/pipeline.py` lines 38-1749 -> new `services/graph_service.py`;
+    `api/run.py` logic + `RunRequest` -> `services/run_service.py`;
+    `api/matlab_command.py` (no handlers at all) ->
+    `services/matlab_command_format.py`.
+  - Cross-module private names made public: `build_graph`,
+    `fn_params_from_registry`, `fn_arguments`, `notify_records_changed`,
+    `reload_config_and_rescan`, `collect_var_types`,
+    `variable_input_type_names`, `format_matlab_string_array`; new
+    `run_service.has_active_runs()` replaces clear_service's peek at
+    `_active_runs`. `graph_service._parse_path_input` deleted (callers use
+    `domain.graph_builder.parse_path_input`).
+  - Only `app.py` / `server.py` import api/ now. Known upward edges left
+    for the allow-list: `domain/edge_view` -> `graph_service.fn_arguments`
+    (lazy; the monkeypatch seam tests share), `matlab_command_format` ->
+    `server._find_scimatlab_matlab_dir`.
+  - Deviation: `app.py` is in the `entry` layer with `server.py`, not
+    `runtime` (it imports every router).
+  - Not done: `variable_service` raises fastapi `HTTPException` (moved
+    unchanged; a typed error belongs there, P4). TS comments naming
+    `api/ws.py` / `api/variables.py` / `api.matlab_command` left to avoid a
+    bundle rebuild for comments.
+- 2026-11-01: stage 5 green (GUI suite + frontend). Stages 6-7 written,
+  awaiting allow-list bootstrap and test runs. Nothing committed since
+  98d19e97 (user did not ask).
+  - Stage 6: `stores/`, `matlab/` (prefix dropped), `project/` (+ `startup`),
+    `runtime/` (+ `ws_hub`). Deviations, following the measured imports:
+    `ids` stays top level (stdlib-only leaf, layer `core`); `bootstrap` and
+    `headless` stay top level (layer `setup`, between services and api);
+    `app` stays top level (layer `entry`). Rewritten with a one-off Node
+    script (from-imports incl. multi-name/parenthesized, dotted paths in
+    code/strings/docs); 180 files. Source-scanning tests updated
+    (`test_load_errors_owner`, `test_edge_view_guard`, `test_history`).
+    Manual-test entry 0zzzzzzzz added.
+  - Stage 7 deviation: files NOT moved yet. scistackplot's imports do not
+    follow 06's grouping (spec -> compare/diffbars/panels; roles/capability
+    -> reduce/export/bins/kde; resolved -> render), so layers are declared
+    over the flat module names first (`scistackplot/tests/import_layers.toml`)
+    and the allow-list shows the real order. Move files once that is read.
+    scistackstats boundary test allows today's 5 deep modules (`TODAY`).
+- 2026-11-01: stages 5-7 green (scistack-gui, scistackplot, scistackplotdb,
+  scistackstats, scistackstatsdb). Also fixed a pre-existing gap from
+  f1f12260: `kde` was unclassified in `design.DESIGN_FIELDS` (now display)
+  and `presets.FIELD_CLASSES` (now template). scistackplot layer order
+  ended as base -> model -> text -> reduce (text's imports of `resolved` are
+  type-only). GUI lazy baseline rose 1343 -> 1377 only because stage 6 split
+  multi-name lazy imports into one statement per subpackage.
+  - Open: stage 7 file moves (needs the spec option types moved into the
+    model first); GUI restart check (manual-test entry 0zzzzzzzz).
+  - More f1f12260 gaps found by the full scistackplot run (not P2):
+    `histogram.exact_values` (classified variable-specific: Claude's call,
+    user skipped the question; flip to `_T` + drop from
+    test_variable_text_paths_... if presets should carry it),
+    `histogram.show_nan` and `style.not_plotted_note` (template);
+    test_restore fixture given the four new fields; test_show_sample
+    asserted the old "categorical mark" wording, updated to the message
+    that now names histogram and density curve.
+- 2026-11-01: stage 7 files moved (user asked). model/, text/, reduce/,
+  export/ created; reduce.py -> reduce/resolve.py, export.py ->
+  export/plot_data.py, dedup -> sources/. Leaf modules live in their job's
+  folder and are listed in the `base` layer by name. Relative imports
+  recomputed per file by a one-off Node script (dry-run on a copy, pyright
+  clean); absolute `scistackplot.<old>` paths rewritten in 190 files incl.
+  tests, other packages, docs/claude, allow-lists. TS comments untouched.
+  Awaiting test run.
+  - Missed and fixed after the user's run: repo-root `tests/integration`
+    (3 files) still used the pre-stage-5/6 GUI paths; the stage 6 rewrite's
+    file list covered package folders only. Whole repo re-grepped: clean.
+  - tests/integration had rotted before P2 (not in CI): 4 PathInput calls
+    lacked the `name=` required since a9357ddd (2026-09-25); now use the
+    aim2 pipeline's names. test_edge_gui expected text variables to be
+    ineligible; dd91f8da made them plottable, test updated.
+  - Integration round 2 (all pre-P2 rot, fixed in tests): `failures` replaced
+    `failure_reasons` in scifor's summary event (helper
+    `conftest.failure_reasons`); spaghetti export skipped when capabilities
+    marks it unavailable; CUSTOM excluded from built-in kind sweeps; the
+    [schema-level] log now says "nothing: one call over the whole dataset".
+  - Column selection (user chose B, then the diagnosis was corrected): a
+    by-name run is the union of node-scoped runs over the function's canvas
+    nodes (45556121), so each real node's selection applies. The test saved
+    under an invented id (`fn__trial_mean_symmetry__test`; ids are allocated
+    since 2026-09-22); it now uses `_fn_node_id` from the built graph. Code:
+    stale `_attach_column_selections` docstring fixed, dead `name_scoped`
+    parameter removed. `column_selections_for_nodes(function_name=...)` is
+    now reached only from GUI unit tests (candidate for removal).
+  - Column selection test, final: with the real node id the selection does
+    reach the run ("restricted to 2 columns"), and the save is then refused
+    by the column-set guard (TrialMeanSymmetry first saved with hip by
+    `seeded`). The test now asserts that refusal and that stored records keep
+    ankle/hip/knee.

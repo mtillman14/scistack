@@ -9,6 +9,7 @@ default green that would read as "up to date".
 
 import pytest
 from scistack_gui.api import pipeline as api_pipeline
+from scistack_gui.services import graph_service
 from scistack_gui.services.pipeline_service import get_pipeline_graph
 
 
@@ -30,7 +31,7 @@ def test_without_run_states_the_check_is_skipped(populated_db, monkeypatch):
     def refuse(*_a, **_k):
         raise AssertionError("the state check ran for a graph that wants none")
 
-    monkeypatch.setattr(api_pipeline, "_compute_run_states", refuse)
+    monkeypatch.setattr(graph_service, "_compute_run_states", refuse)
     graph = get_pipeline_graph(populated_db, "main", run_states=False)
     states = _states(graph)
     assert states, "the picker still needs the nodes"

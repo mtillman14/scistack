@@ -16,8 +16,8 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, capabilities, resolve
-from scistackplot.groups import apply_level_groups
-from scistackplot.spec import LevelGroup
+from scistackplot.reduce.groups import apply_level_groups
+from scistackplot.model.spec import LevelGroup
 
 PHASES = {"pre": "baseline", "post": "post"}
 
@@ -273,7 +273,7 @@ def _stim_spec(**kwargs) -> PlotSpec:
 
 
 def _bars(spec: PlotSpec, table: LongTable) -> dict[str, float]:
-    from scistackplot.resolved import X, Y
+    from scistackplot.reduce.resolved import X, Y
 
     (figure,) = resolve(spec, table)
     (panel,) = figure.panels
@@ -281,7 +281,7 @@ def _bars(spec: PlotSpec, table: LongTable) -> dict[str, float]:
 
 
 def test_combined_depth_sits_just_above_the_source(stim_table):
-    from scistackplot.groups import COMBINED_DEPTH_OFFSET
+    from scistackplot.reduce.groups import COMBINED_DEPTH_OFFSET
 
     derived = apply_level_groups(PlotSpec(measures=["M"], level_groups=[_stim()]), stim_table)
 
@@ -291,7 +291,7 @@ def test_combined_depth_sits_just_above_the_source(stim_table):
 
 
 def test_the_replaced_source_is_collapsed_whatever_the_spec_says(stim_table):
-    from scistackplot.roles import complete_assignment
+    from scistackplot.model.roles import complete_assignment
 
     spec = _stim_spec(
         roles={"Stim": Role.GROUP, "condition": Role.GROUP, "subject": Role.COLLAPSE},
@@ -308,7 +308,7 @@ def test_the_replaced_source_is_collapsed_whatever_the_spec_says(stim_table):
 def test_a_combine_without_a_role_takes_its_sources(stim_table):
     """A spec written outside the panel (endpoint, hand-edited save) still
     reads as 'the combine holds the slot'."""
-    from scistackplot.roles import complete_assignment
+    from scistackplot.model.roles import complete_assignment
 
     spec = _stim_spec(roles={"condition": Role.FACET, "subject": Role.COLLAPSE}, groups=[])
     derived = apply_level_groups(spec, stim_table)
@@ -326,7 +326,7 @@ def test_each_combined_level_is_the_nested_average_of_its_source_levels(stim_tab
 
 
 def test_the_collapse_chain_averages_the_source_before_the_sample(stim_table):
-    from scistackplot.roles import collapse_order, complete_assignment
+    from scistackplot.model.roles import collapse_order, complete_assignment
 
     spec = _stim_spec()
     derived = apply_level_groups(spec, stim_table)
@@ -389,7 +389,7 @@ def test_only_the_first_active_combine_of_a_source_applies(stim_table):
 
 
 def test_validate_refuses_two_active_combines_of_one_source(stim_table):
-    from scistackplot.roles import RoleError, validate
+    from scistackplot.model.roles import RoleError, validate
 
     spec = _stim_spec(level_groups=[_stim(), _stim(name="Other")])
 
@@ -398,7 +398,7 @@ def test_validate_refuses_two_active_combines_of_one_source(stim_table):
 
 
 def test_validate_refuses_a_combine_named_after_an_existing_factor(stim_table):
-    from scistackplot.roles import RoleError, validate
+    from scistackplot.model.roles import RoleError, validate
 
     spec = _stim_spec(
         roles={"subject": Role.COLLAPSE}, groups=[], level_groups=[_stim(name="subject")]
@@ -409,7 +409,7 @@ def test_validate_refuses_a_combine_named_after_an_existing_factor(stim_table):
 
 
 def test_validate_names_the_combine_when_colour_is_on_the_replaced_source(stim_table):
-    from scistackplot.roles import RoleError, validate
+    from scistackplot.model.roles import RoleError, validate
 
     spec = _stim_spec(color="condition")
 
@@ -444,7 +444,7 @@ def test_a_subject_does_not_recur_across_its_cohort(scalar_table):
     """A subject belongs to one cohort, so a line through 'subject 01' across
     cohort ticks would be invented. Before combines had a depth this was
     'cannot be told'."""
-    from scistackplot.roles import line_recurrence
+    from scistackplot.model.roles import line_recurrence
 
     cohort = LevelGroup("Cohort", "subject", {"01": "A", "02": "A", "03": "B"})
     derived = apply_level_groups(

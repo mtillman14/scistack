@@ -60,7 +60,7 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
     *caller* names the reader in the INFO line, so a run's view can be matched
     against the canvas's in scistack.log.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.graph_builder import visible_manual_edges
 
     from scistack_gui.ids import strip_placement
@@ -212,9 +212,9 @@ def removed_argument(
         return None
     label = meta.get("label") or strip_placement(node_id)
     if label not in signatures:
-        from scistack_gui.api.pipeline import _fn_arguments
+        from scistack_gui.services.graph_service import fn_arguments
 
-        signatures[label] = _fn_arguments(label)
+        signatures[label] = fn_arguments(label)
     arguments = signatures[label]
     if not arguments or any(
         a.kind == inspect.Parameter.VAR_KEYWORD for a in arguments
@@ -254,6 +254,6 @@ def run_scope(db, node_id: "str | None") -> "str | None":
     Decision (a) of the plan, matching hidden nodes since 2026-09-20."""
     if not node_id:
         return None
-    from scistack_gui import intent_store
+    from scistack_gui.stores import intent_store
 
     return intent_store.scope_of_node(db, node_id)

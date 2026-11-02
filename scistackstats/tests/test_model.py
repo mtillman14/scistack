@@ -9,7 +9,7 @@ import pytest
 
 from conftest import SUBJECTS, bar_spec, popcorn_table
 from scistackplot import FactorVariable, Role
-from scistackplot.design import design_diff
+from scistackplot.model.design import design_diff
 from scistackstats import (
     Analysis, CovariateValues, FakeEngine, StatsSpec, analysis_frame, apply_to_design, available_tests,
     default_formula, for_frame, run, select_tests, use_engine, why_not_exportable,

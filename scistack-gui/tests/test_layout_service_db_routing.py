@@ -4,15 +4,15 @@
 ``layout`` used to carry db-less forwarders (``read_manual_edges()``,
 ``add_pending_constant(name, value)``, …) that looked the database up with
 ``get_db()``. Functions that were HANDED a ``db`` — ``put_edge``,
-``_build_graph``, both MATLAB generators — mixed them with
+``build_graph``, both MATLAB generators — mixed them with
 ``pipeline_store.*(db, …)`` calls, so one function read from two holders of
 "which database". With a GUI session per database those can differ. The
 forwarders are gone; these tests pin that the passed ``db`` is the one used.
 """
 
 import pytest
-import scistack_gui.db as _gui_db
-from scistack_gui import pipeline_store
+import scistack_gui.runtime.db as _gui_db
+from scistack_gui.stores import pipeline_store
 from scistack_gui.services import layout_service
 
 from scidb import configure_database

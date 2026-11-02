@@ -3,7 +3,7 @@
 The user-facing counterpart of [statistics-design.md](statistics-design.md)
 (the decisions S1–S21) and `.claude/plan-statistics.md` (the stages). Read
 this before changing anything in `scistackstats`, `scistackstatsdb`,
-`csvstats.descriptive`/`csvstats.core`, `scistackplot.design` or StatStudio.
+`csvstats.descriptive`/`csvstats.core`, `scistackplot.model.design` or StatStudio.
 
 ## Packages
 
@@ -25,9 +25,9 @@ for error bars.
 | Concept | Owner |
 |---|---|
 | Every descriptive formula (mean, SD n−1, SEM, t-based CI, quartiles, skew G1, kurtosis G2, …) | `csvstats.descriptive` |
-| How a plot DRAWS "no interval" (n < 2 → zero width) | `scistackplot.spread` |
-| Which PlotSpec fields are "design" (shared) vs "display" | `scistackplot.design.DESIGN_FIELDS` |
-| How two designs differ / copying one onto another | `scistackplot.design.design_diff` / `copy_design` |
+| How a plot DRAWS "no interval" (n < 2 → zero width) | `scistackplot.reduce.spread` |
+| Which PlotSpec fields are "design" (shared) vs "display" | `scistackplot.model.design.DESIGN_FIELDS` |
+| How two designs differ / copying one onto another | `scistackplot.model.design.design_diff` / `copy_design` |
 | Plot → table settings | `scistackstats.seed.seed_from_plot` |
 | The rows a statistic sees (scalar and 1-D) | `scistackstats.tables.analysis_frame` (via `plot_data` / `sample_curves`) |
 | Experimental unit id (sample key + schema keys above it) | `tables.analysis_frame` (`UNIT` column) |
@@ -49,7 +49,7 @@ for error bars.
 | Text formats | `scistackstats.export` (renders `Grid`s only) |
 | Stats preset = which settings | `scistackstats.restore.STATS_SETTINGS` |
 | Plot ↔ stats link | `StatsSpec.linked_plot` only (no back-reference); the linked pair's DESIGN lives in `scistackplotdb.designs` (studio-unification.md) |
-| What each role is called (figure / table / process) | `scistackplot.role_labels` |
+| What each role is called (figure / table / process) | `scistackplot.model.role_labels` |
 
 ## Data flow
 

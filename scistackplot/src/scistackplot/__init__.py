@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .capability import (
+from .model.capability import (
     available_plots,
     capabilities,
     default_plot,
@@ -47,33 +47,33 @@ from .capability import (
     variant_summary,
     why_unavailable,
 )
-from .categorical import (
+from .reduce.categorical import (
     LEVEL_FACTOR,
     MAX_CATEGORY_LEVELS,
     apply_categorical,
     categorical_mode,
     mode_for_kind,
 )
-from .stacking import stack_bases, stacks
-from .cell import apply_cell_collapse, cell_collapse_note, cell_collapses, effective_shape
-from .codegen import (
+from .reduce.stacking import stack_bases, stacks
+from .reduce.cell import apply_cell_collapse, cell_collapse_note, cell_collapses, effective_shape
+from .export.codegen import (
     default_function_name,
     extract_spec,
     generate_plot_function,
     generate_script,
 )
-from .export import (
+from .export.plot_data import (
     DataDepth,
     DataExportOptions,
     data_export_options,
     data_unavailable,
     plot_data,
 )
-from .reduce import MAX_TRANSPORT_POINTS, resolve, resolve_one
-from .figure_file import WrittenFigure, canvas_overflow, write_figure
+from .reduce.resolve import MAX_TRANSPORT_POINTS, resolve, resolve_one
+from .export.figure_file import WrittenFigure, canvas_overflow, write_figure
 from .render import layout_decisions, render_matplotlib, render_plotly
-from .resolved import Encoding, Labels, Panel, ResolvedPlot
-from .roles import (
+from .reduce.resolved import Encoding, Labels, Panel, ResolvedPlot
+from .model.roles import (
     Assignment,
     GroupingLayers,
     OverlayJoin,
@@ -103,10 +103,10 @@ from .roles import (
     validate,
     with_requirements_for,
 )
-from .restore import NoteKind, RestoreError, RestoreNote, Restored, reconcile, restore_spec
-from .presets import FieldClass, apply_preset, make_template, shape_warning
-from .compare import CompareMode, Comparison
-from .custom import (
+from .model.restore import NoteKind, RestoreError, RestoreNote, Restored, reconcile, restore_spec
+from .model.presets import FieldClass, apply_preset, make_template, shape_warning
+from .reduce.compare import CompareMode, Comparison
+from .export.custom import (
     CustomCall,
     CustomFunctionError,
     CustomSignature,
@@ -118,12 +118,12 @@ from .custom import (
     resolve_custom,
     resolve_custom_one,
 )
-from .diffbars import DifferenceBar, bars_for_panel, slot_endpoints
-from .panels import PanelOverride, override_for
-from .rows import ROW_FACTOR, element_values, explode_row_lists, row_factor, row_origin
-from .shape import Shape, classify_column, classify_value, is_plottable
+from .reduce.diffbars import DifferenceBar, bars_for_panel, slot_endpoints
+from .reduce.panels import PanelOverride, override_for
+from .reduce.rows import ROW_FACTOR, element_values, explode_row_lists, row_factor, row_origin
+from .model.shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
-from .spec import (
+from .model.spec import (
     BarOptions,
     CategoricalOptions,
     CategoricalStat,
@@ -167,9 +167,9 @@ from .spec import (
     grid_shape_for,
     is_horizontal,
 )
-from .bins import BinEdges, BinError, bin_edges
-from .fits import PanelFit, annotation_text
-from .textsize import (
+from .reduce.bins import BinEdges, BinError, bin_edges
+from .reduce.fits import PanelFit, annotation_text
+from .text.textsize import (
     BANDS,
     DEFAULT_TEXT_RATIOS,
     ResolvedSizes,
@@ -178,10 +178,10 @@ from .textsize import (
     resolve_sizes,
     sizes_for,
 )
-from .autosize import AutoTextSize, settle as settle_text_size
-from .aliases import AliasError, DisplayText, display_text
-from .colors import ColorError, MarkColors, mark_colors, parse_color
-from .figsize import (
+from .text.autosize import AutoTextSize, settle as settle_text_size
+from .text.aliases import AliasError, DisplayText, display_text
+from .text.colors import ColorError, MarkColors, mark_colors, parse_color
+from .text.figsize import (
     ASPECT_PRESETS,
     CUSTOM as CUSTOM_ASPECT,
     AspectPreset,
@@ -190,7 +190,7 @@ from .figsize import (
     height_for,
     presets_payload,
 )
-from .ticklabels import (
+from .text.ticklabels import (
     BRACKET_POLICY,
     TICK_POLICY,
     LabelFit,
@@ -199,10 +199,10 @@ from .ticklabels import (
     fit_labels,
     slot_row,
 )
-from .xaxis import XGroup, XPlan, leaf_key, plan_x_axis
-from .ylimits import describe as describe_y_limits
-from .ylimits import eligible_scope, limits_by_scope
-from .table import (
+from .text.xaxis import XGroup, XPlan, leaf_key, plan_x_axis
+from .reduce.ylimits import describe as describe_y_limits
+from .reduce.ylimits import eligible_scope, limits_by_scope
+from .model.table import (
     CODE_FACTOR_PREFIX,
     MISSING_LEVEL,
     RUN_FACTOR_PREFIX,
@@ -211,7 +211,7 @@ from .table import (
     MeasureInfo,
     natural_sort_key,
 )
-from .variants import (
+from .reduce.variants import (
     LATEST,
     VARIANT_FACTOR,
     apply_variant_sets,

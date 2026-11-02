@@ -1,7 +1,7 @@
 """
 Renderer protocol and the layout maths both renderers share.
 
-A renderer translates a :class:`~scistackplot.resolved.ResolvedPlot` into a
+A renderer translates a :class:`~scistackplot.reduce.resolved.ResolvedPlot` into a
 backend figure. It performs **no** data reduction — every aggregation, ordering
 and error band was decided in ``reduce.resolve``. Keeping renderers dumb is
 what stops the interactive view and the exported figure from disagreeing.
@@ -18,16 +18,16 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
-from ..panels import (
+from ..reduce.panels import (
     Y_TITLES_FIRST_COLUMN,
     PanelOverride,
     override_for,
     panel_key_text,
     unmatched,
 )
-from ..resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, RUN, SERIES, ResolvedPlot
-from ..roles import overlay_in_legend
-from ..spec import BAR_KINDS, PlotKind, is_horizontal
+from ..reduce.resolved import DASH_CYCLE, SAMPLE_COLOR, SAMPLE_LINE, RUN, SERIES, ResolvedPlot
+from ..model.roles import overlay_in_legend
+from ..model.spec import BAR_KINDS, PlotKind, is_horizontal
 
 LAYER = "scistackplot"
 
@@ -769,11 +769,11 @@ def fill_alpha(kind: PlotKind, style) -> float | None:
     if kind is PlotKind.VIOLIN:
         return VIOLIN_FILL_ALPHA
     if kind is PlotKind.HISTOGRAM:
-        from ..bins import FILL_ALPHA as HISTOGRAM_FILL_ALPHA
+        from ..reduce.bins import FILL_ALPHA as HISTOGRAM_FILL_ALPHA
 
         return HISTOGRAM_FILL_ALPHA
     if kind is PlotKind.KDE:
-        from ..kde import FILL_ALPHA as KDE_FILL_ALPHA
+        from ..reduce.kde import FILL_ALPHA as KDE_FILL_ALPHA
 
         return KDE_FILL_ALPHA
     return None
@@ -819,7 +819,7 @@ SPECIAL_BIN_PATTERN = "/"
 #: colour with a dark edge so they read on top of a bar of the same hue, a
 #: little more transparent, and smaller — the marks are the figure, the
 #: points are the evidence behind it. Their SIZE and line width are
-#: ``scistackplot.weights``' (``StyleOptions.sample_weight``).
+#: ``scistackplot.reduce.weights``' (``StyleOptions.sample_weight``).
 SAMPLE_ALPHA = 0.7
 SAMPLE_EDGE_COLOR = "#333333"
 
@@ -894,7 +894,7 @@ def colorable(resolved: ResolvedPlot) -> list[dict]:
     Also WARNs, once per call, when a pin paints two levels of one factor
     the same (``colors.warn_duplicates``).
     """
-    from ..colors import PALETTE, warn_duplicates
+    from ..text.colors import PALETTE, warn_duplicates
 
     if resolved.spec.kind is PlotKind.HEATMAP:
         return []  # a colormap, not marks: out of scope (plan decision 4)
@@ -1248,8 +1248,8 @@ def rug_rows(panel, resolved: ResolvedPlot) -> list[RugRow]:
     """The panel's rug (``Panel.rug``, built by ``bins.rug_tables``) as rows —
     the ONE reader matplotlib and plotly share, so both place and shade a
     tick identically."""
-    from ..bins import RUG_ROW_HEIGHT, rug_color
-    from ..resolved import COUNT, RUG_ROW, RUG_SHADE, X, Y
+    from ..reduce.bins import RUG_ROW_HEIGHT, rug_color
+    from ..reduce.resolved import COUNT, RUG_ROW, RUG_SHADE, X, Y
 
     rug = getattr(panel, "rug", None)
     if rug is None or rug.empty:

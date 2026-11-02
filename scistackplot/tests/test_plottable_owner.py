@@ -15,7 +15,7 @@ from pathlib import Path
 import pandas as pd
 
 from scistackplot import LongTable, Shape, is_plottable
-from scistackplot.shape import PLOTTABLE_SHAPES
+from scistackplot.model.shape import PLOTTABLE_SHAPES
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCES = [

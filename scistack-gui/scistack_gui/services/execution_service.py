@@ -207,7 +207,8 @@ def _db_path_input_params(db, function_name: str) -> dict[str, dict[str, str]]:
     this data by ``graph_builder.build_edges`` — so without this it would
     have nothing to resolve from.
     """
-    from scistack_gui import pipeline_store, registry
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import convert_scidb_path_inputs
 
     path_inputs = convert_scidb_path_inputs(
@@ -245,7 +246,7 @@ def history_variant_wirings(
     """
     from scidb.provenance import split_call_site_outputs
 
-    from scistack_gui import node_wiring as _node_wiring_store
+    from scistack_gui.stores import node_wiring as _node_wiring_store
 
     if not variants:
         return []
@@ -377,7 +378,7 @@ def column_selections_for_nodes(
     wins and the loser is WARNed rather than merged, because a union of column
     sets is not a thing the user asked for on either node.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain import column_selection as _cs
     from scistack_gui.ids import parse_fn_node_id, strip_placement
 
@@ -463,9 +464,8 @@ def _attach_column_selections(
     node_ids,
     targets: list[dict],
     function_name: str = "",
-    name_scoped: bool = False,
 ) -> list[dict]:
-    """Stamp the GUI's saved column selections onto every target's bindings.
+    """Stamp the column selections saved on *node_ids* onto every target's bindings.
 
     Modelled directly on :func:`_attach_db_path_inputs`. Since 2026-09-19
     history DOES carry a call's selection (``_invocation_input.selector``,
@@ -473,18 +473,18 @@ def _attach_column_selections(
     as their default in :func:`_attach_db_path_inputs`); what is saved on the
     node is the user's OVERRIDE of it, applied here on top.
 
-    Called from BOTH derivation paths, because either can be the one a run
-    bottoms out in: ``derive_fn_targets`` (``name_scoped=True`` — any node id
-    of this function counts) and ``derive_target_for_node`` (node-scoped —
-    only the node clicked, so two call sites of one name stay independent).
+    Node-scoped only: called from :func:`derive_target_for_node` with the
+    node clicked, so two call sites of one name stay independent. A run by
+    function name (:func:`derive_fn_targets`) is the union of node-scoped
+    derivations over the function's canvas nodes, so each node's own
+    selection still applies; a config saved under an id that is no canvas
+    node applies to nothing (2026-11-01, user decision).
     """
     if not targets:
         return targets
     from scistack_gui.domain import column_selection as _cs
 
-    selections = column_selections_for_nodes(
-        db, node_ids, function_name if name_scoped else ""
-    )
+    selections = column_selections_for_nodes(db, node_ids)
     if not selections:
         return targets
 
@@ -524,7 +524,7 @@ def _attach_colname_inputs(
     """
     if not targets:
         return targets
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain import colname_inputs as _cn
     from scistack_gui.domain.edge_resolver import BINDING_COLNAME
 
@@ -562,7 +562,7 @@ def _hidden_constant_values(db, pipeline_id: "str | None" = None) -> dict[str, s
     (``derive_target_for_node`` reads it off the node id); only the
     name-scoped fallback (``derive_fn_targets``, no node) still unions every
     scope's hides."""
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     hidden: dict[str, set[str]] = {}
     for row in pipeline_store.list_hidden_parameter_values(db, pipeline_id):
@@ -606,7 +606,7 @@ def _inferred_targets(resolved, inferred_constants: dict[str, list]) -> list[dic
 def _document_function_nodes(db, function_name: str) -> list[str]:
     """Stored function-node rows labelled *function_name*, every scope, that
     are not hidden in their own scope. The name-scoped run's node set."""
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     manual_nodes = pipeline_store.get_manual_nodes(db)
     hidden_by_scope: dict[str, set[str]] = {}
@@ -632,11 +632,11 @@ def ensure_document(db, scope: "str | None" = None, *, reason: str) -> None:
     find history the document does not hold and run nothing. The build is the
     ONE place adoption happens, so this asks it rather than adopting here.
     """
-    from scistack_gui.api.pipeline import _build_graph
+    from scistack_gui.services.graph_service import build_graph
 
     scope = scope or ROOT_SCOPE
     logger.info("[execution] building %s's canvas so adoption is current (%s)", scope, reason)
-    _build_graph(db, scope, run_states=False)
+    build_graph(db, scope, run_states=False)
 
 
 def _target_key(t: dict) -> str:
@@ -770,7 +770,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     attempt to make adoption current), or when nothing is derivable. Every
     returned target has already been filtered against hidden constant values.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.edge_resolver import resolve_function_edges
     from scistack_gui.domain.graph_builder import wiring_id
     from scistack_gui.domain.variant_resolver import filter_hidden_constant_value_targets
@@ -778,7 +778,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
 
     # The canvas this node is on decides which hides apply — a value
     # unchecked in one hypothesis must not exclude it from another.
-    from scistack_gui import intent_store
+    from scistack_gui.stores import intent_store
 
     hidden_values = _hidden_constant_values(db, intent_store.scope_of_node(db, node_id))
     # The clicked node's canvas decides which hidden edges apply (decision a,
@@ -902,7 +902,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     # No recorded row of this wiring: build from the edges and the values.
     inferred_constants: dict[str, list] = {}
     if resolved.parameter_params:
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         inferred_constants = _infer_wired_constants(
             resolved.parameter_params,
@@ -992,8 +992,8 @@ def record_dispatch_wirings(
     """
     if not node_id or not targets:
         return 0
-    from scistack_gui import intent_store
-    from scistack_gui import node_wiring as _node_wiring_store
+    from scistack_gui.stores import intent_store
+    from scistack_gui.stores import node_wiring as _node_wiring_store
     from scistack_gui.domain.edge_resolver import (
         BINDING_PATHINPUT,
         bindings_of_kind,
@@ -1062,9 +1062,9 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     Cheap, independent of ``derive_fn_targets``/``derive_target_for_node``
     (which already silently exclude disconnected targets) — this exists so
     callers that get an empty target list can tell "disconnected" apart
-    from "never run" and surface the right explicit error (see api/run.py).
+    from "never run" and surface the right explicit error (see services/run_service.py).
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.graph_builder import (
         inbound_edge_candidates_by_handle,
         manual_edge_handle_index,
@@ -1116,7 +1116,7 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     # whichever node holds it. Without that the candidate edge ids are built
     # under the wiring, match no stored hide, and the caller reports "no
     # pipeline history" for a function that is in fact disconnected.
-    from scistack_gui import node_wiring as _node_wiring_store
+    from scistack_gui.stores import node_wiring as _node_wiring_store
 
     node_wiring_now: "str | None" = None
     node_token = None
@@ -1169,8 +1169,8 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     (this "disconnected" concept is GUI-authored state, scistack-gui's own
     layer — see plan-edge-hide-delete.md).
     """
-    from scistack_gui import pipeline_store
-    from scistack_gui.api.pipeline import build_aggregate, ensure_node_identities
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.services.graph_service import build_aggregate, ensure_node_identities
     from scistack_gui.domain.graph_builder import (
         hidden_wirings,
         inbound_edge_candidates_by_handle,
@@ -1187,7 +1187,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     if not hidden_edge_ids:
         return []
 
-    # The SAME aggregate `_build_graph` uses. A narrower hand-rolled copy sat
+    # The SAME aggregate `build_graph` uses. A narrower hand-rolled copy sat
     # here and omitted nothing important by accident — the PathInput
     # resolution was already duplicated line for line — but two copies of a
     # conversion is two chances to drift, and the hidden-edge lookups below
@@ -1285,7 +1285,7 @@ def resolve_combo_call_ids(
     (an unresolved multi-type input) are silently skipped — fail safe, see
     ``variant_resolver.compute_call_id``.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.variant_resolver import constants_match, resolve_target_call_id
 
     targets = (
@@ -1365,7 +1365,7 @@ def _hidden_values_for_run(db) -> dict:
     never silently running FEWER combos than declared."""
     if db is None:
         try:
-            from scistack_gui.db import get_db
+            from scistack_gui.runtime.db import get_db
 
             db = get_db()
         except Exception as e:
@@ -1573,7 +1573,7 @@ def declared_output_classes(db, node_id: "str | None", function_name: str):
     """
     if not node_id:
         return None
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     ports = (pipeline_store.get_node_config(db, node_id) or {}).get("outputPorts") or []
     if not ports:
@@ -1609,7 +1609,7 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     inputs, scalar constants, and any remaining signature params resolved
     via a stored PathInput or Parameter.
 
-    Shared by the per-node Run path (``api/run.py``) and the compiled-
+    Shared by the per-node Run path (``services/run_service.py``) and the compiled-
     pipeline path (``build_backend_pipeline`` below) — one place instead of
     two independently-drifting copies, which is what let PathInput
     resolution go missing from both for a long time.
@@ -1646,8 +1646,8 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
     looked right in the UI and still ran.
     """
     from scidb import ColName, EachOf
-    from scistack_gui import registry
-    from scistack_gui.api.pipeline import _fn_params_from_registry
+    from scistack_gui.project import registry
+    from scistack_gui.services.graph_service import fn_params_from_registry
     from scistack_gui.domain import column_selection as _column_selection
     from scistack_gui.domain.edge_resolver import (
         BINDING_COLNAME,
@@ -1792,7 +1792,7 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
                 kind,
             )
 
-    unbound = [p for p in _fn_params_from_registry(function_name) if p not in inputs]
+    unbound = [p for p in fn_params_from_registry(function_name) if p not in inputs]
     if unbound:
         # Not necessarily an error — optional params with defaults are
         # legitimately unbound — but it is the first thing to check when a
@@ -1857,10 +1857,10 @@ def describe_run_inputs(inputs: dict, function_name: str) -> str:
     this is the line that answers it. See
     ``docs/claude/input-binding-round-trip.md``.
     """
-    from scistack_gui.api.pipeline import _fn_params_from_registry
+    from scistack_gui.services.graph_service import fn_params_from_registry
 
     try:
-        params = list(_fn_params_from_registry(function_name))
+        params = list(fn_params_from_registry(function_name))
     except Exception:  # a log line must never break a run
         params = []
     for extra in inputs:
@@ -1883,7 +1883,7 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
     ``{param: {"types": [...], "columns": [...], "iterate": bool,
     "pool_variants": bool}}`` for one with a column selection or
     AcrossVariants pooling — the two shapes
-    ``api.matlab_command._variable_binding_parts`` parses. Until 2026-09-19
+    ``matlab_command_format._variable_binding_parts`` parses. Until 2026-09-19
     the MATLAB route assembled this from canvas edges plus the node config
     on its own, so a selection recorded in HISTORY (a Python-authored
     ``Var["knee"]`` step) reached a Python re-run and not a MATLAB one: two
@@ -1895,7 +1895,7 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
     and the loser is WARNed, matching ``column_selections_for_nodes``.
 
     A ``colname`` binding renders as ``{"colname": True}`` in the same map
-    (``api.matlab_command._is_colname_entry``), so every MATLAB emit site
+    (``matlab_command_format._is_colname_entry``), so every MATLAB emit site
     that reads variable inputs emits ``scidb.ColName()`` with no new argument.
     """
     from scistack_gui.domain import column_selection as _cs
@@ -1983,7 +1983,7 @@ def default_schema_level(
     """
     from scidb import provenance_query as _pq
     from scidb.schema_level import input_levels, resolve_schema_level
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.domain.edge_resolver import (
         BINDING_PATHINPUT,
         BINDING_VARIABLE,
@@ -2052,14 +2052,14 @@ def node_schema_level(
     """The level a Run of this node would iterate, for the settings panel:
     ``{"state", "keys", "rule", "schema_keys"}``, plus
     ``iterate_label``: what the studios call this idea (the ticked keys), from
-    the one owner of role words (``scistackplot.role_labels``).
+    the one owner of role words (``scistackplot.model.role_labels``).
 
     Built from EXACTLY what a Run passes (``derive_target_for_node`` + staged
     pending overrides) through the same resolver, so the panel cannot show a level the run then ignores
     (cleanup-audit F23). *stated* is the panel's current, possibly unsaved,
     value.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     targets = (
         derive_target_for_node(db, node_id)
@@ -2075,7 +2075,7 @@ def node_schema_level(
         node_id=node_id,
         route="settings panel",
     )
-    from scistackplot.role_labels import role_label_for
+    from scistackplot.model.role_labels import role_label_for
 
     return {
         **level.to_json(rule),
@@ -2129,12 +2129,12 @@ def build_run_glue(target: dict, function_name: str) -> dict:
     Glue is a property of the consuming step's input binding, never a step
     of its own: this function is called *alongside* ``build_run_inputs`` for
     one function node, and never for a glue node (which has no run path at
-    all — see ``api/run.py``). A MATLAB glue node crosses as source text so
+    all — see ``services/run_service.py``). A MATLAB glue node crosses as source text so
     ``+scidb/for_each.m`` can run the body while Python still hashes it into
     the consumer's identity.
     """
     from scidb.glue import GlueSpec
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     chains = target.get("glue_chains") or {}
     if not chains:
@@ -2182,7 +2182,7 @@ def build_run_glue(target: dict, function_name: str) -> dict:
 def _matlab_glue_sources():
     """``(names, source_text_fn)`` for MATLAB-declared glue functions."""
     try:
-        from scistack_gui import matlab_registry as _mr
+        from scistack_gui.matlab import registry as _mr
 
         names = set(_mr.get_all_function_names())
 
@@ -2218,9 +2218,9 @@ def _scope_function_node_ids(db, pipeline_id: str, identity=None) -> list[tuple[
     accepts either spelling. ``identity`` is accepted for the callers that
     still pass it and is not needed.
     """
-    from scistack_gui.api.pipeline import _build_graph
+    from scistack_gui.services.graph_service import build_graph
 
-    graph = _build_graph(db, pipeline_id, run_states=False)
+    graph = build_graph(db, pipeline_id, run_states=False)
     out = [
         (n["id"], n["data"]["label"])
         for n in graph.get("nodes", [])
@@ -2256,13 +2256,13 @@ def pipeline_has_matlab_steps(db, pipeline_id: str) -> bool:
     for a MATLAB-registered function name, which the per-node loop above
     already catches and silently skips (logged as a warning) — a MATLAB-
     containing pipeline run today just quietly omits its MATLAB steps
-    rather than erroring. ``start_pipeline_run`` (``api/run.py``) uses this
+    rather than erroring. ``start_pipeline_run`` (``services/run_service.py``) uses this
     check to route such a pipeline to host-side MATLAB execution instead
     (see plan-matlab-pipeline-execution.md) — the same
     ``matlab_registry.is_matlab_function`` over ``_scope_function_node_ids``
     test ``code_export_service`` already uses to detect a scope's language.
     """
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
     from scistack_gui.services.portability_service import _closure_pipeline_ids
 
     for pid in _closure_pipeline_ids(db, pipeline_id):
@@ -2284,7 +2284,9 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
     from scidb.pipeline import Pipeline
 
     from scidb import for_each
-    from scistack_gui import pipeline_store, registry, step_names
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.project import registry
+    from scistack_gui.project import step_names
     from scistack_gui.domain.variant_resolver import (
         filter_hidden_targets,
         hidden_call_ids_for_fn,
@@ -2340,7 +2342,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
         # Scoped to THIS node's own wiring (derive_target_for_node), never
         # every node/call site sharing fn_label — see
         # _scope_function_node_ids for why (same fix as the single-node
-        # Run path's node_id-scoped derivation in api/run.py).
+        # Run path's node_id-scoped derivation in services/run_service.py).
         targets = apply_pending_overrides(
             derive_target_for_node(db, node_id), pending_consts
         )
@@ -2476,7 +2478,7 @@ def _as_placed(db, pipeline_id: str, pipe, built: dict):
     step values runs as it is (unchanged behaviour)."""
     from scidb.pipeline import Pipeline
 
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     placements = [
         u for u in pipeline_store.get_pipeline_uses(db)

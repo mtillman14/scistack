@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import pytest
 
-import scistack_gui.registry as _registry
-from scistack_gui import matlab_registry
+import scistack_gui.project.registry as _registry
+from scistack_gui.matlab import registry as matlab_registry
 from scistack_gui.domain.display_order import display_sorted
 
 

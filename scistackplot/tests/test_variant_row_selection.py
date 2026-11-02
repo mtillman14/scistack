@@ -20,9 +20,9 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 from scistackplot import LongTable, PlotSpec, VariantSet, resolve
-from scistackplot.capability import variant_summary
-from scistackplot.roles import Role
-from scistackplot.variants import (
+from scistackplot.model.capability import variant_summary
+from scistackplot.model.roles import Role
+from scistackplot.reduce.variants import (
     SOURCE_DEFAULT,
     SOURCE_FROZEN,
     SOURCE_STATED,

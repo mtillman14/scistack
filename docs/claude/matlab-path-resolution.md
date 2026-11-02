@@ -1,12 +1,12 @@
 # MATLAB Path Resolution — `matlab.functions` vs `matlab.variables`
 
-This note documents how `scistack_gui.config.load_config` resolves the two
+This note documents how `scistack_gui.project.config.load_config` resolves the two
 MATLAB file lists declared in `[tool.scistack.matlab]` (or in the `[matlab]`
 table of a top-level `scistack.toml`), and how it handles the common case
 where their file sets overlap.
 
 Related reading:
-- `scistack-gui/scistack_gui/config.py` — implementation
+- `scistack-gui/scistack_gui/project/config.py` — implementation
 - `docs/claude/matlab-gui-implementation.md` — broader MATLAB support overview
 - `scistack-gui/tests/test_config.py` — regression tests
 
@@ -85,9 +85,9 @@ Given the overlapping config above, with `src/func.m` and `src/vars/var.m`
 on disk:
 
 ```
-[scistack] INFO scistack_gui.config: Excluded 1 file(s) from matlab.functions
+[scistack] INFO scistack_gui.project.config: Excluded 1 file(s) from matlab.functions
 because they are also declared in matlab.variables.
-[scistack] INFO scistack_gui.config: Loaded config from .../scistack.toml:
+[scistack] INFO scistack_gui.project.config: Loaded config from .../scistack.toml:
 0 modules, 0 packages, auto_discover=True, 1 MATLAB functions, 1 MATLAB variables
 ```
 
@@ -125,7 +125,7 @@ Two reasons:
 1. **Single source of truth.** After `load_config` returns, the
    `SciStackConfig.matlab_functions` and `matlab_variables` lists are
    consumed by multiple modules (`matlab_registry.load_from_config`,
-   `api/matlab_command.generate_matlab_command` for `addpath_dirs`, etc.).
+   `matlab_command_format.generate_matlab_command` for `addpath_dirs`, etc.).
    Deduplicating once at config time keeps all downstream consumers in
    sync.
 

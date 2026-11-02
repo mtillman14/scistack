@@ -5,7 +5,7 @@ total could not say whether that was one slow network folder, the number of
 folders, or re-adding folders already on the path.
 """
 
-from scistack_gui.api.matlab_command import generate_matlab_command
+from scistack_gui.services.matlab_command_format import generate_matlab_command
 
 DIRS = ["//server/share/lib", "/home/user/shared"]
 

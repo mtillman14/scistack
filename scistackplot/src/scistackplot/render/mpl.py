@@ -19,8 +19,8 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
-from ..figsize import aspect_name
-from ..resolved import (
+from ..text.figsize import aspect_name
+from ..reduce.resolved import (
     GRID_COLUMN_FACTOR,
     GRID_COLUMNS,
     GRID_ROW_FACTOR,
@@ -28,14 +28,14 @@ from ..resolved import (
     MPL_DASHES,
     ResolvedPlot,
 )
-from ..spec import BAR_KINDS, PlotKind, is_horizontal
-from ..stacking import stack_bases, stacks
-from ..table import natural_sort_key
-from ..paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
-from ..textsize import ResolvedSizes, sizes_for
-from ..temporal import apply_mpl_date_axis
-from ..weights import SAMPLE_EDGE_WIDTH, describe_weights, sample_weight, spaghetti_weight
-from ..ticklabels import (
+from ..model.spec import BAR_KINDS, PlotKind, is_horizontal
+from ..reduce.stacking import stack_bases, stacks
+from ..model.table import natural_sort_key
+from ..text.paper import PAPER, apply_paper_axes, describe_paper, figure_rc_params
+from ..text.textsize import ResolvedSizes, sizes_for
+from ..reduce.temporal import apply_mpl_date_axis
+from ..reduce.weights import SAMPLE_EDGE_WIDTH, describe_weights, sample_weight, spaghetti_weight
+from ..text.ticklabels import (
     BRACKET_POLICY,
     STACKED_BRACKET_POLICY,
     STACKED_TICK_POLICY,
@@ -147,7 +147,7 @@ def _render(resolved: ResolvedPlot):
         matplotlib.use("Agg", force=False)
     import matplotlib.pyplot as plt
 
-    from ..autosize import settle
+    from ..text.autosize import settle
 
     # An auto text size is chosen before anything is drawn (autosize owns
     # it; a trial layout arrives here already settled, so this never recurses).
@@ -395,7 +395,7 @@ def _draw_panel(ax, frame: pd.DataFrame, resolved: ResolvedPlot) -> None:
 def _draw_kde(ax, frame, resolved) -> None:
     """One curve per colour level from the curve table ``reduce`` built
     (``kde.curve_table``), filled underneath when ``KdeOptions.fill``."""
-    from ..kde import LINE_WIDTH
+    from ..reduce.kde import LINE_WIDTH
 
     alpha = fill_alpha(PlotKind.KDE, resolved.spec.style)
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
@@ -418,8 +418,8 @@ def _draw_histogram(ax, frame, resolved) -> None:
     (``bins.bin_table``): left edge, width, base and top already decided —
     dodge, stack and the special slots included — so this only draws them,
     hatching the special ones (``base.is_special_bin``)."""
-    from ..bins import EDGE_COLOR, EDGE_WIDTH
-    from ..resolved import BIN_KIND, X_HIGH, X_LOW, Y_BASE
+    from ..reduce.bins import EDGE_COLOR, EDGE_WIDTH
+    from ..reduce.resolved import BIN_KIND, X_HIGH, X_LOW, Y_BASE
 
     alpha = fill_alpha(PlotKind.HISTOGRAM, resolved.spec.style)
     for index, (level, subset) in enumerate(color_groups(frame, resolved)):
@@ -449,7 +449,7 @@ def _draw_fits(ax, panel, resolved: ResolvedPlot) -> None:
     """A regression panel's fitted lines, bands and R² / p annotation
     (``Panel.fits``, decided in ``reduce`` by ``fits.panel_fits``). Each
     fit in its colour level's colour; text stacked from the chosen corner."""
-    from ..fits import BAND_ALPHA, FIT_LINE_WIDTH, annotation_offsets, corner, drawn
+    from ..reduce.fits import BAND_ALPHA, FIT_LINE_WIDTH, annotation_offsets, corner, drawn
 
     if resolved.kind is not PlotKind.REGRESSION or not panel.fits:
         return
@@ -773,7 +773,7 @@ def _draw_rug(ax, panel, resolved: ResolvedPlot) -> int:
     """A histogram / KDE "Show sample": one tick per value along the bottom,
     one row per colour level, shaded by crowding (``base.rug_rows``). x in
     data units, y in axes fraction, so the ticks never move the y range."""
-    from ..bins import RUG_LINE_WIDTH
+    from ..reduce.bins import RUG_LINE_WIDTH
 
     rows = rug_rows(panel, resolved)
     for row in rows:
@@ -1070,7 +1070,7 @@ def _apply_horizontal_cosmetics(ax, resolved: ResolvedPlot, panel, row: int, col
 
 
 # ---------------------------------------------------------------------------
-# Fitting the x labels — scistackplot.ticklabels decides, this measures and
+# Fitting the x labels — scistackplot.text.ticklabels decides, this measures and
 # applies. Runs after a first layout pass, because the room a label has is the
 # laid-out axes width, which nothing knows before then.
 
@@ -2294,7 +2294,7 @@ def _draw_difference_bars(fig, panel_axes: dict[int, Any], resolved: ResolvedPlo
     the figure is laid out again; if that moved a panel's height, the bars
     are placed once more on the new height.
     """
-    from ..diffbars import carries_difference_bars, figure_sizes, place_figure, sibling_floors
+    from ..reduce.diffbars import carries_difference_bars, figure_sizes, place_figure, sibling_floors
 
     setattr(fig, DIFF_BARS_ATTR, None)
     if not resolved.spec.difference_bars:
@@ -2384,7 +2384,7 @@ def _measure_difference_labels(fig, resolved: ResolvedPlot) -> dict[str, tuple[f
 
 def _panel_frame(fig, ax):
     """A panel's drawing box as laid out (``diffbars.PanelFrame``)."""
-    from ..diffbars import PanelFrame
+    from ..reduce.diffbars import PanelFrame
 
     box = ax.get_window_extent(fig.canvas.get_renderer())
     per_px = 72.0 / fig.dpi
@@ -2464,7 +2464,7 @@ def layout_decisions(
     """
     import matplotlib.pyplot as plt
 
-    from ..autosize import at_size, settle
+    from ..text.autosize import at_size, settle
 
     style = resolved.spec.style
     width = float(width_in or style.width)
@@ -2570,8 +2570,8 @@ def _layout_report(resolved: ResolvedPlot, *, decisions_out: dict | None = None)
     the chosen reference serves as the final layout too."""
     import matplotlib.pyplot as plt
 
-    from ..autosize import LayoutReport
-    from ..custom import measuring
+    from ..text.autosize import LayoutReport
+    from ..export.custom import measuring
 
     # A custom figure's marks do not move the labels measured here, so a
     # trial layout does not call the user's function (custom.measuring).
@@ -2742,7 +2742,7 @@ def _element_artists(fig) -> dict[str, list]:
 def _overflow_by_element(fig) -> tuple[tuple[tuple[str, float], ...], float]:
     """``((element, inches), ...)`` for each element whose own text reaches
     past the canvas, and the overflow nothing listed explains (inches)."""
-    from ..figure_file import canvas_overflow
+    from ..export.figure_file import canvas_overflow
 
     renderer = fig.canvas.get_renderer()
     width_px, height_px = (v * fig.dpi for v in fig.get_size_inches())

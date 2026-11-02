@@ -27,8 +27,8 @@ import pytest
 from scidb import BaseVariable, configure_database
 from scidb.database import _local
 from scistackplot import PlotKind, PlotSpec, Role, resolve
-from scistackplot.reducer import DEFAULT_REDUCER, PandasReducer, Reducer, reducer_for
-from scistackplot.spec import Aggregation, ErrorBand, Statistic
+from scistackplot.reduce.reducer import DEFAULT_REDUCER, PandasReducer, Reducer, reducer_for
+from scistackplot.model.spec import Aggregation, ErrorBand, Statistic
 
 from scistackplotdb import ScidbSource
 
@@ -100,7 +100,7 @@ def _fresh_plan_cache():
     cached plan for a recycled table id from an earlier test. Clear on both
     sides so each test's spy observes a real plan build.
     """
-    from scistackplot.reduce import clear_plan_cache
+    from scistackplot.reduce.resolve import clear_plan_cache
 
     clear_plan_cache()
     yield
@@ -256,7 +256,7 @@ class TestEveryKindRoutesThroughTheReducer:
         """
         if measure != "Series":
             pytest.skip("only 1-D measures have per-sample work")
-        from scistackplot.cell import cell_collapses as collapses
+        from scistackplot.reduce.cell import cell_collapses as collapses
 
         table = source.get_table([measure])
         spec = _spec(kind, measure, roles, aggregate)
@@ -345,8 +345,8 @@ class TestReferenceEqualsTheOriginals:
     """
 
     def test_y_extents_raw(self, source):
-        from scistackplot.roles import complete_roles
-        from scistackplot.ylimits import limits_by_scope
+        from scistackplot.model.roles import complete_roles
+        from scistackplot.reduce.ylimits import limits_by_scope
 
         table = source.get_table(["Series"])
         spec = _spec(PlotKind.LINE, "Series", {"subject": Role.FACET, "trial": Role.GROUP}, None)
@@ -356,8 +356,8 @@ class TestReferenceEqualsTheOriginals:
 
     @pytest.mark.parametrize("error", [ErrorBand.SD, ErrorBand.SEM, ErrorBand.CI95, ErrorBand.IQR])
     def test_y_extents_aggregated(self, source, error):
-        from scistackplot.roles import complete_roles
-        from scistackplot.ylimits import limits_by_scope
+        from scistackplot.model.roles import complete_roles
+        from scistackplot.reduce.ylimits import limits_by_scope
 
         table = source.get_table(["Series"])
         stat = Statistic.MEDIAN if error is ErrorBand.IQR else Statistic.MEAN
@@ -373,8 +373,8 @@ class TestReferenceEqualsTheOriginals:
             assert got[key] == pytest.approx(expected[key], nan_ok=True)
 
     def test_y_extents_scalar(self, source):
-        from scistackplot.roles import complete_roles
-        from scistackplot.ylimits import limits_by_scope
+        from scistackplot.model.roles import complete_roles
+        from scistackplot.reduce.ylimits import limits_by_scope
 
         table = source.get_table(["Scalar"])
         spec = _spec(PlotKind.SCATTER, "Scalar", {"subject": Role.FACET, "trial": Role.GROUP}, None)
@@ -383,7 +383,7 @@ class TestReferenceEqualsTheOriginals:
         assert PandasReducer().y_extents(table.frame, spec, table, ["subject"], roles) == expected
 
     def test_explode_series(self, source):
-        from scistackplot.reduce import _explode_1d
+        from scistackplot.reduce.resolve import _explode_1d
 
         table = source.get_table(["Series"])
         frame = table.frame
@@ -394,7 +394,7 @@ class TestReferenceEqualsTheOriginals:
         pd.testing.assert_frame_equal(a, b)
 
     def test_downsample(self, source):
-        from scistackplot.reduce import _downsample, _explode_1d
+        from scistackplot.reduce.resolve import _downsample, _explode_1d
 
         frame, idx = _explode_1d(source.get_table(["Series"]).frame, "Series", "index")
         pd.testing.assert_frame_equal(
@@ -402,7 +402,7 @@ class TestReferenceEqualsTheOriginals:
         )
 
     def test_matrix_mean(self, source):
-        from scistackplot.reduce import _matrix_frame
+        from scistackplot.reduce.resolve import _matrix_frame
 
         frame = source.get_table(["Matrix"]).frame
         s1 = frame[frame["subject"] == "s1"]
@@ -468,7 +468,7 @@ class TestAggregateOnA2DMeasure:
     """
 
     def test_aggregate_over_trials_averages_matrices(self, source):
-        from scistackplot.resolved import Z
+        from scistackplot.reduce.resolved import Z
 
         table = source.get_table(["Matrix"])
         spec = _spec(
@@ -511,9 +511,9 @@ def numpy_source(parity_db) -> ScidbSource:
 
 def _extents(source, kind, measure, roles, aggregate, scope):
     """Resolve far enough to get `y_extents` called, capturing what it returns."""
-    from scistackplot.reducer import reducer_for
-    from scistackplot.roles import complete_roles
-    from scistackplot.ylimits import eligible_scope
+    from scistackplot.reduce.reducer import reducer_for
+    from scistackplot.model.roles import complete_roles
+    from scistackplot.reduce.ylimits import eligible_scope
 
     table = source.get_table([measure])
     spec = _spec(kind, measure, roles, aggregate)
@@ -536,7 +536,7 @@ def _sorted_panel(frame: pd.DataFrame) -> pd.DataFrame:
     BAR panels are not sorted by either reducer (only BAND sorts by X), and the
     reference's groupby(sort=False) order depends on record order in a way the
     numpy path does not reproduce; the VALUES are the contract."""
-    from scistackplot.resolved import COLOR, SERIES, X
+    from scistackplot.reduce.resolved import COLOR, SERIES, X
 
     keys = [c for c in (X, COLOR, SERIES) if c in frame.columns]
     return frame.sort_values(keys, kind="stable").reset_index(drop=True) if keys else frame
@@ -544,7 +544,7 @@ def _sorted_panel(frame: pd.DataFrame) -> pd.DataFrame:
 
 class TestScidbSourceAttachesTheReducer:
     def test_fast_source_tables_carry_the_numpy_reducer(self, numpy_source):
-        from scistackplot.reducer import NumpyReducer
+        from scistackplot.reduce.reducer import NumpyReducer
 
         assert isinstance(numpy_source.get_table(["Scalar"]).reducer, NumpyReducer)
 
@@ -558,7 +558,7 @@ class TestScidbSourceAttachesTheReducer:
         assert a is b
 
     def test_the_numpy_reducer_satisfies_the_protocol(self):
-        from scistackplot.reducer import NumpyReducer
+        from scistackplot.reduce.reducer import NumpyReducer
 
         assert isinstance(NumpyReducer(), Reducer)
 
@@ -661,14 +661,14 @@ class TestNumpyExtentsDeferHonestly:
         """A pre-exploded frame's values ARE the frame; the reference reduces it."""
         from dataclasses import replace
 
-        from scistackplot.reduce import _explode_1d
+        from scistackplot.reduce.resolve import _explode_1d
 
         table = numpy_source.get_table(["Series"])
         frame, idx = _explode_1d(table.frame, "Series", "index")
         exploded = replace(table, frame=frame, index_column=idx)
         spec = _spec(PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
-        from scistackplot.roles import complete_roles
+        from scistackplot.model.roles import complete_roles
 
         roles = complete_roles(spec, exploded)
         got = reducer_for(exploded).y_extents(frame, spec, exploded, [], roles)
@@ -793,7 +793,7 @@ class TestNumpyCollapseEqualsPandas:
         "roles", [{"subject": Role.GROUP, "trial": Role.COLLAPSE}, {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE}], ids=["trial", "trial-then-subject"]
     )
     def test_collapsed_frames_agree(self, pandas_source, numpy_source, roles):
-        from scistackplot.roles import complete_roles
+        from scistackplot.model.roles import complete_roles
 
         spec = _spec(PlotKind.LINE, "Series", roles, None)
         p = pandas_source.get_table(["Series"])
@@ -817,7 +817,7 @@ class TestNumpyCollapseEqualsPandas:
         of ONE trial, position 10 of two — never NaN-poisoned, never padded.
         trial AND subject collapsed: trial averages within each subject (the
         pre-collapse this is about), subject is the sample and stays a column."""
-        from scistackplot.roles import complete_roles
+        from scistackplot.model.roles import complete_roles
 
         spec = _spec(PlotKind.LINE, "Series", {"subject": Role.COLLAPSE, "trial": Role.COLLAPSE}, None)
         n = numpy_source.get_table(["Series"])
@@ -861,7 +861,7 @@ class TestNumpySummarizeEqualsPandas:
     """centre ± spread per position, from the cells, equals explode + groupby."""
 
     def test_panel_frames_agree(self, pandas_source, numpy_source, label, kind, roles, aggregate):
-        from scistackplot.roles import complete_roles
+        from scistackplot.model.roles import complete_roles
 
         spec = _spec(kind, "Series", roles, aggregate)
         p = pandas_source.get_table(["Series"])
@@ -875,7 +875,7 @@ class TestNumpySummarizeEqualsPandas:
     def test_summarize_never_explodes(self, numpy_source, caplog, label, kind, roles, aggregate):
         import logging
 
-        from scistackplot.roles import complete_roles
+        from scistackplot.model.roles import complete_roles
 
         spec = _spec(kind, "Series", roles, aggregate)
         n = numpy_source.get_table(["Series"])
@@ -889,8 +889,8 @@ class TestNumpySummarizeEqualsPandas:
 class TestNumpySummarizeEdges:
     def test_one_replicate_has_zero_spread(self, numpy_source):
         """s3 has ONE trial: std(ddof=1) is NaN there and pandas filled 0.0."""
-        from scistackplot.resolved import COLOR, Y, Y_HIGH, Y_LOW
-        from scistackplot.roles import complete_roles
+        from scistackplot.reduce.resolved import COLOR, Y, Y_HIGH, Y_LOW
+        from scistackplot.model.roles import complete_roles
 
         spec = _spec(PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))
@@ -903,8 +903,8 @@ class TestNumpySummarizeEdges:
 
     def test_the_all_nan_cell_is_not_a_replicate(self, numpy_source):
         """s2/t3 is all NaN: at every position s2's count is 2, not 3."""
-        from scistackplot.resolved import COLOR, X, Y
-        from scistackplot.roles import complete_roles
+        from scistackplot.reduce.resolved import COLOR, X, Y
+        from scistackplot.model.roles import complete_roles
 
         spec = _spec(PlotKind.BAND, "Series", {"subject": Role.GROUP, "trial": Role.COLLAPSE},
                      Aggregation(statistic=Statistic.MEAN, error=ErrorBand.SD))

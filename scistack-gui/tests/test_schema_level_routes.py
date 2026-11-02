@@ -11,7 +11,7 @@ from pathlib import Path
 
 from scidb.schema_level import SchemaLevel
 
-from scistack_gui.api.matlab_command import generate_matlab_command
+from scistack_gui.services.matlab_command_format import generate_matlab_command
 
 KEYS = ["subject", "session", "speed", "trial", "cycle"]
 

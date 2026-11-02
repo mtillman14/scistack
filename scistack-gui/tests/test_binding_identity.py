@@ -240,7 +240,7 @@ class TestPathInputBindingsByFkey:
 @pytest.fixture
 def declared_path_input(monkeypatch, tmp_path):
     """Put one live PathInput in the registry, as source declaration would."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     pi = _scifor.PathInput("{subject}/{subject}_data.csv", root_folder=str(tmp_path), name="{subject}/{subject}_data.csv")
     monkeypatch.setattr(registry, "get_path_inputs_registry", lambda: {"test_pi": pi})
@@ -278,7 +278,7 @@ class TestComputeCallIdIncludesPathInputs:
         assert compute_call_id("read_csv", target) == expected
 
     def test_different_templates_get_different_ids(self, monkeypatch, tmp_path):
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         pi_a = _scifor.PathInput("{subject}/a.csv", root_folder=str(tmp_path), name="{subject}/a.csv")
         pi_b = _scifor.PathInput("{subject}/b.csv", root_folder=str(tmp_path), name="{subject}/b.csv")
@@ -297,7 +297,7 @@ class TestComputeCallIdIncludesPathInputs:
     def test_undeclared_path_input_fails_safe(self, monkeypatch):
         """No live PathInput means we cannot reproduce scidb's key — return
         None ('unknown, don't filter') rather than hash a known-wrong value."""
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         monkeypatch.setattr(registry, "get_path_inputs_registry", lambda: {})
         assert (

@@ -18,7 +18,7 @@ import pandas as pd
 from scidb import BaseVariable, ColName
 from scifor.signature import Argument
 
-from scistack_gui import pipeline_store
+from scistack_gui.stores import pipeline_store
 from scistack_gui.domain import colname_inputs as cn
 from scistack_gui.domain.edge_resolver import (
     BINDING_COLNAME,
@@ -127,7 +127,7 @@ class TestStorage:
         assert pipeline_store.get_node_config(populated_db, bp_node_id)["colNameInputs"] == ["a"]
 
     def test_duplicating_a_node_copies_it(self, populated_db, bp_node_id):
-        from scistack_gui import intent_store
+        from scistack_gui.stores import intent_store
 
         pipeline_store.update_node_config(populated_db, bp_node_id, {"colNameInputs": ["a"]})
         intent_store.copy_subject(populated_db, bp_node_id, "fn__bandpass_filter__copy01")
@@ -216,13 +216,13 @@ class TestRendering:
         assert view["signal"] == {"types": ["RawSignal"], "columns": [], "iterate": True}
 
     def test_matlab_items_render_scidb_colname(self):
-        from scistack_gui.api.matlab_command import _variable_input_items
+        from scistack_gui.services.matlab_command_format import _variable_input_items
 
         items = dict(_variable_input_items({"label": {"colname": True}, "v": ["Raw"]}))
         assert items == {"label": "scidb.ColName()", "v": "Raw()"}
 
     def test_matlab_colname_wins_over_a_history_constant(self, caplog):
-        from scistack_gui.api.matlab_command import _overlay_colname_inputs
+        from scistack_gui.services.matlab_command_format import _overlay_colname_inputs
 
         with caplog.at_level(logging.WARNING):
             out = _overlay_colname_inputs({"label": "20"}, {"label": {"colname": True}})
@@ -230,9 +230,9 @@ class TestRendering:
         assert "ColName replaces" in caplog.text
 
     def test_matlab_type_names_skip_it(self):
-        from scistack_gui.api.matlab_command import _variable_input_type_names
+        from scistack_gui.services.matlab_command_format import variable_input_type_names
 
-        assert _variable_input_type_names({"label": {"colname": True}, "v": ["Raw"]}) == ["Raw"]
+        assert variable_input_type_names({"label": {"colname": True}, "v": ["Raw"]}) == ["Raw"]
 
     def test_code_export_literals(self):
         from scistack_gui.services.code_export_service import _matlab_literal, _py_literal
@@ -293,7 +293,7 @@ def name_length(value, label):
 def test_a_gui_target_runs_once_per_column_with_its_name(populated_db):
     from scidb import for_each
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     registry._functions["name_length"] = name_length
     for subj in [1, 2]:

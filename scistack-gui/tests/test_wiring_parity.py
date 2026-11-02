@@ -23,9 +23,10 @@ import numpy as np
 import pytest
 from conftest import FilteredSignal, RawSignal
 
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from scidb import BaseVariable, for_each
-from scistack_gui import node_wiring, registry as _registry
+from scistack_gui.stores import node_wiring
+from scistack_gui.project import registry as _registry
 from scistack_gui.domain.graph_builder import (
     manual_edge_handle_index,
     manual_input_overrides,
@@ -54,7 +55,7 @@ def side_var(wide):
 def _stated_wiring(db, node_id: str, recorded_params: dict) -> str:
     """FORWARD: what the node says it is — its recorded bindings with the
     edges the user drew folded in, which is what a run of it would record."""
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.edge_view import effective_edges
 
     token = node_id.split("__", 2)[2]

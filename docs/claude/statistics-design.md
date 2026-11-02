@@ -216,7 +216,7 @@ lineage and `scidb report` apply unchanged.
 ### S9. Compared figures do not feed difference bars — **DEFERRED** (2026-09-27)
 
 Plot Studio can now draw a measure relative to a reference level
-(`PlotSpec.comparison`, `scistackplot.compare`,
+(`PlotSpec.comparison`, `scistackplot.reduce.compare`,
 [compare-to-reference.md](compare-to-reference.md)). A test on change scores
 is a different test from a repeated-measures test on the raw values. Until
 that is designed, **the S8 overlay conversion (results → `DifferenceBar`)
@@ -281,7 +281,7 @@ and its reason at INFO. First rules:
 |---|---|
 | bar/band + SD | mean (SD) |
 | bar/band + SEM | mean (SEM), with a GUI note that journals usually report SD |
-| bar/band + CI95 | mean [95% CI] (t-based, the same owner as the plot: `scistackplot.spread`) |
+| bar/band + CI95 | mean [95% CI] (t-based, the same owner as the plot: `scistackplot.reduce.spread`) |
 | box / violin | median [IQR], with the nonparametric test suggested |
 | spaghetti (a sample that recurs across x) | within-unit comparisons (paired / RM) suggested |
 | scatter / strip | mean (SD) |

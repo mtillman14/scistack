@@ -23,8 +23,8 @@ from typing import Any
 import numpy as np
 
 from scistackplot import PlotKind
-from scistackplot.resolved import ResolvedPlot
-from scistackplot.xaxis import is_spacer
+from scistackplot.reduce.resolved import ResolvedPlot
+from scistackplot.text.xaxis import is_spacer
 
 
 @dataclass(frozen=True, order=True)
@@ -406,7 +406,7 @@ def run_brackets(run: Run, n_layers: int) -> set[str]:
     """The bracket part of every tick a run touches — the composed leaf key
     minus its innermost layer — so ``len(run_brackets(...)) == 1`` says the
     run never left its bracket."""
-    from scistackplot.xaxis import LEAF_SEPARATOR
+    from scistackplot.text.xaxis import LEAF_SEPARATOR
 
     return {
         LEAF_SEPARATOR.join(label.split(LEAF_SEPARATOR)[: n_layers - 1]) for label, _, _ in run.points

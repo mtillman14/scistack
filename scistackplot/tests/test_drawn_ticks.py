@@ -34,7 +34,7 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.autosize import settle  # noqa: E402
+from scistackplot.text.autosize import settle  # noqa: E402
 from scistackplot.render.mpl import AXIS_TEXT_ATTR, drawn_ticks, layout_report  # noqa: E402
 from test_ylimits import _spec, spread_table  # noqa: E402,F401
 

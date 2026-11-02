@@ -78,7 +78,7 @@ class TestTheHelpers:
         assert parse_fn_node_id("var__Wide") is None
 
     def test_one_root_scope(self):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
         from scistack_gui.domain import scope_filter
 
         assert ROOT_SCOPE == "main"

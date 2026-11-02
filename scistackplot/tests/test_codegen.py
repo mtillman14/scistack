@@ -19,7 +19,7 @@ from scistackplot import (
     generate_plot_function,
     generate_script,
 )
-from scistackplot.spec import Aggregation, ErrorBand, Filter, Statistic
+from scistackplot.model.spec import Aggregation, ErrorBand, Filter, Statistic
 
 pytest.importorskip("seaborn")
 matplotlib = pytest.importorskip("matplotlib")
@@ -302,7 +302,7 @@ def test_a_ruled_column_layout_is_exported_as_col_order(bilateral_table):
     to source order and warn about it.
     """
     from scistackplot import FacetOptions, PlotKind, PlotSpec, Role
-    from scistackplot.spec import MatchOp, Matcher
+    from scistackplot.model.spec import MatchOp, Matcher
 
     spec = PlotSpec(
         measures=["RawEMG"],
@@ -378,7 +378,7 @@ def test_a_layout_with_holes_says_seaborn_cannot_express_it(struct_table):
     figure that quietly differs from the preview.
     """
     from scistackplot import FacetOptions, PlotKind, PlotSpec, Role
-    from scistackplot.spec import MatchOp, Matcher
+    from scistackplot.model.spec import MatchOp, Matcher
 
     spec = PlotSpec(
         measures=["RawEMG"],
@@ -443,7 +443,7 @@ def test_the_generated_collapse_matches_the_preview(series_table, series_frame):
     preview — produces perfectly valid-looking code.
     """
     from scistackplot import resolve
-    from scistackplot.resolved import Y
+    from scistackplot.reduce.resolved import Y
 
     # A scatter of a 1-D measure: a scalar kind, so it collapses, and seaborn's
     # strip marks carry the plotted values where a violin's outline does not.
@@ -560,7 +560,7 @@ def test_the_chain_is_emitted_deepest_first_and_the_sample_is_left(unbalanced):
 def test_exported_bar_heights_are_the_nested_means(unbalanced):
     frame, table = unbalanced
     from scistackplot import resolve
-    from scistackplot.resolved import X, Y
+    from scistackplot.reduce.resolved import X, Y
 
     figure = _run(generate_plot_function(_bar_spec(), table), frame, "plot_m")
     heights = sorted(

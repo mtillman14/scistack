@@ -6,7 +6,7 @@ import sys
 import textwrap
 
 import pytest
-from scistack_gui.api import project as _project_mod
+from scistack_gui.services import project_service as _project_mod
 
 
 @pytest.fixture
@@ -15,7 +15,7 @@ def project_client(populated_db, tmp_path):
     FastAPI TestClient with a scaffold project directory around the DB.
 
     The populated_db fixture creates test.duckdb in tmp_path and wires up
-    scistack_gui.db._db_path. Here we add the rest of the project
+    scistack_gui.runtime.db._db_path. Here we add the rest of the project
     structure so the discovery scanner has something to find.
 
     Mirrors loose_project_client: load the config and feed the registry
@@ -27,9 +27,9 @@ def project_client(populated_db, tmp_path):
     not what actually happens in the app.
     """
     from fastapi.testclient import TestClient
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.app import create_app
-    from scistack_gui.config import load_config
+    from scistack_gui.project.config import load_config
 
     project_name = "test_project"
 
@@ -124,7 +124,7 @@ class TestGetProjectCode:
         scidb.discover.scan_project directly, which never populated the
         registry execution_service.py actually reads at run time, so a
         displayed function could raise KeyError here."""
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         resp = project_client.get("/api/project/code")
         all_fns = []
@@ -169,10 +169,11 @@ def loose_project_client(populated_db, tmp_path):
     config, then feed it to both registries before the app starts serving.
     """
     from fastapi.testclient import TestClient
-    from scistack_gui import matlab_registry, registry
-    from scistack_gui.api import project as _project_mod
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
+    from scistack_gui.services import project_service as _project_mod
     from scistack_gui.app import create_app
-    from scistack_gui.config import load_config
+    from scistack_gui.project.config import load_config
 
     (tmp_path / "good_module.py").write_text(
         textwrap.dedent("""
@@ -327,8 +328,9 @@ class TestRefreshConfiguredDirectory:
     def test_new_file_in_configured_directory(self, populated_db, tmp_path):
         """scistack.toml mode: a directory entry is expanded again on
         refresh, not replayed from the startup list."""
-        from scistack_gui import matlab_registry, registry
-        from scistack_gui.config import load_config
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
+        from scistack_gui.project.config import load_config
         from scistack_gui.services.registry_reload_service import refresh_registries
 
         pipelines = tmp_path / "pipelines"
@@ -365,7 +367,7 @@ class TestAddProjectPath:
         """The critical regression case: replaying registry loads against a *stale* in-memory
         config and would NOT pick up a newly added path. The handler must
         re-read scistack.toml from disk (see api/project.py's
-        _reload_config_and_rescan) so this works without a server restart.
+        reload_config_and_rescan) so this works without a server restart.
         """
         external = tmp_path_factory.mktemp("external_repo")
         (external / "shared_fn.py").write_text("def shared_fn(x):\n    return x * 2\n")

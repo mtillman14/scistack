@@ -22,7 +22,7 @@ def db_path(tmp_path):
 @pytest.fixture(autouse=True)
 def _reset_db_module():
     """Reset db.py module-level state between tests."""
-    from scistack_gui import db as db_mod
+    from scistack_gui.runtime import db as db_mod
 
     old_db = db_mod._db
     old_path = db_mod._db_path
@@ -39,8 +39,8 @@ class TestAcquireReleaseCycle:
     """Verify that acquire/release correctly opens and closes the connection."""
 
     def test_release_closes_when_refcount_zero(self, db_path):
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import (
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import (
             acquire_db_connection,
             init_db,
             release_db_connection,
@@ -64,8 +64,8 @@ class TestAcquireReleaseCycle:
         assert db_mod._db_refcount == 0
 
     def test_nested_acquire_keeps_open(self, db_path):
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import (
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import (
             acquire_db_connection,
             init_db,
             release_db_connection,
@@ -89,7 +89,7 @@ class TestAcquireReleaseCycle:
 
     def test_second_process_can_open_after_release(self, db_path):
         """After Python releases the lock, another connection can open the file."""
-        from scistack_gui.db import (
+        from scistack_gui.runtime.db import (
             acquire_db_connection,
             init_db,
             release_db_connection,
@@ -107,8 +107,8 @@ class TestAcquireReleaseCycle:
 
     def test_reacquire_after_external_close(self, db_path):
         """Python can reacquire the connection after MATLAB releases it."""
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import (
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import (
             acquire_db_connection,
             init_db,
             release_db_connection,
@@ -152,8 +152,8 @@ class TestAcquireRaisesDoesNotLeakRefcount:
     """
 
     def test_reopen_failure_does_not_increment_refcount(self, db_path):
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import (
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import (
             DatabaseLockedError,
             acquire_db_connection,
             init_db,
@@ -204,7 +204,7 @@ class TestMatlabCommandIncludesCleanup:
     """
 
     def test_template_has_close(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="my_func",
@@ -216,7 +216,7 @@ class TestMatlabCommandIncludesCleanup:
         assert "catch scistack_err__" in cmd
 
     def test_variants_has_close(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="my_func",
@@ -245,8 +245,8 @@ class TestLockConflictReporting:
     """
 
     def test_conflicting_lock_becomes_database_locked_error(self, db_path):
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import DatabaseLockedError, acquire_db_connection, init_db
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import DatabaseLockedError, acquire_db_connection, init_db
 
         init_db(db_path)
         db_mod._db._duck.close()
@@ -276,8 +276,8 @@ class TestLockConflictReporting:
 
     def test_unrelated_io_error_is_not_reclassified(self, db_path):
         """A genuine I/O failure must not be retried or blamed on MATLAB."""
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import DatabaseLockedError, acquire_db_connection, init_db
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import DatabaseLockedError, acquire_db_connection, init_db
 
         init_db(db_path)
         db_mod._db._duck.close()
@@ -295,8 +295,8 @@ class TestLockConflictReporting:
     def test_retry_succeeds_when_the_lock_clears(self, db_path):
         """MATLAB grabs the file for one write and lets go; a short backoff
         should absorb that rather than surfacing an error."""
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import acquire_db_connection, init_db
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import acquire_db_connection, init_db
 
         init_db(db_path)
         real_reopen = db_mod._db._duck.reopen
@@ -347,8 +347,8 @@ class TestLockContentionIsLoggedAsOneEpisode:
         return attempts
 
     def _prepare(self, db_path):
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import init_db
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import init_db
 
         init_db(db_path)
         real_reopen = db_mod._db._duck.reopen
@@ -361,13 +361,13 @@ class TestLockContentionIsLoggedAsOneEpisode:
     ):
         import logging
 
-        from scistack_gui.db import acquire_db_connection
+        from scistack_gui.runtime.db import acquire_db_connection
 
         db_mod, real_reopen = self._prepare(db_path)
         monkeypatch.setattr(db_mod, "ACQUIRE_RETRY_INTERVAL", 0.0)
         self._lock_until(db_mod, real_reopen, clears_after=6)
 
-        with caplog.at_level(logging.INFO, logger="scistack_gui.db"):
+        with caplog.at_level(logging.INFO, logger="scistack_gui.runtime.db"):
             acquire_db_connection(timeout=5)
 
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -389,12 +389,12 @@ class TestLockContentionIsLoggedAsOneEpisode:
         episode, and a quiet path must stay quiet."""
         import logging
 
-        from scistack_gui.db import acquire_db_connection
+        from scistack_gui.runtime.db import acquire_db_connection
 
         db_mod, real_reopen = self._prepare(db_path)
         self._lock_until(db_mod, real_reopen, clears_after=1)
 
-        with caplog.at_level(logging.INFO, logger="scistack_gui.db"):
+        with caplog.at_level(logging.INFO, logger="scistack_gui.runtime.db"):
             acquire_db_connection(timeout=5)
 
         assert "acquired after" not in caplog.text
@@ -404,12 +404,12 @@ class TestLockContentionIsLoggedAsOneEpisode:
         """Demoting the retry chatter must not quiet the failure itself."""
         import logging
 
-        from scistack_gui.db import DatabaseLockedError, acquire_db_connection
+        from scistack_gui.runtime.db import DatabaseLockedError, acquire_db_connection
 
         db_mod, real_reopen = self._prepare(db_path)
         self._lock_until(db_mod, real_reopen, clears_after=99)
 
-        with caplog.at_level(logging.INFO, logger="scistack_gui.db"):
+        with caplog.at_level(logging.INFO, logger="scistack_gui.runtime.db"):
             with pytest.raises(DatabaseLockedError):
                 acquire_db_connection(timeout=0)
 
@@ -430,7 +430,7 @@ class TestRequestAlwaysGetsAResponse:
         return frames
 
     def test_locked_database_yields_a_typed_error_frame(self, monkeypatch):
-        from scistack_gui import db as db_mod
+        from scistack_gui.runtime import db as db_mod
         from scistack_gui import server
 
         frames = self._capture_frames(monkeypatch)
@@ -451,7 +451,7 @@ class TestRequestAlwaysGetsAResponse:
     def test_acquire_failure_does_not_release(self, monkeypatch):
         """release_db_connection must not run for an acquire that failed —
         it would drive the refcount negative and close a live connection."""
-        from scistack_gui import db as db_mod
+        from scistack_gui.runtime import db as db_mod
         from scistack_gui import server
 
         self._capture_frames(monkeypatch)
@@ -471,7 +471,7 @@ class TestRequestAlwaysGetsAResponse:
         assert released == []
 
     def test_handler_exception_yields_an_error_frame(self, monkeypatch):
-        from scistack_gui import db as db_mod
+        from scistack_gui.runtime import db as db_mod
         from scistack_gui import server
 
         frames = self._capture_frames(monkeypatch)
@@ -491,7 +491,7 @@ class TestRequestAlwaysGetsAResponse:
     def test_release_failure_does_not_double_respond(self, monkeypatch):
         """The success frame is already out; a failing release must neither
         kill the thread nor emit a second frame for the same id."""
-        from scistack_gui import db as db_mod
+        from scistack_gui.runtime import db as db_mod
         from scistack_gui import server
 
         frames = self._capture_frames(monkeypatch)
@@ -511,7 +511,7 @@ class TestRequestAlwaysGetsAResponse:
     def test_respond_failure_falls_back_to_an_error_frame(self, monkeypatch):
         """If the success frame itself can't be serialised, the request must
         still be answered — otherwise the caller waits forever."""
-        from scistack_gui import db as db_mod
+        from scistack_gui.runtime import db as db_mod
         from scistack_gui import server
 
         frames = []
@@ -562,8 +562,8 @@ class TestWindowsLockMessageIsRecognized:
     )
 
     def test_windows_message_classifies_as_a_lock_conflict(self, db_path):
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import DatabaseLockedError, acquire_db_connection, init_db
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import DatabaseLockedError, acquire_db_connection, init_db
 
         init_db(db_path)
         db_mod._db._duck.close()
@@ -586,8 +586,8 @@ class TestWindowsLockMessageIsRecognized:
 
     def test_windows_lock_is_retried_not_raised_immediately(self, db_path):
         """The 2.1 s real-world window must be absorbed, not reported."""
-        import scistack_gui.db as db_mod
-        from scistack_gui.db import acquire_db_connection, init_db
+        import scistack_gui.runtime.db as db_mod
+        from scistack_gui.runtime.db import acquire_db_connection, init_db
 
         init_db(db_path)
         real_reopen = db_mod._db.reopen

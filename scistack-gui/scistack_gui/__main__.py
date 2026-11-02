@@ -78,7 +78,7 @@ def main():
     args = parser.parse_args()
 
     if args.project_root is not None:
-        from scistack_gui.config import set_project_root_hint
+        from scistack_gui.project.config import set_project_root_hint
 
         set_project_root_hint(args.project_root)
 

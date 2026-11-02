@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from scistack_gui import history
+from scistack_gui.stores import history
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 def _functions_dir(create: bool = False) -> "Path | None":
     """The project's ``functions_dir``, auto-created (and recorded in
     scistack.toml) on the first write, like ``glue_service._glue_dir``."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     cfg = getattr(registry, "_config", None)
     if cfg is not None and getattr(cfg, "functions_dir", None) is not None:
@@ -42,8 +42,8 @@ def _functions_dir(create: bool = False) -> "Path | None":
     if not create:
         return None
 
-    from scistack_gui import db as db_module
-    from scistack_gui.config import set_functions_dir
+    from scistack_gui.runtime import db as db_module
+    from scistack_gui.project.config import set_functions_dir
 
     try:
         db_path = db_module.get_db_path()
@@ -73,7 +73,7 @@ def validate_function_name(name: str) -> "str | None":
     """Error string for an unusable new function name, or ``None``."""
     from scidb import function_role
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.services.target_file_service import validate_entity_name
 
     err = validate_entity_name(name)
@@ -135,7 +135,7 @@ def create_function(name: str, params: "list[str] | None" = None) -> dict:
 def read_function_source(name: str) -> dict:
     """The current source of a Python function, and whether it is editable
     here (it lives in ``functions_dir``)."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.services import glue_service
 
     fn = registry.lookup_function(name)

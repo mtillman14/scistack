@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import scistack_gui.registry as _registry
-from scistack_gui import config as config_mod
+import scistack_gui.project.registry as _registry
+from scistack_gui.project import config as config_mod
 from scistack_gui.services.target_file_service import get_or_create_target_file
 
 
@@ -36,7 +36,7 @@ def test_legacy_module_path_used_directly(populated_db, tmp_path):
 
 
 def test_already_configured_entities_file_used_directly(populated_db, tmp_path):
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     explicit = tmp_path / "entities.toml"
     config_mod.set_entities_file(get_db_path(), explicit)
@@ -55,7 +55,7 @@ def test_already_configured_entities_file_used_directly(populated_db, tmp_path):
 def test_entities_file_wins_over_a_legacy_variable_file(populated_db, tmp_path):
     """A project with BOTH keys writes to the TOML. The .py file's
     declarations are still discovered -- they are just read-only now."""
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     legacy = tmp_path / "legacy_vars.py"
     legacy.write_text("import scidb\n")
@@ -76,7 +76,7 @@ def test_entities_file_wins_over_a_legacy_variable_file(populated_db, tmp_path):
 
 
 def test_auto_creates_default_when_config_present_but_unset(populated_db, tmp_path):
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     # Folder-scan config: valid project, but no entities_file configured
     # (the common case -- server.py's auto-discovery path when no
@@ -103,7 +103,7 @@ def test_auto_creates_default_when_config_present_but_unset(populated_db, tmp_pa
 def test_a_pyproject_does_not_block_auto_create(populated_db, tmp_path):
     """2026-10-08: a pyproject.toml is packaging only, so a project that has
     one still gets its entities file auto-created into scistack.toml."""
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text("[tool.scistack]\n")
@@ -138,7 +138,7 @@ class TestCreateWritesToml:
     """The create path writes TOML entries, and the result parses back."""
 
     def _project(self, tmp_path):
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
 
         entities = config_mod.set_entities_file(get_db_path(), None)
         _registry._module_path = None
@@ -276,7 +276,7 @@ class TestUpdateDeclaration:
     def _project(self, tmp_path, body):
         """Configure a loose project whose TOML entities file contains
         *body*."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
 
         entities = tmp_path / "entities.toml"
         entities.write_text(body)
@@ -354,7 +354,7 @@ class TestUpdateDeclaration:
         from scidb.entities import render_parameter_value
         from scidb.source_edit import render_parameter
 
-        from scistack_gui.matlab_parser import render_matlab_parameter
+        from scistack_gui.matlab.parser import render_matlab_parameter
         from scistack_gui.services.target_file_service import update_declaration
 
         entities = self._project(tmp_path, "[parameters]\nW = 30\n")
@@ -393,7 +393,7 @@ class TestUpdateDeclaration:
     ):
         """The confinement rule: read-only, with the exact location so the UI
         can point at it instead of a generic hint."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
         from scistack_gui.services.parameter_service import update_parameter
 
         other = tmp_path / "params.py"
@@ -418,7 +418,7 @@ class TestUpdateDeclaration:
     def _outside_project(self, tmp_path):
         """A Parameter and a PathInput declared in a hand-written module that
         is NOT the entities file -- the read-only case."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
 
         other = tmp_path / "params.py"
         other.write_text(
@@ -539,7 +539,7 @@ class TestPathInputHistory:
     """
 
     def _project(self, tmp_path, body):
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
 
         entities = tmp_path / "entities.toml"
         entities.write_text(body)
@@ -551,8 +551,8 @@ class TestPathInputHistory:
     def test_nothing_is_recorded_until_an_edit_happens(self, populated_db, tmp_path):
         """Merely loading a project writes nothing — the table exists for
         edits, not as a log of every scan."""
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
 
         self._project(tmp_path, '[path_inputs]\nRAW = "a.csv"\n')
 
@@ -561,8 +561,8 @@ class TestPathInputHistory:
     def test_old_template_still_resolves_after_an_edit(self, populated_db, tmp_path):
         """The whole point: a run recorded against 'a.csv' can still be
         attributed to RAW instead of collapsing into __unresolved__."""
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.path_input_service import update_path_input
 
         self._project(tmp_path, '[path_inputs]\nRAW = "a.csv"\n')
@@ -572,8 +572,8 @@ class TestPathInputHistory:
         assert pipeline_store.lookup_path_input_name(get_db(), "a.csv") == "RAW"
 
     def test_repeated_edits_accumulate(self, populated_db, tmp_path):
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.path_input_service import update_path_input
 
         self._project(tmp_path, '[path_inputs]\nRAW = "a.csv"\n')
@@ -585,8 +585,8 @@ class TestPathInputHistory:
         assert pipeline_store.lookup_path_input_name(db, "b.csv") == "RAW"
 
     def test_recording_is_idempotent(self, populated_db, tmp_path):
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
 
         self._project(tmp_path, "[path_inputs]\n")
         db = get_db()
@@ -596,16 +596,16 @@ class TestPathInputHistory:
         assert len(pipeline_store.list_path_input_history(db, "RAW")) == 1
 
     def test_unknown_template_returns_none(self, populated_db, tmp_path):
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
 
         self._project(tmp_path, "[path_inputs]\n")
 
         assert pipeline_store.lookup_path_input_name(get_db(), "never.csv") is None
 
     def test_root_folder_is_part_of_the_key(self, populated_db, tmp_path):
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
 
         self._project(tmp_path, "[path_inputs]\n")
         db = get_db()
@@ -635,8 +635,8 @@ class TestRefreshCoversMatlab:
 
     def _matlab_project(self, tmp_path, body):
         """A project whose only entity surface is a ``[matlab] entities_file``."""
-        from scistack_gui import matlab_registry
-        from scistack_gui.db import get_db_path
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.runtime.db import get_db_path
 
         entities = tmp_path / "scistack_entities.m"
         entities.write_text(body, encoding="utf-8")
@@ -670,8 +670,8 @@ class TestRefreshCoversMatlab:
         """Even an edit that never touches MATLAB must leave the MATLAB
         half of the registry standing — otherwise every MATLAB node
         disappears from the canvas until the next Refresh Code."""
-        from scistack_gui import matlab_registry
-        from scistack_gui.db import get_db_path
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.runtime.db import get_db_path
         from scistack_gui.services.parameter_service import create_parameter
 
         m_entities = tmp_path / "scistack_entities.m"
@@ -701,7 +701,7 @@ class TestRefreshCoversMatlab:
         """A genuinely invalid write is still refused — but the message now
         carries the entities loader's own reason instead of a bare "may be
         invalid" for a file that was rolled back out from under the user."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
         from scistack_gui.services.target_file_service import update_declaration
 
         entities = tmp_path / "entities.toml"
@@ -729,7 +729,7 @@ class TestRefreshCoversMatlab:
     def test_empty_template_is_refused_before_any_write(self, populated_db, tmp_path):
         """The same case coming from the sidebar: refused up front, so no
         write-then-roll-back cycle happens at all."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
         from scistack_gui.services.path_input_service import update_path_input
 
         entities = tmp_path / "entities.toml"

@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from scistackplot import PlotKind, PlotSpec, Role, generate_plot_function, resolve
-from scistackplot.table import LongTable
+from scistackplot.model.table import LongTable
 
 SESSIONS = ["pre", "post"]
 GROUPS = ["stim", "sham"]
@@ -104,7 +104,7 @@ def test_the_preview_agrees(table):
     """The reference the export is checked against: the same composed leaves
     in the same order (the preview also holds spacers between groups, which
     seaborn cannot draw — see `codegen._nested_x_order`)."""
-    from scistackplot.xaxis import LEAF_SEPARATOR, is_spacer
+    from scistackplot.text.xaxis import LEAF_SEPARATOR, is_spacer
 
     figure = resolve(_coloured_bar(), table)[0]
     leaves = [str(v).replace(LEAF_SEPARATOR, " · ") for v in figure.x_order if not is_spacer(str(v))]

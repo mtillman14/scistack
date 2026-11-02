@@ -31,9 +31,9 @@ from scistackplot import (
     resolve_custom_one,
     write_figure,
 )
-from scistackplot.custom import FIGURE_LEVEL, PANEL_LEVEL, layout_kind
+from scistackplot.export.custom import FIGURE_LEVEL, PANEL_LEVEL, layout_kind
 from scistackplot.render.mpl import layout_report
-from scistackplot.shape import Shape
+from scistackplot.model.shape import Shape
 
 from conftest import SESSIONS, SUBJECTS
 

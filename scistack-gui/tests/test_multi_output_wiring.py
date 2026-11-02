@@ -20,9 +20,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from scidb import BaseVariable, PathInput, for_each
-from scistack_gui import node_wiring, registry as _registry
+from scistack_gui.stores import node_wiring
+from scistack_gui.project import registry as _registry
 
 
 class Table(BaseVariable):

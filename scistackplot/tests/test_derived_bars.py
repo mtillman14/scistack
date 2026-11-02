@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, resolve
-from scistackplot.diffbars import DifferenceBar, bars_for_panel, with_derived_bars
+from scistackplot.reduce.diffbars import DifferenceBar, bars_for_panel, with_derived_bars
 
 
 def _table() -> LongTable:

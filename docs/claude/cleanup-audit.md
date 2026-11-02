@@ -79,7 +79,7 @@ under-count (many commits bundle several fixes). Top files:
 | 502 | 4 | `scidb/database.py:1299 save_batch` |
 | 480 | 31 | `scidb/foreach.py:231 for_each` |
 | 391 | 6 | `scidb/database.py:1920 _find_record` |
-| 376 | 2 | `scistack_gui/config.py:296 load_config` |
+| 376 | 2 | `scistack_gui/project/config.py:296 load_config` |
 
 The four largest hotspots in §1.2 each contain one of these functions.
 
@@ -127,7 +127,7 @@ but is crossed by reaching into internals:
 220 `except Exception` / bare `except` blocks; **37 swallow** (body is
 `pass`/`return []`/`return None`). The ones on data paths matter most:
 
-- **`scidb/intent.py:774 load_statements_sql` and `scistack_gui/intent_store.py:481 _rows`**:
+- **`scidb/intent.py:774 load_statements_sql` and `scistack_gui/stores/intent_store.py:481 _rows`**:
   any SQL error, including a locked database or a missing table, returns
   `[]`. Intent statements are the user's wiring, hides, and pending
   constants. A transient lock makes them read as *absent*, so the canvas can
@@ -233,7 +233,7 @@ owners or no owner, **bug class present**.
 
 | concept | owner | consumers | rival / gap | status |
 |---|---|---|---|---|
-| Intent statements (wiring, hides, constants, columns) | `scidb.intent` + `scistack_gui/intent_store.py` | `pipeline_store` and `layout` (forwarders), services | reads swallow SQL errors as "no statements" (**F1**); up to 3 forwarding hops (F10) | ⚠️ |
+| Intent statements (wiring, hides, constants, columns) | `scidb.intent` + `scistack_gui/stores/intent_store.py` | `pipeline_store` and `layout` (forwarders), services | reads swallow SQL errors as "no statements" (**F1**); up to 3 forwarding hops (F10) | ⚠️ |
 | Current wiring of a node | `edge_resolver.ResolvedWiring.bindings` (one dict, three views) | execution, MATLAB command, call_id | — | ✅ |
 | Manual edges vs history | `graph_builder.manual_input_overrides` (rule: visible edges outrank history) | build_edges, execution | **B1 breaks the rule**: a history constant edge supersedes the manual Parameter edge because the two have different source ids | ❌ |
 | **Column-selection shape** | `scidb.intent.normalize_columns` / `same_columns` | GUI chip, `provenance_save.compute_input_selectors`, `mark_unused_intent` | "every column" is **symbolic** in intent (`{columns: [], iterate: true}`) but **resolved** in the recorded selector. `same_columns` compares literally, so every all-columns `for_columns` is flagged "not reflected by its last run" (seen 14:45:56). **B2** | ❌ |
@@ -248,7 +248,7 @@ owners or no owner, **bug class present**.
 | Storage-row encoding | `sciduckdb` | scidb | consumed through 8 private functions (F7) | ⚠️ |
 | Run completion status | `scidb/run_markers.py` | GUI matlab_watch | — | ✅ |
 | Pinned loads | `scidb.variant.pin_loads_uncollapsed` | plot loaders, inspect | — | ✅ |
-| Line recurrence (plots) | `scistackplot.roles.line_recurrence` | reduce, render | — | ✅ |
+| Line recurrence (plots) | `scistackplot.model.roles.line_recurrence` | reduce, render | — | ✅ |
 
 ### 2.5 What the table says
 

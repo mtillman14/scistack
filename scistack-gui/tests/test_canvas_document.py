@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from scistack_gui import node_wiring
-from scistack_gui import pipeline_store as ps
+from scistack_gui.stores import node_wiring
+from scistack_gui.stores import pipeline_store as ps
 from scistack_gui.canvas_shape_cli import capture_shapes
 from scistack_gui.domain.adoption import (
     AdoptionPlan,
@@ -233,11 +233,11 @@ class TestAdoption:
         assert rows and rows[0][1] == "event"
 
     def test_inside_an_undo_recording_nothing_is_written_but_it_is_drawn(self, client, populated_db):
-        from scistack_gui import history
-        from scistack_gui.api.pipeline import _build_graph
+        from scistack_gui.stores import history
+        from scistack_gui.services.graph_service import build_graph
 
         with history.recording("t-adopt", label="t", method="t"):
-            graph = _build_graph(populated_db, "main", run_states=False)
+            graph = build_graph(populated_db, "main", run_states=False)
         assert ps.get_manual_nodes(populated_db) == {}
         labels = {n["data"]["label"] for n in graph["nodes"]}
         assert "bandpass_filter" in labels
@@ -458,7 +458,7 @@ class TestRecordedSettingsSurviveAClear:
         assert "runOptions" not in settings.get(bp_node_id, {})
 
     def test_adoption_stores_them_on_the_node(self, client, populated_db, bp_node_id, monkeypatch):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         self._with_recorded(populated_db, monkeypatch, distribute=True)
         _graph(client)  # the adopting build
@@ -487,7 +487,7 @@ class StepRewireSignal(_BaseVariable):
 
 class TestStepNames:
     def test_names_are_unique_per_function(self, client, populated_db):
-        from scistack_gui.step_names import ensure_step_names, step_names
+        from scistack_gui.project.step_names import ensure_step_names, step_names
 
         out = ensure_step_names(
             populated_db, [("fn__f__a", "pkg.f"), ("fn__f__b", "pkg.f"), ("fn__g__c", "g")]
@@ -506,7 +506,7 @@ class TestStepNames:
         from conftest import FilteredSignal, bandpass_filter
 
         from scidb import for_each
-        from scistack_gui.step_names import set_step_name
+        from scistack_gui.project.step_names import set_step_name
 
         _graph(client)  # adopt
         set_step_name(populated_db, bp_node_id, "filter")
@@ -536,7 +536,7 @@ class TestStepNames:
 
     def test_export_writes_the_step_name(self, client, populated_db, bp_node_id):
         from scistack_gui.services.code_export_service import export_pipeline_to_code
-        from scistack_gui.step_names import step_name_of
+        from scistack_gui.project.step_names import step_name_of
 
         _graph(client)
         script = export_pipeline_to_code(populated_db, "main")["script"]
@@ -546,7 +546,7 @@ class TestStepNames:
     def test_claims_are_by_function_and_newest_step(self):
         from types import SimpleNamespace
 
-        from scistack_gui.step_names import step_claims
+        from scistack_gui.project.step_names import step_claims
 
         agg = SimpleNamespace(
             fn_input_params={("f", "c1"): {}, ("g", "c2"): {}},

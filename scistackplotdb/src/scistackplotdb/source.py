@@ -27,12 +27,12 @@ from scistackplot import (
     natural_sort_key,
     row_origin,
 )
-from scistackplot.categorical import MAX_CATEGORY_LEVELS
-from scistackplot.dedup import SingleFlight
-from scistackplot.framesize import format_extent, frame_extent
+from scistackplot.reduce.categorical import MAX_CATEGORY_LEVELS
+from scistackplot.sources.dedup import SingleFlight
+from scistackplot.text.framesize import format_extent, frame_extent
 from scistackplot.sources import BaseSource, UnknownMeasureError
-from scistackplot.variants import VARIABLE_COLUMN
-from scistackplot.temporal import is_temporal_column
+from scistackplot.reduce.variants import VARIABLE_COLUMN
+from scistackplot.reduce.temporal import is_temporal_column
 
 from .hierarchy import join_frames, joinable, joined_levels
 from .load import (
@@ -75,7 +75,7 @@ def _as_levels(column):
     keys are cast to VARCHAR on load for the same reason
     (``load.load_variable``).
 
-    Deliberately these two calls and nothing cleverer: ``scistackplot.codegen``
+    Deliberately these two calls and nothing cleverer: ``scistackplot.export.codegen``
     emits ``fillna(...).astype(str)`` into the exported endpoint, so anything
     extra here (normalising ``70.0`` to ``70``, say) would spell a level one way
     in the preview and another way in the export — the disagreement that
@@ -85,7 +85,7 @@ def _as_levels(column):
 
     A DATETIME column is the exception: its values stay datetimes (missing
     ones named), and ``LongTable.from_frame`` gives each its identity label
-    in time order (``scistackplot.temporal.level_labels``) — text that says
+    in time order (``scistackplot.reduce.temporal.level_labels``) — text that says
     when, not ``2026-07-01 14:00:00+02:00`` sorted as text. The generated code
     emits the same labels (``temporal.factor_label_code``).
     """
@@ -150,7 +150,7 @@ class ScidbSource(BaseSource):
         if not self._fast:
             return None  # -> reducer_for() supplies the pandas reference
         if self._reducer_instance is None:
-            from scistackplot.reducer import NumpyReducer
+            from scistackplot.reduce.reducer import NumpyReducer
 
             self._reducer_instance = NumpyReducer()
         return self._reducer_instance
@@ -603,7 +603,7 @@ class ScidbSource(BaseSource):
         memoizes the result — this method always does the full work.
 
         ``measures`` are the y variables. Several of them **stack**: one value
-        column plus a :data:`~scistackplot.variants.VARIABLE_COLUMN` saying
+        column plus a :data:`~scistackplot.reduce.variants.VARIABLE_COLUMN` saying
         which variable each row came from, which is what lets a variant row
         claim its own variable's rows and no others.
 
@@ -1093,7 +1093,7 @@ class ScidbSource(BaseSource):
         ``drop_duplicates`` silently kept whichever came first — a figure
         stratified by a version of the spreadsheet nobody chose.
 
-        The pin is applied with :func:`scistackplot.variants.variant_set_mask`,
+        The pin is applied with :func:`scistackplot.reduce.variants.variant_set_mask`,
         the same one definition the measure's own variant rows use, so "what a
         selection keeps" cannot mean two things one call apart.
 
@@ -1102,7 +1102,7 @@ class ScidbSource(BaseSource):
         (``plot-variant-rows.md`` § "An unfilled row is inert"). What used to be
         silent about that state is now :meth:`_one_label_per_location`.
         """
-        from scistackplot.variants import variant_set_mask
+        from scistackplot.reduce.variants import variant_set_mask
 
         selection = group.selection
         frame = variable_frame.frame
@@ -1431,12 +1431,12 @@ class ScidbSource(BaseSource):
     def default_variant_for(self, variable: str) -> dict:
         """The variant a GROUPING by ``variable`` should open on: latest.
 
-        Exactly :func:`scistackplot.variants.default_selection` over that
+        Exactly :func:`scistackplot.reduce.variants.default_selection` over that
         variable's own variant table — the same rule, and the same *code*, that
         decides what a plot opens on. Two rules for "latest" would be two
         answers, and this one has to agree with the Variants section beside it.
 
-        Read :func:`~scistackplot.variants.default_selection` before touching
+        Read :func:`~scistackplot.reduce.variants.default_selection` before touching
         this: "latest" here is the per-schema-location **boolean flag**, never
         the string ``"latest"``. The string stops resolving through the flag the
         moment anything else is pinned in the same selection, and silently drops
@@ -1447,7 +1447,7 @@ class ScidbSource(BaseSource):
         metadata queries rather than reading any of them.
         """
         variable = base_variable(variable)  # a text measure loads its variable
-        from scistackplot.variants import default_selection
+        from scistackplot.reduce.variants import default_selection
 
         return default_selection(self.variant_table(variable))
 
@@ -1583,7 +1583,7 @@ class ScidbSource(BaseSource):
                 text_measure_name(variable_frame.name), len(usable), layer=LAYER,
             )
         # Datetime fields melt into ONE value column with the rest, which is a
-        # time axis only if every field is a datetime (scistackplot.temporal).
+        # time axis only if every field is a datetime (scistackplot.reduce.temporal).
         # Beside numeric fields they would read as numbers (NaN), so they are
         # left out and named — group by one (Variable.column) instead.
         datetimes = [c for c in usable if is_temporal_column(frame[c])]
@@ -1659,7 +1659,7 @@ class ScidbSource(BaseSource):
         field_factor: str | None,
     ):
         """``(frame, row column or None, its origin or None)`` — every
-        row-list cell split into one row per element (scistackplot.rows,
+        row-list cell split into one row per element (scistackplot.reduce.rows,
         the one owner of the reshape; codegen mirrors it from the origin).
 
         The Row factor is kept only when some cell held two or more rows: a

@@ -18,8 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from scistack_gui import pipeline_store as ps
-from scistack_gui.db import get_db
+from scistack_gui.stores import pipeline_store as ps
+from scistack_gui.runtime.db import get_db
 
 from tests.test_bundle_project import _build_source, _export
 

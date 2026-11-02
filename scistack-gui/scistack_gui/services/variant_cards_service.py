@@ -82,7 +82,7 @@ def parameter_offers(card) -> list[dict]:
     """
     from scidb.variant import is_code_or_run_pin
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.services.target_file_service import entity_editability
 
     steps = {s.function_name: s for s in card.upstream.steps}
@@ -122,7 +122,7 @@ def parameter_offers(card) -> list[dict]:
 def variable_variants(db, variable: str) -> dict:
     """``Inspector.variant_cards(variable)`` as JSON, plus each card's
     Parameter offers, the pin history and the deletion history."""
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("variable_variants"):
         result = db.inspect.variant_cards(variable)
@@ -250,7 +250,7 @@ def delete_variant_plan(
     card, widened by any "also remove from the Parameter" choices. Record ids
     are dropped from the reply (counts are what is shown); the fingerprint is
     kept, so the confirm step can refuse if the database changed."""
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     targets = _delete_targets(variable, card_id, remove_parameter_values, record_ids)
     with db_connection("delete_variant_plan"):
@@ -285,7 +285,7 @@ def delete_variant(
     """
     from scidb.inspect.mutate import Mutator
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.services.layout_service import update_parameter
 
     targets = _delete_targets(variable, card_id, remove_parameter_values, record_ids)
@@ -329,7 +329,7 @@ def run_pin_conflicts(
     dialog when this is non-empty."""
     from scidb.variant_pins import active_pins
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
     from scistack_gui.services.execution_service import (
         derive_fn_targets,
         derive_target_for_node,

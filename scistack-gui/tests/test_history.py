@@ -1,7 +1,7 @@
 """Undo/redo: change records captured at the handler choke point.
 
 See ``docs/claude/undo-redo.md``. The record/undo/redo machinery is
-``scistack_gui.history``; ``api/handlers.py`` wraps undoable handlers in it;
+``scistack_gui.stores.history``; ``api/handlers.py`` wraps undoable handlers in it;
 ``api/history.py`` exposes undo/redo on both transports.
 """
 
@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from scistack_gui import history
-from scistack_gui import layout as layout_store
+from scistack_gui.stores import history
+from scistack_gui.stores import layout as layout_store
 from scistack_gui.api.handlers import CHANGE_HEADER, pop_change, rpc_methods
 from scistack_gui.api.tables import ALL_HANDLERS
 
@@ -354,7 +354,7 @@ def test_every_file_write_notes_history():
     missing: list[str] = []
     for path in sorted(GUI_PKG.rglob("*.py")):
         rel = path.relative_to(GUI_PKG).as_posix()
-        if rel == "history.py":
+        if rel == "stores/history.py":
             continue
         tree = ast.parse(path.read_text())
         for fn in ast.walk(tree):

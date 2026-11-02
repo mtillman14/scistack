@@ -16,8 +16,8 @@ from pathlib import Path
 import pytest
 
 from scifor import machine
-from scistack_gui import startup
-from scistack_gui.config import _normalize, add_path, load_config, remove_path, tomllib
+from scistack_gui.project import startup
+from scistack_gui.project.config import _normalize, add_path, load_config, remove_path, tomllib
 
 
 def _roots(path: Path, roots: dict[str, str]) -> None:
@@ -131,7 +131,7 @@ def test_add_path_outside_every_root_stays_absolute(tmp_path, _pin_machine_file)
 def test_the_paths_popup_gets_the_full_path_of_a_rooted_entry(tmp_path, _pin_machine_file):
     """User request 2026-10-19: the popup shows the full path on this
     machine, not the raw `{rto}/...`."""
-    from scistack_gui.config import describe_managed_paths
+    from scistack_gui.project.config import describe_managed_paths
 
     lab = tmp_path / "lab"
     (lab / "repo").mkdir(parents=True)

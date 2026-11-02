@@ -6,8 +6,8 @@ from dataclasses import replace
 
 from conftest import bar_spec, popcorn_table
 from scistackplot import Role, resolve
-from scistackplot.diffbars import bars_for_panel, with_derived_bars
-from scistackplot.spec import Comparison
+from scistackplot.reduce.diffbars import bars_for_panel, with_derived_bars
+from scistackplot.model.spec import Comparison
 from scistackstats import Analysis, FakeEngine, StatsSpec, run, use_engine
 from scistackstats.overlays import bars_for
 from scistackstats.spec import OverlaySpec

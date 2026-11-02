@@ -7,7 +7,7 @@ selected. F36: the pipeline script ignored each node's own selection.
 
 import json
 
-from scistack_gui.api.matlab_command import (
+from scistack_gui.services.matlab_command_format import (
     generate_matlab_command,
     generate_matlab_pipeline_command,
 )

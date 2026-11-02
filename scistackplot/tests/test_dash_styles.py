@@ -18,7 +18,7 @@ import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, render_plotly, resolve
 from scistackplot.render.base import dash_levels, shows_legend
-from scistackplot.resolved import DASH, DASH_CYCLE, MPL_DASHES, SERIES
+from scistackplot.reduce.resolved import DASH, DASH_CYCLE, MPL_DASHES, SERIES
 
 
 @pytest.fixture

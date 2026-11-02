@@ -240,7 +240,7 @@ def cascade_unrun_producers(
     """Carry the colour of never-run function nodes downstream.
 
     A never-run (manual) node's colour is decided after the grouped cascade
-    (``api/pipeline._build_graph``: "which history has never run" -> red), so
+    (``graph_service.build_graph``: "which history has never run" -> red), so
     until 2026-10-26 its red reached no variable: a drawn edge from a red
     ``parse_loaded_data_per_subject`` into ``LoadedData`` (34 records) left
     the variable, and everything reading it, green.

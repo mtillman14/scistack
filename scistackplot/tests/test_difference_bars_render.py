@@ -21,7 +21,7 @@ import pytest  # noqa: E402
 from matplotlib.collections import PathCollection  # noqa: E402
 from matplotlib.markers import MarkerStyle  # noqa: E402
 
-import scistackplot.reduce as reduce_mod  # noqa: E402
+import scistackplot.reduce.resolve as reduce_mod  # noqa: E402
 from scistackplot import (  # noqa: E402
     LongTable,
     PlotKind,
@@ -31,7 +31,7 @@ from scistackplot import (  # noqa: E402
     YAxis,
     resolve,
 )
-from scistackplot.diffbars import FOOT_GAP_PT, GAP_PT, LINE_PT, DifferenceBar  # noqa: E402
+from scistackplot.reduce.diffbars import FOOT_GAP_PT, GAP_PT, LINE_PT, DifferenceBar  # noqa: E402
 from scistackplot.render.mpl import (  # noqa: E402
     DIFF_BAR_GID,
     DIFF_BARS_ATTR,
@@ -389,7 +389,7 @@ def test_a_log_axis_draws_the_bars(gait_table):
 
 
 def test_the_label_size_is_the_differences_text_size(gait_table):
-    from scistackplot.spec import TextSizes
+    from scistackplot.model.spec import TextSizes
 
     style = StyleOptions(width=6.0, height=4.0, text=TextSizes(base=12.0, differences=20.0))
     figure, fig = _render(_spec(*BARS, style=style), gait_table)

@@ -35,10 +35,10 @@ import pandas as pd
 from scistacklog import Log
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, plot_data
-from scistackplot.groups import apply_level_groups
-from scistackplot.roles import collapse_steps, complete_roles, fanout_keys
-from scistackplot.spec import Filter
-from scistackplot.variants import apply_variant_sets
+from scistackplot.reduce.groups import apply_level_groups
+from scistackplot.model.roles import collapse_steps, complete_roles, fanout_keys
+from scistackplot.model.spec import Filter
+from scistackplot.reduce.variants import apply_variant_sets
 
 from .spec import DV, StatsSpec
 
@@ -200,11 +200,11 @@ def analysis_frame(stats_spec: StatsSpec, dv: DV, table: LongTable, *, curves: b
     """The rows and their structure for one DV (module docstring).
 
     ``curves`` (SPM, S4): one row per unit per cell with its whole 1-D curve,
-    from ``scistackplot.export.sample_curves`` (the band figure's own
+    from ``scistackplot.export.plot_data.sample_curves`` (the band figure's own
     reduction), instead of the scalar rows ``plot_data`` gives.
     """
-    from scistackplot.export import sample_curves
-    from scistackplot.shape import Shape
+    from scistackplot.export.plot_data import sample_curves
+    from scistackplot.model.shape import Shape
 
     if curves and dv.variable in table.measure_names and table.shape_of(dv.variable) is not Shape.SERIES_1D:
         raise AnalysisFrameError(f"{dv.key}: SPM needs a 1-D measure; {dv.variable} is {table.shape_of(dv.variable)}")

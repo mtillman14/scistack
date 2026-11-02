@@ -85,7 +85,7 @@ sessions inside their group. It needs two grouping layers, and the same list
 read as a bar plot nests subject bars inside session ticks inside Intervention
 brackets. Each subject keeps one small deterministic offset at every x
 position (never a random jitter — a line must end on its own markers),
-decided once per figure by `scistackplot.spaghetti.series_offsets` and read by
+decided once per figure by `scistackplot.reduce.spaghetti.series_offsets` and read by
 both renderers and the generated code.
 
 **Show sample** puts the data behind a summary on top of it. `show_sample =
@@ -141,7 +141,7 @@ header, and the exported code draws the same date ticks. See
 ## Text measures
 
 A text (or True/False) column is plotted by rewriting it into numbers first
-(`scistackplot.categorical`), and the plot type decides how:
+(`scistackplot.reduce.categorical`), and the plot type decides how:
 
 | Plot type | What it draws | "Show sample" |
 |---|---|---|
@@ -389,7 +389,7 @@ columns as fit. `PlotSpec.sample_in_legend=False` (the Show sample pane's
 
 `StyleOptions.width` / `height` are inches and size the **saved** figure and
 the generated code; the interactive preview fills whatever pane it is in.
-`scistackplot.figsize` is the one vocabulary of aspect-ratio presets (`4:3`,
+`scistackplot.text.figsize` is the one vocabulary of aspect-ratio presets (`4:3`,
 `16:9`, `3:2`, golden, `2:1`, `1:1`, two portrait ratios, `custom`): pick a
 ratio, name a width — a journal column is 3.5 in, a double column 7.2 in — and
 `height_for` gives the height. `aspect_name` runs the other way, so a reopened
@@ -415,7 +415,7 @@ size (drawn at Width x Height, 1 pt = 1 px) or at the pane's size ("Fit pane").
 `legend` and `legend_title` are each either fixed or `None`, which derives
 them from `base` with matplotlib's own ratios. Only `base` set draws exactly
 what one font knob would. A fixed size is never shrunk by the label or legend
-fit, which may still rotate, wrap or move it. `scistackplot.textsize` is the
+fit, which may still rotate, wrap or move it. `scistackplot.text.textsize` is the
 one owner (`resolve_sizes`, `rc_params`). The export, the generated code and
 the plotly preview (as px) all read it, under `rc_context` so nothing leaks
 into the next figure. See `docs/claude/plot-text-and-labels.md`.
@@ -426,7 +426,7 @@ axis and legend titles 1.2, the rest 1.0, overridable per element in
 `TextSizes.ratios`), clamped into that element's floor/ceiling (the band of
 `TextSizes.target` × the ratio — `"print"` 8–12 pt, `"slide"` 14–28 pt — or
 `TextSizes.floors` / `ceilings` in pt). With `base` unset (`None`),
-`scistackplot.autosize` searches the largest reference whose real matplotlib
+`scistackplot.text.autosize` searches the largest reference whose real matplotlib
 layout breaks no rule: no text into text (tick fit, numeric tick collisions,
 neighbouring panels, brackets, legend), nothing off the canvas, at least 3
 tick labels per numeric axis, no y title taller than its panel. One failing
@@ -437,7 +437,7 @@ number in `base` fixes the reference (unclamped).
 
 The figure's **paper** (white background, black text, a black frame round every
 panel, outward ticks, no grid, and the error-bar ink) has one owner,
-`scistackplot.paper.PAPER`. Its values are matplotlib's defaults, written
+`scistackplot.text.paper.PAPER`. Its values are matplotlib's defaults, written
 out. The export, the generated code and the plotly preview all draw it, so
 the preview shows the saved figure's page rather than plotly's grid. A
 personal `matplotlibrc` cannot change an export. The Plot Studio shows the
@@ -447,7 +447,7 @@ See `docs/claude/preview-paper-parity.md`.
 `StyleOptions.sample_weight` and `StyleOptions.line_weight` are multipliers
 (default 1) on the point size AND line thickness together: the first for the
 "Show sample" overlay's points and joining lines, the second for a
-spaghetti's own points and lines. `scistackplot.weights` is the one owner;
+spaghetti's own points and lines. `scistackplot.reduce.weights` is the one owner;
 matplotlib, the plotly preview and the generated code all read it.
 
 ## What the text reads as: display aliases
@@ -482,7 +482,7 @@ Only the text changes. Filters, facet layout rules, the level order and
 draws. The exported code writes the merged aliases in as a literal and
 relabels what it drew. Two levels of one factor that would read the same are
 refused (`AliasError`), because the figure could not tell them apart.
-`scistackplot.aliases.DisplayText` (on `ResolvedPlot.text`) is the one owner
+`scistackplot.text.aliases.DisplayText` (on `ResolvedPlot.text`) is the one owner
 of how every level and name reads. See `docs/claude/plot-text-and-labels.md`.
 
 ## What colour a mark is: pinned colours
@@ -500,7 +500,7 @@ spec = PlotSpec(
 ```
 
 Colours may be `#rrggbb`, `#rgb`, `rgb(r, g, b)` or a matplotlib colour
-name. `scistackplot.colors.parse_color` is the one reader, and it
+name. `scistackplot.text.colors.parse_color` is the one reader, and it
 canonicalises every colour to `#rrggbb`.
 
 A scidb-backed table also carries the project's `[colors]` (read live

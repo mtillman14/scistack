@@ -34,7 +34,7 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.autosize import MIN_TICK_LABELS, settle  # noqa: E402
+from scistackplot.text.autosize import MIN_TICK_LABELS, settle  # noqa: E402
 from scistackplot.render.mpl import (  # noqa: E402
     _tick_and_title_rules,
     is_numeric_axis,

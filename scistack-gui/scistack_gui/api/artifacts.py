@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from scidb.database import DatabaseManager
 
 from scistack_gui.api.handlers import Handler, install_routes
-from scistack_gui.db import get_db
+from scistack_gui.runtime.db import get_db
 
 logger = logging.getLogger(__name__)
 

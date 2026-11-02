@@ -187,6 +187,8 @@ is a standing user decision.*
 | P2 | Generate codegen from `ResolvedPlot` where possible: emit the reduced per-panel frames' *recipe* (the reduction steps `reduce` took, as a plan object) instead of re-deriving them from the spec. Concretely, `reduce` records the pandas operations it applied (`ReductionPlan`) and codegen prints that plan. | weakness 1, for the reduction half; the drawing half stays a translation, like a third renderer |
 | P3 | Move location-filter semantics into a dependency-free leaf that scifor, scistackplot and (via a generated table) the GUI all read. scicanonicalhash is the existing zero-dependency leaf, but a tiny `scistack-locations` or a module in scistacklog's tier is cleaner. Alternatively keep three copies but **generate** the parity cases into each language's tests from the doc's JSON (`docs/claude/location-filter-cases.json` already exists). | weakness 3 |
 
+> **Done (2026-11-01, P2 stage 7):** P1 — subpackages `model/`, `text/`, `reduce/`, `export/` (plus existing `sources/`, `render/`); `reduce.py` -> `reduce/resolve.py`, `export.py` -> `export/plot_data.py`, `dedup` -> `sources/`. Enforced order base -> model -> text -> reduce -> sources -> render/export (text below reduce, as the imports are; `base` = leaf modules listed by name), 28 allow-listed pairs. Largest remaining debt: `spec`/`presets` hold `Comparison`, `DifferenceBar`, `PanelOverride` defined in `reduce/`; `roles`/`capability` call reduce helpers. scistackstats may reach past the model only into five listed modules.
+
 P3's second option is cheap and keeps the dependency rule. The JSON case file
 already exists, so it is only a matter of reading it in all three test
 suites.

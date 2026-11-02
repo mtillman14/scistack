@@ -183,7 +183,7 @@ class GraduationAction:
 #: canvas is never meaningful: a hand-placed one always folds into its DB twin,
 #: even when the twin's placement is already positioned (2026-10-01). Function
 #: nodes are not here: a second same-named function node can be a genuinely
-#: new call site, and they graduate by wiring (api/pipeline refinement).
+#: new call site, and they graduate by wiring (graph_service refinement).
 ENTITY_NODE_TYPES = frozenset({"variableNode", "pathInputNode", "parameterNode"})
 
 
@@ -466,7 +466,7 @@ def group_call_sites_by_wiring(
     # on. A plain "worst member state" assignment (the old approach) only
     # ever set the group's OWN node — a pending row on bandpass_filter
     # never reached var__FilteredSignal, since pass 1's DAG propagation
-    # (domain.api.pipeline._compute_run_states) necessarily runs BEFORE
+    # (graph_service._compute_run_states) necessarily runs BEFORE
     # this staged row even exists.
     from scistack_gui.domain.run_state import propagate_run_states
 
@@ -475,7 +475,7 @@ def group_call_sites_by_wiring(
         for gkey, states in group_member_states.items()
         if states
     }
-    # Same rule as pass 1 (api/pipeline._build_graph): the cascade follows the
+    # Same rule as pass 1 (graph_service.build_graph): the cascade follows the
     # edges visible on the canvas, drawn ones included. Applied again here
     # because this pass re-propagates on the GROUPED wiring, which is rebuilt
     # from the recorded call sites and so carries no manual bindings either.
@@ -651,7 +651,7 @@ def resolve_path_input_name(
        rootless PathInput resolves against the project root anyway, so the two
        name the same files; this is the same input recorded two ways.
        Generated MATLAB commands used to substitute the project root for a
-       missing ``root_folder`` (see ``api.matlab_command._format_path_input``),
+       missing ``root_folder`` (see ``matlab_command_format._format_path_input``),
        so every run made that way is on disk under the rooted key. The
        generator no longer does that, but the recorded rows are permanent —
        without this step they keep an ``__unresolved__`` ghost node beside
@@ -769,7 +769,7 @@ def convert_scidb_path_inputs(
     by resolved registry name, ``"functions"`` as ``set[(FnKey, param_name)]``).
 
     Single shared conversion — do not re-inline this at a new call site;
-    ``api/pipeline.py`` and ``execution_service.disconnected_report_entries``
+    ``services/graph_service.py`` and ``execution_service.disconnected_report_entries``
     both need the exact same resolution (registry name, not param name) for
     their hidden-edge-id lookups to line up with what ``build_edges``
     actually produced. That includes ``project_root``: a caller that omits it
@@ -868,7 +868,7 @@ def aggregate_from_scidb(
     """``get_aggregated_variants()`` (or the pure
     ``scidb.database.aggregate_pipeline_variants``) -> :class:`AggregatedData`.
 
-    PURE — the registry, history index and root are passed in; ``api/pipeline
+    PURE — the registry, history index and root are passed in; ``services/graph_service
     .build_aggregate`` is the thin wrapper that reads them. THE one conversion:
     a second, test-only one (``aggregate_variants``, from raw variant rows)
     was deleted 2026-09-23 so the tests exercise the path production runs
@@ -1809,7 +1809,7 @@ def build_function_nodes(
         # Order by registry signature declaration order (falling back to
         # alphabetical for any param not in the signature, e.g. stale DB
         # data) so DB-derived handle order matches the manual-node path,
-        # which already orders by signature (pipeline.py _fn_params_from_registry).
+        # which already orders by signature (pipeline.py fn_params_from_registry).
         sig_order = fn_params_map.get(fn, [])
         constant_params = input_port_order(sig_order, fn_constants.get(fkey, set()))
 
@@ -2904,7 +2904,7 @@ def unproduced_output_fkeys(
     for node_key, wired in drawn.items():
         fkeys = fkeys_by_node.get(node_key)
         if not fkeys:
-            continue  # a never-run manual node: api/pipeline colours it
+            continue  # a never-run manual node: graph_service colours it
         recorded = set().union(*(fn_outputs.get(f, set()) for f in fkeys))
         missing = sorted(wired - recorded)
         if not missing:

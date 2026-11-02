@@ -31,7 +31,7 @@ The five rules, implemented here:
    :class:`Decision` so a loss can be reported.
 
 Pure: no I/O, no DB, no GUI import. The intent STORE stays in the GUI layer
-(``scistack_gui.pipeline_store``); this module defines the shape, the aspect
+(``scistack_gui.stores.pipeline_store``); this module defines the shape, the aspect
 normalizers and the resolver, and takes a plain payload — so MATLAB, the CLI
 and plain Python can resolve without a GUI table. If scidb ever has to import
 ``pipeline_store``, the design is wrong.
@@ -906,7 +906,7 @@ class run_output_names:
 # ---------------------------------------------------------------------------
 # The stored shape (read contract)
 # ---------------------------------------------------------------------------
-# The intent STORE is GUI-owned (scistack_gui.intent_store creates and writes
+# The intent STORE is GUI-owned (scistack_gui.stores.intent_store creates and writes
 # it), but its ROW SHAPE is this module's: the columns are Statement's
 # fields. Naming them here is what lets scidb's own inspector read the table
 # back without importing the GUI — a store that scidb could not read would

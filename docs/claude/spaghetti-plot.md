@@ -42,7 +42,7 @@ needs a categorical axis"). SPAGHETTI is a scalar kind with LINE's identity.
 
 Random jitter (STRIP) is not available: a line must end on its own marker. So
 each series gets ONE deterministic horizontal shift it keeps at every x
-position — `scistackplot/spaghetti.py::series_offsets(ids)`: natural-sorted,
+position — `scistackplot/reduce/spaghetti.py::series_offsets(ids)`: natural-sorted,
 evenly spaced over `[-SPAGHETTI_SPREAD, +SPAGHETTI_SPREAD]` (0.2), a single
 series at 0. Computed **once per figure** in `reduce._spaghetti_offsets` and
 carried as `ResolvedPlot.series_offsets` (also in `to_dict`).

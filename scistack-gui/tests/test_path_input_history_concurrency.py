@@ -21,7 +21,7 @@ sciduckdb/tests/test_fetch_locking.py; this test exercises the real store functi
 import threading
 
 import pytest
-from scistack_gui import pipeline_store
+from scistack_gui.stores import pipeline_store
 
 
 @pytest.fixture

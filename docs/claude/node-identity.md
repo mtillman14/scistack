@@ -318,7 +318,7 @@ looked at (`docs/gui-manual-testing-todo.md` item 0p).
 `_node_wiring (node_id, wiring_id, run_id, first_seen, last_seen, scope)`,
 primary key `(node_id, wiring_id)`, append-only. Created by
 `pipeline_store._ensure_tables` beside `_intent`, never in provenance (§7a).
-Accessors in `scistack_gui/node_wiring.py`; a repeat advances `last_seen` and
+Accessors in `scistack_gui/stores/node_wiring.py`; a repeat advances `last_seen` and
 leaves `first_seen` alone, because rewriting it would erase the chronology
 that makes *"what did it run as before?"* answerable.
 

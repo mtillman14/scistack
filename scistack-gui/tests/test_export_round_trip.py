@@ -27,10 +27,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from scidb import configure_database
-from scistack_gui import pipeline_store
-from scistack_gui import registry as _registry
+from scistack_gui.stores import pipeline_store
+from scistack_gui.project import registry as _registry
 
 MODULE = "export_round_trip_steps"
 
@@ -65,7 +65,7 @@ def _counts(db) -> dict:
 
 
 def _wait_for_runs(timeout: float = 30.0) -> None:
-    from scistack_gui.api import run as run_api
+    from scistack_gui.services import run_service as run_api
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -105,7 +105,7 @@ def project(tmp_path, monkeypatch):
     _registry._functions["scale_round_trip"] = mod.scale_round_trip
     _registry._module_path = module_path
 
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
     from scistack_gui.ids import in_handle, param_node_id, var_node_id
 
     fn = "fn__scale_round_trip__a1b2c3"

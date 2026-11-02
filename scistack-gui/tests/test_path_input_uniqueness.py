@@ -15,7 +15,7 @@ so the GUI holds it unique where it can:
 from __future__ import annotations
 
 from scifor import PathInput
-from scistack_gui import registry
+from scistack_gui.project import registry
 from scistack_gui.ids import ROOT_SCOPE
 from scistack_gui.services import layout_service
 

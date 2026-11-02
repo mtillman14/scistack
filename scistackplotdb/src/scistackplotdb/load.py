@@ -24,9 +24,9 @@ import pandas as pd
 from sciduckdb import merge_tz_columns, stored_tz_companions, tz_column_name
 from scistacklog import Log
 from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, element_values
-from scistackplot.framesize import format_extent, frame_extent
-from scistackplot.shape import Shape, classify_value
-from scistackplot.table import natural_sort_key
+from scistackplot.text.framesize import format_extent, frame_extent
+from scistackplot.model.shape import Shape, classify_value
+from scistackplot.model.table import natural_sort_key
 
 LAYER = "scistackplotdb"
 
@@ -100,7 +100,7 @@ class VariableFrame:
     #: Data columns stored as ``row_list`` ("combine rows": one element per
     #: source row, sciduckdb.row_lists). Their cells arrive as arrays; the
     #: source splits them into rows with a ``Row`` factor
-    #: (scistackplot.rows), never plots them as 1-D series.
+    #: (scistackplot.reduce.rows), never plots them as 1-D series.
     row_list_columns: list[str] = field(default_factory=list)
 
     @property
@@ -493,7 +493,7 @@ def _row_list_columns(db, variable: str, columns) -> list[str]:
     ``on_duplicate="combine"``). This reader selects the stored cells as they
     are, so EVERY cell of such a column is an array (``[7]``, ``[5, 12]``).
     The source splits them into rows with a ``Row`` factor
-    (scistackplot.rows) — they are observations, not a 1-D series. This
+    (scistackplot.reduce.rows) — they are observations, not a 1-D series. This
     replaced the "read as 1-D" decision of
     .claude/plan-combine-duplicate-locations.md §6 on 2026-10-30
     (.claude/plan-row-list-plots.md)."""
@@ -618,7 +618,7 @@ def load_variable(
         # Cells and SAMPLES alongside the record count: 419 records is the same
         # number whether each holds 200 samples or 250,000, and only the second
         # explains a plot that never returns. Measured over the data columns
-        # only, one O(cells) pass (scistackplot.framesize).
+        # only, one O(cells) pass (scistackplot.text.framesize).
         with timer.phase("measure_extent"):
             extent = frame_extent(frame, columns)
         Log.info(

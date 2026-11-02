@@ -85,7 +85,7 @@ _GLOBAL_NODE_TYPES = ("parameterNode", "pathInputNode")
 def _closure_pipeline_ids(db, root_pipeline_id: str) -> list[str]:
     """``root_pipeline_id`` + every pipeline it uses, recursively (BFS) —
     so the export is self-contained regardless of nesting depth."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     seen = [root_pipeline_id]
     seen_set = {root_pipeline_id}
@@ -104,7 +104,7 @@ def _closure_pipeline_ids(db, root_pipeline_id: str) -> list[str]:
 def _notes_for(names: set[str], pipeline_ids: list[str]) -> dict[str, str]:
     """The sidebar notes (``layout.read_notes``, keyed ``kind:name``) about
     any of *names* or about a submodule in *pipeline_ids*."""
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     wanted = set(names) | set(pipeline_ids)
     return {
@@ -116,7 +116,7 @@ def _notes_for(names: set[str], pipeline_ids: list[str]) -> dict[str, str]:
 
 def hypothesis_of(db, pipeline_id: str) -> "dict | None":
     """The hypothesis fields of *pipeline_id*, or ``None`` when it is not one."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     h = {x["pipeline_id"]: x for x in ps.list_hypotheses(db)}.get(pipeline_id)
     if h is None:
@@ -143,8 +143,8 @@ def export_globals(db, snap, pipeline_ids: list[str]) -> dict:
 
     Needs the code registry (the project is opened WITH discovery to export).
     """
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui import registry
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import path_input_display
 
     referenced: dict[str, set[str]] = {t: set() for t in _GLOBAL_NODE_TYPES}
@@ -192,7 +192,7 @@ def export_globals(db, snap, pipeline_ids: list[str]) -> dict:
 def export_pipeline(db, pipeline_id: str) -> dict:
     """Build the portable document for ``pipeline_id`` + every pipeline it
     (transitively) uses. See module docstring for what is/isn't included."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.services import canvas_snapshot
 
     pipeline_ids = _closure_pipeline_ids(db, pipeline_id)
@@ -290,7 +290,7 @@ def _resolve_pipeline(
     if old_pid in resolution:
         return resolution[old_pid]
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.services import canvas_snapshot
 
     name = next(p["name"] for p in document["pipelines"] if p["pipeline_id"] == old_pid)
@@ -350,7 +350,8 @@ def unresolved_labels(snap) -> list[str]:
     in the LOCAL registry yet — informational only (see module docstring:
     nothing blocks the import on this)."""
     from scidb import BaseVariable
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
 
     unresolved: set[str] = set()
     for n in snap.nodes:
@@ -373,11 +374,11 @@ def local_global_names(db, *, discovered: bool) -> dict:
     positions for ``param__`` ids, so a read after placing nodes would make
     every imported constant look like it already existed. PathInput/Sweep
     names come from the registry, so only when *discovered*."""
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     names = {"constants": set(layout_store.read_all_constant_names())}
     if discovered:
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         names["path_inputs"] = set(registry.get_path_inputs_registry())
         names["sweeps"] = set(registry.get_parameters_registry())
@@ -388,7 +389,7 @@ def local_global_names(db, *, discovered: bool) -> dict:
 
 def apply_hypothesis(db, pipeline_id: str, h: "dict | None") -> None:
     """Tag *pipeline_id* as a hypothesis with the fields in *h* (no-op on None)."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     if not h:
         return
@@ -414,8 +415,8 @@ def apply_globals(
     Without discovery, PathInput/Sweep materialisation (which writes source
     through the registry) is DEFERRED and reported, not attempted.
     """
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
 
     reused_constants = []
     for name, values in document.get("constants", {}).items():
@@ -529,7 +530,7 @@ def import_pipeline_document(db, document: dict, *, discovered: bool = True) -> 
     target's source, and checking that every label resolves -- and reports
     them as ``deferred`` / ``unresolved_labels=None`` instead. Nothing here
     imports user code."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.services import canvas_snapshot
 
     version = document.get("format_version")

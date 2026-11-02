@@ -190,7 +190,7 @@ its source. Plan: `.claude/plot-studio-combine-section.md`.
 
 | question | owner |
 |---|---|
-| collapse order / sample / steps | `scistackplot/roles.py` — `collapse_order`, `sample_key`, `collapse_steps` |
+| collapse order / sample / steps | `scistackplot/model/roles.py` — `collapse_order`, `sample_key`, `collapse_steps` |
 | how a kind reads the grouping list | `roles.grouping_layers` → `GroupingLayers(ticks, series, color, units)` |
 | one line per sample level (line, spaghetti) | `roles.UNIT_KINDS`, `GroupingLayers.units` / `.identity`, `roles.spaghetti_sample_repeats` |
 | the sample rows, one call for figure and CSV | `reduce._sample_frame` (figure) = `export.plot_data` default |

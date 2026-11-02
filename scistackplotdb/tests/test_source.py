@@ -115,7 +115,7 @@ def test_scalar_variable_resolves_to_a_box_plot(seeded):
     assert resolved.row_count == 12
     # Colour is paint (2026-09-21): the coloured subject layer keeps its tick
     # layer, so the x axis is session x subject, sessions outermost.
-    from scistackplot.xaxis import LEAF_SEPARATOR, is_spacer
+    from scistackplot.text.xaxis import LEAF_SEPARATOR, is_spacer
 
     # A nested axis puts spacer slots between blocks (xaxis.SPACER_PREFIX);
     # they are positions, not ticks.
@@ -235,7 +235,7 @@ def test_unassigned_variant_separates_figures_and_cannot_be_collapsed(two_varian
     """The correctness trap: two pipelines' results must not overplot as one.
     Unassigned, the variant axis fans out like any unmentioned factor;
     collapsing it is refused outright."""
-    from scistackplot.roles import complete_roles
+    from scistackplot.model.roles import complete_roles
 
     table = ScidbSource(two_variants).get_table(["Scaled"])
     variant = table.variant_factors[0].name
@@ -338,7 +338,7 @@ def test_two_code_versions_are_refused_not_pooled(two_code_versions):
     The code axis is left UNASSIGNED: it separates figures (nothing pools
     silently), and collapsing it deliberately is refused.
     """
-    from scistackplot.roles import complete_roles
+    from scistackplot.model.roles import complete_roles
 
     table = ScidbSource(two_code_versions).get_table(["Scaled"])
     spec = PlotSpec(
@@ -431,7 +431,7 @@ def test_default_roles_separate_both_variant_kinds(constants_and_code_versions):
     multi = [f for f in table.variant_factors if len(f.levels) > 1]
     assert len(multi) == 2, "a constant variant and a code version, both live"
 
-    from scistackplot.roles import default_assignment
+    from scistackplot.model.roles import default_assignment
 
     opened = default_assignment(table, "Scaled")
     assert Role.COLLAPSE not in {opened.roles[f.name] for f in multi}, (
@@ -454,7 +454,7 @@ def _one_figure(spec, table, *, color=None):
     not about the opening figure, so they flatten the fan-out first."""
     from dataclasses import replace
 
-    from scistackplot.spec import MAX_X_LAYERS
+    from scistackplot.model.spec import MAX_X_LAYERS
 
     plain = [f.name for f in table.factors if not f.is_variant and not f.is_field]
     # Since colour is paint (2026-09-21) a coloured layer is a tick layer too
@@ -509,7 +509,7 @@ def test_no_default_pin_without_code_versions(two_variants):
 def test_default_spec_opens_on_one_named_variant(two_code_versions):
     """The panel always has a row to edit, and it starts on current results."""
     from scistackplot import apply_variant_sets, default_spec
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     table = ScidbSource(two_code_versions).get_table(["Scaled"])
     spec = default_spec(table, "Scaled")

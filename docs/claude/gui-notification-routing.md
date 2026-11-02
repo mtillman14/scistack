@@ -47,11 +47,11 @@ Python emits a message nobody asked for. Two transports, chosen at runtime:
 
 | Mode | Entry point | Wire |
 |---|---|---|
-| VS Code extension (JSON-RPC) | `scistack_gui/notify.py` | newline-delimited JSON on **stdout** |
+| VS Code extension (JSON-RPC) | `scistack_gui/runtime/notify.py` | newline-delimited JSON on **stdout** |
 | Standalone (FastAPI) | `scistack_gui/api/ws.py` | WebSocket `/ws`, per-client outbox |
 
-Call sites do **not** choose. They call `ws.push_message({"type": ..., ...})`,
-and `ws.push_message` checks `notify._enabled` and delegates to
+Call sites do **not** choose. They call `ws_hub.push_message({"type": ..., ...})`,
+and `ws_hub.push_message` checks `notify._enabled` and delegates to
 `notify.push_message` in JSON-RPC mode. `notify.push_message` pops `type` and
 re-emits it as the JSON-RPC `method`, with the remaining keys as `params`.
 Async handlers in `server.py` may call `notify(method, params)` directly.
@@ -210,7 +210,7 @@ different line — "is the terminal message guaranteed on all paths".
 MATLAB runs dispatched to the terminal never emitted `dag_updated`. Not a
 routing failure: nothing was ever sent. `_start_matlab_run` returns
 `host_execution_required` and exits without spawning a thread, so the
-`api/run._notify_records_changed()` that every in-process path ends with had
+`run_service.notify_records_changed()` that every in-process path ends with had
 no caller on that side, and `matlab_run_watch._finish` — written later, for
 the terminal path — pushed its verdict and stopped.
 

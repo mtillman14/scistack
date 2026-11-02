@@ -10,7 +10,7 @@ import pytest
 
 from conftest import BRANDS, bar_spec, popcorn_frame, popcorn_table
 from scistackplot import Role
-from scistackplot.spec import Alias
+from scistackplot.model.spec import Alias
 from scistackstats import Analysis, DescriptiveSpec, FakeEngine, StatsSpec, describe_table, run, use_engine
 from scistackstats.export import FORMATS, export_comparisons, export_descriptives, latex_escape
 from scistackstats.format import (

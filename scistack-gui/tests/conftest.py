@@ -19,11 +19,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 _root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_root / "scistack" / "src"))  # scistack package
 
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from fastapi.testclient import TestClient
 from scidb.database import _local
-from scistack_gui import matlab_registry as _matlab_registry
-from scistack_gui import registry as _registry
+from scistack_gui.matlab import registry as _matlab_registry
+from scistack_gui.project import registry as _registry
 from scistack_gui.app import create_app
 
 from scidb import BaseVariable, configure_database, for_each
@@ -197,7 +197,7 @@ def populated_db(tmp_path):
     Real DuckDB with subject/session schema, 4 RawSignal records,
     and a for_each run producing FilteredSignal (with constant low_hz=20).
 
-    Also sets scistack_gui.db._db / _db_path so API endpoints work.
+    Also sets scistack_gui.runtime.db._db / _db_path so API endpoints work.
     """
     db_path = tmp_path / "test.duckdb"
     db = configure_database(db_path, ["subject", "session"])
@@ -221,7 +221,7 @@ def populated_db(tmp_path):
     _gui_db._db_path = db_path
 
     # Ensure pipeline structure tables exist (normally done by init_db).
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     pipeline_store._ensure_tables(db)
 
@@ -254,7 +254,7 @@ def _pin_project_root(tmp_path):
     this pin is what makes ``tmp_path`` behave as the project in every test,
     not just those that write files.
     """
-    from scistack_gui.config import set_project_root_hint
+    from scistack_gui.project.config import set_project_root_hint
 
     set_project_root_hint(tmp_path)
     yield
@@ -298,8 +298,8 @@ def glue_project(client, tmp_path):
     file. That auto-create needs a loose-script project — a config-less
     single-file setup has no scistack.toml to record the directory in.
     """
-    from scistack_gui import registry as _reg
-    from scistack_gui.config import load_config
+    from scistack_gui.project import registry as _reg
+    from scistack_gui.project.config import load_config
 
     (tmp_path / "scistack.toml").write_text("modules = []\n")
     _reg.load_from_config(load_config(None, tmp_path / "test.duckdb"))
@@ -340,7 +340,7 @@ def node_id_for_wiring(db, fn_name: str, wiring: str) -> str:
     instead — and allocating when nothing has yet is what the first graph
     build would have done, so the test can name the node before it builds.
     """
-    from scistack_gui import node_wiring
+    from scistack_gui.stores import node_wiring
 
     node_wiring.ensure_tables(db)
     node_id = node_wiring.node_for_wiring(db, wiring)

@@ -1,5 +1,5 @@
 """
-Compare to reference (``PlotSpec.comparison``, ``scistackplot.compare``):
+Compare to reference (``PlotSpec.comparison``, ``scistackplot.reduce.compare``):
 difference / % change from one level of a grouping layer, numerically.
 
 Plan ``.claude/plan-compare-to-reference.md``; doc
@@ -42,10 +42,10 @@ from scistackplot import (
     plot_data,
     resolve,
 )
-from scistackplot.compare import NO_REFERENCE, NOT_POSITIVE, RAGGED, plan_comparison
-from scistackplot.reduce import _plan, clear_plan_cache, planned_y_limits
-from scistackplot.resolved import COLOR, X, Y, Y_HIGH, Y_LOW
-from scistackplot.roles import complete_assignment
+from scistackplot.reduce.compare import NO_REFERENCE, NOT_POSITIVE, RAGGED, plan_comparison
+from scistackplot.reduce.resolve import _plan, clear_plan_cache, planned_y_limits
+from scistackplot.reduce.resolved import COLOR, X, Y, Y_HIGH, Y_LOW
+from scistackplot.model.roles import complete_assignment
 
 #: "Save data"'s header for a compared M (`compare.value_column`).
 DIFF_COLUMN = "\u0394 M (from session s1)"

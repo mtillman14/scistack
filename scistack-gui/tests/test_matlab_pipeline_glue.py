@@ -5,7 +5,7 @@ cleanup-audit F17: the single-node command passed ``glue=`` to its
 glued step ran on unreshaped input when run as part of a pipeline.
 """
 
-from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
 VARIANTS = [
     {

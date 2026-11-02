@@ -38,7 +38,7 @@ def sync_libraries(db) -> dict:
     from scidb.library import read_library
     from scidb.names import library_packages
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     report: dict[str, list] = {
         "seeded": [], "resynced": [], "unchanged": [], "orphaned": [], "errors": [],
@@ -85,7 +85,7 @@ def local_pipeline_ids(db, library: str, document: dict) -> dict[str, str]:
     (``ids.library_pipeline_id``) only for a document pipeline no row
     claims (a library seeded here for the first time)."""
     from scistack_gui import ids
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     recorded = {
         r["doc_pipeline_id"]: r["pipeline_id"]
@@ -107,8 +107,9 @@ def local_pipeline_ids(db, library: str, document: dict) -> dict[str, str]:
 
 def _sync_one(db, lp) -> str:
     """Seed, re-sync or leave one library pipeline; returns which."""
-    from scistack_gui import ids, library_lock
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui import ids
+    from scistack_gui.stores import library_lock
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.services import canvas_snapshot
 
     from scidb.names import authored_libraries
@@ -185,7 +186,7 @@ def list_libraries(db) -> list[dict]:
     from scidb.library import read_library
     from scidb.names import authored_libraries, library_packages
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     authored = authored_libraries()
     out = []
@@ -229,7 +230,7 @@ def suggest_key_map(db, pipeline_id: str) -> dict:
     from scidb.library import read_library
     from scidb.schema_map import KeyMap
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     owner = ps.library_owner(db, pipeline_id)
     if owner is None:
@@ -253,7 +254,7 @@ def _requirements(db, pipeline_id: str) -> "tuple[dict, set[str], set[str]]":
     """``(owner, parameter names, PathInput names)`` the library pipeline
     *pipeline_id* (and the library pipelines it places) refers to. Read from
     the seeded canvas: the nodes are the requirements."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     owner = ps.library_owner(db, pipeline_id)
     if owner is None:
@@ -283,7 +284,7 @@ def placement_check(db, pipeline_id: str) -> dict:
     runs resolve those nodes by name in the project's registry)."""
     from scidb.library import read_library
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import path_input_display
 
     owner, params, pis = _requirements(db, pipeline_id)
@@ -379,7 +380,7 @@ def on_placed(db, child_pipeline_id: str) -> dict:
     (E7): Parameters with the library's defaults, PathInputs with its
     templates and no root. A name the project has is left as it is (D1).
     ``{}`` for a pipeline no library owns."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     if ps.library_owner(db, child_pipeline_id) is None:
         return {}
@@ -397,8 +398,8 @@ def unwired_step_values(db, pipeline_ids) -> list[dict]:
     through ``domain.edge_view.effective_edges``, the one owner): an edge the
     user removed (hidden, kept) does not wire an input. One owner for E1's
     tunables and E8's report."""
-    from scistack_gui import registry
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.project import registry
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.domain.edge_view import effective_edges
     from scistack_gui.ids import handle_name, strip_placement
 
@@ -427,7 +428,7 @@ def unwired_step_values(db, pipeline_ids) -> list[dict]:
 def parameter_users(db) -> dict[str, list[str]]:
     """``{Parameter name: [libraries whose pipelines use it]}`` (E6), from
     the requirements of every library pipeline here (O18)."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     users: dict[str, set[str]] = {}
     for row in ps.list_library_pipelines(db):
@@ -441,7 +442,7 @@ def parameter_users(db) -> dict[str, list[str]]:
 
 
 def _use(db, use_id: str) -> dict:
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     use = next((u for u in ps.get_pipeline_uses(db) if u["use_id"] == use_id), None)
     if use is None:
@@ -469,8 +470,8 @@ def tunables(db, use_id: str) -> dict:
     * ``key_map``: this placement's schema-key mapping."""
     from scidb.library import read_library
 
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui import registry
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import path_input_display
 
     use = _use(db, use_id)
@@ -529,7 +530,7 @@ def project_tunables(db) -> list[dict]:
     project, nested ones included -- ``{"use_id", "path", ...tunables}``,
     ``path`` = pipeline names from the top. View only: edits go through the
     placement (:func:`set_step_value`), the one owner of its values."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     pipelines = {p["pipeline_id"]: p["name"] for p in ps.list_all_pipelines(db)}
     uses = ps.get_pipeline_uses(db)
@@ -565,7 +566,7 @@ def set_step_value(db, use_id: str, key: str, value) -> dict:
     """E3: this placement's value for step value *key* (``"fn.param"``,
     the scidb ``PipelineBinding`` key, O22), written to its binding (O21).
     The next run of the placement uses it."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     use = _use(db, use_id)
     if key not in _step_value_keys(db, use):
@@ -585,8 +586,8 @@ def promote_step_value(db, use_id: str, key: str, parameter: str) -> dict:
     the step value's current value, and the placement pointed at it -- a
     REFERENCE in the binding, never a copy of the value (O21). Editing the
     Parameter then changes this placement."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui import registry
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.project import registry
     from scistack_gui.services.parameter_service import create_parameter
 
     use = _use(db, use_id)
@@ -611,7 +612,7 @@ def resolved_binding_params(params: "dict | None") -> dict:
     """A binding's ``params`` as the backend binds them: a Parameter
     REFERENCE (``{"parameter": name}``, E5) becomes the project's Parameter
     (an ``EachOf``, so every value runs); plain values pass through."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     out = {}
     for key, value in (params or {}).items():
@@ -632,8 +633,8 @@ def missing_roots(db, pipeline_id: str) -> list[str]:
     """D2: the PathInputs a library pipeline in *pipeline_id*'s closure
     reads that have no root folder here yet (a library carries templates,
     never where one project's files are)."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui import registry
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import path_input_display
 
     pis = registry.get_path_inputs_registry()

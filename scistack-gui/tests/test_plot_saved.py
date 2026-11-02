@@ -129,7 +129,7 @@ def test_saving_onto_another_plots_name_is_a_question(populated_db):
 def test_opening_writes_no_variant_pins(populated_db):
     """The panel persists pins when its spec's variant_sets change; a second
     writer here would give that concept two owners."""
-    from scistack_gui import intent_store
+    from scistack_gui.stores import intent_store
 
     spec = _spec(populated_db)
     plot_id = saved_plot_service.save(populated_db, "RawSignal", "A", spec, None)["plot"]["plot_id"]
@@ -276,7 +276,7 @@ def test_follow_latest_over_both_transports(client, populated_db):
 def test_stored_variant_pins_never_carry_a_freeze(populated_db):
     """Pins are every NEW plot's default; a saved plot's frozen version must
     not leak into them."""
-    from scistack_gui import intent_store
+    from scistack_gui.stores import intent_store
 
     intent_store.set_variant_selections(
         populated_db,

@@ -37,8 +37,8 @@ from scistackplot import (
     resolve,
     validate,
 )
-from scistackplot.resolved import Y
-from scistackplot.variants import VARIABLE_COLUMN, VARIANT_FACTOR
+from scistackplot.reduce.resolved import Y
+from scistackplot.reduce.variants import VARIABLE_COLUMN, VARIANT_FACTOR
 
 
 def _two_variable_source() -> DataFrameSource:

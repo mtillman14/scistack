@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from scidb import BaseVariable, for_each
 
-from scistack_gui import registry as _registry
+from scistack_gui.project import registry as _registry
 from scistack_gui.domain.graph_builder import build_function_nodes
 from conftest import RawSignal
 
@@ -72,14 +72,14 @@ def test_handles_follow_the_recorded_outputs_order(populated_db):
     in that order (domain.output_order, from _run_outputs). Until 2026-10-28
     graph_builder sorted them alphabetically, so a split's tooltip and picker
     paired groups with the wrong outputs. A later run in the other order wins."""
-    from scistack_gui.api.pipeline import _build_graph
+    from scistack_gui.services.graph_service import build_graph
 
     _run_two_outputs([OrderTen, OrderSix])
-    graph = _build_graph(populated_db, "main", run_states=False)
+    graph = build_graph(populated_db, "main", run_states=False)
     assert _node(graph, "two_outputs")["data"]["output_types"] == ["OrderTen", "OrderSix"]
 
     _run_two_outputs([OrderSix, OrderTen])
-    graph = _build_graph(populated_db, "main", run_states=False)
+    graph = build_graph(populated_db, "main", run_states=False)
     assert _node(graph, "two_outputs")["data"]["output_types"] == ["OrderSix", "OrderTen"]
 
 
@@ -88,12 +88,12 @@ def test_canvas_run_of_a_two_output_function_writes_both(client, monkeypatch, po
     outputs in one call, in the node's handle order. Until 2026-10-28 it made
     one call writing one output ([['OrderTen']], user run), so the second
     output was never written (execution_service.run_output_types)."""
-    from scistack_gui.api.pipeline import _build_graph
-    from scistack_gui.api import run as run_api
+    from scistack_gui.services.graph_service import build_graph
+    from scistack_gui.services import run_service as run_api
 
     _run_two_outputs([OrderTen, OrderSix])
     _registry._functions["two_outputs"] = two_outputs
-    handles = _node(_build_graph(populated_db, "main", run_states=False), "two_outputs")[
+    handles = _node(build_graph(populated_db, "main", run_states=False), "two_outputs")[
         "data"
     ]["output_types"]
     calls: list[list[str]] = []
@@ -124,7 +124,7 @@ def test_matlab_split_function_draws_class_handles_in_recorded_order():
     variables (a for_columns split). It draws one handle per output CLASS in
     recorded order; before 2026-10-28 it drew only the signature's handle and
     the second variable's edge had nowhere to attach."""
-    from scistack_gui.api.pipeline import matlab_class_handle_functions
+    from scistack_gui.services.graph_service import matlab_class_handle_functions
 
     recorded = {"matlab_split": [["OrderTen", "OrderSix"]], "matlab_plain": [["Time"]]}
     order = {"matlab_split": ["result"], "matlab_plain": ["time"]}
@@ -143,7 +143,7 @@ def test_matlab_split_function_draws_class_handles_in_recorded_order():
         run_states={},
         matlab_functions={"matlab_split"},
         saved_configs={"matlab_split": None},
-        # What _build_graph passes once the function is a class-handle one.
+        # What build_graph passes once the function is a class-handle one.
         matlab_output_order={},
         matlab_param_to_class={},
         recorded_output_orders=recorded,
@@ -186,7 +186,7 @@ def test_run_output_types_follows_the_record():
 
 
 def test_manual_edges_come_back_in_drawn_order(populated_db):
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     for i, target in enumerate(["var__Z", "var__A", "var__M"]):
         pipeline_store.write_manual_edge(
@@ -201,7 +201,7 @@ def test_manual_edges_come_back_in_drawn_order(populated_db):
 def test_matlab_command_lists_outputs_in_the_owner_order():
     """With history, a MATLAB run's outputs cell follows the order passed as
     output_types (domain.output_order), not variant-row order."""
-    from scistack_gui.api.matlab_command import generate_matlab_command
+    from scistack_gui.services.matlab_command_format import generate_matlab_command
 
     variants = [
         {"input_types": {"t": "Walks"}, "output_type": "SixMWT", "constants": {}},
@@ -249,11 +249,11 @@ def _code_run(n, outputs):
 
 def _canvas_run(client, monkeypatch, db, label, fn):
     """(node handles, [outputs of each for_each call]) for a canvas Run."""
-    from scistack_gui.api import run as run_api
-    from scistack_gui.api.pipeline import _build_graph
+    from scistack_gui.services import run_service as run_api
+    from scistack_gui.services.graph_service import build_graph
 
     _registry._functions[label] = fn
-    handles = _node(_build_graph(db, "main", run_states=False), label)["data"]["output_types"]
+    handles = _node(build_graph(db, "main", run_states=False), label)["data"]["output_types"]
     calls: list[list[str]] = []
     monkeypatch.setattr(
         run_api,
@@ -314,7 +314,7 @@ def test_6_matlab_signature_reordered_after_a_run_maps_by_name():
     """A run of `function [time, force] = f` wrote [Time, Force]; the .m is
     then edited to `[force, time]`. Each name keeps its variable, and the
     MATLAB outputs cell follows the NEW signature (MATLAB pairs by position)."""
-    from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+    from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
     from scistack_gui.domain.output_order import matlab_output_order
 
     by_name = {"f": {"time": "Time", "force": "Force"}}

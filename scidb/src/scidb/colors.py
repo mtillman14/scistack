@@ -24,7 +24,7 @@ READS as, a colour is how it is PAINTED — two concepts, two owners.
 
 This module reads, checks the SHAPE of, and writes the project layer. A
 colour's text is kept as text: what a colour may be written as is
-``scistackplot.colors.parse_color``'s (scidb cannot import scistackplot), and
+``scistackplot.text.colors.parse_color``'s (scidb cannot import scistackplot), and
 the GUI's writer canonicalises through it before calling
 :func:`render_colors_table`. The merge with a plot's own pins and the
 painting are scistackplot's. See docs/claude/plot-colors.md.

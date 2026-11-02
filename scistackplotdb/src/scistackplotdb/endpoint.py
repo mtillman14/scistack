@@ -2,7 +2,7 @@
 Turning a ``PlotSpec`` into a pipeline endpoint.
 
 The GUI's "Add to pipeline" produces two things: a ``plot_`` function (generated
-by ``scistackplot.codegen`` — literal seaborn, no runtime dependency on this
+by ``scistackplot.export.codegen`` — literal seaborn, no runtime dependency on this
 package) and the ``for_each`` call that runs it. This module owns the second
 half, and with it the one translation that has to be exactly right:
 
@@ -26,9 +26,9 @@ from dataclasses import dataclass, field
 from scistacklog import Log
 from scistackplot import LongTable, PlotSpec, default_function_name
 from scistackplot import generate_plot_function
-from scistackplot.codegen import group_param, variant_params
-from scistackplot.roles import fanout_keys
-from scistackplot.variants import defined_sets
+from scistackplot.export.codegen import group_param, variant_params
+from scistackplot.model.roles import fanout_keys
+from scistackplot.reduce.variants import defined_sets
 
 from .load import LATEST_COLUMN
 from .text_fields import base_variable
@@ -147,7 +147,7 @@ def _pin_literal(value) -> str:
 
 def row_expression(input_variable: str, variant_set, table=None) -> str:
     """One variant ROW as a ``Variant(...)`` load — through the row's
-    EFFECTIVE selection (``scistackplot.variants.export_selection``), so the
+    EFFECTIVE selection (``scistackplot.reduce.variants.export_selection``), so the
     exported code loads what the preview drew: current code for a row that
     names none, the frozen version for a reopened saved plot.
 
@@ -156,7 +156,7 @@ def row_expression(input_variable: str, variant_set, table=None) -> str:
     """
     from types import SimpleNamespace
 
-    from scistackplot.variants import export_selection
+    from scistackplot.reduce.variants import export_selection
 
     # The TABLE's default, exactly what the preview applied: a table with
     # none (nothing superseded) exports its rows as written.

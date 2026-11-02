@@ -1,7 +1,7 @@
 """
 Renderers.
 
-Both take a fully reduced :class:`~scistackplot.resolved.ResolvedPlot` and only
+Both take a fully reduced :class:`~scistackplot.reduce.resolved.ResolvedPlot` and only
 translate it. matplotlib is the export and pipeline path (it returns the
 ``Figure`` a scidb ``plot_`` endpoint must return); plotly is the interactive
 path (it returns a plotly.js figure dict for the webview).

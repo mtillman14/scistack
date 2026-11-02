@@ -225,7 +225,7 @@ class TestGlueChainHeadKinds:
 # ---------------------------------------------------------------------------
 class TestGlueIsNotAStep:
     def test_glue_nodes_are_not_scope_function_nodes(self, client, populated_db):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
         from scistack_gui.services.execution_service import _scope_function_node_ids
 
         before = _scope_function_node_ids(populated_db, "main")
@@ -241,7 +241,7 @@ class TestGlueIsNotAStep:
     def test_build_backend_pipeline_step_count_is_unchanged_by_glue(
         self, client, populated_db
     ):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,
@@ -261,7 +261,7 @@ class TestGlueIsNotAStep:
         assert _step_count() == before
 
     def test_the_run_route_refuses_a_glue_node(self, client, populated_db):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         pipeline_store._upsert_node(
             populated_db, "glue-node-3", GLUE_NODE_TYPE, "glue_z", "main"
@@ -315,13 +315,13 @@ class TestGluePanelRoundTrip:
         assert path.read_text() == new_body
         # 2. ...and the live registry now holds the NEW body, which is what
         #    makes the consuming function's glue hash move.
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         assert registry.get_function("glue_scale")(3) == 6
 
     def test_editing_the_body_changes_the_glue_hash(self, client, glue_project):
         from scidb.glue import GlueSpec
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         client.post("/api/glue", json={"name": "shift"})
         before = GlueSpec(name="glue_shift", fn=registry.get_function("glue_shift")).hash
@@ -341,7 +341,7 @@ class TestGluePanelRoundTrip:
         assert before != after
 
     def test_a_bad_body_is_rejected_and_rolled_back(self, client, glue_project):
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         client.post("/api/glue", json={"name": "ok_one"})
         path = Path(client.get("/api/glue/glue_ok_one").json()["path"])
@@ -363,7 +363,7 @@ class TestGluePanelRoundTrip:
     def test_delete_removes_the_node_but_never_the_file(
         self, client, glue_project, populated_db
     ):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         created = client.post("/api/glue", json={"name": "keepme"}).json()
         path = Path(created["path"])
@@ -460,7 +460,7 @@ class TestMatlabRunCommandCarriesGlue:
     silently dropped (2026-09-10)."""
 
     def test_matlab_glue_becomes_a_handle(self):
-        from scistack_gui.api.matlab_command import _format_glue_struct
+        from scistack_gui.services.matlab_command_format import _format_glue_struct
 
         src = _format_glue_struct(
             {"emg": [{"name": "glue_a", "language": "matlab", "source_file": "/a.m"}]}
@@ -471,7 +471,7 @@ class TestMatlabRunCommandCarriesGlue:
         """Python glue reaches a MATLAB run only on a constant-fed param,
         where prepare applies it. MATLAB cannot make a handle for it, and the
         bridge has no registry — so it crosses as name + file."""
-        from scistack_gui.api.matlab_command import _format_glue_struct
+        from scistack_gui.services.matlab_command_format import _format_glue_struct
 
         src = _format_glue_struct(
             {
@@ -491,13 +491,13 @@ class TestMatlabRunCommandCarriesGlue:
         assert src.startswith("struct('config', {{") and src.endswith("}})")
 
     def test_no_glue_emits_no_option(self):
-        from scistack_gui.api.matlab_command import _format_glue_struct
+        from scistack_gui.services.matlab_command_format import _format_glue_struct
 
         assert _format_glue_struct(None) == ""
         assert _format_glue_struct({}) == ""
 
     def test_the_generated_command_contains_the_glue_option(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filterDelsys",
@@ -545,13 +545,13 @@ class TestRenamedGluePort:
 
         from scifor.signature import Argument
 
-        from scistack_gui.api import pipeline as pipeline_api
+        from scistack_gui.services import graph_service as pipeline_api
         from scistack_gui.domain.edge_view import _on_missing_port
 
         arguments = [
             Argument(p, inspect.Parameter.POSITIONAL_OR_KEYWORD) for p in params
         ]
-        monkeypatch.setattr(pipeline_api, "_fn_arguments", lambda n: arguments)
+        monkeypatch.setattr(pipeline_api, "fn_arguments", lambda n: arguments)
         manual_nodes = {"g1": _glue_node("glue_cfg")}
         edges = [
             _edge("e_old", "param__config", "g1", "in__value"),

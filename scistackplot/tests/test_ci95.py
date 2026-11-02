@@ -3,7 +3,7 @@
 Regression for the divergence found 2026-09-27 (statistics plan, Stage 1):
 the preview drew ``1.96 · SEM`` and the exported code drew seaborn's bootstrap
 ``("ci", 95)``. The formula's one owner is now ``csvstats.descriptive``;
-``scistackplot.spread`` only draws "no interval" as zero width. The reference
+``scistackplot.reduce.spread`` only draws "no interval" as zero width. The reference
 values are hand-checked t quantiles, so a return to 1.96 fails at n = 2 and 5.
 """
 
@@ -15,11 +15,11 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, resolve
-from scistackplot.codegen import generate_plot_function
-from scistackplot.resolved import X, Y, Y_HIGH, Y_LOW
-from scistackplot.series_stats import position_stats
-from scistackplot.spec import Aggregation, ErrorBand, PlotKind, PlotSpec, Role, Statistic
-from scistackplot.spread import QUANTILE_METHOD, SD_DDOF, ci95_spread, sem_spread
+from scistackplot.export.codegen import generate_plot_function
+from scistackplot.reduce.resolved import X, Y, Y_HIGH, Y_LOW
+from scistackplot.reduce.series_stats import position_stats
+from scistackplot.model.spec import Aggregation, ErrorBand, PlotKind, PlotSpec, Role, Statistic
+from scistackplot.reduce.spread import QUANTILE_METHOD, SD_DDOF, ci95_spread, sem_spread
 
 matplotlib.use("Agg")
 

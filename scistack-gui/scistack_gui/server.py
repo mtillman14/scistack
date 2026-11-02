@@ -90,7 +90,7 @@ _DEBUGGER_STATUS = _start_debugger()
 
 def _send(obj: dict) -> None:
     """Write a JSON-RPC message to stdout (thread-safe with notify._lock)."""
-    from scistack_gui.notify import _lock
+    from scistack_gui.runtime.notify import _lock
 
     msg = json.dumps(obj)
     with _lock:
@@ -193,7 +193,7 @@ _PLOT_ONLY = False
 #: A method declared so that then forgets to wrap its own database access
 #: will fail with a closed connection rather than silently working, because
 #: this server closes the connection whenever the refcount hits zero. The
-#: single-function run (``api/run.start_run``) is a different arrangement:
+#: single-function run (``run_service.start_run``) is a different arrangement:
 #: it acquires *in addition to* the blanket hold and hands the hold off to
 #: its thread, so it is not in this set.
 SELF_MANAGED_DB_METHODS = self_managed(ALL_HANDLERS)
@@ -361,7 +361,7 @@ def _handle_request(req: dict) -> None:
     """
     from scidb.log import Log
 
-    from scistack_gui.db import (
+    from scistack_gui.runtime.db import (
         DatabaseLockedError,
         acquire_db_connection,
         release_db_connection,
@@ -504,11 +504,11 @@ def _serve_stdin() -> None:
     Each request is handled in its own thread so a long call (``start_run``,
     a figure save) doesn't stop the loop reading the next one.
 
-    Lines come from :func:`scistack_gui.stdin_reader.request_lines`, never
+    Lines come from :func:`scistack_gui.runtime.stdin_reader.request_lines`, never
     from iterating the stdin stream: on Windows a read left pending on the
     pipe stalls every first-time native import on those request threads.
     """
-    from scistack_gui.stdin_reader import request_lines
+    from scistack_gui.runtime.stdin_reader import request_lines
 
     logger.info("Server ready, waiting for requests on stdin...")
     for line in request_lines():
@@ -554,7 +554,7 @@ def _run_plot_only(t0: float, log_file: "Path | None") -> None:
 
     Log.bridge_python_logging()
 
-    from scistack_gui.notify import enable
+    from scistack_gui.runtime.notify import enable
 
     enable()
 
@@ -641,12 +641,12 @@ def main():
     # narrow-hold helper be a real acquire here and a no-op in the standalone
     # FastAPI process, where the connection is held for the life of the process
     # and releasing it would close the one every later request depends on.
-    from scistack_gui.db import set_connection_policy
+    from scistack_gui.runtime.db import set_connection_policy
 
     set_connection_policy("per_request")
 
     if args.project_root is not None:
-        from scistack_gui.config import set_project_root_hint
+        from scistack_gui.project.config import set_project_root_hint
 
         set_project_root_hint(args.project_root)
 
@@ -722,11 +722,11 @@ def main():
 
     # Import user code first (same order as __main__.py) so that
     # configure_database() can auto-register the user's variable classes.
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     if args.project:
         # Project mode: load scistack.toml
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         try:
             _send_progress("Loading project config...")
@@ -743,7 +743,7 @@ def main():
             )
             # Load MATLAB registry if MATLAB config is present.
             if config.has_matlab:
-                from scistack_gui import matlab_registry
+                from scistack_gui.matlab import registry as matlab_registry
 
                 _send_progress(
                     f"Loading MATLAB registry ({len(config.matlab_functions)} "
@@ -818,7 +818,7 @@ def main():
         # (more commonly, for a loose-scripts project) a folder scan of the
         # database's directory. Never fatal — an empty registry here is no
         # worse than today's default of not discovering anything at all.
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         try:
             _send_progress("Auto-discovering pipeline code...")
@@ -834,7 +834,7 @@ def main():
                 f"{len(result['variables'])} variables"
             )
             if config.has_matlab:
-                from scistack_gui import matlab_registry
+                from scistack_gui.matlab import registry as matlab_registry
 
                 matlab_result = matlab_registry.load_from_config(config)
                 logger.info(
@@ -850,7 +850,7 @@ def main():
             logger.warning("Auto-discovery failed (%s); starting with an empty registry.", e)
 
     # Initialise the database (create if missing and schema keys supplied)
-    from scistack_gui.db import create_db, init_db
+    from scistack_gui.runtime.db import create_db, init_db
 
     _send_progress("Opening database...")
     try:
@@ -902,14 +902,14 @@ def main():
     Log.bridge_python_logging()
 
     # Enable JSON-RPC notifications on stdout
-    from scistack_gui.notify import enable
+    from scistack_gui.runtime.notify import enable
 
     enable()
 
     # Phase 8: project-open diagnostics. A problem is recorded in
-    # scistack_gui.startup; the frontend picks it up via the next
+    # scistack_gui.project.startup; the frontend picks it up via the next
     # `get_info` call.
-    from scistack_gui import startup as _startup
+    from scistack_gui.project import startup as _startup
 
     if registry._config is not None:
         _startup.check_config_paths(registry._config)
@@ -921,7 +921,7 @@ def main():
     # Release the DuckDB file lock now that startup is complete. It will be
     # reacquired automatically when the first request arrives. This allows
     # MATLAB (or any other process) to open the same database immediately.
-    from scistack_gui.db import close_initial_connection
+    from scistack_gui.runtime.db import close_initial_connection
 
     close_initial_connection()
     logger.info("DB connection released after startup — MATLAB can now access the file")

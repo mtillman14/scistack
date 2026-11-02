@@ -28,10 +28,10 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.bins import BARS_SOURCE, DENSITY_SPECIAL_NOTE
-from scistackplot.reduce import clear_plan_cache
-from scistackplot.resolved import BIN_KIND, BIN_LABEL, COUNT, X_HIGH, X_LOW, Y, Y_BASE
-from scistackplot.spec import HistogramOptions as Options
+from scistackplot.reduce.bins import BARS_SOURCE, DENSITY_SPECIAL_NOTE
+from scistackplot.reduce.resolve import clear_plan_cache
+from scistackplot.reduce.resolved import BIN_KIND, BIN_LABEL, COUNT, X_HIGH, X_LOW, Y, Y_BASE
+from scistackplot.model.spec import HistogramOptions as Options
 
 
 @pytest.fixture(autouse=True)

@@ -24,13 +24,13 @@ re-parse needs no MATLAB, only the file.
 
 from __future__ import annotations
 
-import scistack_gui.registry as _registry
-from scistack_gui import config as config_mod
+import scistack_gui.project.registry as _registry
+from scistack_gui.project import config as config_mod
 
 
 def _project(tmp_path, body):
     """A loose project whose Python entities file contains *body*."""
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     entities = tmp_path / "entities.py"
     entities.write_text(body)
@@ -41,7 +41,7 @@ def _project(tmp_path, body):
 
 
 def _rescan():
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     _registry.load_from_config(config_mod.load_config(None, get_db_path()))
 
@@ -205,7 +205,7 @@ class TestReadOnlyRoundTrip:
     ):
         """Confinement is the contract, not a soft preference: the foreign
         file must be byte-identical afterwards."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
         from scistack_gui.services.parameter_service import update_parameter
 
         other = tmp_path / "params.py"
@@ -288,7 +288,7 @@ class TestMatlabEntitiesRoundTrip:
     def test_parameter_value_rewrite(self, tmp_path):
         from scidb.source_edit import splice
 
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_parameter_literal,
             find_entities_binding,
             read_source_text,
@@ -319,7 +319,7 @@ class TestMatlabEntitiesRoundTrip:
     def test_path_input_rewrite(self, tmp_path):
         from scidb.source_edit import splice
 
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_path_input_literal,
             find_entities_binding,
             read_source_text,
@@ -347,8 +347,10 @@ class TestMatlabEntitiesRoundTrip:
         and confirm the GUI-visible object matches."""
         from scidb.source_edit import splice
 
-        from scistack_gui import matlab_registry, registry
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab import registry as matlab_registry
+
+        from scistack_gui.project import registry
+        from scistack_gui.matlab.parser import (
             find_entities_binding,
             read_source_text,
             render_matlab_parameter,

@@ -28,7 +28,7 @@ beside ``name``, so a level literally called ``name`` is not ambiguous.
 
 Display only: nothing here changes which rows are drawn or their order.
 A plot may override any entry (``PlotSpec.aliases``, scistackplot); the merge
-and the application are ``scistackplot.aliases``'. This module reads, checks
+and the application are ``scistackplot.text.aliases``'. This module reads, checks
 and writes the project layer — see docs/claude/plot-text-and-labels.md.
 
 Why scidb owns it

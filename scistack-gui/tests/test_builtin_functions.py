@@ -9,13 +9,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scistack_gui import registry
+from scistack_gui.project import registry
 from scistack_gui.services import builtin_function_service as svc
 
 
 @pytest.fixture(autouse=True)
 def _clean_matlab_registry():
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
 
     matlab_registry._matlab_functions.clear()
     matlab_registry._matlab_variables.clear()
@@ -199,7 +199,7 @@ class TestMatlabBuiltin:
         assert result["ok"] is True
         assert result["name"] == "mean"
 
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         assert matlab_registry.is_matlab_function("mean")
         info = matlab_registry.get_matlab_function("mean")
@@ -216,7 +216,7 @@ class TestMatlabBuiltin:
         result = svc.create_builtin_function("matlab", "not_a_real_fn")
         assert result["ok"] is False
 
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         assert not matlab_registry.is_matlab_function("not_a_real_fn")
 
@@ -258,7 +258,7 @@ class TestMatlabBuiltin:
         monkeypatch.setattr(svc.subprocess, "run", lambda *a, **k: FakeResult())
         svc.create_builtin_function("matlab", "mean")
 
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         matlab_registry._matlab_functions.clear()
         assert not matlab_registry.is_matlab_function("mean")

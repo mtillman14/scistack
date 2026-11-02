@@ -19,7 +19,7 @@ from scistackplot import (
     rc_params,
     resolve_sizes,
 )
-from scistackplot.textsize import (
+from scistackplot.text.textsize import (
     BANDS,
     CEILING,
     FLOOR,

@@ -21,8 +21,8 @@ import pandas as pd
 import pytest
 
 from scistackplot import DataFrameSource, PlotSpec, Role, resolve, resolve_one
-from scistackplot import reduce as reduce_mod
-from scistackplot.spec import FacetOptions, PlotKind
+from scistackplot.reduce.resolve import resolve as reduce_mod
+from scistackplot.model.spec import FacetOptions, PlotKind
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +105,7 @@ def test_stacking_two_measures_produces_one_value_column(two_measure_source):
     stacking on a CSV or DataFrame source had never once worked. The scidb path
     has its own `_stacked_table`, which is why only the standalone sources were
     affected and nothing noticed. Found 2026-09-11."""
-    from scistackplot.variants import VARIABLE_COLUMN
+    from scistackplot.reduce.variants import VARIABLE_COLUMN
 
     stacked = two_measure_source.get_table(["Signal", "Other"])
     frame = stacked.frame
@@ -277,7 +277,7 @@ def test_a_cached_plan_still_uses_the_NEW_facet_grid(struct_table):
 
 
 def test_changing_a_filter_rebuilds_the_plan(series_table, monkeypatch):
-    from scistackplot.spec import Filter
+    from scistackplot.model.spec import Filter
 
     calls = _count_plans(monkeypatch)
 
@@ -320,7 +320,7 @@ def test_a_different_table_is_a_different_plan(series_frame, monkeypatch):
 
 
 def test_the_plan_cache_is_bounded(series_table):
-    from scistackplot.spec import Filter
+    from scistackplot.model.spec import Filter
 
     for subject in ["01", "02", "03"]:
         resolve_one(
@@ -486,7 +486,7 @@ def test_the_first_resolve_reports_an_empty_cache(series_table, caplog):
 
 def test_a_miss_names_the_spec_field_that_changed(series_table, caplog):
     """The diagnosis the 19:25 log could not give: WHICH field churned."""
-    from scistackplot.spec import Filter
+    from scistackplot.model.spec import Filter
 
     with caplog.at_level(logging.INFO, logger="scistackplot"):
         resolve_one(_spec(), series_table, 0)
@@ -503,7 +503,7 @@ def test_a_miss_names_the_spec_field_that_changed(series_table, caplog):
 
 def test_a_miss_names_every_differing_field_up_to_a_cap(series_table, caplog):
     """Bounded: a wholly different spec must not print the whole spec."""
-    from scistackplot.spec import Aggregation, ErrorBand, Filter, Statistic, YAxis
+    from scistackplot.model.spec import Aggregation, ErrorBand, Filter, Statistic, YAxis
 
     with caplog.at_level(logging.INFO, logger="scistackplot"):
         resolve_one(_spec(), series_table, 0)

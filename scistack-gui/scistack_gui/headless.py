@@ -18,7 +18,7 @@ code is discovered:
   then called with ``discovered=False`` and reports what it deferred.
 
 Every service already reads the opened project through the process globals
-``bootstrap`` sets (``scistack_gui.db``, the pinned project root), exactly as
+``bootstrap`` sets (``scistack_gui.runtime.db``, the pinned project root), exactly as
 in a GUI session.
 """
 
@@ -48,7 +48,7 @@ def open_for_import(
 
 def _open(db_path, *, project, discover: bool, schema_keys):
     """Open the project; return (the open database, the bootstrap result)."""
-    from scistack_gui import db as gui_db
+    from scistack_gui.runtime import db as gui_db
     from scistack_gui.bootstrap import open_or_create_project
 
     db_path = Path(db_path)
@@ -58,7 +58,7 @@ def _open(db_path, *, project, discover: bool, schema_keys):
         previous = gui_db.close_db()
         logger.info("[headless] closed %s before opening %s", previous, db_path)
     if project is not None:
-        from scistack_gui.config import set_project_root_hint
+        from scistack_gui.project.config import set_project_root_hint
 
         set_project_root_hint(project)
     result = open_or_create_project(
@@ -104,7 +104,7 @@ def export_open_project(out_path: "Path | str", *, options=None, db=None) -> Pat
     from scidb.bundle import export_project
     from scifor.pathinput import project_root
 
-    from scistack_gui import db as gui_db
+    from scistack_gui.runtime import db as gui_db
 
     db = db if db is not None else gui_db.get_db()
     out = export_project(
@@ -169,7 +169,7 @@ def check_code(db_path: "Path | str", *, project: "Path | None" = None) -> dict:
 
     Returns ``{"unresolved_labels": [...], "functions_loaded",
     "variables_loaded", "warnings": [...]}``."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.services import canvas_snapshot, portability_service
 
     db, result = _open(db_path, project=project, discover=True, schema_keys=None)

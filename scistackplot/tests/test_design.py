@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from scistackplot.design import (
+from scistackplot.model.design import (
     DESIGN_FIELDS,
     SyncClass,
     copy_design,
@@ -13,7 +13,7 @@ from scistackplot.design import (
     design_of,
     unclassified_fields,
 )
-from scistackplot.spec import (
+from scistackplot.model.spec import (
     Aggregation,
     ErrorBand,
     Filter,

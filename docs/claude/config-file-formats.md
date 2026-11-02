@@ -163,7 +163,7 @@ workspace folder), then the database file's folder.
 | `ScidbSource._ordered` → `LongTable.level_order` | plot x axis, colour, facet panels, nested-x plan (plotly + matplotlib) |
 | `render.base.legend_entry_labels` | legend entry order in both renderers (plotly `legendrank`, matplotlib handle order) — NOT draw order, which is panel by panel |
 | `ScidbSource._cache_generation` | drops built plot tables when the declaration changes |
-| `scistackplot.codegen._level_order_lines` | exported seaborn code: `order=`, `hue_order=`, `col_order=`, `row_order=` (filtered to the levels each figure's `df` holds) |
+| `scistackplot.export.codegen._level_order_lines` | exported seaborn code: `order=`, `hue_order=`, `col_order=`, `row_order=` (filtered to the levels each figure's `df` holds) |
 
 **Diagnosing "my levels are alphabetical".** `grep schema_order scistack.log`:
 `[schema_order] using <config> (found from the …)` names the config in use;
@@ -235,7 +235,7 @@ default = "#333333"               # the one colour of a figure with no colour la
 - **Owner:** `scidb.colors` owns the shape. It is read live through
   `DatabaseManager.dataset_colors`, from the same config as `[schema_keys]`
   and `[aliases]`, and mtime-cached.
-  - Colour TEXT is kept as written. `scistackplot.colors.parse_color`
+  - Colour TEXT is kept as written. `scistackplot.text.colors.parse_color`
     decides what it means (and WARNs and drops a bad value at draw time).
   - Unknown things get a WARN.
 - **Not part of `_cache_generation`.** An edit rebuilds no table.
@@ -338,7 +338,7 @@ it — MATLAB classdef stubs sit beside the entities file, so they went to
 `<root>/scistack_matlab_variables` instead of
 `<root>/src/scistack_matlab_variables`. That was the visible symptom.
 
-`scistack_gui.config` routes every read through `_config_path` (Path form) or
+`scistack_gui.project.config` routes every read through `_config_path` (Path form) or
 `_config_pattern` (glob patterns, expanded as text); `scidb.entities`
 resolution goes through the same scifor function. Nothing joins a raw string
 onto the project root directly.
@@ -399,9 +399,9 @@ rto = "Y:/"                  # on the Linux box: "/home/mtillman/mnt/rto"
 
 ## Implementation
 
-- **Parser**: `scistack_gui/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_config_path()`; file name and location: `scifor/discovery.py` `CONFIG_FILENAME`, `config_path_at()`
+- **Parser**: `scistack_gui/project/config.py` — `load_config()`, `resolve_project_root()`, `locate_config_at()`, `_config_path()`; file name and location: `scifor/discovery.py` `CONFIG_FILENAME`, `config_path_at()`
 - **Cross-platform path reading**: `scifor/discovery.py` — `resolve_config_path()`, `normalize_config_separators()`, `is_windows_absolute()`
-- **Machine roots** (one owner): `scifor/machine.py`; startup notice `scistack_gui/startup.py` — `check_machine_config_paths()` via `check_config_paths()`
+- **Machine roots** (one owner): `scifor/machine.py`; startup notice `scistack_gui/project/startup.py` — `check_machine_config_paths()` via `check_config_paths()`
 - **Project creation** (one owner): `scidb/project.py` — `init_project()`, called by `scistack init` and, on database creation, by the GUI's `ensure_project_files(create_new=True)`
 - **Config/entities-file creation on open**: `scistack_gui/services/project_init_service.py` — `ensure_project_files()`, called from `bootstrap.open_or_create_project()` and `server.py`
 - **Writing scistack.toml** (one owner): `scidb/config_file.py` — `render()`, `write()`; every key survives a write

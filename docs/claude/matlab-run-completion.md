@@ -134,7 +134,7 @@ The window in between is covered by leg B, which needs nothing from MATLAB.
 
 ## 4. The watcher
 
-`scistack_gui.matlab_run_watch`, one daemon thread per tracked run. The
+`scistack_gui.matlab.run_watch`, one daemon thread per tracked run. The
 thread observes; `classify()` decides, as a pure function so the verdicts
 are tested without threads or MATLAB.
 
@@ -205,7 +205,7 @@ every run path at once.
 
 **No routing gap here**, which was worth confirming rather than assuming:
 `matlab_run_watch` pushes through `notify.push_message` (JSON-RPC) while
-`api/run` binds `ws.push_message` at import, but `ws.push_message` delegates
+`api/run` binds `ws_hub.push_message` at import, but `ws_hub.push_message` delegates
 to the JSON-RPC one when the extension host is driving. The two converge.
 (Contrast `gui-notification-routing.md` §"A third source", where they do not.)
 

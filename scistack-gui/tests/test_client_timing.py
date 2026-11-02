@@ -62,7 +62,7 @@ def test_the_rpc_is_registered_and_needs_no_database():
 
 
 def test_the_json_rpc_path_answers_without_touching_the_database(monkeypatch, timed):
-    from scistack_gui import db as db_mod
+    from scistack_gui.runtime import db as db_mod
     from scistack_gui import server
 
     def _never(*args, **kwargs):

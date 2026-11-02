@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-import scistack_gui.registry as _registry
+import scistack_gui.project.registry as _registry
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +47,7 @@ def project(tmp_path):
     from scidb import entities
 
     entities.clear_cache()
-    from scistack_gui.config import load_config
+    from scistack_gui.project.config import load_config
 
     config = load_config(tmp_path, tmp_path / "test.duckdb")
     _registry.load_from_config(config)
@@ -67,7 +67,7 @@ def counters(monkeypatch):
 
     monkeypatch.setattr(_registry, "_load_file_modules", counting_modules)
 
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
 
     real_sources = matlab_registry.load_from_sources
 
@@ -163,7 +163,7 @@ class TestNarrowReloadPrunes:
         self, tmp_path
     ):
         (tmp_path / "scistack.toml").write_text("modules = []\n", encoding="utf-8")
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         config = load_config(tmp_path, tmp_path / "test.duckdb")
         _registry.load_from_config(config)
@@ -208,7 +208,7 @@ class TestRefreshParameterSource:
         )
         pushed = []
         monkeypatch.setattr(
-            "scistack_gui.api.ws.push_message", lambda msg: pushed.append(msg)
+            "scistack_gui.runtime.ws_hub.push_message", lambda msg: pushed.append(msg)
         )
 
         layout_service.refresh_parameter_source("SAMPLING_RATE_HZ")
@@ -219,14 +219,14 @@ class TestRefreshParameterSource:
         self, tmp_path, monkeypatch
     ):
         (tmp_path / "scistack.toml").write_text("modules = []\n", encoding="utf-8")
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
         from scistack_gui.services import layout_service
 
         config = load_config(tmp_path, tmp_path / "test.duckdb")
         _registry.load_from_config(config)
         pushed = []
         monkeypatch.setattr(
-            "scistack_gui.api.ws.push_message", lambda msg: pushed.append(msg)
+            "scistack_gui.runtime.ws_hub.push_message", lambda msg: pushed.append(msg)
         )
 
         result = layout_service.refresh_parameter_source("SAMPLING_RATE_HZ")
@@ -290,7 +290,7 @@ class TestGetParametersSourceLocation:
         from scidb import entities
 
         entities.clear_cache()
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
         from scistack_gui.services.layout_service import get_parameters
 
         config = load_config(tmp_path, tmp_path / "test.duckdb")
@@ -318,7 +318,7 @@ class TestDispatch:
         assert called["n"] == 1
 
     def test_dot_m_target_routes_to_the_single_source_reload(self, project, monkeypatch):
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
         from scistack_gui.services import target_file_service
 
         seen = {}

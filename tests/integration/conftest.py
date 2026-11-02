@@ -148,8 +148,8 @@ def attempt(fn, *args, **kwargs):
 def run_summary(for_each_fn, *args, **kwargs):
     """``(result, summary)`` of a ``for_each`` call, the summary being the
     scifor progress event (``completed`` / ``failed`` / ``no_data`` /
-    ``failure_reasons``) — so a test can say WHY a combination did not run
-    instead of only that it did not."""
+    ``failures``) — so a test can say WHY a combination did not run instead
+    of only that it did not (see :func:`failure_reasons`)."""
     summary: dict = {}
 
     def progress(event):
@@ -158,6 +158,12 @@ def run_summary(for_each_fn, *args, **kwargs):
 
     result = for_each_fn(*args, _progress_fn=progress, **kwargs)
     return result, summary
+
+
+def failure_reasons(summary: dict) -> dict[str, int]:
+    """``{reason: count}`` from a summary event's ``failures`` groups
+    (``scifor.failures.groups_to_wire``)."""
+    return {g["reason"]: g["count"] for g in summary.get("failures") or []}
 
 
 @pytest.fixture
@@ -199,11 +205,11 @@ def small_subset() -> dict:
 def as_gui_db():
     """Point the GUI's module-level database at a manager for one test.
 
-    The graph build and the run service read ``scistack_gui.db.get_db()``
+    The graph build and the run service read ``scistack_gui.runtime.db.get_db()``
     rather than taking a manager, because the real process has exactly one;
     the GUI's own conftest sets it the same way.
     """
-    import scistack_gui.db as gui_db
+    import scistack_gui.runtime.db as gui_db
 
     saved = (gui_db._db, gui_db._db_path)
 

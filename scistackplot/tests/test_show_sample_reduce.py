@@ -25,9 +25,9 @@ from scistackplot import (
     Role,
     resolve,
 )
-from scistackplot.resolved import COLOR, SERIES, X, Y
-from scistackplot.spaghetti import overlay_offsets, series_offsets
-from scistackplot.ylimits import ExtentMode
+from scistackplot.reduce.resolved import COLOR, SERIES, X, Y
+from scistackplot.reduce.spaghetti import overlay_offsets, series_offsets
+from scistackplot.reduce.ylimits import ExtentMode
 
 
 @pytest.fixture

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scistack_gui import pipeline_store as ps
-from scistack_gui.db import get_db
+from scistack_gui.stores import pipeline_store as ps
+from scistack_gui.runtime.db import get_db
 
 #: A project module with a uniquely named function. Whether it was IMPORTED is
 #: read from the process (sys.modules, the registry), not from a side effect
@@ -23,7 +23,7 @@ TRIPWIRE = "def tripwire_fn(x):\n    return x\n"
 def _imported(root) -> bool:
     import sys
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     path = str((root / "tripwire.py").resolve())
     in_modules = any(

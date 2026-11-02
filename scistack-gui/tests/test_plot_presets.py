@@ -85,7 +85,7 @@ def test_rename_hide_and_history(populated_db):
 
 
 def test_applying_writes_no_variant_pins(populated_db):
-    from scistack_gui import intent_store
+    from scistack_gui.stores import intent_store
 
     preset_id = plot_preset_service.save(populated_db, "A", _styled(populated_db))["preset"]["preset_id"]
     before = intent_store.variant_selections(populated_db, "FilteredSignal")

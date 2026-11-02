@@ -3,7 +3,7 @@ when code moves between packages (share as library, make my own copy)."""
 
 from __future__ import annotations
 
-from scistack_gui.code_rewrite import rewrite_imports
+from scistack_gui.project.code_rewrite import rewrite_imports
 
 SRC = '''\
 """Doc mentioning gaitlib.filters (never rewritten)."""

@@ -38,7 +38,7 @@ from scistackplot import (
     resolve_one,
 )
 from scistackplot.render.base import shares_y_axis
-from scistackplot.resolved import SERIES, Y, Y_HIGH, Y_LOW
+from scistackplot.reduce.resolved import SERIES, Y, Y_HIGH, Y_LOW
 
 matplotlib = pytest.importorskip("matplotlib")
 
@@ -571,7 +571,7 @@ def test_switching_kind_on_a_cached_plan_recomputes_the_limits(three_level_table
     """LINE -> BAND reuses the plan (deliberately: kind is not in its key) but
     must NOT reuse the line's limits — the band draws mean ± SD, which sits
     outside the observations for small n. Until 2026-09-14 it did."""
-    from scistackplot import reduce as reduce_mod
+    from scistackplot.reduce.resolve import resolve as reduce_mod
 
     reduce_mod._plan_cache.clear()
     # The same roles for both — the plan is keyed by them — so the line is
@@ -591,7 +591,7 @@ def test_switching_kind_on_a_cached_plan_recomputes_the_limits(three_level_table
 
 
 def test_each_extent_mode_is_computed_once(three_level_table, caplog):
-    from scistackplot import reduce as reduce_mod
+    from scistackplot.reduce.resolve import resolve as reduce_mod
 
     reduce_mod._plan_cache.clear()
     collapsed = {"subject": Role.ITERATE, "muscle": Role.FACET, "trial": Role.COLLAPSE}
@@ -666,7 +666,7 @@ def test_a_missing_level_finds_its_own_group():
     """pandas hands a NaN level back as nan, and nan != nan: the entry the
     extents wrote could never be found, so the panel fell back to the global
     range. Both sides now key NaN as None."""
-    from scistackplot.ylimits import GLOBAL_KEY, limits_for, scope_key
+    from scistackplot.reduce.ylimits import GLOBAL_KEY, limits_for, scope_key
 
     limits = {(None,): (1.0, 2.0), ("TA",): (5.0, 6.0), GLOBAL_KEY: (0.0, 9.0)}
     assert scope_key({"muscle": float("nan")}, ["muscle"]) == (None,)
@@ -760,7 +760,7 @@ def test_an_ineligible_scope_factor_is_dropped_at_debug(caplog):
     """It fired WARN on every resolve of an unchanged plot (31x in scistack.log
     2026-10-19); the panel already offers only eligible factors."""
     from scistackplot import LongTable, Role
-    from scistackplot.ylimits import LAYER, eligible_scope
+    from scistackplot.reduce.ylimits import LAYER, eligible_scope
 
     frame = pd.DataFrame({"subject": ["S1", "S2"], "trial": ["1", "1"], "Peak": [1.0, 2.0]})
     table = LongTable.from_frame(frame, factors=["subject", "trial"], measures=["Peak"], name="Peak")

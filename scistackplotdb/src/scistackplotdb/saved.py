@@ -433,14 +433,14 @@ FROZEN_KEY = "frozen_code"
 def _row_masks(spec, table) -> list[tuple[int, Any]]:
     """``[(row_index, mask)]`` — the rows each variant row DRAWS, by the same
     owner and first-match-wins order the figure uses
-    (``scistackplot.variants.row_mask`` / ``apply_variant_sets``).
+    (``scistackplot.reduce.variants.row_mask`` / ``apply_variant_sets``).
 
     With no row concrete, the figure draws an empty row's effective selection;
     that is frozen as row 0 (synthesised on open if the spec has none).
     """
     import pandas as pd
-    from scistackplot.spec import VariantSet
-    from scistackplot.variants import defined_sets, is_stated, row_mask
+    from scistackplot.model.spec import VariantSet
+    from scistackplot.reduce.variants import defined_sets, is_stated, row_mask
 
     frame = table.frame
     if not defined_sets(spec.variant_sets):
@@ -550,8 +550,8 @@ def thaw_code(db, spec, table, frozen_code: dict, *, label: str = ""):
 
     from scidb.provenance_query import function_versions
     from scistackplot import NoteKind, RestoreNote
-    from scistackplot.spec import VariantSet
-    from scistackplot.variants import _ordinal_rank
+    from scistackplot.model.spec import VariantSet
+    from scistackplot.reduce.variants import _ordinal_rank
 
     if not frozen_code:
         return spec, [], []
@@ -640,8 +640,8 @@ def follow_latest_saved_plot(db, plot_id: str, *, table=None) -> SavedPlotInfo:
     from dataclasses import replace
 
     from scistackplot import restore_spec
-    from scistackplot.spec import VariantSet
-    from scistackplot.variants import is_function_axis
+    from scistackplot.model.spec import VariantSet
+    from scistackplot.reduce.variants import is_function_axis
 
     from .load import LATEST_COLUMN
 

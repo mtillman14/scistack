@@ -36,7 +36,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from scistack_gui import history
+from scistack_gui.stores import history
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ def ensure_project_files(
     A ``pyproject.toml`` changes nothing here: it is packaging, never config,
     and the GUI never edits it (2026-10-08).
     """
-    from scistack_gui import config as config_mod
+    from scistack_gui.project import config as config_mod
 
     result = InitResult()
     try:

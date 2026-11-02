@@ -136,7 +136,7 @@ Read half:
   plain script read the same config for the same folder.
 - `resolve_entities_path(root, section)` — the resolution **rule**, split
   out so a caller that already located the config and parsed its section
-  (`scistack_gui.config.load_config`) asks scidb instead of reimplementing
+  (`scistack_gui.project.config.load_config`) asks scidb instead of reimplementing
   it. Three cases, in order: an `entities_file = "..."` key wins; an
   `entities_file = ""` is an explicit opt-out (what the GUI's "clear
   entities file" writes — the only way to stop reading a file that sits at
@@ -158,7 +158,7 @@ Line-level splices, never whole-file regeneration, so comments and
 neighbouring entries survive an edit byte for byte.
 
 Around it:
-- `scistack_gui.registry._load_entities_file` registers the results,
+- `scistack_gui.project.registry._load_entities_file` registers the results,
   **last** in `load_from_config` so a TOML declaration wins over a
   same-named one found in a module — the entities file is what the GUI
   writes, so if the two disagree, what the user just edited is what they

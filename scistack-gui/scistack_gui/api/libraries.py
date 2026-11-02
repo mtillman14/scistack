@@ -99,7 +99,7 @@ def _share_as_library(db, req: ShareRequest) -> dict:
 
 
 def _reload_and_sync(db) -> dict:
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
     from scistack_gui.services.library_service import sync_libraries
     from scistack_gui.services.registry_reload_service import reload_registries_from_disk
 
@@ -110,8 +110,8 @@ def _reload_and_sync(db) -> dict:
 def _add_library(db, req: LibraryName) -> dict:
     import importlib.util
 
-    from scistack_gui.config import add_package
-    from scistack_gui.db import get_db_path
+    from scistack_gui.project.config import add_package
+    from scistack_gui.runtime.db import get_db_path
     from scistack_gui.services.library_service import list_libraries
 
     add_package(get_db_path(), req.name)
@@ -138,8 +138,8 @@ def _add_library(db, req: LibraryName) -> dict:
 
 
 def _remove_library(db, req: LibraryName) -> dict:
-    from scistack_gui.config import remove_package
-    from scistack_gui.db import get_db_path
+    from scistack_gui.project.config import remove_package
+    from scistack_gui.runtime.db import get_db_path
     from scistack_gui.services.library_service import list_libraries
 
     remove_package(get_db_path(), req.name)

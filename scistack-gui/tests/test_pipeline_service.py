@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-import scistack_gui.registry as _registry
+import scistack_gui.project.registry as _registry
 from scistack_gui.services.pipeline_service import (
     get_function_doc,
     get_function_params,
@@ -22,7 +22,7 @@ from scistack_gui.services.pipeline_service import (
 
 @pytest.fixture(autouse=True)
 def _clean_matlab_registry():
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
 
     matlab_registry._matlab_functions.clear()
     yield
@@ -98,8 +98,8 @@ class TestGetFunctionDoc:
         assert "not registered" in result["error"]
 
     def test_matlab_function_returns_signature_and_docstring(self, populated_db):
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         info = MatlabFunctionInfo(
             name="bandpass_filter",
@@ -119,8 +119,8 @@ class TestGetFunctionDoc:
         assert result["docstring"] == "BANDPASS_FILTER  Apply a bandpass filter."
 
     def test_matlab_function_multiple_outputs_signature(self, populated_db):
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         info = MatlabFunctionInfo(
             name="decompose",
@@ -137,8 +137,8 @@ class TestGetFunctionDoc:
         assert result["docstring"] is None
 
     def test_matlab_function_no_outputs_signature(self, populated_db):
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         info = MatlabFunctionInfo(
             name="plot_results",

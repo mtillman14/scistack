@@ -16,16 +16,16 @@ from typing import Any, Callable, Hashable, Protocol, runtime_checkable
 
 from scistacklog import Log
 
-from ..dedup import SingleFlight
-from ..framesize import format_extent, frame_extent
-from ..spec import FactorVariable
-from ..table import LongTable
+from .dedup import SingleFlight
+from ..text.framesize import format_extent, frame_extent
+from ..model.spec import FactorVariable
+from ..model.table import LongTable
 
 LAYER = "scistackplot"
 
 #: Guards the lazy per-source attributes below. A plain ``getattr``-or-create is
 #: not safe here: the server runs a thread per request and several arrive together
-#: (see :mod:`scistackplot.dedup`), so two threads could each build their own
+#: (see :mod:`scistackplot.sources.dedup`), so two threads could each build their own
 #: ``SingleFlight`` and then let the builds race — defeating the deduplication
 #: entirely, silently, and only under load.
 _LAZY_LOCK = threading.Lock()
@@ -411,7 +411,7 @@ class BaseSource:
         a CSV or DataFrame source never worked at all — found 2026-09-11 by the
         first test to ask for it.
         """
-        from ..variants import VARIABLE_COLUMN
+        from ..reduce.variants import VARIABLE_COLUMN
 
         primary = measures[0]
         frame = table.frame

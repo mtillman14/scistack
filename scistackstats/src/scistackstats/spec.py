@@ -1,7 +1,7 @@
 """StatsSpec: everything a StatStudio table is, as data (S10, S16, S18).
 
 - ``design`` is a plot-layer :class:`~scistackplot.PlotSpec`, the design
-  carrier (S11). Only its design fields (``scistackplot.design``) mean
+  carrier (S11). Only its design fields (``scistackplot.model.design``) mean
   anything here. The stats layer reads rows at a fixed analysis kind
   (``tables.ANALYSIS_KIND``), so the carrier's display fields are ignored.
 - ``dvs``: the dependent variables, one row block each (S16). An empty list

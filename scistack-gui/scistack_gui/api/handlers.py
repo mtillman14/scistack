@@ -104,7 +104,7 @@ class Handler:
     #: non-GET method whose model has fields outside the path.
     body: bool | None = None
     #: Push ``dag_updated`` to every client after a successful call (a
-    #: result that is not ``{"ok": False, ...}``) — through ``ws.push_message``,
+    #: result that is not ``{"ok": False, ...}``) — through ``ws_hub.push_message``,
     #: which is the WebSocket in the browser and the stdout notification in
     #: the extension, so both transports refresh alike.
     notify_dag_updated: bool = False
@@ -112,7 +112,7 @@ class Handler:
     #: the transports is what the HOST can do (the extension can dispatch a
     #: MATLAB script to the MathWorks terminal; the browser cannot).
     wants_transport: bool = False
-    #: Whether a call is recorded for undo (``scistack_gui.history``;
+    #: Whether a call is recorded for undo (``scistack_gui.stores.history``;
     #: ``docs/claude/undo-redo.md``). Every non-GET handler must say True or
     #: False explicitly — ``test_every_mutating_handler_decides_undo`` — so a
     #: new mutation cannot be forgotten. None = a read (GET) that never writes.
@@ -157,7 +157,7 @@ class Handler:
         that id; one called without (a script, a test) still holds the
         history lock so it cannot land inside another call's recording.
         """
-        from scistack_gui import history
+        from scistack_gui.stores import history
 
         args: list[Any] = []
         if self.needs_db:
@@ -165,7 +165,7 @@ class Handler:
         if self.params is not None:
             args.append(req)
         kwargs = {"transport": transport} if self.wants_transport else {}
-        from scistack_gui import library_lock
+        from scistack_gui.stores import library_lock
 
         # An undoable handler IS a user edit (the undo system's own
         # definition): library-owned pipelines refuse it (library_lock).
@@ -189,7 +189,7 @@ class Handler:
                 )
             result = self.call(*args, **kwargs)
         if self.notify_dag_updated and _succeeded(result):
-            from scistack_gui.api.ws import push_message
+            from scistack_gui.runtime.ws_hub import push_message
 
             push_message({"type": "dag_updated"})
         return result
@@ -249,7 +249,7 @@ def rpc_methods(handlers: Iterable[Handler]) -> dict[str, Callable[[dict], Any]]
             req = h.parse(params)
             db = None
             if h.needs_db:
-                from scistack_gui.db import get_db, is_loaded
+                from scistack_gui.runtime.db import get_db, is_loaded
 
                 # A db_optional method in a plot-only server: there is no
                 # connection to give it, and it is written to work without
@@ -331,7 +331,7 @@ def install_routes(router: APIRouter, handlers: Iterable[Handler]) -> None:
                 raise HTTPException(status_code=422, detail=json.loads(exc.json()))
             db = None
             if h.needs_db:
-                from scistack_gui.db import get_db, is_loaded
+                from scistack_gui.runtime.db import get_db, is_loaded
 
                 # Same rule as the RPC transport above — the two must not
                 # differ on when a handler gets a connection.

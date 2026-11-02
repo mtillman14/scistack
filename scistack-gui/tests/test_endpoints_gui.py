@@ -10,11 +10,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from conftest import FilteredSignal, RawSignal, bandpass_filter
 from fastapi.testclient import TestClient
 from scidb.database import _local
-from scistack_gui import registry as _registry
+from scistack_gui.project import registry as _registry
 from scistack_gui.app import create_app
 
 from scidb import BaseVariable, configure_database, for_each
@@ -67,7 +67,7 @@ def endpoint_client(tmp_path):
     _registry._functions["bandpass_filter"] = bandpass_filter
     _registry._functions["stat_signal_mean"] = stat_signal_mean
 
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     pipeline_store._ensure_tables(db)
 

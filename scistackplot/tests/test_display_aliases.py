@@ -31,7 +31,7 @@ from scistackplot import (
     resolve,
     restore_spec,
 )
-from scistackplot.aliases import PLOT, PROJECT, RAW, DisplayText, merge
+from scistackplot.text.aliases import PLOT, PROJECT, RAW, DisplayText, merge
 
 SUBJECTS = ["01", "02", "03"]
 SESSIONS = ["pre", "post"]
@@ -208,7 +208,7 @@ def test_the_project_layer_is_read_per_resolve(scalar_table):
 
 def test_an_alias_edit_does_not_re_plan(scalar_table, monkeypatch):
     """`aliases` is plan-irrelevant: text changes, the reduction does not."""
-    from scistackplot import reduce
+    from scistackplot.reduce.resolve import resolve as reduce
 
     calls = []
     real = reduce._build_plan

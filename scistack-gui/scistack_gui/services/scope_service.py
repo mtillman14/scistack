@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 def list_pipelines() -> dict:
     """All scopes + all use edges — the sidebar / breadcrumb data."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     db = get_db()
     return {
@@ -30,16 +30,16 @@ def list_pipelines() -> dict:
 
 
 def create_pipeline(name: str) -> dict:
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     pipeline_id = ps.create_pipeline(get_db(), name)
     return {"ok": True, "pipeline_id": pipeline_id, "name": name}
 
 
 def rename_pipeline(pipeline_id: str, name: str) -> dict:
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.rename_pipeline(get_db(), pipeline_id, name)
     return {"ok": True}
@@ -48,16 +48,16 @@ def rename_pipeline(pipeline_id: str, name: str) -> dict:
 def hide_pipeline(pipeline_id: str) -> dict:
     """Hide a scope (store guards apply). Positions are left intact —
     never delete data; unhide_pipeline fully restores it."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.hide_pipeline(get_db(), pipeline_id)
     return {"ok": True}
 
 
 def unhide_pipeline(pipeline_id: str) -> dict:
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.unhide_pipeline(get_db(), pipeline_id)
     return {"ok": True}
@@ -65,23 +65,23 @@ def unhide_pipeline(pipeline_id: str) -> dict:
 
 def list_hidden_pipelines() -> dict:
     """Hidden pipelines — the restore panel's data."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     return {"pipelines": ps.list_hidden_pipelines(get_db())}
 
 
 def list_hypotheses() -> dict:
     """Hypothesis-tagged pipelines — the tab strip's data."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     return {"hypotheses": ps.list_hypotheses(get_db())}
 
 
 def create_hypothesis(name: str) -> dict:
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     pipeline_id = ps.create_hypothesis(get_db(), name)
     return {"ok": True, "pipeline_id": pipeline_id, "name": name}
@@ -94,8 +94,8 @@ def update_hypothesis(
     evidence_for: list | None = None,
     evidence_against: list | None = None,
 ) -> dict:
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.update_hypothesis(
         get_db(),
@@ -111,8 +111,8 @@ def update_hypothesis(
 def hide_hypothesis(pipeline_id: str) -> dict:
     """Hide a hypothesis tab (store guards apply). Positions and hypothesis
     metadata are left intact — unhide_pipeline fully restores the tab."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.hide_hypothesis(get_db(), pipeline_id)
     return {"ok": True}
@@ -130,9 +130,9 @@ def add_pipeline_use(
     Placing a LIBRARY pipeline also declares the Parameters / PathInputs the
     project lacks, by itself (E7, ``library_service.on_placed``, the one
     path: there is no second "declare" click to forget)."""
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.library_service import on_placed
 
     use_id = ps.add_pipeline_use(
@@ -144,9 +144,9 @@ def add_pipeline_use(
 
 
 def remove_pipeline_use(use_id: str) -> dict:
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.remove_pipeline_use(get_db(), use_id)
     layout_store.drop_node_positions(use_id)
@@ -154,8 +154,8 @@ def remove_pipeline_use(use_id: str) -> dict:
 
 
 def update_use_binding(use_id: str, binding: dict) -> dict:
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.update_use_binding(get_db(), use_id, binding)
     return {"ok": True}
@@ -199,9 +199,9 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
     the mechanism above.
     """
     from scistack_gui import ids
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.domain import graph_builder
     from scistack_gui.domain.edge_resolver import node_id_to_var_label
     from scistack_gui.domain.scope_filter import node_scope
@@ -365,7 +365,7 @@ def _clone_nodes(
     Returns ``(old_id -> new_id map, nodes copied, edges copied)``.
     """
     from scistack_gui import ids
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
     from scistack_gui.services import canvas_snapshot
 
     snap = canvas_snapshot.capture(db, [source_pid], node_ids)
@@ -437,9 +437,9 @@ def duplicate_pipeline(pipeline_id: str, new_name: str) -> dict:
     expected to be immediately self-consistent, so this validates the
     result compiles and rolls back if not.
     """
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     db = get_db()
     new_pid = ps.create_pipeline(db, new_name)
@@ -496,7 +496,7 @@ def paste_nodes(
     Returns the old->new id map so the caller can select the freshly
     pasted nodes.
     """
-    from scistack_gui.db import get_db
+    from scistack_gui.runtime.db import get_db
 
     if not node_ids:
         return {"ok": True, "node_id_map": {}}
@@ -518,8 +518,8 @@ def duplicate_hypothesis(pipeline_id: str, new_name: str) -> dict:
     hypothesis (see duplicate_pipeline) — used by the tab strip's
     "Duplicate" action so the result shows up as a new tab, e.g. "gait
     symmetry" -> "gait speed"."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     result = duplicate_pipeline(pipeline_id, new_name)
     ps.tag_as_hypothesis(get_db(), result["pipeline_id"])
@@ -528,9 +528,9 @@ def duplicate_hypothesis(pipeline_id: str, new_name: str) -> dict:
 
 def pipeline_interface(pipeline_id: str) -> dict:
     """A scope's ports from the document graph (see domain.scope_filter)."""
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.domain.scope_filter import document_interface
 
     from scistack_gui.domain.edge_view import effective_edges
@@ -554,8 +554,8 @@ def pipeline_interface(pipeline_id: str) -> dict:
 def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
     """The pipelineNode entries for one canvas: one per use row on
     ``scope_id``, carrying the child's name, binding, and ports."""
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.domain.scope_filter import document_interface
 
     all_uses = ps.get_pipeline_uses(db)
@@ -608,16 +608,16 @@ def hide_port(pipeline_id: str, direction: str, var_type: str) -> dict:
     """Suppress a variable type's exposed port on ``pipeline_id``'s
     interface (to-do #9) — see pipeline_store.hide_port /
     domain.scope_filter.document_interface."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.hide_port(get_db(), pipeline_id, direction, var_type)
     return {"ok": True}
 
 
 def unhide_port(pipeline_id: str, direction: str, var_type: str) -> dict:
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.unhide_port(get_db(), pipeline_id, direction, var_type)
     return {"ok": True}
@@ -626,8 +626,8 @@ def unhide_port(pipeline_id: str, direction: str, var_type: str) -> dict:
 def get_hidden_ports(pipeline_id: str) -> dict:
     """One scope's hidden ports as JSON-friendly lists (the frontend
     context menu's Show/Hide label needs to know current state)."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     hidden = ps.get_hidden_ports(get_db(), pipeline_id)
     return {"input": sorted(hidden["input"]), "output": sorted(hidden["output"])}
@@ -637,7 +637,7 @@ def export_pipeline(pipeline_id: str) -> dict:
     """Write a portable document for ``pipeline_id`` (+ everything it
     uses) to ``exports/`` and return its path + the document itself
     (to-do #7) — see services.portability_service."""
-    from scistack_gui.db import get_db
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.portability_service import export_pipeline_to_file
 
     return export_pipeline_to_file(get_db(), pipeline_id)
@@ -646,7 +646,7 @@ def export_pipeline(pipeline_id: str) -> dict:
 def import_pipeline(document: dict) -> dict:
     """Recreate an exported document with fresh ids (to-do #7) — see
     services.portability_service."""
-    from scistack_gui.db import get_db
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.portability_service import import_pipeline_document
 
     return import_pipeline_document(get_db(), document)
@@ -656,7 +656,7 @@ def export_pipeline_code(pipeline_id: str) -> dict:
     """Translate ``pipeline_id`` (+ everything it uses) into a standalone
     Python or MATLAB script, written to ``exports/`` (to-do #6) — see
     services.code_export_service."""
-    from scistack_gui.db import get_db
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.code_export_service import export_pipeline_to_code
 
     return export_pipeline_to_code(get_db(), pipeline_id)

@@ -22,26 +22,26 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
-from ..bins import RUG_SLOTS
-from ..figsize import describe_size
-from ..paper import (
+from ..reduce.bins import RUG_SLOTS
+from ..text.figsize import describe_size
+from ..text.paper import (
     PAPER,
     describe_paper,
     plotly_axis_style,
     plotly_error_style,
     plotly_layout_style,
 )
-from ..resolved import (
+from ..reduce.resolved import (
     GRID_COLUMN_FACTOR,
     GRID_COLUMNS,
     GRID_ROW_FACTOR,
     GRID_ROWS,
     ResolvedPlot,
 )
-from ..roles import overlay_in_legend
-from ..spec import BAR_KINDS, PlotKind, is_horizontal
-from ..stacking import stack_bases, stacks
-from ..diffbars import (
+from ..model.roles import overlay_in_legend
+from ..model.spec import BAR_KINDS, PlotKind, is_horizontal
+from ..reduce.stacking import stack_bases, stacks
+from ..reduce.diffbars import (
     LINE_PT,
     PanelFrame,
     carries_difference_bars,
@@ -50,9 +50,9 @@ from ..diffbars import (
     place_figure,
     sibling_floors,
 )
-from ..textsize import sizes_for
-from ..weights import SAMPLE_EDGE_WIDTH, mark_weights_meta, sample_weight, spaghetti_weight
-from ..xaxis import LEAF_SEPARATOR
+from ..text.textsize import sizes_for
+from ..reduce.weights import SAMPLE_EDGE_WIDTH, mark_weights_meta, sample_weight, spaghetti_weight
+from ..text.xaxis import LEAF_SEPARATOR
 from .base import (
     LONE_POINT_MARKER_PT,
     is_lone_point,
@@ -120,7 +120,7 @@ def render(
     """
     # Auto text: the sizes the export's layout chose (decisions), never a
     # second search; undecided, autosize searches at the spec's size.
-    from ..autosize import apply, settle, text_sizes_meta
+    from ..text.autosize import apply, settle, text_sizes_meta
 
     if decisions is not None and decisions.get("auto_text") is not None:
         resolved = apply(resolved, decisions["auto_text"])
@@ -687,8 +687,8 @@ def _panel_traces(
             hover = {}
 
         if kind is PlotKind.HISTOGRAM:
-            from ..bins import EDGE_COLOR, EDGE_WIDTH
-            from ..resolved import BIN_KIND, BIN_LABEL, COUNT, X_HIGH, X_LOW, Y_BASE
+            from ..reduce.bins import EDGE_COLOR, EDGE_WIDTH
+            from ..reduce.resolved import BIN_KIND, BIN_LABEL, COUNT, X_HIGH, X_LOW, Y_BASE
 
             lows = subset[X_LOW].to_numpy(dtype=float)
             highs = subset[X_HIGH].to_numpy(dtype=float)
@@ -740,8 +740,8 @@ def _panel_traces(
                     "<br>n = %{customdata[0]}<extra>%{fullData.name}</extra>"
                 )
         elif kind is PlotKind.KDE:
-            from ..kde import LINE_WIDTH
-            from ..resolved import COUNT
+            from ..reduce.kde import LINE_WIDTH
+            from ..reduce.resolved import COUNT
 
             # The curve table (`kde.curve_table`): one curve per colour level,
             # filled to zero when `KdeOptions.fill`; points 1 pt = 1 px.
@@ -859,7 +859,7 @@ def _fit_colour(resolved: ResolvedPlot, fit) -> str:
 def _fit_traces(panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> list[dict]:
     """A regression panel's fitted lines and bands (``Panel.fits``), the
     traces ``mpl._draw_fits`` draws as lines and ``fill_between``."""
-    from ..fits import BAND_ALPHA, FIT_LINE_WIDTH, drawn
+    from ..reduce.fits import BAND_ALPHA, FIT_LINE_WIDTH, drawn
 
     if resolved.kind is not PlotKind.REGRESSION or not panel.fits:
         return []
@@ -900,7 +900,7 @@ def _fit_traces(panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> list
 def _add_fit_annotations(layout: dict, panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> None:
     """The R² / p text at the panel's corner, in points-as-px at the
     export's size (1 pt = 1 px), the offsets ``mpl._draw_fits`` uses."""
-    from ..fits import annotation_offsets, corner, drawn
+    from ..reduce.fits import annotation_offsets, corner, drawn
 
     if resolved.kind is not PlotKind.REGRESSION or not resolved.spec.regression.show_stats:
         return
@@ -1005,7 +1005,7 @@ def _rug_traces(panel, resolved: ResolvedPlot, x_axis: str, y_axis: str) -> list
     row — placed in data units from the row's axes fraction of the panel's
     own y range, plus one invisible markers trace a row for the hover
     (value and how many values share its slot)."""
-    from ..bins import RUG_LINE_WIDTH
+    from ..reduce.bins import RUG_LINE_WIDTH
 
     rows = rug_rows(panel, resolved)
     limits = panel_y_limits(resolved, panel)

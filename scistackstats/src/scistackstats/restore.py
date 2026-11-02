@@ -1,8 +1,8 @@
 """Open a stored stats spec, keeping everything that still parses (Stage 9).
 
 Save is strict (``StatsSpec.from_dict``); open salvages, as saved plots do
-(``scistackplot.restore``): every setting that cannot be read becomes a
-:class:`~scistackplot.restore.RestoreNote` and its default, and the stored
+(``scistackplot.model.restore``): every setting that cannot be read becomes a
+:class:`~scistackplot.model.restore.RestoreNote` and its default, and the stored
 copy is never rewritten. The design is salvaged by the plot layer's own
 ``restore_spec``, so a stats spec and a saved plot recover a design the same
 way.
@@ -19,7 +19,7 @@ from typing import Any
 from scistacklog import Log
 
 from scistackplot import PlotSpec
-from scistackplot.restore import NoteKind, RestoreNote, restore_spec
+from scistackplot.model.restore import NoteKind, RestoreNote, restore_spec
 
 from .catalog import TESTS
 from .describe import STATISTICS

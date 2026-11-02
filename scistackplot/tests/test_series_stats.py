@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from scistackplot.series_stats import (
+from scistackplot.reduce.series_stats import (
     PAD_BUDGET,
     blocks,
     cell_arrays,
@@ -20,7 +20,7 @@ from scistackplot.series_stats import (
     position_mean,
     position_stats,
 )
-from scistackplot.spec import ErrorBand, Statistic
+from scistackplot.model.spec import ErrorBand, Statistic
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ CASES = [
 @pytest.mark.parametrize("statistic,error", CASES, ids=[f"{s}-{e}" for s, e in CASES])
 @pytest.mark.parametrize("budget", [PAD_BUDGET, 50, 1], ids=["default", "tiny", "one"])
 def test_blocked_stats_equal_the_one_shot_pad(ragged, statistic, error, budget, monkeypatch):
-    import scistackplot.series_stats as mod
+    import scistackplot.reduce.series_stats as mod
 
     monkeypatch.setattr(mod, "PAD_BUDGET", budget)
     got = position_stats(ragged, statistic, error)
@@ -89,7 +89,7 @@ def test_blocked_stats_equal_the_one_shot_pad(ragged, statistic, error, budget, 
 def test_blocked_mean_equals_the_one_shot_pad(ragged, budget, monkeypatch):
     import warnings
 
-    import scistackplot.series_stats as mod
+    import scistackplot.reduce.series_stats as mod
 
     monkeypatch.setattr(mod, "PAD_BUDGET", budget)
     mean, count = position_mean(ragged)

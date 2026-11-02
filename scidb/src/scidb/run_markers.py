@@ -29,7 +29,7 @@ database, which is scidb's territory.
 **Markers are not the whole answer.** A killed MATLAB writes nothing, so a
 missing ``.done`` is ambiguous on its own: still running, or gone. The
 second half of the answer needs no cooperation from MATLAB at all — see
-``scistack_gui.db.probe_lock_holder``, which asks who holds the DuckDB file
+``scistack_gui.runtime.db.probe_lock_holder``, which asks who holds the DuckDB file
 and whether that process is still alive.
 """
 

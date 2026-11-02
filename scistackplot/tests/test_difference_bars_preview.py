@@ -18,7 +18,7 @@ matplotlib.use("Agg")
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 
-import scistackplot.reduce as reduce_mod  # noqa: E402
+import scistackplot.reduce.resolve as reduce_mod  # noqa: E402
 from scistackplot import (  # noqa: E402
     LongTable,
     PlotKind,
@@ -30,7 +30,7 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve_one,
 )
-from scistackplot.diffbars import DifferenceBar, target_bounds, slot_endpoints  # noqa: E402
+from scistackplot.reduce.diffbars import DifferenceBar, target_bounds, slot_endpoints  # noqa: E402
 from scistackplot.render.plotly_ import DIFF_BAR_TAG, DIFF_LABEL_TAG  # noqa: E402
 
 LAYER = "scistackplot"
@@ -254,7 +254,7 @@ def test_every_point_drawn_falls_inside_a_ticks_bounds(table):
 
 
 def test_bounds_split_uneven_positions_half_way():
-    from scistackplot.diffbars import Endpoint
+    from scistackplot.reduce.diffbars import Endpoint
 
     ends = [
         Endpoint(0, 0.0, {"x": "a"}, "a"),
@@ -281,7 +281,7 @@ def test_meta_explains_an_unresolved_bar(table):
 def test_only_figures_that_can_carry_bars_get_meta(table):
     from dataclasses import replace
 
-    from scistackplot.diffbars import carries_difference_bars
+    from scistackplot.reduce.diffbars import carries_difference_bars
 
     figure = _sham(_spec(kind=PlotKind.STRIP), table)
     assert carries_difference_bars(figure)

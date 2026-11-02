@@ -7,7 +7,7 @@ value. It needs a real file on the MATLAB path before ``RawEMG()`` resolves.
 
 This lives in ``scimatlab`` because "make a declared entity referenceable
 from MATLAB" is a MATLAB-wrapper concern (CLAUDE.md NOTE 3). It used to
-live in ``scistack_gui.matlab_registry``, which meant a hand-written MATLAB
+live in ``scistack_gui.matlab.registry``, which meant a hand-written MATLAB
 script got no such guarantee and a project that never configured
 ``[matlab] variable_dir`` got no classdef at all -- the run failed mid-way
 with ``Unrecognized function or variable 'RawEMG'`` and nothing anywhere

@@ -1,6 +1,6 @@
 """
 Per-panel overrides, Stage 1 (2026-09-27): the spec fields and the one
-matcher. ``scistackplot.panels`` owns which override belongs to which panel;
+matcher. ``scistackplot.reduce.panels`` owns which override belongs to which panel;
 these tests pin its identity rules (plan D1: facet values as TEXT, exact
 match, last wins) and the spec round trip. Limits, titles, export and GUI
 are later stages (``.claude/plan-per-panel-overrides.md``).
@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, StyleOptions, resolve
-from scistackplot.panels import (
+from scistackplot.reduce.panels import (
     Y_TITLES,
     Y_TITLES_EVERY_PANEL,
     Y_TITLES_FIRST_COLUMN,
@@ -25,7 +25,7 @@ from scistackplot.panels import (
     unmatched,
     y_titles_problem,
 )
-from scistackplot.roles import RoleError
+from scistackplot.model.roles import RoleError
 
 LAYER = "scistackplot"
 
@@ -198,10 +198,10 @@ def test_validate_refuses_an_unknown_y_titles():
 # Stage 2: limits in the preview (D2: panel end > figure end > computed)
 # =================================================================================
 
-import scistackplot.reduce as reduce_mod  # noqa: E402
+import scistackplot.reduce.resolve as reduce_mod  # noqa: E402
 from scistackplot import YAxis, resolve_one  # noqa: E402
 from scistackplot.render.base import shares_y_axis  # noqa: E402
-from scistackplot.ylimits import limits_for, pinned_ends  # noqa: E402
+from scistackplot.reduce.ylimits import limits_for, pinned_ends  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

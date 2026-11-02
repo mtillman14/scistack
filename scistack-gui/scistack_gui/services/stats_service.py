@@ -17,7 +17,7 @@ import logging
 import time
 from typing import Any
 
-from scistack_gui import history
+from scistack_gui.stores import history
 from scistack_gui.services import plot_service
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def _spec(payload: dict):
 def _tables(db, spec, *, csv_path: str | None, label: str) -> dict:
     from scistackstats import load_tables
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     t0 = time.perf_counter()
     with db_connection(label, needed=not csv_path):
@@ -50,7 +50,7 @@ def _load(db, spec, *, csv_path: str | None, label: str) -> tuple[dict, dict]:
     variant pin and one-value-per-location rules)."""
     from scistackstats import load_covariates, load_tables
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     t0 = time.perf_counter()
     with db_connection(label, needed=not csv_path):
@@ -69,9 +69,9 @@ def _load(db, spec, *, csv_path: str | None, label: str) -> tuple[dict, dict]:
 
 def _opened(spec, *, notes=None, info=None, seed_notes=None, design_version=None) -> dict:
     """The reply every way of opening StatStudio shares: the spec, its notes,
-    and the table's role words (``scistackplot.role_labels``, the one owner
+    and the table's role words (``scistackplot.model.role_labels``, the one owner
     shared with Plot Studio; the webview hardcodes none)."""
-    from scistackplot.role_labels import role_labels_payload
+    from scistackplot.model.role_labels import role_labels_payload
 
     return {
         "ok": True,
@@ -104,7 +104,7 @@ def _stat_function_spec(stat_function: str) -> dict:
 
     from scistackstats import embedded_spec
 
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     fn = registry.lookup_function(stat_function)
     if fn is None:
@@ -146,7 +146,7 @@ def open_stats(
     from scistackplot import PlotSpec
     from scistackstats import SeedError, StatsSpec, seed_from_plot
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     if stats_id:
         from scistackstatsdb import load_saved_stats
@@ -520,7 +520,7 @@ def overlay_for_plot(db, plot_id: str, plot_payload: dict) -> dict:
     """The brackets of the first linked stats table that draws them."""
     from scistackstatsdb import linked_stats_for, load_saved_stats
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("stats_overlay_for_plot"):
         linked = linked_stats_for(db, plot_id)

@@ -1,4 +1,4 @@
-"""Collapsing each CELL of a 1-D measure to a scalar (``scistackplot.cell``).
+"""Collapsing each CELL of a 1-D measure to a scalar (``scistackplot.reduce.cell``).
 
 The rule under test: a scalar-only kind selected for a vector-valued measure
 means "reduce each cell to one value first", after which the measure is an
@@ -24,7 +24,7 @@ from scistackplot import (
     cell_collapses,
     effective_shape,
 )
-from scistackplot.series_stats import cell_arrays, collapse_cells
+from scistackplot.reduce.series_stats import cell_arrays, collapse_cells
 
 
 def violin(measure: str, **kwargs) -> PlotSpec:
@@ -233,7 +233,7 @@ def test_the_figure_says_its_points_are_summaries(series_table):
 def test_collapse_is_logged(series_table, caplog):
     import logging
 
-    from scistackplot.cell import LAYER
+    from scistackplot.reduce.cell import LAYER
 
     with caplog.at_level(logging.INFO, logger=LAYER):
         apply_cell_collapse(violin("Signal"), series_table)
@@ -270,7 +270,7 @@ def test_some_empty_cells_log_at_debug_not_warn(caplog):
     2026-10-19. The per-collapse count is DEBUG now."""
     import logging
 
-    from scistackplot.cell import LAYER
+    from scistackplot.reduce.cell import LAYER
 
     table = _signal_table([[1.0, 3.0], [], [np.nan]])
     with caplog.at_level(logging.DEBUG, logger=LAYER):
@@ -291,7 +291,7 @@ def test_some_empty_cells_log_at_debug_not_warn(caplog):
 def test_every_value_nan_warns(values, caplog):
     import logging
 
-    from scistackplot.cell import LAYER, all_nan_warning
+    from scistackplot.reduce.cell import LAYER, all_nan_warning
 
     frame = _signal_table(values).frame
     with caplog.at_level(logging.WARNING, logger=LAYER):
@@ -310,14 +310,14 @@ def test_every_value_nan_warns(values, caplog):
     ],
 )
 def test_one_real_value_does_not_warn(values):
-    from scistackplot.cell import all_nan_warning
+    from scistackplot.reduce.cell import all_nan_warning
 
     assert all_nan_warning(_signal_table(values).frame, "Signal") is None
 
 
 def test_no_rows_is_not_all_nan():
     """Filtered to nothing is a different case, already explained by row_count."""
-    from scistackplot.cell import all_nan_warning
+    from scistackplot.reduce.cell import all_nan_warning
 
     assert all_nan_warning(_signal_table([]).frame, "Signal") is None
 

@@ -51,7 +51,7 @@ def for_each(
 
 ## How the GUI Currently Calls for_each
 
-In `scistack-gui/scistack_gui/api/run.py`, the `_run_in_thread` function:
+In `scistack-gui/scistack_gui/services/run_service.py`, the `_run_in_thread` function:
 
 1. Resolves inputs and outputs from the node graph (edges, registry)
 2. Builds `schema_kwargs` as ALL distinct values for every key (lines 307-311)

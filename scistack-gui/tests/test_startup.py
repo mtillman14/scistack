@@ -1,4 +1,4 @@
-"""Tests for :mod:`scistack_gui.startup` (Phase 8 project-open diagnostics).
+"""Tests for :mod:`scistack_gui.project.startup` (Phase 8 project-open diagnostics).
 
 Two layers:
 
@@ -16,8 +16,8 @@ import json
 from pathlib import Path
 
 import pytest
-from scistack_gui import startup
-from scistack_gui.startup import (
+from scistack_gui.project import startup
+from scistack_gui.project.startup import (
     StartupError,
     clear_startup_errors,
     get_startup_errors,
@@ -81,7 +81,7 @@ def test_startup_discovery_reports_progress_per_module():
 
 def test_load_from_config_forwards_progress_to_module_imports(tmp_path, monkeypatch):
     """The callback reaches the per-file import loop (not just the signature)."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     seen: list = []
 

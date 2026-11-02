@@ -5,7 +5,7 @@
     POST /api/history/redo     history_redo   — restore a change's after side
     GET  /api/history/recent   history_recent — a restarted surface's undo/redo steps
 
-The records themselves are ``scistack_gui.history``; the order in which a
+The records themselves are ``scistack_gui.stores.history``; the order in which a
 user undoes them is the frontend's (one stack per surface). See
 ``docs/claude/undo-redo.md``.
 
@@ -24,7 +24,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from scistack_gui import history
+from scistack_gui.stores import history
 from scistack_gui.api.handlers import Handler, install_routes
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def _reload_after_restore(files: list[str]) -> None:
     registries."""
     from scidb import aliases, colors
 
-    from scistack_gui.api.project import _reload_config_and_rescan
+    from scistack_gui.services.project_service import reload_config_and_rescan
     from scistack_gui.services import plot_service
     from scistack_gui.services.target_file_service import _invalidate_bytecode
 
@@ -79,7 +79,7 @@ def _reload_after_restore(files: list[str]) -> None:
     colors.clear_cache()
     plot_service.forget_resolved()
     try:
-        _reload_config_and_rescan()
+        reload_config_and_rescan()
     except Exception:
         logger.exception("[history] registry reload after restore failed")
 
@@ -89,7 +89,7 @@ def _finish(direction: str, result: dict) -> dict:
         return result
     if result.get("reload"):
         _reload_after_restore(result.get("files") or [])
-    from scistack_gui.api.ws import push_message
+    from scistack_gui.runtime.ws_hub import push_message
 
     push_message({"type": "dag_updated"})
     push_message(
@@ -111,7 +111,7 @@ def _redo(req: ChangeRef) -> dict:
     return _finish("redo", history.redo(req.change_id))
 
 
-# needs_db=False and holds_db_lock=False: `scistack_gui.history` takes the
+# needs_db=False and holds_db_lock=False: `scistack_gui.stores.history` takes the
 # connection itself, only when a record has rows, so an undo of a file-only
 # change (a project alias) works with no database and never waits on MATLAB.
 _SELF = {"needs_db": False, "holds_db_lock": False}

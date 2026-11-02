@@ -10,7 +10,9 @@ reach the per-language getters only through ``all_load_errors``.
 import ast
 from pathlib import Path
 
-from scistack_gui import matlab_registry, registry
+from scistack_gui.matlab import registry as matlab_registry
+
+from scistack_gui.project import registry
 
 PACKAGE = Path(__file__).resolve().parent.parent / "scistack_gui"
 
@@ -27,7 +29,7 @@ def test_all_load_errors_carries_both_languages():
 def test_only_the_aggregator_reads_the_per_language_lists():
     callers = []
     for path in sorted(PACKAGE.rglob("*.py")):
-        if path.name == "registry.py" and path.parent == PACKAGE:
+        if path == PACKAGE / "project" / "registry.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

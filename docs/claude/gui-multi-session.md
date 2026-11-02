@@ -14,10 +14,10 @@ One limitation is inherent rather than unfinished; see
 
 **The decision: a session is an operating-system process.**
 
-The Python backend is pervasively process-global. `scistack_gui.db` holds
+The Python backend is pervasively process-global. `scistack_gui.runtime.db` holds
 `_db`, `_db_path`, `_db_refcount` and `_connection_policy`;
-`scistack_gui.registry` holds `_functions`, `_parameters`, `_path_inputs`
-and `_config`; `scistack_gui.config` holds `_project_root_hint`; and below
+`scistack_gui.project.registry` holds `_functions`, `_parameters`, `_path_inputs`
+and `_config`; `scistack_gui.project.config` holds `_project_root_hint`; and below
 all of it `scifor.set_schema` and `scidb.configure_database` are themselves
 global. Teaching that stack to hold two databases at once would mean
 threading a session object through layers that have no reason to know the

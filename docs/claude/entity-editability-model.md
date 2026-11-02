@@ -420,7 +420,7 @@ classdef?":
   and `rehash`es. MATLAB's path is the only authority that sees a
   hand-written classdef sitting somewhere else, and writing a second one
   would shadow it.
-- `scistack_gui.matlab_registry.materialize_variable_stubs`, at registry
+- `scistack_gui.matlab.registry.materialize_variable_stubs`, at registry
   load — same rule against the classdefs the registry parsed, and it runs
   *after* `load_from_sources` so those are all known.
 
@@ -480,7 +480,7 @@ gives real breakpoints and workspace inspection.
 
 The sidecar is kept warm, so its workspace persists across commands. The
 script form makes staleness after a write-back trivial to handle:
-`api/matlab_command.py` emits `scistack_entities;` right after the
+`services/matlab_command_format.py` emits `scistack_entities;` right after the
 `addpath` block of every generated command — one place, all tiers,
 idempotent. No cache invalidation, no write-back→session notification
 channel.

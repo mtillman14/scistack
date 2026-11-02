@@ -152,7 +152,7 @@ def test_default_selection_opens_on_the_current_run_only(both_runs):
 
 def test_the_two_runs_are_never_pooled(both_runs):
     """The guard that exists for exactly this — armed only once the axis exists."""
-    from scistackplot.roles import complete_roles
+    from scistackplot.model.roles import complete_roles
 
     table = ScidbSource(both_runs).get_table(["RunLoaded"])
     spec = PlotSpec(

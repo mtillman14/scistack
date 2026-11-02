@@ -94,7 +94,7 @@ def test_an_uneven_split_keeps_every_row(seeded):
 
 def test_a_categorical_variable_is_a_factor_and_a_measure(seeded):
     """A grouping, and since 2026-11-01 also plottable: drawn as counts, %s
-    or categories (scistackplot.categorical), never on a numeric axis."""
+    or categories (scistackplot.reduce.categorical), never on a numeric axis."""
     source = ScidbSource(seeded)
 
     assert source._shape_of("Condition") is Shape.CATEGORICAL

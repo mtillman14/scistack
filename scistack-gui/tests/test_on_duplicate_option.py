@@ -43,7 +43,7 @@ def test_run_default_is_error(client, bp_node_id, monkeypatch):
 
 
 def test_matlab_pairs_emit_only_combine():
-    from scistack_gui.api.matlab_command import _format_run_option_pairs
+    from scistack_gui.services.matlab_command_format import _format_run_option_pairs
 
     assert "'on_duplicate', 'combine'" in _format_run_option_pairs(
         {"on_duplicate": "combine"}, "f"
@@ -52,8 +52,8 @@ def test_matlab_pairs_emit_only_combine():
 
 
 def test_python_export_emits_only_combine(client, bp_node_id):
-    from scistack_gui import pipeline_store
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.code_export_service import export_pipeline_to_code
 
     db = get_db()
@@ -64,8 +64,8 @@ def test_python_export_emits_only_combine(client, bp_node_id):
 
 
 def test_set_on_duplicate_merges_into_run_options(client, bp_node_id):
-    from scistack_gui import pipeline_store
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.runtime.db import get_db
 
     db = get_db()
     pipeline_store.update_node_config(

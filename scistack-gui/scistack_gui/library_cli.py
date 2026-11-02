@@ -102,7 +102,7 @@ def _create(args: argparse.Namespace) -> dict:
     as export does) and share the submodule."""
     from scidb.inspect.cli import CLIError, resolve_db_path
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.headless import open_for_export
     from scistack_gui.services.library_authoring import share, share_defaults
 
@@ -148,7 +148,7 @@ def _print_report(report: dict) -> None:
 
 
 def dispatch(args: argparse.Namespace) -> int:
-    from scistack_gui.config import add_package, remove_package
+    from scistack_gui.project.config import add_package, remove_package
 
     project = (args.project or Path.cwd()).resolve()
     cmd = getattr(args, "library_command", None) or "list"

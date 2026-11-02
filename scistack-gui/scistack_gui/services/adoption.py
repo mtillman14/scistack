@@ -5,7 +5,7 @@ walkthrough ``docs/claude/canvas-as-document-explained.md`` Step 1. The pure
 rule is ``domain/adoption.py``; this module reads the inputs it needs and
 persists its plan.
 
-**When.** Inside every graph build (``api/pipeline._build_graph``), after the
+**When.** Inside every graph build (``graph_service.build_graph``), after the
 build has assembled what history would draw. On most builds there is nothing
 new and nothing is written. It covers, with one code path, the three cases the
 user framed on 2026-10-21: a canvas used before (only what history added since
@@ -53,7 +53,7 @@ def gui_recorded_wirings(db, scidb_agg: dict, agg) -> list:
     for that step."""
     from scidb.wirings import recorded_wirings
 
-    from scistack_gui import node_wiring
+    from scistack_gui.stores import node_wiring
     from scistack_gui.domain import graph_builder as gb
 
     names: dict = {}
@@ -139,7 +139,7 @@ def recorded_node_settings(db, labels: "dict[str, str]") -> dict[str, dict]:
     disagreement (one call site selected columns, another did not) is logged
     and left unset, since no single setting reproduces both.
     """
-    from scistack_gui import node_wiring
+    from scistack_gui.stores import node_wiring
     from scistack_gui.domain import column_selection as _cs
     from scistack_gui.services.execution_service import (
         _attach_db_path_inputs,
@@ -210,7 +210,7 @@ def recorded_node_settings(db, labels: "dict[str, str]") -> dict[str, dict]:
 
 
 def _scopes(db, positions_by_scope: dict) -> set[str]:
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     return (
         {p["pipeline_id"] for p in ps.list_all_pipelines(db)}
@@ -231,8 +231,8 @@ def plan_for_build(
     scidb_agg: dict,
 ) -> tuple[AdoptionPlan, list[dict]]:
     """What this build would adopt: ``(plan, combo hides)``. Writes nothing."""
-    from scistack_gui import node_wiring
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import node_wiring
+    from scistack_gui.stores import pipeline_store as ps
 
     t0 = time.perf_counter()
     adopted = node_wiring.adopted_subjects(db)
@@ -291,7 +291,10 @@ def plan_for_build(
 def write(db, plan: AdoptionPlan, combos: list[dict]) -> "str | None":
     """Persist *plan*. Returns the audit event id, or ``None`` when nothing
     was written. One INFO line per adopted step (NOTE 2)."""
-    from scistack_gui import history, intent_store, library_lock, node_wiring
+    from scistack_gui.stores import history
+    from scistack_gui.stores import intent_store
+    from scistack_gui.stores import library_lock
+    from scistack_gui.stores import node_wiring
 
     if plan.empty and not combos:
         return None
@@ -309,7 +312,7 @@ def write(db, plan: AdoptionPlan, combos: list[dict]) -> "str | None":
         # What the recorded runs of each adopted step agree on (selectors, run
         # options) becomes the node's own settings, never overriding one the
         # user already made. Written with the node, so once.
-        from scistack_gui import pipeline_store as ps
+        from scistack_gui.stores import pipeline_store as ps
 
         fn_labels = {nid: label for nid, t, label, _s in plan.nodes if t == "functionNode"}
         for node_id, recorded in recorded_node_settings(db, fn_labels).items():
@@ -383,8 +386,10 @@ def retire_rewired_edges(
     Once per (node, wiring) (``_adopted`` subject ``rewire:...``); not inside
     an undoable edit's recording (same reason as adoption itself).
     """
-    from scistack_gui import history, library_lock, node_wiring
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import history
+    from scistack_gui.stores import library_lock
+    from scistack_gui.stores import node_wiring
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.domain.graph_builder import edge_connection_id, is_manual_edge
 
     if not rewired or history.is_recording():

@@ -7,7 +7,7 @@ Built 2026-11-01 from `.claude/plan-plot-omissions.md`. Tests:
 The user's rule: data is never dropped silently. Every figure says what it left
 out and why.
 
-## Reasons (owner `scistackplot.omissions`)
+## Reasons (owner `scistackplot.reduce.omissions`)
 
 | reason | meaning | lost? | decided in |
 |---|---|---|---|

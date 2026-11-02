@@ -7,7 +7,7 @@ import json
 import pytest
 
 from conftest import bar_spec, popcorn_frame, popcorn_table
-from scistackplot.spec import FactorVariable, VariantSet
+from scistackplot.model.spec import FactorVariable, VariantSet
 from scistackstats import DV, Analysis, StatsSpec, describe_table, run
 from scistackstats.codegen import NotExportable, generate_stats_function, why_not_exportable
 

@@ -20,7 +20,8 @@ from scidb.intent import (
     Statement,
     resolve,
 )
-from scistack_gui import intent_store, pipeline_store
+from scistack_gui.stores import intent_store
+from scistack_gui.stores import pipeline_store
 from scistack_gui.ids import ROOT_SCOPE
 
 NODE = "fn__trial_mean_symmetry__0123456789abcdef"

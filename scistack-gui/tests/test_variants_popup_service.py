@@ -45,7 +45,7 @@ def _card(payload, low_hz):
 @pytest.fixture
 def declared_low_hz(monkeypatch):
     """A canvas Parameter ``low_hz`` declaring 20 and 30, editable."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.services import target_file_service
 
     monkeypatch.setattr(

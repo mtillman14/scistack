@@ -59,7 +59,7 @@ def _open_gui(session: dict):
 def _init(session: dict, step: dict) -> dict:
     from scistack_gui.headless import open_for_import
 
-    from scistack_gui import db as gui_db
+    from scistack_gui.runtime import db as gui_db
 
     open_for_import(
         session["db"], project=Path(session["project"]), schema_keys=step["schema_keys"]
@@ -73,8 +73,8 @@ def _init(session: dict, step: dict) -> dict:
 def _canvas(db, step: dict) -> dict:
     """Setup only (not under test): a submodule built node by node, as the
     existing share tests build theirs."""
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.ids import new_manual_edge_id, new_manual_node_id
 
     pid = ps.create_pipeline(db, step["pipeline"])
@@ -164,8 +164,8 @@ def _script(session: dict, step: dict) -> dict:
 def _save(step: dict) -> dict:
     import numpy as np
 
-    from scistack_gui.db import get_db
-    from scistack_gui.registry import get_variable_class
+    from scistack_gui.runtime.db import get_db
+    from scistack_gui.project.registry import get_variable_class
 
     cls = get_variable_class(step["variable"])
     items = [(np.asarray(v, dtype=float), meta) for v, meta in step["items"]]
@@ -184,7 +184,7 @@ def _run(db, step: dict) -> dict:
 
 
 def _load(step: dict) -> dict:
-    from scistack_gui.registry import get_variable_class
+    from scistack_gui.project.registry import get_variable_class
 
     cls = get_variable_class(step["variable"])
     out = {}
@@ -239,7 +239,7 @@ def _latest(db, step: dict) -> dict:
 
 
 def _pipelines(db) -> dict:
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     rows = []
     for p in ps.list_pipelines(db):
@@ -277,14 +277,14 @@ def main(argv: list[str]) -> int:
                 results.append(_add_node(client, step))
             elif op == "cli":
                 if db is not None:  # a terminal command opens the project itself
-                    from scistack_gui import db as gui_db
+                    from scistack_gui.runtime import db as gui_db
 
                     gui_db.close_db()
                     db = None
                 results.append(_cli(session, step))
             elif op == "script":
                 if db is not None:  # the script is another process: release the file
-                    from scistack_gui import db as gui_db
+                    from scistack_gui.runtime import db as gui_db
 
                     gui_db.close_db()
                     db = None

@@ -2,7 +2,7 @@
 
 ``load_variable`` reads the stored cells as they are — every cell a float
 array, one element per source row (``[7]``, ``[5, 12]``). The SOURCE then
-splits them into rows numbered by a ``Row`` factor (``scistackplot.rows``):
+splits them into rows numbered by a ``Row`` factor (``scistackplot.reduce.rows``):
 the elements are observations, not a 1-D series. This replaced the "read as
 1-D" decision of ``.claude/plan-combine-duplicate-locations.md`` §6 on
 2026-10-30 (``.claude/plan-row-list-plots.md``), after a combined clinical
@@ -19,8 +19,8 @@ import pandas as pd
 import pytest
 from scidb import BaseVariable
 from scistackplot import ROW_FACTOR, Filter, PlotKind, PlotSpec, Shape, resolve, row_factor
-from scistackplot.resolved import Y
-from scistackplot.roles import default_assignment
+from scistackplot.reduce.resolved import Y
+from scistackplot.model.roles import default_assignment
 
 from scistackplotdb import ScidbSource, generate_endpoint
 from scistackplotdb.load import load_variable

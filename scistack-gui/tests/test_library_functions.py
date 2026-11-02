@@ -1,4 +1,4 @@
-"""Tests for scistack_gui.library_functions — resolving library function
+"""Tests for scistack_gui.project.library_functions — resolving library function
 references (numpy/pandas/stdlib) by explicit import rather than by storing
 them in the function registry.
 
@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scistack_gui import library_functions as lf
-from scistack_gui import registry
+from scistack_gui.project import library_functions as lf
+from scistack_gui.project import registry
 
 
 class TestCanonicalReference:
@@ -316,7 +316,7 @@ class TestRegistryLookup:
         assert callable(registry.lookup_function("pandas.read_csv"))
 
     def test_lookup_hands_the_run_path_a_qualified_name(self):
-        """api/run passes registry.get_function(name) straight to for_each,
+        """run_service passes registry.get_function(name) straight to for_each,
         so the name scidb records is decided right here."""
         registry._functions.pop("pandas.read_csv", None)
         assert registry.get_function("pandas.read_csv").__name__ == "pandas.read_csv"

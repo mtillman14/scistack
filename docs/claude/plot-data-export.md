@@ -125,7 +125,7 @@ Scalar plots only (user decision, 2026-09-19). The DRAWN shape decides:
 
 | question | owner |
 |---|---|
-| the frame | `scistackplot/export.py` — `plot_data` |
+| the frame | `scistackplot/export/plot_data.py` — `plot_data` |
 | which depths, which columns, why not | `export.data_export_options(spec, roles, table, shape)`: pure, and read by both `plot_data` and `capability.capabilities` (`data_export` key) |
 | the sample rows | `reduce._sample_frame`: one call, figure and CSV |
 | the depth cut | `roles.chain_cut` (shared with `overlay_steps`) |

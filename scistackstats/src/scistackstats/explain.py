@@ -28,8 +28,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from scistackplot.role_labels import role_label_for
-from scistackplot.spec import Role
+from scistackplot.model.role_labels import role_label_for
+from scistackplot.model.spec import Role
 
 from .catalog import TESTS
 from .design import BETWEEN, MIXED, WITHIN, cells_text
@@ -270,7 +270,7 @@ _CONCEPT_LIST = (
 CONCEPTS: dict[str, Concept] = {c.id: c for c in _CONCEPT_LIST}
 
 #: The concepts that NAME a role. Their titles are the role words
-#: (scistackplot.role_labels), so a figure's step-by-step view says "Separate
+#: (scistackplot.model.role_labels), so a figure's step-by-step view says "Separate
 #: figures" where a table's says "Separate tables".
 _ROLE_CONCEPTS: dict[str, Role] = {
     "role.compare": Role.GROUP,
@@ -455,7 +455,7 @@ def _step_unit(facts: "GuideFacts") -> StepGuide:
 
 
 #: The wizard's three choices per factor. Their words are the table's role
-#: labels (scistackplot.role_labels, the one owner shared with Plot Studio).
+#: labels (scistackplot.model.role_labels, the one owner shared with Plot Studio).
 _ROLE_CHOICES = (
     ("group", role_label_for(Role.GROUP, "table"), "role.compare"),
     ("separate", role_label_for(Role.ITERATE, "table"), "role.separate"),
@@ -466,7 +466,7 @@ _ROLE_CHOICES = (
 def _step_factors(facts: "GuideFacts", surface: str = "table") -> StepGuide:
     """What each factor does. *surface* is whose nouns the choices use: a
     table's ("Separate tables") or, in Plot Studio's step-by-step view, a
-    figure's ("Separate figures"); scistackplot.role_labels owns both."""
+    figure's ("Separate figures"); scistackplot.model.role_labels owns both."""
     dv = _first_dv(facts)
     step = StepGuide("factors", "What to compare", "What are you comparing?",
                      concepts=["role.compare", "role.separate", "role.average"])

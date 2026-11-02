@@ -22,7 +22,7 @@ V2 = b"function tableOut = load_cbrace(filePath, sheet)\r\n    % 5 \xc2\xb0C\r\n
 
 @pytest.fixture
 def registry_with(tmp_path):
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
 
     before = dict(matlab_registry._matlab_functions)
     path = tmp_path / "load_cbrace.m"
@@ -45,7 +45,7 @@ def _edit(path, raw):
 def test_gui_and_matlab_hash_the_same_file_identically(tmp_path):
     """One owner: the parser's hash is what MATLAB's entry point records, on a
     CRLF + non-ASCII file (where the old fileread recipe could diverge)."""
-    from scistack_gui.matlab_parser import parse_matlab_function
+    from scistack_gui.matlab.parser import parse_matlab_function
 
     path = tmp_path / "load_cbrace.m"
     path.write_bytes(V2)
@@ -59,8 +59,8 @@ def test_an_edit_after_the_scan_is_seen_by_the_state_check(registry_with, caplog
     scanned = matlab_registry.get_matlab_function("load_cbrace").source_hash
     _edit(path, V2)
 
-    with caplog.at_level(logging.INFO, logger="scistack_gui.matlab_registry"):
-        from scistack_gui.api.pipeline import _build_matlab_fn_proxy
+    with caplog.at_level(logging.INFO, logger="scistack_gui.matlab.registry"):
+        from scistack_gui.services.graph_service import _build_matlab_fn_proxy
 
         proxy = _build_matlab_fn_proxy("load_cbrace")
 
@@ -75,7 +75,7 @@ def test_an_edit_after_the_scan_is_seen_by_the_state_check(registry_with, caplog
 def test_run_dispatch_rechecks_the_file_and_logs_the_expected_hash(registry_with, caplog):
     matlab_registry, path = registry_with
     _edit(path, V2)
-    from scistack_gui.api.matlab_command import _check_source_at_dispatch
+    from scistack_gui.services.matlab_command_format import _check_source_at_dispatch
 
     with caplog.at_level(logging.INFO):
         expected = _check_source_at_dispatch("load_cbrace")
@@ -95,6 +95,6 @@ def test_a_vanished_file_keeps_the_scans_entry(registry_with, caplog):
     matlab_registry, path = registry_with
     first = matlab_registry.get_matlab_function("load_cbrace")
     path.unlink()
-    with caplog.at_level(logging.WARNING, logger="scistack_gui.matlab_registry"):
+    with caplog.at_level(logging.WARNING, logger="scistack_gui.matlab.registry"):
         assert matlab_registry.current_matlab_function("load_cbrace", purpose="test") is first
     assert "no longer defines function" in caplog.text

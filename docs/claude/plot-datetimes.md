@@ -14,7 +14,7 @@ Built 2026-10-22. Plan: `.claude/plan-plot-datetimes.md`. Storage side:
   `"Europe/Berlin"`, `"+02:00"`), which converts every aware value.
 - Q1: a datetime measure offers no **bar** (a bar from 0 is a bar from 1970).
 
-## One owner: `scistackplot.temporal`
+## One owner: `scistackplot.reduce.temporal`
 
 | concern | function |
 |---|---|

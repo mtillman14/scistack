@@ -3,7 +3,7 @@
 Status: **implemented** (2026-08-14, user-reported bug fix). See
 `.claude/plan-pipeline-import-identity.md` for the as-drafted record. Code:
 `scistack_gui/services/portability_service.py` (`_resolve_pipeline`,
-module docstring's "Identity-based reuse"), `scistack_gui/pipeline_store.py`
+module docstring's "Identity-based reuse"), `scistack_gui/stores/pipeline_store.py`
 (`create_pipeline`'s optional `pipeline_id`, `get_pipeline`,
 `list_all_pipelines`). Tests: `scistack-gui/tests/test_portability.py`
 (`TestSubmoduleContentDedup`, `TestHiddenPipelineReimport`,

@@ -41,8 +41,8 @@ from scistackplot.render.base import (
     palette_for,
     sample_palette_for,
 )
-from scistackplot.resolved import COLOR, SAMPLE_COLOR, SERIES
-from scistackplot.roles import complete_roles
+from scistackplot.reduce.resolved import COLOR, SAMPLE_COLOR, SERIES
+from scistackplot.model.roles import complete_roles
 from plot_geometry import despaced, mpl_sample_colors
 
 # subject x session x trial, plus `group` — a subject property with no
@@ -322,7 +322,7 @@ def test_mpl_line_runs_between_the_two_session_ticks_when_the_colour_is_session(
     """Colour = session on a [session, group] grouping: session stays a tick
     inside its group bracket (colour is paint), so subject 01's line runs
     from the A·s1 tick to the A·s2 tick, each point on its own bar."""
-    from scistackplot.xaxis import leaf_key
+    from scistackplot.text.xaxis import leaf_key
 
     figure = _figure(_spec("session", "subject"), table)
     drawn = render_matplotlib(figure)
@@ -536,7 +536,7 @@ def test_sample_in_legend_defaults_on_and_round_trips():
 
 
 def test_the_rule_lists_only_an_own_coloured_overlay():
-    from scistackplot.roles import overlay_in_legend
+    from scistackplot.model.roles import overlay_in_legend
 
     assert overlay_in_legend(_spec("session", "subject"), "subject")
     assert not overlay_in_legend(_spec("session", "subject", sample_in_legend=False), "subject")

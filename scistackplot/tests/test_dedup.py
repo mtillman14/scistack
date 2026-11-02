@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scistackplot.dedup import SingleFlight
+from scistackplot.sources.dedup import SingleFlight
 from scistackplot.sources.frame import DataFrameSource
 
 LAYER = "scistackplot"

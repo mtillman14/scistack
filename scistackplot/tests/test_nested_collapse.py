@@ -32,7 +32,7 @@ from scistackplot import (
     Role,
     resolve,
 )
-from scistackplot.resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW
+from scistackplot.reduce.resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW
 
 
 @pytest.fixture

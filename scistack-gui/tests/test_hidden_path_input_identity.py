@@ -19,9 +19,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from scidb import BaseVariable, PathInput, for_each
-from scistack_gui import node_wiring, registry as _registry
+from scistack_gui.stores import node_wiring
+from scistack_gui.project import registry as _registry
 
 
 class LoadedTable(BaseVariable):
@@ -332,9 +333,9 @@ class TestFilterRunsAfterIdentity:
         import inspect
         import textwrap
 
-        from scistack_gui.api import pipeline
+        from scistack_gui.services import graph_service as pipeline
 
-        tree = ast.parse(textwrap.dedent(inspect.getsource(pipeline._build_graph)))
+        tree = ast.parse(textwrap.dedent(inspect.getsource(pipeline.build_graph)))
         calls = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
@@ -345,7 +346,7 @@ class TestFilterRunsAfterIdentity:
 
     def test_filter_hidden_is_called_once(self):
         calls = [n for _, n in self._calls_in_build_graph() if n == "filter_hidden"]
-        assert len(calls) == 1, f"_build_graph calls filter_hidden {len(calls)} times"
+        assert len(calls) == 1, f"build_graph calls filter_hidden {len(calls)} times"
 
     def test_filter_hidden_follows_identity_and_grouping(self):
         lines = {}
@@ -353,7 +354,7 @@ class TestFilterRunsAfterIdentity:
             lines.setdefault(name, []).append(lineno)
         filt = min(lines["filter_hidden"])
         for step in ("_resolve_node_identity", "group_call_sites_by_wiring"):
-            assert step in lines, f"_build_graph no longer calls {step}"
+            assert step in lines, f"build_graph no longer calls {step}"
             assert filt > max(lines[step]), (
                 f"filter_hidden (line {filt}) runs before {step} "
                 f"(line {max(lines[step])}): a hide can reach wiring_id"
@@ -630,9 +631,9 @@ class TestRunManualNodeEndToEnd:
 
     @pytest.fixture
     def ran_manual(self, pi_client):
-        from scistack_gui import layout as layout_store
-        from scistack_gui import pipeline_store as ps
-        from scistack_gui.api.pipeline import build_aggregate
+        from scistack_gui.stores import layout as layout_store
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.services.graph_service import build_aggregate
         from scistack_gui.domain import graph_builder as gb
 
         db = _gui_db.get_db()
@@ -653,7 +654,7 @@ class TestRunManualNodeEndToEnd:
         return pi_client, db
 
     def test_the_node_is_re_keyed_with_its_position(self, ran_manual):
-        from scistack_gui import layout as layout_store
+        from scistack_gui.stores import layout as layout_store
         from scistack_gui.ids import parse_fn_node_id
 
         client, db = ran_manual
@@ -705,7 +706,7 @@ class TestRunManualNodeEndToEnd:
 
 
 def pipeline_store_edges(db):
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     return ps.get_manual_edges(db)
 

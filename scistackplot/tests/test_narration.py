@@ -26,7 +26,7 @@ LAYER = "scistackplot"
 #:
 #: No `y_limits` here on purpose: the limits are computed once for the WHOLE
 #: fan-out, inside the `plan` phase, because a scope of `[]` means one range
-#: across figures this function never sees (`scistackplot.ylimits`). What is
+#: across figures this function never sees (`scistackplot.reduce.ylimits`). What is
 #: left per figure is reading the panels' own limits back, which is not work.
 #:
 #: No `collapse_levels` for this spec: a nested 1-D measure takes ONE of

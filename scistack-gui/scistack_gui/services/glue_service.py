@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from scistack_gui import history
+from scistack_gui.stores import history
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ def _glue_dir(create: bool = False) -> "Path | None":
     reason: without it, the first "New glue node" click fails with a
     configuration error the GUI offers no way to fix.
     """
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     cfg = getattr(registry, "_config", None)
     if cfg is not None and getattr(cfg, "glue_dir", None) is not None:
@@ -51,8 +51,8 @@ def _glue_dir(create: bool = False) -> "Path | None":
     if not create:
         return None
 
-    from scistack_gui import db as db_module
-    from scistack_gui.config import set_glue_dir
+    from scistack_gui.runtime import db as db_module
+    from scistack_gui.project.config import set_glue_dir
 
     try:
         db_path = db_module.get_db_path()
@@ -122,7 +122,7 @@ def list_glue_nodes() -> list[dict]:
     read-only, the same contract entity declarations have always had.
     """
     from scidb import function_role
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     directory = _glue_dir()
     out: list[dict] = []
@@ -160,7 +160,7 @@ def _matlab_glue_names() -> list[str]:
     from scidb import function_role
 
     try:
-        from scistack_gui import matlab_registry as _mr
+        from scistack_gui.matlab import registry as _mr
 
         return [n for n in _mr.get_all_function_names() if function_role(n) == "glue"]
     except Exception:
@@ -169,7 +169,7 @@ def _matlab_glue_names() -> list[str]:
 
 def _matlab_source_path(name: str):
     try:
-        from scistack_gui import matlab_registry as _mr
+        from scistack_gui.matlab import registry as _mr
 
         fn = _mr.get_matlab_function(name)
         return Path(fn.path) if getattr(fn, "path", None) else None
@@ -203,7 +203,7 @@ def create_glue_node(
     Returns ``{"ok": True, "name", "path", "source"}`` or
     ``{"ok": False, "error": ...}``.
     """
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     name = normalize_glue_name(name)
     err = validate_glue_name(name)
@@ -309,12 +309,12 @@ def _resolves(name: str, language: str) -> bool:
     """Whether ``name`` is still discoverable after a write."""
     if language == "matlab":
         try:
-            from scistack_gui import matlab_registry as _mr
+            from scistack_gui.matlab import registry as _mr
 
             return name in set(_mr.get_all_function_names())
         except Exception:
             return False
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     return registry.lookup_function(name) is not None
 
@@ -330,8 +330,8 @@ def delete_glue_node(name: str, db=None) -> dict:
     Returns the number of canvas nodes removed, so the UI can say "removed
     from 2 pipelines" rather than reporting a silent no-op.
     """
-    from scistack_gui import db as db_module
-    from scistack_gui import pipeline_store
+    from scistack_gui.runtime import db as db_module
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.edge_resolver import GLUE_NODE_TYPE
 
     try:
@@ -410,7 +410,7 @@ def _reload_project() -> dict:
     calls ``reload_registries_from_disk`` after auto-creating the entities
     file, rather than the narrow reload it uses for ordinary writes.
     """
-    from scistack_gui import db as db_module
+    from scistack_gui.runtime import db as db_module
     from scistack_gui.services.registry_reload_service import (
         reload_registries_from_disk,
     )

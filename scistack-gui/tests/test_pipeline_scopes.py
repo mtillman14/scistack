@@ -11,9 +11,9 @@ Layout positions are per-scope in the JSON file.
 import json
 
 import pytest
-from scistack_gui import layout as layout_store
-from scistack_gui import pipeline_store as ps
-from scistack_gui.db import get_db
+from scistack_gui.stores import layout as layout_store
+from scistack_gui.stores import pipeline_store as ps
+from scistack_gui.runtime.db import get_db
 
 # ---------------------------------------------------------------------------
 # Pipeline scopes (CRUD + root guarantees)
@@ -806,7 +806,7 @@ class TestSweepExecutionResolution:
         directly — create_path_input/create_parameter now call
         registry.refresh_module(), which re-scans that ONE file from
         scratch and would otherwise wipe a dict-injected function."""
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         target = registry._module_path
         with open(target, "a") as f:
@@ -956,8 +956,8 @@ class TestSweepExecutionResolution:
         invisible -- so unchecking one value used to look right in the UI
         and still run.
         """
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import build_run_inputs
 
         client = client_with_variable_file
@@ -1000,8 +1000,8 @@ class TestSweepExecutionResolution:
         the records the user unchecked, so this raises instead."""
         import pytest
 
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import build_run_inputs
 
         client = client_with_variable_file
@@ -1024,8 +1024,8 @@ class TestSweepExecutionResolution:
         signature param it happens to feed made unchecking a value on a
         Parameter whose names differ silently do nothing.
         """
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import build_run_inputs
 
         client = client_with_variable_file
@@ -1044,14 +1044,14 @@ class TestSweepExecutionResolution:
         """No hidden values means the declared Parameter passes through
         untouched -- not rebuilt, so identity-sensitive callers see the
         registry object itself."""
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import build_run_inputs
 
         client = client_with_variable_file
         client.post("/api/parameters", json={"name": "window_seconds", "values": [10, 20]})
         self._register_fn("fn_no_hides")
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         declared = registry.get_parameters_registry()["window_seconds"]
         target = self._binding(window_seconds="window_seconds")
@@ -1077,7 +1077,7 @@ class TestEdgeDrivenBinding:
 
     @staticmethod
     def _register_fn(name: str, params: str):
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         with open(registry._module_path, "a") as f:
             f.write(f"\n\ndef {name}({params}):\n    return {params.split(',')[0]}\n")
@@ -1118,7 +1118,7 @@ class TestEdgeDrivenBinding:
             handle="in__filepath_or_buffer",
         )
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             build_run_inputs,
             derive_fn_targets,
@@ -1156,7 +1156,7 @@ class TestEdgeDrivenBinding:
             handle="in__window",
         )
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             build_run_inputs,
             derive_fn_targets,
@@ -1183,8 +1183,8 @@ class TestEdgeDrivenBinding:
         nothing when they differ, so every unchecked value would run anyway
         — the same declared-vs-parameter confusion as the registry lookup,
         one layer further on."""
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_fn_targets
 
         client = client_with_variable_file
@@ -1233,7 +1233,7 @@ class TestEdgeDrivenBinding:
             "source": "mf_unwired", "target": "mv_unwired",
         })
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             build_run_inputs,
             derive_fn_targets,
@@ -1269,7 +1269,7 @@ class TestEdgeDrivenBinding:
             handle="in__dtype_backend",
         )
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             build_run_inputs,
             derive_fn_targets,
@@ -2192,7 +2192,7 @@ class TestHiddenPortsFiltering:
 
 class TestExecutionCompiler:
     def test_derive_fn_targets_from_db_history(self, client):
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_fn_targets
 
         targets = derive_fn_targets(get_db(), "bandpass_filter")
@@ -2202,7 +2202,7 @@ class TestExecutionCompiler:
         assert targets[0]["output_type"] == "FilteredSignal"
 
     def test_derive_fn_targets_unknown_fn_is_empty(self, client):
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_fn_targets
 
         assert derive_fn_targets(get_db(), "no_such_fn") == []
@@ -2249,7 +2249,7 @@ class TestDeriveTargetForNode:
             "source": "param__low_hz", "target": "mf_bp_other", "target_handle": "in__low_hz",
         })
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_target_for_node
 
         targets = derive_target_for_node(get_db(), "mf_bp_other")
@@ -2309,7 +2309,7 @@ class TestDeriveTargetForNode:
             "source": "param__low_hz", "target": "mf_bp_other3", "target_handle": "in__low_hz",
         })
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_target_for_node
 
         targets = derive_target_for_node(get_db(), "mf_bp_other3")
@@ -2336,7 +2336,7 @@ class TestDeriveTargetForNode:
         import numpy as np
         from scidb import BaseVariable, Parameter
 
-        from scistack_gui import registry as _registry
+        from scistack_gui.project import registry as _registry
 
         class OtherSignal4(BaseVariable):
             pass
@@ -2375,7 +2375,7 @@ class TestDeriveTargetForNode:
                 "target_handle": "in__brand_new_gain",
             })
 
-            from scistack_gui.db import get_db
+            from scistack_gui.runtime.db import get_db
             from scistack_gui.services.execution_service import derive_target_for_node
 
             targets = derive_target_for_node(get_db(), "mf_bp_other4")
@@ -2394,8 +2394,8 @@ class TestDeriveTargetForNode:
         """The flip side: an already-graduated node's own wiring must
         resolve to ITS real DB history, not get confused by an unrelated
         manual node sharing the same label."""
-        from scistack_gui import node_wiring
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import node_wiring
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.domain.graph_builder import wiring_id
         from scistack_gui.services.execution_service import derive_target_for_node
 
@@ -2427,10 +2427,10 @@ class TestDeriveTargetForNode:
         import numpy as np
         from scidb import BaseVariable
 
-        from scistack_gui import layout as layout_store
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
-        from scistack_gui import node_wiring
+        from scistack_gui.stores import layout as layout_store
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
+        from scistack_gui.stores import node_wiring
         from scistack_gui.domain.graph_builder import wiring_id
         from scistack_gui.services.execution_service import derive_target_for_node
 
@@ -2478,7 +2478,7 @@ class TestDeriveTargetForNode:
         assert targets[0]["constants"] == {"low_hz": 20}
 
     def test_compile_root_scope(self, client):
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,
@@ -2525,7 +2525,7 @@ class TestDeriveTargetForNode:
     def test_run_pipeline_skips_current_steps(self, client):
         """Synchronous run through the compiler: the seed already ran
         bandpass fully, so skip_computed leaves zero new invocations."""
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import run_pipeline
 
         db = get_db()
@@ -2545,7 +2545,7 @@ class TestDeriveTargetForNode:
 
     def test_compiled_pipelines_are_discarded(self, client):
         from scidb.pipeline import _all_pipelines
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import plan_pipeline
 
         before = len(_all_pipelines)
@@ -2558,7 +2558,7 @@ class TestDeriveTargetForNode:
         call and per-combo functions crash on multi-row tables (regression
         found via gui_test_data, 2026-07-18). Explicit iterables (not
         schema_level) so binding `iterate` overrides compose per key."""
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,
@@ -2578,7 +2578,7 @@ class TestDeriveTargetForNode:
         """Staged pending values override DB history at COMPILE time (Stage
         2 of the wiring-grouped plan) — the same Strategy-2 semantics as the
         eager run thread, via the shared apply_pending_overrides helper."""
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,
@@ -2600,8 +2600,8 @@ class TestDeriveTargetForNode:
         Pipeline and plan-preview both go through build_backend_pipeline,
         which previously never consulted the hidden set at all (see
         plan-combo-hiding.md)."""
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import (
             _discard_compiled,
@@ -2640,8 +2640,8 @@ class TestDeriveTargetForNode:
         """The full Stage-2 loop: stage a value -> pull run writes the
         staged variant's records -> next graph build auto-cleans the
         pending value and the node returns to green."""
-        from scistack_gui import layout as layout_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import layout as layout_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import run_pipeline
 
         client.put("/api/parameters/low_hz/pending/42")
@@ -2678,7 +2678,7 @@ class TestDeriveTargetForNode:
         """run_pipeline surfaces the backend's last_run_report so the run
         thread can report honest success (iteration failures never raise
         out of for_each)."""
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import run_pipeline
 
         result = run_pipeline(get_db(), "main", mode="until", target="bandpass_filter")
@@ -2738,7 +2738,7 @@ class TestDeriveTargetForNode:
             "target_handle": "in__low_hz",
         })
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,
@@ -2769,7 +2769,7 @@ class TestPathInputExecutionResolution:
     derivation ever constructs one. Before that fix, NEITHER the never-run
     fallback NOR an already-run DB-history target ever built a live
     scifor.PathInput anywhere in scistack-gui — a PathInput-driven function
-    couldn't be run through the GUI at all, first run or re-run. api/run.py
+    couldn't be run through the GUI at all, first run or re-run. services/run_service.py
     and execution_service.build_backend_pipeline used to carry two
     independently-drifting copies of the input-building logic; both now call
     the one shared execution_service.build_run_inputs.
@@ -2800,7 +2800,7 @@ class TestPathInputExecutionResolution:
         directly — create_path_input/create_parameter now call
         registry.refresh_module(), which re-scans that ONE file from
         scratch and would otherwise wipe a dict-injected function."""
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         target = registry._module_path
         with open(target, "a") as f:
@@ -2834,7 +2834,7 @@ class TestPathInputExecutionResolution:
             "/api/edges/e_load_out", json={"source": "mf_load", "target": "mv_loaded"}
         )
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_fn_targets
 
         targets = derive_fn_targets(get_db(), "load_raw")
@@ -2872,7 +2872,7 @@ class TestPathInputExecutionResolution:
             "target_handle": "in__filepath",
         })
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             build_run_inputs,
             derive_fn_targets,
@@ -2913,7 +2913,7 @@ class TestPathInputExecutionResolution:
             "target_handle": "in__filepath",
         })
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import (
             _discard_compiled,
             build_backend_pipeline,
@@ -2953,7 +2953,7 @@ class TestPathInputExecutionResolution:
         docs/claude/code-discovery-categories.md), so this writes the
         declaration directly rather than going through the API."""
         from scidb import EachOf, PathInput
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         self._register_loader("load_raw5")
         target = registry._module_path
@@ -3039,7 +3039,7 @@ class TestNeverRunNodeMatlabCommand:
         })
 
     def test_never_run_target_is_history_shaped(self, client):
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_target_for_node
 
         self._wire(client, "mf_nr1", [("mv_nr1_in", "NeverRunIn1")], ("mv_nr1_out", "NeverRunOut1"))
@@ -3050,7 +3050,7 @@ class TestNeverRunNodeMatlabCommand:
         assert targets[0]["input_types"] == {"signal": "NeverRunIn1"}
 
     def test_single_node_command_for_never_run_node_does_not_crash(self, client):
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.matlab_command_service import generate_matlab_command
 
         self._wire(client, "mf_nr2", [("mv_nr2_in", "NeverRunIn2")], ("mv_nr2_out", "NeverRunOut2"))
@@ -3069,7 +3069,7 @@ class TestNeverRunNodeMatlabCommand:
         node's wiring — the real bandpass_filter(RawSignal) call site)."""
         import pytest
 
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.matlab_command_service import generate_matlab_command
 
         self._wire(
@@ -3089,8 +3089,8 @@ class TestNeverRunNodeMatlabCommand:
         wiring with the FIRST candidate only (``ts[0]``) while
         ``record_dispatch_wirings`` hashed the full list, so for a multi-type
         input the two never matched. Both now read one view."""
-        from scistack_gui import pipeline_store
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.domain.edge_resolver import (
             BINDING_PATHINPUT,
             bindings_of_kind,

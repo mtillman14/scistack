@@ -1,14 +1,14 @@
 """Comparisons → brackets on the linked figure (S20 part 1, P6).
 
-Results become the plot layer's own shape, ``scistackplot.diffbars.
+Results become the plot layer's own shape, ``scistackplot.reduce.diffbars.
 DifferenceBar`` with ``origin="test"``. The caller joins them to a figure for
-one resolve with ``scistackplot.diffbars.with_derived_bars``, and never
+one resolve with ``scistackplot.reduce.diffbars.with_derived_bars``, and never
 stores them (they are intent). The plot layer never sees a stats type.
 
 A bracket is only drawn where it means what it says:
 
 - the stats table's design must equal the figure's
-  (``scistackplot.design.design_fingerprint``). With different designs a
+  (``scistackplot.model.design.design_fingerprint``). With different designs a
   comparison's rows are not the figure's marks;
 - not on a figure compared to a reference level (S9): a test of raw values
   is not a test of change scores;
@@ -28,8 +28,8 @@ from typing import Any
 from scistacklog import Log
 
 from scistackplot import PlotSpec
-from scistackplot.design import design_fingerprint
-from scistackplot.diffbars import DifferenceBar
+from scistackplot.model.design import design_fingerprint
+from scistackplot.reduce.diffbars import DifferenceBar
 
 from .format import p_phrase, stars
 from .run import Comparison, StatsReport

@@ -1,4 +1,4 @@
-"""The automatic text size: ONE reference (scistackplot.autosize; user, 2026-10-14).
+"""The automatic text size: ONE reference (scistackplot.text.autosize; user, 2026-10-14).
 
 Part 1 tests the search with a fake layout, so its rules are pinned without
 matplotlib: one dial, the range, binary-search cost, "at the bottom the
@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from scistackplot import DEFAULT_TEXT_RATIOS, TEXT_TARGETS, TextSizes
-from scistackplot.autosize import (
+from scistackplot.text.autosize import (
     MIN_TICK_LABELS,
     LayoutReport,
     candidates,
@@ -162,7 +162,7 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.autosize import settle  # noqa: E402
+from scistackplot.text.autosize import settle  # noqa: E402
 from test_mpl_label_fit import _graph1, gait_table  # noqa: E402,F401
 
 #: The most layouts a 9-candidate search may take (the top, then log2).

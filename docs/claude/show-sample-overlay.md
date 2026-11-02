@@ -240,7 +240,7 @@ when a weight applies.
 | export | `codegen._sample_preamble_lines` (before the emitted chain) + `codegen._sample_draw_lines` (after the `catplot`) |
 | report | `capability.sample_overlay_summary` → `sample_overlay {available, reason, factors[{name, checked, shown}], ignored, shown, averaged, join, granularity}` |
 | GUI | `PlotStudio.tsx` "Show sample" section; `showSample.ts` (toggle, join choice, ticked/locked) |
-| point size + line width (`style.sample_weight`; a spaghetti's own lines: `style.line_weight`) | `scistackplot.weights` (`sample_weight` / `spaghetti_weight` → `ResolvedWeight`), read by `mpl._draw_sample` / `_draw_spaghetti`, `plotly_._sample_traces` / `_spaghetti_traces`, `codegen._sample_draw_lines` + the spaghetti `relplot` args; GUI box shown from `layout.meta.mark_weights` (`markWeights.ts`). See "Mark weights" below |
+| point size + line width (`style.sample_weight`; a spaghetti's own lines: `style.line_weight`) | `scistackplot.reduce.weights` (`sample_weight` / `spaghetti_weight` → `ResolvedWeight`), read by `mpl._draw_sample` / `_draw_spaghetti`, `plotly_._sample_traces` / `_spaghetti_traces`, `codegen._sample_draw_lines` + the spaghetti `relplot` args; GUI box shown from `layout.meta.mark_weights` (`markWeights.ts`). See "Mark weights" below |
 | the overlay's own colour | `roles.overlay_color` (active?), `resolved.SAMPLE_COLOR`, `reduce._overlay_frame` (column) + `sample_color_order`, `render.base.sample_runs` (`SampleRun`, `SAMPLE_CROSS_LINE_COLOR`) / `sample_palette_for` / `sample_legend_levels`, `codegen._sample_color_of` / `_sample_legend_lines`, `capability … color {setting, active, options}` |
 
 ## Traps

@@ -1196,7 +1196,7 @@ def _drain(messages, kind, timeout=60.0):
 @pytest.fixture
 def captured_pushes(monkeypatch):
     """Collect every push_message the job emits, over either transport."""
-    from scistack_gui.api import ws as ws_mod
+    from scistack_gui.runtime import ws_hub as ws_mod
 
     messages: list = []
     monkeypatch.setattr(ws_mod, "push_message", messages.append)
@@ -1564,13 +1564,13 @@ def test_invalidate_is_a_noop_for_an_unbuilt_source(populated_db):
 def test_run_completion_invalidates_the_cache(populated_db, monkeypatch):
     """The wiring itself: finishing a run must drop the cache, not just push
     dag_updated. These two travelled separately and only one was ever sent."""
-    from scistack_gui.api import run as run_api
+    from scistack_gui.services import run_service as run_api
 
     cached = plot_service.get_source(populated_db)
     messages = []
     monkeypatch.setattr(run_api, "push_message", messages.append)
 
-    run_api._notify_records_changed()
+    run_api.notify_records_changed()
 
     assert {"type": "dag_updated"} in messages
     assert plot_service.get_source(populated_db) is not cached
@@ -1581,7 +1581,7 @@ def test_notify_still_updates_the_dag_if_invalidation_fails(
 ):
     """A cache we failed to drop is a stale figure, not a failed run — the
     records are already written, so this must never bury the result."""
-    from scistack_gui.api import run as run_api
+    from scistack_gui.services import run_service as run_api
 
     messages = []
     monkeypatch.setattr(run_api, "push_message", messages.append)
@@ -1591,7 +1591,7 @@ def test_notify_still_updates_the_dag_if_invalidation_fails(
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
 
-    run_api._notify_records_changed()  # must not raise
+    run_api.notify_records_changed()  # must not raise
 
     assert {"type": "dag_updated"} in messages
 
@@ -1812,7 +1812,7 @@ def test_binding_survives_a_parameter_renamed_away_from_the_argument(swept_db):
     the node to "not a variant here", and reports the axis as living in a
     nested pipeline.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     source = plot_service.get_source(swept_db)
     axes = source.variant_graph("FilteredSignal")["axes"]
@@ -1957,7 +1957,7 @@ def test_an_invalid_spec_is_a_message_on_the_deferred_path_too(populated_db):
 @pytest.fixture
 def per_request_policy():
     """Run the body under the JSON-RPC server's connection policy."""
-    from scistack_gui import db as db_mod
+    from scistack_gui.runtime import db as db_mod
 
     previous = db_mod.connection_policy()
     was_open = db_mod._db_open
@@ -2044,7 +2044,7 @@ def test_persistent_policy_never_closes_the_connection(populated_db):
     no request acquires. An acquire/release pair there would drop the refcount
     to zero and close the connection that every later request expects to find
     open — `get_db` hands back the manager without reopening it."""
-    from scistack_gui import db as db_mod
+    from scistack_gui.runtime import db as db_mod
 
     assert db_mod.connection_policy() == "persistent"
     was_open, was_ref = db_mod._db_open, db_mod._db_refcount
@@ -2071,7 +2071,7 @@ def test_a_csv_spec_takes_no_connection(per_request_policy):
 
 
 def test_an_unknown_policy_is_refused():
-    from scistack_gui import db as db_mod
+    from scistack_gui.runtime import db as db_mod
 
     with pytest.raises(ValueError, match="Unknown connection policy"):
         db_mod.set_connection_policy("whenever")
@@ -2933,7 +2933,7 @@ def test_invalidate_drops_the_kept_resolve(populated_db, monkeypatch):
 
 
 def test_a_project_alias_write_answers_ok_and_drops_the_kept_resolve(tmp_path, monkeypatch):
-    import scistack_gui.db as gui_db
+    import scistack_gui.runtime.db as gui_db
     from scidb import aliases
 
     db_path = tmp_path / "proj.duckdb"
@@ -2951,7 +2951,7 @@ def test_a_project_alias_write_answers_ok_and_drops_the_kept_resolve(tmp_path, m
 
 
 def test_a_refused_project_alias_is_an_answer_not_an_error(tmp_path, monkeypatch):
-    import scistack_gui.db as gui_db
+    import scistack_gui.runtime.db as gui_db
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -2967,7 +2967,7 @@ def test_a_refused_project_alias_is_an_answer_not_an_error(tmp_path, monkeypatch
 
 
 def test_a_project_color_write_answers_ok_and_drops_the_kept_resolve(tmp_path, monkeypatch):
-    import scistack_gui.db as gui_db
+    import scistack_gui.runtime.db as gui_db
     from scidb import colors
 
     db_path = tmp_path / "proj.duckdb"
@@ -2985,7 +2985,7 @@ def test_a_project_color_write_answers_ok_and_drops_the_kept_resolve(tmp_path, m
 
 
 def test_a_colour_that_is_not_one_is_an_answer_not_an_error(tmp_path, monkeypatch):
-    import scistack_gui.db as gui_db
+    import scistack_gui.runtime.db as gui_db
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")

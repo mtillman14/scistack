@@ -13,8 +13,8 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, capabilities, resolve
-from scistackplot.reduce import apply_filters
-from scistackplot.spec import Filter
+from scistackplot.reduce.resolve import apply_filters
+from scistackplot.model.spec import Filter
 
 
 def _rows(figure) -> int:

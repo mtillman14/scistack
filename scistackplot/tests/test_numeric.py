@@ -12,8 +12,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from scistackplot.numeric import coerce_numeric
-from scistackplot.reduce import _explode_1d
+from scistackplot.reduce.numeric import coerce_numeric
+from scistackplot.reduce.resolve import _explode_1d
 
 
 class TestCoerceNumeric:

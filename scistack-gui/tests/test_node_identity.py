@@ -21,9 +21,10 @@ import numpy as np
 import pytest
 from conftest import FilteredSignal, RawSignal
 
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from scidb import BaseVariable, for_each
-from scistack_gui import node_wiring, registry as _registry
+from scistack_gui.stores import node_wiring
+from scistack_gui.project import registry as _registry
 from scistack_gui.domain import node_identity
 from scistack_gui.domain.node_identity import Ambiguity, resolve_identities
 
@@ -256,7 +257,7 @@ class TestAmbiguity:
         """A repeated warning buries the next one. The POPUP still arrives with
         every response — the panel that shows it may have mounted since — but
         the log records each pair the first time only."""
-        from scistack_gui.api import pipeline as api_pipeline
+        from scistack_gui.services import graph_service as api_pipeline
 
         amb = Ambiguity("f", "w2", "fn__f__a000000000000000", ("fn__f__b000000000000000",))
         other = Ambiguity("f", "w3", "fn__f__a000000000000000", ("fn__f__c000000000000000",))
@@ -405,7 +406,7 @@ class TestHiddenClaimants:
         import ast
         import inspect
 
-        from scistack_gui.api import pipeline
+        from scistack_gui.services import graph_service as pipeline
 
         tree = ast.parse(inspect.getsource(pipeline))
         calls = [
@@ -415,7 +416,7 @@ class TestHiddenClaimants:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "resolve_identities"
         ]
-        assert calls, "api/pipeline no longer calls resolve_identities"
+        assert calls, "graph_service no longer calls resolve_identities"
         for call in calls:
             assert "hidden_node_ids" in {kw.arg for kw in call.keywords}
 
@@ -723,6 +724,6 @@ class TestTheRepairPathsAreGone:
         assert not hasattr(graph_builder, "superseded_manual_input_overrides")
 
     def test_migrate_node_statements_is_removed(self):
-        from scistack_gui.api import pipeline
+        from scistack_gui.services import graph_service as pipeline
 
         assert not hasattr(pipeline, "_migrate_node_statements")

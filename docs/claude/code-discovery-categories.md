@@ -38,7 +38,7 @@ declared Parameter and PathInput strewn across the root canvas.
 
 Two separate scanners exist, used in different contexts:
 
-- **`scistack_gui/registry.py`** — powers the live GUI/VS Code server. For
+- **`scistack_gui/project/registry.py`** — powers the live GUI/VS Code server. For
   each configured source (see "Where Python looks," below), it imports the
   module and calls `inspect.getmembers(module, callable)`, keeping anything
   that:
@@ -274,7 +274,7 @@ string/number literal. `root_folder` is accepted in **both** MATLAB
 syntaxes — `root_folder='/d'` (name=value, R2021b+) and `'root_folder', '/d'`
 (name-value pair). When every needed argument parses, a **real**
 `scifor.PathInput`/`scidb.Parameter` object is constructed and registered into
-the same shared `scistack_gui.registry` Python-discovered entities use
+the same shared `scistack_gui.project.registry` Python-discovered entities use
 (`registry._register_path_input(name, pi, source=path)`) — so the GUI
 canvas's `pathInput__` nodes, `execution_service.build_run_inputs`'s
 content-matching resolution, and `matlab_command_service`'s command
@@ -333,7 +333,7 @@ What appears in the graph as `pipelineNode` is a **nested pipeline**
 source code — `binding_json`'s three keys are a direct, field-for-field
 match with `PipelineBinding.key_map`/`.params`/`.iterate`.
 
-### Source → GUI import (`scistack_gui/pipeline_discovery.py`)
+### Source → GUI import (`scistack_gui/project/pipeline_discovery.py`)
 
 A user's file can define a pipeline in source:
 
@@ -387,10 +387,10 @@ why an arbitrary id works correctly here — function nodes already followed
 this pattern; var/const nodes previously didn't, and that gap is fixed.
 
 Wired into `bootstrap.open_or_create_project` (initial load, all project
-modes) and `api/project.py._refresh_registries` (loose-script/single-file
+modes) and `services/project_service.py._refresh_registries` (loose-script/single-file
 "Refresh Code" path). **Known gap**: not wired into the packaged-project
 (`pyproject.toml` present) `scan_project` refresh branch — see the comment
-at that call site in `api/project.py`.
+at that call site in `services/project_service.py`.
 
 ### GUI → source export (`scistack_gui/services/code_export_service.py`)
 
@@ -474,10 +474,10 @@ depends on), not duplicated per package:
 - `scidb.discover.is_test_path(path)` / `is_test_modname(modname)` — the
   directory + Python-filename-convention check. Applied in
   `discover.py:scan_package`'s `pkgutil.walk_packages` loop (skips a test
-  submodule before import) and reused by `scistack_gui/registry.py`'s
+  submodule before import) and reused by `scistack_gui/project/registry.py`'s
   `_load_packages` (same `pkgutil.walk_packages` shape, for pip-installed
   `packages = [...]` config entries).
-- `scistack_gui/config.py:_is_test_file(path)` — wraps `is_test_path` and
+- `scistack_gui/project/config.py:_is_test_file(path)` — wraps `is_test_path` and
   adds the MATLAB-only `_MATLAB_TEST_FILE_RE` check. Applied in
   `_walk_source_files` (prunes `test`/`tests` dirnames during any walk, and
   filters the final per-file result list), `_resolve_glob_paths` (MATLAB

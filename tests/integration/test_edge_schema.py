@@ -31,6 +31,7 @@ from conftest import (
     TRIALS,
     attempt,
     cell,
+    failure_reasons,
     run_summary,
 )
 
@@ -48,12 +49,16 @@ def _templates(root):
         "cycle": scidb.PathInput(
             "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_c{cycle}.csv",
             root_folder=str(root),
+            name="SYMMETRY_FILE",
         ),
         "trial": scidb.PathInput(
             "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_trial.csv",
             root_folder=str(root),
+            name="TRIAL_FILE",
         ),
-        "subject": scidb.PathInput("{subject}/{subject}_demographics.csv", root_folder=str(root)),
+        "subject": scidb.PathInput(
+            "{subject}/{subject}_demographics.csv", root_folder=str(root), name="DEMOGRAPHICS_FILE"
+        ),
     }
 
 
@@ -265,7 +270,7 @@ def test_an_input_finer_than_the_iteration_without_as_table(scratch_db, pipeline
         # with a recorded reason. Both are visible; a silent pick is not.
         assert summary.get("completed", 0) + summary.get("failed", 0) + summary.get("no_data", 0) == summary.get("total", 0)
         if summary.get("failed"):
-            assert summary.get("failure_reasons"), summary
+            assert failure_reasons(summary), summary
 
 
 # --- A5: ragged data -----------------------------------------------------------------------
@@ -290,14 +295,14 @@ def test_ragged_data_runs_every_combination_that_exists(scratch_db, pipeline, ra
 
     _, summary = run_normalized_knee(pipeline)
     assert summary.get("completed") == N_SMALL - len(SPEEDS) * len(CYCLES), summary
-    assert summary.get("failed", 0) == 0, summary.get("failure_reasons")
+    assert summary.get("failed", 0) == 0, failure_reasons(summary)
     assert set(pipeline.NormalizedKnee.load(as_df=True)["trial"]) == {"01", "03"}
 
 
 def test_ragged_data_plots_and_exports_without_the_gap(scratch_db, pipeline, ragged_root):
     pytest.importorskip("scistackplotdb")
     from scistackplot import PlotKind, PlotSpec, Role, plot_data, render_plotly, resolve
-    from scistackplot.xaxis import is_spacer
+    from scistackplot.text.xaxis import is_spacer
     from scistackplotdb import ScidbSource
 
     load_levels(pipeline, root=ragged_root)
@@ -339,7 +344,7 @@ def test_a_key_value_that_matches_nothing_fails_visibly_and_saves_nothing(scratc
         _, summary = outcome
         assert summary.get("completed", 0) == 0, summary
         if summary.get("failed"):
-            reasons = " ".join(summary.get("failure_reasons") or {})
+            reasons = " ".join(failure_reasons(summary))
             assert "No such file" in reasons or "week99" in reasons, reasons
     assert _count(pipeline.CycleSymmetry) == 0
 

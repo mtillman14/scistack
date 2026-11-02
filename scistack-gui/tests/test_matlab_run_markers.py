@@ -9,7 +9,7 @@ Two signals replace that guess, and the tests below are organised around
 them:
 
 * the run's own **markers** (``scidb.run_markers``), which say how it ended;
-* the **DuckDB lock holder** (``scistack_gui.db.probe_lock_holder``), which
+* the **DuckDB lock holder** (``scistack_gui.runtime.db.probe_lock_holder``), which
   says whether it is still going and needs nothing from MATLAB — the half
   that survives a killed or Ctrl-C'd MATLAB.
 
@@ -28,8 +28,8 @@ import time
 import pytest
 
 from scidb import run_markers
-from scistack_gui import db as gui_db
-from scistack_gui.matlab_run_watch import (
+from scistack_gui.runtime import db as gui_db
+from scistack_gui.matlab.run_watch import (
     IDLE_GRACE_S,
     STARTUP_GRACE_S,
     classify,
@@ -304,7 +304,7 @@ def test_a_broken_hint_falls_back_to_the_patient_default(monkeypatch):
         raise RuntimeError("watcher exploded")
 
     monkeypatch.setattr(
-        "scistack_gui.matlab_run_watch.any_run_in_flight", _boom
+        "scistack_gui.matlab.run_watch.any_run_in_flight", _boom
     )
     assert gui_db._effective_acquire_timeout(5.0) == 5.0
 
@@ -318,7 +318,7 @@ def test_a_broken_hint_falls_back_to_the_patient_default(monkeypatch):
 
 
 def _script(run_id="run-xyz", **kwargs):
-    from scistack_gui.api.matlab_command import generate_matlab_command
+    from scistack_gui.services.matlab_command_format import generate_matlab_command
 
     return generate_matlab_command(
         function_name="bandpass_filter",
@@ -353,7 +353,7 @@ def _pin_scimatlab_dir(monkeypatch, value=_FAKE_SCIMATLAB):
 
 
 def _pipeline_script(run_id="run-pipe"):
-    from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+    from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
     return generate_matlab_pipeline_command(
         pipeline_id="main",
@@ -506,7 +506,7 @@ def test_every_generator_exit_reports_the_run():
     import ast
     from pathlib import Path
 
-    import scistack_gui.api.matlab_command as mod
+    import scistack_gui.services.matlab_command_format as mod
 
     tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
     generators = {
@@ -543,7 +543,7 @@ def test_every_generator_exit_reports_the_run():
 # A terminal run writes records like any other. Until 2026-09-22 it was the one
 # completion path that never said so: `_start_matlab_run` returns
 # `host_execution_required` and exits without spawning a thread, so the
-# `_notify_records_changed()` every in-process path ends with had no caller on
+# `notify_records_changed()` every in-process path ends with had no caller on
 # this side. Observed: 4 `dag_updated` messages in a 55-minute session against
 # 9 runs, none of them after a run — node colours stayed as they were and Plot
 # Studio kept serving pre-run frames.
@@ -553,13 +553,13 @@ def _capture_pushes(monkeypatch) -> list:
     """Every frame either push_message reaches the transport with.
 
     There are two, deliberately: `matlab_run_watch` pushes through
-    `notify.push_message` (the JSON-RPC path) and `api.run` binds
+    `notify.push_message` (the JSON-RPC path) and `run_service` binds
     `ws.push_message` at import. `ws.push_message` delegates to the JSON-RPC
     one when the extension host is driving, so in production they converge —
     but a test that patched only one would miss half the frames.
     """
-    import scistack_gui.api.run as run_mod
-    import scistack_gui.notify as notify_mod
+    import scistack_gui.services.run_service as run_mod
+    import scistack_gui.runtime.notify as notify_mod
 
     seen: list = []
     monkeypatch.setattr(notify_mod, "push_message", seen.append)
@@ -568,7 +568,7 @@ def _capture_pushes(monkeypatch) -> list:
 
 
 def _tracked_run(tmp_path, run_id: str = "r1"):
-    from scistack_gui.matlab_run_watch import TrackedRun
+    from scistack_gui.matlab.run_watch import TrackedRun
 
     return TrackedRun(
         run_id=run_id,
@@ -597,7 +597,7 @@ def test_every_verdict_announces_that_records_changed(
     failed halfway — it saved what it got to — and of one we cannot classify.
     Announcing too often costs a refetch; announcing too rarely is the bug.
     """
-    from scistack_gui.matlab_run_watch import _finish
+    from scistack_gui.matlab.run_watch import _finish
 
     seen = _capture_pushes(monkeypatch)
     _finish(_tracked_run(tmp_path), success=success, error=error, unknown=unknown)
@@ -616,15 +616,15 @@ def test_every_verdict_announces_that_records_changed(
 
 def test_the_announcement_never_buries_the_verdict(tmp_path, monkeypatch):
     """A refresh we failed to request is a stale canvas, not a lost run."""
-    import scistack_gui.api.run as run_mod
-    from scistack_gui.matlab_run_watch import _finish
+    import scistack_gui.services.run_service as run_mod
+    from scistack_gui.matlab.run_watch import _finish
 
     seen = _capture_pushes(monkeypatch)
 
     def _explode() -> None:
         raise RuntimeError("no transport")
 
-    monkeypatch.setattr(run_mod, "_notify_records_changed", _explode)
+    monkeypatch.setattr(run_mod, "notify_records_changed", _explode)
     _finish(_tracked_run(tmp_path), success=True, error="", unknown=False)
 
     assert [m.get("type") for m in seen] == ["run_done"]
@@ -641,7 +641,7 @@ def test_no_run_completion_path_here_forgets_to_announce():
     import ast
     from pathlib import Path
 
-    import scistack_gui.matlab_run_watch as mod
+    import scistack_gui.matlab.run_watch as mod
 
     tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
     checked = 0
@@ -652,7 +652,7 @@ def test_no_run_completion_path_here_forgets_to_announce():
         if "'run_done'" not in body and '"run_done"' not in body:
             continue
         checked += 1
-        assert "_notify_records_changed" in body, (
+        assert "notify_records_changed" in body, (
             f"{node.name}() emits run_done without announcing that records "
             f"changed — the canvas will keep its pre-run colours"
         )
@@ -684,7 +684,7 @@ def test_failed_iterations_fail_the_run(make):
     reported verdict=done. Every GUI route resets the iteration tally inside
     its try and raises after its last for_each, BEFORE closing the database,
     so the catch writes the failure marker — the Python Run's rule
-    (api/run.py fails a run when any iteration failed)."""
+    (services/run_service.py fails a run when any iteration failed)."""
     lines = make().splitlines()
     stripped = [l.strip() for l in lines]
     reset_at = stripped.index("scidb.internal.iteration_tally('reset');")

@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from scistackplot import render_matplotlib, resolve  # noqa: E402
 from scistackplot.render.mpl import LEGEND_ATTR, LEGEND_BUDGET  # noqa: E402
-from scistackplot.ticklabels import TICK_POLICY  # noqa: E402
+from scistackplot.text.ticklabels import TICK_POLICY  # noqa: E402
 from test_mpl_label_fit import FIXED_14  # noqa: E402
 from test_mpl_label_fit import _graph1 as _plain_graph1  # noqa: E402
 from test_mpl_label_fit import _graph2 as _plain_graph2  # noqa: E402

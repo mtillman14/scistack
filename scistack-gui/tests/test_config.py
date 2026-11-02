@@ -1,4 +1,4 @@
-"""Tests for scistack_gui.config — config loading edge cases."""
+"""Tests for scistack_gui.project.config — config loading edge cases."""
 
 import os
 import sys
@@ -9,7 +9,7 @@ import pytest
 # Ensure the local package is importable.
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scistack_gui.config import (
+from scistack_gui.project.config import (
     SciStackConfig,
     _normalize,
     add_path,
@@ -780,7 +780,7 @@ def test_folder_scan_walks_package_dirs_with_the_path_above_them(tmp_path):
     +a/+b/ is named a.b.f, and the MATLAB path holds the folder ABOVE the
     outermost package (MATLAB refuses a +package folder on its path). A
     private/ folder inside a package is still skipped."""
-    from scistack_gui.matlab_parser import parse_matlab_function
+    from scistack_gui.matlab.parser import parse_matlab_function
 
     (tmp_path / "public.m").write_text("function y = public(x)\ny=x;\nend\n")
     inner = tmp_path / "lib" / "+gait" / "+filters"
@@ -932,7 +932,7 @@ def test_add_path_preserves_matlab_entities_file(tmp_path):
 
 
 def test_matlab_entities_file_is_resolved_against_project_root(tmp_path):
-    from scistack_gui.config import load_config
+    from scistack_gui.project.config import load_config
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -948,7 +948,7 @@ def test_matlab_entities_file_is_resolved_against_project_root(tmp_path):
 
 
 def test_matlab_entities_file_defaults_to_none(tmp_path):
-    from scistack_gui.config import load_config
+    from scistack_gui.project.config import load_config
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -1361,7 +1361,7 @@ def test_first_write_seeds_db_folder_only_into_the_matching_list(tmp_path):
 
 
 def test_first_write_via_add_path_also_skips_empty_db_folder(tmp_path):
-    from scistack_gui.config import add_path
+    from scistack_gui.project.config import add_path
 
     project_root, datasets, db_path = _new_db_in(tmp_path)
     library = tmp_path / "lib"
@@ -1598,7 +1598,7 @@ def test_add_path_is_readable_back_when_db_is_outside_the_project(tmp_path):
     could never reach the config the writer had just created. Discovery
     reported "0 .py, 0 .m" forever.
     """
-    from scistack_gui.config import add_path, load_config
+    from scistack_gui.project.config import add_path, load_config
 
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -1627,7 +1627,7 @@ def test_two_add_paths_both_survive(tmp_path):
     config next to the DATABASE and never found the one it had written to the
     project root — so it re-seeded from an empty section and silently
     discarded everything added before."""
-    from scistack_gui.config import add_path, load_config
+    from scistack_gui.project.config import add_path, load_config
 
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -1847,7 +1847,7 @@ def test_glue_dir_survives_set_and_clear_entities_file(tmp_path):
 
 
 def test_set_glue_dir_creates_the_directory_and_writes_the_key(tmp_path):
-    from scistack_gui.config import DEFAULT_GLUE_RELPATH, set_glue_dir
+    from scistack_gui.project.config import DEFAULT_GLUE_RELPATH, set_glue_dir
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -1861,7 +1861,7 @@ def test_set_glue_dir_creates_the_directory_and_writes_the_key(tmp_path):
 
 
 def test_set_glue_dir_leaves_an_existing_directory_alone(tmp_path):
-    from scistack_gui.config import set_glue_dir
+    from scistack_gui.project.config import set_glue_dir
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")
@@ -2141,7 +2141,7 @@ def _color_project(tmp_path):
 
 def test_set_project_color_writes_a_canonical_level_and_keeps_the_file(tmp_path):
     """The Colours section's "↑ project": the typed colour is canonicalised
-    (scistackplot.colors.parse_color) and everything else comes back."""
+    (scistackplot.text.colors.parse_color) and everything else comes back."""
     db_path, toml_file = _color_project(tmp_path)
 
     table = set_project_color(db_path, "session", level="BL", color="rgb(0, 114, 178)")
@@ -2244,7 +2244,7 @@ def test_same_path_agrees_with_the_filesystem_about_case(tmp_path):
     ``_identity_key``; this test would have asserted the opposite if it had
     trusted ``normcase`` to predict it.
     """
-    from scistack_gui.config import _same_path
+    from scistack_gui.project.config import _same_path
 
     f = tmp_path / "grSides.m"
     f.write_text("function grSides()\n")
@@ -2270,7 +2270,7 @@ def test_same_path_folds_case_when_file_identity_is_unavailable(tmp_path, monkey
     """
     import os
 
-    from scistack_gui import config as config_mod
+    from scistack_gui.project import config as config_mod
 
     f = tmp_path / "grSides.m"
     f.write_text("function grSides()\n")
@@ -2294,7 +2294,7 @@ def test_a_function_does_not_shadow_itself_under_two_spellings(tmp_path, caplog)
     import logging
     import os
 
-    from scistack_gui.registry import resolve_definition_shadowing
+    from scistack_gui.project.registry import resolve_definition_shadowing
 
     f = tmp_path / "grSides.m"
     f.write_text("function grSides()\n")
@@ -2321,7 +2321,7 @@ def test_a_function_does_not_shadow_itself_under_two_spellings(tmp_path, caplog)
 def test_functions_dir_is_folded_into_modules_and_survives_add_path(tmp_path):
     """The third writable surface (GUI-created functions): its files are
     discovered, and every config write carries the key through."""
-    from scistack_gui.config import load_config
+    from scistack_gui.project.config import load_config
 
     db_path = tmp_path / "proj.duckdb"
     db_path.write_text("")

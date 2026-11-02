@@ -13,7 +13,7 @@ Python references are restricted to the standard library plus numpy/pandas
 (exactly what this feature is scoped to, not a general import backdoor),
 and conventional import aliases are accepted and canonicalized —
 ``pd.read_csv`` is stored as ``pandas.read_csv``. Both rules live in
-:mod:`scistack_gui.library_functions`.
+:mod:`scistack_gui.project.library_functions`.
 
 MATLAB references are validated by shelling out to a real MATLAB
 installation (``matlab -batch "disp(exist(...))"``) since there is no
@@ -24,7 +24,7 @@ without one.
 Both are persisted (see ``pipeline_store.write_builtin_function``) because
 neither is rediscovered by scanning disk. But a Python reference is never
 put into ``registry._functions``: it is imported on demand at every use
-site (:mod:`scistack_gui.library_functions`), so there is nothing to
+site (:mod:`scistack_gui.project.library_functions`), so there is nothing to
 replay and no refresh path that can evict it. A MATLAB reference has no
 import equivalent — it must be re-registered into ``matlab_registry``,
 which is what :func:`replay_persisted_builtins` still exists to do.
@@ -37,8 +37,8 @@ import re
 import shutil
 import subprocess
 
-from scistack_gui import library_functions
-from scistack_gui.matlab_parser import MatlabFunctionInfo
+from scistack_gui.project import library_functions
+from scistack_gui.matlab.parser import MatlabFunctionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ def _last_nonblank_line(text: str | None) -> str | None:
 
 
 def _register_matlab_builtin_in_memory(reference: str) -> None:
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
 
     info = MatlabFunctionInfo(
         name=reference,
@@ -189,8 +189,8 @@ def _register_matlab_builtin_in_memory(reference: str) -> None:
 
 
 def _persist_builtin(name: str, language: str) -> None:
-    from scistack_gui import pipeline_store
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.runtime.db import get_db
 
     pipeline_store.write_builtin_function(get_db(), name, language)
 
@@ -203,7 +203,7 @@ def get_python_library_function_names(db) -> list[str]:
     listing available functions (``pipeline_service.get_registry``) has to
     read it here.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     try:
         rows = pipeline_store.get_builtin_functions(db)
@@ -233,7 +233,7 @@ def replay_persisted_builtins(db) -> dict:
     happens to be momentarily unavailable; a MATLAB builtin already passed
     validation once, at creation time, and that's trusted on replay.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     rows = pipeline_store.get_builtin_functions(db)
     counts = {"python": 0, "matlab": 0}

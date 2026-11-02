@@ -1,4 +1,4 @@
-"""The preview's paper is the export's paper — both read ``scistackplot.paper``.
+"""The preview's paper is the export's paper — both read ``scistackplot.text.paper``.
 
 The reported gap (2026-09-24): a light-mode Plot Studio still did not show
 the file Save would write. The export (matplotlib) drew a white page, a black
@@ -7,7 +7,7 @@ drew plotly's own defaults: a grey grid, a zero line, no frame, no ticks.
 Marks, sizes and labels had long been matched; the paper never was.
 
 These tests read the paper back out of both renderers and hold each to the
-one owner, :data:`scistackplot.paper.PAPER`, so the two cannot drift apart. They
+one owner, :data:`scistackplot.text.paper.PAPER`, so the two cannot drift apart. They
 also pin PAPER to matplotlib's own defaults (turning the owner into existence
 changed no exported file) and check that a user's ``matplotlibrc`` cannot
 change an export.
@@ -21,14 +21,14 @@ import re
 import pytest
 
 from scistackplot import PlotKind, PlotSpec, Role, render_matplotlib, render_plotly, resolve
-from scistackplot.paper import (
+from scistackplot.text.paper import (
     PAPER,
     figure_rc_params,
     paper_axes_code,
     paper_rc_params,
     plotly_axis_style,
 )
-from scistackplot.textsize import resolve_sizes
+from scistackplot.text.textsize import resolve_sizes
 
 matplotlib = pytest.importorskip("matplotlib")
 import matplotlib.pyplot as plt  # noqa: E402

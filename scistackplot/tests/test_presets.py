@@ -31,7 +31,7 @@ from scistackplot import (
     make_template,
     shape_warning,
 )
-from scistackplot.presets import (
+from scistackplot.model.presets import (
     FIELD_CLASSES,
     MEASURE_PLACEHOLDER,
     FieldClass,
@@ -141,6 +141,9 @@ def test_variable_text_paths_are_the_ones_the_user_chose():
         "histogram.bin_width",
         "histogram.range_min",
         "histogram.range_max",
+        # Single-value bars (e.g. 0) are values in the variable's own units,
+        # like the bin width (2026-11-01; Claude's call, user may flip it).
+        "histogram.exact_values",
         # The one category a text measure's plot shows ("Only fall") is that
         # variable's own text: applied to another variable it would match
         # nothing and draw nothing (2026-11-01, categorical-measures.md).
@@ -395,7 +398,7 @@ def test_a_preset_never_stores_chosen_auto_sizes():
 def test_an_applied_auto_preset_is_sized_for_the_new_variable(width_table):
     pytest.importorskip("matplotlib")
     from scistackplot import resolve
-    from scistackplot.autosize import settle
+    from scistackplot.text.autosize import settle
 
     applied = apply_preset(make_template(_box()), _target(), table=width_table).spec
     (resolved,) = resolve(applied, width_table)

@@ -20,7 +20,8 @@ import threading
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from scistack_gui.api import ws as ws_mod
+from scistack_gui.runtime import ws_hub as ws_mod
+from scistack_gui.api.ws import router as ws_router
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def _stub_state(**kw) -> ws_mod.ClientState:
 
 def _ws_app() -> FastAPI:
     app = FastAPI()
-    app.include_router(ws_mod.router)
+    app.include_router(ws_router)
     return app
 
 

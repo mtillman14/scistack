@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 from scidb import for_each
 from scistackplot import PlotSpec, VariantSet
-from scistackplot.variants import apply_variant_sets
+from scistackplot.reduce.variants import apply_variant_sets
 
 from scistackplotdb import (
     ScidbSource,

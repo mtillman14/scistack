@@ -10,7 +10,7 @@ layout.json. One service covers both value counts — there is no separate
 
 from __future__ import annotations
 
-import scistack_gui.registry as _registry
+import scistack_gui.project.registry as _registry
 from scistack_gui.services.parameter_service import create_parameter
 
 

@@ -136,7 +136,7 @@ def test_a_chosen_test_runs_and_the_recommendation_is_still_shown():
 def test_the_mixed_model_needs_a_within_factor():
     from scistackstats.catalog import why_unavailable
     from conftest import popcorn_table
-    from scistackplot.spec import Aggregation
+    from scistackplot.model.spec import Aggregation
 
     frame = analysis_frame(StatsSpec(design=bar_spec(aggregate=Aggregation(pooled=True))), DV("Ratings"), popcorn_table())
     stratum, rows = frame.stratum_groups()[0]

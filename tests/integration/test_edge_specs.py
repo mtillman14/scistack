@@ -38,9 +38,9 @@ from scistackplot import (  # noqa: E402
     resolve,
     resolve_one,
 )
-from scistackplot.resolved import X, Y, Y_LOW  # noqa: E402
-from scistackplot.roles import complete_roles, validate  # noqa: E402
-from scistackplot.xaxis import is_spacer  # noqa: E402
+from scistackplot.reduce.resolved import X, Y, Y_LOW  # noqa: E402
+from scistackplot.model.roles import complete_roles, validate  # noqa: E402
+from scistackplot.text.xaxis import is_spacer  # noqa: E402
 from scistackplotdb import ScidbSource  # noqa: E402
 
 from conftest import FULL, JOINTS, N_CYCLES, SESSIONS, SUBJECTS, attempt  # noqa: E402
@@ -241,7 +241,7 @@ def test_collapsing_the_variant_factor_is_refused(source):
 
 
 def test_too_many_grouping_layers_is_refused_with_the_cap(symmetry):
-    from scistackplot.spec import MAX_X_LAYERS
+    from scistackplot.model.spec import MAX_X_LAYERS
 
     spec = PlotSpec(
         measures=["CycleSymmetry"],
@@ -327,7 +327,7 @@ def test_a_depth_that_is_not_collapsed_names_the_choices(symmetry):
 
 
 def test_kind_switches_on_a_cached_plan_all_draw(symmetry, waveform):
-    from scistackplot import reduce as reduce_mod
+    from scistackplot.reduce.resolve import resolve as reduce_mod
 
     reduce_mod._plan_cache.clear()
     for kind in (PlotKind.BAR, PlotKind.BOX, PlotKind.VIOLIN, PlotKind.SCATTER, PlotKind.STRIP, PlotKind.BAR):

@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from scistackplot import PlotSpec, Role, fanout_keys, resolve
-from scistackplot.roles import complete_roles
+from scistackplot.model.roles import complete_roles
 
 
 def test_fanout_runs_in_schema_order_not_dict_order(scalar_table):

@@ -410,7 +410,7 @@ never executed — that is not an error and must not red the canvas.
 
 Two places currently assume "a node on the canvas is a step," and both need to
 learn otherwise: `execution_service.build_backend_pipeline` /
-`derive_fn_targets`, and `api/run.py`'s per-node Run route (which must *refuse*
+`derive_fn_targets`, and `services/run_service.py`'s per-node Run route (which must *refuse*
 a glue node id rather than compiling an empty pipeline and reporting a
 successful run that did nothing).
 

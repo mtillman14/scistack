@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import pandas as pd
 from scistackplot import LongTable, PlotSpec
-from scistackplot.capability import variant_summary
-from scistackplot.spec import VariantSet
-from scistackplot.variants import SPAN_LOCATION_LIMIT, describe_span
+from scistackplot.model.capability import variant_summary
+from scistackplot.model.spec import VariantSet
+from scistackplot.reduce.variants import SPAN_LOCATION_LIMIT, describe_span
 
 
 def _table(

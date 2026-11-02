@@ -28,13 +28,13 @@ from scistackplot import (
     overlay_unavailable,
     validate,
 )
-from scistackplot.roles import (
+from scistackplot.model.roles import (
     complete_roles,
     grouping_layers,
     line_recurrence,
     spaghetti_sample_repeats,
 )
-from scistackplot.shape import Shape
+from scistackplot.model.shape import Shape
 
 SCHEMA = ["subject", "session", "speed", "trial", "cycle"]
 
@@ -424,7 +424,10 @@ def test_overlay_kinds_are_the_categorical_kinds():
 def test_why_an_overlay_is_unavailable(gait):
     roles = complete_roles(_spec(["subject"]), gait)
     assert overlay_unavailable(_spec([]), roles, Shape.SCALAR) is None
-    assert "categorical mark" in overlay_unavailable(_spec([], kind=PlotKind.LINE), roles, Shape.SCALAR)
+    # The histogram and density curve carry it too since 2026-11-01 (a rug).
+    reason = overlay_unavailable(_spec([], kind=PlotKind.LINE), roles, Shape.SCALAR)
+    assert "no mark to place sample points beside" in reason
+    assert "histogram and density curve" in reason
     assert overlay_unavailable(_spec([], kind=PlotKind.SPAGHETTI), roles, Shape.SCALAR) is None
     assert "x-y" in overlay_unavailable(_spec([], kind=PlotKind.SCATTER, x_measure="M"), roles, Shape.SCALAR)
     assert "one value per row" in overlay_unavailable(_spec([]), roles, Shape.SERIES_1D)
@@ -490,10 +493,11 @@ def test_capability_report_lists_the_collapsed_keys_as_checkboxes(gait):
 def test_capability_report_says_why_there_is_no_overlay(gait):
     from scistackplot import capabilities
 
-    # A line has no categorical mark to place points beside (the spaghetti
-    # used to be the example here; it carries the overlay since 2026-09-21).
+    # A line has no mark to place points beside (the spaghetti used to be the
+    # example here; it carries the overlay since 2026-09-21).
     report = capabilities(_spec([], kind=PlotKind.LINE), gait)["sample_overlay"]
-    assert report["available"] is False and "categorical mark" in report["reason"]
+    assert report["available"] is False
+    assert "no mark to place sample points beside" in report["reason"]
     assert report["factors"] and report["shown"] == [] and report["granularity"] == ""
 
 

@@ -18,8 +18,8 @@ import textwrap
 
 import pytest
 
-from scistack_gui import registry
-from scistack_gui.config import load_config
+from scistack_gui.project import registry
+from scistack_gui.project.config import load_config
 
 
 def _write_library(root, name: str, *, fn: str = "filter_emg"):
@@ -76,7 +76,7 @@ def project_with_libraries(tmp_path, monkeypatch):
     (project / "scistack.toml").write_text(
         'modules = ["analysis.py"]\npackages = ["fakelib", "otherlib"]\n'
     )
-    from scistack_gui.config import set_project_root_hint
+    from scistack_gui.project.config import set_project_root_hint
 
     set_project_root_hint(project)
     names.clear_cache()

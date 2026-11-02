@@ -92,10 +92,10 @@ canvas-vs-run-time disconnected-state mismatch across hypothesis pipelines.
   `parse_placement_id`/`strip_placement`.
 - `scistack_gui/domain/scope_filter.py`: `node_scope`, `_resolve_in_scope`,
   `resolve_scope_view`.
-- `scistack_gui/pipeline_store.py`: `_pipeline_hidden_nodes`/
+- `scistack_gui/stores/pipeline_store.py`: `_pipeline_hidden_nodes`/
   `_pipeline_hidden_edges` schema + migration, `hide_node`/`unhide_node`/
   `hide_edge`/`unhide_edge`/`get_hidden_node_ids`/`get_hidden_edge_ids`.
-- `scistack_gui/layout.py`: `delete_node`, `write_manual_node`.
+- `scistack_gui/stores/layout.py`: `delete_node`, `write_manual_node`.
 - `scistack_gui/services/layout_service.py`: `delete_edge`, `put_edge`
   (reconnect-unhide), `unhide_edge`/`get_hidden_edges` (restore panel).
 - `scistack_gui/api/pipeline.py::_build_graph`: where scope gets threaded

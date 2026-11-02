@@ -10,7 +10,7 @@ import time
 
 import numpy as np
 import pytest
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 
 # Import test variable classes and pipeline function from conftest so we share
 # the same class objects (avoids duplicate BaseVariable subclass registrations).
@@ -22,9 +22,9 @@ from conftest import (
     fn_min_state_across_call_sites,
 )
 from scidb.database import _local
-from scistack_gui import layout as layout_store
-from scistack_gui import pipeline_store as _pipeline_store
-from scistack_gui import registry as _registry
+from scistack_gui.stores import layout as layout_store
+from scistack_gui.stores import pipeline_store as _pipeline_store
+from scistack_gui.project import registry as _registry
 
 from scidb import BaseVariable, configure_database, for_each
 
@@ -197,8 +197,8 @@ class TestPipeline:
         (no DB history yet) fails with:
             "Function '...' not found in registry."
         """
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         # Stub a MATLAB function into the registry.
         fn_name = "my_matlab_fn"
@@ -613,7 +613,7 @@ class TestDisconnectedEdges:
         assert node["data"]["run_state"] == "green"
 
     def test_run_blocked_when_disconnected(self, client, bp_node_id, monkeypatch):
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         edge = self._find_edge(client, "var__RawSignal", bp_node_id)
         self._delete(client, edge)
@@ -633,7 +633,7 @@ class TestDisconnectedEdges:
     def test_run_blocked_emits_explicit_disconnected_error(
         self, client, bp_node_id, monkeypatch
     ):
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         edge = self._find_edge(client, "var__RawSignal", bp_node_id)
         self._delete(client, edge)
@@ -693,7 +693,7 @@ class TestDisconnectedEdges:
         import numpy as np
         from scidb import BaseVariable
 
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         class OtherSignal5(BaseVariable):
             pass
@@ -735,7 +735,7 @@ class TestDisconnectedEdges:
         import numpy as np
         from scidb import BaseVariable
 
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         class OtherSignal6(BaseVariable):
             pass
@@ -935,7 +935,7 @@ class TestWiringMutationBroadcasts:
 
     @pytest.fixture
     def captured(self, monkeypatch):
-        from scistack_gui.api import ws as ws_mod
+        from scistack_gui.runtime import ws_hub as ws_mod
 
         messages: list[dict] = []
         monkeypatch.setattr(ws_mod, "push_message", lambda msg: messages.append(msg))
@@ -1085,7 +1085,7 @@ class TestRunEndpoint:
         as_table, `_run_in_thread` must call for_each with `schema_keys` set
         to all DB schema keys, and must never pass a `schema_level` kwarg at
         all (since for_each has no such parameter)."""
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         captured = {}
 
@@ -1119,8 +1119,8 @@ class TestRunEndpoint:
         not the canvas node's wiring_id (bp_node_id) -- wiring_id excludes
         constants so it's a different hash from the real per-combo call_id
         and would never match."""
-        from scistack_gui import pipeline_store
-        from scistack_gui.api import run as run_api
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.services import run_service as run_api
         from scistack_gui.ids import fn_node_id
         from scistack_gui.services.execution_service import resolve_combo_call_ids
 
@@ -1171,7 +1171,7 @@ class TestRunEndpoint:
 
     def test_cancel_run_unknown_id_returns_error(self, client):
         """cancel_run on a run_id that isn't active should return ok=False."""
-        from scistack_gui.api.run import cancel_run
+        from scistack_gui.services.run_service import cancel_run
 
         result = cancel_run("does_not_exist_xyz")
         assert result["ok"] is False
@@ -1179,7 +1179,7 @@ class TestRunEndpoint:
 
     def test_force_cancel_run_unknown_id_returns_error(self, client):
         """force_cancel_run on an unknown run_id should also error gracefully."""
-        from scistack_gui.api.run import force_cancel_run
+        from scistack_gui.services.run_service import force_cancel_run
 
         result = force_cancel_run("not_a_real_run_id")
         assert result["ok"] is False
@@ -1194,7 +1194,7 @@ class TestRunEndpoint:
         bypassing _run_in_thread's heavyweight setup. This exercises the
         registry, event plumbing, and the run_done emission path.
         """
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         run_id = "cancel_test_1"
         emitted: list[dict] = []
@@ -1266,7 +1266,7 @@ class TestRunEndpoint:
         injection inside pytest is destabilising) — we register a dummy
         thread, call force_cancel_run, then clean up.
         """
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         run_id = "force_cancel_smoke"
         cancel_event = threading.Event()
@@ -1309,7 +1309,7 @@ class TestRunEndpoint:
         itself, so a caller polling ``_active_runs`` right after
         ``POST /api/run`` could see it empty and conclude the run was over
         before it began (test_export_round_trip: "assert 4 > 4")."""
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         run_id = "registered_early"
         entered, release = threading.Event(), threading.Event()
@@ -1347,7 +1347,7 @@ class TestRunEndpoint:
         """Regression: ``unhashable type: 'dict'`` raised from target
         derivation escaped the run thread. No run_done was pushed, so the GUI
         showed the run spinning until the user cancelled it."""
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
         from scistack_gui.services import execution_service
 
         def crash(db, function_name):
@@ -1376,7 +1376,7 @@ class TestRunEndpoint:
     def test_crash_after_run_done_does_not_send_a_second_one(self, monkeypatch):
         """A run already popped from the registry has told the frontend how
         it ended; a late crash must not contradict that."""
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         emitted: list[dict] = []
         monkeypatch.setattr(run_api, "push_message", lambda msg: emitted.append(msg))
@@ -1956,7 +1956,7 @@ class TestManualInputEdgesOnHistoryNodes:
     def test_run_binds_the_manually_wired_variable(
         self, wide, side_var, bp_node_id, monkeypatch
     ):
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         self._wire_side(wide, bp_node_id)
         captured: list[dict] = []
@@ -1972,7 +1972,7 @@ class TestManualInputEdgesOnHistoryNodes:
         assert captured[0]["inputs"]["low_hz"] == 20, "history constants are kept"
 
     def test_node_scoped_run_binds_it_too(self, wide, side_var, bp_node_id, monkeypatch):
-        from scistack_gui.api import run as run_api
+        from scistack_gui.services import run_service as run_api
 
         self._wire_side(wide, bp_node_id)
         captured: list[dict] = []
@@ -1992,8 +1992,8 @@ class TestManualInputEdgesOnHistoryNodes:
     ):
         from scifor import ColumnSelection
 
-        from scistack_gui import pipeline_store
-        from scistack_gui.api import run as run_api
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.services import run_service as run_api
 
         self._wire_side(wide, bp_node_id)
         pipeline_store.update_node_config(
@@ -2132,7 +2132,7 @@ class TestManualInputEdgesOnHistoryNodes:
     ):
         """One node, two wirings: the association records what it ran as, and
         the node's own inputs show the binding the run used."""
-        from scistack_gui import node_wiring
+        from scistack_gui.stores import node_wiring
 
         db = _gui_db.get_db()
         self._wire_side(wide, bp_node_id)
@@ -2151,7 +2151,7 @@ class TestManualInputEdgesOnHistoryNodes:
         """No rewrite: the edge already names the node that ran, and the
         DB-derived edge for the same connection dedups against it, so the
         canvas draws it once."""
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
         from scistack_gui.ids import strip_placement
 
         db = _gui_db.get_db()
@@ -2177,7 +2177,7 @@ class TestManualInputEdgesOnHistoryNodes:
     ):
         """The symptom that started this: settings that silently stop
         applying. Nothing is migrated, because nothing moved."""
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         db = _gui_db.get_db()
         self._wire_side(wide, bp_node_id)
@@ -2212,7 +2212,8 @@ class TestManualInputEdgesOnHistoryNodes:
     ):
         """Statements left behind are what produced the "saved node config(s)
         match no node in the resolved graph" warning."""
-        from scistack_gui import intent_store, pipeline_store
+        from scistack_gui.stores import intent_store
+        from scistack_gui.stores import pipeline_store
 
         db = _gui_db.get_db()
         self._wire_side(wide, bp_node_id)
@@ -2233,7 +2234,7 @@ class TestManualInputEdgesOnHistoryNodes:
         """Attribution is persisted, so a second build re-reads it rather than
         re-deciding — the id is stable and nothing overwrites what the user
         has since set."""
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         db = _gui_db.get_db()
         self._wire_side(wide, bp_node_id)
@@ -2278,7 +2279,7 @@ class TestGraduationCarriesNodeConfig:
     def test_the_setting_stays_on_the_fresh_node(self, client, bp_node_id, caplog):
         import logging
 
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         self._place_fresh(
             client,
@@ -2307,8 +2308,8 @@ class TestGraduationCarriesNodeConfig:
     ):
         from scifor import ColumnSelection
 
-        from scistack_gui import pipeline_store
-        from scistack_gui.api import run as run_api
+        from scistack_gui.stores import pipeline_store
+        from scistack_gui.services import run_service as run_api
 
         client.get("/api/pipeline")  # adopts the history node
         pipeline_store.update_node_config(
@@ -2328,7 +2329,7 @@ class TestGraduationCarriesNodeConfig:
     def test_a_fresh_nodes_setting_does_not_reach_the_history_node(
         self, client, bp_node_id
     ):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         pipeline_store.update_node_config(
             _gui_db.get_db(), f"{bp_node_id}::main", {"schemaLevel": ["session"]}

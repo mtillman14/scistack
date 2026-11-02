@@ -35,7 +35,7 @@ class GuiSection:
         """Capture every visible pipeline. The project must be open WITH
         discovery (``headless.open_for_export``): the canvas is built with the
         code registry."""
-        from scistack_gui import pipeline_store as ps
+        from scistack_gui.stores import pipeline_store as ps
         from scistack_gui.services import canvas_snapshot, portability_service
 
         db = ctx.db
@@ -82,7 +82,7 @@ class GuiSection:
         front end WITHOUT discovery (``headless.open_for_import``), so nothing
         here runs the bundle's code; registry steps are deferred and
         reported."""
-        from scistack_gui import pipeline_store as ps
+        from scistack_gui.stores import pipeline_store as ps
         from scistack_gui.ids import ROOT_SCOPE
         from scistack_gui.services import canvas_snapshot, portability_service
 
@@ -115,7 +115,7 @@ class GuiSection:
         # first open with discovery finds the hash differs and seeds their
         # content from the installed library (services/library_service). The
         # import itself runs no code, so it cannot read the library here.
-        from scistack_gui import library_lock
+        from scistack_gui.stores import library_lock
 
         library_placeholders = []
         with library_lock.library_writes():
@@ -180,7 +180,7 @@ class CodeSection:
 
         from scifor.discovery import CONFIG_FILENAME, own_package_dir
 
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         root = Path(ctx.root).resolve()
         config = load_config(root, Path(str(ctx.db.dataset_db_path)))

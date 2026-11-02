@@ -254,7 +254,7 @@ def _start_pipeline_run(req: PipelineRunRequest, *, transport: str) -> dict:
     (Stage 3) — see start_pipeline_run's docstring. That is the one thing
     the transport decides.
     """
-    from scistack_gui.api.run import start_pipeline_run
+    from scistack_gui.services.run_service import start_pipeline_run
 
     return start_pipeline_run(
         req.pipeline_id,

@@ -1,4 +1,4 @@
-"""Datetimes in plots (``scistackplot.temporal``; plan .claude/plan-plot-datetimes.md,
+"""Datetimes in plots (``scistackplot.reduce.temporal``; plan .claude/plan-plot-datetimes.md,
 doc docs/claude/plot-datetimes.md).
 
 User rules (2026-10-22): a datetime follows the same rules as every other
@@ -37,13 +37,13 @@ from scistackplot import (
     plot_data,
     resolve,
 )
-from scistackplot.aliases import display_text
-from scistackplot.reduce import clear_plan_cache
-from scistackplot.roles import RoleError
-from scistackplot.shape import Shape
-from scistackplot.spec import Filter, YAxis
-from scistackplot.table import MISSING_LEVEL
-from scistackplot.temporal import (
+from scistackplot.text.aliases import display_text
+from scistackplot.reduce.resolve import clear_plan_cache
+from scistackplot.model.roles import RoleError
+from scistackplot.model.shape import Shape
+from scistackplot.model.spec import Filter, YAxis
+from scistackplot.model.table import MISSING_LEVEL
+from scistackplot.reduce.temporal import (
     BAR_REASON,
     LOCAL,
     LOG_REASON,
@@ -59,7 +59,7 @@ from scistackplot.temporal import (
     tick_format,
     wall_clock_ms,
 )
-from scistackplot.ylimits import pinned_ends
+from scistackplot.reduce.ylimits import pinned_ends
 
 
 def ts(text, tz=None):

@@ -3048,7 +3048,7 @@ class TestPlacementQualifiedConfigRehydration:
         )
 
     def _resolved(self, node_configs, scope="main"):
-        """Build, then scope-resolve exactly as api/pipeline._build_graph
+        """Build, then scope-resolve exactly as graph_service.build_graph
         does, with a placement-qualified position for the node."""
         from scistack_gui.domain.scope_filter import resolve_scope_view
 

@@ -40,13 +40,13 @@ def _notify_dag_updated(source: str | None = None) -> None:
     *source* labels the refresh it triggers in the canvas's
     ``[client] canvas refresh`` lines (frontend DAG/canvasRefreshLog.ts), so
     a placement's own refresh is told apart from the .duckdb watcher's."""
-    from scistack_gui.api.ws import push_message
+    from scistack_gui.runtime.ws_hub import push_message
 
     push_message({"type": "dag_updated", **({"source": source} if source else {})})
 
 
 def get_layout(pipeline_id: str = ROOT_SCOPE) -> dict:
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     return layout_store.read_layout(pipeline_id)
 
@@ -59,7 +59,7 @@ def put_layout(
     label: str | None = None,
     pipeline_id: str = ROOT_SCOPE,
 ) -> dict:
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     logger.info(
         "[layout_service] put_layout called (node_id=%r, type=%r, label=%r, position=(%.1f, %.1f), scope=%r)",
@@ -93,7 +93,7 @@ def put_layout(
                     "existing_node_id": existing,
                 }
         if node_type == "functionNode":
-            from scistack_gui import matlab_registry
+            from scistack_gui.matlab import registry as matlab_registry
 
             if matlab_registry.is_matlab_function(label):
                 info = matlab_registry.get_matlab_function(label)
@@ -116,7 +116,7 @@ def put_layout(
             # It is still worth a line in the log, because this is the state
             # that ends in "Unrecognized function or variable" if a MATLAB run
             # reaches it undeclared. The hard gate is at the run boundary,
-            # where the decision is unambiguous — see api/run.py and
+            # where the decision is unambiguous — see services/run_service.py and
             # matlab_command._unresolvable_var_types.
             logger.info(
                 "[layout_service] Variable node %r placed with label %r, which "
@@ -154,7 +154,7 @@ def _placed_path_input(label: str, pipeline_id: str) -> "str | None":
     only ones do not, hidden ones are gone (``domain.scope_filter``). One
     canvas is one scope: the same PathInput on two hypothesis tabs is fine.
     """
-    from scistack_gui.db import get_db
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.pipeline_service import get_pipeline_graph
 
     graph = get_pipeline_graph(get_db(), pipeline_id, run_states=False)
@@ -167,7 +167,7 @@ def _placed_path_input(label: str, pipeline_id: str) -> "str | None":
 
 
 def delete_layout(node_id: str) -> dict:
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     logger.info("[layout_service] delete_layout called (node_id=%r)", node_id)
     layout_store.delete_node(node_id)
@@ -184,8 +184,8 @@ def put_edge(
     source_handle: str | None = None,
     target_handle: str | None = None,
 ) -> dict:
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.graph_builder import connection_id, find_cycle
     from scistack_gui.domain.scope_filter import node_scope
 
@@ -251,7 +251,7 @@ def put_edge(
     # user's rewiring (scistack.log 2026-10-22 17:51: LoadedData -> fn was
     # removed, then fn -> LoadedData was refused three times).
     # Not the full graph build (domain.pipeline_service.get_pipeline_graph ->
-    # api.pipeline._build_graph): it PERSISTS manual-node graduation as part
+    # graph_service.build_graph): it PERSISTS manual-node graduation as part
     # of building the response, so calling it here, before this edge's wiring
     # is in place, can graduate a node prematurely (regression found via
     # test_differently_wired_manual_node_does_not_graduate_or_show_green and
@@ -301,7 +301,7 @@ def delete_edge(
     source_handle: str | None = None,
     target_handle: str | None = None,
 ) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     logger.info("[layout_service] delete_edge called (edge_id=%r)", edge_id)
     # Every removal is a HIDE, drawn edge or not (user decision D2,
@@ -349,8 +349,8 @@ def _hide_edge_in_its_scope(
     Scoped to the edge's own scope (derived from its endpoints): the same
     connection on another pipeline's independent placement stays visible
     there (plan-scope-hidden-nodes-edges.md)."""
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.scope_filter import node_scope
 
     manual_nodes = pipeline_store.get_manual_nodes(db)
@@ -388,7 +388,7 @@ def disconnect_removed_arguments(db) -> list[dict]:
     (put_edge). An audit event names what was disconnected. Returns
     ``[{edge_id, source, target, port}]``.
     """
-    from scistack_gui import history
+    from scistack_gui.stores import history
     from scistack_gui.domain.edge_view import effective_edges
     from scistack_gui.ids import IN_HANDLE_PREFIX
 
@@ -439,7 +439,7 @@ def disconnect_removed_arguments(db) -> list[dict]:
 
 
 def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] unhide_edge called (edge_id=%r, pipeline_id=%r)",
@@ -452,19 +452,19 @@ def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> dict:
 
 
 def get_hidden_edges(db, pipeline_id: "str | None" = None) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     return {"edges": pipeline_store.list_hidden_edges(db, pipeline_id)}
 
 
 def get_notes() -> dict[str, str]:
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     return layout_store.read_notes()
 
 
 def set_note(key: str, text: str) -> dict:
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     layout_store.write_note(key, text)
     return {"ok": True}
@@ -481,7 +481,7 @@ def get_parameters() -> list[dict]:
     ``data`` — the sidebar list is the other surface that needs to offer
     "refresh from file" / "open source" (see ``is_declared_in_entities_file``,
     the single comparison shared by both)."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import is_declared_in_entities_file
 
     entities_file = (
@@ -512,7 +512,7 @@ def get_parameters() -> list[dict]:
 def _parameter_users() -> dict:
     """``library_service.parameter_users`` for the open project (``{}``
     with none open)."""
-    from scistack_gui import db as gui_db
+    from scistack_gui.runtime import db as gui_db
 
     if not gui_db.is_loaded():
         return {}
@@ -558,8 +558,8 @@ def delete_parameter(name: str, pipeline_id: str = ROOT_SCOPE) -> dict:
     """"Delete" hides the node only — the source declaration is never
     touched (never delete, mark hidden). Reuses the same generic hide-node
     mechanism functions/variables/PathInputs already use."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.hide_node(get_db(), param_node_id(name), pipeline_id=pipeline_id)
     return {"ok": True}
@@ -567,7 +567,7 @@ def delete_parameter(name: str, pipeline_id: str = ROOT_SCOPE) -> dict:
 
 def get_path_inputs() -> list[dict]:
     """Source-scanned — see docs/claude/code-discovery-categories.md."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import path_input_display
 
     return [
@@ -629,7 +629,7 @@ def _auto_declare_schema_key_types(key_regex, alternate_templates) -> dict:
     if not digit_only_keys(key_regex, alternate_templates):
         return empty
     try:
-        from scistack_gui.db import db_connection, get_db
+        from scistack_gui.runtime.db import db_connection, get_db
 
         with db_connection("auto_declare_schema_key_types"):
             return auto_declare_from_key_regex(get_db(), key_regex, alternate_templates)
@@ -666,9 +666,9 @@ def rename_path_input(name: str, new_name: str) -> dict:
     content-match. Scripts that refer to the old name are not rewritten —
     the GUI does not own them.
     """
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.target_file_service import rename_declaration
 
     new_name = (new_name or "").strip()
@@ -726,8 +726,8 @@ def delete_path_input(name: str, pipeline_id: str = ROOT_SCOPE) -> dict:
     """"Delete" hides the node only — the source declaration is never
     touched (never delete, mark hidden). Reuses the same generic hide-node
     mechanism functions/variables already use."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
 
     ps.hide_node(get_db(), path_input_node_id(name), pipeline_id=pipeline_id)
     return {"ok": True}
@@ -746,10 +746,10 @@ def deep_copy_path_input(node_id: str) -> dict:
     survives with the same "must configure a variable_file" constraint as
     any other GUI-initiated creation.
     """
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui import registry
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.project import registry
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.domain.graph_builder import path_input_display
     from scistack_gui.ids import strip_placement
     from scistack_gui.domain.scope_filter import node_scope
@@ -814,7 +814,7 @@ def _unique_path_input_name(base: str, existing: dict) -> str:
 
 
 def put_pending_constant(db, name: str, value: str) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] put_pending_constant called (name=%r, value=%r)", name, value
@@ -825,7 +825,7 @@ def put_pending_constant(db, name: str, value: str) -> dict:
 
 
 def delete_pending_constant(db, name: str, value: str) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] delete_pending_constant called (name=%r, value=%r)",
@@ -838,7 +838,7 @@ def delete_pending_constant(db, name: str, value: str) -> dict:
 
 
 def put_node_config(db, node_id: str, config: dict) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     pipeline_store.update_node_config(db, node_id, config)
     return {"ok": True}
@@ -850,7 +850,7 @@ def set_shown_argument(db, node_id: str, argument: str, shown: bool) -> dict:
     rest of the config (``update_node_config`` replaces the whole blob).
     ``graph_builder.port_visibility`` reads it; re-hiding a port something
     feeds changes nothing visible (a fed port is always drawn)."""
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     config = pipeline_store.get_node_config(db, node_id)
     names = [n for n in config.get("shownArguments") or [] if n != argument]
@@ -874,7 +874,7 @@ def set_on_duplicate(db, node_id: str, value: str) -> dict:
     reads it."""
     from scidb.combine import validate_on_duplicate
 
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     validate_on_duplicate(value)
     config = pipeline_store.get_node_config(db, node_id)
@@ -905,7 +905,8 @@ def set_output_ports(db, node_id: str, ports: list, renames: "dict | None" = Non
     ``out__{old}`` to ``out__{new}`` in the same call, so a rename keeps its
     connection. An empty list clears the declaration (automatic again).
     """
-    from scistack_gui import intent_store, pipeline_store
+    from scistack_gui.stores import intent_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.ids import (
         OUT_HANDLE_PREFIX,
         VAR_ID_PREFIX,
@@ -1032,7 +1033,7 @@ def hide_variant_combo(
 ) -> dict:
     """Hide one row of a function's constant Cartesian product — never
     deletes data, only excludes it from display and future runs."""
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
     from scistack_gui.ids import fn_node_id
     from scistack_gui.services.execution_service import resolve_combo_call_ids
 
@@ -1056,7 +1057,7 @@ def hide_variant_combo(
 
 
 def unhide_variant_combo(db, node_id: str) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     logger.info("[layout_service] unhide_variant_combo called (node_id=%r)", node_id)
     pipeline_store.unhide_combo(db, node_id)
@@ -1065,7 +1066,7 @@ def unhide_variant_combo(db, node_id: str) -> dict:
 
 
 def get_hidden_combos(db, function_name: str) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     return {"combos": pipeline_store.list_hidden_combos(db, function_name)}
 
@@ -1076,7 +1077,7 @@ def hide_parameter_value(
     """Hide one constant value — excludes it (and, once execution_service
     consults this, every call site using it) from future runs without
     deleting any DB history for it."""
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] hide_parameter_value called (const_name=%r, "
@@ -1102,7 +1103,7 @@ def refresh_parameter_source(name: "str | None" = None) -> dict:
     every entities-file-declared Parameter picks up its current value as a
     side effect, not just the one clicked -- there is no per-key TOML read
     to scope down to, and the whole-file parse is already sub-second."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     logger.info(
         "[layout_service] refresh_parameter_source called (name=%r)", name
@@ -1120,7 +1121,7 @@ def refresh_parameter_source(name: "str | None" = None) -> dict:
 def unhide_parameter_value(
     db, const_name: str, value: str, pipeline_id: str = ROOT_SCOPE
 ) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] unhide_parameter_value called (const_name=%r, "
@@ -1144,7 +1145,7 @@ def set_parameter_group_checked(
     a 50-value range is the same N+1 shape as
     ``project_batched_provenance_hot_paths``.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     members = [str(v) for v in values]
     logger.info(
@@ -1164,7 +1165,7 @@ def set_parameter_group_checked(
 
 
 def get_hidden_constant_values(db, pipeline_id: "str | None" = ROOT_SCOPE) -> dict:
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     return {
         "hidden_values": pipeline_store.list_hidden_parameter_values(db, pipeline_id)

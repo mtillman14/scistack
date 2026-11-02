@@ -2,7 +2,7 @@
 Locating and rewriting entity declarations in source files.
 
 This is the **write** half of source-declared entities; ``discover.py`` and
-``scistack_gui.registry`` are the read half. It lives in ``scidb`` because
+``scistack_gui.project.registry`` are the read half. It lives in ``scidb`` because
 ``scidb`` owns the declaration grammar -- it defines ``constant()``,
 ``Sweep`` and ``PathInput``, so it is the layer that knows what a
 declaration of one looks like (CLAUDE.md NOTE 3). Everything here is pure:

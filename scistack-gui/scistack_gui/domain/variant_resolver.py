@@ -247,7 +247,7 @@ def constants_match(db_constants: dict, selected: dict) -> bool:
 def _path_input_version_key(declared_name: str) -> "str | None":
     """The live PathInput's ``to_key()`` — the same string scidb writes into
     ``__inputs``. None when the declaration no longer exists in source."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     pi = registry.get_path_inputs_registry().get(declared_name)
     if pi is None:

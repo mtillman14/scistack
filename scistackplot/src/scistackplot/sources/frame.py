@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 import pandas as pd
 
-from ..table import LongTable
+from ..model.table import LongTable
 from .base import BaseSource
 
 

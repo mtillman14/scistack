@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from scistack_gui import history
+from scistack_gui.stores import history
 from scistack_gui.api.handlers import CHANGE_HEADER
 from scistack_gui.ids import new_manual_edge_id, new_manual_node_id
 

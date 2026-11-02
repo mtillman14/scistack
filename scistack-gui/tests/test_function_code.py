@@ -9,7 +9,7 @@ glue nodes are written into.
 
 from pathlib import Path
 
-from scistack_gui import registry as _registry
+from scistack_gui.project import registry as _registry
 from scistack_gui.services import function_code_service as fcs
 
 

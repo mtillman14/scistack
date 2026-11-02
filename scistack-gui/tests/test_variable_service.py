@@ -11,7 +11,7 @@ import sys
 import textwrap
 
 import pytest
-import scistack_gui.registry as _registry
+import scistack_gui.project.registry as _registry
 from scistack_gui.services.variable_service import create_variable
 
 # ---------------------------------------------------------------------------

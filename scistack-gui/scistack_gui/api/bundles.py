@@ -44,7 +44,7 @@ def _get_export_options() -> dict:
     from scidb.bundle import EXTENSION
 
     from scistack_gui.bundle_cli import export_choices
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     return {
         "choices": export_choices(),

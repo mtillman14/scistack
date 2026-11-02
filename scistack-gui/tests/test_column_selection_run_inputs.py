@@ -18,7 +18,7 @@ import numpy as np
 from scidb import BaseVariable
 from scifor import ColumnSelection as SciforColumnSelection
 
-from scistack_gui import pipeline_store
+from scistack_gui.stores import pipeline_store
 from scistack_gui.domain.edge_resolver import variable_binding
 from scistack_gui.services.execution_service import (
     build_run_inputs,
@@ -96,7 +96,7 @@ class TestBuildRunInputsColumnSelection:
         """This is what makes a column change RE-RUN rather than silently
         reuse the cached result: ``ForEachConfig._serialize_inputs`` puts
         ``to_key()`` into ``__inputs``, forking the version-key group."""
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         picked = build_run_inputs(
             self._target(["a"]), "bandpass_filter", populated_db
@@ -231,7 +231,7 @@ class OtherOut(BaseVariable):
 
 class TestAttachToNeverRunTargets:
     def test_inferred_target_carries_the_selection(self, client):
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
 
         OtherRaw.save(np.zeros(5), subject=1, session="pre")
         client.put(

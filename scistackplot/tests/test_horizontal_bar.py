@@ -41,15 +41,15 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.capability import why_unavailable  # noqa: E402
-from scistackplot.diffbars import HORIZONTAL_REASON, unavailable  # noqa: E402
+from scistackplot.model.capability import why_unavailable  # noqa: E402
+from scistackplot.reduce.diffbars import HORIZONTAL_REASON, unavailable  # noqa: E402
 from scistackplot.render import layout_decisions  # noqa: E402
 from scistackplot.render.base import axis_sides, shows_category_labels  # noqa: E402
 from scistackplot.render.mpl import LABEL_FIT_ATTR, X_GROUP_LABEL_GID  # noqa: E402
 from scistackplot.render.plotly_ import X_GROUP_TAG  # noqa: E402
-from scistackplot.resolved import X, Y, Y_HIGH, Y_LOW  # noqa: E402
-from scistackplot.spec import BAR_KINDS, HORIZONTAL_KINDS, StyleOptions  # noqa: E402
-from scistackplot.temporal import BAR_REASON  # noqa: E402
+from scistackplot.reduce.resolved import X, Y, Y_HIGH, Y_LOW  # noqa: E402
+from scistackplot.model.spec import BAR_KINDS, HORIZONTAL_KINDS, StyleOptions  # noqa: E402
+from scistackplot.reduce.temporal import BAR_REASON  # noqa: E402
 
 # subject x session x trial, plus `group` (a subject property). Every value
 # distinct, so a bar in the wrong place carries a number that gives it away.

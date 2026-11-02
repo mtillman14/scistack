@@ -30,8 +30,8 @@ from scistackplot import (
     resolve,
 )
 from scistackplot.render.base import SAMPLE_CROSS_LINE_COLOR, palette_for
-from scistackplot.resolved import SERIES, X
-from scistackplot.xaxis import LEAF_SEPARATOR
+from scistackplot.reduce.resolved import SERIES, X
+from scistackplot.text.xaxis import LEAF_SEPARATOR
 from plot_geometry import mpl_sample_colors
 
 
@@ -386,7 +386,7 @@ def _runs(spec, table):
 
 def test_the_overlay_frame_carries_the_run(nested):
     """`__run` is the bracket's value: subject 01 has one run per session."""
-    from scistackplot.resolved import RUN
+    from scistackplot.reduce.resolved import RUN
 
     figure = _figure(_nested_spec(["ColName", "session"]), nested)
     sample = figure.panels[0].sample

@@ -4,7 +4,7 @@ sample" overlay's points AND lines, ``StyleOptions.line_weight`` a
 spaghetti's own points and lines — multipliers, 1 = the look before the
 knobs existed.
 
-``scistackplot.weights`` is the one owner; these tests hold the three readers
+``scistackplot.reduce.weights`` is the one owner; these tests hold the three readers
 (matplotlib, plotly, the generated seaborn code) to it, and pin that 1x
 draws exactly what the hard-coded sizes drew.
 """
@@ -33,8 +33,8 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.roles import RoleError  # noqa: E402
-from scistackplot.weights import (  # noqa: E402
+from scistackplot.model.roles import RoleError  # noqa: E402
+from scistackplot.reduce.weights import (  # noqa: E402
     PLOTLY_PX_PER_PT,
     SAMPLE_LINE_WIDTH,
     SAMPLE_MARKER_FRACTION,

@@ -52,7 +52,7 @@ output edges were drawn), then alphabetically with an INFO line.
   per call, and de-duplication still keeps one target for them.
 - MATLAB canvas run: `matlab_command_service.generate_matlab_command`
   passes the owner's class order as `output_types`; with history
-  `api.matlab_command._order_group_outputs` sorts each group by it (was
+  `matlab_command_format._order_group_outputs` sorts each group by it (was
   variant-row order); without history the signature order is the
   `declared` input, not a re-sort of its own.
 - Picker and output tooltips: node handle order (`plan_groups`).

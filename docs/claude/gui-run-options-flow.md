@@ -152,7 +152,7 @@ scidb.for_each(@loadGaitRiteOneFile, ...
 (`:277`, `:305`) and into the scifor opts (`:571`). Defaults live at `:1723-1725`
 (`as_table = string.empty`, `distribute = false`).
 
-There are **three** places in `api/matlab_command.py` that emit a `for_each`
+There are **three** places in `services/matlab_command_format.py` that emit a `for_each`
 call, and an option added to one and not the others is silently absent from the
 other two:
 

@@ -9,7 +9,7 @@ saved plot's ``plot_id``. Either studio writes it; both read it on open, and
 an edit in one reaches the other through the GUI's broadcast.
 
 What the design is, field by field, is still
-:data:`scistackplot.design.DESIGN_FIELDS`. This store keeps a whole
+:data:`scistackplot.model.design.DESIGN_FIELDS`. This store keeps a whole
 ``PlotSpec`` dict (so it reads back through ``restore_spec``) but only its
 design fields are ever applied (:func:`apply_design`, through
 ``copy_design``). Display settings stay with each artifact.
@@ -74,7 +74,7 @@ def load_design(db, plot_id: str) -> StoredDesign | None:
     """The newest shared design of saved plot *plot_id*, or None when it is
     not linked to anything (or the row cannot be read)."""
     from scistackplot import restore_spec
-    from scistackplot.design import design_fingerprint
+    from scistackplot.model.design import design_fingerprint
 
     row = _row_for(db, plot_id)
     if row is None:
@@ -103,7 +103,7 @@ def save_design(db, plot_id: str, spec) -> tuple[StoredDesign, bool]:
     the newest stored version, nothing is appended and ``changed`` is
     False, so a broadcast echo between two open studios stops here.
     """
-    from scistackplot.design import design_fingerprint
+    from scistackplot.model.design import design_fingerprint
 
     if not plot_id:
         raise DesignError("A shared design needs the saved plot it belongs to.")
@@ -136,7 +136,7 @@ def apply_design(db, plot_id: str | None, spec) -> tuple[Any, list, int | None]:
     """*spec* with the shared design of *plot_id* copied onto it
     (``copy_design``: design fields only, display kept). Unchanged, with
     version None, when *plot_id* is not linked."""
-    from scistackplot.design import copy_design
+    from scistackplot.model.design import copy_design
 
     stored = load_design(db, plot_id) if plot_id else None
     if stored is None:

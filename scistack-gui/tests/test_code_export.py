@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 from scidb.foreach_config import RunOptions
-from scistack_gui.db import get_db
+from scistack_gui.runtime.db import get_db
 from scistack_gui.services.code_export_service import (
     _matlab_literal,
     _matlab_struct,
@@ -76,8 +76,8 @@ class TestMixedLanguageUnsupported:
     def test_mixed_python_and_matlab_raises(self, client):
         from pathlib import Path
 
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         matlab_registry._matlab_functions["matlab_proc"] = MatlabFunctionInfo(
             name="matlab_proc", file_path=Path("matlab_proc.m"),
@@ -104,8 +104,8 @@ class TestMixedLanguageUnsupported:
     def test_mixed_language_is_400_via_api(self, client):
         from pathlib import Path
 
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         matlab_registry._matlab_functions["matlab_proc"] = MatlabFunctionInfo(
             name="matlab_proc", file_path=Path("matlab_proc.m"),
@@ -143,8 +143,8 @@ class TestMatlabCodeExport:
         from pathlib import Path
 
         from scidb import BaseVariable
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         class MatlabOutput(BaseVariable):
             pass
@@ -372,7 +372,7 @@ class TestColumnSelectionLiterals:
 
         assert _py_literal(Parameter(10, 20)).startswith("Parameter(")
 
-    # --- MATLAB (must match api.matlab_command._format_variable_class) ---
+    # --- MATLAB (must match matlab_command_format._format_variable_class) ---
 
     def test_matlab_single_column(self):
         assert _matlab_literal(self._sel(["speed"])) == 'RawSignal("speed")'
@@ -395,7 +395,7 @@ class TestColumnSelectionLiterals:
     def test_the_two_renderers_agree_with_the_matlab_generator(self):
         """One syntax, two renderers. They drifted before (the generated
         command and the exported script are read side by side)."""
-        from scistack_gui.api.matlab_command import _format_variable_class
+        from scistack_gui.services.matlab_command_format import _format_variable_class
 
         for columns, iterate in (
             (["speed"], False),

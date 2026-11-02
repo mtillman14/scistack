@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 from scidb import BaseVariable
 
-from scistack_gui.db import get_db
+from scistack_gui.runtime.db import get_db
 from scistack_gui.ids import strip_placement
 from scistack_gui.services.execution_service import (
     derive_target_for_node,
@@ -279,9 +279,9 @@ def _rename_argument(monkeypatch, old, new):
 
     from scifor.signature import Argument
 
-    from scistack_gui.api import pipeline as pipeline_api
+    from scistack_gui.services import graph_service as pipeline_api
 
-    real = pipeline_api._fn_arguments
+    real = pipeline_api.fn_arguments
 
     def renamed(fn_name):
         arguments = real(fn_name)
@@ -292,8 +292,8 @@ def _rename_argument(monkeypatch, old, new):
             for a in arguments
         ]
 
-    monkeypatch.setattr(pipeline_api, "_fn_arguments", renamed)
-    return lambda: monkeypatch.setattr(pipeline_api, "_fn_arguments", real)
+    monkeypatch.setattr(pipeline_api, "fn_arguments", renamed)
+    return lambda: monkeypatch.setattr(pipeline_api, "fn_arguments", real)
 
 
 def _run_arguments(node) -> set:

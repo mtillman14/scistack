@@ -11,7 +11,7 @@ import duckdb
 import pytest
 from fastapi.testclient import TestClient
 
-# Same import dance as scistack_gui.config, so this test runs on 3.10 too.
+# Same import dance as scistack_gui.project.config, so this test runs on 3.10 too.
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - 3.10 fallback
@@ -26,7 +26,7 @@ def api_client():
     """TestClient with no database loaded.
 
     conftest.py's autouse ``clear_db_state`` fixture resets
-    ``scistack_gui.db._db``/``_db_path`` to None before and after every
+    ``scistack_gui.runtime.db._db``/``_db_path`` to None before and after every
     test, so a plain ``create_app()`` here (no ``populated_db``) starts
     with nothing open — the exact state the browser wizard is meant to
     bootstrap out of.
@@ -302,7 +302,7 @@ class TestCreateProjectEagerEntitiesFile:
         assert not (tmp_path / "src" / "scistack_entities.toml").exists()
         assert "SAMPLING_RATE_HZ" in declared.read_text()
 
-        from scistack_gui import registry as _registry
+        from scistack_gui.project import registry as _registry
 
         assert "SAMPLING_RATE_HZ" in _registry.get_parameters_registry()
 
@@ -327,7 +327,7 @@ class TestCreateProjectEagerEntitiesFile:
         )
         assert resp.status_code == 200
 
-        from scistack_gui import registry as _registry
+        from scistack_gui.project import registry as _registry
 
         assert "SAMPLING_RATE_HZ" in _registry.get_parameters_registry()
 

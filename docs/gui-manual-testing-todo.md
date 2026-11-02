@@ -11,6 +11,34 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzz. GUI still opens and runs after the backend module reorg — added 2026-11-01
+
+**What changed:** no behaviour change intended. The backend's Python modules
+moved:
+- logic out of `api/` into `services/` (`graph_service`, `run_service`,
+  `project_service`, `variable_service`, `matlab_command_format`);
+- the old top-level modules into `stores/`, `matlab/`, `project/` and
+  `runtime/`;
+- sciduckdb's connection methods were renamed.
+
+A missed import shows up only when that code path runs.
+
+**Backend**
+1. Restart the GUI server (reload the VS Code window). `scistack.log` should
+   show the server starting with no `ImportError` / `ModuleNotFoundError`.
+
+**Frontend**
+1. Open a project. The canvas should draw, with the usual node colours.
+2. Run one Python node, then **Run** the whole pipeline. Output should stream
+   and the nodes should turn green.
+3. Open **📁 Paths** (the project panel) and the sidebar plot of one variable.
+   Both should load.
+4. If MATLAB is set up: generate and run a MATLAB node's command. It should run
+   and report back as before.
+5. Make an edit, then press **Undo**. The edit should be undone.
+
+---
+
 ## 0zzzzzzz. A failed output save keeps nothing from the run — added 2026-11-01
 
 **What changed:** a run's writes now go into the database together or not at

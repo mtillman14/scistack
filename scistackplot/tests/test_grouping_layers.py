@@ -21,7 +21,7 @@ import pandas as pd
 import pytest
 
 from scistackplot import Aggregation, LongTable, PlotKind, PlotSpec, Role, RoleError
-from scistackplot.roles import (
+from scistackplot.model.roles import (
     Assignment,
     complete_assignment,
     default_assignment,
@@ -32,8 +32,8 @@ from scistackplot.roles import (
     validate,
     with_requirements_for,
 )
-from scistackplot.shape import Shape
-from scistackplot.spec import MAX_X_LAYERS, LegacySpecError
+from scistackplot.model.shape import Shape
+from scistackplot.model.spec import MAX_X_LAYERS, LegacySpecError
 
 
 # --- ordered_groups ----------------------------------------------------------

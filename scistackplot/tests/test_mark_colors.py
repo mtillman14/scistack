@@ -37,7 +37,7 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.colors import (  # noqa: E402
+from scistackplot.text.colors import (  # noqa: E402
     PALETTE,
     PLOT,
     PROJECT,
@@ -46,7 +46,7 @@ from scistackplot.colors import (  # noqa: E402
     merge,
     warn_duplicates,
 )
-from scistackplot.reduce import _PLAN_IRRELEVANT_FIELDS  # noqa: E402
+from scistackplot.reduce.resolve import _PLAN_IRRELEVANT_FIELDS  # noqa: E402
 from scistackplot.render.base import (  # noqa: E402
     DEFAULT_PALETTE,
     colorable,

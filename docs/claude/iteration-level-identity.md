@@ -78,7 +78,7 @@ and a database created before 2026-10-01 must be rebuilt by re-running.
 ## Related fixes made at the same time
 
 - **Plot Studio's unnamed default.** A spec with no variant rows used to draw every
-  generation. `scistackplot.variants._apply_default_pin` now applies the source's
+  generation. `scistackplot.reduce.variants._apply_default_pin` now applies the source's
   `default_pin` (the per-location latest flag) and logs the selection it used. Pinned
   defaults (`variant_pins`) are not yet applied in Plot Studio.
 - **Per-record delete.** `variant_delete` target `{"variable", "record_ids"}`;

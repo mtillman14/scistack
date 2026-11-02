@@ -37,20 +37,23 @@ def _bar_spec(db) -> dict:
     return {**spec, "roles": roles, "groups": ["session"], "color": None, "kind": "bar"}
 
 
-# --- C1: an unplottable variable ---------------------------------------------------------
+# --- C1: a text variable ----------------------------------------------------------------
 
 
 class Label(BaseVariable):
-    """A string per session — nothing to draw."""
+    """A string per session: drawn as counts per category."""
 
 
-def test_a_string_valued_variable_is_ineligible_with_a_reason(scratch_db):
+def test_a_string_valued_variable_opens_on_a_count_bar(scratch_db):
+    """Text measures are plottable since 2026-11-01
+    (docs/claude/categorical-measures.md): the count per category."""
     Label.save("good", subject="subject01", session="baseline")
     Label.save("bad", subject="subject01", session="week04")
     described, error = attempt(plot_service.describe, scratch_db, "Label")
     assert error is None, error
-    assert described["eligible"] is False
-    assert described["reason"], described
+    assert described["eligible"] is True, described
+    assert described["spec"]["categorical"]["stat"] == "count"
+    assert sorted(described["capabilities"]["categorical"]["levels"]) == ["bad", "good"]
 
 
 def test_describe_of_an_unknown_variable_is_a_typed_error(example_db):
@@ -141,7 +144,8 @@ def test_a_data_save_with_a_folder_as_the_target(example_db, tmp_path):
 
 
 def test_the_graph_built_from_history_names_every_step(example_db, pipeline, as_gui_db):
-    from scistack_gui import pipeline_store, registry
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.project import registry
     from scistack_gui.services.pipeline_service import get_pipeline_graph
 
     as_gui_db(example_db)
@@ -164,7 +168,8 @@ def test_the_graph_built_from_history_names_every_step(example_db, pipeline, as_
 def test_the_graph_survives_a_variable_with_no_records(scratch_db, pipeline, as_gui_db):
     """A registered variable nothing has produced yet (the state every new
     project is in) must not break the graph build."""
-    from scistack_gui import pipeline_store, registry
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.project import registry
     from scistack_gui.services.pipeline_service import get_pipeline_graph
 
     as_gui_db(scratch_db)

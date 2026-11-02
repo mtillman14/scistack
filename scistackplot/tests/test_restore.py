@@ -31,6 +31,7 @@ from scistackplot import (
     HistMultiple,
     HistogramOptions,
     HistStat,
+    KdeOptions,
     RegressionOptions,
     StatsCorner,
     Comparison,
@@ -59,7 +60,7 @@ from scistackplot import (
     reconcile,
     restore_spec,
 )
-from scistackplot.variants import stale_role_names, strip_answered_roles
+from scistackplot.reduce.variants import stale_role_names, strip_answered_roles
 
 
 def full_spec() -> PlotSpec:
@@ -95,7 +96,10 @@ def full_spec() -> PlotSpec:
             range_max=2.0,
             stat=HistStat.DENSITY,
             multiple=HistMultiple.DODGE,
+            exact_values=(0.0,),
+            show_nan=False,
         ),
+        kde=KdeOptions(bandwidth_adjust=1.5, cut=1.0, fill=True),
         regression=RegressionOptions(
             fit_line=False,
             show_stats=False,
@@ -147,6 +151,7 @@ def full_spec() -> PlotSpec:
             tick_rotation=45,
             tick_every=2,
             y_titles="first_column",
+            not_plotted_note=True,
         ),
         aliases={"session": Alias(name="Visit", levels={"01": "One"})},
         colors={"session": {"01": "#ff0000"}},

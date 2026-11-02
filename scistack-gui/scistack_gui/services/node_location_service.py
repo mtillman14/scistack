@@ -121,7 +121,7 @@ def node_location_tree(
         prune_to_problems,
     )
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("node_location_tree"):
         variables = input_variables_for_node(db, node_id)

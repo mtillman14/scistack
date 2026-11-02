@@ -150,7 +150,7 @@ def share_defaults(db, pipeline_id: str) -> dict:
     (the pipeline already belongs to a library the project authors)."""
     from scidb.names import authored_libraries
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     p = ps.get_pipeline(db, pipeline_id)
     if p is None:
@@ -339,7 +339,7 @@ class _PythonCode:
         return "/".join(parts) + ".py"
 
     def files(self, plan: LibraryPlan) -> dict[str, bytes]:
-        from scistack_gui.code_rewrite import rewrite_imports
+        from scistack_gui.project.code_rewrite import rewrite_imports
 
         def resolve(name: str):
             return self.modules[name].target if name in self.modules else None
@@ -372,7 +372,7 @@ class _MatlabCode:
     qualified (``matlab_rewrite``, O9)."""
 
     def __init__(self, lib: str, root: Path):
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         self.lib = lib
         self.root = root
@@ -388,7 +388,7 @@ class _MatlabCode:
         return out
 
     def add(self, name: str) -> None:
-        from scistack_gui.matlab_rewrite import calls
+        from scistack_gui.matlab.rewrite import calls
 
         known = self.project_functions()
         todo = [name]
@@ -401,7 +401,7 @@ class _MatlabCode:
             todo += [other for other in known if other != n and calls(text, other)]
 
     def files(self, plan: LibraryPlan) -> dict[str, bytes]:
-        from scistack_gui.matlab_rewrite import qualify
+        from scistack_gui.matlab.rewrite import qualify
 
         out = {}
         for name, path in sorted(self.functions.items()):
@@ -479,7 +479,9 @@ def _library_functions(lib: str) -> dict[str, str]:
     (Python from the registry, MATLAB from its ``+lib`` folder)."""
     from scidb.names import library_of
 
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+
+    from scistack_gui.project import registry
 
     out = {}
     for label, fn in list(registry._functions.items()):
@@ -499,8 +501,10 @@ def _plan_from_canvas(db, pipeline_id: str, lib: str, existing: str) -> LibraryP
     from scidb.library import make_document
     from scidb.names import library_of
 
-    from scistack_gui import matlab_registry, registry
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.matlab import registry as matlab_registry
+
+    from scistack_gui.project import registry
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.domain.graph_builder import path_input_display
     from scistack_gui.services import canvas_snapshot
     from scistack_gui.services.library_service import unwired_step_values
@@ -676,9 +680,9 @@ def _plan_from_package(db, old: str, new: str) -> LibraryPlan:
     )
     from scidb.names import library_packages
 
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.code_rewrite import rewrite_imports
-    from scistack_gui.matlab_rewrite import qualify
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.project.code_rewrite import rewrite_imports
+    from scistack_gui.matlab.rewrite import qualify
 
     if old not in library_packages():
         raise AuthoringRefused(f"'{old}' is not a library of this project (not under packages)")
@@ -761,7 +765,7 @@ def plan_library(db, *, name: str, pipeline_id: "str | None" = None,
     :class:`AuthoringRefused`) before anything is written."""
     from scidb.names import authored_libraries
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     name = (name or "").strip()
     if copy_of is not None:
@@ -808,7 +812,9 @@ def _current_hashes(names) -> dict:
     current source hash. ``None`` when it cannot be resolved here."""
     from scidb.foreach_config import function_hash_for
 
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+
+    from scistack_gui.project import registry
 
     out = {}
     for label in names:
@@ -837,9 +843,9 @@ def _relabel_canvas(db, pipeline_ids: list[str], mapping: dict[str, str]) -> dic
     still claimed by a node -- and is not drawn again as a new one. The
     renamed node is recorded as running the NEW name's wirings (R2 history),
     which makes it current."""
-    from scistack_gui import layout as layout_store
-    from scistack_gui import node_wiring
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import node_wiring
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.domain.adoption import node_subject
     from scistack_gui.ids import ROOT_SCOPE, fn_nodes_prefix, strip_placement
 
@@ -887,8 +893,8 @@ def _relabel_canvas(db, pipeline_ids: list[str], mapping: dict[str, str]) -> dic
 def _record_new_wirings(db, renamed: dict, mapping: dict[str, str]) -> int:
     """Each renamed node runs as its old wirings' NEW-name twins (the
     carried history), as of now -- so the node is green and current."""
-    from scistack_gui import node_wiring
-    from scistack_gui.api.pipeline import build_aggregate
+    from scistack_gui.stores import node_wiring
+    from scistack_gui.services.graph_service import build_aggregate
     from scistack_gui.domain import graph_builder as gb
 
     if not renamed:
@@ -927,9 +933,9 @@ def switch_project(db, plan: LibraryPlan, report: AuthoringReport) -> None:
     from scidb.library import definition_hash
     from scifor.discovery import ensure_authored_libraries_importable
 
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.config import add_package, remove_package
-    from scistack_gui.db import get_db_path
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.project.config import add_package, remove_package
+    from scistack_gui.runtime.db import get_db_path
     from scistack_gui.services.registry_reload_service import reload_registries_from_disk
 
     root = _project_root()
@@ -953,7 +959,7 @@ def switch_project(db, plan: LibraryPlan, report: AuthoringReport) -> None:
     # Every wiring in history is claimed by its node BEFORE the rename (the
     # one resolution a graph build runs): otherwise the NEW name's history
     # would arrive with no claimant and be minted a second node.
-    from scistack_gui.api.pipeline import ensure_node_identities
+    from scistack_gui.services.graph_service import ensure_node_identities
 
     ensure_node_identities(db)
     rename = rename_functions(db, plan.functions, _current_hashes(plan.functions.values()))

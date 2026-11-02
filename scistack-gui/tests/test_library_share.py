@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from scistack_gui import pipeline_store as ps
+from scistack_gui.stores import pipeline_store as ps
 
 PKG = "emgproj_t10b"
 LIB = "emglib_t10b"
@@ -85,7 +85,7 @@ def project(tmp_path, monkeypatch):
         "env": ("functionNode", "envelope_t10b"),
         "out": ("variableNode", "EmgEnvelope"),
     }
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     ids = {}
     for i, (key, (ntype, label)) in enumerate(nodes.items()):
@@ -210,7 +210,7 @@ def test_the_project_switches_to_its_library(project):
     except ModuleNotFoundError:  # pragma: no cover
         import tomli as tomllib
 
-    from scistack_gui import library_lock
+    from scistack_gui.stores import library_lock
     from scistack_gui.services.library_service import list_libraries
 
     root, db, pid = project
@@ -231,7 +231,7 @@ def test_sync_never_overwrites_the_working_copy(project):
     """B6: an unpublished canvas edit survives a re-sync; publishing writes it."""
     from scidb.library import read_document
 
-    from scistack_gui import library_lock
+    from scistack_gui.stores import library_lock
     from scistack_gui.services.library_authoring import share
     from scistack_gui.services.library_service import sync_libraries
 
@@ -284,7 +284,9 @@ def test_make_own_copy_renames_and_switches_every_placement(project):
 
     from scidb.names import function_name
 
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+
+    from scistack_gui.project import registry
     from scistack_gui.services.library_authoring import copy
 
     root, db, pid = project

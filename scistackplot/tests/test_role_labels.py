@@ -6,8 +6,8 @@ words: the verb is fixed, only the noun follows the output.
 
 import pytest
 
-from scistackplot.role_labels import ROLE_LABELS, SURFACES, role_label_for, role_labels_payload
-from scistackplot.spec import Role
+from scistackplot.model.role_labels import ROLE_LABELS, SURFACES, role_label_for, role_labels_payload
+from scistackplot.model.spec import Role
 
 
 def test_every_output_surface_names_every_role():

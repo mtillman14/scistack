@@ -26,9 +26,9 @@ from pathlib import Path
 
 import pytest
 from scidb import BaseVariable
-from scistack_gui import matlab_registry
-from scistack_gui.db import get_db
-from scistack_gui.matlab_parser import MatlabFunctionInfo
+from scistack_gui.matlab import registry as matlab_registry
+from scistack_gui.runtime.db import get_db
+from scistack_gui.matlab.parser import MatlabFunctionInfo
 
 
 def _wait_for_threads(prefix: str, timeout: float = 2.0) -> None:
@@ -128,7 +128,7 @@ class TestPipelineHasMatlabSteps:
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 class TestStartPipelineRunMatlabRouting:
     def test_matlab_pipeline_returns_host_execution_required(self, client):
-        from scistack_gui.api.run import start_pipeline_run
+        from scistack_gui.services.run_service import start_pipeline_run
 
         _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
         try:
@@ -152,7 +152,7 @@ class TestStartPipelineRunMatlabRouting:
             matlab_registry._matlab_functions.pop("matlab_proc", None)
 
     def test_matlab_pipeline_show_mode_rejected(self, client):
-        from scistack_gui.api.run import start_pipeline_run
+        from scistack_gui.services.run_service import start_pipeline_run
 
         _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
         try:
@@ -170,7 +170,7 @@ class TestStartPipelineRunMatlabRouting:
         """The existing Python pipeline-run path (main, conftest-seeded
         bandpass_filter) must still spawn its normal background thread —
         this routing change must not regress it."""
-        from scistack_gui.api.run import start_pipeline_run
+        from scistack_gui.services.run_service import start_pipeline_run
 
         result = start_pipeline_run("main", mode="all", run_id="rid_python")
         assert result == {"run_id": "rid_python"}
@@ -179,7 +179,7 @@ class TestStartPipelineRunMatlabRouting:
 
 class TestGenerateMatlabPipelineCommandService:
     """matlab_command_service.generate_matlab_pipeline_command — the
-    DB-backed resolution layer feeding api.matlab_command's pure string
+    DB-backed resolution layer feeding matlab_command_format's pure string
     generator (already unit-tested directly in test_matlab.py)."""
 
     def test_resolves_matlab_scope_into_pipeline_wrapped_script(self, client):
@@ -264,8 +264,8 @@ class TestStandaloneSidecarRouting:
     run_output/run_done)."""
 
     def test_default_routes_through_sidecar_thread(self, client, monkeypatch):
-        from scistack_gui import matlab_sidecar
-        from scistack_gui.api.run import start_pipeline_run
+        from scistack_gui.matlab import sidecar as matlab_sidecar
+        from scistack_gui.services.run_service import start_pipeline_run
 
         _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
         try:
@@ -305,8 +305,8 @@ class TestStandaloneSidecarRouting:
             matlab_registry._matlab_functions.pop("matlab_proc", None)
 
     def test_matlab_unavailable_reports_error_without_crashing(self, client, monkeypatch):
-        from scistack_gui import matlab_sidecar
-        from scistack_gui.api.run import start_pipeline_run
+        from scistack_gui.matlab import sidecar as matlab_sidecar
+        from scistack_gui.services.run_service import start_pipeline_run
 
         _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
         try:
@@ -332,8 +332,8 @@ class TestStandaloneSidecarRouting:
     def test_host_can_dispatch_matlab_skips_sidecar(self, client, monkeypatch):
         """The VS Code/JSON-RPC path (host_can_dispatch_matlab=True) must
         never touch the sidecar — dagPanel.ts owns dispatch there."""
-        from scistack_gui import matlab_sidecar
-        from scistack_gui.api.run import start_pipeline_run
+        from scistack_gui.matlab import sidecar as matlab_sidecar
+        from scistack_gui.services.run_service import start_pipeline_run
 
         _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
         try:
@@ -368,8 +368,8 @@ class TestStartMatlabSidecarRun:
     text)."""
 
     def test_reports_unavailable_without_spawning_a_thread(self, monkeypatch):
-        from scistack_gui import matlab_sidecar
-        from scistack_gui.api.run import start_matlab_sidecar_run
+        from scistack_gui.matlab import sidecar as matlab_sidecar
+        from scistack_gui.services.run_service import start_matlab_sidecar_run
 
         monkeypatch.setattr(matlab_sidecar, "sidecar_capable", lambda: False)
 
@@ -380,8 +380,8 @@ class TestStartMatlabSidecarRun:
         assert live == []
 
     def test_available_spawns_thread_and_drives_sidecar(self, monkeypatch):
-        from scistack_gui import matlab_sidecar
-        from scistack_gui.api.run import start_matlab_sidecar_run
+        from scistack_gui.matlab import sidecar as matlab_sidecar
+        from scistack_gui.services.run_service import start_matlab_sidecar_run
 
         monkeypatch.setattr(matlab_sidecar, "sidecar_capable", lambda: True)
 
@@ -415,8 +415,8 @@ class TestStartMatlabSidecarRun:
         """A MATLAB that launches but can't reach Python is a SETUP problem.
         Without the probe it fails on the first py.* call, deep inside
         configure_database, and reads as a pipeline error instead."""
-        from scistack_gui import matlab_sidecar
-        from scistack_gui.api.run import start_matlab_sidecar_run
+        from scistack_gui.matlab import sidecar as matlab_sidecar
+        from scistack_gui.services.run_service import start_matlab_sidecar_run
 
         monkeypatch.setattr(matlab_sidecar, "sidecar_capable", lambda: True)
 
@@ -457,9 +457,9 @@ class TestDatabaseHandoffToMatlab:
 
     def test_lock_is_released_while_matlab_runs(self, monkeypatch, tmp_path):
         import duckdb
-        from scistack_gui import db as db_mod
-        from scistack_gui import matlab_sidecar
-        from scistack_gui.api.run import start_matlab_sidecar_run
+        from scistack_gui.runtime import db as db_mod
+        from scistack_gui.matlab import sidecar as matlab_sidecar
+        from scistack_gui.services.run_service import start_matlab_sidecar_run
 
         p = tmp_path / "handoff.duckdb"
         con = duckdb.connect(str(p))
@@ -514,7 +514,7 @@ class TestDatabaseHandoffToMatlab:
         """A request arriving mid-run must be told MATLAB has the database,
         not quietly reopen it and steal the lock back from the run we just
         dispatched."""
-        from scistack_gui import db as db_mod
+        from scistack_gui.runtime import db as db_mod
 
         saved = (db_mod._db, db_mod._db_open, db_mod._db_refcount)
         db_mod._db, db_mod._db_open, db_mod._db_refcount = None, False, 0

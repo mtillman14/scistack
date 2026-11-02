@@ -30,8 +30,8 @@ from scistackplot import (  # noqa: E402
     plot_data,
     resolve,
 )
-from scistackplot.resolved import X, Y, Y_HIGH  # noqa: E402
-from scistackplot.roles import complete_roles  # noqa: E402
+from scistackplot.reduce.resolved import X, Y, Y_HIGH  # noqa: E402
+from scistackplot.model.roles import complete_roles  # noqa: E402
 from scistackplotdb import ScidbSource  # noqa: E402
 
 from conftest import JOINTS, N_CYCLES, SESSIONS, SUBJECTS  # noqa: E402

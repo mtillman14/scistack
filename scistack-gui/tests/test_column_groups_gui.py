@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from scifor import ColumnSelection as SciforColumnSelection
 
-from scistack_gui.api.matlab_command import (
+from scistack_gui.services.matlab_command_format import (
     _format_variable_class,
     _variable_binding_parts,
     format_matlab_column_spec,

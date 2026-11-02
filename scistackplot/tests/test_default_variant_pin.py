@@ -34,8 +34,8 @@ from scistackplot import (
     resolve,
     variant_set_mask,
 )
-from scistackplot.roles import validate
-from scistackplot.variants import apply_variant_sets
+from scistackplot.model.roles import validate
+from scistackplot.reduce.variants import apply_variant_sets
 
 
 def _table(
@@ -327,7 +327,7 @@ def test_the_seeded_row_stays_inert(scalar_table):
 
 def test_the_seeded_row_is_named_for_the_measure(scalar_table):
     from scistackplot import default_spec
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     spec = default_spec(scalar_table, "StepLength")
 
@@ -339,7 +339,7 @@ def test_the_seeded_row_is_named_for_the_measure(scalar_table):
 
 def test_a_row_names_its_own_variable_over_the_primary():
     from scistackplot import VariantSet
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     row = VariantSet(variable="RawEMG")
 
@@ -349,7 +349,7 @@ def test_a_row_names_its_own_variable_over_the_primary():
 def test_a_row_with_a_variable_and_a_selection_names_both():
     """The reported bug: a row plotting RawEMG was called "latest"."""
     from scistackplot import VariantSet
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     row = VariantSet(variable="RawEMG", selection={"bandpass.low_hz": "20"})
 
@@ -359,7 +359,7 @@ def test_a_row_with_a_variable_and_a_selection_names_both():
 def test_the_latest_flag_reads_as_current():
     """`CodeIsLatest=True` in a legend tells a reader nothing."""
     from scistackplot import VariantSet
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     row = VariantSet(selection={"CodeIsLatest": True})
 
@@ -372,7 +372,7 @@ def test_a_false_latest_flag_does_not_read_as_current():
     """"Not the current code" is a real thing to ask for, and must not be
     labelled as its opposite."""
     from scistackplot import VariantSet
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     row = VariantSet(selection={"CodeIsLatest": False})
 
@@ -383,7 +383,7 @@ def test_a_false_latest_flag_does_not_read_as_current():
 
 def test_an_explicit_name_wins():
     from scistackplot import VariantSet
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     row = VariantSet(name="baseline", variable="RawEMG", selection={"a": "1"})
 
@@ -394,7 +394,7 @@ def test_two_rows_on_one_variable_stay_distinguishable():
     """Names are the Variant factor's LEVELS, so two rows sharing a name would
     merge into one legend entry and silently pool their data."""
     from scistackplot import VariantSet
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     rows = [
         VariantSet(selection={"bandpass.low_hz": "20"}),
@@ -410,7 +410,7 @@ def test_two_rows_on_one_variable_stay_distinguishable():
 def test_an_unfilled_row_with_no_primary_is_still_not_set():
     """The library caller's view, where there is no primary to fall back on."""
     from scistackplot import VariantSet
-    from scistackplot.variants import set_name
+    from scistackplot.reduce.variants import set_name
 
     assert set_name(VariantSet(), 0) == "(not set)"
     assert set_name(VariantSet(), 1) == "(not set 2)"
@@ -431,7 +431,7 @@ def test_adding_a_row_beside_the_seeded_one_draws_BOTH():
         apply_variant_sets,
         defined_sets,
     )
-    from scistackplot.variants import VARIANT_FACTOR
+    from scistackplot.reduce.variants import VARIANT_FACTOR
 
     # Stacked through the REAL path rather than hand-built: a stacked table
     # names its value column after the primary measure, and that name is also

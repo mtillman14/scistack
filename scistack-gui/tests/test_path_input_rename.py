@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import inspect
 
-import scistack_gui.registry as _registry
-from scistack_gui import config as config_mod
+import scistack_gui.project.registry as _registry
+from scistack_gui.project import config as config_mod
 
 
 def _toml_project(tmp_path, body):
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     entities = tmp_path / "entities.toml"
     entities.write_text(body, encoding="utf-8")
@@ -102,9 +102,10 @@ class TestRenameDeclaration:
 
 class TestRebaseNodeState:
     def test_every_placement_and_its_state_moves(self, populated_db, tmp_path):
-        from scistack_gui import intent_store, layout as layout_store
-        from scistack_gui import pipeline_store as ps
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import intent_store
+        from scistack_gui.stores import layout as layout_store
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.layout_service import rename_path_input
 
         _toml_project(tmp_path, '[path_inputs]\nRAW = "{subject}/a.csv"\n')
@@ -158,8 +159,8 @@ class TestRebaseNodeState:
         """A freshly dropped node (``pathInput__RAW__x1y2z3``) graduates by
         LABEL, so its label must follow the rename or it never finds the
         renamed node."""
-        from scistack_gui import pipeline_store as ps
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.layout_service import rename_path_input
 
         _toml_project(tmp_path, '[path_inputs]\nRAW = "a.csv"\n')
@@ -171,8 +172,8 @@ class TestRebaseNodeState:
         assert ps.get_manual_nodes(db)["pathInput__RAW__x1y2z3"]["label"] == "NEW"
 
     def test_a_refused_rename_moves_nothing(self, populated_db, tmp_path):
-        from scistack_gui import pipeline_store as ps
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.layout_service import rename_path_input
 
         _toml_project(tmp_path, '[parameters]\nHZ = 1\n\n[path_inputs]\nRAW = "a.csv"\n')
@@ -253,8 +254,8 @@ class TestRecordedNameAfterRename:
         assert "OLD" in result
 
     def test_rename_is_recorded(self, populated_db, tmp_path):
-        from scistack_gui import pipeline_store as ps
-        from scistack_gui.db import get_db
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.layout_service import rename_path_input
 
         _toml_project(tmp_path, '[path_inputs]\nOLD = "a.csv"\n')
@@ -268,7 +269,7 @@ class TestRecordedNameAfterRename:
         """convert_scidb_path_inputs has two production callers, and they
         must resolve identically (its docstring) — a caller without the
         index draws the ghost the other does not."""
-        from scistack_gui.api import pipeline as api_pipeline
+        from scistack_gui.services import graph_service as api_pipeline
         from scistack_gui.services import execution_service
 
         for fn in (api_pipeline.build_aggregate, execution_service._db_path_input_params):

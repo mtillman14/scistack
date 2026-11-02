@@ -1,4 +1,4 @@
-"""The server's stdin reader (scistack_gui/stdin_reader.py).
+"""The server's stdin reader (scistack_gui/runtime/stdin_reader.py).
 
 On Windows a read left pending on the stdin pipe stalled every first-time
 native import on a request thread: Plot Studio's first ``plot_describe`` hung
@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from scistack_gui import stdin_reader
-from scistack_gui.stdin_reader import IDLE_POLL_S, poll_chunks, split_lines
+from scistack_gui.runtime import stdin_reader
+from scistack_gui.runtime.stdin_reader import IDLE_POLL_S, poll_chunks, split_lines
 
 
 # --- split_lines ------------------------------------------------------------
@@ -119,7 +119,7 @@ def test_a_native_import_on_another_thread_finishes_while_the_reader_waits():
     child = textwrap.dedent(
         """
         import os, threading, time
-        from scistack_gui.stdin_reader import request_lines
+        from scistack_gui.runtime.stdin_reader import request_lines
 
         def work():
             time.sleep(1.0)  # let the main thread reach its read first

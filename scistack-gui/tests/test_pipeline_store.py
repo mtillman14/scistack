@@ -1,5 +1,5 @@
 """
-Unit tests for scistack_gui.pipeline_store's hidden-combo and hidden-edge
+Unit tests for scistack_gui.stores.pipeline_store's hidden-combo and hidden-edge
 primitives.
 
 Hiding must never delete data -- these tests confirm hide_combo/unhide_combo
@@ -9,7 +9,7 @@ hidden-edges table (hide_edge/unhide_edge) is its own independent set --
 hiding an edge keeps the node itself on screen (red), unlike hiding a node.
 """
 
-from scistack_gui import pipeline_store
+from scistack_gui.stores import pipeline_store
 
 
 class TestHiddenCombos:

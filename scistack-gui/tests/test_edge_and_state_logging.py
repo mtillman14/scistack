@@ -151,7 +151,7 @@ def _wire_new_bandpass_node(client, suffix):
 
 class TestManualNodeLogging:
     def test_first_run_of_a_new_wiring_is_info_not_warning(self, client, caplog):
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.execution_service import derive_target_for_node
 
         fn_node = _wire_new_bandpass_node(client, "A")
@@ -166,7 +166,7 @@ class TestManualNodeLogging:
 
     def test_manual_fn_node_state_is_logged_at_info(self, client, caplog):
         fn_node = _wire_new_bandpass_node(client, "B")
-        with caplog.at_level(logging.INFO, logger="scistack_gui.api.pipeline"):
+        with caplog.at_level(logging.INFO, logger="scistack_gui.services.graph_service"):
             resp = client.get("/api/pipeline")
         assert resp.status_code == 200
 

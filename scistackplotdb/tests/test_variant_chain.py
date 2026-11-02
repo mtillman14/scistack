@@ -154,7 +154,7 @@ def test_downstream_pooling_is_refused(upstream_code_versions):
     — same assertion, one layer downstream. Unassigned, the code column
     separates figures (nothing pools silently); collapsing it is refused.
     """
-    from scistackplot.roles import complete_roles
+    from scistackplot.model.roles import complete_roles
 
     table = ScidbSource(upstream_code_versions).get_table(["Summarized"])
     spec = PlotSpec(

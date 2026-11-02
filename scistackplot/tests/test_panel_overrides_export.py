@@ -13,7 +13,7 @@ from dataclasses import replace as _replace
 import pytest
 
 from scistackplot import PlotSpec, StyleOptions, YAxis, generate_plot_function, resolve
-from scistackplot.panels import Y_TITLES_FIRST_COLUMN, PanelOverride
+from scistackplot.reduce.panels import Y_TITLES_FIRST_COLUMN, PanelOverride
 
 pytest.importorskip("seaborn")
 pytest.importorskip("matplotlib")

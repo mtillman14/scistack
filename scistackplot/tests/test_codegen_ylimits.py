@@ -25,8 +25,8 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, generate_plot_function, resolve
-from scistackplot.reduce import planned_y_limits
-from scistackplot.spec import Aggregation, ErrorBand, Filter
+from scistackplot.reduce.resolve import planned_y_limits
+from scistackplot.model.spec import Aggregation, ErrorBand, Filter
 
 pytest.importorskip("seaborn")
 matplotlib = pytest.importorskip("matplotlib")
@@ -179,7 +179,7 @@ def two_scale_table(two_scale_frame) -> LongTable:
 
 
 def _per_field_bar() -> PlotSpec:
-    from scistackplot.spec import YAxis
+    from scistackplot.model.spec import YAxis
 
     return PlotSpec(
         measures=["M"],
@@ -237,7 +237,7 @@ def test_a_partial_iterate_scope_still_warns_in_the_docstring(two_scale_table):
     can read its group from."""
     from dataclasses import replace
 
-    from scistackplot.spec import YAxis
+    from scistackplot.model.spec import YAxis
 
     spec = replace(
         _per_field_bar(),
@@ -263,7 +263,7 @@ def test_per_panel_autoscale_export_runs(kind, two_scale_table, two_scale_frame)
     values for keyword argument 'sharey'" (2026-09-24)."""
     from dataclasses import replace
 
-    from scistackplot.spec import YAxis
+    from scistackplot.model.spec import YAxis
 
     spec = replace(_per_field_bar(), kind=kind, y_axis=YAxis(scope=["session", "field"]))
     source = generate_plot_function(spec, two_scale_table)

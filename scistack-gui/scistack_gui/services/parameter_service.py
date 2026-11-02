@@ -52,7 +52,7 @@ def create_parameter(
     "error": ...}`` on failure (invalid name, name collision, no configured
     target file, or a write/refresh failure).
     """
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     err = validate_entity_name(name)
     if err:
@@ -150,13 +150,13 @@ def update_parameter(
     from scidb.entities import render_parameter_value
     from scidb.source_edit import render_parameter
 
-    from scistack_gui.matlab_parser import render_matlab_parameter
+    from scistack_gui.matlab.parser import render_matlab_parameter
     from scistack_gui.services.target_file_service import update_declaration
 
     if not values:
         # Worth a line in scistack.log: this is the one edit that can take a
         # wired, previously-runnable Parameter back to un-runnable.
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         existing = registry.get_parameters_registry().get(name)
         logger.info(
@@ -187,10 +187,10 @@ def _record_value_group(name: str, values: list, group: "dict | None") -> None:
     edit into a reported failure. Losing the marker costs the compact row on
     the canvas, nothing else.
     """
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     try:
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
 
         db = get_db()
     except Exception as e:  # pragma: no cover - depends on GUI db state

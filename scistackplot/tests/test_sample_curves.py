@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from scistackplot import PlotKind, PlotSpec, Role, resolve
-from scistackplot.export import sample_curves
-from scistackplot.resolved import COLOR, Y
+from scistackplot.export.plot_data import sample_curves
+from scistackplot.reduce.resolved import COLOR, Y
 
 
 def _band() -> PlotSpec:

@@ -155,7 +155,7 @@ def test_regression_endpoint_fits_with_csvstats(seeded):
 
 @pytest.fixture
 def comparison_spec():
-    from scistackplot.spec import VariantSet
+    from scistackplot.model.spec import VariantSet
 
     return PlotSpec(
         measures=["StepLength"],
@@ -169,7 +169,7 @@ def comparison_spec():
 
 
 def test_one_variant_pins_the_single_input(table):
-    from scistackplot.spec import VariantSet
+    from scistackplot.model.spec import VariantSet
 
     spec = PlotSpec(
         measures=["StepLength"],
@@ -235,7 +235,7 @@ def test_the_generated_function_labels_and_stacks_them(table, comparison_spec):
 
 def test_variant_input_names_are_identifiers(table):
     """A variant is named for a reader ("20 Hz + latest"); a parameter cannot be."""
-    from scistackplot.spec import VariantSet
+    from scistackplot.model.spec import VariantSet
 
     spec = PlotSpec(
         measures=["StepLength"],
@@ -257,7 +257,7 @@ def test_variant_input_names_are_identifiers(table):
 def test_a_multi_function_selection_nests_variants(table):
     """Two producing functions cannot share one Variant(fn=...), and dotted-string
     kwargs would leak a reserved namespace into code the user is meant to edit."""
-    from scistackplot.spec import VariantSet
+    from scistackplot.model.spec import VariantSet
 
     spec = PlotSpec(
         measures=["StepLength"],

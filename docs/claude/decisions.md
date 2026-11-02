@@ -43,7 +43,7 @@ places, and a linked figure and table each kept a copy of the design, kept
 in step by Sync banners (a NOTE 4 violation by construction).
 **Decision (user).** Supersedes the "two-way design sync, banners in both
 studios" part of D-2026-10-17-1. (1) One role vocabulary, owner
-`scistackplot.role_labels`: Compare / Separate panels|sections / Separate
+`scistackplot.model.role_labels`: Compare / Separate panels|sections / Separate
  figures|tables / Average over. (2) StatStudio opens from every place Plot
 Studio does, plus `stat_` nodes. (3) StatStudio's Data and Structure groups
 ARE Plot Studio's (design-only mode), and both studios share the rail
@@ -98,7 +98,7 @@ reason. **Doc:** [statistics.md](statistics.md).
 
 **Context.** Test brackets are intent computed from results (P6); storing
 them in the plot spec would make them stale facts. **Decision.**
-`DifferenceBar.origin`; `scistackplot.diffbars.with_derived_bars` is the one
+`DifferenceBar.origin`; `scistackplot.reduce.diffbars.with_derived_bars` is the one
 merge (derived first, manual wins a duplicate pair). The GUI sends
 `derived_bars` on resolve, export, save and add-to-pipeline, so the export
 matches the preview. **Doc:** [difference-bars.md](difference-bars.md).
@@ -110,7 +110,7 @@ A plan to let scistackplot own "statistics a figure draws" would have given
 mean/SD/CI two owners (csv-stats' test results carry them too).
 **Decision (user).** `csvstats.descriptive` is the one owner. scistackplot
 decides which rows, and how to draw "no interval". StatStudio is a separate
-tab with two-way design sync (`scistackplot.design`), banners in both
+tab with two-way design sync (`scistackplot.model.design`), banners in both
 studios, and the link stored on the stats side only. **Docs:**
 [statistics-design.md](statistics-design.md) S10–S21,
 [statistics.md](statistics.md).
@@ -495,7 +495,7 @@ everything (the user's objection: a long x title must not shrink the y ticks).
 **Decision.**
 - `TextSizes.base = None` means AUTO and is the default. A number is the old
   fixed behaviour; a fixed element is never searched.
-- `scistackplot.autosize` is the one owner. It runs a parallel binary search
+- `scistackplot.text.autosize` is the one owner. It runs a parallel binary search
   per element (x/y ticks, x/y titles, title, brackets, legend, difference
   labels) over real matplotlib layouts, and blames each layout problem on
   the element that has it. Plot area < 55% of the canvas is the one shared
@@ -525,7 +525,7 @@ data?" rule written twice (save and apply drifting), and a second copy of
 the named/versioned/hidden storage rules.
 
 **Decision.**
-- `scistackplot.presets.FIELD_CLASSES` classifies every spec setting as
+- `scistackplot.model.presets.FIELD_CLASSES` classifies every spec setting as
   DATA, VARIABLE_TEXT, REBASED or TEMPLATE. Save strips with it, apply fills
   from the target with it. A guard test fails on an unclassified field.
 - Title, y label and y limits (incl. per-panel ones and the measure's own
@@ -550,7 +550,7 @@ its operation does.
 
 **Decision.**
 - Undoable handlers (`Handler.undoable=True`) are wrapped in
-  `scistack_gui.history.recording`. It diffs every tracked GUI table by
+  `scistack_gui.stores.history.recording`. It diffs every tracked GUI table by
   primary key and records the before/after bytes of every project file
   written (`history.note_write`). Undo writes the before side back; redo
   writes the after side.
@@ -625,7 +625,7 @@ the GUI.
   - A string under `[colors]` is a setting and a table is a thing.
   
   The TOML grammar is owned by `scidb.colors`. The colour text grammar is
-  owned by `scistackplot.colors.parse_color` alone, canonicalised to
+  owned by `scistackplot.text.colors.parse_color` alone, canonicalised to
   `#rrggbb`.
 - **Drawing.** `render.base.palette_for` / `sample_palette_for` stay the ONE
   owner of a mark's colour and read `ResolvedPlot.colors` first. A pin on
@@ -664,7 +664,7 @@ of text.
   Within a factor the text must be one-to-one, and a clash is refused
   (`AliasError`, a `RoleError`).
 - **How aliases reach a figure.**
-  - The ONE owner of how text reads is `scistackplot.aliases.DisplayText`,
+  - The ONE owner of how text reads is `scistackplot.text.aliases.DisplayText`,
     on `ResolvedPlot.text`. The renderers never call `str(level)` for text.
   - `aliases` is plan-irrelevant.
   - Tables carry a live READER of the project layer
@@ -673,7 +673,7 @@ of text.
 - **Exported code.** It bakes the merged aliases in as a literal (lineage)
   and relabels the drawn text rather than renaming data.
 - **Text sizes.** They are `StyleOptions.text` (`TextSizes`), resolved by
-  `scistackplot.textsize`. A size the user sets is never shrunk by fitting.
+  `scistackplot.text.textsize`. A size the user sets is never shrunk by fitting.
 
 **Consequences.**
 - A project alias edit reaches the preview and saved figures at once, but an

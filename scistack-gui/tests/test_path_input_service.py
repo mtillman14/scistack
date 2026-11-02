@@ -9,7 +9,7 @@ path — including the qualified ``scidb.X`` append form and the shared
 
 from __future__ import annotations
 
-import scistack_gui.registry as _registry
+import scistack_gui.project.registry as _registry
 from scistack_gui.services.path_input_service import create_path_input
 
 

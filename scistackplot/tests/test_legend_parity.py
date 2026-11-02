@@ -31,8 +31,8 @@ from scistackplot import (
     resolve,
 )
 from scistackplot.render.base import legend_entry_labels, legend_levels
-from scistackplot.table import LongTable
-from scistackplot.variants import VARIANT_FACTOR, set_name
+from scistackplot.model.table import LongTable
+from scistackplot.reduce.variants import VARIANT_FACTOR, set_name
 
 matplotlib = pytest.importorskip("matplotlib")
 

@@ -19,8 +19,8 @@ import numpy as np
 import pytest
 from scidb import BaseVariable, Parameter
 
-from scistack_gui import pipeline_store
-from scistack_gui.db import get_db
+from scistack_gui.stores import pipeline_store
+from scistack_gui.runtime.db import get_db
 from scistack_gui.services.execution_service import (
     derive_fn_targets,
     derive_target_for_node,
@@ -150,7 +150,7 @@ class TestUnvaluedParameter:
     def test_build_run_inputs_refuses_to_bind_it(self, populated_db, monkeypatch):
         """Bound as-is it is a zero-length EachOf axis: for_each would
         iterate zero times, write no records and report success."""
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.domain.edge_resolver import BINDING_PARAMETER
         from scistack_gui.services.execution_service import build_run_inputs
 
@@ -211,7 +211,7 @@ class TestDbHistoryPathInputBinding:
     ):
         from scidb import PathInput
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.services.execution_service import _db_path_input_params
 
         monkeypatch.setattr(
@@ -234,7 +234,7 @@ class TestDbHistoryPathInputBinding:
     ):
         from scidb import PathInput
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.services.execution_service import _db_path_input_params
 
         monkeypatch.setattr(
@@ -255,7 +255,7 @@ class TestDbHistoryPathInputBinding:
     ):
         from scidb import PathInput
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.services.execution_service import _attach_db_path_inputs
 
         monkeypatch.setattr(
@@ -318,7 +318,7 @@ class TestGraduatedPathInputNodeIsRunnable:
     def _db_with_history(self, db, monkeypatch):
         from scidb import PathInput
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         monkeypatch.setattr(
             registry,
@@ -363,8 +363,8 @@ class TestGraduatedPathInputNodeIsRunnable:
         Since plan-canvas-as-document Stage 4 a node runs from its STORED
         edges, so the node and its edges are rows (what adoption writes), and
         the recorded row is found by the wiring those edges state."""
-        from scistack_gui import node_wiring
-        from scistack_gui import pipeline_store as ps
+        from scistack_gui.stores import node_wiring
+        from scistack_gui.stores import pipeline_store as ps
         from scistack_gui.ids import in_handle, path_input_node_id, var_node_id
 
         node_id = str(node_wiring.mint_node_id("read_csv_like"))
@@ -505,7 +505,7 @@ class TestDefaultSchemaLevel:
     def test_a_path_input_template_names_its_level(self, populated_db, monkeypatch):
         from scifor import PathInput
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.domain.edge_resolver import pathinput_binding
         from scistack_gui.services.execution_service import default_schema_level
 
@@ -525,7 +525,7 @@ class TestDefaultSchemaLevel:
         loader fed only by one ran at every key (cleanup-audit F25)."""
         from scifor import EachOf, PathInput
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.domain.edge_resolver import pathinput_binding
         from scistack_gui.services.execution_service import default_schema_level
 
@@ -568,7 +568,7 @@ class TestDatasetLevelDefault:
     ):
         from scifor import PathInput
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.domain.edge_resolver import pathinput_binding
         from scistack_gui.services.execution_service import default_schema_level
 
@@ -649,7 +649,7 @@ class TestPooledBindingRoundTrip:
     ):
         from scidb import AcrossVariants
 
-        from scistack_gui import registry
+        from scistack_gui.project import registry
         from scistack_gui.services.execution_service import (
             _attach_db_path_inputs,
             build_run_inputs,
@@ -713,7 +713,7 @@ class TestCompiledPipelineHonoursRunOptions:
     def test_the_step_spec_carries_the_node_s_options(
         self, client, populated_db, bp_node_id
     ):
-        from scistack_gui import pipeline_store
+        from scistack_gui.stores import pipeline_store
 
         pipeline_store.update_node_config(
             populated_db, bp_node_id, {"runOptions": {"distribute": True}}

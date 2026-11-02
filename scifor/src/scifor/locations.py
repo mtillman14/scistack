@@ -1,7 +1,7 @@
 """Which schema locations a run is about: ragged prefixes plus a level rule.
 
 One meaning, stated once in ``docs/claude/location-filter-semantics.md`` and
-transcribed here for combos, in ``scistackplot.reduce`` for DataFrame rows, and
+transcribed here for combos, in ``scistackplot.reduce.resolve`` for DataFrame rows, and
 in the GUI's ``locationSelection.ts`` for checkbox state. ``scistackplot``
 cannot import ``scifor`` (pandas/numpy/scistacklog only), so the parity test
 table at the bottom of that document is what keeps the copies honest.

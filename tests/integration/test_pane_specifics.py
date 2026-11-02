@@ -35,8 +35,8 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.resolved import Y, Y_HIGH, Y_LOW  # noqa: E402
-from scistackplot.variants import VARIANT_FACTOR  # noqa: E402
+from scistackplot.reduce.resolved import Y, Y_HIGH, Y_LOW  # noqa: E402
+from scistackplot.reduce.variants import VARIANT_FACTOR  # noqa: E402
 from scistackplotdb import ScidbSource  # noqa: E402
 
 from conftest import JOINTS, SESSIONS, SUBJECTS, TRIALS, attempt  # noqa: E402
@@ -410,7 +410,7 @@ def test_a_heatmap_averages_the_matrices_it_collapses(source):
 def test_grouping_a_2d_variable_is_refused_with_the_reason(source):
     table = source.get_table(["JointCoupling"])
     spec = PlotSpec(measures=["JointCoupling"], roles={"session": Role.GROUP, "subject": Role.ITERATE}, groups=["session"], kind=PlotKind.HEATMAP)
-    from scistackplot.roles import validate
+    from scistackplot.model.roles import validate
 
     _, error = attempt(validate, spec, table)
     assert error is not None and "2-D" in str(error)
@@ -449,6 +449,10 @@ def test_export_of_every_scalar_kind_runs_on_the_pipelines_frame(example_db, pip
     spec = _bar(symmetry, kind=kind)
     report = capabilities(spec, symmetry)
     entry = next(e for e in report["kinds"] if e["kind"] == str(kind))
+    if not entry["available"]:
+        # The panel offers only available kinds (e.g. spaghetti needs two
+        # grouping layers; this spec has one), so there is nothing to export.
+        pytest.skip(f"the panel does not offer {kind} here: {entry['reason']}")
     if entry.get("assignment"):
         spec = PlotSpec.from_dict({**spec.to_dict(), **entry["assignment"], "kind": str(kind)})
     exported = plot_service.export_code(example_db, spec.to_dict())

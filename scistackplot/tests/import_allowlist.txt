@@ -1,0 +1,31 @@
+# Upward imports allowed today. This list may only shrink:
+# delete a line when its import is gone. Format: src -> dst  # reason
+# Owner: tools/import_layers.py
+scistackplot.model.capability -> scistackplot.export.plot_data  # data_export_options for the Save data menu
+scistackplot.model.capability -> scistackplot.reduce.bins  # capability probes this feature to decide which plots are available
+scistackplot.model.capability -> scistackplot.reduce.categorical  # capability probes this feature to decide which plots are available
+scistackplot.model.capability -> scistackplot.reduce.cell  # capability probes this feature to decide which plots are available
+scistackplot.model.capability -> scistackplot.reduce.compare  # capability probes this feature to decide which plots are available
+scistackplot.model.capability -> scistackplot.reduce.diffbars  # capability probes this feature to decide which plots are available
+scistackplot.model.capability -> scistackplot.reduce.groups  # capability probes this feature to decide which plots are available
+scistackplot.model.capability -> scistackplot.reduce.resolve  # apply_filters before counting what is plottable
+scistackplot.model.capability -> scistackplot.reduce.variants  # apply_variant_sets before counting what is plottable
+scistackplot.model.presets -> scistackplot.reduce.panels  # PanelOverride type lives in panels; belongs in model
+scistackplot.model.restore -> scistackplot.reduce.groups  # old specs upgraded with apply_level_groups
+scistackplot.model.restore -> scistackplot.reduce.variants  # old specs upgraded with variant-set helpers
+scistackplot.model.roles -> scistackplot.reduce.bins  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.categorical  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.cell  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.compare  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.kde  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.panels  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.stacking  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.variants  # role defaults read this feature's own rules
+scistackplot.model.roles -> scistackplot.reduce.weights  # role defaults read this feature's own rules
+scistackplot.model.spec -> scistackplot.reduce.compare  # Comparison type lives in compare; belongs in model
+scistackplot.model.spec -> scistackplot.reduce.diffbars  # DifferenceBar type lives in diffbars; belongs in model
+scistackplot.model.spec -> scistackplot.reduce.panels  # PanelOverride type lives in panels; belongs in model
+scistackplot.reduce.diffbars -> scistackplot.render.base  # x_positions: shared layout maths owned by render.base
+scistackplot.reduce.resolve -> scistackplot.render.base  # SAMPLE_PALETTE constants owned by render.base
+scistackplot.reduce.resolved -> scistackplot.render.base  # panel_y_title / shows_y_labels layout rules owned by render.base
+scistackplot.text.autosize -> scistackplot.render.mpl  # measures text with the matplotlib layout (layout_report)

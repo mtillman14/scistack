@@ -38,9 +38,9 @@ import threading
 
 import pytest
 
-from scistack_gui import layout as layout_store
-from scistack_gui import pipeline_store
-from scistack_gui.db import get_db
+from scistack_gui.stores import layout as layout_store
+from scistack_gui.stores import pipeline_store
+from scistack_gui.runtime.db import get_db
 
 
 def _hammer(targets, threads=8, iterations=10):

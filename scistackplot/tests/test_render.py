@@ -523,7 +523,7 @@ def test_matplotlib_keeps_ticklabels_above_an_empty_cell(struct_table, wrapped_g
 
 def _layout_spec(rows=(), cols=(), n_rows=None, n_cols=None):
     from scistackplot import FacetOptions
-    from scistackplot.spec import MatchOp, Matcher
+    from scistackplot.model.spec import MatchOp, Matcher
 
     return PlotSpec(
         measures=["RawEMG"],
@@ -730,7 +730,7 @@ def test_a_blank_slot_claims_nothing(bilateral_table):
     string, so an unset slot used to match the first panel it saw — with fixed
     slots, most slots are blank most of the time.
     """
-    from scistackplot.spec import MatchOp, Matcher
+    from scistackplot.model.spec import MatchOp, Matcher
 
     assert Matcher(op=MatchOp.CONTAINS, value="").matches("LHAM") is False
     assert Matcher(op=MatchOp.NOT_CONTAINS, value="").matches("LHAM") is False
@@ -879,8 +879,8 @@ def test_one_panel_ignores_pinned_rows_cols_and_slots():
     N columns or slots the spec still carries, the grid is 1 x 1 — never one
     plot in a grid of empty cells (user, 2026-09-26)."""
     from scistackplot import FacetOptions
-    from scistackplot.reduce import plan_layout
-    from scistackplot.spec import MatchOp, Matcher
+    from scistackplot.reduce.resolve import plan_layout
+    from scistackplot.model.spec import MatchOp, Matcher
 
     facet = FacetOptions(
         n_rows=2,

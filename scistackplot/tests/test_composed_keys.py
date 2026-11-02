@@ -21,9 +21,9 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, resolve
-from scistackplot.reduce import SERIES_SEPARATOR, _composed_key
-from scistackplot.resolved import SERIES
-from scistackplot.xaxis import LEAF_SEPARATOR, leaf_key
+from scistackplot.reduce.resolve import SERIES_SEPARATOR, _composed_key
+from scistackplot.reduce.resolved import SERIES
+from scistackplot.text.xaxis import LEAF_SEPARATOR, leaf_key
 
 
 def _naive(frame: pd.DataFrame, columns: list[str], separator: str) -> list[str]:

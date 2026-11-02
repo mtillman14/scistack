@@ -21,7 +21,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt  # noqa: E402
 
-import scistackplot.reduce as reduce_mod  # noqa: E402
+import scistackplot.reduce.resolve as reduce_mod  # noqa: E402
 from scistackplot import (  # noqa: E402
     LongTable,
     PlotKind,
@@ -32,7 +32,7 @@ from scistackplot import (  # noqa: E402
     layout_decisions,
     resolve_one,
 )
-from scistackplot.diffbars import DifferenceBar  # noqa: E402
+from scistackplot.reduce.diffbars import DifferenceBar  # noqa: E402
 
 LAYER = "scistackplot"
 
@@ -106,7 +106,7 @@ def _spec(*bars: DifferenceBar, **extra) -> PlotSpec:
 
 
 def _run(source: str, rows: pd.DataFrame, spec: PlotSpec):
-    from scistackplot.codegen import default_function_name
+    from scistackplot.export.codegen import default_function_name
 
     namespace: dict = {}
     exec(compile(source, "<generated>", "exec"), namespace)  # noqa: S102
@@ -200,7 +200,7 @@ def test_a_sibling_figure_is_raised_to_the_shared_top(table, frame):
 
 
 def test_the_label_is_the_differences_text_size(table, frame):
-    from scistackplot.spec import TextSizes
+    from scistackplot.model.spec import TextSizes
 
     from dataclasses import replace
 
@@ -217,9 +217,9 @@ def test_the_label_is_the_differences_text_size(table, frame):
 def test_a_nested_axis_maps_the_ends_through_the_exported_order(table, frame):
     """The export drops the preview's spacers, so a bar's x is looked up by
     its tick's name in the order the export drew."""
-    from scistackplot.codegen import _nested_x_order
-    from scistackplot.roles import complete_roles
-    from scistackplot.cell import effective_shape
+    from scistackplot.export.codegen import _nested_x_order
+    from scistackplot.model.roles import complete_roles
+    from scistackplot.reduce.cell import effective_shape
 
     spec = _spec(
         DifferenceBar(

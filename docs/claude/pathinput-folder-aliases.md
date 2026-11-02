@@ -88,7 +88,7 @@ they're in the dict:
 | Deep copy | `layout_service.deep_copy_path_input` (now copies alternates too) |
 | Portability import | `portability_service` → `create_path_input(..., aliases)` |
 | Bundle import rewrite (key map renames alias keys like placeholders) | `scidb.bundle._rewrite_path_inputs` / `_rename_alias_keys` |
-| MATLAB run command | `matlab_command_service._declared_path_input` → `api.matlab_command._format_path_input_arm` |
+| MATLAB run command | `matlab_command_service._declared_path_input` → `matlab_command_format._format_path_input_arm` |
 | MATLAB aliases argument text | `matlab_parser.render_matlab_aliases` (JSON char, never a struct) |
 | MATLAB `scidb.entities()` | `scimatlab.bridge.load_entities` sends `aliases_json` → `+scidb/entities.m` |
 

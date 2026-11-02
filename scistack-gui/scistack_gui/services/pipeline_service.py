@@ -23,7 +23,7 @@ def get_pipeline_graph(
 ) -> dict:
     """Build the pipeline graph (nodes + edges) for one SCOPE.
 
-    Delegates to api/pipeline._build_graph which already orchestrates
+    Delegates to graph_service.build_graph which already orchestrates
     domain modules. This service function provides a stable entry point
     for both protocol adapters.
 
@@ -33,10 +33,10 @@ def get_pipeline_graph(
     left a graph build that just stopped mid-log with no error at all, and
     the traceback had to be recovered from the terminal by hand.
     """
-    from scistack_gui.api.pipeline import _build_graph
+    from scistack_gui.services.graph_service import build_graph
 
     try:
-        return _build_graph(db, pipeline_id, run_states=run_states)
+        return build_graph(db, pipeline_id, run_states=run_states)
     except Exception:
         logger.exception(
             "[pipeline] graph build FAILED (scope=%s) — see traceback", pipeline_id
@@ -47,9 +47,9 @@ def get_pipeline_graph(
 def get_function_params(fn_name: str) -> list[str]:
     """Return non-private parameter names from the function's signature
     (``registry.function_arguments``: Python or MATLAB)."""
-    from scistack_gui.api.pipeline import _fn_params_from_registry
+    from scistack_gui.services.graph_service import fn_params_from_registry
 
-    return _fn_params_from_registry(fn_name)
+    return fn_params_from_registry(fn_name)
 
 
 def get_function_full_info(fn_name: str) -> dict:
@@ -64,7 +64,8 @@ def get_function_full_info(fn_name: str) -> dict:
     come from ``graph_builder.port_visibility`` with nothing fed yet, the
     rule the canvas build applies, so the node doesn't redraw on refetch.
     """
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
     from scistack_gui.domain.graph_builder import port_visibility
 
     arguments = registry.function_arguments(fn_name)
@@ -92,7 +93,8 @@ def get_function_full_info(fn_name: str) -> dict:
 
 def get_function_source(fn_name: str) -> dict:
     """Return the source file path and line number for a registered function."""
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
 
     if matlab_registry.is_matlab_function(fn_name):
         info = matlab_registry.get_matlab_function(fn_name)
@@ -131,7 +133,8 @@ def get_function_doc(fn_name: str) -> dict:
     item-info panel. Mirrors ``get_function_source``'s not-registered error
     shape.
     """
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
 
     if matlab_registry.is_matlab_function(fn_name):
         info = matlab_registry.get_matlab_function(fn_name)
@@ -191,8 +194,8 @@ def get_info() -> dict:
     opens/creates a database before its webview mounts, so this branch is
     standalone-frontend-only).
     """
-    from scistack_gui import startup as _startup
-    from scistack_gui.db import get_db_path, is_loaded
+    from scistack_gui.project import startup as _startup
+    from scistack_gui.runtime.db import get_db_path, is_loaded
 
     if not is_loaded():
         return {"db_loaded": False}
@@ -212,7 +215,8 @@ def get_registry() -> dict:
     list is unioned in here. That table is their only record.
     """
     from scidb import BaseVariable
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
 
     library_fns = _python_library_function_names()
     matlab_fns = matlab_registry.get_all_function_names()
@@ -268,7 +272,7 @@ def _python_library_function_names() -> list[str]:
     frontend calls it while showing the project-creation wizard), so a
     missing DB is a normal state here, not an error.
     """
-    from scistack_gui.db import get_db, is_loaded
+    from scistack_gui.runtime.db import get_db, is_loaded
     from scistack_gui.services.builtin_function_service import (
         get_python_library_function_names,
     )
@@ -305,7 +309,7 @@ def refresh_module() -> dict:
     # file on disk to find them from — so they'd otherwise be silently
     # dropped by the registry .clear() every refresh does internally.
     try:
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.builtin_function_service import (
             replay_persisted_builtins,
         )
@@ -319,7 +323,7 @@ def refresh_module() -> dict:
     # removed argument; the user redraws it).
     disconnected: list[dict] = []
     try:
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
         from scistack_gui.services.layout_service import disconnect_removed_arguments
 
         disconnected = disconnect_removed_arguments(get_db())

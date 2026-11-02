@@ -61,7 +61,7 @@ my_study/
 
 ## How code is discovered
 
-The GUI's loader is `scistack_gui.config.load_config`.
+The GUI's loader is `scistack_gui.project.config.load_config`.
 
 1. **The project's own package** (`src/<name>/`, named by `pyproject.toml`)
    is always loaded as a package, with or without a `scistack.toml`. Its

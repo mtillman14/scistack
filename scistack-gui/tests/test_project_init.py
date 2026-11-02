@@ -48,7 +48,7 @@ class TestEnsureProjectFiles:
         leave the project with no writable surface."""
         ensure_project_files(tmp_path / "data.duckdb")
 
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         config = load_config(tmp_path, tmp_path / "data.duckdb")
         assert config.entities_file is not None
@@ -178,7 +178,7 @@ class TestEnsureProjectFiles:
 
 class TestLanguageStubs:
     def _config(self, tmp_path):
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         ensure_project_files(tmp_path / "data.duckdb")
         from scidb import entities
@@ -257,7 +257,7 @@ class TestPreExistingEntitiesFileIsPopulated:
     It did not, because two layers disagreed about where the entities file
     is. ``scidb.entities`` falls back to the conventional
     ``src/scistack_entities.toml`` when no ``entities_file`` key is set;
-    ``scistack_gui.config.load_config`` did not, and the registry follows the
+    ``scistack_gui.project.config.load_config`` did not, and the registry follows the
     GUI's answer. So ``ensure_project_files`` asked scidb, was told the
     project already had an entities file, and skipped writing the key --
     after which ``load_config`` returned ``entities_file=None`` and the
@@ -286,8 +286,8 @@ class TestPreExistingEntitiesFileIsPopulated:
 
         # Exactly what opening/creating a database does, in order.
         ensure_project_files(tmp_path / "data.duckdb")
-        from scistack_gui import registry as _registry
-        from scistack_gui.config import load_config
+        from scistack_gui.project import registry as _registry
+        from scistack_gui.project.config import load_config
 
         config = load_config(None, tmp_path / "data.duckdb")
         _registry.load_from_config(config)
@@ -295,7 +295,7 @@ class TestPreExistingEntitiesFileIsPopulated:
 
     def test_entities_load_when_the_config_has_no_entities_file_key(self, tmp_path):
         from scidb import BaseVariable
-        from scistack_gui import registry as _registry
+        from scistack_gui.project import registry as _registry
 
         config = self._project(tmp_path, "modules = []\n")
 
@@ -320,7 +320,7 @@ class TestPreExistingEntitiesFileIsPopulated:
         leaving the project in folder-scan mode where entities_file is None
         by construction."""
         from scidb import entities
-        from scistack_gui import registry as _registry
+        from scistack_gui.project import registry as _registry
 
         src = tmp_path / "src"
         src.mkdir()
@@ -330,7 +330,7 @@ class TestPreExistingEntitiesFileIsPopulated:
         entities.clear_cache()
 
         ensure_project_files(tmp_path / "data.duckdb")
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         config = load_config(None, tmp_path / "data.duckdb")
         _registry.load_from_config(config)

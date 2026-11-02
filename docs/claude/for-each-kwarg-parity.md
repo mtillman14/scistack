@@ -88,4 +88,4 @@ Python (`scidb.intent.run_step` / `set_ambient_step`, like the origin), so
 EachOf alternatives inherit it; MATLAB's `scidb.for_each(..., 'step', "x")`
 sets it through `set_ambient_step` and clears it on exit. The GUI uses it to
 attribute a script run to the canvas node of that step name
-(`scistack_gui/step_names.py`); code export writes it.
+(`scistack_gui/project/step_names.py`); code export writes it.

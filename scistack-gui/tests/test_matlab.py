@@ -15,7 +15,7 @@ import pytest
 
 class TestParseMatlabFunction:
     def test_basic_function(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "bandpass_filter.m"
         f.write_text(
@@ -36,7 +36,7 @@ class TestParseMatlabFunction:
         assert info.n_outputs == 1  # [filtered]
 
     def test_single_output(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "compute_vo2.m"
         f.write_text("function result = compute_vo2(breath_data)\n  result = 0;\nend\n")
@@ -48,7 +48,7 @@ class TestParseMatlabFunction:
         assert info.n_outputs == 1
 
     def test_no_output(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "plot_results.m"
         f.write_text("function plot_results(data, title_str)\n  plot(data);\nend\n")
@@ -60,7 +60,7 @@ class TestParseMatlabFunction:
         assert info.n_outputs == 0
 
     def test_no_params(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "setup.m"
         f.write_text("function setup()\n  disp('hi');\nend\n")
@@ -71,7 +71,7 @@ class TestParseMatlabFunction:
         assert info.params == []
 
     def test_not_a_function(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "script.m"
         f.write_text("% Just a script\nx = 5;\n")
@@ -80,13 +80,13 @@ class TestParseMatlabFunction:
         assert info is None
 
     def test_missing_file(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         info = parse_matlab_function(tmp_path / "nonexistent.m")
         assert info is None
 
     def test_multiple_outputs(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "decompose.m"
         f.write_text("function [amp, phase, freq] = decompose(signal, fs)\nend\n")
@@ -98,7 +98,7 @@ class TestParseMatlabFunction:
         assert info.n_outputs == 3  # [amp, phase, freq]
 
     def test_source_hash_changes(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "foo.m"
         f.write_text("function y = foo(x)\n  y = x;\nend\n")
@@ -116,7 +116,7 @@ class TestParseMatlabFunction:
         the 'shadows previous definition' bug where every unittest test
         class's identically-named setup method (e.g. resetSchema/addPaths)
         overwrote the last one registered."""
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "TestSomething.m"
         f.write_text(
@@ -139,7 +139,7 @@ class TestParseMatlabFunction:
         a constructor) -- parse_matlab_function must defer to
         parse_matlab_variable/classify_matlab_file for these, not extract
         the constructor as a standalone function."""
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "RawSignal.m"
         f.write_text(
@@ -163,7 +163,7 @@ class TestExtractDocstring:
     """
 
     def test_single_line(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "bandpass_filter.m"
         f.write_text(
@@ -179,7 +179,7 @@ class TestExtractDocstring:
         assert info.docstring == "BANDPASS_FILTER  Apply a bandpass filter."
 
     def test_multi_line(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "compute_vo2.m"
         f.write_text(
@@ -203,7 +203,7 @@ class TestExtractDocstring:
         )
 
     def test_none_when_blank_line_follows(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "setup.m"
         f.write_text("function setup()\n\n  disp('hi');\nend\n")
@@ -212,7 +212,7 @@ class TestExtractDocstring:
         assert info.docstring is None
 
     def test_none_when_code_follows_immediately(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "plot_results.m"
         f.write_text("function plot_results(data)\n  plot(data);\nend\n")
@@ -221,7 +221,7 @@ class TestExtractDocstring:
         assert info.docstring is None
 
     def test_stops_at_first_non_comment_line(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "decompose.m"
         f.write_text(
@@ -241,7 +241,7 @@ class TestExtractDocstring:
 
 class TestParseMatlabVariable:
     def test_basic_classdef(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_variable
+        from scistack_gui.matlab.parser import parse_matlab_variable
 
         f = tmp_path / "RawSignal.m"
         f.write_text(
@@ -259,7 +259,7 @@ class TestParseMatlabVariable:
         """A MATLAB variable with custom storage has methods blocks (to_db,
         Static from_db); folder-scan discovery must still call it a
         variable, not a function (scimatlab +scidb/+internal/codec.m)."""
-        from scistack_gui import matlab_parser as mp
+        from scistack_gui.matlab import parser as mp
 
         f = tmp_path / "MarkerTrajectory.m"
         f.write_text(
@@ -283,7 +283,7 @@ class TestParseMatlabVariable:
         assert mp.classify_matlab_file(f) == ("variable", "MarkerTrajectory")
 
     def test_not_base_variable(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_variable
+        from scistack_gui.matlab.parser import parse_matlab_variable
 
         f = tmp_path / "MyClass.m"
         f.write_text("classdef MyClass < handle\nend\n")
@@ -292,7 +292,7 @@ class TestParseMatlabVariable:
         assert name is None
 
     def test_custom_base(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_variable
+        from scistack_gui.matlab.parser import parse_matlab_variable
 
         f = tmp_path / "Foo.m"
         f.write_text("classdef Foo < mylib.BaseVariable\nend\n")
@@ -301,13 +301,13 @@ class TestParseMatlabVariable:
         assert name == "Foo"
 
     def test_missing_file(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_variable
+        from scistack_gui.matlab.parser import parse_matlab_variable
 
         name = parse_matlab_variable(tmp_path / "nonexistent.m")
         assert name is None
 
     def test_no_classdef(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_variable
+        from scistack_gui.matlab.parser import parse_matlab_variable
 
         f = tmp_path / "script.m"
         f.write_text("% Just a script\n")
@@ -322,7 +322,7 @@ class TestBlockCommentStripping:
     "here's how to call this" example code in their scripts."""
 
     def test_function_example_inside_block_comment_ignored(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "real_fn.m"
         f.write_text(
@@ -344,7 +344,7 @@ class TestBlockCommentStripping:
         assert info.name == "real_fn"
 
     def test_classdef_example_inside_block_comment_ignored(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_variable
+        from scistack_gui.matlab.parser import parse_matlab_variable
 
         f = tmp_path / "RealVar.m"
         f.write_text(
@@ -362,7 +362,7 @@ class TestBlockCommentStripping:
         assert name == "RealVar"
 
     def test_entirely_commented_out_function_not_registered(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "commented.m"
         f.write_text(
@@ -385,7 +385,7 @@ class TestLineContinuation:
     captured parameter name."""
 
     def test_multiline_signature_params_are_clean(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "many_args.m"
         f.write_text(
@@ -403,7 +403,7 @@ class TestLineContinuation:
         assert not any("\n" in p for p in info.params)
 
     def test_multiline_signature_with_trailing_comment(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         f = tmp_path / "commented_continuation.m"
         f.write_text(
@@ -423,7 +423,7 @@ class TestLineContinuation:
         regex matching, never to what gets hashed."""
         from hashlib import sha256
 
-        from scistack_gui.matlab_parser import parse_matlab_function
+        from scistack_gui.matlab.parser import parse_matlab_function
 
         raw = b"function y = foo(a, ...\n    b)\ny=a;\nend\n"
         f = tmp_path / "foo.m"
@@ -452,14 +452,14 @@ class TestPreprocessingIsLengthPreserving:
         ],
     )
     def test_length_is_preserved(self, text):
-        from scistack_gui.matlab_parser import _preprocess_for_parsing
+        from scistack_gui.matlab.parser import _preprocess_for_parsing
 
         assert len(_preprocess_for_parsing(text)) == len(text)
 
     def test_block_comment_keeps_line_count(self):
         """Block comments become blank lines, so line numbers reported to
         the user still match the real file."""
-        from scistack_gui.matlab_parser import _preprocess_for_parsing
+        from scistack_gui.matlab.parser import _preprocess_for_parsing
 
         text = "%{\na\nb\n%}\nfunction y = f()\n"
         out = _preprocess_for_parsing(text)
@@ -468,7 +468,7 @@ class TestPreprocessingIsLengthPreserving:
         assert out.index("function") == text.index("function")
 
     def test_masked_regions_carry_no_keywords(self):
-        from scistack_gui.matlab_parser import _preprocess_for_parsing
+        from scistack_gui.matlab.parser import _preprocess_for_parsing
 
         text = "%{\nfunction y = fake(x)\nclassdef Fake < scidb.BaseVariable\n%}\n"
         out = _preprocess_for_parsing(text)
@@ -486,7 +486,7 @@ class TestParseMatlabEntitiesScript:
         return f
 
     def test_parses_each_kind(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_entities_script
+        from scistack_gui.matlab.parser import parse_matlab_entities_script
 
         f = self._write(
             tmp_path,
@@ -504,7 +504,7 @@ class TestParseMatlabEntitiesScript:
         assert bindings["thresh"].kind == "parameter"
 
     def test_spans_locate_expression_and_arguments(self, tmp_path):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             parse_matlab_entities_script,
             read_source_text,
         )
@@ -521,7 +521,7 @@ class TestParseMatlabEntitiesScript:
         the same splice as a value edit (D4)."""
         from scidb.source_edit import splice
 
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             parse_matlab_entities_script,
             read_source_text,
         )
@@ -536,20 +536,20 @@ class TestParseMatlabEntitiesScript:
         )
 
     def test_scifor_namespace_accepted(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_entities_script
+        from scistack_gui.matlab.parser import parse_matlab_entities_script
 
         f = self._write(tmp_path, "window = scidb.Parameter(1);\n")
         assert parse_matlab_entities_script(f)[0].kind == "parameter"
 
     def test_bare_constructor_accepted(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_entities_script
+        from scistack_gui.matlab.parser import parse_matlab_entities_script
 
         f = self._write(tmp_path, "window = Parameter(1);\n")
         assert parse_matlab_entities_script(f)[0].kind == "parameter"
 
     def test_non_entity_lines_are_skipped(self, tmp_path):
         """An entities script may contain ordinary MATLAB."""
-        from scistack_gui.matlab_parser import parse_matlab_entities_script
+        from scistack_gui.matlab.parser import parse_matlab_entities_script
 
         f = self._write(
             tmp_path,
@@ -562,13 +562,13 @@ class TestParseMatlabEntitiesScript:
         assert [b.name for b in parse_matlab_entities_script(f)] == ["window"]
 
     def test_comparison_is_not_a_binding(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_entities_script
+        from scistack_gui.matlab.parser import parse_matlab_entities_script
 
         f = self._write(tmp_path, "if a == scidb.Parameter(1)\nend\n")
         assert parse_matlab_entities_script(f) == []
 
     def test_paren_inside_a_template_does_not_break_the_span(self, tmp_path):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             parse_matlab_entities_script,
             read_source_text,
         )
@@ -579,7 +579,7 @@ class TestParseMatlabEntitiesScript:
         assert b.args_span.extract(text) == "'{s}/a(1).mat'"
 
     def test_semicolon_is_optional(self, tmp_path):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             parse_matlab_entities_script,
             read_source_text,
         )
@@ -590,14 +590,14 @@ class TestParseMatlabEntitiesScript:
         assert b.expr_span.extract(text) == "scidb.Parameter(1)"
 
     def test_continued_argument_list(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_entities_script
+        from scistack_gui.matlab.parser import parse_matlab_entities_script
 
         f = self._write(tmp_path, "window = scidb.Parameter(1, ...\n    2);\n")
         b = parse_matlab_entities_script(f)[0]
         assert b.kind == "parameter"
 
     def test_constant_literal_extracted(self, tmp_path):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_parameter_literal,
             parse_matlab_entities_script,
             read_source_text,
@@ -611,7 +611,7 @@ class TestParseMatlabEntitiesScript:
         assert binding_parameter_literal(b, text) == ([30], "Analysis window")
 
     def test_literals_extracted(self, tmp_path):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_path_input_literal,
             binding_parameter_literal,
             parse_matlab_entities_script,
@@ -637,7 +637,7 @@ class TestParseMatlabEntitiesScript:
     def test_root_folder_accepted_in_both_matlab_syntaxes(self, tmp_path):
         """+scifor/PathInput.m's `arguments` block accepts name=value
         (R2021b+) and name-value pairs alike, so extraction must too."""
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_path_input_literal,
             parse_matlab_entities_script,
             read_source_text,
@@ -665,7 +665,7 @@ class TestParseMatlabEntitiesScript:
     # MATLAB. See matlab_parser.collect_matlab_literal_scope.
 
     def _fold(self, tmp_path, src, name="p"):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_path_input_literal,
             collect_matlab_literal_scope,
             parse_matlab_entities_script,
@@ -745,7 +745,7 @@ class TestParseMatlabEntitiesScript:
 
     def test_folding_is_opt_in_no_scope_behaves_as_before(self, tmp_path):
         """Callers that don't pass a scope keep the old literal-only rule."""
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_path_input_literal,
             parse_matlab_entities_script,
             read_source_text,
@@ -759,7 +759,7 @@ class TestParseMatlabEntitiesScript:
         assert binding_path_input_literal(b, text) is None
 
     def test_equals_inside_a_template_is_not_a_named_argument(self, tmp_path):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_path_input_literal,
             parse_matlab_entities_script,
             read_source_text,
@@ -771,7 +771,7 @@ class TestParseMatlabEntitiesScript:
         assert binding_path_input_literal(b, text) == ("{s}/a=b.mat", None)
 
     def test_non_literal_value_invalidates_extraction(self, tmp_path):
-        from scistack_gui.matlab_parser import (
+        from scistack_gui.matlab.parser import (
             binding_parameter_literal,
             parse_matlab_entities_script,
             read_source_text,
@@ -783,12 +783,12 @@ class TestParseMatlabEntitiesScript:
         assert binding_parameter_literal(b, text) is None
 
     def test_missing_file_returns_empty(self, tmp_path):
-        from scistack_gui.matlab_parser import parse_matlab_entities_script
+        from scistack_gui.matlab.parser import parse_matlab_entities_script
 
         assert parse_matlab_entities_script(tmp_path / "nope.m") == []
 
     def test_is_entities_script_rejects_functions_and_classdefs(self, tmp_path):
-        from scistack_gui.matlab_parser import is_matlab_entities_script
+        from scistack_gui.matlab.parser import is_matlab_entities_script
 
         script = self._write(tmp_path, "window = scidb.Parameter(1);\n")
         assert is_matlab_entities_script(script)
@@ -806,7 +806,7 @@ class TestParseMatlabEntitiesScript:
         assert not is_matlab_entities_script(plain)
 
     def test_classify_returns_entities_script(self, tmp_path):
-        from scistack_gui.matlab_parser import classify_matlab_file
+        from scistack_gui.matlab.parser import classify_matlab_file
 
         f = self._write(tmp_path, "window = scidb.Parameter(1);\n")
         kind, _ = classify_matlab_file(f)
@@ -817,7 +817,7 @@ class TestParseMatlabEntitiesScript:
         steal a file from an existing category. A function that happens to
         construct a Sweep is just a function — the value-getter convention
         no longer exists."""
-        from scistack_gui.matlab_parser import classify_matlab_file
+        from scistack_gui.matlab.parser import classify_matlab_file
 
         f = tmp_path / "window.m"
         f.write_text("function s = window()\ns = scidb.Parameter(1);\nend\n")
@@ -832,7 +832,8 @@ class TestLoadEntitiesScript:
     form declared them."""
 
     def test_registers_path_input_and_sweep(self, tmp_path):
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text(
@@ -849,7 +850,9 @@ class TestLoadEntitiesScript:
     def test_registered_sweep_is_a_real_eachof(self, tmp_path):
         from scifor import EachOf
 
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text("window = scidb.Parameter(1, 2);\n")
@@ -858,7 +861,8 @@ class TestLoadEntitiesScript:
         assert isinstance(registry.get_parameters_registry()["window"], EachOf)
 
     def test_last_binding_of_a_name_wins(self, tmp_path):
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text("window = scidb.Parameter(1);\nwindow = scidb.Parameter(9);\n")
@@ -870,7 +874,8 @@ class TestLoadEntitiesScript:
         """Before +scidb/Constant.m, a MATLAB constant was an anonymous value
         in a for_each struct with no discoverable name (the old "MATLAB has
         no equivalent" note in code-discovery-categories.md §3)."""
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text(
@@ -889,7 +894,9 @@ class TestLoadEntitiesScript:
         build_parameter_nodes and every other consumer stay language-agnostic."""
         from scidb import Parameter
 
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text("window = scidb.Parameter(30);\n")
@@ -898,7 +905,8 @@ class TestLoadEntitiesScript:
         assert isinstance(registry.get_parameters_registry()["window"], Parameter)
 
     def test_constant_description_optional_and_both_syntaxes(self, tmp_path):
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text(
@@ -914,7 +922,8 @@ class TestLoadEntitiesScript:
         assert consts["c"].description == "paired"
 
     def test_constant_string_value(self, tmp_path):
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text("label = scidb.Parameter('baseline');\n")
@@ -923,7 +932,8 @@ class TestLoadEntitiesScript:
         assert registry.get_parameters_registry()["label"].value == "baseline"
 
     def test_non_literal_constant_stays_unregistered(self, tmp_path):
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text("window = scidb.Parameter(some_var);\n")
@@ -936,7 +946,7 @@ class TestLoadEntitiesScript:
         )
 
     def test_missing_file_is_not_an_error(self, tmp_path):
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         matlab_registry.load_entities_script(tmp_path / "nope.m")
         assert not any(
@@ -944,7 +954,7 @@ class TestLoadEntitiesScript:
         )
 
     def test_non_literal_declaration_records_a_load_error(self, tmp_path):
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         f = tmp_path / "scistack_entities.m"
         f.write_text("window = scidb.Parameter(some_var);\n")
@@ -957,7 +967,7 @@ class TestLoadEntitiesScript:
 
 class TestClassifyMatlabFile:
     def test_classifies_function(self, tmp_path):
-        from scistack_gui.matlab_parser import classify_matlab_file
+        from scistack_gui.matlab.parser import classify_matlab_file
 
         f = tmp_path / "foo.m"
         f.write_text("function y = foo(x)\ny=x;\nend\n")
@@ -967,7 +977,7 @@ class TestClassifyMatlabFile:
         assert payload.name == "foo"
 
     def test_classifies_variable(self, tmp_path):
-        from scistack_gui.matlab_parser import classify_matlab_file
+        from scistack_gui.matlab.parser import classify_matlab_file
 
         f = tmp_path / "RawSignal.m"
         f.write_text("classdef RawSignal < scidb.BaseVariable\nend\n")
@@ -981,7 +991,7 @@ class TestClassifyMatlabFile:
         `function` declaration) must be classified as a variable, not a
         function — classdef parsing is tried first specifically for this
         reason."""
-        from scistack_gui.matlab_parser import classify_matlab_file
+        from scistack_gui.matlab.parser import classify_matlab_file
 
         f = tmp_path / "RawSignal.m"
         f.write_text(
@@ -1000,7 +1010,7 @@ class TestClassifyMatlabFile:
         assert payload == "RawSignal"
 
     def test_neither_returns_none(self, tmp_path):
-        from scistack_gui.matlab_parser import classify_matlab_file
+        from scistack_gui.matlab.parser import classify_matlab_file
 
         f = tmp_path / "script.m"
         f.write_text("% just a script\nx = 5;\n")
@@ -1010,7 +1020,7 @@ class TestClassifyMatlabFile:
 
 class TestMatlabRegistryLoadFromSources:
     def test_mixed_sources_classified_and_registered(self, tmp_path):
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         fn_file = tmp_path / "foo.m"
         fn_file.write_text("function y = foo(x)\ny=x;\nend\n")
@@ -1027,9 +1037,11 @@ class TestMatlabRegistryLoadFromSources:
     def test_refresh_deregisters_stale_entry_from_shared_registry(self, tmp_path):
         """Removing a PathInput declaration and refreshing must not leave
         its OLD registered object lingering forever in
-        scistack_gui.registry -- matlab_registry.clear() only ever touched
+        scistack_gui.project.registry -- matlab_registry.clear() only ever touched
         its own dicts before this fix."""
-        from scistack_gui import config, matlab_registry, registry
+        from scistack_gui.project import config
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         entities = tmp_path / "scistack_entities.m"
         entities.write_text("raw_emg = scidb.PathInput('{subject}.mat');\n")
@@ -1058,7 +1070,7 @@ class TestMatlabRegistryLoadFromSources:
         errors (see load_from_config) -- plain scripts excepted, see the next test."""
         import logging
 
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         script_file = tmp_path / "script.m"
         script_file.write_text("% just a script\n")
@@ -1084,7 +1096,9 @@ class TestMatlabRegistryLoadFromSources:
         script (a non-variable classdef) is still a load error."""
         import logging
 
-        from scistack_gui import config, matlab_registry
+        from scistack_gui.project import config
+
+        from scistack_gui.matlab import registry as matlab_registry
 
         script = tmp_path / "main_entrypoint.m"
         script.write_text("% entry point\nx = 1;\nrunAll(x);\n")
@@ -1108,7 +1122,7 @@ class TestMatlabRegistryLoadFromSources:
         assert warned == []
 
     def test_is_matlab_script(self, tmp_path):
-        from scistack_gui.matlab_parser import is_matlab_script
+        from scistack_gui.matlab.parser import is_matlab_script
 
         script = tmp_path / "s.m"
         script.write_text("% a script\ny = 2;\n")
@@ -1138,7 +1152,7 @@ class TestMatlabRegistryLoadFromSources:
         same setup-method name must NOT collide in the registry."""
         import logging
 
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         test_a = tmp_path / "TestA.m"
         test_a.write_text(
@@ -1182,7 +1196,7 @@ class TestMatlabRegistryLoadFromSources:
 
 class TestGenerateMatlabCommand:
     def test_template_no_variants(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="bandpass_filter",
@@ -1196,7 +1210,7 @@ class TestGenerateMatlabCommand:
         assert "scidb.for_each" in cmd
 
     def test_with_variants(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         variants = [
             {
@@ -1222,7 +1236,7 @@ class TestGenerateMatlabCommand:
         assert "20" in cmd
 
     def test_addpath(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="foo",
@@ -1235,7 +1249,7 @@ class TestGenerateMatlabCommand:
         assert "addpath('/home/user/shared')" in cmd
 
     def test_schema_filter(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         variants = [
             {
@@ -1258,7 +1272,7 @@ class TestGenerateMatlabCommand:
         assert "[1 2 3]" in cmd
 
     def test_string_schema_filter(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         variants = [
             {
@@ -1281,7 +1295,7 @@ class TestGenerateMatlabCommand:
         assert '"post"' in cmd
 
     def test_deduplicates_variants(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         # Same constants, different output types → should deduplicate.
         variants = [
@@ -1310,7 +1324,7 @@ class TestGenerateMatlabCommand:
         assert cmd.count("scidb.for_each") == 1
 
     def test_escape_single_quotes(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="f",
@@ -1321,7 +1335,7 @@ class TestGenerateMatlabCommand:
         assert "/path/with''quote/db.duckdb" in cmd
 
     def test_pyenv_preamble_present(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="f",
@@ -1349,7 +1363,7 @@ class TestGenerateMatlabCommand:
         assert "clear functions" not in cmd
 
     def test_pyenv_preamble_omitted_when_none(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="f",
@@ -1361,7 +1375,7 @@ class TestGenerateMatlabCommand:
         assert "pyenv" not in cmd
 
     def test_pyenv_preamble_escapes_single_quotes(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="f",
@@ -1374,7 +1388,7 @@ class TestGenerateMatlabCommand:
         assert "scistack_pyenv_target__ = '/tmp/O''Neil/python';" in cmd
 
     def test_pyenv_preamble_windows_path(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="f",
@@ -1396,7 +1410,7 @@ class TestGenerateMatlabCommand:
         Regression: previously ``string(Executable) ~= string(target)`` fired
         erroneously when Status=Loaded and the paths differed only in separators.
         """
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="f",
@@ -1418,7 +1432,7 @@ class TestGenerateMatlabCommand:
         )
 
     def test_pyenv_preamble_ordered_before_addpath(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="f",
@@ -1440,7 +1454,7 @@ class TestGenerateMatlabCommand:
 
 class TestFormatPathInput:
     def test_explicit_root_folder_used_as_is(self):
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {"name": "RAW", "template": "{subject}/data.mat", "root_folder": "/my/data"}
         result = _format_path_input(pi)
@@ -1449,14 +1463,14 @@ class TestFormatPathInput:
         )
 
     def test_no_root_folder_no_project_root(self):
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {"name": "RAW", "template": "{subject}/data.mat", "root_folder": None}
         result = _format_path_input(pi)
         assert result == 'scifor.PathInput("{subject}/data.mat", name="RAW")'
 
     def test_absolute_template_without_root_folder(self):
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {"name": "RAW", "template": "/absolute/path/{subject}.mat", "root_folder": None}
         result = _format_path_input(pi)
@@ -1471,7 +1485,7 @@ class TestFormatPathInput:
         grew an ``__unresolved__`` ghost node. Resolution is pinned separately
         (see ``test_generate_matlab_command_pins_project_root``).
         """
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="load_file",
@@ -1486,7 +1500,7 @@ class TestFormatPathInput:
         assert 'root_folder="/projects/myexp"' not in cmd
 
     def test_generate_matlab_command_keeps_declared_root_folder(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="load_file",
@@ -1509,7 +1523,7 @@ class TestFormatPathInput:
     def test_generate_matlab_command_pins_project_root(self):
         """The project root is stated to scifor instead, so a rootless
         PathInput resolves against the project and not MATLAB's cwd."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="load_file",
@@ -1528,7 +1542,7 @@ class TestFormatPathInput:
         assert cmd.index("set_pathinput_project_root") < cmd.index("scifor.PathInput")
 
     def test_generate_matlab_command_omits_pin_without_project_root(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="load_file",
@@ -1538,7 +1552,7 @@ class TestFormatPathInput:
         assert "set_pathinput_project_root" not in cmd
 
     def test_generate_matlab_command_injects_sweep_as_scifor_sweep(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="bandpass_filter",
@@ -1557,7 +1571,7 @@ class TestFormatPathInput:
         in execution_service.build_run_inputs."""
         import pytest
 
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         with pytest.raises(ValueError, match="has no value yet") as excinfo:
             generate_matlab_command(
@@ -1569,7 +1583,7 @@ class TestFormatPathInput:
         assert "'low_hz'" in str(excinfo.value)
 
     def test_generate_matlab_command_sweep_and_path_input_together(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="bandpass_filter",
@@ -1593,7 +1607,7 @@ class TestFormatPathInput:
         fine for functions whose PathInput template carries a {key}
         placeholder, because discovery then supplied the iterable.
         """
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filter_emg",
@@ -1606,7 +1620,7 @@ class TestFormatPathInput:
         assert "'cycle', []" in cmd
 
     def test_never_run_function_honors_schema_level(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filter_emg",
@@ -1620,7 +1634,7 @@ class TestFormatPathInput:
         assert "'cycle'" not in cmd
 
     def test_never_run_function_applies_schema_filter(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filter_emg",
@@ -1635,7 +1649,7 @@ class TestFormatPathInput:
     def test_no_schema_keys_emits_no_trailing_comma(self):
         """A schema-less project must still produce a syntactically valid
         call — the kwargs block is optional, not empty."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filter_emg",
@@ -1667,7 +1681,7 @@ class TestSchemaLevelTriState:
     ]
 
     def _cmd(self, **kwargs):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         defaults = dict(
             function_name="filter_emg",
@@ -1734,7 +1748,7 @@ class TestSchemaLevelTriState:
         assert "scidb.for_each(@filter_emg" in cmd
 
     def test_pipeline_step_honors_empty_list(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="p1",
@@ -1759,17 +1773,17 @@ class TestSchemaLevelTriState:
 
 class TestFormatSweep:
     def test_numeric_values(self):
-        from scistack_gui.api.matlab_command import _format_sweep
+        from scistack_gui.services.matlab_command_format import _format_sweep
 
         assert _format_sweep([10, 20, 30]) == "scidb.Parameter(10, 20, 30)"
 
     def test_string_values(self):
-        from scistack_gui.api.matlab_command import _format_sweep
+        from scistack_gui.services.matlab_command_format import _format_sweep
 
         assert _format_sweep(["low", "high"]) == "scidb.Parameter('low', 'high')"
 
     def test_single_value(self):
-        from scistack_gui.api.matlab_command import _format_sweep
+        from scistack_gui.services.matlab_command_format import _format_sweep
 
         assert _format_sweep([42]) == "scidb.Parameter(42)"
 
@@ -1781,7 +1795,7 @@ class TestFormatSweep:
         through to ``str(val)`` in quotes, so the function received a char
         array holding a Python repr.
         """
-        from scistack_gui.api.matlab_command import _format_sweep
+        from scistack_gui.services.matlab_command_format import _format_sweep
 
         out = _format_sweep([{"order": 4, "cutoff": [10, 400]}])
         assert out == "scidb.Parameter(struct('order', 4, 'cutoff', [10, 400]))"
@@ -1799,32 +1813,32 @@ class TestFormatSweep:
 
 class TestFormatMatlabValue:
     def test_nested_dict_becomes_nested_struct(self):
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value({"FILTER": {"ORDER": 4}, "VAF": 0.9}) == (
             "struct('FILTER', struct('ORDER', 4), 'VAF', 0.9)"
         )
 
     def test_empty_dict(self):
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value({}) == "struct()"
 
     def test_string_list_is_a_string_array_not_concatenated_chars(self):
         """``['HAM', 'RF']`` emitted as ``['HAM', 'RF']`` is the single char
         array ``'HAMRF'`` in MATLAB — square brackets concatenate."""
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value(["HAM", "RF"]) == '["HAM", "RF"]'
 
     def test_numeric_and_bool_lists(self):
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value([10, 400]) == "[10, 400]"
         assert _format_matlab_value([True, False]) == "[true, false]"
 
     def test_mixed_list_is_a_cell(self):
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value([1, "a"]) == "{1, 'a'}"
 
@@ -1832,12 +1846,12 @@ class TestFormatMatlabValue:
         """``struct('a', {1, 'x'})`` builds a 1x2 STRUCT ARRAY, not a scalar
         struct with a cell field. The extra brace layer is what makes it a
         cell field."""
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value({"a": [1, "x"]}) == "struct('a', {{1, 'x'}})"
 
     def test_none_is_empty_brackets(self):
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value(None) == "[]"
         assert _format_matlab_value([]) == "[]"
@@ -1845,7 +1859,7 @@ class TestFormatMatlabValue:
     def test_keys_are_sanitized_like_makeValidName(self):
         """Mirrors pydict_to_struct's matlab.lang.makeValidName, so the two
         routes into MATLAB agree on field names."""
-        from scistack_gui.api.matlab_command import _format_matlab_value
+        from scistack_gui.services.matlab_command_format import _format_matlab_value
 
         assert _format_matlab_value({"my key": 1}) == "struct('myKey', 1)"
         assert _format_matlab_value({"2bad": 1}) == "struct('x2bad', 1)"
@@ -1859,7 +1873,7 @@ class TestFormatMatlabValue:
 
 class TestConfigMatlabParsing:
     def test_matlab_table(self, tmp_path):
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         # Create a scistack.toml with a [matlab] table.
         (tmp_path / "scistack.toml").write_text(
@@ -1902,7 +1916,7 @@ class TestConfigMatlabParsing:
         assert config.matlab_variable_dir == (tmp_path / "matlab" / "types")
 
     def test_scistack_toml(self, tmp_path):
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         # Create a scistack.toml.
         (tmp_path / "scistack.toml").write_text(
@@ -1923,7 +1937,7 @@ class TestConfigMatlabParsing:
         assert len(config.matlab_functions) == 1
 
     def test_no_matlab_section(self, tmp_path):
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         (tmp_path / "scistack.toml").write_text(
             textwrap.dedent("""\
@@ -1942,7 +1956,7 @@ class TestConfigMatlabParsing:
         assert config.matlab_entities_file is None
 
     def test_explicit_entities_file(self, tmp_path):
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         (tmp_path / "scistack.toml").write_text(
             textwrap.dedent("""\
@@ -1988,7 +2002,7 @@ class TestGenerateMatlabCommandOutputTypes:
     def test_output_types_from_variants_use_class_names(self):
         """When DB variants exist, output_type (class name) must appear in
         the outputs cell array, not the function's output parameter names."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         variants = [
             {
@@ -2029,7 +2043,7 @@ class TestGenerateMatlabCommandOutputTypes:
     def test_output_types_with_no_variants_uses_provided_output_types(self):
         """When no DB variants exist and output_types are provided, the class
         names should appear (not lowercase function param names)."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="load_csv",
@@ -2145,7 +2159,7 @@ class TestGroupVariantsNonScalarConstants:
     """
 
     def test_dict_constant_groups_without_raising(self):
-        from scistack_gui.api.matlab_command import _group_variants
+        from scistack_gui.services.matlab_command_format import _group_variants
 
         variants = [
             {
@@ -2164,7 +2178,7 @@ class TestGroupVariantsNonScalarConstants:
     def test_multi_output_with_dict_constant_collapses_to_one_call(self):
         """The whole point of the grouping: one for_each call listing every
         output, not one call per output row."""
-        from scistack_gui.api.matlab_command import _group_variants
+        from scistack_gui.services.matlab_command_format import _group_variants
 
         consts = {"gaitrite_config": {"units": "m"}}
         variants = [
@@ -2176,7 +2190,7 @@ class TestGroupVariantsNonScalarConstants:
         assert grouped[0]["output_types"] == ["A", "B"]
 
     def test_differing_dict_constants_stay_separate(self):
-        from scistack_gui.api.matlab_command import _group_variants
+        from scistack_gui.services.matlab_command_format import _group_variants
 
         variants = [
             {
@@ -2193,7 +2207,7 @@ class TestGroupVariantsNonScalarConstants:
         assert len(_group_variants(variants)) == 2
 
     def test_list_constant_groups_without_raising(self):
-        from scistack_gui.api.matlab_command import _group_variants
+        from scistack_gui.services.matlab_command_format import _group_variants
 
         variants = [
             {
@@ -2272,10 +2286,10 @@ class TestMatlabRunnableTargets:
     def test_collect_var_types_names_a_leftover_list(self):
         """The generator's own guard: a route that bypasses the filter fails
         naming the function and param, not with a bare unhashable-type."""
-        from scistack_gui.api.matlab_command import _collect_var_types
+        from scistack_gui.services.matlab_command_format import collect_var_types
 
         with pytest.raises(TypeError, match="'grSides' param 'grTableIn'"):
-            _collect_var_types(
+            collect_var_types(
                 [
                     {
                         "function_name": "grSides",
@@ -2468,7 +2482,7 @@ class TestAlternatePathInputTemplates:
         return {"cosmed": path_input_display(obj)}
 
     def test_format_emits_each_of_with_every_template(self):
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {
             "name": "cosmed",
@@ -2485,7 +2499,7 @@ class TestAlternatePathInputTemplates:
         )
 
     def test_format_without_alternates_is_a_bare_path_input(self):
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {"name": "cosmed", "template": "x.csv", "alternate_templates": []}
         assert _format_path_input(pi) == 'scifor.PathInput("x.csv", name="cosmed")'
@@ -2517,7 +2531,7 @@ class TestAlternatePathInputTemplates:
         ]
 
     def test_edge_bound_declaration_reaches_the_command(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
         from scistack_gui.services.matlab_command_service import (
             resolve_path_input_params,
         )
@@ -2550,7 +2564,7 @@ class TestAlternatePathInputTemplates:
         MATLAB route used to bind the last drawn only."""
         from scifor import PathInput
 
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
         from scistack_gui.domain.graph_builder import path_input_display
         from scistack_gui.services.matlab_command_service import (
             _collect_edge_path_inputs,
@@ -2607,7 +2621,7 @@ class TestPathInputAliasesInMatlabCommand:
         assert self._declared()["xsens"]["aliases"] == self.ALIASES
 
     def test_format_emits_aliases_as_json_text(self):
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {"name": "xsens", "template": "{session}/d.csv", "aliases": {"session": {"BL": ["Baseline"]}}}
         assert _format_path_input(pi) == (
@@ -2616,7 +2630,7 @@ class TestPathInputAliasesInMatlabCommand:
         )
 
     def test_quote_in_a_spelling_is_escaped_for_matlab(self):
-        from scistack_gui.matlab_parser import render_matlab_aliases
+        from scistack_gui.matlab.parser import render_matlab_aliases
 
         assert render_matlab_aliases({"s": {"A": ["it's"]}}) == (
             '\'{"s": {"A": ["it\'\'s"]}}\''
@@ -2636,7 +2650,7 @@ class TestPathInputAliasesInMatlabCommand:
         assert result["filepath"]["aliases"] == self.ALIASES
 
     def test_edge_bound_declaration_reaches_the_command(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
         from scistack_gui.services.matlab_command_service import (
             resolve_path_input_params,
         )
@@ -2657,7 +2671,7 @@ class TestPathInputAliasesInMatlabCommand:
         ) in cmd
 
     def test_alternate_carries_its_own_aliases(self):
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {
             "name": "x",
@@ -2675,7 +2689,7 @@ class TestPathInputAliasesInMatlabCommand:
     def test_key_regex_is_emitted_as_a_struct_of_chars(self):
         """2026-10-21: the run command re-renders the declaration, and a
         TOML key_regex was silently dropped from every GUI MATLAB run."""
-        from scistack_gui.api.matlab_command import _format_path_input
+        from scistack_gui.services.matlab_command_format import _format_path_input
 
         pi = {
             "name": "x",
@@ -2707,8 +2721,8 @@ class TestMatlabFnProxyHash:
     def test_proxy_uses_unpack_false(self, monkeypatch):
         from hashlib import sha256
 
-        from scistack_gui import matlab_registry as _mr
-        from scistack_gui.api.pipeline import _build_matlab_fn_proxy
+        from scistack_gui.matlab import registry as _mr
+        from scistack_gui.services.graph_service import _build_matlab_fn_proxy
 
         class FakeInfo:
             source_hash = "a" * 64
@@ -2727,8 +2741,8 @@ class TestMatlabFnProxyHash:
     def test_single_output_hash_also_unpack_false(self, monkeypatch):
         from hashlib import sha256
 
-        from scistack_gui import matlab_registry as _mr
-        from scistack_gui.api.pipeline import _build_matlab_fn_proxy
+        from scistack_gui.matlab import registry as _mr
+        from scistack_gui.services.graph_service import _build_matlab_fn_proxy
 
         class FakeInfo:
             source_hash = "b" * 64
@@ -2759,7 +2773,7 @@ class TestMatlabParamToClassFromDb:
         return {(fn, call_id): {"variants": list(variants)}}
 
     def test_output_num_maps_to_declared_output_name(self):
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         result = _matlab_param_to_class_from_db(
             self._agg({"output_type": "RawEMG", "output_num": 0}),
@@ -2770,7 +2784,7 @@ class TestMatlabParamToClassFromDb:
         assert result == {"loadDelsysEMGOneFile": {"loaded_data": "RawEMG"}}
 
     def test_each_slot_maps_to_its_own_output_name(self):
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         result = _matlab_param_to_class_from_db(
             self._agg(
@@ -2799,7 +2813,7 @@ class TestMatlabParamToClassFromDb:
     # 120,351 lines in the 2026-09-22 log.
 
     def test_one_declared_output_does_not_consult_the_number(self):
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         for onum in (None, 0, 7, 450):
             result = _matlab_param_to_class_from_db(
@@ -2813,7 +2827,7 @@ class TestMatlabParamToClassFromDb:
 
     def test_a_distributed_run_maps_every_slice_to_the_one_output(self, caplog):
         """The real shape: 450 records of one variable, output_num 0..449."""
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         variants = [
             {"output_type": "GAITRiteLoaded", "output_num": i} for i in range(450)
@@ -2835,7 +2849,7 @@ class TestMatlabParamToClassFromDb:
         self, caplog
     ):
         """One param cannot name two classes. Say which and why."""
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         with caplog.at_level(logging.WARNING):
             result = _matlab_param_to_class_from_db(
@@ -2854,7 +2868,7 @@ class TestMatlabParamToClassFromDb:
     def test_a_multi_output_fn_still_refuses_to_guess(self, caplog):
         """The original rule, kept where it means something: two declared
         outputs and a number naming neither is genuinely ambiguous."""
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         with caplog.at_level(logging.INFO):
             result = _matlab_param_to_class_from_db(
@@ -2867,7 +2881,7 @@ class TestMatlabParamToClassFromDb:
         assert caplog.text == "", "the unmapped summary belongs at DEBUG"
 
     def test_the_multi_output_summary_is_one_line_per_function(self, caplog):
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         variants = [{"output_type": "RawEMG", "output_num": i} for i in range(5, 40)]
         with caplog.at_level(logging.DEBUG):
@@ -2881,7 +2895,7 @@ class TestMatlabParamToClassFromDb:
         assert len(lines) == 1, f"{len(lines)} lines for one function"
 
     def test_non_matlab_functions_are_ignored(self):
-        from scistack_gui.api.pipeline import _matlab_param_to_class_from_db
+        from scistack_gui.services.graph_service import _matlab_param_to_class_from_db
 
         result = _matlab_param_to_class_from_db(
             self._agg({"output_type": "Filtered", "output_num": 0}, fn="python_fn"),
@@ -2921,7 +2935,7 @@ class TestGenerateMatlabPipelineCommand:
         ]
 
     def test_wraps_steps_in_scidb_pipeline(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="gait_analysis",
@@ -2939,7 +2953,7 @@ class TestGenerateMatlabPipelineCommand:
     def test_registration_order_independent(self):
         """Pipeline.m's execution_order() topo-sorts server-side — the
         script may register steps in any order."""
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         steps = self._two_step_pipeline()
         cmd_forward = generate_matlab_pipeline_command(
@@ -2958,7 +2972,7 @@ class TestGenerateMatlabPipelineCommand:
         assert "@bandpass_filter" in cmd_reversed
 
     def test_mode_until_calls_run_until_with_target(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="p",
@@ -2972,7 +2986,7 @@ class TestGenerateMatlabPipelineCommand:
         assert "pipe.run_all(" not in cmd
 
     def test_mode_until_requires_target(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         with pytest.raises(ValueError):
             generate_matlab_pipeline_command(
@@ -2985,7 +2999,7 @@ class TestGenerateMatlabPipelineCommand:
             )
 
     def test_mode_endpoints_calls_run_endpoints(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="p",
@@ -3000,7 +3014,7 @@ class TestGenerateMatlabPipelineCommand:
         assert "'finalized', true" in cmd
 
     def test_show_mode_rejected(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         with pytest.raises(ValueError):
             generate_matlab_pipeline_command(
@@ -3013,7 +3027,7 @@ class TestGenerateMatlabPipelineCommand:
             )
 
     def test_step_with_no_variants_skipped_with_comment(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         steps = self._two_step_pipeline()
         steps.append({"function_name": "never_run_fn", "variants": []})
@@ -3026,7 +3040,7 @@ class TestGenerateMatlabPipelineCommand:
         assert cmd.count("scidb.for_each") == 2
 
     def test_no_runnable_steps_raises(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         with pytest.raises(ValueError):
             generate_matlab_pipeline_command(
@@ -3037,7 +3051,7 @@ class TestGenerateMatlabPipelineCommand:
             )
 
     def test_variable_registration_union_across_steps(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="p",
@@ -3049,7 +3063,7 @@ class TestGenerateMatlabPipelineCommand:
         assert cmd.count("scidb.register_variable(FilteredSignal())") == 1
 
     def test_step_sweep_rendered_as_scifor_sweep(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         steps = self._two_step_pipeline()
         # window_seconds is NOT among this step's fixture "constants" —
@@ -3063,7 +3077,7 @@ class TestGenerateMatlabPipelineCommand:
         assert "scidb.Parameter(10, 20, 30)" in cmd
 
     def test_pyenv_preamble_present(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="p",
@@ -3078,7 +3092,7 @@ class TestGenerateMatlabPipelineCommand:
         assert pyenv_idx < pipe_idx
 
     def test_addpath_and_configure_database_emitted_once(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="p",
@@ -3096,7 +3110,7 @@ class TestGenerateMatlabPipelineCommand:
         variant rows sharing (input_types, constants) but different
         output_type collapse into one for_each with a multi-item outputs
         cell."""
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         steps = [
             {
@@ -3120,7 +3134,7 @@ class TestGenerateMatlabPipelineCommand:
         filtered to MATLAB functions — passing a step list that mirrors
         'a Python node was excluded upstream' (i.e. simply absent here)
         must still produce a clean script for the remaining MATLAB steps."""
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         # Only the MATLAB step is passed — as the service layer would do
         # after filtering out a co-scoped Python function node.
@@ -3145,7 +3159,7 @@ class TestPreambleTimingInstrumentation:
     """
 
     def _variant_cmd(self, **kwargs):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         defaults = dict(
             function_name="bandpass_filter",
@@ -3279,7 +3293,7 @@ class TestPreambleTimingInstrumentation:
     def test_template_branch_is_instrumented_too(self):
         """The never-run-function branch returns early — it needs its own
         summary and total, or first runs are the ones left unmeasured."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="brand_new",
@@ -3292,7 +3306,7 @@ class TestPreambleTimingInstrumentation:
         assert "[timing] matlab_script: TOTAL=" in cmd
 
     def test_pipeline_command_is_instrumented(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="gait",
@@ -3472,7 +3486,7 @@ class TestMaterializeVariableStubs:
     a class at runtime, and class(obj) is what names the table."""
 
     def test_creates_a_stub_per_declared_name(self, tmp_path):
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         created = materialize_variable_stubs(["StepLength", "Cadence"], tmp_path)
 
@@ -3482,7 +3496,7 @@ class TestMaterializeVariableStubs:
         )
 
     def test_existing_classdef_is_never_overwritten(self, tmp_path):
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         handwritten = tmp_path / "StepLength.m"
         handwritten.write_text("classdef StepLength < scidb.BaseVariable\n% mine\nend\n")
@@ -3493,7 +3507,7 @@ class TestMaterializeVariableStubs:
         assert "% mine" in handwritten.read_text()
 
     def test_is_idempotent(self, tmp_path):
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         materialize_variable_stubs(["StepLength"], tmp_path)
         assert materialize_variable_stubs(["StepLength"], tmp_path) == []
@@ -3501,7 +3515,7 @@ class TestMaterializeVariableStubs:
     def test_stub_for_a_removed_declaration_is_left_alone(self, tmp_path):
         """Deleting generated-but-referenced files is how a pipeline stops
         running mid-session; the project's ethos is hide, never delete."""
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         materialize_variable_stubs(["Gone"], tmp_path)
         materialize_variable_stubs([], tmp_path)
@@ -3511,8 +3525,8 @@ class TestMaterializeVariableStubs:
     def test_name_with_a_classdef_elsewhere_is_not_shadowed(self, tmp_path):
         """Two classdefs for one type on the MATLAB path shadow each other,
         and the hand-written one is the declaration."""
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         handwritten = tmp_path / "src" / "StepLength.m"
         handwritten.parent.mkdir()
@@ -3530,7 +3544,7 @@ class TestMaterializeVariableStubs:
         was written at all and the run died with 'Unrecognized function or
         variable' from inside for_each."""
         from scimatlab.stubs import DEFAULT_STUB_DIRNAME
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         (tmp_path / "scistack.toml").write_text(
             'entities_file = "src/scistack_entities.toml"\n', encoding="utf-8"
@@ -3552,8 +3566,8 @@ class TestMaterializeVariableStubs:
         entities FILE (in src/) as project_start. With config read only AT
         the root, that found no config and wrote no stubs, silently."""
         from scimatlab.stubs import DEFAULT_STUB_DIRNAME
-        from scistack_gui import matlab_registry
-        from scistack_gui.config import load_config
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project.config import load_config
 
         (tmp_path / "scistack.toml").write_text(
             'entities_file = "src/scistack_entities.toml"\n', encoding="utf-8"
@@ -3577,7 +3591,7 @@ class TestMatlabFunctionPrecedence:
 
     @staticmethod
     def _info(name, path):
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         return MatlabFunctionInfo(
             name=name, file_path=path, params=[], source_hash="0" * 64
@@ -3587,10 +3601,10 @@ class TestMatlabFunctionPrecedence:
     def _configure(monkeypatch, root):
         import types
 
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         from scifor import pathinput
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         # What the load path does: both registries get the config, and
         # registry.load_from_config pins scifor's root -- the one holder
@@ -3601,7 +3615,7 @@ class TestMatlabFunctionPrecedence:
         monkeypatch.setattr(pathinput, "_project_root_override", root.resolve())
 
     def test_project_wins_regardless_of_scan_order(self, monkeypatch, tmp_path):
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         root = tmp_path / "proj"
         project = root / "src" / "plot_EMG_timeseries_SPM.m"
@@ -3629,7 +3643,7 @@ class TestMatlabFunctionPrecedence:
         """``energy_tkeo`` in the log: two copies inside the same libraries
         tree. Neither is more specific to the project, so the choice really is
         arbitrary and the warning stays."""
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         root = tmp_path / "proj"
         self._configure(monkeypatch, root)
@@ -3652,7 +3666,7 @@ class TestMatlabFunctionPrecedence:
         """A builtin has no backing file, so there is no tier to compare and
         the old behaviour must be preserved — replay_persisted_builtins relies
         on it."""
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         root = tmp_path / "proj"
         self._configure(monkeypatch, root)
@@ -3685,8 +3699,8 @@ class TestGeneratedStubAttribution:
     def test_generated_stub_is_attributed_to_its_declaring_toml(
         self, tmp_path, caplog
     ):
-        from scistack_gui import registry
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.project import registry
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         entities, stub_dir = self._project(tmp_path)
         # What registry._load_entities_file already did with the TOML by the
@@ -3708,8 +3722,9 @@ class TestGeneratedStubAttribution:
         takes the ``skipped`` branch. Both must attribute to the TOML — a stub
         written by a previous session is no more a declaration than a fresh one.
         """
-        from scistack_gui import matlab_registry, registry
-        from scistack_gui.matlab_registry import materialize_variable_stubs
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
+        from scistack_gui.matlab.registry import materialize_variable_stubs
 
         entities, stub_dir = self._project(tmp_path)
         registry._register_variable("RawEMG", source=str(entities))
@@ -3737,7 +3752,8 @@ class TestGeneratedStubAttribution:
         declaration and the TOML entry is not consulted. It used to WARN
         "declared in more than one place" ~20x per scan (scistack.log
         2026-10-19) for src/vars/*.m beside their TOML entries."""
-        from scistack_gui import matlab_registry, registry
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.project import registry
 
         entities, _ = self._project(tmp_path)
         handwritten = tmp_path / "src" / "RawEMG.m"
@@ -3760,7 +3776,7 @@ class TestGeneratedStubAttribution:
     def test_two_python_declarations_still_warn(self, caplog):
         """The warning keeps firing outside the tier rule: two project
         modules declaring one Variable really are redundant."""
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         registry._register_variable("RawEMG", source="/p/src/a.py")
         with caplog.at_level(logging.WARNING):
@@ -3774,7 +3790,7 @@ class TestUnresolvableVarTypePreflight:
     'Unrecognized function or variable'. Say so at generation time."""
 
     def test_unknown_output_type_is_flagged_in_the_script(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "load_emg", "/tmp/x.duckdb", ["subject"], output_types=["RawEMG"]
@@ -3786,8 +3802,8 @@ class TestUnresolvableVarTypePreflight:
         assert "{RawEMG()}" in cmd
 
     def test_type_with_a_known_classdef_is_not_flagged(self, tmp_path):
-        from scistack_gui import matlab_registry
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         matlab_registry._matlab_variables["RawEMG"] = tmp_path / "RawEMG.m"
 
@@ -3800,9 +3816,9 @@ class TestUnresolvableVarTypePreflight:
     def test_declared_in_the_entities_file_is_not_flagged(self, tmp_path):
         """+scidb/entities.m materializes a classdef for a declared
         variable before the run reaches it, so a declaration is enough."""
-        from scistack_gui import matlab_registry
-        from scistack_gui.api.matlab_command import generate_matlab_command
-        from scistack_gui.config import SciStackConfig
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
+        from scistack_gui.project.config import SciStackConfig
 
         entities = tmp_path / "scistack_entities.toml"
         entities.write_text('variables = ["RawEMG"]\n', encoding="utf-8")
@@ -3817,7 +3833,7 @@ class TestUnresolvableVarTypePreflight:
         assert "% WARNING:" not in cmd
 
     def test_variant_types_are_checked_too(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "filter_emg",
@@ -3848,14 +3864,14 @@ class TestSingleNodeMatlabRunRouting:
     """
 
     def _as_matlab(self, monkeypatch, *names):
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import registry as matlab_registry
 
         monkeypatch.setattr(
             matlab_registry, "is_matlab_function", lambda n: n in names
         )
 
     def test_python_function_is_not_routed(self, monkeypatch):
-        from scistack_gui.api.run import route_matlab_single_run
+        from scistack_gui.services.run_service import route_matlab_single_run
 
         self._as_matlab(monkeypatch)  # nothing is MATLAB
         assert (
@@ -3869,7 +3885,7 @@ class TestSingleNodeMatlabRunRouting:
         work."""
         import threading
 
-        import scistack_gui.api.run as run_mod
+        import scistack_gui.services.run_service as run_mod
 
         self._as_matlab(monkeypatch, "loadDelsysEMGOneFile")
         started = threading.Event()
@@ -3899,7 +3915,7 @@ class TestSingleNodeMatlabRunRouting:
         here and the same run_id gets real run_output/run_done."""
         import threading
 
-        import scistack_gui.api.run as run_mod
+        import scistack_gui.services.run_service as run_mod
 
         self._as_matlab(monkeypatch, "loadDelsysEMGOneFile")
         started = threading.Event()
@@ -3924,7 +3940,7 @@ class TestSingleNodeMatlabRunRouting:
         """server.py's handler must decide BEFORE acquire_db_connection:
         holding the DuckDB file lock for a run this process will never
         execute would block the MATLAB session we just dispatched to."""
-        from scistack_gui import db as db_mod
+        from scistack_gui.runtime import db as db_mod
         from scistack_gui import server
 
         self._as_matlab(monkeypatch, "loadDelsysEMGOneFile")
@@ -3948,7 +3964,7 @@ class TestSingleNodeMatlabRunRouting:
         """Command generation happens inside the run thread so a failure
         reaches the user as run_output/run_done. Raising it out of the RPC
         instead would leave the Run button stuck on '⏳ Running…'."""
-        import scistack_gui.api.run as run_mod
+        import scistack_gui.services.run_service as run_mod
 
         messages = []
         monkeypatch.setattr(run_mod, "push_message", messages.append)
@@ -4002,16 +4018,16 @@ class TestPathInputNeverRegisteredAsVariable:
         }
 
     def test_collect_var_types_excludes_path_inputs(self):
-        from scistack_gui.api.matlab_command import _collect_var_types
+        from scistack_gui.services.matlab_command_format import collect_var_types
 
-        types = _collect_var_types([self._path_input_variant()])
+        types = collect_var_types([self._path_input_variant()])
 
         assert types == {"RefSignal", "RawEMG"}, (
             "a PathInput's to_key() JSON leaked into the variable-type set"
         )
 
     def test_generated_command_never_registers_a_path_input(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="loadDelsysEMGOneFile",
@@ -4036,7 +4052,7 @@ class TestPathInputNeverRegisteredAsVariable:
         then give run 2 the variants that took the register branch. Assert the
         same invariant across both.
         """
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         first = generate_matlab_command(
             function_name="loadDelsysEMGOneFile",
@@ -4154,8 +4170,8 @@ class TestMatlabInputsBindPositionally:
 
     @pytest.fixture
     def registered_fn(self):
-        from scistack_gui import matlab_registry
-        from scistack_gui.matlab_parser import MatlabFunctionInfo
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.matlab.parser import MatlabFunctionInfo
 
         before = dict(matlab_registry._matlab_functions)
         matlab_registry._matlab_functions["filterDelsys"] = MatlabFunctionInfo(
@@ -4183,7 +4199,7 @@ class TestMatlabInputsBindPositionally:
     ):
         """The exact failing case: no DB history, one variable + two
         Parameters, drawn on the canvas in the wrong order."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filterDelsys",
@@ -4202,7 +4218,7 @@ class TestMatlabInputsBindPositionally:
     def test_variants_branch_orders_by_signature_too(self, registered_fn):
         """The bug was a branch flip once before (see
         TestPathInputNeverRegisteredAsVariable) — assert both branches."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filterDelsys",
@@ -4225,7 +4241,7 @@ class TestMatlabInputsBindPositionally:
         """No parsed signature — the function may live only on MATLAB's own
         path, and reordering on a guess is worse than emitting what the
         caller assembled."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="not_in_the_registry",
@@ -4241,7 +4257,7 @@ class TestMatlabInputsBindPositionally:
     def test_param_outside_the_signature_is_appended_not_interleaved(
         self, registered_fn
     ):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filterDelsys",
@@ -4258,9 +4274,9 @@ class TestMatlabInputsBindPositionally:
     def test_gap_before_a_bound_param_is_warned_about(self, registered_fn, caplog):
         """The unfixable half: if ``loaded_data`` is simply not wired, no
         ordering can save the call, so it must be loud."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
-        with caplog.at_level(logging.WARNING, logger="scistack_gui.api.matlab_command"):
+        with caplog.at_level(logging.WARNING, logger="scistack_gui.services.matlab_command_format"):
             generate_matlab_command(
                 function_name="filterDelsys",
                 db_path="/db.duckdb",
@@ -4276,7 +4292,7 @@ class TestMatlabInputsBindPositionally:
         ), f"an unwired leading parameter must be warned about; got {messages}"
 
     def test_multi_type_variable_binding_becomes_eachof(self, registered_fn):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="filterDelsys",
@@ -4313,7 +4329,7 @@ class TestRunOptionsInGeneratedCommand:
     ]
 
     def _cmd(self, run_options, **kwargs):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         return generate_matlab_command(
             function_name="bandpass_filter",
@@ -4403,7 +4419,7 @@ class TestRunOptionsInGeneratedCommand:
     def test_pipeline_step_carries_its_own_options(self):
         """A whole-pipeline script registers one for_each per node, and each
         node has its OWN saved options -- they are not a property of the run."""
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="main",
@@ -4440,7 +4456,7 @@ class TestVariableInputColumnSelection:
     """
 
     def _expr(self, ref):
-        from scistack_gui.api.matlab_command import _variable_input_items
+        from scistack_gui.services.matlab_command_format import _variable_input_items
 
         return dict(_variable_input_items({"table_in": ref}))["table_in"]
 
@@ -4495,11 +4511,11 @@ class TestVariableInputColumnSelection:
         )
 
     def test_type_names_still_reach_the_classdef_preflight(self):
-        """``_variable_input_type_names`` feeds the unresolvable-classdef
+        """``variable_input_type_names`` feeds the unresolvable-classdef
         warning; the dict shape must not hide the names from it."""
-        from scistack_gui.api.matlab_command import _variable_input_type_names
+        from scistack_gui.services.matlab_command_format import variable_input_type_names
 
-        names = _variable_input_type_names(
+        names = variable_input_type_names(
             {
                 "a": "RawEMG",
                 "b": ["RawVO2"],
@@ -4522,7 +4538,7 @@ class TestVariableInputColumnSelection:
 
 
 class TestDoubleQuotedStringEscaping:
-    """``_format_matlab_string_array`` emits DOUBLE-quoted literals but used
+    """``format_matlab_string_array`` emits DOUBLE-quoted literals but used
     to escape SINGLE quotes -- the escaping of the other quoting style. An
     embedded ``"`` therefore terminated the literal and an embedded ``'`` was
     corrupted into ``''``.
@@ -4533,26 +4549,26 @@ class TestDoubleQuotedStringEscaping:
     """
 
     def test_double_quote_is_doubled(self):
-        from scistack_gui.api.matlab_command import _format_matlab_string_array
+        from scistack_gui.services.matlab_command_format import format_matlab_string_array
 
-        assert _format_matlab_string_array(['a"b']) == '["a""b"]'
+        assert format_matlab_string_array(['a"b']) == '["a""b"]'
 
     def test_single_quote_is_left_alone(self):
         """Inside ``"..."`` a single quote is an ordinary character. Doubling
         it is not a harmless over-escape -- it changes the value."""
-        from scistack_gui.api.matlab_command import _format_matlab_string_array
+        from scistack_gui.services.matlab_command_format import format_matlab_string_array
 
-        assert _format_matlab_string_array(["c'd"]) == "[\"c'd\"]"
+        assert format_matlab_string_array(["c'd"]) == "[\"c'd\"]"
 
     def test_single_quoted_helper_still_escapes_single_quotes(self):
         """The other helper is unchanged -- ``'...'`` literals (addpath, db
         path, pipeline id) still need ``''``."""
-        from scistack_gui.api.matlab_command import _escape_matlab_string
+        from scistack_gui.services.matlab_command_format import _escape_matlab_string
 
         assert _escape_matlab_string("c'd") == "c''d"
 
     def test_agrees_with_the_code_export_renderer(self):
-        from scistack_gui.api.matlab_command import _escape_matlab_dq
+        from scistack_gui.services.matlab_command_format import _escape_matlab_dq
         from scistack_gui.services.code_export_service import _matlab_str
 
         for s in ('a"b', "c'd", "plain"):
@@ -4560,7 +4576,7 @@ class TestDoubleQuotedStringEscaping:
 
     def test_selection_reaches_the_template_branch(self):
         """The first-run branch: no DB variants, wiring is the only source."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="summarise",
@@ -4577,7 +4593,7 @@ class TestDoubleQuotedStringEscaping:
     def test_selection_reaches_the_db_variant_branch(self):
         """A function WITH history. The recorded ``input_types`` renders
         ``Trials()``; the overlay must replace it, not sit beside it."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name="summarise",
@@ -4598,7 +4614,7 @@ class TestDoubleQuotedStringEscaping:
         assert "'table_in', Trials()" not in cmd
 
     def test_selection_reaches_a_pipeline_step(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="main",
@@ -4748,7 +4764,7 @@ class TestScopeVariantsToNode:
 
     def test_that_is_one_for_each_call_not_two(self):
         """The consequence, through the function that actually emits them."""
-        from scistack_gui.api.matlab_command import _group_variants
+        from scistack_gui.services.matlab_command_format import _group_variants
         from scistack_gui.services.matlab_command_service import scope_variants_to_node
 
         by_name, targets = self._by_name()

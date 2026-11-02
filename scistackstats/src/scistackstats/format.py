@@ -14,7 +14,7 @@ Two layers:
    one result cannot disagree.
 
 Display names come from the plot layer's alias owner
-(``scistackplot.aliases.display_text``: the design's own aliases over the
+(``scistackplot.text.aliases.display_text``: the design's own aliases over the
 project's), through :class:`Labels`.
 """
 
@@ -25,8 +25,8 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from scistackplot import LongTable
-from scistackplot.aliases import DisplayText, display_text
-from scistackplot.variants import set_name
+from scistackplot.text.aliases import DisplayText, display_text
+from scistackplot.reduce.variants import set_name
 
 from .catalog import TESTS
 from .describe import CELL_LAYOUTS, STATISTICS, DescriptivesTable, DVBlock

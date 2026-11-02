@@ -8,8 +8,8 @@ import pytest
 from conftest import BRANDS, SUBJECTS, bar_spec, popcorn_frame, popcorn_table
 from csvstats.descriptive import summarize  # test-side reference only
 from scistackplot import LongTable, Role, resolve
-from scistackplot.resolved import X, Y_HIGH, Y_LOW
-from scistackplot.spec import Aggregation, ErrorBand
+from scistackplot.reduce.resolved import X, Y_HIGH, Y_LOW
+from scistackplot.model.spec import Aggregation, ErrorBand
 from scistackstats import DV, AnalysisFrameError, DescriptiveSpec, StatsSpec, analysis_frame, describe_table
 from scistackstats.tables import UNIT
 

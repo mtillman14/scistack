@@ -1,6 +1,6 @@
 """Which canvas node a recorded wiring belongs to (D-2026-09-22-2).
 
-The rule is ``docs/claude/node-identity.md`` §7; ``scistack_gui/node_wiring.py``
+The rule is ``docs/claude/node-identity.md`` §7; ``scistack_gui/stores/node_wiring.py``
 is the storage; this module is the decision, kept pure so it can be tested
 without a database.
 
@@ -221,7 +221,7 @@ def resolve_identities(
     persists ``to_record`` — so this function is a pure decision and can be
     exercised against hand-built inputs.
     """
-    from scistack_gui.node_wiring import mint_node_id
+    from scistack_gui.stores.node_wiring import mint_node_id
 
     mint = mint or mint_node_id
     stated_by = stated_by or {}

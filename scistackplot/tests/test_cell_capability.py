@@ -24,8 +24,8 @@ from scistackplot import (
     roles_for_kind,
     why_unavailable,
 )
-from scistackplot.resolved import X, Y
-from scistackplot.roles import Assignment, default_assignment
+from scistackplot.reduce.resolved import X, Y
+from scistackplot.model.roles import Assignment, default_assignment
 
 SAMPLE = {"trial": Role.COLLAPSE}
 NO_SAMPLE = {"trial": Role.ITERATE}
@@ -301,7 +301,7 @@ def test_switching_kinds_does_not_share_a_plan(step_length_table):
     """A line and a violin of one 1-D measure are different frames, different
     roles and different limits — the plan cache must not serve one for the
     other even though ``kind`` is otherwise presentation."""
-    from scistackplot import reduce as reduce_mod
+    from scistackplot.reduce.resolve import resolve as reduce_mod
 
     reduce_mod.clear_plan_cache()
     roles = {"subject": Role.GROUP, "trial": Role.GROUP}

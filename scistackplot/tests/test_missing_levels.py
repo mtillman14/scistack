@@ -19,11 +19,11 @@ import pandas as pd
 import pytest
 
 from scistackplot import PlotKind, PlotSpec, Role, generate_plot_function, resolve
-from scistackplot.codegen import default_function_name
-from scistackplot.resolved import X
-from scistackplot.spec import Filter
-from scistackplot.table import LongTable
-from scistackplot.xaxis import LEAF_SEPARATOR, is_spacer
+from scistackplot.export.codegen import default_function_name
+from scistackplot.reduce.resolved import X
+from scistackplot.model.spec import Filter
+from scistackplot.model.table import LongTable
+from scistackplot.text.xaxis import LEAF_SEPARATOR, is_spacer
 
 SESSIONS = ["pre", "mid", "post"]
 SIDES = ["L", "R"]

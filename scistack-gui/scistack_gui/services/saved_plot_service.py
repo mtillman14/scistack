@@ -3,7 +3,7 @@ Saved plots — Plot Studio's named, per-variable figures.
 
 An adapter only: storage, naming rules, versioning, restoring drifted
 settings and reconciling them with today's data all belong to
-``scistackplotdb.saved`` and ``scistackplot.restore`` (CLAUDE.md NOTE 3).
+``scistackplotdb.saved`` and ``scistackplot.model.restore`` (CLAUDE.md NOTE 3).
 This module turns their results into JSON and loads the data table with the
 panel's cached source (``plot_service.get_source``), so a saved plot opens on
 the same frames the panel draws from.
@@ -99,7 +99,7 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
     from scistackplot import capabilities
     from scistackplotdb import load_saved_plot
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     loaded: dict = {}
 
@@ -169,7 +169,7 @@ def follow_latest(db, plot_id: str) -> dict:
     gets the new spec and capabilities in the same reply as ``open_plot``."""
     from scistackplotdb import follow_latest_saved_plot
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("plot_saved_follow_latest"):
         info = follow_latest_saved_plot(db, plot_id)

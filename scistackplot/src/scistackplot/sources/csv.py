@@ -26,7 +26,7 @@ from typing import Any, Iterable
 import pandas as pd
 from scistacklog import Log
 
-from ..table import LongTable
+from ..model.table import LongTable
 from .base import BaseSource
 
 LAYER = "scistackplot"

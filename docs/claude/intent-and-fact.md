@@ -115,7 +115,7 @@ round-trip guards are all reports on a `Decision`.
 
 ## 4. Where intent lives today
 
-`scistack_gui/pipeline_store.py` defines 13 tables. Sorted by what they
+`scistack_gui/stores/pipeline_store.py` defines 13 tables. Sorted by what they
 really are:
 
 | | tables | governed here? |
@@ -144,7 +144,7 @@ its comparison. Exactly one owner each, in the lowest layer that can host it:
 | `wiring` | which source feeds which parameter | `scidb`, alongside the input-binding shape (`docs/claude/input-binding-round-trip.md`) |
 | `hidden` | which call sites / values / edges are excluded | scidb (it already stores `excluded` on records) |
 | `constants` | pending and recorded constant values | `scidb.foreach_config` |
-| `variant_selection` | a plot's named pins over variant space (`VariantSet`), keyed by name, about the plotted variable; no fact side | `scidb.intent` (shape), `scistackplot.spec.VariantSet` (payload) |
+| `variant_selection` | a plot's named pins over variant space (`VariantSet`), keyed by name, about the plotted variable; no fact side | `scidb.intent` (shape), `scistackplot.model.spec.VariantSet` (payload) |
 
 The GUI imports all of them. The precedent that this works is `call_id`:
 scidb owns the recipe (`foreach_config.CallSite`), computes
@@ -158,7 +158,7 @@ and the GUI calls it instead of hashing its own.
 | site | today | with this model |
 |---|---|---|
 | GUI run (`api/run.py`) | `derive_fn_targets` → `_attach_db_*` → `_attach_column_selections` → `filter_hidden_*` → `build_run_inputs` | gather statements → `resolve(origin=gui)` → execute the `RunPlan` |
-| MATLAB run (`api/matlab_command.py:1415`) | its own copy of the binding logic | the same `RunPlan`, rendered to MATLAB |
+| MATLAB run (`services/matlab_command_format.py:1415`) | its own copy of the binding logic | the same `RunPlan`, rendered to MATLAB |
 | code export (`code_export_service.py`) | resolves, then prints | unchanged in shape — and it becomes the proof that `RunPlan` is complete |
 | canvas rendering | chips computed on a path separate from the run | chips render the same `RunPlan`, so a chip that disagrees with the run is structurally impossible |
 | `scidb` CLI / Inspector | `trace` shows fact | `trace` shows intent, fact and the `Decision` between them |
@@ -229,8 +229,8 @@ shippable.
 
 | what | where |
 |---|---|
-| intent tables today | `scistack-gui/scistack_gui/pipeline_store.py:92-300` |
-| the five derivation paths | `services/execution_service.py`, `api/run.py`, `api/matlab_command.py`, `services/code_export_service.py`, `domain/graph_builder.py` |
+| intent tables today | `scistack-gui/scistack_gui/stores/pipeline_store.py:92-300` |
+| the five derivation paths | `services/execution_service.py`, `api/run.py`, `services/matlab_command_format.py`, `services/code_export_service.py`, `domain/graph_builder.py` |
 | the working precedent (one recipe, both directions) | `scidb/src/scidb/foreach_config.py` + `provenance_query.config_call_id` |
 | what a binding is | `docs/claude/input-binding-round-trip.md` |
 | why ids move | `docs/claude/placement-qualified-ids.md` |
@@ -242,7 +242,7 @@ Every stage of `.claude/plan-intent-and-fact.md` is built:
 
 * **Store:** `_intent` holds all seven execution-intent tables' worth of state
   plus `variant_selection`. `pipeline_store` keeps its accessors and
-  delegates (`scistack_gui/intent_store.py`, `GRADUATED_ASPECTS` is the
+  delegates (`scistack_gui/stores/intent_store.py`, `GRADUATED_ASPECTS` is the
   progress bar). The old tables are left in place, rows untouched, after a
   marker-guarded one-time import each; dropping them is a separate step.
 * **Origin:** `_run.origin`; `scidb.intent.run_origin` / `set_ambient_origin`;

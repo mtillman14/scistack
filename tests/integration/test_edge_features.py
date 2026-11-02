@@ -28,6 +28,7 @@ from conftest import (
     TRIALS,
     attempt,
     cell,
+    failure_reasons,
     run_summary,
 )
 from test_edge_schema import ONE_SESSION, ONE_SUBJECT, N_SMALL, load_levels
@@ -48,8 +49,8 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.resolved import X, Y  # noqa: E402
-from scistackplot.variants import VARIABLE_COLUMN  # noqa: E402
+from scistackplot.reduce.resolved import X, Y  # noqa: E402
+from scistackplot.reduce.variants import VARIABLE_COLUMN  # noqa: E402
 from scistackplotdb import ScidbSource  # noqa: E402
 
 matplotlib = pytest.importorskip("matplotlib")
@@ -290,7 +291,7 @@ def test_collapsing_the_variable_axis_is_refused(example_db):
         groups=["session"],
         kind=PlotKind.BAR,
     )
-    from scistackplot.roles import validate
+    from scistackplot.model.roles import validate
 
     _, error = attempt(validate, spec, table)
     assert error is not None and VARIABLE_COLUMN in str(error)
@@ -433,7 +434,7 @@ def test_merge_joins_two_inputs_column_wise(scratch_db, pipeline):
     _, summary = outcome
     assert summary.get("completed", 0) + summary.get("failed", 0) == summary.get("total"), summary
     if summary.get("failed"):
-        pytest.xfail(f"Merge of a cycle-level and a trial-level input: {summary.get('failure_reasons')}")
+        pytest.xfail(f"Merge of a cycle-level and a trial-level input: {failure_reasons(summary)}")
     assert summary["completed"] == N_SMALL
 
 
@@ -472,6 +473,7 @@ def test_iterating_with_an_int_over_zero_padded_trial_folders(scratch_db, pipeli
     t = scidb.PathInput(
         "{subject}/{session}/t{trial}/{subject}_{session}_{speed}_t{trial}_trial.csv",
         root_folder=str(DATA_ROOT),
+        name="TRIAL_FILE",
     )
     outcome, error = attempt(
         run_summary, scidb.for_each, pipeline.load_trial_info, {"csv_file_path": t}, [Padded],

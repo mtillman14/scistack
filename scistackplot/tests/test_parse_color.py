@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from scistackplot.colors import ColorError, parse_color, try_color
+from scistackplot.text.colors import ColorError, parse_color, try_color
 
 
 @pytest.mark.parametrize(

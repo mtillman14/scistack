@@ -38,14 +38,14 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("services/scope_service.py", "extract_to_submodule"): (
         "mutator: moves stored edges into the new submodule"
     ),
-    ("layout.py", "read_layout"): (
+    ("stores/layout.py", "read_layout"): (
         "API passthrough of stored rows (get_layout); the frontend draws "
         "get_pipeline's edges, not these"
     ),
 }
 
 #: Modules allowed anywhere: the store that defines the readers.
-ALLOWED_MODULES = {"pipeline_store.py"}
+ALLOWED_MODULES = {"stores/pipeline_store.py"}
 
 
 class _Finder(ast.NodeVisitor):

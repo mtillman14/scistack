@@ -6,7 +6,7 @@ This module knows nothing about scidb-specific concepts (``BaseVariable``,
 import a package and its submodules, capture per-module errors without
 aborting, skip test-only modules/files by naming convention, and manage
 ``sys.path``/``sys.modules`` for repeated scans. Consumers (``scidb.discover``,
-``scistack_gui.registry``) supply their own per-module callback to decide
+``scistack_gui.project.registry``) supply their own per-module callback to decide
 what "discovery" means for them.
 """
 
@@ -239,7 +239,7 @@ def resolve_config_path(root: Path, raw: str) -> Path:
 
     The reverse direction needs nothing: Windows accepts ``/`` natively,
     which is why the writers now record ``/`` (see
-    ``scistack_gui.config._portable_relpath``).
+    ``scistack_gui.project.config._portable_relpath``).
 
     A Windows-*absolute* value (``Y:\\LabMembers\\...``) is a different
     problem -- there is no such drive here and no sane way to guess what it

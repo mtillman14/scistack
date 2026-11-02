@@ -15,8 +15,8 @@ Two flavors:
 
 from __future__ import annotations
 
-from scistack_gui import pipeline_store as ps
-from scistack_gui.db import get_db
+from scistack_gui.stores import pipeline_store as ps
+from scistack_gui.runtime.db import get_db
 from scistack_gui.services.portability_service import (
     FORMAT_VERSION,
     export_pipeline,
@@ -154,7 +154,7 @@ class TestExportImportSameDatabase:
         # editor, then hits Refresh Code). If import were to "reimport" it,
         # this edit would be clobbered back to the exported template;
         # reuse-by-name means it must survive.
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         registry._module_path.write_text(
             'from scidb import PathInput\ngait_data = PathInput("{subject}_edited.csv", name="gait_data")\n'
@@ -181,7 +181,7 @@ class TestExportImportCrossDatabase:
         handles the same way)."""
         from scidb import configure_database
 
-        from scistack_gui import db as gui_db
+        from scistack_gui.runtime import db as gui_db
 
         db_path = tmp_path / "other_user.duckdb"
         db = configure_database(db_path, ["subject", "session"])
@@ -265,7 +265,7 @@ class TestExportImportCrossDatabase:
         # redundant) the next time this scope's graph rebuilds — nothing
         # to do with export/import, a name collision with the fixture.
         client = client_with_variable_file
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         pid = client.post("/api/pipelines", json={"name": "loading"}).json()["pipeline_id"]
         client.post("/api/path-inputs", json={"name": "gait_data", "template": "{subject}.csv"})
@@ -342,7 +342,7 @@ class TestSubmoduleContentDedup:
     def _second_db(self, tmp_path):
         from scidb import configure_database
 
-        from scistack_gui import db as gui_db
+        from scistack_gui.runtime import db as gui_db
 
         db_path = tmp_path / "other_user.duckdb"
         db = configure_database(db_path, ["subject", "session"])
@@ -480,7 +480,7 @@ class TestHiddenPipelineReimport:
     def _second_db(self, tmp_path):
         from scidb import configure_database
 
-        from scistack_gui import db as gui_db
+        from scistack_gui.runtime import db as gui_db
 
         db_path = tmp_path / "other_user.duckdb"
         db = configure_database(db_path, ["subject", "session"])
@@ -546,7 +546,7 @@ class TestHiddenPipelineReimport:
 def _second_db(tmp_path):
     from scidb import configure_database
 
-    from scistack_gui import db as gui_db
+    from scistack_gui.runtime import db as gui_db
 
     db_path = tmp_path / "other_user.duckdb"
     db = configure_database(db_path, ["subject", "session"])
@@ -605,7 +605,7 @@ class TestCanvasSnapshotCarriesEverything:
         assert config.get("schemaSelection") == EXCLUDE_S02["schemaSelection"]
 
     def test_positions_and_edges_travel(self, client, tmp_path):
-        from scistack_gui import layout as layout_store
+        from scistack_gui.stores import layout as layout_store
         from scistack_gui.services.pipeline_service import get_pipeline_graph
 
         pid = self._pipeline(client)
@@ -621,7 +621,7 @@ class TestCanvasSnapshotCarriesEverything:
         assert (var_id, fn_id) in edges
 
     def test_notes_travel_and_never_overwrite(self, client, tmp_path):
-        from scistack_gui import layout as layout_store
+        from scistack_gui.stores import layout as layout_store
 
         pid = self._pipeline(client)
         layout_store.write_note("variable:RawSignal", "raw from the force plate")

@@ -56,7 +56,7 @@ def create_path_input(
     "error": ...}`` on failure (invalid name, name collision, no configured
     target file, or a write/refresh failure).
     """
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     err = _validate_name(name)
     if err:
@@ -164,7 +164,7 @@ def update_path_input(
     from scidb.entities import render_path_input_value
     from scidb.source_edit import render_path_input
 
-    from scistack_gui.matlab_parser import render_matlab_path_input
+    from scistack_gui.matlab.parser import render_matlab_path_input
     from scistack_gui.services.target_file_service import update_declaration
 
     logger.info(

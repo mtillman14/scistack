@@ -153,7 +153,7 @@ def test_rotated_ticks_on_an_inner_row_stay_off_the_row_below():
 
 # --- hidden y titles give their room back (per-panel overrides, D5/D6) ------------
 
-from scistackplot.panels import Y_TITLES_FIRST_COLUMN, PanelOverride  # noqa: E402
+from scistackplot.reduce.panels import Y_TITLES_FIRST_COLUMN, PanelOverride  # noqa: E402
 
 WIDE = (9.0, 3.0)
 

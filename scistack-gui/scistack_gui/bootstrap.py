@@ -124,7 +124,7 @@ def open_or_create_project(
 
     # Import user code first so that configure_database() can auto-register
     # the user's variable classes.
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     functions_loaded = 0
     variables_loaded = 0
@@ -135,7 +135,7 @@ def open_or_create_project(
     if not discover:
         from scifor.pathinput import set_project_root
 
-        from scistack_gui.config import resolve_project_root
+        from scistack_gui.project.config import resolve_project_root
 
         root = resolve_project_root(project, db_path)
         set_project_root(root)
@@ -145,7 +145,7 @@ def open_or_create_project(
             root,
         )
     elif project:
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         logger.info("[bootstrap] project mode: loading config from %s", project)
         config = load_config(project, db_path)
@@ -159,7 +159,7 @@ def open_or_create_project(
             variables_loaded,
         )
         if config.has_matlab:
-            from scistack_gui import matlab_registry
+            from scistack_gui.matlab import registry as matlab_registry
 
             matlab_result = matlab_registry.load_from_config(config)
             matlab_functions_loaded = len(matlab_result["matlab_functions"])
@@ -183,7 +183,7 @@ def open_or_create_project(
         registry.register_module(user_mod, module_path=module_path)
         logger.info("[bootstrap] loaded module: %s", module_path)
     else:
-        from scistack_gui.config import load_config
+        from scistack_gui.project.config import load_config
 
         logger.info(
             "[bootstrap] no module/project given: auto-discovering near %s", db_path
@@ -200,7 +200,7 @@ def open_or_create_project(
                 variables_loaded,
             )
             if config.has_matlab:
-                from scistack_gui import matlab_registry
+                from scistack_gui.matlab import registry as matlab_registry
 
                 matlab_result = matlab_registry.load_from_config(config)
                 matlab_functions_loaded = len(matlab_result["matlab_functions"])
@@ -226,7 +226,7 @@ def open_or_create_project(
         except Exception:
             logger.exception("[bootstrap] failed to create language entities stubs")
 
-    from scistack_gui.db import create_db, init_db
+    from scistack_gui.runtime.db import create_db, init_db
 
     if create_new:
         logger.info(
@@ -251,7 +251,7 @@ def open_or_create_project(
             warnings.append("Failed to restore builtin function references.")
 
         try:
-            from scistack_gui.pipeline_discovery import discover_and_seed_pipelines
+            from scistack_gui.project.pipeline_discovery import discover_and_seed_pipelines
 
             pipeline_result = discover_and_seed_pipelines(db)
             if pipeline_result["created"]:
@@ -268,7 +268,7 @@ def open_or_create_project(
 
     Log.bridge_python_logging()
 
-    from scistack_gui import startup as _startup
+    from scistack_gui.project import startup as _startup
 
     if loaded_config is not None:
         _startup.check_config_paths(loaded_config)

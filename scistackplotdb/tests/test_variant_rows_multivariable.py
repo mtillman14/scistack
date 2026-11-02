@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import pytest
 from scistackplot import PlotKind, PlotSpec, Role, capabilities, resolve
-from scistackplot.spec import VariantSet
-from scistackplot.variants import VARIABLE_COLUMN, VARIANT_FACTOR, apply_variant_sets
+from scistackplot.model.spec import VariantSet
+from scistackplot.reduce.variants import VARIABLE_COLUMN, VARIANT_FACTOR, apply_variant_sets
 
 from scistackplotdb import ScidbSource
 

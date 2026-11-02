@@ -474,7 +474,7 @@ def resolve_function_edges(
     """Resolve input/output/parameter connections for a function from edges.
 
     This is the single source of truth for edge inference, replacing the
-    duplicated logic that was in api/pipeline.py, api/run.py, and server.py.
+    duplicated logic that was in services/graph_service.py, services/run_service.py, and server.py.
 
     **Every binding comes from an edge.** An incoming edge names the
     parameter it feeds in its ``targetHandle``; an edge that doesn't is

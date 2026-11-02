@@ -117,13 +117,13 @@ Right rail: Saved plots (`SavedPlotsRail.tsx`), then Presets (`PresetsSection.ts
   (`fallback`), never from 0. Steps: Font and text sizes 1 pt, weights 0.1,
   W/H 0.1 in / 1 mm / 10 px. Not `type="number"`, because the native spinner
   starts an empty box from 0. N rows/cols keep the native spinner.
-- **One panel is a 1 × 1 grid**, owned by `scistackplot.reduce.plan_layout`
+- **One panel is a 1 × 1 grid**, owned by `scistackplot.reduce.resolve.plan_layout`
   (pins and slots ignored, kept in the spec). The panel reads
   `layout.meta.panels` and locks N rows/cols to 1.
 
 ## Shared with StatStudio (2026-11-01, docs/claude/studio-unification.md)
 
-- **Role words** come from `scistackplot.role_labels` (figure surface):
+- **Role words** come from `scistackplot.model.role_labels` (figure surface):
   Compare · Separate panels · Separate figures · Average over. No `.tsx`
   file may hold one (`Studio/studioOpen.test.ts`).
 - **Step by step | Advanced** switch at the top of the rail. Step by step

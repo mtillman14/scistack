@@ -1,4 +1,4 @@
-"""Fitting axis labels into their room: the pure decision (scistackplot.ticklabels).
+"""Fitting axis labels into their room: the pure decision (scistackplot.text.ticklabels).
 
 A fake ``measure`` makes the geometry exact: every character is 0.6 em wide and
 a line is 1 em tall, so each expected outcome below can be checked by hand.
@@ -16,7 +16,7 @@ from scistackplot import (
     fit_labels,
     slot_row,
 )
-from scistackplot.ticklabels import is_numbered, strip_prefix, wrap_label
+from scistackplot.text.ticklabels import is_numbered, strip_prefix, wrap_label
 
 #: Names (not numbered, so never stripped or thinned), no break point: only
 #: shrink and rotate can help.

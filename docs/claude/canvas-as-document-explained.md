@@ -605,7 +605,7 @@ records a new wiring for an existing step adds a second node (Q6).
   wiring agrees on.
 - **Step names** (Q6 option A): `for_each(..., step="filter")` →
   `_run_step`; the canvas node whose step name is `filter`
-  (`scistack_gui/step_names.py`, its config blob's `step`) claims that run's
+  (`scistack_gui/project/step_names.py`, its config blob's `step`) claims that run's
   wiring even when the script changed it, and its old stored edges are hidden
   (`adoption.retire_rewired_edges`). Code export gives every exported node a
   step name and writes it; GUI runs pass it. Unnamed script runs still add a

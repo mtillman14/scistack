@@ -79,7 +79,7 @@ def variant_set(
     table: LongTable | None = None,
 ) -> VariantSet:
     """
-    Build a named :class:`~scistackplot.spec.VariantSet` from a ``scidb.Variant``.
+    Build a named :class:`~scistackplot.model.spec.VariantSet` from a ``scidb.Variant``.
 
     ::
 

@@ -471,7 +471,7 @@ def absent_locations(
 ) -> list[tuple]:
     """Locations the dataset HAS at these schema keys where a variable has no
     record: the "No record" reason of a plot's "Not plotted" list
-    (`scistackplot.omissions`; user, 2026-11-01).
+    (`scistackplot.reduce.omissions`; user, 2026-11-01).
 
     A location exists when some ``_schema`` row projects onto it with every
     one of ``keys`` non-NULL — another variable saved there, at that depth or

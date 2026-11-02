@@ -14,9 +14,9 @@ import math
 import pandas as pd
 import pytest
 
-import scistackplot.reduce as reduce_mod
+import scistackplot.reduce.resolve as reduce_mod
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, StyleOptions, YAxis, resolve
-from scistackplot.diffbars import (
+from scistackplot.reduce.diffbars import (
     BarSizes,
     DifferenceBar,
     Endpoint,

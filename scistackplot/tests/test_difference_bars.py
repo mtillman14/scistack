@@ -1,6 +1,6 @@
 """
 Difference bars, Stage 1 (2026-09-27): the spec field, the text size, the
-capability and the one resolver. ``scistackplot.diffbars`` owns what a bar
+capability and the one resolver. ``scistackplot.reduce.diffbars`` owns what a bar
 names (plan D1: the panel's ITERATE + FACET values and each end's x-layer
 values, all as text) and which ticks of which panel it lands on. Placement,
 rendering, export and GUI are later stages (``.claude/plan-difference-bars.md``).
@@ -13,7 +13,7 @@ import logging
 import pandas as pd
 import pytest
 
-import scistackplot.reduce as reduce_mod
+import scistackplot.reduce.resolve as reduce_mod
 from scistackplot import (
     LongTable,
     PlotKind,
@@ -22,8 +22,8 @@ from scistackplot import (
     StyleOptions,
     resolve,
 )
-from scistackplot.capability import capabilities
-from scistackplot.diffbars import (
+from scistackplot.model.capability import capabilities
+from scistackplot.reduce.diffbars import (
     DEFAULT_LABEL,
     DifferenceBar,
     bars_for_panel,
@@ -31,11 +31,11 @@ from scistackplot.diffbars import (
     slot_endpoints,
     unavailable,
 )
-from scistackplot.restore import restore_spec
-from scistackplot.shape import Shape
-from scistackplot.spec import TextSizes
-from scistackplot.textsize import resolve_sizes
-from scistackplot.xaxis import plan_x_axis
+from scistackplot.model.restore import restore_spec
+from scistackplot.model.shape import Shape
+from scistackplot.model.spec import TextSizes
+from scistackplot.text.textsize import resolve_sizes
+from scistackplot.text.xaxis import plan_x_axis
 
 LAYER = "scistackplot"
 

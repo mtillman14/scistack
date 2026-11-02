@@ -20,7 +20,7 @@ ROOT = "/studies/gait"
 
 
 def _script(**kwargs):
-    from scistack_gui.api.matlab_command import generate_matlab_command
+    from scistack_gui.services.matlab_command_format import generate_matlab_command
 
     return generate_matlab_command(
         function_name="bandpass_filter",
@@ -32,7 +32,7 @@ def _script(**kwargs):
 
 
 def _pipeline_script(**kwargs):
-    from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+    from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
     return generate_matlab_pipeline_command(
         pipeline_id="main",
@@ -104,7 +104,7 @@ def test_no_project_root_emits_no_cd():
 def test_every_python_run_thread_enters_the_project_root():
     """Structural guard: each in-process Python run thread calls
     ``enter_project_root`` — per run, because user code may chdir."""
-    src = Path(__file__).resolve().parents[1] / "scistack_gui" / "api" / "run.py"
+    src = Path(__file__).resolve().parents[1] / "scistack_gui" / "services" / "run_service.py"
     tree = ast.parse(src.read_text(encoding="utf-8"))
     wanted = {"_run_in_thread", "_run_pipeline_in_thread"}
     found = {}

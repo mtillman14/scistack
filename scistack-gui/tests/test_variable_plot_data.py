@@ -1,5 +1,5 @@
 """
-Tests for scistack_gui.api.variables.get_variable_plot_data (to-do #4:
+Tests for scistack_gui.services.variable_service.get_variable_plot_data (to-do #4:
 default plotting for scalar/1D-numeric variables).
 
 Eligibility is judged from the DuckDB column type of the variable's own
@@ -12,7 +12,7 @@ string data, dict/multi-column data).
 
 from __future__ import annotations
 
-from scistack_gui.db import get_db
+from scistack_gui.runtime.db import get_db
 from scistack_gui.services.variable_service import get_variable_plot_data
 
 

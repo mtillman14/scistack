@@ -11,8 +11,8 @@ from __future__ import annotations
 import json
 import zipfile
 
-from scistack_gui import pipeline_store as ps
-from scistack_gui.db import get_db
+from scistack_gui.stores import pipeline_store as ps
+from scistack_gui.runtime.db import get_db
 
 EXCLUDE_S02 = {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}
 
@@ -27,7 +27,7 @@ def _node_by_label(db, pid, label):
 
 
 def _build_source(client):
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
 
     # Root canvas content.
     client.put("/api/layout/m_in", json={
@@ -73,7 +73,7 @@ def test_the_bundle_carries_gui_and_plots_sections(client, tmp_path):
 
 
 def test_a_whole_project_imports_into_a_new_project(client, tmp_path):
-    from scistack_gui import layout as layout_store
+    from scistack_gui.stores import layout as layout_store
     from scistack_gui.headless import import_project_bundle
 
     hid = _build_source(client)

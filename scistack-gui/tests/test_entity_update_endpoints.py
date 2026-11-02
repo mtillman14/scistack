@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import inspect
 
-import scistack_gui.registry as _registry
-from scistack_gui import config as config_mod
+import scistack_gui.project.registry as _registry
+from scistack_gui.project import config as config_mod
 
 
 def _project(tmp_path, body):
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     entities = tmp_path / "entities.py"
     entities.write_text(body)
@@ -89,7 +89,7 @@ class TestRestEndpoints:
     def test_read_only_declaration_reports_its_location(self, client, tmp_path):
         """A declaration outside the entities file is refused with the exact
         file:line, so the UI can point at it rather than hint generically."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
 
         other = tmp_path / "params.py"
         other.write_text(
@@ -131,7 +131,7 @@ def _toml_project(tmp_path, toml_text):
     docs/claude/entity-editability-model.md). ``_project`` still exercises
     the legacy ``.py`` surface for its own tests; this is a separate helper
     so that surface's behavior can't leak into TOML-format coverage."""
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
 
     entities = tmp_path / "scistack_entities.toml"
     entities.write_text(toml_text, encoding="utf-8")
@@ -373,7 +373,7 @@ class TestTransportParity:
         """The panels ask ``get_entity_editability`` before any edit; the
         browser goes through REST (kind + name in the path), the VS Code
         extension through JSON-RPC. Both must answer the same."""
-        from scistack_gui.db import get_db_path
+        from scistack_gui.runtime.db import get_db_path
         from scistack_gui.server import METHODS
 
         other = tmp_path / "params.py"
@@ -421,7 +421,7 @@ class TestMatlabEntitiesPreamble:
     makes an edit visible to a kept-warm sidecar session."""
 
     def test_entities_script_runs_after_addpath(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "process",
@@ -435,7 +435,7 @@ class TestMatlabEntitiesPreamble:
         assert cmd.index("addpath('/proj/src');") < cmd.index("scistack_entities;")
 
     def test_runs_before_the_database_is_configured(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "process",
@@ -447,7 +447,7 @@ class TestMatlabEntitiesPreamble:
         assert cmd.index("scistack_entities;") < cmd.index("configure_database")
 
     def test_omitted_when_no_entities_file_configured(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command("process", "/tmp/x.duckdb", ["subject"])
 
@@ -456,7 +456,7 @@ class TestMatlabEntitiesPreamble:
     def test_pipeline_command_also_runs_it(self):
         """Wiring only the single-function generator would leave WHOLE-pipeline
         runs unable to resolve a declared entity by name."""
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="main",
@@ -488,7 +488,7 @@ class TestMatlabTomlEntitiesPreamble:
     (plan Stage 5). Same placement rules as the legacy script."""
 
     def test_entities_call_runs_after_addpath(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "process",
@@ -507,7 +507,7 @@ class TestMatlabTomlEntitiesPreamble:
         cwd: outside the project that finds nothing, the load logs
         ``0 variable(s), 0 parameter(s), 0 path input(s) ... from .``, and
         every declared entity is silently out of scope."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "process",
@@ -520,7 +520,7 @@ class TestMatlabTomlEntitiesPreamble:
         assert "scidb.entities('/proj');" in cmd
 
     def test_project_root_is_escaped(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "process",
@@ -533,7 +533,7 @@ class TestMatlabTomlEntitiesPreamble:
         assert "scidb.entities('/it''s/a/proj');" in cmd
 
     def test_pipeline_command_passes_the_project_root_too(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="main",
@@ -560,7 +560,7 @@ class TestMatlabTomlEntitiesPreamble:
     def test_both_sources_are_emitted_when_both_configured(self):
         """They declare different names; dropping either would leave a name
         undefined at the point the command uses it."""
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             "process",
@@ -574,14 +574,14 @@ class TestMatlabTomlEntitiesPreamble:
         assert "scistack_entities;" in cmd
 
     def test_omitted_when_no_entities_file_configured(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command("process", "/tmp/x.duckdb", ["subject"])
 
         assert "scidb.entities()" not in cmd
 
     def test_pipeline_command_also_loads_it(self):
-        from scistack_gui.api.matlab_command import generate_matlab_pipeline_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command
 
         cmd = generate_matlab_pipeline_command(
             pipeline_id="main",

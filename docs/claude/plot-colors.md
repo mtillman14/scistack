@@ -58,12 +58,12 @@ so they have two owners (CLAUDE.md NOTE 4). They share only the lookup keys
 | Concept | Owner |
 |---|---|
 | `[colors]` TOML grammar (read, shape-check, render, one-edit) | `scidb.colors` (`normalize`, `colors_in`, `project_colors`, `render_colors_table`, `with_color`, `validate`) |
-| What colour TEXT may be (`#rgb`, `#rrggbb`, `rrggbb`, `rgb(r,g,b)`, matplotlib names) → canonical `#rrggbb` | `scistackplot.colors.parse_color` |
-| Plot-over-project merge, with origins | `scistackplot.colors.merge` / `mark_colors` → `MarkColors` |
-| Factor → lookup keys (a grouping column `Sex` finds `Demographics.Sex` first) | `scistackplot.aliases.lookup_keys` (shared with the aliases) |
+| What colour TEXT may be (`#rgb`, `#rrggbb`, `rrggbb`, `rgb(r,g,b)`, matplotlib names) → canonical `#rrggbb` | `scistackplot.text.colors.parse_color` |
+| Plot-over-project merge, with origins | `scistackplot.text.colors.merge` / `mark_colors` → `MarkColors` |
+| Factor → lookup keys (a grouping column `Sex` finds `Demographics.Sex` first) | `scistackplot.text.aliases.lookup_keys` (shared with the aliases) |
 | The colour a mark is DRAWN in | `render.base.palette_for` / `sample_palette_for`, which read `resolved.colors` first |
 | What the GUI's Colours section lists | `render.base.colorable` → `layout.meta.colorable` |
-| Writing the project layer | `scistack_gui.config.set_project_color`: it canonicalises through `parse_color`, then calls `scidb.colors.with_color` and the whole-file writer |
+| Writing the project layer | `scistack_gui.project.config.set_project_color`: it canonicalises through `parse_color`, then calls `scidb.colors.with_color` and the whole-file writer |
 
 scidb cannot import scistackplot, so the project layer arrives as TEXT and is
 parsed at merge time. A bad value gets a WARN and is dropped, and the figure

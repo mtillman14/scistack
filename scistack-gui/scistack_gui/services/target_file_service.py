@@ -18,7 +18,7 @@ Two jobs:
    be written, whether it has changed underneath us, atomic replacement,
    re-scan verification, and rollback. The *grammar* -- locating the span
    and rendering the replacement -- belongs to ``scidb.source_edit``
-   (Python) and ``scistack_gui.matlab_parser`` (MATLAB).
+   (Python) and ``scistack_gui.matlab.parser`` (MATLAB).
 
 Writes are confined to the configured entities file (``variable_file`` for
 Python, ``[matlab] entities_file`` for MATLAB). A declaration living
@@ -37,7 +37,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from scistack_gui import history
+from scistack_gui.stores import history
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +197,7 @@ def get_or_create_target_file() -> "tuple[Path | None, str | None]":
     -- new declarations go to the TOML even in a project that has one (see
     ``config.SciStackConfig.variable_file``).
     """
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     if registry._config is not None and registry._config.entities_file is not None:
         return registry._config.entities_file, None
@@ -205,8 +205,8 @@ def get_or_create_target_file() -> "tuple[Path | None, str | None]":
         return registry._module_path, None
 
     if registry._config is not None:
-        from scistack_gui import config as config_mod
-        from scistack_gui.db import get_db_path
+        from scistack_gui.project import config as config_mod
+        from scistack_gui.runtime.db import get_db_path
         from scistack_gui.services.registry_reload_service import (
             reload_registries_from_disk,
         )
@@ -267,7 +267,7 @@ def record_source_hash(path: "Path | None") -> None:
 
 def declaration_source(kind: str, name: str) -> "str | None":
     """The source file the registry recorded for this entity, or ``None``."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     attr = _SOURCE_KIND_REGISTRIES.get(kind)
     if attr is None:
@@ -305,7 +305,7 @@ def _editable_targets() -> "tuple[Path | None, Path | None]":
     MATLAB projects with no editable surface at all, which is a worse
     outcome than the inconsistency.
     """
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     config = registry._config
     if config is None:
@@ -339,7 +339,7 @@ def _location_of(kind: str, name: str, source: str) -> dict:
         return payload
 
     if path.suffix == ".m":
-        from scistack_gui.matlab_parser import find_entities_binding
+        from scistack_gui.matlab.parser import find_entities_binding
 
         binding = find_entities_binding(path, name)
         if binding is not None:
@@ -489,7 +489,7 @@ def update_declaration(
         span = find_entry_span(original, section, name) if section else None
         replacement = toml_expr
     elif is_matlab:
-        from scistack_gui.matlab_parser import find_entities_binding
+        from scistack_gui.matlab.parser import find_entities_binding
 
         binding = find_entities_binding(path, name)
         span = binding.expr_span if binding is not None else None
@@ -734,10 +734,11 @@ def _record_current_path_input_value(name: str) -> None:
     Best-effort: no open database (bootstrap, tests) means nothing to
     record, never a failed edit.
     """
-    from scistack_gui import pipeline_store, registry
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.project import registry
 
     try:
-        from scistack_gui.db import get_db
+        from scistack_gui.runtime.db import get_db
 
         db = get_db()
     except Exception as e:
@@ -899,7 +900,8 @@ def _reload_after_write(path: "Path | None") -> "str | None":
     uses, which re-expands configured directories/globs), as do add/remove
     path and creating the entities file itself.
     """
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
 
     if path is None:
         return _refresh_registries()
@@ -926,7 +928,7 @@ def _refresh_registries() -> "str | None":
     """Re-scan after a write. Returns an error string, or ``None``.
 
     **Both** registries, Python then MATLAB -- the same order bootstrap and
-    ``api/project._refresh_registries`` use. The MATLAB half is not
+    ``project_service._refresh_registries`` use. The MATLAB half is not
     optional: ``registry.load_from_config`` CLEARS the shared
     ``_path_inputs``/``_parameters`` dicts and repopulates them from Python
     modules and the TOML entities file only, while every MATLAB-declared
@@ -958,7 +960,8 @@ def _verify_failure_reason(name: str) -> str:
     entry name and line), so anything mentioning this name is the real
     reason and belongs in front of the user.
     """
-    from scistack_gui import matlab_registry, registry
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
 
     reasons = [
         f"{err['source']}: {err['error']}"

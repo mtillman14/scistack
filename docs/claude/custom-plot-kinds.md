@@ -1,7 +1,7 @@
 # Custom plot kinds: a `plot_` function drawing in Plot Studio
 
 *Written 2026-10-14 with the feature (plan `.claude/plan-custom-plot-kinds.md`).
-Read this before touching `scistackplot/custom.py`,
+Read this before touching `scistackplot/export/custom.py`,
 `scistack_gui/services/custom_plot_service.py`, or anything that dispatches on
 `PlotKind.CUSTOM`.*
 

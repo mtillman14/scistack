@@ -33,8 +33,8 @@ from scistackplot import (
     plot_data,
     resolve,
 )
-from scistackplot.resolved import X, Y, Y_HIGH, Y_LOW
-from scistackplot.roles import complete_roles
+from scistackplot.reduce.resolved import X, Y, Y_HIGH, Y_LOW
+from scistackplot.model.roles import complete_roles
 
 SUBJECTS = ["01", "02", "10"]
 SESSIONS = ["pre", "post"]

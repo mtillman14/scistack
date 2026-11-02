@@ -19,7 +19,7 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.figsize import RATIO_TOLERANCE, preset
+from scistackplot.text.figsize import RATIO_TOLERANCE, preset
 
 
 def test_the_default_size_is_a_named_preset():

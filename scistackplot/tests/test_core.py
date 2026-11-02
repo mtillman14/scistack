@@ -177,7 +177,7 @@ def test_colour_is_one_grouping_layer(scalar_table):
 def test_1d_measure_groups_as_series(series_table):
     """Its x axis is the within-observation index; a grouped factor is one
     line per level rather than a tick."""
-    from scistackplot.roles import grouping_layers
+    from scistackplot.model.roles import grouping_layers
 
     spec = PlotSpec(measures=["Signal"], roles={"session": Role.GROUP})
     validate(spec, series_table)  # must not raise
@@ -187,7 +187,7 @@ def test_1d_measure_groups_as_series(series_table):
 
 def test_second_measure_owns_x(scalar_frame):
     from scistackplot import LongTable
-    from scistackplot.roles import grouping_layers
+    from scistackplot.model.roles import grouping_layers
 
     frame = scalar_frame.assign(Speed=1.0)
     table = LongTable.from_frame(
@@ -203,7 +203,7 @@ def test_second_measure_owns_x(scalar_frame):
 def test_an_unassigned_variant_factor_separates_figures(variant_table):
     """Nothing is ever pooled silently: a variant factor the spec never
     named fans out like any other unmentioned factor."""
-    from scistackplot.roles import complete_roles
+    from scistackplot.model.roles import complete_roles
 
     spec = PlotSpec(measures=["Peak"], roles={"subject": Role.GROUP})
     validate(spec, variant_table)  # does not raise
@@ -234,7 +234,7 @@ def test_a_named_variant_answers_the_factor(variant_table):
     """Selecting one variant is what pinning became: the factor collapses to a
     single level, so there is nothing left to separate."""
     from scistackplot import apply_variant_sets
-    from scistackplot.spec import VariantSet
+    from scistackplot.model.spec import VariantSet
 
     spec = PlotSpec(
         measures=["Peak"],
@@ -248,7 +248,7 @@ def test_a_named_variant_answers_the_factor(variant_table):
 
 
 def test_default_roles_make_a_variant_the_coloured_layer(variant_table):
-    from scistackplot.roles import default_assignment
+    from scistackplot.model.roles import default_assignment
 
     opened = default_assignment(variant_table, "Peak")
     assert opened.roles["bandpass.low_hz"] is Role.GROUP
@@ -257,7 +257,7 @@ def test_default_roles_make_a_variant_the_coloured_layer(variant_table):
 
 
 def test_default_roles_for_1d_group_nothing(series_table):
-    from scistackplot.roles import default_assignment
+    from scistackplot.model.roles import default_assignment
 
     assert default_assignment(series_table, "Signal").groups == []
 

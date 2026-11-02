@@ -8,7 +8,7 @@ import pytest
 
 from conftest import bar_spec
 from scistackplot import PlotKind
-from scistackplot.spec import Aggregation, ErrorBand, Statistic
+from scistackplot.model.spec import Aggregation, ErrorBand, Statistic
 from scistackstats import DV, Analysis, DescriptiveSpec, FormatSpec, SeedError, StatsSpec, StatsSpecError, seed_from_plot
 
 
@@ -84,7 +84,7 @@ def test_sem_seed_notes_journals_prefer_sd():
 
 
 def test_compared_figure_refuses_to_seed():
-    from scistackplot.spec import Comparison
+    from scistackplot.model.spec import Comparison
 
     plot = replace(bar_spec(), comparison=Comparison(layer="brand", level="Acme"))
     with pytest.raises(SeedError, match="reference"):
@@ -92,7 +92,7 @@ def test_compared_figure_refuses_to_seed():
 
 
 def test_an_inactive_comparison_does_not_block_seeding():
-    from scistackplot.spec import Comparison
+    from scistackplot.model.spec import Comparison
 
     plot = replace(bar_spec(), comparison=Comparison(layer="brand", level="Acme", active=False))
     assert seed_from_plot(plot).spec.design == plot

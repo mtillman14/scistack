@@ -73,7 +73,7 @@ def _fake_for_each(groups, *, raise_exc=None, seen=None):
 
 
 def _run(client, bp_node_id, monkeypatch, fake, run_options=None):
-    from scistack_gui.api import run as run_api
+    from scistack_gui.services import run_service as run_api
 
     emitted: list[dict] = []
     monkeypatch.setattr(run_api, "push_message", lambda msg: emitted.append(msg))
@@ -174,8 +174,8 @@ def test_collector_drops_no_data_and_renders_console():
 def test_python_export_emits_on_error_only_when_set(client, bp_node_id, value, emitted):
     """A node's on_error reaches the compiled pipeline AND the exported
     script (export matches the GUI run)."""
-    from scistack_gui import pipeline_store
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.code_export_service import export_pipeline_to_code
 
     db = get_db()
@@ -187,8 +187,8 @@ def test_python_export_emits_on_error_only_when_set(client, bp_node_id, value, e
 
 
 def test_compiled_pipeline_tags_steps_with_their_node(client, bp_node_id):
-    from scistack_gui import pipeline_store
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.runtime.db import get_db
     from scistack_gui.services.execution_service import (
         _discard_compiled,
         build_backend_pipeline,
@@ -213,7 +213,7 @@ def test_compiled_pipeline_tags_steps_with_their_node(client, bp_node_id):
 
 
 def test_matlab_run_option_pairs_emit_on_error_only_when_stop(caplog):
-    from scistack_gui.api.matlab_command import _format_run_option_pairs
+    from scistack_gui.services.matlab_command_format import _format_run_option_pairs
 
     assert "'on_error', 'stop'" in _format_run_option_pairs({"on_error": "stop"}, "f")
     assert _format_run_option_pairs({"on_error": "continue"}, "f") == ""
@@ -223,7 +223,7 @@ def test_matlab_run_option_pairs_emit_on_error_only_when_stop(caplog):
 
 
 def test_matlab_failure_marker_carries_the_tally_failures():
-    from scistack_gui.api.matlab_command import _run_marker_finish_lines
+    from scistack_gui.services.matlab_command_format import _run_marker_finish_lines
 
     lines = "\n".join(_run_marker_finish_lines("/tmp/x/study.duckdb", "r1", ok=False))
     assert "scidb.internal.iteration_tally('failures')" in lines
@@ -234,13 +234,13 @@ def test_done_marker_failures_reach_run_done_on_the_node(tmp_path, monkeypatch):
     jsonencode's 1-element-array-as-object quirk included)."""
     import time as _time
 
-    import scistack_gui.notify as notify_mod
+    import scistack_gui.runtime.notify as notify_mod
     from scidb import run_markers
-    from scistack_gui.matlab_run_watch import TrackedRun, _finish
+    from scistack_gui.matlab.run_watch import TrackedRun, _finish
 
     seen: list = []
     monkeypatch.setattr(notify_mod, "push_message", seen.append)
-    monkeypatch.setattr("scistack_gui.api.run._notify_records_changed", lambda: None)
+    monkeypatch.setattr("scistack_gui.services.run_service.notify_records_changed", lambda: None)
 
     markers = run_markers.marker_dir(tmp_path / "study.duckdb")
     markers.mkdir()

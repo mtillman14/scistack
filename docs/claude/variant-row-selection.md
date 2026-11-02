@@ -20,7 +20,7 @@ Until 2026-10-15 these answered differently. For an empty row 0, the figure
 used the source default ("current"), but the banner used *everything*. The
 result was a banner saying "CosmedData mixes v1 | v2" above a figure that
 drew v2 only. **One owner now answers the question:
-`scistackplot.variants.row_mask`**, built on `effective_selection` and
+`scistackplot.reduce.variants.row_mask`**, built on `effective_selection` and
 `frozen_mask`. Everything else consumes it.
 
 ## The rule, in order

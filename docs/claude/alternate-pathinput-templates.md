@@ -32,7 +32,7 @@ location, the newer save wins (same-invocation-latest).
 | Registry object → display dict `{template, root_folder, alternate_templates}` | `scistack_gui.domain.graph_builder.path_input_display` |
 | Display dict → the MATLAB command's PathInput dict | `matlab_command_service._declared_path_input` |
 | Which PathInputs a MATLAB command binds (history + edges) | `matlab_command_service.resolve_path_input_params` (single-node AND pipeline routes) |
-| Dict → MATLAB expression (`scifor.EachOf(...)` when alternates) | `api.matlab_command._format_path_input` |
+| Dict → MATLAB expression (`scifor.EachOf(...)` when alternates) | `matlab_command_format._format_path_input` |
 | Expanding the axis at run time | `+scidb/for_each.m` Step 0 (MATLAB), `scidb.foreach` (Python) |
 | Schema level of an EachOf of PathInputs (union of placeholders) | `scidb.schema_level` |
 

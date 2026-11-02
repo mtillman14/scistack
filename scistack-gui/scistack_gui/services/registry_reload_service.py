@@ -21,7 +21,7 @@ import logging
 import traceback
 from pathlib import Path
 
-from scistack_gui.config import SciStackConfig
+from scistack_gui.project.config import SciStackConfig
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 def reload_registries_from_disk(db_path: Path) -> SciStackConfig:
     """Re-parse scistack.toml from disk and reload both the Python and
     MATLAB registries against the fresh config. Returns the new config."""
-    from scistack_gui import matlab_registry, registry
-    from scistack_gui.config import load_config
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
+    from scistack_gui.project.config import load_config
 
     new_config = load_config(None, db_path)
     try:
@@ -61,8 +62,9 @@ def refresh_registries() -> dict:
     are registered into, so a Python-only reload would drop every MATLAB
     entity (see ``target_file_service._refresh_registries``).
     """
-    from scistack_gui import matlab_registry, registry
-    from scistack_gui.config import load_config
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
+    from scistack_gui.project.config import load_config
 
     # Several callers can trigger this; one frame of context says which.
     caller = "".join(traceback.format_stack(limit=3)[:-1]).strip().replace("\n", " | ")

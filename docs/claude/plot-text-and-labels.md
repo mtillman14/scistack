@@ -40,7 +40,7 @@ fixed `base` uses the same ratios, so it no longer reproduces matplotlib's
 (beta rule). A saved plot that still has them reverts them to defaults, and
 `restore_spec` adds a note for each.
 
-### One owner: `scistackplot/textsize.py`
+### One owner: `scistackplot/text/textsize.py`
 
 `resolve_sizes(style)` resolves every `None` to points. `rc_params(sizes)` is
 the one `rc_context` dict. Both `render_matplotlib` and the generated
@@ -62,7 +62,7 @@ it (`meta.label_fit`, the GUI notice names the element) and does not
 override you. The x tick pin has always worked this way. The rule now covers
 `groups` and `legend` too.
 
-### Automatic size (`base` unset): `scistackplot/autosize.py`
+### Automatic size (`base` unset): `scistackplot/text/autosize.py`
 
 *Rebuilt 2026-10-14 as ONE dial (plan `.claude/plan-dimension-text-sizing.md`,
 ADR D-2026-10-14-1, superseding the per-element search of D-2026-10-06-2).
@@ -274,9 +274,9 @@ WARNs about instead.
 |---|---|---|
 | The `[aliases]` grammar: read, render, validate | `scidb.aliases` | `ScidbSource`, the GUI config writer |
 | Which config file | `scidb.schema_order.locate_config` (reused) | `scidb.aliases.project_aliases` |
-| Writing `scistack.toml` | `scistack_gui.config._render_scistack_toml` (whole-file rewrite; carries `[aliases]` and `[schema_keys]`, `[aliases]` text from `scidb.aliases.render_aliases_table`) | Paths popup, `plot_project_alias_set` (via `scidb.aliases.with_alias`) |
-| Project aliases → plotting | `ScidbSource._aliases_source` → `LongTable.aliases_source` (a live READER, set once at build) → `LongTable.project_aliases()` | `scistackplot.aliases.display_text` |
-| Merge order + level/name text | `scistackplot.aliases` (`display_text` → `DisplayText`, on `ResolvedPlot.text`) | `reduce._build_figure`, both renderers, `x_axis_title` (and so codegen) |
+| Writing `scistack.toml` | `scistack_gui.project.config._render_scistack_toml` (whole-file rewrite; carries `[aliases]` and `[schema_keys]`, `[aliases]` text from `scidb.aliases.render_aliases_table`) | Paths popup, `plot_project_alias_set` (via `scidb.aliases.with_alias`) |
+| Project aliases → plotting | `ScidbSource._aliases_source` → `LongTable.aliases_source` (a live READER, set once at build) → `LongTable.project_aliases()` | `scistackplot.text.aliases.display_text` |
+| Merge order + level/name text | `scistackplot.text.aliases` (`display_text` → `DisplayText`, on `ResolvedPlot.text`) | `reduce._build_figure`, both renderers, `x_axis_title` (and so codegen) |
 | The labelable factors and levels shown in the GUI | `layout.meta.labelable` (Python) | the Plot Studio Labels section |
 
 `scistackplot` never reads a config file itself; it must work without scidb.
@@ -372,7 +372,7 @@ generated code is exactly what it was.
 
 Below Figure size. **Title / X label / Y label** are the `style` fields; a
 blank box deletes the key. Then one block per entry of
-`layout.meta.labelable`, which is Python's list (`scistackplot.aliases.labelable`):
+`layout.meta.labelable`, which is Python's list (`scistackplot.text.aliases.labelable`):
 the measure, then every factor the figure draws as text, each with the `key`
 an alias is written under (a grouping column's `Var.Column`, the key the
 lookup reads first).
@@ -383,7 +383,7 @@ text. "↑ project" writes the plot's value to `scistack.toml` and clears the
 plot's copy; "✕ project" removes the project's.
 
 The write path: `plot_project_alias_set` → `plot_service.set_project_alias`
-→ `scistack_gui.config.set_project_alias`, which uses the one whole-file
+→ `scistack_gui.project.config.set_project_alias`, which uses the one whole-file
 writer and `scidb.aliases.with_alias` / `render_aliases_table`, then
 forgets the mtime-cached parse. A pyproject.toml project and a project with
 no config are refused as `{ok: false, error}` answers. The panel then

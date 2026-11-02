@@ -20,7 +20,7 @@ connection open).
 
 ## Rule 1 — the GUI's lock is not permanently held
 
-`scistack_gui/db.py` refcounts the connection and closes it when the count
+`scistack_gui/runtime/db.py` refcounts the connection and closes it when the count
 reaches zero. The JSON-RPC server acquires per request
 (`server.py::_handle_request`) and releases after, so between requests the
 file is free for MATLAB.

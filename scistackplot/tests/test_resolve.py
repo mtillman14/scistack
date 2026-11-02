@@ -14,9 +14,9 @@ from scistackplot import (
     Role,
     resolve,
 )
-from scistackplot.resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW
-from scistackplot.spec import Aggregation
-from scistackplot.xaxis import leaf_key
+from scistackplot.reduce.resolved import COLOR, SERIES, X, Y, Y_HIGH, Y_LOW
+from scistackplot.model.spec import Aggregation
+from scistackplot.text.xaxis import leaf_key
 
 
 # --- fan-out ---------------------------------------------------------------
@@ -309,7 +309,7 @@ def test_variants_cannot_be_collapsed(variant_table):
 
 
 def test_one_named_variant_keeps_only_its_rows(variant_table):
-    from scistackplot.spec import VariantSet
+    from scistackplot.model.spec import VariantSet
 
     spec = PlotSpec(
         measures=["Peak"],
@@ -325,7 +325,7 @@ def test_two_named_variants_become_one_coloured_factor(variant_table):
     """The comparison case: both variants in one figure, told apart by name
     rather than overplotted."""
     from scistackplot import VARIANT_FACTOR
-    from scistackplot.spec import VariantSet
+    from scistackplot.model.spec import VariantSet
 
     spec = PlotSpec(
         measures=["Peak"],

@@ -6,7 +6,7 @@ import pytest
 
 from conftest import BRANDS, bar_spec, popcorn_frame, popcorn_table
 from scistackplot import LongTable, Role
-from scistackplot.spec import Aggregation
+from scistackplot.model.spec import Aggregation
 from scistackstats import (
     DV,
     Analysis,

@@ -24,9 +24,9 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.bins import RUG_ROW_HEIGHT, RUG_SHADES, RUG_SLOTS, RUG_SOURCE
-from scistackplot.reduce import clear_plan_cache
-from scistackplot.resolved import COUNT, RUG_ROW, RUG_SHADE, X, Y
+from scistackplot.reduce.bins import RUG_ROW_HEIGHT, RUG_SHADES, RUG_SLOTS, RUG_SOURCE
+from scistackplot.reduce.resolve import clear_plan_cache
+from scistackplot.reduce.resolved import COUNT, RUG_ROW, RUG_SHADE, X, Y
 
 
 @pytest.fixture(autouse=True)

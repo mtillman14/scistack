@@ -20,7 +20,7 @@ long been matched between them (see `plot-text-and-labels.md`,
 | zero line | none | dark |
 | error bars | black, 1.5 pt, caps 3 pt | `#444`, 2 px, caps 4 px |
 
-## One owner: `scistackplot/paper.py`
+## One owner: `scistackplot/text/paper.py`
 
 `PAPER` (a frozen `PaperStyle`) holds the values, which ARE matplotlib's
 defaults. `test_paper_is_matplotlibs_own_default_look` pins that, so

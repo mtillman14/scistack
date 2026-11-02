@@ -24,7 +24,7 @@ from scistackplot import (
     generate_plot_function,
     resolve,
 )
-from scistackplot.resolved import X, Y
+from scistackplot.reduce.resolved import X, Y
 
 from test_categorical import _bars, _spec, _table
 
@@ -115,7 +115,7 @@ def test_the_exported_heatmap_is_the_previewed_matrix():
 
 
 def test_a_record_filter_on_the_text_is_exported():
-    from scistackplot.spec import Filter
+    from scistackplot.model.spec import Filter
 
     spec = replace(_spec(), filters=[Filter(column="Outcome", include=["fall"])])
     source, figure = _run(spec, _table())

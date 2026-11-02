@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
 
-import scistackplot.reduce as reduce_mod  # noqa: E402
+import scistackplot.reduce.resolve as reduce_mod  # noqa: E402
 from scistackplot import (  # noqa: E402
     LongTable,
     PlotKind,
@@ -30,7 +30,7 @@ from scistackplot import (  # noqa: E402
     resolve,
     resolve_one,
 )
-from scistackplot.diffbars import DifferenceBar, figure_has_bars, range_key  # noqa: E402
+from scistackplot.reduce.diffbars import DifferenceBar, figure_has_bars, range_key  # noqa: E402
 from scistackplot.render.mpl import DIFF_BARS_ATTR  # noqa: E402
 from scistackplot.render.mpl import render as render_mpl  # noqa: E402
 

@@ -19,9 +19,9 @@ import pytest
 pytest.importorskip("scistack_gui")
 
 import scidb  # noqa: E402
-from scistack_gui.api import run as run_api  # noqa: E402
-from scistack_gui.api import ws as ws_mod  # noqa: E402
-from scistack_gui import pipeline_store  # noqa: E402
+from scistack_gui.services import run_service as run_api  # noqa: E402
+from scistack_gui.runtime import ws_hub as ws_mod  # noqa: E402
+from scistack_gui.stores import pipeline_store  # noqa: E402
 
 from conftest import CYCLES, DATA_ROOT, PIPELINE_DIR, SPEEDS, TRIALS  # noqa: E402
 from test_edge_schema import ONE_SESSION, ONE_SUBJECT, load_levels, run_normalized_knee  # noqa: E402
@@ -61,7 +61,7 @@ def _rewrite(path, header, row):
 def registered(pipeline):
     """The GUI's function registry, filled the way server startup fills it —
     the run path resolves a function by NAME through it."""
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     registry.register_module(pipeline, module_path=PIPELINE_DIR / "pipeline.py")
     return registry
@@ -76,6 +76,7 @@ def seeded(scratch_db, pipeline, as_gui_db, root, registered):
     t = scidb.PathInput(
         "{subject}/{session}/t{trial}/waveforms/{subject}_{session}_{speed}_t{trial}_c{cycle}.csv",
         root_folder=str(root),
+        name="WAVEFORM_FILE",
     )
     scidb.for_each(
         pipeline.load_cycle_waveform, {"csv_file_path": t}, [pipeline.CycleWaveform],
@@ -91,6 +92,24 @@ def seeded(scratch_db, pipeline, as_gui_db, root, registered):
         as_table=["cycles"], subject=ONE_SUBJECT, session=ONE_SESSION, speed=[], trial=[],
     )
     return scratch_db
+
+
+def _fn_node_id(db, function_name: str) -> str:
+    """The canvas id of *function_name*'s one function node.
+
+    Node ids are allocated, not derived (2026-09-22,
+    ``docs/claude/node-identity.md``), so a test that saves a node config
+    must use the id the graph build gives the node, as the panel does.
+    """
+    from scistack_gui.services.pipeline_service import get_pipeline_graph
+
+    graph = get_pipeline_graph(db)
+    ids = [
+        n["id"] for n in graph["nodes"]
+        if n["type"] == "functionNode" and n["data"].get("label") == function_name
+    ]
+    assert len(ids) == 1, f"{function_name}: expected one canvas node, got {ids}"
+    return ids[0]
 
 
 def _run(db, function_name, pushes, *, expect_success: bool = True, **kwargs) -> dict:
@@ -235,29 +254,34 @@ def test_a_where_filter_runs_only_the_matching_records(seeded, pipeline, pushes,
 
 def test_a_column_selection_in_the_node_config_reaches_the_run(seeded, pipeline, pushes):
     """The panel stores ``columnSelections`` per node; the run must hand the
-    function only those columns. ``trial_mean_symmetry`` averages whatever
-    joint columns it is given, so a two-column selection is visible in the
-    output's columns."""
+    function only those columns.
+
+    ``seeded`` already saved ``TrialMeanSymmetry`` from all three joints, and
+    a variable keeps the columns of its first save. So a run that really
+    received only ankle and knee computes every combination and is then
+    REFUSED at save time, naming the missing ``hip`` — which proves the
+    selection reached the function, and that the stored records were left
+    as they were.
+    """
     pipeline_store.update_node_config(
-        seeded, "fn__trial_mean_symmetry__test",
+        seeded, _fn_node_id(seeded, "trial_mean_symmetry"),
         {"columnSelections": {"cycles": {"columns": ["ankle", "knee"], "iterate": False}}},
     )
-    done = _run(seeded, "trial_mean_symmetry", pushes, run_options={"as_table": True},
+    done = _run(seeded, "trial_mean_symmetry", pushes, expect_success=False,
+                run_options={"as_table": True},
                 schema_level=["subject", "session", "speed", "trial"])
-    assert done["success"] is True, done
-    latest = pipeline.TrialMeanSymmetry.load(as_df=True)
-    columns = set()
-    for data in latest["data"]:
-        columns |= set(data.columns if isinstance(data, pd.DataFrame) else data.keys())
-    selection_lines = [
+    output = "\n".join(
         m.get("text", "") for m in pushes
-        if m.get("type") == "run_output" and "column" in m.get("text", "").lower()
-    ]
-    assert "hip" not in columns, (
-        f"columns={sorted(columns)}; the node config's selection did not reach the run.\n"
-        f"column-selection log lines: {selection_lines or '(none — the config was never read)'}"
+        if m.get("type") == "run_output" and m.get("run_id") == done.get("run_id")
     )
-    assert {"ankle", "knee"} <= columns
+    assert done["success"] is False, done
+    assert done.get("completed_combos") and not done.get("failed_combos"), done
+    assert "ColumnSetChangedError" in output and "missing (hip)" in output, output[-2500:]
+
+    stored = set()
+    for data in pipeline.TrialMeanSymmetry.load(as_df=True)["data"]:
+        stored |= set(data.columns if isinstance(data, pd.DataFrame) else data.keys())
+    assert {"ankle", "hip", "knee"} <= stored, "the refused save must leave the records as they were"
 
 
 def test_a_for_columns_selection_in_the_node_config_runs_per_column(seeded, pipeline, pushes):
@@ -420,7 +444,7 @@ def test_a_dataset_level_step_reruns_once_from_the_canvas(seeded, pipeline, push
 
     import numpy as np
 
-    from scistack_gui import registry as _registry
+    from scistack_gui.project import registry as _registry
 
     class DatasetNote(scidb.BaseVariable):
         pass
@@ -443,4 +467,6 @@ def test_a_dataset_level_step_reruns_once_from_the_canvas(seeded, pipeline, push
         done = _run(seeded, "note_length", pushes)
     assert done["success"] is True, done
     assert _count(NoteLength) == before, "a faithful re-run adds nothing"
-    assert "iterating nothing: one call (" in caplog.text, caplog.text
+    # SchemaLevel.describe() of the nothing level ("nothing: one call over
+    # the whole dataset"), as execution_service's [schema-level] line logs it.
+    assert "-> iterating nothing: one call" in caplog.text, caplog.text

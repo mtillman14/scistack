@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 from scidb import BaseVariable
 
-import scistack_gui.registry as _registry
+import scistack_gui.project.registry as _registry
 
 
 @pytest.fixture(autouse=True)
@@ -44,7 +44,7 @@ class TestPutLayoutAcceptsUndeclaredVariables:
     """
 
     def test_an_undeclared_variable_node_is_still_written(self, monkeypatch):
-        from scistack_gui import layout as layout_store
+        from scistack_gui.stores import layout as layout_store
         from scistack_gui.services import layout_service
 
         written = {}
@@ -83,7 +83,7 @@ class TestUnresolvableTypesAreSurfacedNotBlocked:
     """
 
     def test_the_warning_names_the_type_and_the_fix(self):
-        from scistack_gui.api.matlab_command import unresolvable_var_type_warning
+        from scistack_gui.services.matlab_command_format import unresolvable_var_type_warning
 
         warning = unresolvable_var_type_warning(["Raw_EMG"])
 
@@ -93,22 +93,22 @@ class TestUnresolvableTypesAreSurfacedNotBlocked:
         assert "declare" in warning.lower()
 
     def test_no_warning_when_every_type_resolves(self, monkeypatch):
-        from scistack_gui import matlab_registry
-        from scistack_gui.api.matlab_command import unresolvable_var_type_warning
+        from scistack_gui.matlab import registry as matlab_registry
+        from scistack_gui.services.matlab_command_format import unresolvable_var_type_warning
 
         monkeypatch.setitem(matlab_registry._matlab_variables, "RawEMG", None)
 
         assert unresolvable_var_type_warning(["RawEMG"]) is None
 
     def test_empty_type_list_is_fine(self):
-        from scistack_gui.api.matlab_command import unresolvable_var_type_warning
+        from scistack_gui.services.matlab_command_format import unresolvable_var_type_warning
 
         assert unresolvable_var_type_warning([]) is None
         assert unresolvable_var_type_warning([None, ""]) is None
 
     def test_generation_annotates_the_script_and_never_raises(self):
         """The copy-command path must keep producing an inspectable script."""
-        from scistack_gui.api.matlab_command import _unresolvable_var_type_lines
+        from scistack_gui.services.matlab_command_format import _unresolvable_var_type_lines
 
         lines = _unresolvable_var_type_lines(["Raw_EMG"])
 
@@ -125,7 +125,7 @@ class TestUnresolvableTypesAreSurfacedNotBlocked:
             matlab_command_service, "_fmt", lambda **kwargs: "% script", raising=False
         )
 
-        from scistack_gui.api.matlab_command import unresolvable_var_type_warning
+        from scistack_gui.services.matlab_command_format import unresolvable_var_type_warning
 
         warning = unresolvable_var_type_warning({"Raw_EMG"})
         assert warning is not None and "Raw_EMG" in warning

@@ -43,8 +43,8 @@ FORMAT = 1
 def capture_shapes(db) -> dict:
     """``{"format", "pipelines": {pipeline_id: {"name", "shape", "sources"}}}``
     for every visible pipeline of the open project."""
-    from scistack_gui import layout as layout_store
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import layout as layout_store
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.domain.canvas_shape import canvas_shape, canvas_sources
     from scistack_gui.services.pipeline_service import get_pipeline_graph
 
@@ -70,7 +70,7 @@ def non_cartesian(db) -> list[dict]:
     GUI's PathInput names and claims (``services.adoption.gui_recorded_wirings``)."""
     from scidb.wirings import non_cartesian_report
 
-    from scistack_gui.api.pipeline import build_aggregate
+    from scistack_gui.services.graph_service import build_aggregate
     from scistack_gui.services.adoption import gui_recorded_wirings
 
     scidb_agg = db.get_aggregated_variants()

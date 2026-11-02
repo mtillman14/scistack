@@ -105,7 +105,7 @@ class SpecRequest(BaseModel):
     #: Re-render the last resolve of this exact request (a pane resize).
     reuse_resolved: bool = False
     #: Bars derived by a layer above (StatStudio test brackets), merged for
-    #: this request only through `scistackplot.diffbars.with_derived_bars`.
+    #: this request only through `scistackplot.reduce.diffbars.with_derived_bars`.
     derived_bars: list[dict] | None = None
 
 
@@ -264,7 +264,7 @@ class PresetListRequest(BaseModel):
 
 class PresetSaveRequest(BaseModel):
     name: str
-    #: The panel's full spec; the data is taken out by scistackplot.presets.
+    #: The panel's full spec; the data is taken out by scistackplot.model.presets.
     spec: dict
     #: The panel's raw shape, recorded as "made on ... (shape)".
     made_on_shape: str | None = None
@@ -404,14 +404,14 @@ def _location_tree(db, req: LocationTreeRequest) -> dict:
 def _with_derived(spec: dict, derived: list[dict] | None) -> dict:
     """The request's spec with derived bars joined, for this request only.
 
-    The merge is `scistackplot.diffbars.with_derived_bars` (manual bars win a
+    The merge is `scistackplot.reduce.diffbars.with_derived_bars` (manual bars win a
     duplicate pair). The panel keeps saving its own spec, so derived bars are
     never stored. Resolve, export and save all go through here, so the
     exported figure draws the brackets the preview drew.
     """
     if not derived:
         return spec
-    from scistackplot.diffbars import DifferenceBar, with_derived_bars
+    from scistackplot.reduce.diffbars import DifferenceBar, with_derived_bars
 
     from scistack_gui.services.plot_service import _spec_from_payload
 

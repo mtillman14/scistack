@@ -39,11 +39,15 @@ from scistackplot import (  # noqa: E402
     resolve,
     resolve_one,
 )
-from scistackplot.resolved import COLOR, X, Y  # noqa: E402
-from scistackplot.roles import complete_roles  # noqa: E402
+from scistackplot.reduce.resolved import COLOR, X, Y  # noqa: E402
+from scistackplot.model.roles import complete_roles  # noqa: E402
 from scistackplotdb import ScidbSource  # noqa: E402
 
-from conftest import JOINTS, N_CYCLES, SESSIONS, SUBJECTS, TRIALS  # noqa: E402
+from conftest import JOINTS, N_CYCLES, SESSIONS, SUBJECTS, TRIALS, failure_reasons  # noqa: E402
+
+#: Every built-in kind. CUSTOM is the user's own plot_ function: never a
+#: capability tile, and covered by scistackplot's custom-kind tests.
+BUILT_IN_KINDS = [k for k in PlotKind if k is not PlotKind.CUSTOM]
 
 matplotlib = pytest.importorskip("matplotlib")
 matplotlib.use("Agg", force=True)
@@ -173,7 +177,7 @@ def _assert_csv_matches_marks(spec: PlotSpec, table, figures) -> None:
 # --- every kind, both renderers ---------------------------------------------------
 
 
-@pytest.mark.parametrize("kind", list(PlotKind), ids=[k.value for k in PlotKind])
+@pytest.mark.parametrize("kind", BUILT_IN_KINDS, ids=[k.value for k in BUILT_IN_KINDS])
 def test_every_scalar_kind_resolves_renders_and_matches_its_csv(symmetry, kind):
     spec = _for_kind(_scalar_spec(symmetry), symmetry, kind)
     figures = resolve(spec, symmetry)
@@ -182,7 +186,7 @@ def test_every_scalar_kind_resolves_renders_and_matches_its_csv(symmetry, kind):
     _assert_csv_matches_marks(spec, symmetry, figures)
 
 
-@pytest.mark.parametrize("kind", list(PlotKind), ids=[k.value for k in PlotKind])
+@pytest.mark.parametrize("kind", BUILT_IN_KINDS, ids=[k.value for k in BUILT_IN_KINDS])
 def test_every_1d_kind_resolves_and_renders(waveform, kind):
     """Line and band draw the curves; a scalar kind reduces each curve with
     the cell statistic first and then draws like any scalar plot."""
@@ -277,7 +281,7 @@ def test_the_exported_endpoint_fans_out_like_the_preview(symmetry, pipeline, exa
     def capturing_for_each(*args, **kwargs):
         def progress(event):
             if event.get("event") == "summary":
-                failures.update(event.get("failure_reasons") or {})
+                failures.update(failure_reasons(event))
         kwargs.setdefault("save", False)  # the file is the test; keep the db clean
         return for_each(*args, _progress_fn=progress, **kwargs)
 
@@ -381,7 +385,7 @@ def test_the_gui_data_save_job_writes_the_trial_depth(example_db, symmetry, tmp_
     """The path the panel's button takes: a background job, three messages,
     and the file — here at depth="trial", wide."""
     pytest.importorskip("scistack_gui")
-    from scistack_gui.api import ws as ws_mod
+    from scistack_gui.runtime import ws_hub as ws_mod
     from scistack_gui.services import plot_service
 
     plot_service.invalidate()

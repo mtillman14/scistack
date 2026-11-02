@@ -1,5 +1,5 @@
 """
-Tests for scistack_gui.pipeline_discovery — Direction 1 of the source<->GUI
+Tests for scistack_gui.project.pipeline_discovery — Direction 1 of the source<->GUI
 pipeline translation (source -> GUI import). See
 docs/claude/code-discovery-categories.md and
 .claude/plan-pathinput-sweep-submodule-source-of-truth.md.
@@ -8,8 +8,8 @@ docs/claude/code-discovery-categories.md and
 from __future__ import annotations
 
 from scidb import BaseVariable, Pipeline
-from scistack_gui import pipeline_store as ps
-from scistack_gui.pipeline_discovery import discover_and_seed_pipelines
+from scistack_gui.stores import pipeline_store as ps
+from scistack_gui.project.pipeline_discovery import discover_and_seed_pipelines
 
 
 class RawA(BaseVariable):
@@ -206,7 +206,7 @@ class TestDiscoverAndSeedPipelines:
 
     def test_named_pathinput_wires_by_registered_name_not_param(self, populated_db):
         from scidb import PathInput
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         db = populated_db
         raw_emg = PathInput("{subject}/{trial}.mat", name="{subject}/{trial}.mat")
@@ -244,7 +244,7 @@ class TestDiscoverAndSeedPipelines:
 
     def test_named_sweep_wires_by_registered_name(self, populated_db):
         from scidb import Parameter
-        from scistack_gui import registry
+        from scistack_gui.project import registry
 
         db = populated_db
         window = Parameter(10, 20, 30)

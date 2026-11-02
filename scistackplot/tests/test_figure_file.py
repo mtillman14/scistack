@@ -22,7 +22,7 @@ import matplotlib.image as mpimg  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
 from scistackplot import canvas_overflow, render_matplotlib, resolve, write_figure  # noqa: E402
-from scistackplot.figure_file import OVERFLOW_TOLERANCE_IN  # noqa: E402
+from scistackplot.export.figure_file import OVERFLOW_TOLERANCE_IN  # noqa: E402
 from test_mpl_label_fit import _graph1, _graph2, gait_table  # noqa: E402,F401
 
 DPI = 100

@@ -166,7 +166,7 @@ scidb's forward `to_call_id` is correct rather than an oversight.
 
 This is the **only** place in scistack-gui where a live `scifor.PathInput`
 or a fanned-out `Parameter` is ever constructed for execution. Both the
-per-node Run path (`api/run.py`) and the compiled-pipeline path
+per-node Run path (`services/run_service.py`) and the compiled-pipeline path
 (`build_backend_pipeline`) call it, after a long period in which they
 carried two independently-drifting copies.
 

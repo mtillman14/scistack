@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import scistack_gui.db as _gui_db
+import scistack_gui.runtime.db as _gui_db
 from conftest import FilteredSignal, RawSignal, bandpass_filter
 from fastapi.testclient import TestClient
 from scidb.database import _local
-from scistack_gui import registry as _registry
+from scistack_gui.project import registry as _registry
 from scistack_gui.app import create_app
 from scistack_gui.domain.graph_builder import edge_dedup_key, wiring_id
 from scistack_gui.ids import fn_node_id
@@ -58,7 +58,7 @@ def two_call_sites_client(tmp_path):
     _gui_db._db_path = tmp_path / "twosite.duckdb"
     _registry._functions["bandpass_filter"] = bandpass_filter
 
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     pipeline_store._ensure_tables(db)
 
@@ -75,8 +75,8 @@ def _bp_group_node_id(db=None) -> str:
     node — but since 2026-09-22 that node's id is ALLOCATED, not derived from
     the wiring, so it has to be looked up (``docs/claude/node-identity.md``).
     """
-    from scistack_gui import node_wiring
-    from scistack_gui.db import get_db
+    from scistack_gui.stores import node_wiring
+    from scistack_gui.runtime.db import get_db
 
     db = db or get_db()
     wid = wiring_id("bandpass_filter", {"signal": "RawSignal"}, {"FilteredSignal"}, {})
@@ -187,7 +187,7 @@ def test_partial_run_reddens_only_its_own_variant_chip(tmp_path):
     _gui_db._db = db
     _gui_db._db_path = tmp_path / "split.duckdb"
     _registry._functions["bandpass_filter"] = bandpass_filter
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     pipeline_store._ensure_tables(db)
 

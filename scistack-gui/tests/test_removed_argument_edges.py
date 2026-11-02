@@ -34,10 +34,10 @@ def _edge(eid, target_handle, target=FN_NODE, source="pathInput__data_path"):
 @pytest.fixture
 def signature(monkeypatch):
     """Set the function's signature as the one reader returns it."""
-    from scistack_gui.api import pipeline as pipeline_api
+    from scistack_gui.services import graph_service as pipeline_api
 
     def set_(arguments):
-        monkeypatch.setattr(pipeline_api, "_fn_arguments", lambda n: arguments)
+        monkeypatch.setattr(pipeline_api, "fn_arguments", lambda n: arguments)
 
     return set_
 
@@ -86,7 +86,7 @@ def test_output_edges_and_other_nodes_are_not_judged(signature):
 
 
 def test_signature_is_read_once_per_pass(monkeypatch):
-    from scistack_gui.api import pipeline as pipeline_api
+    from scistack_gui.services import graph_service as pipeline_api
 
     calls = []
 
@@ -94,7 +94,7 @@ def test_signature_is_read_once_per_pass(monkeypatch):
         calls.append(name)
         return [Argument("data_path", PK)]
 
-    monkeypatch.setattr(pipeline_api, "_fn_arguments", reader)
+    monkeypatch.setattr(pipeline_api, "fn_arguments", reader)
     memo: dict = {}
     for i in range(3):
         missing_port(_edge(f"e{i}", "in__df_in"), MANUAL_NODES, memo)

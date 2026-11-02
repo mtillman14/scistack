@@ -5,7 +5,7 @@
 > Stage 1b). The pattern below still holds for the remaining check,
 > `check_windows_config_paths`, and for any new one.
 
-Design rationale for `scistack_gui/startup.py` and the startup-error
+Design rationale for `scistack_gui/project/startup.py` and the startup-error
 delivery flow. Read this before adding any new project-open check (lockfile
 staleness is the first but won't be the last) so new checks follow the same
 pattern and the frontend behaviour stays consistent.
@@ -49,7 +49,7 @@ directly from the server's startup sequence. That was removed because:
   the React app hasn't finished mounting, the message is **dropped**.
   There's no replay.
 - In the FastAPI mode, startup runs before uvicorn accepts connections,
-  which means the WebSocket queue has no consumer — `ws.push_message`
+  which means the WebSocket queue has no consumer — `ws_hub.push_message`
   silently drops the message when `_loop is None`.
 - Adding a queue/replay layer to either path is code we'd have to maintain
   forever for a feature that only needs to deliver once, on mount.
@@ -63,7 +63,7 @@ already calls on mount.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                      scistack_gui.startup                           │
+│                      scistack_gui.project.startup                           │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │  _startup_errors: list[StartupError]   (module-level state)   │  │
 │  └───────────────────────────────────────────────────────────────┘  │
@@ -104,7 +104,7 @@ already calls on mount.
                                       └───────────────────────────────┘
 ```
 
-### `scistack_gui/startup.py` — the module
+### `scistack_gui/project/startup.py` — the module
 
 Holds three things:
 
@@ -197,7 +197,7 @@ The dialog has:
 To add another project-open diagnostic (e.g. "verify the database schema
 matches the code", or "warn if `.duckdb` is on a network mount"):
 
-1. **Add a function to `scistack_gui/startup.py`** with the same shape as
+1. **Add a function to `scistack_gui/project/startup.py`** with the same shape as
    `check_lockfile_staleness`:
    ```python
    def check_schema_drift(project_root: Path) -> Optional[StartupError]:
@@ -243,7 +243,7 @@ Two things worth noting in `tests/test_startup.py`:
    call time, so `monkeypatch.setattr("scistack.uv_wrapper.sync", fake)`
    is picked up on the next call. If the imports were at module level
    this wouldn't work without `monkeypatch.setattr` against the
-   `scistack_gui.startup` module itself.
+   `scistack_gui.project.startup` module itself.
 
 ## What this pattern deliberately doesn't do
 
@@ -268,7 +268,7 @@ Two things worth noting in `tests/test_startup.py`:
   `sync` primitives this pattern orchestrates. Lives in the scistack layer
   per CLAUDE.md's "solutions should live in the corresponding scistack
   layer" rule.
-- `scistack-gui/scistack_gui/startup.py` — this module.
+- `scistack-gui/scistack_gui/project/startup.py` — this module.
 - `scistack-gui/scistack_gui/__main__.py` — FastAPI CLI, calls
   `check_lockfile_staleness` before `uvicorn.run`.
 - `scistack-gui/scistack_gui/server.py` — JSON-RPC server, calls

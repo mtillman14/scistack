@@ -1,16 +1,16 @@
 """
-Tests for scistack_gui.layout — the node-position / manual-node persistence layer.
+Tests for scistack_gui.stores.layout — the node-position / manual-node persistence layer.
 
-All tests use the `layout_path` fixture, which points scistack_gui.db._db_path
+All tests use the `layout_path` fixture, which points scistack_gui.runtime.db._db_path
 at a temp database. Positions, the palette and notes are tables in it (no
 sidecar file since plan-canvas-as-document Stage 0a).
 """
 
 import json
 
-from scistack_gui import layout as layout_store
-from scistack_gui import pipeline_store
-from scistack_gui.db import get_db
+from scistack_gui.stores import layout as layout_store
+from scistack_gui.stores import pipeline_store
+from scistack_gui.runtime.db import get_db
 
 # ---------------------------------------------------------------------------
 # read_layout — default state
@@ -46,7 +46,7 @@ class TestReadLayout:
 
     def test_positions_and_notes_are_undoable_tables(self, layout_path):
         """Every layout table is tracked for undo, like any GUI table."""
-        from scistack_gui import history
+        from scistack_gui.stores import history
 
         tracked = set(history.tracked_tables())
         assert set(layout_store.UNDOABLE_TABLES) <= tracked

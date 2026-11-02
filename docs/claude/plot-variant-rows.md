@@ -87,7 +87,7 @@ Translating a `scidb.Variant` into these keys is therefore
 
 A code axis may be selected as `"latest"` rather than a named ordinal, and it
 resolves **against the data**, in one of two ways
-(`scistackplot.variants.resolve_selection`):
+(`scistackplot.reduce.variants.resolve_selection`):
 
 | situation | resolves to | why |
 |---|---|---|
@@ -461,13 +461,13 @@ beats one that guesses.
 | which axes a variable has, and their origin | `scistackplotdb.load.attach_variants` → `VariableFrame.variant_axes` → `FactorInfo.origin` | Both halves (`Code:<fn>`, `fn.param`) are in hand there. A GUI splitting those strings would re-implement scidb's namespacing one layer away, and break first when it changes. |
 | axes + versions for the popup | `ScidbSource.variant_graph` | Reuses the source's frame cache; opening a dialog must not re-read the variable. |
 | `scidb.Variant` → selection | `scistackplotdb.variant_set` | Needs both vocabularies; scistackplot must stay scidb-free. |
-| what a selection keeps | `scistackplot.variants.variant_set_mask` | One definition, so the GUI's "4 of 24" and the renderer's rows cannot disagree. |
-| the rows' data model + counts | `scistackplot.capability.variant_summary` | Adds `sets` (label, auto label, **row_count**) beside the axes. `row_count == 0` is the number that catches real mistakes, and is what gates `available`. |
-| what a table OPENS on | `scistackplot.variants.default_selection` | One rule for the panel's first figure and for a row added later, or the two disagree about what "one variant" means. Not in the GUI: a library caller must open on the same figure (CLAUDE.md NOTE 3). |
+| what a selection keeps | `scistackplot.reduce.variants.variant_set_mask` | One definition, so the GUI's "4 of 24" and the renderer's rows cannot disagree. |
+| the rows' data model + counts | `scistackplot.model.capability.variant_summary` | Adds `sets` (label, auto label, **row_count**) beside the axes. `row_count == 0` is the number that catches real mistakes, and is what gates `available`. |
+| what a table OPENS on | `scistackplot.reduce.variants.default_selection` | One rule for the panel's first figure and for a row added later, or the two disagree about what "one variant" means. Not in the GUI: a library caller must open on the same figure (CLAUDE.md NOTE 3). |
 | which node supplies an axis | `scistack_gui.services.plot_service.axis_node_bindings` | Needs the canvas graph, so it cannot live in scistackplot — but it is still a rule about scidb's namespacing, and a rule in TSX has no test. See `variant-axis-node-binding.md`. |
 | what can be plotted alongside, **and why not** | `ScidbSource.stackable_report` | The refusals were always computed and only logged. The picker draws every variable node, so one it cannot offer has to say why in place. |
-| one span as a sentence | `scistackplot.variants.describe_span` (+ its TS mirror) | The log, the row tag and the figure banner must not word the same span three ways. |
-| what a row selects (effective selection, freeze) | `scistackplot.variants.effective_selection` / `row_mask` | The figure, the row counts, the span banner, `_answered` and the export (`export_selection`) — two readers once disagreed about an empty row 0 (2026-10-15). |
+| one span as a sentence | `scistackplot.reduce.variants.describe_span` (+ its TS mirror) | The log, the row tag and the figure banner must not word the same span three ways. |
+| what a row selects (effective selection, freeze) | `scistackplot.reduce.variants.effective_selection` / `row_mask` | The figure, the row counts, the span banner, `_answered` and the export (`export_selection`) — two readers once disagreed about an empty row 0 (2026-10-15). |
 
 ## 7. Known limits
 

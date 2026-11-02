@@ -31,10 +31,10 @@ from scistackplot import (  # noqa: E402
     render_plotly,
     resolve,
 )
-from scistackplot.resolved import SAMPLE_LINE, SERIES, X  # noqa: E402
-from scistackplot.roles import complete_roles, overlay_join, overlay_unavailable  # noqa: E402
-from scistackplot.spaghetti import overlay_offsets  # noqa: E402
-from scistackplot.shape import Shape  # noqa: E402
+from scistackplot.reduce.resolved import SAMPLE_LINE, SERIES, X  # noqa: E402
+from scistackplot.model.roles import complete_roles, overlay_join, overlay_unavailable  # noqa: E402
+from scistackplot.reduce.spaghetti import overlay_offsets  # noqa: E402
+from scistackplot.model.shape import Shape  # noqa: E402
 
 # subject x session x trial, plus a subject-level `group`. Every value is
 # distinct so a point on the wrong line carries a number that says so.

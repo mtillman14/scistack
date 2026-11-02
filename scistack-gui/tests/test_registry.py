@@ -1,12 +1,12 @@
 """
-Tests for scistack_gui.registry — function and variable-class registry.
+Tests for scistack_gui.project.registry — function and variable-class registry.
 """
 
 import logging
 import types
 
 import pytest
-from scistack_gui import registry
+from scistack_gui.project import registry
 
 from scidb import BaseVariable
 
@@ -991,7 +991,7 @@ class TestMatlabClassificationCache:
         )
 
     def test_unchanged_file_is_not_reparsed(self, tmp_path):
-        from scistack_gui import matlab_parser as mp
+        from scistack_gui.matlab import parser as mp
 
         mp.invalidate_classify_cache()
         path = self._fn_file(tmp_path)
@@ -1011,7 +1011,7 @@ class TestMatlabClassificationCache:
         """Same path, different bytes — the result must follow the file."""
         import os
 
-        from scistack_gui import matlab_parser as mp
+        from scistack_gui.matlab import parser as mp
 
         mp.invalidate_classify_cache()
         path = self._fn_file(tmp_path, params="a, b")
@@ -1030,7 +1030,7 @@ class TestMatlabClassificationCache:
     def test_explicit_invalidation_forces_a_reparse(self, tmp_path):
         """Covers the same-tick, same-size edit the stamp key cannot see —
         which is why ``reload_source`` invalidates before re-reading."""
-        from scistack_gui import matlab_parser as mp
+        from scistack_gui.matlab import parser as mp
 
         mp.invalidate_classify_cache()
         path = self._fn_file(tmp_path, params="aa")
@@ -1051,7 +1051,7 @@ class TestMatlabClassificationCache:
         assert mp.classify_matlab_file(path)[1].params == ["bb"]
 
     def test_missing_file_is_never_cached(self, tmp_path):
-        from scistack_gui import matlab_parser as mp
+        from scistack_gui.matlab import parser as mp
 
         mp.invalidate_classify_cache()
         missing = tmp_path / "nope.m"
@@ -1066,8 +1066,8 @@ class TestMatlabClassificationCache:
 
     def test_reload_source_invalidates_the_cache(self, tmp_path, monkeypatch):
         """The narrow-reload path runs right after a GUI write."""
-        from scistack_gui import matlab_parser as mp
-        from scistack_gui import matlab_registry
+        from scistack_gui.matlab import parser as mp
+        from scistack_gui.matlab import registry as matlab_registry
 
         mp.invalidate_classify_cache()
         path = self._fn_file(tmp_path, name="editedFn", params="x")

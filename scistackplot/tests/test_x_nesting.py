@@ -2,7 +2,7 @@
 Nested x grouping: several factors sharing one categorical axis.
 
 "Stim and sham side by side, each split by session" — up to three layers. The
-composition is a pure, label-only function (:func:`scistackplot.xaxis.plan_x_axis`),
+composition is a pure, label-only function (:func:`scistackplot.text.xaxis.plan_x_axis`),
 which is what lets both renderers draw the same brackets and codegen emit the
 resolved order instead of replaying the rules.
 """
@@ -13,8 +13,8 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, RoleError, resolve
-from scistackplot.roles import validate
-from scistackplot.xaxis import is_spacer, leaf_key, plan_x_axis
+from scistackplot.model.roles import validate
+from scistackplot.text.xaxis import is_spacer, leaf_key, plan_x_axis
 
 
 # --- the composition, with no frames at all --------------------------------
@@ -308,7 +308,7 @@ def test_more_than_three_labelled_layers_is_refused(grouped_table):
 
 
 def test_grouping_a_1d_measure_makes_series_not_ticks(series_table):
-    from scistackplot.roles import grouping_layers
+    from scistackplot.model.roles import grouping_layers
 
     spec = PlotSpec(
         measures=["Signal"],
@@ -401,7 +401,7 @@ def test_generated_code_keeps_the_nested_axis_through_an_aggregate(grouped_table
 def test_the_plotly_axis_states_the_whole_plan_order(grouped_table):
     """Including the spacers — they are the gap between groups."""
     from scistackplot import render_plotly
-    from scistackplot.xaxis import is_spacer
+    from scistackplot.text.xaxis import is_spacer
 
     figure = resolve(_nested_spec(), grouped_table)[0]
     layout = render_plotly(figure)["layout"]
@@ -550,7 +550,7 @@ def test_the_two_backends_order_the_axis_the_same_way(grouped_table):
     shipped: matplotlib indexes into `x_order` and was always right."""
     pytest.importorskip("matplotlib")
     from scistackplot import render_matplotlib, render_plotly
-    from scistackplot.xaxis import is_spacer
+    from scistackplot.text.xaxis import is_spacer
 
     figure = resolve(_nested_spec(), grouped_table)[0]
     layout = render_plotly(figure)["layout"]
@@ -804,7 +804,7 @@ def test_a_new_grouping_groups(depth_table):
 
 def test_a_new_grouping_facets_when_the_labelled_ticks_are_full(depth_table):
     from scistackplot import role_for_new_grouping
-    from scistackplot.spec import MAX_X_LAYERS
+    from scistackplot.model.spec import MAX_X_LAYERS
 
     roles = {
         name: Role.GROUP

@@ -97,7 +97,7 @@ def test_the_rpc_is_registered_and_needs_no_database():
 
 
 def test_the_json_rpc_path_answers_without_touching_the_database(monkeypatch, logged):
-    from scistack_gui import db as db_mod
+    from scistack_gui.runtime import db as db_mod
     from scistack_gui import server
 
     def _never(*args, **kwargs):
@@ -123,7 +123,7 @@ def test_a_placement_labels_its_own_dag_updated(monkeypatch):
     from scistack_gui.services import layout_service
 
     pushed = []
-    monkeypatch.setattr("scistack_gui.api.ws.push_message", lambda msg: pushed.append(msg))
+    monkeypatch.setattr("scistack_gui.runtime.ws_hub.push_message", lambda msg: pushed.append(msg))
     layout_service._notify_dag_updated("put_layout")
     layout_service._notify_dag_updated()
     assert pushed == [

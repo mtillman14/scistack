@@ -1,6 +1,6 @@
 """"Not plotted" — what a figure leaves out (user, 2026-11-01).
 
-`.claude/plan-plot-omissions.md`. One owner, `scistackplot.omissions`; every
+`.claude/plan-plot-omissions.md`. One owner, `scistackplot.reduce.omissions`; every
 drop site reports there. Reasons: no value, no record, outside the bin range
 (lost); NaN elements, partly averaged (thinned). Filtered rows are never
 listed; a histogram with its NaN bar shown draws its NaNs; a text measure
@@ -26,8 +26,8 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.export import NOT_PLOTTED_DEPTH
-from scistackplot.omissions import (
+from scistackplot.export.plot_data import NOT_PLOTTED_DEPTH
+from scistackplot.reduce.omissions import (
     NAN_ELEMENTS,
     NO_RECORD,
     NO_VALUE,
@@ -36,8 +36,8 @@ from scistackplot.omissions import (
     OmissionReport,
     combine,
 )
-from scistackplot.reduce import clear_plan_cache
-from scistackplot.spec import LocationFilter
+from scistackplot.reduce.resolve import clear_plan_cache
+from scistackplot.model.spec import LocationFilter
 
 
 @pytest.fixture(autouse=True)
@@ -202,7 +202,7 @@ def test_csv_lists_every_item():
 
 
 def test_report_to_dict_caps_items_but_keeps_counts():
-    from scistackplot.omissions import MAX_ITEMS, Omission
+    from scistackplot.reduce.omissions import MAX_ITEMS, Omission
 
     report = OmissionReport(drawn=1, items=[Omission({"s": str(i)}, "V", NO_VALUE) for i in range(MAX_ITEMS + 3)])
     data = report.to_dict()

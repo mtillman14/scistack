@@ -34,7 +34,7 @@ from scistackplot import (
     variant_set_mask,
     variant_summary,
 )
-from scistackplot.spec import VariantSet
+from scistackplot.model.spec import VariantSet
 
 
 def _table(
@@ -371,7 +371,7 @@ def test_an_unfilled_variant_does_not_resurrect_the_code_factor():
 
 
 def test_an_unfilled_variant_does_not_make_the_figure_unrenderable():
-    from scistackplot.roles import validate
+    from scistackplot.model.roles import validate
 
     table = _two_version_table()
     spec = PlotSpec(
@@ -517,7 +517,7 @@ def test_defaults_never_assign_a_role_to_an_answered_column():
     calls the role an unknown factor and refuses to draw anything.
     """
     from scistackplot import default_spec
-    from scistackplot.roles import validate
+    from scistackplot.model.roles import validate
 
     table = _table(
         pd.DataFrame(
@@ -542,7 +542,7 @@ def test_defaults_never_assign_a_role_to_an_answered_column():
 def test_a_stale_role_from_a_saved_spec_is_dropped_not_fatal():
     """Assign a code axis to a facet, then add a variant that pins it — an
     ordinary sequence in the GUI, and the spec outlives the table either way."""
-    from scistackplot.variants import strip_answered_roles
+    from scistackplot.reduce.variants import strip_answered_roles
 
     table = _two_version_table()
     spec = PlotSpec(
@@ -560,7 +560,7 @@ def test_a_stale_role_from_a_saved_spec_is_dropped_not_fatal():
 
 def test_a_role_naming_nothing_at_all_is_still_an_error():
     """The stale-role drop must not swallow typos."""
-    from scistackplot.roles import validate
+    from scistackplot.model.roles import validate
 
     table = _two_version_table()
     spec = PlotSpec(measures=["value"], roles={"sesion": Role.GROUP})
@@ -583,7 +583,7 @@ def test_an_unselected_code_axis_is_reported_on_the_ROW_not_resurrected():
     row that pooled it — where the fix is (pin a version there, or split the row
     in two), and where the GUI shows it as "pools 2 versions".
     """
-    from scistackplot.capability import variant_summary
+    from scistackplot.model.capability import variant_summary
 
     table = _table(
         pd.DataFrame(
@@ -654,7 +654,7 @@ def test_no_variant_sets_leaves_the_table_untouched():
 def test_a_multi_level_variant_factor_defaults_to_colour_not_pooling():
     """Two named variants left FREE would overplot — the exact failure this
     feature exists to prevent — so an unassigned Variant factor is coloured."""
-    from scistackplot.roles import complete_roles
+    from scistackplot.model.roles import complete_roles
 
     table = _two_version_table()
     spec = PlotSpec(
@@ -666,7 +666,7 @@ def test_a_multi_level_variant_factor_defaults_to_colour_not_pooling():
     )
     derived = apply_variant_sets(spec, table)
 
-    from scistackplot.roles import complete_assignment
+    from scistackplot.model.roles import complete_assignment
 
     assignment = complete_assignment(spec, derived)
     assert assignment.roles[VARIANT_FACTOR] is Role.GROUP
@@ -679,7 +679,7 @@ def test_variants_are_never_pooled():
     factor (nothing is silent), and collapsing one is refused outright — the
     old 'free'/'aggregate' opt-in went with those roles (2026-09-17).
     """
-    from scistackplot.roles import complete_roles, validate
+    from scistackplot.model.roles import complete_roles, validate
 
     table = _table(
         pd.DataFrame(

@@ -16,7 +16,7 @@ from __future__ import annotations
 import pandas as pd
 
 from scistackplot import LongTable, Role
-from scistackplot.roles import collapse_order, has_sample, sample_key
+from scistackplot.model.roles import collapse_order, has_sample, sample_key
 
 
 def _table(frame, **kwargs) -> LongTable:

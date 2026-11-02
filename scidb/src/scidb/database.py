@@ -5330,7 +5330,7 @@ class DatabaseManager:
                                the next free slot. Do not index a signature
                                with it without checking the range, and never
                                for a single-output function — see
-                               scistack_gui.api.pipeline.
+                               scistack_gui.services.graph_service.
                                _matlab_param_to_class_from_db),
                 record_count  (int: distinct records for this variant)
         """

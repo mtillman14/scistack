@@ -4,7 +4,7 @@ database and applied to any variable.
 
 A saved plot (:mod:`scistackplotdb.saved`) belongs to one variable. A preset
 belongs to the project: it is the saved plot's settings with everything that
-belongs to the variable taken out (``scistackplot.presets`` decides what that
+belongs to the variable taken out (``scistackplot.model.presets`` decides what that
 is, once). Apply it to another variable and the figure is drawn the same way::
 
     from scistackplotdb import ScidbSource, apply_preset_to, list_presets

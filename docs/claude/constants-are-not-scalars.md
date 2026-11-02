@@ -17,7 +17,7 @@ value to a scalar:
 - `docs/claude/entities-toml-format.md` rule 2 — *an inline table under
   `[parameters]` **is** the value*. So `delsys_config = {fs = 2000, channels =
   ["RHAM", "RTA"]}` puts a `dict` (holding a `list`) into the constants map.
-- `_format_matlab_value` in `scistack-gui/scistack_gui/api/matlab_command.py`
+- `_format_matlab_value` in `scistack-gui/scistack_gui/services/matlab_command_format.py`
   deliberately renders `dict` → `struct(...)` and `list` → string/numeric/cell
   array, mirroring `+scidb/+internal/from_python.m`, precisely so that such a
   value reaches the user's MATLAB function as a struct rather than as a char
@@ -74,7 +74,7 @@ possibly-missing field can be passed straight through.
 | `provenance_query.variant_keys_batch` | the batched form of the above |
 | `locations.pathinput_configs` | invocations → PathInput discovery configs |
 | `database.filter_variants_for_execution` | dedup before execution |
-| `scistack_gui.api.matlab_command._group_variants` | variant rows → `for_each` calls |
+| `scistack_gui.services.matlab_command_format._group_variants` | variant rows → `for_each` calls |
 
 The batched and per-record variant keys are compared against each other
 (`current_records_by_schema_batch` mixes them), so they must stay **byte-
@@ -94,7 +94,7 @@ The crash also showed a second defect. Target derivation runs *before*
 `_run_in_thread`'s per-target `try`, so the exception left the thread with
 nothing but a stderr traceback. No `run_done` was pushed and the run spun
 until the user cancelled it, so the crash looked like a hang.
-`api/run._report_crashed_run` now catches anything that escapes the thread.
+`run_service._report_crashed_run` now catches anything that escapes the thread.
 It logs the traceback to `scistack.log` and, if the run is still registered in
 `_active_runs` (every path that already sent `run_done` popped it first),
 pushes a failed `run_done`. Pipeline runs already caught everything.

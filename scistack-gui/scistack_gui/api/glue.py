@@ -13,7 +13,7 @@ code panel shows beside the editor. The handler table for both transports
 A glue node has **no run method**, by design (D5). It is transient by
 construction, so a standalone run would produce nothing and a state badge
 would describe nothing; it executes only as part of a consuming function's
-run. See ``docs/claude/free-code-glue-nodes.md`` §5, and ``api/run.py``'s
+run. See ``docs/claude/free-code-glue-nodes.md`` §5, and ``services/run_service.py``'s
 refusal of a glue node id.
 
 Every mutation notifies ``dag_updated`` on success — on BOTH transports.

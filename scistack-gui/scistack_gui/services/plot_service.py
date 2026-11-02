@@ -23,7 +23,7 @@ import logging
 from dataclasses import replace
 from typing import Any
 
-from scistack_gui import history
+from scistack_gui.stores import history
 from scistack_gui.services import custom_plot_service
 
 # The Parameter input-port handle prefix (``param__{argument}``): the same
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 #:
 #: A run that writes records makes a db source stale — it caches whole frames,
 #: so a stale one serves PRE-RUN data and the user plots the wrong thing. That
-#: is what ``invalidate()`` is for; ``api.run._notify_records_changed`` calls it
+#: is what ``invalidate()`` is for; ``run_service.notify_records_changed`` calls it
 #: wherever a run announces ``dag_updated``.
 #:
 #: Keyed by path rather than by ``id(db)``: CPython reuses ids after garbage
@@ -219,7 +219,7 @@ def set_project_alias(
 ) -> dict:
     """Write one PROJECT display alias (``[aliases]`` in scistack.toml).
 
-    The write is ``scistack_gui.config.set_project_alias`` (the one writer of
+    The write is ``scistack_gui.project.config.set_project_alias`` (the one writer of
     the file; the grammar is ``scidb.aliases``'). No table is dropped: a
     built table reads the project's aliases live
     (``LongTable.aliases_source``), so the next resolve shows the edit. Only
@@ -229,9 +229,9 @@ def set_project_alias(
     A refusal — no config — is ``{ok: False, error}``:
     a state to show beside the box, not a fault.
     """
-    from scistack_gui.config import _UNCHANGED
-    from scistack_gui.config import set_project_alias as write_alias
-    from scistack_gui.db import get_db_path
+    from scistack_gui.project.config import _UNCHANGED
+    from scistack_gui.project.config import set_project_alias as write_alias
+    from scistack_gui.runtime.db import get_db_path
 
     try:
         table = write_alias(
@@ -257,15 +257,15 @@ def set_project_color(
     """Write one PROJECT mark colour (``[colors]`` in scistack.toml).
 
     ``thing=None`` is the single mark colour (``[colors] default``). The
-    write is ``scistack_gui.config.set_project_color`` (which canonicalises
-    the colour through ``scistackplot.colors.parse_color``). As with
+    write is ``scistack_gui.project.config.set_project_color`` (which canonicalises
+    the colour through ``scistackplot.text.colors.parse_color``). As with
     :func:`set_project_alias`, no table is dropped — a built table reads the
     project's colours live (``LongTable.colors_source``) — and a refusal
     (no config, text that is not a colour) is
     ``{ok: False, error}``.
     """
-    from scistack_gui.config import set_project_color as write_color
-    from scistack_gui.db import get_db_path
+    from scistack_gui.project.config import set_project_color as write_color
+    from scistack_gui.runtime.db import get_db_path
 
     try:
         table = write_color(get_db_path(), thing, level=level, color=color)
@@ -288,9 +288,9 @@ def _with_stored_variant_sets(db, variable: str, spec):
     if db is None or not variable:
         return spec
     try:
-        from scistackplot.spec import VariantSet
+        from scistackplot.model.spec import VariantSet
 
-        from scistack_gui import intent_store
+        from scistack_gui.stores import intent_store
 
         stored = intent_store.variant_selections(db, variable)
     except Exception:
@@ -339,7 +339,7 @@ def opening_spec(db, table, variable: str):
 def save_variant_sets(db, variable: str, variant_sets: list) -> dict:
     """Persist a plot's pins as `variant_selection` statements about
     *variable* (the RPC behind every edit of the Variants section)."""
-    from scistack_gui import intent_store
+    from scistack_gui.stores import intent_store
 
     n = intent_store.set_variant_selections(db, variable, variant_sets)
     return {"ok": True, "variable": variable, "stored": n}
@@ -363,7 +363,7 @@ def describe(
     from contextlib import ExitStack
 
     from scidb.log import Log
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     # live=True: each phase logs as it starts, so a panel that never opens
     # leaves the step it is stuck in as the last line of scistack.log. Before
@@ -509,9 +509,9 @@ def _ineligible_reason(table, variable: str) -> str | None:
     """Why the panel cannot draw ``variable`` at all, or None. The shape rule
     is `scistackplot.is_plottable` (the one owner); free text — a text
     measure with too many distinct values to be categories — is
-    `scistackplot.categorical`'s."""
+    `scistackplot.reduce.categorical`'s."""
     from scistackplot import is_plottable
-    from scistackplot.categorical import free_text_reason
+    from scistackplot.reduce.categorical import free_text_reason
 
     if len(table.frame) == 0:
         # The empty state the design doc insists on naming explicitly: a
@@ -562,7 +562,7 @@ def variant_graph(
     A CSV has no provenance and therefore no variants — it returns the empty
     graph rather than an error, so the popup can open and say so.
     """
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     # The hold spans the whole body: `axis_node_bindings` below builds the
     # pipeline graph, which is its own set of database reads.
@@ -652,7 +652,7 @@ def grouping_graph(db, variable: str, *, csv_path: str | None = None, purpose: s
     popup and which this one has to keep: a dialog about what to LOOK at must
     never change what a run does.
     """
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("plot_grouping_graph", needed=not csv_path):
         source = get_source(db, csv_path=csv_path)
@@ -677,7 +677,7 @@ def grouping_columns(
     per candidate column, so it is paid for the variable the user actually
     opened and for no other.
     """
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("plot_grouping_columns", needed=not csv_path):
         source = get_source(db, csv_path=csv_path)
@@ -706,7 +706,7 @@ def grouping_default_variant(
     ``scistackplot.default_selection`` over that variable's cheap variant table.
     One rule for "latest", shared with the Variants section (CLAUDE.md NOTE 3).
     """
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("plot_grouping_default_variant", needed=not csv_path):
         source = get_source(db, csv_path=csv_path)
@@ -748,7 +748,7 @@ def location_tree(
     A CSV has no provenance, so it has no locations to verify: the empty tree is
     returned with a note, rather than an error, so the popup can open and say so.
     """
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection("plot_location_tree", needed=not csv_path):
         return _location_tree(
@@ -1013,7 +1013,7 @@ def resolve_figures(
                 "figure": _render_preview(figure, preview, render_plotly),
                 "row_count": figure.row_count,
                 "downsampled_from": figure.downsampled_from,
-                # What this figure leaves out (scistackplot.omissions): the
+                # What this figure leaves out (scistackplot.reduce.omissions): the
                 # "Not plotted" button and popup.
                 "omissions": figure.omissions.to_dict() if figure.omissions is not None else None,
             }
@@ -1835,7 +1835,7 @@ def start_save_job(
 
     Returns ``{"job_id": ...}`` at once; the work reports itself through three
     messages, delivered over whichever transport is active
-    (``ws.push_message`` picks):
+    (``ws_hub.push_message`` picks):
 
     * ``plot_save_progress`` — ``job_id``, ``stage``, ``done``, ``total``,
       ``path`` (the file just written, or the figure label while resolving)
@@ -1872,7 +1872,7 @@ def start_save_job(
     import time
     import uuid
 
-    from scistack_gui.api.ws import push_message
+    from scistack_gui.runtime.ws_hub import push_message
 
     if what not in ("image", "data"):
         raise ValueError(f"Unknown save kind {what!r}; expected 'image' or 'data'.")
@@ -2096,10 +2096,10 @@ def _load(db, spec_payload: dict, *, csv_path: str | None, label: str):
     pins it.
 
     The connection is only taken under the ``per_request`` policy, so the
-    standalone process is unaffected (:func:`scistack_gui.db.db_connection`).
+    standalone process is unaffected (:func:`scistack_gui.runtime.db.db_connection`).
     A CSV spec takes no connection at all — there is no database in that path.
     """
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     with db_connection(label, needed=not csv_path):
         source = get_source(db, csv_path=csv_path)
@@ -2120,9 +2120,9 @@ def _spec_from_payload(payload: dict):
 
 def _not_plotted_total(resolved: list) -> dict:
     """The "Not plotted" toolbar button for the figures sent: their reports
-    combined (``scistackplot.omissions.combine``, which also owns the
+    combined (``scistackplot.reduce.omissions.combine``, which also owns the
     wording). Each figure's own report rides on its payload for the popup."""
-    from scistackplot.omissions import combine
+    from scistackplot.reduce.omissions import combine
 
     total = combine([getattr(figure, "omissions", None) for figure in resolved])
     return {

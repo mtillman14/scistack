@@ -19,7 +19,7 @@ def _entities_script() -> "str | None":
     """The configured legacy ``[matlab] entities_file`` script, if any — its
     declarations have to be in scope before a generated command references
     one by name."""
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
 
     config = getattr(matlab_registry, "_config", None)
     entities = getattr(config, "matlab_entities_file", None)
@@ -34,7 +34,7 @@ def _entities_file() -> "str | None":
     MATLAB-only project still has one, and the two registries hold the same
     ``SciStackConfig`` anyway.
     """
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     config = getattr(registry, "_config", None)
     entities = getattr(config, "entities_file", None)
@@ -496,7 +496,7 @@ def scope_variants_to_node(
     WHICH variants is a wiring question, not a name question, and this route
     asked it by name: ``[v for v in all_variants if v["function_name"] ==
     function_name]``. That spans every wiring the function has ever had, and
-    ``api.matlab_command._group_variants`` emits one ``for_each`` per distinct
+    ``matlab_command_format._group_variants`` emits one ``for_each`` per distinct
     ``(input_types, constants)`` — so one click ran them all.
 
     Seen 2026-09-22: ``grSides`` gained a second wiring after a run through a
@@ -566,13 +566,13 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     Returns:
         {"command": str} with the MATLAB command string.
     """
-    from scistack_gui import pipeline_store
-    from scistack_gui import matlab_registry
-    from scistack_gui import registry
-    from scistack_gui.api.matlab_command import generate_matlab_command as _fmt
-    from scistack_gui.step_names import step_name_of as _step_name_of
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.project import registry
+    from scistack_gui.services.matlab_command_format import generate_matlab_command as _fmt
+    from scistack_gui.project.step_names import step_name_of as _step_name_of
     from scistack_gui.domain import schema_selection as _schema_selection
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
     from scistack_gui.domain.edge_resolver import infer_manual_fn_output_types
     from scistack_gui.domain.graph_builder import path_input_display
 
@@ -795,7 +795,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     # dir, so cwd-relative resolution would be wrong). It is stated to scifor,
     # NOT written into each PathInput's root_folder — that rewrote the input's
     # recorded identity and grew __unresolved__ ghost nodes on the canvas; see
-    # api.matlab_command._project_root_lines.
+    # matlab_command_format._project_root_lines.
     _root = registry.get_project_root()
     project_root: str | None = str(_root) if _root is not None else None
 
@@ -878,16 +878,16 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         "generate_matlab_command: fn=%s, command_length=%d", function_name, len(cmd)
     )
     # Advisory only -- MATLAB's path is the authority on what resolves (see
-    # matlab_command._unresolvable_var_types). Returned so api/run.py can put
+    # matlab_command._unresolvable_var_types). Returned so services/run_service.py can put
     # it in the run console before the user starts waiting on MATLAB, rather
     # than leaving it as a comment they may never read.
     #
     # Its own key, NOT "warnings": on the pipeline branch below that key
     # means "steps excluded from the script", which a caller may act on, and
     # mixing an unrelated diagnostic into it makes both unreadable.
-    from scistack_gui.api.matlab_command import (
-        _collect_var_types,
-        _variable_input_type_names,
+    from scistack_gui.services.matlab_command_format import (
+        collect_var_types,
+        variable_input_type_names,
         unresolvable_var_type_warning,
     )
 
@@ -897,8 +897,8 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     # about a class the script never names (2026-10-21).
     checked = (
         (set() if fn_variants else set(output_types or []))
-        | set(_variable_input_type_names(variable_inputs))
-        | _collect_var_types(
+        | set(variable_input_type_names(variable_inputs))
+        | collect_var_types(
             fn_variants if fn_variants else (params.get("variants") or [])
         )
     )
@@ -918,7 +918,7 @@ def _drop_project_root_folder(path_inputs: dict, project_root) -> None:
 
     Dropping it changes nothing about what resolves: the generated script pins
     the same directory as scifor's resolution base for rootless PathInputs (see
-    ``api.matlab_command._project_root_lines``). Any other ``root_folder`` is a
+    ``matlab_command_format._project_root_lines``). Any other ``root_folder`` is a
     real declaration and is left alone.
     """
     if project_root is None:
@@ -958,7 +958,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     scope. Python function nodes sharing the scope are excluded (a
     MATLAB-only script cannot register a Python step into the same
     in-process ``scidb.Pipeline`` the MATLAB session builds — see
-    ``api.matlab_command.generate_matlab_pipeline_command``'s docstring)
+    ``matlab_command_format.generate_matlab_pipeline_command``'s docstring)
     and reported back via ``warnings`` instead of silently vanishing.
 
     Args:
@@ -970,13 +970,13 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     Returns:
         {"command": str, "warnings": list[str]}
     """
-    from scistack_gui import matlab_registry
-    from scistack_gui import pipeline_store
-    from scistack_gui import registry as _reg
-    from scistack_gui.api.matlab_command import (
+    from scistack_gui.matlab import registry as matlab_registry
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.project import registry as _reg
+    from scistack_gui.services.matlab_command_format import (
         generate_matlab_pipeline_command as _fmt,
     )
-    from scistack_gui.db import get_db_path
+    from scistack_gui.runtime.db import get_db_path
     from scistack_gui.domain.graph_builder import path_input_display
     from scistack_gui.domain.variant_resolver import (
         filter_hidden_targets,
@@ -1186,17 +1186,17 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     # See the single-function branch: advisory, surfaced in the run console,
     # and kept out of "warnings" so that list stays exactly the excluded
     # Python steps its callers and tests expect.
-    from scistack_gui.api.matlab_command import (
-        _collect_var_types,
-        _variable_input_type_names,
+    from scistack_gui.services.matlab_command_format import (
+        collect_var_types,
+        variable_input_type_names,
         unresolvable_var_type_warning,
     )
 
     pipeline_var_types: set[str] = set()
     for step in steps:
-        pipeline_var_types |= _collect_var_types(step.get("variants") or [])
+        pipeline_var_types |= collect_var_types(step.get("variants") or [])
         pipeline_var_types |= set(
-            _variable_input_type_names(step.get("variable_inputs"))
+            variable_input_type_names(step.get("variable_inputs"))
         )
     diagnostics = [
         d for d in [unresolvable_var_type_warning(pipeline_var_types)] if d

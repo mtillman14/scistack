@@ -295,7 +295,7 @@ def project_root() -> Path:
     The one owner of "which directory is this project?" for every layer --
     PathInput resolution here, config lookup in ``scidb.entities`` and
     ``scidb.schema_order``, MATLAB stub placement. The GUI decides its root
-    (``scistack_gui.config.resolve_project_root``) and pins it here, so a GUI
+    (``scistack_gui.project.config.resolve_project_root``) and pins it here, so a GUI
     run resolves exactly where the canvas matched.
 
     It deliberately does NOT walk up looking for ``pyproject.toml`` or

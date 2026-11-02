@@ -22,9 +22,9 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, capabilities, resolve
-from scistackplot.codegen import _location_lines, extract_spec, generate_plot_function
-from scistackplot.reduce import apply_filters
-from scistackplot.spec import Filter, LocationFilter, value_spellings
+from scistackplot.export.codegen import _location_lines, extract_spec, generate_plot_function
+from scistackplot.reduce.resolve import apply_filters
+from scistackplot.model.spec import Filter, LocationFilter, value_spellings
 
 KEYS = ["subject", "session", "trial"]
 
@@ -372,7 +372,7 @@ def test_the_no_filter_fast_path_still_sees_a_location_filter(scalar_table):
 class TestLevelsAfterLocation:
     def test_a_prefix_that_never_names_the_column_leaves_it_alone(self):
         """The key-named form makes this a membership test, not arithmetic."""
-        from scistackplot.codegen import _levels_after_location
+        from scistackplot.export.codegen import _levels_after_location
 
         loc = LocationFilter(
             keys=["subject", "timepoint", "speed"],
@@ -384,7 +384,7 @@ class TestLevelsAfterLocation:
         assert _levels_after_location(spec, "speed", ["SSV", "FST"]) == ["SSV"]
 
     def test_a_selection_at_that_depth_narrows_it(self):
-        from scistackplot.codegen import _levels_after_location
+        from scistackplot.export.codegen import _levels_after_location
 
         spec = _spec(_loc(("01",), ("03",)))
 
@@ -395,7 +395,7 @@ class TestLevelsAfterLocation:
 
     def test_a_shorter_prefix_leaves_deeper_keys_alone(self):
         """"All of subject 01" did not name a trial, so every trial survives."""
-        from scistackplot.codegen import _levels_after_location
+        from scistackplot.export.codegen import _levels_after_location
 
         spec = _spec(_loc(("01",), ("02", "pre", "3")))
 
@@ -407,14 +407,14 @@ class TestLevelsAfterLocation:
         ]
 
     def test_every_prefix_reaching_that_depth_does_narrow_it(self):
-        from scistackplot.codegen import _levels_after_location
+        from scistackplot.export.codegen import _levels_after_location
 
         spec = _spec(_loc(("01", "pre"), ("02", "pre")))
 
         assert _levels_after_location(spec, "session", ["pre", "post"]) == ["pre"]
 
     def test_a_column_the_filter_does_not_name_is_untouched(self):
-        from scistackplot.codegen import _levels_after_location
+        from scistackplot.export.codegen import _levels_after_location
 
         spec = _spec(_loc(("01",)))
 
@@ -562,7 +562,7 @@ class TestExcludeLevels:
     def test_an_excluded_level_leaves_the_generated_axis_order(self):
         """An omitted level must not reserve an empty slot on the exported
         figure's axis."""
-        from scistackplot.codegen import _levels_after_location
+        from scistackplot.export.codegen import _levels_after_location
 
         spec = _spec(LocationFilter(keys=KEYS, exclude_levels={"session": ["pre"]}))
         assert _levels_after_location(spec, "session", ["pre", "post"]) == ["post"]

@@ -105,7 +105,7 @@ def authored_libraries() -> frozenset[str]:
     AUTHORS: those whose folder is ``<root>/libs/<name>/``
     (``scifor.discovery.authored_library_dirs``). Derived from the two
     owners every time -- no stored flag, no second list. Their pipelines are
-    editable here (``scistack_gui.library_lock``) and never re-synced over
+    editable here (``scistack_gui.stores.library_lock``) and never re-synced over
     the canvas (``library_service.sync_libraries``)."""
     root = project_root()
     result = frozenset(library_packages() & {n for n, _ in authored_library_dirs(root)})

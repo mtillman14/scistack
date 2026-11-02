@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from scistacklog import Log
 
 from scistackplot import PlotKind, PlotSpec
-from scistackplot.spec import ErrorBand, Statistic
+from scistackplot.model.spec import ErrorBand, Statistic
 
 from .spec import DV, Analysis, DescriptiveSpec, GuideState, StatsSpec
 

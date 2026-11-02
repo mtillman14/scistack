@@ -529,7 +529,7 @@ class TestProjectResolution:
 
 class TestResolveEntitiesPath:
     """The rule on its own, for callers that already located the project
-    config and parsed its section (``scistack_gui.config.load_config``)."""
+    config and parsed its section (``scistack_gui.project.config.load_config``)."""
 
     def test_declared_key_wins_and_resolves_against_the_root(self, tmp_path):
         resolved = entities.resolve_entities_path(

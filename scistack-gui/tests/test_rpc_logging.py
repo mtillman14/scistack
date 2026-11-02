@@ -29,8 +29,8 @@ from scistack_gui import server
 def _quiet_db(monkeypatch):
     """``_handle_request`` acquires/releases the DB around every call; no
     database is loaded here, so make both a no-op."""
-    monkeypatch.setattr("scistack_gui.db.acquire_db_connection", lambda *a, **k: None)
-    monkeypatch.setattr("scistack_gui.db.release_db_connection", lambda *a, **k: None)
+    monkeypatch.setattr("scistack_gui.runtime.db.acquire_db_connection", lambda *a, **k: None)
+    monkeypatch.setattr("scistack_gui.runtime.db.release_db_connection", lambda *a, **k: None)
 
 
 def _dispatch(monkeypatch, method, result):

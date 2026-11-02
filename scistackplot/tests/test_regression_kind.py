@@ -27,12 +27,12 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.capability import available_plots, why_unavailable
-from scistackplot.codegen import function_params
-from scistackplot.fits import STATS_TEXT_SOURCE, annotation_text
-from scistackplot.reduce import clear_plan_cache
-from scistackplot.roles import CONTINUOUS_LOG_REASON, REGRESSION_NEEDS_X, RoleError
-from scistackplot.shape import Shape
+from scistackplot.model.capability import available_plots, why_unavailable
+from scistackplot.export.codegen import function_params
+from scistackplot.reduce.fits import STATS_TEXT_SOURCE, annotation_text
+from scistackplot.reduce.resolve import clear_plan_cache
+from scistackplot.model.roles import CONTINUOUS_LOG_REASON, REGRESSION_NEEDS_X, RoleError
+from scistackplot.model.shape import Shape
 
 
 @pytest.fixture(autouse=True)

@@ -154,7 +154,7 @@ def test_a_db_optional_method_is_handed_none_when_no_database_is_open(monkeypatc
         _call,
         db_optional=True,
     )
-    monkeypatch.setattr("scistack_gui.db.is_loaded", lambda: False)
+    monkeypatch.setattr("scistack_gui.runtime.db.is_loaded", lambda: False)
 
     rpc = handlers_mod.rpc_methods([handler])["fake_plot"]
     assert rpc({"variable": "", "csv_path": "/tmp/x.csv"}) == {"ok": True}
@@ -166,8 +166,8 @@ def test_a_required_db_method_still_raises_when_no_database_is_open(monkeypatch)
     from scistack_gui.api import handlers as handlers_mod
 
     handler = handlers_mod.Handler("fake_needs_db", None, None, lambda db: {"ok": True})
-    monkeypatch.setattr("scistack_gui.db.is_loaded", lambda: False)
-    monkeypatch.setattr("scistack_gui.db._db", None, raising=False)
+    monkeypatch.setattr("scistack_gui.runtime.db.is_loaded", lambda: False)
+    monkeypatch.setattr("scistack_gui.runtime.db._db", None, raising=False)
 
     rpc = handlers_mod.rpc_methods([handler])["fake_needs_db"]
     with pytest.raises(RuntimeError, match="Database not initialised"):

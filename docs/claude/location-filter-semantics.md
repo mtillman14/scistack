@@ -13,8 +13,8 @@ play** — and it is asked in four places that cannot share code:
 | Asker | Mechanics | Home |
 |---|---|---|
 | Which combos should `for_each` run? | a predicate over a `dict` combo | `scifor.locations` |
-| Which rows should the figure draw? | a vectorised pandas mask | `scistackplot.reduce` |
-| Which rows should the EXPORTED script draw? | that mask, emitted as source | `scistackplot.codegen` |
+| Which rows should the figure draw? | a vectorised pandas mask | `scistackplot.reduce.resolve` |
+| Which rows should the EXPORTED script draw? | that mask, emitted as source | `scistackplot.export.codegen` |
 | Which boxes are ticked, and in what state? | a coverage walk over a tree | `locationSelection.ts` |
 
 `scistackplot` depends on pandas, numpy and scistacklog only — **not** on

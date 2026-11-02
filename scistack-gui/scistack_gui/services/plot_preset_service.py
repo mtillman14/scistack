@@ -2,7 +2,7 @@
 Plot presets — Plot Studio's named figure settings, applied to any variable.
 
 An adapter only: what a preset owns, storing it and applying it all belong to
-``scistackplot.presets`` and ``scistackplotdb.presets`` (CLAUDE.md NOTE 3).
+``scistackplot.model.presets`` and ``scistackplotdb.presets`` (CLAUDE.md NOTE 3).
 This module turns their results into JSON and loads the target variable's
 table with the panel's cached source (``plot_service.get_source``), so an
 applied preset is checked against the same frames the panel draws from.
@@ -84,7 +84,7 @@ def apply(db, preset_id: str, spec: dict, version: int | None = None) -> dict:
     from scistackplot import capabilities
     from scistackplotdb import apply_preset_to
 
-    from scistack_gui.db import db_connection
+    from scistack_gui.runtime.db import db_connection
 
     target = plot_service._spec_from_payload(spec)
     loaded: dict = {}

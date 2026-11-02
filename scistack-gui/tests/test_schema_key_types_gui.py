@@ -19,7 +19,7 @@ from scistack_gui.services import schema_key_type_service as svc
 
 
 def _db():
-    from scistack_gui.db import get_db
+    from scistack_gui.runtime.db import get_db
 
     return get_db()
 

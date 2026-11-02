@@ -5,7 +5,7 @@ Every layer that asks "which arguments does this function take, and which
 have a default?" asks here: scifor's keyword injection
 (``foreach._accepted_param_names``), scidb's step values
 (``pipeline._default_input_names``), and the GUI's input ports and tunables
-(``scistack_gui.registry.function_arguments``). Before 2026-10-24 each called
+(``scistack_gui.project.registry.function_arguments``). Before 2026-10-24 each called
 ``inspect.signature`` itself, with its own fallback and its own idea of which
 names count, so "has a default" could disagree between the tunables panel and
 the canvas.

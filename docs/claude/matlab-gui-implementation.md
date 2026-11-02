@@ -64,7 +64,7 @@ When searching for a config file, the system checks for `pyproject.toml` first, 
 
 ### Config class
 
-`SciStackConfig` (in `scistack_gui/config.py`) carries the parsed MATLAB fields:
+`SciStackConfig` (in `scistack_gui/project/config.py`) carries the parsed MATLAB fields:
 
 ```python
 @dataclass
@@ -90,7 +90,7 @@ Non-glob paths that don't exist emit a warning but are still included (the file 
 
 ## 2. MATLAB .m File Parser
 
-**File:** `scistack_gui/matlab_parser.py`
+**File:** `scistack_gui/matlab/parser.py`
 
 Static parser that extracts function signatures and classdef declarations from `.m` files without running MATLAB. No MATLAB license or installation required.
 
@@ -146,14 +146,14 @@ Returns `"RawSignal"` (the class name), or `None` if the file isn't a `BaseVaria
 
 ## 3. MATLAB Registry
 
-**File:** `scistack_gui/matlab_registry.py`
+**File:** `scistack_gui/matlab/registry.py`
 
-Mirrors `scistack_gui/registry.py` for Python code. Module-level state tracks discovered MATLAB functions and variables.
+Mirrors `scistack_gui/project/registry.py` for Python code. Module-level state tracks discovered MATLAB functions and variables.
 
 ### Loading
 
 ```python
-from scistack_gui import matlab_registry
+from scistack_gui.matlab import registry as matlab_registry
 
 # Called once at startup if MATLAB config is present:
 result = matlab_registry.load_from_config(config)
@@ -213,7 +213,7 @@ def _fn_params_from_registry(fn_name: str) -> list[str]:
         # Python path: use inspect.signature
         ...
     # MATLAB fallback: use parsed .m file params
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
     if matlab_registry.is_matlab_function(fn_name):
         return list(matlab_registry.get_matlab_function(fn_name).params)
     return []
@@ -263,7 +263,7 @@ MATLAB writes row 3   → timer resets (2s)
 
 ## 6. MATLAB Command Generation
 
-**File:** `scistack_gui/api/matlab_command.py`
+**File:** `scistack_gui/services/matlab_command_format.py`
 
 Generates complete, self-contained MATLAB scripts ready to paste into a MATLAB command window.
 
@@ -502,9 +502,9 @@ Falls back to clipboard copy. User can:
 
 | File | Lines | Purpose |
 |------|-------|---------|
-| `scistack_gui/matlab_parser.py` | ~115 | Static `.m` file parser |
-| `scistack_gui/matlab_registry.py` | ~140 | MATLAB function/variable registry |
-| `scistack_gui/api/matlab_command.py` | ~190 | MATLAB command string generation |
+| `scistack_gui/matlab/parser.py` | ~115 | Static `.m` file parser |
+| `scistack_gui/matlab/registry.py` | ~140 | MATLAB function/variable registry |
+| `scistack_gui/services/matlab_command_format.py` | ~190 | MATLAB command string generation |
 | `extension/src/matlabTerminal.ts` | ~55 | MathWorks extension detection + terminal integration |
 | `tests/test_matlab.py` | ~270 | Tests for parser, command generation, config |
 
@@ -512,7 +512,7 @@ Falls back to clipboard copy. User can:
 
 | File | Key changes |
 |------|-------------|
-| `scistack_gui/config.py` | 4 new `SciStackConfig` fields, `scistack.toml` support, `_resolve_glob_paths()`, `_extract_scistack_section()` |
+| `scistack_gui/project/config.py` | 4 new `SciStackConfig` fields, `scistack.toml` support, `_resolve_glob_paths()`, `_extract_scistack_section()` |
 | `scistack_gui/server.py` | MATLAB registry init in `main()`, 5 updated handlers, 2 new handlers (`generate_matlab_command`, MATLAB `create_variable`) |
 | `scistack_gui/api/pipeline.py` | `language: "matlab"` tag on function nodes, MATLAB fallback in `_fn_params_from_registry()` |
 | `extension/src/extension.ts` | DuckDB `FileSystemWatcher` with 2s debounce, cleanup in `deactivate()` |

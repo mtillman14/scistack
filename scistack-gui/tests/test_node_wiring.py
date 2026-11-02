@@ -9,7 +9,7 @@ advancing on a repeat, and the mint rule. The DECISION that uses them is
 
 import pytest
 
-from scistack_gui import node_wiring
+from scistack_gui.stores import node_wiring
 
 
 @pytest.fixture
@@ -222,7 +222,7 @@ def test_forget_all_clears_the_table(db):
 def test_ensure_tables_runs_from_pipeline_store(populated_db):
     """Beside `_intent`, through the same choke point — so no path can reach
     a GUI database without it."""
-    from scistack_gui import pipeline_store
+    from scistack_gui.stores import pipeline_store
 
     pipeline_store._ensure_tables(populated_db)
     rows = populated_db._duck.fetchall(

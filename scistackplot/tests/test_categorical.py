@@ -36,10 +36,10 @@ from scistackplot import (
     resolve,
     stack_bases,
 )
-from scistackplot.categorical import MAX_CATEGORY_LEVELS, apply_categorical
-from scistackplot.resolved import GRID_COLUMNS, GRID_ROWS, X, Y, Y_HIGH, Y_LOW, Z
-from scistackplot.roles import RoleError
-from scistackplot.spec import Filter
+from scistackplot.reduce.categorical import MAX_CATEGORY_LEVELS, apply_categorical
+from scistackplot.reduce.resolved import GRID_COLUMNS, GRID_ROWS, X, Y, Y_HIGH, Y_LOW, Z
+from scistackplot.model.roles import RoleError
+from scistackplot.model.spec import Filter
 
 KEYS = ["subject", "session", "trial"]
 

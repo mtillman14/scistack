@@ -1,0 +1,26 @@
+# scistackplot's layers (design review 06 "Shape", refactor P1), lowest first.
+# One subpackage per layer, except `base`: leaf modules (no scistackplot
+# imports) that live in their job's folder but sit below every layer.
+# Checked by test_import_layers.py.
+package = "scistackplot"
+src = "../src"
+lazy_baseline = 225
+# text sits below reduce: reduce/resolved use DisplayText and MarkColors.
+order = ["base", "model", "text", "reduce", "sources", ["render", "export"], "facade"]
+
+[layers]
+base = [
+    "scistackplot.sources.dedup", "scistackplot.reduce.numeric",
+    "scistackplot.reduce.temporal", "scistackplot.reduce.spread",
+    "scistackplot.reduce.omissions", "scistackplot.text.ticklabels",
+    "scistackplot.text.xaxis", "scistackplot.text.figsize",
+    "scistackplot.text.framesize",
+]
+model = ["scistackplot.model.*"]
+text = ["scistackplot.text.*"]
+reduce = ["scistackplot.reduce.*"]
+sources = ["scistackplot.sources.*"]
+render = ["scistackplot.render.*"]
+export = ["scistackplot.export.*"]
+# The package's __init__ re-exports the public names; nothing inside imports it.
+facade = ["scistackplot"]

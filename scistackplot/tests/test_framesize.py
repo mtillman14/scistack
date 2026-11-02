@@ -10,7 +10,7 @@ a plot that never returned indistinguishable from a plot over a small table
 import numpy as np
 import pandas as pd
 
-from scistackplot.framesize import (
+from scistackplot.text.framesize import (
     NUMPY_BYTES_PER_SAMPLE,
     PYLIST_BYTES_PER_SAMPLE,
     cell_samples,

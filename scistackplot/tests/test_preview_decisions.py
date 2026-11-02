@@ -240,7 +240,7 @@ def test_auto_size_draws_each_trial_once_and_no_more(gait_table, monkeypatch, ca
 def test_kept_trial_decisions_equal_a_fresh_draw(gait_table, case):
     import matplotlib.pyplot as plt
 
-    from scistackplot.autosize import at_size, with_sizes
+    from scistackplot.text.autosize import at_size, with_sizes
     from scistackplot.render.mpl import _figure_decisions, render
 
     resolved = _auto_cases(gait_table)[case]

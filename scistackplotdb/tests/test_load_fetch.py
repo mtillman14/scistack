@@ -199,7 +199,7 @@ class TestNormalizeCell:
         assert out.shape == (2, 2) and out.dtype == np.float64
 
     def test_ragged_rows_become_a_list_of_rows_and_still_classify_2d(self):
-        from scistackplot.shape import Shape, classify_value
+        from scistackplot.model.shape import Shape, classify_value
 
         from scistackplotdb.load import _normalize_cell
 

@@ -43,14 +43,14 @@ from scistackplot import (  # noqa: E402
     row_factor,
     row_origin,
 )
-from scistackplot.cell import apply_cell_collapse  # noqa: E402
+from scistackplot.reduce.cell import apply_cell_collapse  # noqa: E402
 from scistackplot.render.base import (  # noqa: E402
     LONE_POINT_MARKER,
     is_lone_point,
     lone_point_marker_code,
 )
-from scistackplot.roles import default_assignment  # noqa: E402
-from scistackplot.series_stats import cell_array  # noqa: E402
+from scistackplot.model.roles import default_assignment  # noqa: E402
+from scistackplot.reduce.series_stats import cell_array  # noqa: E402
 
 
 # --- the split ------------------------------------------------------------------

@@ -29,7 +29,7 @@ Decisions (user, 2026-10-06):
 
 ## What a preset owns: one table
 
-`scistackplot/presets.py: FIELD_CLASSES` classifies every `PlotSpec` setting.
+`scistackplot/model/presets.py: FIELD_CLASSES` classifies every `PlotSpec` setting.
 It is read on save (`make_template` strips) and on apply
 (`apply_preset` takes those settings from the target), so the two cannot
 disagree.

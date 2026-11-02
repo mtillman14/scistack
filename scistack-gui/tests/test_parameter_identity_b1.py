@@ -183,7 +183,7 @@ def test_a_gui_run_states_the_names_from_its_wiring():
 
 class TestGeneratedMatlab:
     def test_the_first_run_template_records_the_names(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name=FN,
@@ -194,7 +194,7 @@ class TestGeneratedMatlab:
         assert f"'parameter_names', struct('{ARG}', '{DECLARED}')" in cmd
 
     def test_a_rerun_from_history_records_the_names(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name=FN,
@@ -213,7 +213,7 @@ class TestGeneratedMatlab:
         assert f"'parameter_names', struct('{ARG}', '{DECLARED}')" in cmd
 
     def test_no_names_no_pair(self):
-        from scistack_gui.api.matlab_command import generate_matlab_command
+        from scistack_gui.services.matlab_command_format import generate_matlab_command
 
         cmd = generate_matlab_command(
             function_name=FN,

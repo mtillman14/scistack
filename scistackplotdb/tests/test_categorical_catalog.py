@@ -24,7 +24,7 @@ from scistackplot import (
     default_spec,
     resolve,
 )
-from scistackplot.resolved import X, Y
+from scistackplot.reduce.resolved import X, Y
 
 from scistackplotdb import ScidbSource, base_variable, generate_endpoint, text_measure_name
 from scistackplotdb.source import MAX_GROUP_LEVELS
@@ -110,7 +110,7 @@ def test_an_all_text_variable_is_itself_categorical(db):
 def test_free_text_is_refused_in_place(db):
     for index in range(MAX_GROUP_LEVELS + 3):
         Note.save(f"note {index}", subject=f"{index:03d}", session="pre", trial="1")
-    from scistackplot.categorical import free_text_reason
+    from scistackplot.reduce.categorical import free_text_reason
 
     table = ScidbSource(db).get_table(["Note"])
     assert "free text" in free_text_reason(table, "Note")

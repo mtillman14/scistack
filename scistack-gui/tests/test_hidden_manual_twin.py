@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 from scidb import BaseVariable
 
-from scistack_gui import pipeline_store
-from scistack_gui.db import get_db
+from scistack_gui.stores import pipeline_store
+from scistack_gui.runtime.db import get_db
 from scistack_gui.domain import graph_builder as gb
 from scistack_gui.domain.edge_resolver import (
     infer_manual_fn_output_types,

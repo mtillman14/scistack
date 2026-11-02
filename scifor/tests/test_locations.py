@@ -2,7 +2,7 @@
 
 The parity cases are LOADED from docs/claude/location-filter-cases.json, not
 transcribed. The same rule exists four times — here over for_each combos, in
-scistackplot.reduce as a pandas mask, in scistackplot.codegen as the emitted
+scistackplot.reduce.resolve as a pandas mask, in scistackplot.export.codegen as the emitted
 copy of that mask, and in the GUI's locationSelection.ts — and scistackplot
 cannot import scifor (pandas/numpy/scistacklog only), so the copies are real.
 Reading one shared file means a case added to the spec FAILS every

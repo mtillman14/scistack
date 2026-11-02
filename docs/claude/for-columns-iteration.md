@@ -265,7 +265,7 @@ Before groups, >1 output was an error, so nothing existing changed meaning.
 | "missing" for the no-data rule | `scifor.missing` (MATLAB `group_has_no_data`) |
 | wire form `[{"name"?, "columns"}]` (DB selector, GUI, bridge) | `scifor.column_selection.groups_to_wire` / `spec_from_wire` |
 | stored selection shape (`"groups"` only when grouped) | `scidb.intent.normalize_columns` / `selector_json`; `selection_spec` rebuilds the spec |
-| MATLAB literal for a spec | `scistack_gui.api.matlab_command.format_matlab_column_spec` |
+| MATLAB literal for a spec | `scistack_gui.services.matlab_command_format.format_matlab_column_spec` |
 | GUI picker's answer | `scistack_gui.domain.column_selection.plan_groups` (RPC `plan_column_groups`) |
 
 `ColumnSelection.groups` is `None` when flat; `column_spec` returns the spec

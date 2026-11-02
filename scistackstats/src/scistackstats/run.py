@@ -27,7 +27,7 @@ import pandas as pd
 from scistacklog import Log
 
 from scistackplot import LongTable
-from scistackplot.design import design_fingerprint
+from scistackplot.model.design import design_fingerprint
 
 from .catalog import TESTS, needed_action, recommend, select_tests
 from .design import WITHIN, Design, comparison_tiers, derive_design
@@ -198,7 +198,7 @@ class AnalysisReport:
 class StatsReport:
     analyses: list[AnalysisReport]
     engine: dict[str, str]
-    #: ``scistackplot.design.design_fingerprint`` of the design the report
+    #: ``scistackplot.model.design.design_fingerprint`` of the design the report
     #: ran on, so a GUI can tell when the results are stale against the spec.
     design_digest: str
     #: ``AnalysisFrame.summary()`` per DV that had rows (for captions).

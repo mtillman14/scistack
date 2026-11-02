@@ -26,7 +26,7 @@ from dataclasses import replace
 import pytest
 
 from scistackplot import PlotSpec, Role, RoleError, role_options
-from scistackplot.capability import (
+from scistackplot.model.capability import (
     ROLE_ORDER,
     factor_summary,
     factors_menu,
@@ -35,9 +35,9 @@ from scistackplot.capability import (
     role_hint,
     role_label,
 )
-from scistackplot.roles import validate
-from scistackplot.shape import Shape
-from scistackplot.spec import PlotKind
+from scistackplot.model.roles import validate
+from scistackplot.model.shape import Shape
+from scistackplot.model.spec import PlotKind
 
 
 def _error(spec: PlotSpec, table) -> str | None:
@@ -348,7 +348,7 @@ def test_the_report_never_offers_a_kind_the_validator_refuses_for_layers(scalar_
     that then failed to draw (role-assignment sweep, 2026-09-19). One rule,
     `roles.layer_cap_reason`, now feeds both."""
     from scistackplot import PlotKind, PlotSpec, Role, RoleError, capabilities
-    from scistackplot.roles import validate
+    from scistackplot.model.roles import validate
 
     frame = scalar_table.frame.assign(limb=["L", "R"] * (len(scalar_table.frame) // 2))
     from scistackplot import LongTable

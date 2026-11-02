@@ -43,7 +43,7 @@ def export_pipeline_to_code(db, pipeline_id: str) -> dict:
     """Detect language across the closure and generate a standalone
     script. Raises ValueError for a mixed-language closure (unsupported —
     see module docstring)."""
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
     from scistack_gui.services.pipeline_service import get_pipeline_graph
     from scistack_gui.services.portability_service import _closure_pipeline_ids
 
@@ -60,7 +60,7 @@ def export_pipeline_to_code(db, pipeline_id: str) -> dict:
 
     # Every exported step gets a step name (Q6) if it has none, so the script
     # and the canvas agree on which node each for_each is from then on.
-    from scistack_gui.step_names import ensure_step_names
+    from scistack_gui.project.step_names import ensure_step_names
 
     ensure_step_names(db, fn_nodes)
 
@@ -85,7 +85,7 @@ def export_pipeline_to_code(db, pipeline_id: str) -> dict:
     import re
     from pathlib import Path
 
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
 
     names_by_id = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
     root_name = names_by_id.get(pipeline_id, pipeline_id)
@@ -287,7 +287,7 @@ def _py_glue_literal(glue: "dict | None") -> str:
 
 
 def _py_header(db) -> str:
-    from scistack_gui import registry
+    from scistack_gui.project import registry
 
     lines = [
         '"""',
@@ -417,7 +417,7 @@ def _matlab_literal(value) -> str:
     MATLAB has no ``ColumnSelection`` wrapper: the columns go to the
     ``BaseVariable`` constructor and ``iterate`` comes from ``for_columns``
     (``+scidb/BaseVariable.m``), so the four spellings match
-    ``api.matlab_command._format_variable_class`` exactly — two renderers, one
+    ``matlab_command_format._format_variable_class`` exactly — two renderers, one
     syntax, and a test in each pins it.
     """
     if _is_deferred_colname(value):
@@ -430,7 +430,7 @@ def _matlab_literal(value) -> str:
         inner, columns, iterate = parts
         name = inner.__name__ if isinstance(inner, type) else str(inner)
         if iterate:
-            from scistack_gui.api.matlab_command import format_matlab_column_spec
+            from scistack_gui.services.matlab_command_format import format_matlab_column_spec
 
             return f"{name}().for_columns({format_matlab_column_spec(columns)})"
         if len(columns) == 1:
@@ -509,7 +509,7 @@ def _matlab_header(db) -> str:
     except ImportError:
         lines.append("% TODO: addpath('/path/to/scimatlab/matlab')")
 
-    from scistack_gui import matlab_registry
+    from scistack_gui.matlab import registry as matlab_registry
 
     addpaths = []
     if matlab_registry._config is not None:
@@ -533,7 +533,7 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
     + apply_pending_overrides + filter_hidden_targets + dedup), minus the
     for_each(...) call, since there's no compiled Pipeline to walk for
     MATLAB (registry.get_function only resolves Python callables)."""
-    from scistack_gui import pipeline_store as ps
+    from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.domain.variant_resolver import (
         filter_hidden_targets,
         hidden_call_ids_for_fn,
@@ -548,7 +548,7 @@ def _matlab_steps(db, pipeline_ids: list) -> list:
         on_duplicate_from_config,
         on_error_from_config,
     )
-    from scistack_gui.step_names import step_name_of
+    from scistack_gui.project.step_names import step_name_of
 
     pending_consts = ps.get_pending_constants(db)
 
@@ -604,14 +604,14 @@ def _matlab_run_option_args(options, inputs: dict) -> str:
     record at every location. ``across_variants`` needs nothing here — it
     rides on the input expression as ``scidb.AcrossVariants(...)``.
     """
-    from scistack_gui.api.matlab_command import _format_matlab_string_array
+    from scistack_gui.services.matlab_command_format import format_matlab_string_array
 
     parts = ""
     if options.distribute:
         parts += ", 'distribute', true"
     as_table = options.resolved_as_table(inputs)
     if as_table:
-        parts += ", 'as_table', " + _format_matlab_string_array(as_table)
+        parts += ", 'as_table', " + format_matlab_string_array(as_table)
     return parts
 
 
@@ -655,7 +655,7 @@ def _topo_sort_targets(steps: list) -> list:
 
 
 def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[str, list[str]]:
-    from scistack_gui import registry
+    from scistack_gui.project import registry
     from scistack_gui.services.execution_service import (
         build_run_glue,
         build_run_inputs,

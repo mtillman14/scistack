@@ -31,9 +31,9 @@ from scistackplot import (
     render_plotly,
     resolve,
 )
-from scistackplot.capability import why_unavailable
-from scistackplot.resolved import SERIES, X, Y
-from scistackplot.spaghetti import SPAGHETTI_SPREAD, series_offsets
+from scistackplot.model.capability import why_unavailable
+from scistackplot.reduce.resolved import SERIES, X, Y
+from scistackplot.reduce.spaghetti import SPAGHETTI_SPREAD, series_offsets
 
 GROUPS = ["Digitimer", "Sham", "Onward"]
 SESSIONS = ["S1", "S2", "S3"]
@@ -523,7 +523,7 @@ def test_a_collapsed_subject_is_its_own_line_inside_its_group(study_table, study
 
 
 def test_the_sample_repeats_rule(study_table):
-    from scistackplot.roles import complete_roles, spaghetti_sample_repeats
+    from scistackplot.model.roles import complete_roles, spaghetti_sample_repeats
 
     spec = _group_lines_spec()
     roles = complete_roles(spec, study_table)
@@ -541,7 +541,7 @@ def test_a_sample_that_cannot_be_joined_is_averaged_into_its_line(study_table, c
     the log says so."""
     import logging
 
-    from scistackplot.roles import collapse_steps, complete_roles
+    from scistackplot.model.roles import collapse_steps, complete_roles
 
     spec = _study_spec()
     steps = collapse_steps(spec, complete_roles(spec, study_table), study_table)
@@ -555,7 +555,7 @@ def test_a_sample_that_cannot_be_joined_is_averaged_into_its_line(study_table, c
 
 
 def test_no_other_kind_averages_the_sample(study_table):
-    from scistackplot.roles import collapse_steps, complete_roles
+    from scistackplot.model.roles import collapse_steps, complete_roles
 
     for kind in (PlotKind.SCATTER, PlotKind.STRIP, PlotKind.BOX, PlotKind.BAR):
         spec = _study_spec(kind=kind)
@@ -602,7 +602,7 @@ def _polylines(figure):
 
 
 def test_the_marks_carry_their_run():
-    from scistackplot.resolved import RUN
+    from scistackplot.reduce.resolved import RUN
 
     table, _, spec = _crossed_table()
     frame = resolve(spec, table)[0].panels[0].frame

@@ -31,14 +31,14 @@ logger = logging.getLogger(__name__)
 def _adopt_every_canvas(db) -> list[str]:
     """Build every pipeline's canvas (no run states), adopting as it goes.
     Returns the scopes built."""
-    from scistack_gui import pipeline_store as ps
-    from scistack_gui.api.pipeline import _build_graph
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.services.graph_service import build_graph
 
     scopes = [ROOT_SCOPE] + sorted(
         p["pipeline_id"] for p in ps.list_all_pipelines(db) if p["pipeline_id"] != ROOT_SCOPE
     )
     for scope in scopes:
-        _build_graph(db, scope, run_states=False)
+        build_graph(db, scope, run_states=False)
     return scopes
 
 
@@ -79,7 +79,7 @@ def clear_data_plan(db) -> dict:
 def clear_data(db, reason: str, fingerprint: str, backup: bool = False) -> dict:
     """Delete every record and its run history; keep every canvas.
 
-    Refuses while a run is in progress (``api.run`` owns that state) and when
+    Refuses while a run is in progress (``run_service`` owns that state) and when
     the database changed since the plan was shown (``fingerprint``)."""
     from scidb.clear_data import clear_data as _clear
 
@@ -114,7 +114,6 @@ def clear_data(db, reason: str, fingerprint: str, backup: bool = False) -> dict:
 
 
 def _run_in_progress() -> bool:
-    from scistack_gui.api import run as run_api
+    from scistack_gui.services.run_service import has_active_runs
 
-    with run_api._active_runs_lock:
-        return bool(run_api._active_runs)
+    return has_active_runs()
