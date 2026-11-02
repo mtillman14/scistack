@@ -20,6 +20,13 @@ Example:
     # Save/load
     RawSignal.save(np.array([1, 2, 3]), subject=1, session="A")
     raw = RawSignal.load(subject=1, session="A")
+
+Public surface:
+    ``scidb`` (this module) is the user API and ``scidb.inspect`` the read
+    API. Other SciStack packages may also import the internal modules listed
+    in ``SUPPORTED_MODULES`` below, and nothing else. Each consumer package
+    has a boundary test that enforces this. The internal half of the list is
+    what consumers use today; it is meant to shrink, not grow.
 """
 
 # From scifor (Layer 1) — Fixed/ColName/EachOf are the same classes scidb
@@ -124,6 +131,63 @@ try:
     __version__ = _metadata.version("scistack-db")
 except _metadata.PackageNotFoundError:
     __version__ = "0.0.0"
+
+# THE list of scidb modules other packages may import (see the docstring).
+# Read by every consumer's test_scidb_boundary.py through tools/import_layers.py.
+SUPPORTED_MODULES: tuple[str, ...] = (
+    # Public API
+    "scidb",
+    "scidb.inspect",
+    # Internals consumers import today; remove an entry once nothing needs it
+    "scidb.aliases",
+    "scidb.across_variants",
+    "scidb.bindings",
+    "scidb.bundle",
+    "scidb.clear_data",
+    "scidb.colors",
+    "scidb.column_selection",
+    "scidb.combine",
+    "scidb.config_file",
+    "scidb.database",
+    "scidb.discover",
+    "scidb.entities",
+    "scidb.environment",
+    "scidb.exceptions",
+    "scidb.exclusions",
+    "scidb.external_loop",
+    "scidb.filters",
+    "scidb.foreach",
+    "scidb.foreach_config",
+    "scidb.glue",
+    "scidb.inspect.cli",
+    "scidb.inspect.mutate",
+    "scidb.inspect.variant_cards",
+    "scidb.intent",
+    "scidb.inventory",
+    "scidb.library",
+    "scidb.locations",
+    "scidb.log",
+    "scidb.names",
+    "scidb.parameter",
+    "scidb.per_combo",
+    "scidb.pipeline",
+    "scidb.project",
+    "scidb.provenance",
+    "scidb.provenance_query",
+    "scidb.roles",
+    "scidb.run_markers",
+    "scidb.schema_level",
+    "scidb.schema_map",
+    "scidb.schema_order",
+    "scidb.source_edit",
+    "scidb.state",
+    "scidb.table_copy",
+    "scidb.variable",
+    "scidb.variant",
+    "scidb.variant_pins",
+    "scidb.verify",
+    "scidb.wirings",
+)
 
 __all__ = [
     "RenameReport",

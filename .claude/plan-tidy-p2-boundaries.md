@@ -183,4 +183,14 @@ Move files, fix imports, and change nothing else:
    scistack-gui, one at a time.
 
 ## Progress
-- (none yet)
+- 2026-11-01: stages 1–3 done; user ran tools/tests, scidb layer + supported-module tests and the four boundary tests, all green.
+  - Deviations: layer config is `tests/import_layers.toml` (order, layers,
+    `lazy_baseline`) so the test and the `--write` bootstrap CLI read one
+    file. `order` takes peer groups (`["run", "project"]`), which is how
+    "project beside run" is expressed. Layer entries match exactly;
+    `pkg.sub.*` covers a subpackage. `TYPE_CHECKING` imports are not
+    violations. A TODO reason in the allow-list fails the test.
+  - Stage 3 also covers `from scidb import <module>` (resolved via
+    `other_modules`). `._duck` baseline is 27 (grep count), not 26.
+    `scidb/tests/test_supported_modules.py` checks the tuple has no stale
+    names.
