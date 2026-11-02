@@ -9,8 +9,6 @@ _root = Path(__file__).parent.parent
 sys.path.insert(0, str(_root / "src"))
 sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scifor" / "src"))
-sys.path.insert(0, str(_root / "scilineage" / "src"))
-sys.path.insert(0, str(_root / "path-gen" / "src"))
 sys.path.insert(0, str(_root / "canonical-hash" / "src"))
 
 from scidb.database import _local
@@ -277,8 +275,8 @@ class TestSchemaOverridesHash:
 class _NoDuckDB:
     """Database double that doesn't expose a DuckDB backend.
 
-    Mirrors backends (remote/net) and the lightweight test doubles used by
-    scihist's for_each tests, which implement the public Database surface but
+    Mirrors the lightweight test doubles used by the for_each tests
+    (``make_simple_mock_db``), which implement the public Database surface but
     have no ``_duck``.  Regression guard for the AttributeError that crashed
     for_each Step 9.5 when it reached straight into ``db._duck``.
     """

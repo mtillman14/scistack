@@ -272,6 +272,8 @@ mirror problem is confined to scifor's semantics
 | W4 | Write a single identity table (doc, plus a test that asserts it): each row is one fact (function hash, input types, input record ids, constants, as_table, distribute, across_variants, iteration level), each column is one id. Generate the recipes' field lists from it. | weakness 4 |
 | W5 | Rename "version keys" to "call-site keys" throughout, and remove the stale `_lineage` comment. | weakness 5 |
 
+> **Done (2026-11-01, P1):** W5, docstring half only — stale `version_keys` / `LineageFcn` / scihist docstrings and comments fixed. The rename is P4.
+
 > **Done (2026-11-01):** W1. `record_run` failures fail the save; phases 2–4 run in one re-entrant `SciDuck.transaction` (all-or-nothing, decision D-2026-11-01-2). D2's first piece (`transaction()`) landed with it. Tests: `sciduckdb/tests/test_transaction.py`, `scidb/tests/test_save_provenance_failure.py`.
 
 W1 is the only one of these that is a correctness issue rather than a

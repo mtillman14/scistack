@@ -93,7 +93,7 @@ so old and new structural layouts of a variable never collide.
 To know whether a *computation* is the same, you also need to fingerprint the
 **function**. Function hashing is **bytecode-based**: it hashes the function's
 compiled code, not its source text (it is part of the lineage engine — see
-[Internals — scilineage](../internals/scilineage.md)). Two consequences:
+[Internals — scicanonicalhash](../internals/scicanonicalhash.md)). Two consequences:
 
 - **Reformatting is invisible.** Changing whitespace, comments, or the docstring
   does **not** change the hash — only changing what the function actually computes

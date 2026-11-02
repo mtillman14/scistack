@@ -20,16 +20,11 @@ python -m venv %USERPROFILE%\scidb-env
 
 ## 2. Install Python Packages
 
-From the root of this repository, install the packages in dependency order. The `-e` flag enables editable/development installs so changes to source are picked up automatically.
+From the root of this repository, install every package in editable mode, in
+dependency order (the script is the one owner of that order):
 
 ```bash
-pip install -e canonical-hash/
-pip install -e path-gen/
-pip install -e scilineage/
-pip install -e sciduckdb/
-pip install -e pipelinedb-lib/
-pip install -e scidb/         # scidb (main package)
-pip install -e scimatlab/  # MATLAB bridge
+bash dev-install.sh
 ```
 
 ## 3. Point MATLAB at Your Python

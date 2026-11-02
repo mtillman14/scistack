@@ -947,8 +947,8 @@ class TestSkipComputedWithSplit:
 class TestSaveKwargAlignment:
     """Iterating a key that is ALSO a save-time non-schema kwarg must align
     each combo with its matching ``__save__.<key>`` variant group, not
-    cross-product combos with every group (regression: scihist
-    test_generates_file cache-hit ran 4 calls instead of 2, pairing the
+    cross-product combos with every group (regression:
+    test_hist_generates_file cache-hit ran 4 calls instead of 2, pairing the
     run="A" iteration with the __save__.run="B" group and vice versa)."""
 
     def test_iterated_save_kwarg_aligns_not_crosses(self, db):
@@ -979,7 +979,7 @@ class TestSaveKwargAlignment:
 
     def test_second_run_skips_aligned_groups(self, db):
         """skip_computed must hit on the aligned records (the original
-        scihist cache-hit failure mode)."""
+        test_hist_generates_file cache-hit failure mode)."""
         RawSignal.save(np.array([1.0, 2.0]), subject="1", run="A")
         RawSignal.save(np.array([3.0, 4.0]), subject="1", run="B")
 

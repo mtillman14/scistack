@@ -10,6 +10,7 @@ These pin the format and behavior contracts the rest of scistack relies on:
 
 import logging
 import re
+from pathlib import Path
 
 import pytest
 
@@ -207,14 +208,14 @@ def test_every_declared_layer_reaches_the_file(tmp_path):
 
 def test_child_module_loggers_are_covered(tmp_path):
     """Plain logging.getLogger('<layer>.<module>') records land in the file
-    tagged with the layer — this is how sciduckdb/scilineage/etc. log."""
+    tagged with the layer — this is how sciduckdb/scicanonicalhash/etc. log."""
     log_file = tmp_path / "scistack.log"
     Log.set_path(str(log_file))
     logging.getLogger("scidb.discover").info("module-level record")
-    logging.getLogger("scilineage.hashing").info("hash note")
+    logging.getLogger("scicanonicalhash.functions").info("hash note")
     content = log_file.read_text(encoding="utf-8")
     assert "[scidb] module-level record" in content
-    assert "[scilineage] hash note" in content
+    assert "[scicanonicalhash] hash note" in content
 
 
 def test_unknown_layer_falls_back_to_scidb_with_warning(tmp_path):
@@ -503,3 +504,13 @@ def test_trial_ends_on_exception(tmp_path):
             raise RuntimeError("boom")
     Log.warn("real warning", layer="scistackplot")
     assert "WARN  [scistackplot] real warning" in read_text_or_empty(path)
+
+
+def test_readme_lists_exactly_the_declared_layers():
+    """The README's layer list is a reader of LAYERS, not a second owner: it
+    once listed 8 layers while LAYERS had 12."""
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    m = re.search(r"`layer` must be one of `scistacklog\.LAYERS`:\n(.*?)\.\n", readme, re.S)
+    assert m, "README layer list not found"
+    listed = re.findall(r"`([a-z_]+)`", m.group(1))
+    assert listed == list(LAYERS)

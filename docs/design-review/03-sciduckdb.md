@@ -200,6 +200,8 @@ tested.
 | D3 | Hide `save`/`load`/`list_versions`/`delete` (mark hidden rather than delete), and rewrite the README around codec + connection. | weakness 2 |
 | D4 | Decide one schema owner: either sciduckdb owns all DDL (scidb declares tables, sciduckdb creates them), or sciduckdb owns none (scidb creates `_schema` too). The second is smaller. | weakness 3 |
 
+> **Done (2026-11-01, P1):** D3 — `save`/`load`/`list_versions`/`delete` and their private helpers deleted. The codec round-trip tests now go through `tests/codec_roundtrip.py` (public codec functions in a real table). `_restore_types` became the public `restore_types`, so scidb no longer reaches into `_duck._restore_types`. README rewritten (codec, connection, schema ids). `_get_or_create_schema_id` stays: scidb calls it at 3 sites (promote in P2).
+
 > **Partly done (2026-11-01, plan-tidy P0):** `SciDuck.transaction(label)` exists. It is re-entrant, an inner rollback dooms the outer level (`TransactionRolledBackError`), and `add_rollback_listener` is the cache hook. `_begin`/`_commit`/`_rollback` are depth-aware. `save_batch`, `_commit_graph` and `rename._write` use `transaction()`; the remaining `_begin` callers migrate with the rest of D2.
 
 D1–D3 are internal and low-risk. D4 belongs with the scidb review, since

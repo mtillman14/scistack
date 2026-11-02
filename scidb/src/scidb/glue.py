@@ -34,6 +34,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from scicanonicalhash import compute_function_hash
+
 from .exceptions import SciStackError
 from .log import Log
 from .per_combo import PerComboLoader, PerComboLoaderMerge
@@ -227,8 +229,6 @@ def _compute_glue_hash(spec: GlueSpec) -> str:
     *below* scimatlab and must not depend on it.
     """
     if spec.language == "python" and spec.fn is not None:
-        from scilineage.hashing import compute_function_hash
-
         return compute_function_hash(spec.fn, truncate=16)
     # Python glue whose body could not be loaded (see resolve_python_glue)
     # falls through to the text hash. It is a DIFFERENT number than the AST

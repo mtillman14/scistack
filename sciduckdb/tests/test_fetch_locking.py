@@ -43,11 +43,8 @@ _FETCH_METHODS = {
 # Packages scanned by the repo-wide guard.
 _SCANNED_PACKAGES = (
     "scidb",
-    "scidb-net",
     "sciduckdb",
     "scifor",
-    "scihist",
-    "scilineage",
     "scimatlab",
     "scistack-gui",
     "scistacklog",

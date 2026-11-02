@@ -22,6 +22,8 @@ from sciduckdb.sciduckdb import (
     count_null_list_elements,
 )
 
+from .codec_roundtrip import fetch, store
+
 
 @pytest.fixture
 def duck():
@@ -57,8 +59,8 @@ class TestStorageToPython:
         assert out.dtype == np.int64
 
     def test_restoration_is_idempotent(self):
-        """SciDuck.load restores a cell twice (_restore_types, then the
-        multi_column branch). The second pass sees a plain float array whose
+        """scidb's load restores a multi-column cell twice (restore_types,
+        then the multi_column branch). The second pass sees a plain float array whose
         declared dtype is still int64 — casting NaN to int64 yields INT_MIN, so
         the upcast must survive re-restoration."""
         meta = {"python_type": "ndarray", "numpy_dtype": "int64"}
@@ -138,10 +140,8 @@ class TestCounters:
 
 class TestRoundTrip:
     def test_dict_float_array_with_nan(self, duck):
-        duck.save(
-            "arr", {"force": np.array([np.nan, 0.5, 0.4, np.nan])}, subject="S01", trial="1"
-        )
-        loaded = duck.load("arr", subject="S01", trial="1")
+        meta = store(duck, "arr", {"force": np.array([np.nan, 0.5, 0.4, np.nan])})
+        loaded = fetch(duck, "arr", meta)
         f = loaded["force"]
         assert f.dtype == np.float64
         assert np.isnan(f[0]) and np.isnan(f[3]), f
@@ -157,8 +157,8 @@ class TestRoundTrip:
                 "label": ["a", "b"],
             }
         )
-        duck.save("gr", original, subject="S01", trial="1")
-        loaded = duck.load("gr", subject="S01", trial="1")
+        meta = store(duck, "gr", original)
+        loaded = fetch(duck, "gr", meta)
         assert isinstance(loaded, pd.DataFrame)
         s0, s1 = loaded["steps"].iloc[0], loaded["steps"].iloc[1]
         assert np.isnan(s0[0]) and s0[1] == 0.49 and s0[2] == 0.45, s0
@@ -166,8 +166,8 @@ class TestRoundTrip:
 
     def test_2d_array_with_nan(self, duck):
         m = np.array([[1.0, np.nan], [np.nan, 4.0]])
-        duck.save("mat", {"m": m}, subject="S01", trial="1")
-        out = duck.load("mat", subject="S01", trial="1")["m"]
+        meta = store(duck, "mat", {"m": m})
+        out = fetch(duck, "mat", meta)["m"]
         assert out.shape == (2, 2)
         assert np.isnan(out[0, 1]) and np.isnan(out[1, 0])
         assert out[0, 0] == 1.0 and out[1, 1] == 4.0
@@ -175,15 +175,15 @@ class TestRoundTrip:
     def test_int_array_with_sql_null_upcasts(self, duck):
         """A NULL written by SQL into a BIGINT[] column — no in-memory NaN
         could have produced it — still reloads as NaN, in float64."""
-        duck.save("ints", {"ids": np.array([1, 2, 3], dtype=np.int64)}, subject="S01", trial="1")
+        meta = store(duck, "ints", {"ids": np.array([1, 2, 3], dtype=np.int64)})
         duck._execute('UPDATE "ints" SET ids = [1, NULL, 3]')
-        out = duck.load("ints", subject="S01", trial="1")["ids"]
+        out = fetch(duck, "ints", meta)["ids"]
         assert out.dtype == np.float64
         assert out[0] == 1 and np.isnan(out[1]) and out[2] == 3
 
     def test_nan_free_arrays_untouched(self, duck):
-        duck.save("clean", {"v": np.array([0.0, 1.0, 2.0])}, subject="S01", trial="1")
-        out = duck.load("clean", subject="S01", trial="1")["v"]
+        meta = store(duck, "clean", {"v": np.array([0.0, 1.0, 2.0])})
+        out = fetch(duck, "clean", meta)["v"]
         np.testing.assert_array_equal(out, [0.0, 1.0, 2.0])
         assert not np.any(np.isnan(out))
 

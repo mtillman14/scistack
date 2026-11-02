@@ -8,9 +8,9 @@ ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
 OUT="$(mkdir -p "${1:-$HERE/out}" && cd "${1:-$HERE/out}" && pwd)"
 cd "$ROOT"
 
-PKGS="scifor scimatlab sciduckdb scidb scilineage scihist scistack scistacklog scistackplot scistackplotdb scistackstats scistackstatsdb scicanonicalhash scidb-net scistack-gui"
+PKGS="scifor scimatlab sciduckdb scidb scistack scistacklog scistackplot scistackplotdb scistackstats scistackstatsdb scicanonicalhash scistack-gui"
 TEST_RE='(^|/)tests?/|\.test\.'
-EXCLUDE_RE='(\.d\.ts$|/dist/|/out/|/media/|^examples/|^docs/|^build/|^site/|^spec/|^path-gen/|^csv-data|^tmp\.py$|^\.claude/|^tools/)'
+EXCLUDE_RE='(\.d\.ts$|/dist/|/out/|/media/|^examples/|^docs/|^build/|^site/|^spec/|^csv-data|^tmp\.py$|^\.claude/|^tools/)'
 
 git ls-files > "$OUT/files.txt"
 grep -E '\.(py|m|tsx?)$' "$OUT/files.txt" | grep -vE "$TEST_RE" | grep -vE "$EXCLUDE_RE" > "$OUT/src.txt"

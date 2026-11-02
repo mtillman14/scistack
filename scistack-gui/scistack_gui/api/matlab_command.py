@@ -1119,7 +1119,7 @@ def generate_matlab_command(
     lines.extend(_timing_init_lines())
 
     # pyenv preamble — must come before any py.* call (i.e. before
-    # scihist.configure_database, which internally calls py.scidb.*).
+    # scidb.configure_database, which internally calls py.scidb.*).
     pyenv_lines = (
         _format_pyenv_preamble(python_executable) if python_executable else []
     )
@@ -1152,7 +1152,7 @@ def generate_matlab_command(
         timing.section(
             [
                 "% Configure database (skip if already configured)",
-                f"db = scihist.configure_database("
+                f"db = scidb.configure_database("
                 f"'{_escape_matlab_string(db_path)}', {schema_keys_str});",
             ],
             "scistack_t_configure_db__",
@@ -1784,7 +1784,7 @@ def generate_matlab_pipeline_command(
         timing.section(
             [
                 "% Configure database (skip if already configured)",
-                f"db = scihist.configure_database("
+                f"db = scidb.configure_database("
                 f"'{_escape_matlab_string(db_path)}', {schema_keys_str});",
             ],
             "scistack_t_configure_db__",
@@ -2052,7 +2052,7 @@ def _format_pyenv_preamble(python_executable: str) -> list[str]:
          a try/catch. This is required because ``pyenv('Version', ...)`` only
          *configures* Python; it does not actually load it. On some
          MATLAB+venv combinations, the first ``py.*`` call inside a package
-         function (e.g. ``scihist.configure_database``) fails with
+         function (e.g. ``scidb.configure_database``) fails with
          "Unrecognized function or variable 'py'" because MATLAB's symbol
          resolver runs before the Python load. Loading Python here — from
          the script's top-level scope — avoids that path entirely.
@@ -2090,7 +2090,7 @@ def _format_pyenv_preamble(python_executable: str) -> list[str]:
         "end",
         "% Force Python to actually load NOW (at script top-level), so that",
         "% subsequent py.* calls inside package functions (e.g.",
-        "% scihist.configure_database) resolve correctly. pyenv('Version', ...)",
+        "% scidb.configure_database) resolve correctly. pyenv('Version', ...)",
         "% only configures Python; it does not load it.",
         "try",
         "    scistack_py_version__ = char(py.sys.version);",

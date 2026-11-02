@@ -91,7 +91,7 @@ function [blame, probable, rule] = classify_blame(err, frames, no_data)
 %      no check named the cause).
 %   3. user_code  -- the innermost non-library frame is the user's.
 %   4. setup      -- SciStack's own code raised it on purpose: an error()
-%      call with a scifor:/scidb:/scihist:/scistack: identifier, whose message
+%      call with a scifor:/scidb:/scistack: identifier, whose message
 %      says what to change (Python's ActionableError).
 %   5. internal   -- anything else SciStack's code raised.
 %
@@ -115,7 +115,7 @@ function [blame, probable, rule] = classify_blame(err, frames, no_data)
         blame = 'user_code';
         rule = sprintf('innermost non-library frame is user code (%s:%d)', ...
             frames(innermost).file, frames(innermost).line);
-    elseif startsWith(id, {'scifor:', 'scidb:', 'scihist:', 'scistack:'})
+    elseif startsWith(id, {'scifor:', 'scidb:', 'scistack:'})
         blame = 'setup';
         rule = sprintf('SciStack raised %s on purpose', id);
     else

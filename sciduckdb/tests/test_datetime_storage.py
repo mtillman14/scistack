@@ -29,6 +29,8 @@ from sciduckdb.datetimes import (
 )
 from sciduckdb.sciduckdb import _storage_signature, value_to_storage_row
 
+from .codec_roundtrip import fetch, store
+
 
 @pytest.fixture
 def duck():
@@ -190,17 +192,17 @@ class TestStoredSchema:
         assert tz_column_name("t") == "t__tz"
 
 
-class TestSciDuckRoundTrip:
+class TestCodecRoundTrip:
     def test_scalar(self, duck):
         value = pd.Timestamp("2026-07-01 14:00:00.000000001", tz="Europe/Berlin")
-        duck.save("when", value, subject="S01")
-        loaded = duck.load("when", subject="S01")
+        meta = store(duck, "when", value)
+        loaded = fetch(duck, "when", meta)
         assert loaded == value and str(loaded.tzinfo) == "Europe/Berlin"
         assert loaded.nanosecond == 1
 
     def test_nat_scalar(self, duck):
-        duck.save("when", pd.NaT, subject="S01")
-        assert duck.load("when", subject="S01") is pd.NaT
+        meta = store(duck, "when", pd.NaT)
+        assert fetch(duck, "when", meta) is pd.NaT
 
     def test_dataframe_mixed(self, duck):
         values = [
@@ -208,8 +210,8 @@ class TestSciDuckRoundTrip:
             pd.Timestamp("2026-01-01"),
             pd.NaT,
         ]
-        duck.save("frame", pd.DataFrame({"t": pd.Series(values, dtype=object)}), subject="S01")
-        loaded = duck.load("frame", subject="S01")["t"].tolist()
+        meta = store(duck, "frame", pd.DataFrame({"t": pd.Series(values, dtype=object)}))
+        loaded = fetch(duck, "frame", meta)["t"].tolist()
         assert str(loaded[0].tzinfo) == "Asia/Tokyo" and loaded[0] == values[0]
         assert loaded[1] == values[1] and loaded[1].tzinfo is None
         assert loaded[2] is pd.NaT

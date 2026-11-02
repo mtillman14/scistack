@@ -79,7 +79,7 @@ Python (in-process)                                 │
           (data + bipartite provenance graph)
 ```
 
-The key insight: the MATLAB layer hands its inputs/results to the Python bridge, which drives scidb's real prepare/save phases. All correctness-sensitive logic — variant tracking, provenance recording, identity hashing, where= semantics — lives in scidb, so MATLAB-driven and Python-driven pipelines stay in sync. (`scilineage` is reduced to function-source hashing; the former `@lineage_fcn` / `LineageFcnResult` / rerun-cache system was removed in favor of the bipartite graph.)
+The key insight: the MATLAB layer hands its inputs/results to the Python bridge, which drives scidb's real prepare/save phases. All correctness-sensitive logic — variant tracking, provenance recording, identity hashing, where= semantics — lives in scidb, so MATLAB-driven and Python-driven pipelines stay in sync.
 
 ## Defining Variable Types
 

@@ -1,31 +1,50 @@
 # SciDuck
 
-A thin DuckDB layer for managing versioned scientific data.
+The DuckDB layer under `scidb`. It owns three things: the **codec** that turns
+Python values into queryable DuckDB columns and back, a **locked connection**
+that is safe to share across threads, and the **`_schema` table** of
+schema-location ids. `scidb` owns everything else (records, provenance, which
+tables exist); application code reaches SciDuck only through `scidb`.
 
-Each variable is stored in its own table. Variables are associated with a hierarchical dataset schema (e.g. subject -> session -> trial) and can be saved at any level of that hierarchy. Multiple versions of each variable are supported natively.
+All data, arrays included, is stored in queryable DuckDB types (LIST, nested
+LIST, JSON), so the database can be inspected with DBeaver or any
+DuckDB-compatible viewer.
 
-All data -- including arrays -- is stored in queryable DuckDB types (LIST, nested LIST, JSON) so the database can be inspected with DBeaver or any DuckDB-compatible viewer.
-
-## Usage
+## Codec
 
 ```python
-from sciduckdb import SciDuck
+from sciduckdb import infer_data_columns, value_to_storage_row, restore_types, storage_to_python
 
-duck = SciDuck("data.duckdb", dataset_schema=["subject", "session"])
-duck.save("MyVar", data, subject="S01", session=1)
-loaded = duck.load("MyVar", subject="S01", session=1)
+col_types, dtype_meta = infer_data_columns(value)   # {column: DuckDB type}, restore metadata
+row = value_to_storage_row(value, dtype_meta)        # one row of storage values
+# ... after reading the rows back into a DataFrame df:
+df = restore_types(df, dtype_meta)                   # Python types restored per column
 ```
 
-## Features
+- Scalars, numpy arrays (any dtype and shape), lists, and dicts (flat or
+  nested; nested keys become dot-separated columns) store one row per value.
+- A DataFrame value stores one DuckDB row per DataFrame row
+  (`dataframe_to_storage_rows`), one column per DataFrame column.
+- `dtype_meta` records what each column was, so a load is lossless: dtypes,
+  shapes and NULL list elements (restored as NaN) survive the round trip.
 
-- **Three save modes**: DataFrame with schema columns (Mode A), single entry via kwargs (Mode B), or dict mapping tuples to values (Mode C)
-- **Automatic type inference**: Maps Python/numpy types to DuckDB types
-- **Round-trip restoration**: Metadata tracks original types for lossless load
-- **Version management**: Automatic version numbering, duplicate hash detection
-- **Variable groups**: Organize variables into named groups
-- **Schema validation**: Validates dataset schema consistency across sessions
+## Connection
 
-Note: all schema key values are coerced to strings before storage.
+`SciDuck(path, dataset_schema=[...])` opens the file. Every statement runs
+under one lock, so a concurrent `close()` cannot land mid-statement. Group
+paired work with `with duck.transaction("label"):`; it is re-entrant on the
+owning thread and rolls back on any exception.
+
+## Schema ids
+
+`batch_get_or_create_schema_ids` maps schema locations
+(`{"subject": "S01", "session": "A"}`) to integer `schema_id`s in `_schema`,
+creating missing rows. A key left out is NULL in its row, so non-contiguous
+key subsets are distinct locations. All schema key values are stored as
+strings.
+
+Variables can also be organised into named groups (`add_to_group`,
+`get_group`, `list_groups`, `remove_from_group`).
 
 ## Datetimes
 

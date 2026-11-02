@@ -153,7 +153,7 @@ Python loader (so correctness lives in one place):
   (one call per group, `__vsig_*` discriminator columns), so variants stay
   separate *without* explicit pinning; `AcrossVariants(X)` is the explicit
   pooling opt-in. See the aggregation section of
-  [scidb-for-each-internals.md](scidb-for-each-internals.md) and
+  [archive/scidb-for-each-internals.md](archive/scidb-for-each-internals.md) and
   [endpoints-viz-and-stats-design.md](endpoints-viz-and-stats-design.md).
   `Variant` remains useful to run only ONE group (load-time narrowing).
 
@@ -163,9 +163,9 @@ Python loader (so correctness lives in one place):
   parameter that `branch_params_filter` parallels.
 - [where-provenance-and-merge.md](where-provenance-and-merge.md) — how `where=`
   selects one variant per combo through `Merge` via stored `__where` provenance.
-- [scidb-for-each-internals.md](scidb-for-each-internals.md) — `_load_input` /
+- [archive/scidb-for-each-internals.md](archive/scidb-for-each-internals.md) — `_load_input` /
   `_load_var_type_as_spread` recursion and the input-wrapper model.
-- [scidb-identity-and-data-flow.md](scidb-identity-and-data-flow.md) — variant
+- [archive/scidb-identity-and-data-flow.md](archive/scidb-identity-and-data-flow.md) — variant
   tracking (Steps 11–12) and why branch_params are stripped before per-combo.
 - [each-of-variant-expansion.md](each-of-variant-expansion.md) — the call-level
   multiplexer that `Variant` nests inside.

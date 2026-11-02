@@ -129,6 +129,8 @@ shim in `scidb.log`, which freezes the numeric level scale and call shapes.
 **Refactor candidates:** none structural. Update the README's layer list from
 `LAYERS` (or have a test assert they match).
 
+> **Done (2026-11-01, P1):** README lists `LAYERS` exactly; `test_readme_lists_exactly_the_declared_layers` asserts it.
+
 ---
 
 ## scicanonicalhash
@@ -190,6 +192,8 @@ changes every record id._
 
 **Refactor candidates:** drop the scilineage re-export.
 
+> **Done (2026-11-01, P1):** scilineage is gone; the function hash lives in `scicanonicalhash.functions`.
+
 ---
 
 ## scipathgen
@@ -214,6 +218,8 @@ mark hidden" rule) or re-express it as a thin wrapper over `PathInput`, so one
 template grammar exists.
 
 User's note: If `PathGenerator` is 100% obsolete and unreferenced elsewhere in the code, it should be deleted.
+
+> **Done (2026-11-01, P1):** `path-gen/`, `scidb.paths`, `PathGenerator.m` and its MATLAB test deleted.
 
 > **Answer (2026-11-01).** Checked across the whole repo. It is obsolete, but there
 > are **two** of them, not one:
@@ -308,6 +314,8 @@ scidb uses it in 3 places: `foreach_config.py` (module import),
   code), or keep scilineage but rewrite its README to "function identity".
 - Decide scidb-net's fate (document 05) before touching scilineage, since it is
   the only consumer of the removed names.
+
+> **Done (2026-11-01, P1):** merged into `scicanonicalhash.functions` (D4); scilineage deleted. Hash pinned by `test_function_hash_unchanged_by_move`.
 
 ---
 

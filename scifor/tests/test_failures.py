@@ -229,7 +229,7 @@ def test_frame_origin_is_the_only_frame_classifier():
     what is user code (one owner — NOTE 4)."""
     root = pathlib.Path(scifor.__file__).resolve().parents[3]
     offenders = []
-    for pkg in ("scifor/src", "scidb/src", "scihist/src", "scistack-gui/scistack_gui"):
+    for pkg in ("scifor/src", "scidb/src", "scistack-gui/scistack_gui"):
         base = root / pkg
         if not base.exists():
             continue

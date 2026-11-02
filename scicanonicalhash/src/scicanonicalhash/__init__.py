@@ -1,7 +1,8 @@
 """Deterministic hashing for arbitrary Python objects.
 
-This package provides utilities for creating stable, deterministic hashes
-of Python objects, essential for cache key computation, data versioning,
+This package provides stable, deterministic hashes of Python objects
+(``canonical_hash``) and of functions by source (``compute_function_hash``),
+essential for cache key computation, data versioning,
 and reproducibility in data pipelines.
 """
 
@@ -12,6 +13,10 @@ from scicanonicalhash.datetimes import (
     zone_from_label,
     zone_label,
 )
+from scicanonicalhash.functions import (
+    compute_function_hash,
+    compute_function_hash_with_sources,
+)
 from scicanonicalhash.hashing import (
     canonical_hash,
     frame_path_counts,
@@ -20,6 +25,8 @@ from scicanonicalhash.hashing import (
 
 __all__ = [
     "canonical_hash",
+    "compute_function_hash",
+    "compute_function_hash_with_sources",
     "frame_path_counts",
     "generate_record_id",
     "is_datetime_value",

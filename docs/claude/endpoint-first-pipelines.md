@@ -457,5 +457,5 @@ correct layer split (CLAUDE.md NOTE 3).
   this supersedes for the pipeline-builder case
 - [variant-branch-param-pinning.md](variant-branch-param-pinning.md) —
   variant identity that target specs must carry (R1)
-- [scidb-for-each-internals.md](scidb-for-each-internals.md) — the
+- [archive/scidb-for-each-internals.md](archive/scidb-for-each-internals.md) — the
   single-step machinery `run_until` composes

@@ -10,7 +10,6 @@ echo "Installing all SciStack packages in editable mode..."
 # Layer 0: no internal deps
 pip install -e $SCRIPT_DIR/scistacklog --no-deps
 pip install -e $SCRIPT_DIR/scicanonicalhash --no-deps
-pip install -e $SCRIPT_DIR/path-gen --no-deps
 pip install -e $SCRIPT_DIR/scifor --no-deps
 pip install -e $SCRIPT_DIR/sciduckdb --no-deps  # depends on scicanonicalhash
 
@@ -26,18 +25,13 @@ pip install -e $SCRIPT_DIR/scistackplot --no-deps
 # Layer 0.6: statistics on top of scistackplot + csv-stats (pure, in-memory)
 pip install -e $SCRIPT_DIR/scistackstats --no-deps
 
-# Layer 1: depends on scicanonicalhash
-pip install -e $SCRIPT_DIR/scilineage --no-deps
-
-# Layer 2: depends on scipathgen, scicanonicalhash, sciduck-db
+# Layer 1: depends on scifor, scicanonicalhash, sciduckdb, scistacklog
 pip install -e $SCRIPT_DIR/scidb --no-deps
 
-# Layer 3: depends on scidb
+# Layer 2: depends on scidb
 pip install -e $SCRIPT_DIR/scistackplotdb --no-deps
 pip install -e $SCRIPT_DIR/scistackstatsdb --no-deps
 pip install -e $SCRIPT_DIR/scimatlab --no-deps
-pip install -e $SCRIPT_DIR/scihist --no-deps
-pip install -e $SCRIPT_DIR/scidb-net --no-deps
 pip install -e $SCRIPT_DIR/scistack --no-deps
 pip install -e $SCRIPT_DIR/scistack-gui --no-deps
 

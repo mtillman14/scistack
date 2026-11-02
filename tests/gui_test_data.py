@@ -33,7 +33,6 @@ import pandas as pd
 
 from scidb import BaseVariable, configure_database
 
-# from scilineage.src.scilineage import lineage_fcn
 
 # examples/vo2max/data/by_subject/{S01,S02,S03}/{vo2_ml_min,heart_rate_bpm}.csv
 # — see load_vo2_from_csv/load_heart_rate_from_csv below. Deliberately its

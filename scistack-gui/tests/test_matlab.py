@@ -1192,7 +1192,7 @@ class TestGenerateMatlabCommand:
 
         assert "bandpass_filter" in cmd
         assert "/data/experiment.duckdb" in cmd
-        assert "scihist.configure_database" in cmd
+        assert "scidb.configure_database" in cmd
         assert "scidb.for_each" in cmd
 
     def test_with_variants(self):
@@ -2701,7 +2701,7 @@ class TestPathInputAliasesInMatlabCommand:
 
 class TestMatlabFnProxyHash:
     """Fix A — the proxy hash must match what MATLAB's scidb.LineageFcn(fn)
-    (unpack_output=false default) produces, so scihist.check_node_state does
+    (unpack_output=false default) produces, so scidb.check_node_state does
     not report every combo as "stale: function hash changed"."""
 
     def test_proxy_uses_unpack_false(self, monkeypatch):
@@ -3088,7 +3088,7 @@ class TestGenerateMatlabPipelineCommand:
             addpath_dirs=["/home/user/matlab/lib"],
         )
         assert cmd.count("addpath('/home/user/matlab/lib')") == 1
-        assert cmd.count("scihist.configure_database(") == 1
+        assert cmd.count("scidb.configure_database(") == 1
         assert cmd.count("scidb.close_database(db)") == 2  # success path + catch
 
     def test_multi_output_function_collapses_to_one_call(self):
@@ -3247,11 +3247,12 @@ class TestPreambleTimingInstrumentation:
         assert "scidb.Log.info('[timing] matlab_preamble: TOTAL=%.3fs" in cmd
         assert cmd.index("matlab_preamble") < cmd.index("scidb.for_each")
 
-    def test_never_emits_the_scihist_for_each_shim(self):
-        """The generator must call scidb.for_each, never the scihist shim.
+    def test_emits_scidb_directly_never_a_wrapper(self):
+        """The generator calls scidb.* directly; the removed +scihist package
+        must never reappear in the emitted code.
 
-        +scihist/for_each.m is a wrapper, and a wrapper is an extra call frame
-        between the user's statement and scidb.for_each. scidb.for_each reads
+        A wrapper is an extra call frame between the user's statement and
+        scidb.for_each. scidb.for_each reads
         `nargout` to decide whether to convert the Python result table back into
         a MATLAB table (~385s of a 641s run on 2026-09-13 when it does), and
         going through a wrapper that assigns the result makes that nargout 1
@@ -3260,8 +3261,9 @@ class TestPreambleTimingInstrumentation:
         """
         cmd = self._variant_cmd()
 
-        assert "scihist.for_each" not in cmd
+        assert "scihist" not in cmd
         assert "scidb.for_each" in cmd
+        assert "scidb.configure_database(" in cmd
 
     def test_total_is_emitted_after_the_try_block_and_clears_temporaries(self):
         """`run(...)` evaluates in the caller's workspace, so the script's own
@@ -3328,8 +3330,7 @@ class TestFindSciMatlabMatlabDir:
         )
         d = Path(result)
         assert d.is_dir(), f"Expected a directory at {result}"
-        # The directory must contain the +scihist, +scidb, +scifor MATLAB packages.
-        assert (d / "+scihist").is_dir(), f"+scihist not found under {result}"
+        # The directory must contain the +scidb and +scifor MATLAB packages.
         assert (d / "+scidb").is_dir(), f"+scidb not found under {result}"
         assert (d / "+scifor").is_dir(), f"+scifor not found under {result}"
 
@@ -3356,14 +3357,17 @@ class TestFindSciMatlabMatlabDir:
         assert "db.close FAILED" in contents
         assert "rethrow(close_err__)" in contents
 
-    def test_scihist_configure_database_present(self):
-        """Regression: +scihist/configure_database.m must exist so MATLAB can call it."""
+    def test_scidb_configure_database_present(self):
+        """Regression: the generated preamble calls scidb.configure_database, so
+        +scidb/configure_database.m must exist (it replaced the removed
+        +scihist shim)."""
         from scistack_gui.server import _find_scimatlab_matlab_dir
 
         result = _find_scimatlab_matlab_dir()
         assert result is not None
-        cfg_db = Path(result) / "+scihist" / "configure_database.m"
-        assert cfg_db.exists(), f"scihist.configure_database not found at {cfg_db}"
+        cfg_db = Path(result) / "+scidb" / "configure_database.m"
+        assert cfg_db.exists(), f"scidb.configure_database not found at {cfg_db}"
+        assert not (Path(result) / "+scihist").exists(), "+scihist was removed"
 
 
 # ---------------------------------------------------------------------------

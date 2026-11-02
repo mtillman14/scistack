@@ -36,6 +36,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 import scifor as _scifor
+from scicanonicalhash import compute_function_hash
 from scifor import Fixed, PathInput
 
 from scidb import BaseVariable, configure_database, for_each
@@ -484,8 +485,6 @@ class TestVariantSplitIsPredicted:
     def test_every_written_invocation_is_predicted(self, db):
         _seed_variants()
         for_each(pooled, {"value": Scaled}, [Out], subject=[], trial=[])
-        from scilineage.hashing import compute_function_hash
-
         expected = pq.expected_invocations_for_function(
             db, "pooled", compute_function_hash(pooled, truncate=16)
         )
@@ -600,8 +599,6 @@ class TestAcrossVariantsIsAFact:
         assert forward != ForEachConfig(pooled, {"value": Scaled}).to_call_id()
 
     def test_every_written_invocation_is_predicted(self, db):
-        from scilineage.hashing import compute_function_hash
-
         self._run()
         expected = pq.expected_invocations_for_function(
             db, "pooled", compute_function_hash(pooled, truncate=16)

@@ -861,7 +861,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     %
     % NOTE: nargout is the arity of the IMMEDIATE caller. A wrapper that writes
     % `result_tbl = scidb.for_each(...)` unconditionally reports nargout=1 here
-    % and defeats the gate; +scihist/for_each.m forwards arity for that reason.
+    % and defeats the gate, so a wrapper must forward arity
+    % (`if nargout > 0 ... else ... end`).
     post_t0 = tic;
     t_from_python = 0;
     t_flatten = 0;

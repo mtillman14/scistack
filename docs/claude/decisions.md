@@ -1043,7 +1043,7 @@ the schema is never extended. MATLAB gets the selection pre-computed
 
 **Consequences.** One rule selects the rows AND writes the edges. The
 per-input spellings are deleted, not kept. `.claude/plan-2c-row-selection-seam.md`,
-`docs/claude/scidb-for-each-internals.md`.
+`docs/claude/archive/scidb-for-each-internals.md`.
 
 ## D-2026-09-20-4 — `AcrossVariants` is a fact
 
@@ -1099,7 +1099,7 @@ scope on every row, resolution walks `scope -> global`, duplication copies
 
 * `schema_keys=None` is one call over the dataset; `[]` is every key
   (`for_each` refuses a bare string and an unknown key, 2026-09-20) —
-  `docs/claude/scidb-for-each-internals.md`.
+  `docs/claude/archive/scidb-for-each-internals.md`.
 * The schema level default has one owner (node > last run > inputs union
   > all keys) — `execution_service.default_schema_level`.
 * Variant space is three dimensions in one dict; run options are not a

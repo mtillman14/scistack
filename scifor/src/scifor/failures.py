@@ -69,8 +69,6 @@ WIRE_COMBOS_MAX = 20
 FRAMEWORK_PACKAGES = (
     "scifor",
     "scidb",
-    "scihist",
-    "scilineage",
     "sciduckdb",
     "scistacklog",
     "scicanonicalhash",

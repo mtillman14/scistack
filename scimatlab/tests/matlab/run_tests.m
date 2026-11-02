@@ -3,8 +3,8 @@ function results = run_tests()
 %
 %   results = run_tests()
 %
-%   Sets up paths, discovers all Test*.m files in scifor/, scidb/, and
-%   scihist/ subdirectories, and runs them using MATLAB's unittest framework.
+%   Sets up paths, discovers all Test*.m files in scifor/ and scidb/
+%   subdirectories, and runs them using MATLAB's unittest framework.
 %
 %   Example:
 %       cd scimatlab/tests/matlab
@@ -22,24 +22,23 @@ function results = run_tests()
     % Set up MATLAB and Python paths
     run(fullfile(this_dir, 'setup_paths.m'));
 
-    % Discover and run all test classes (scifor + scidb + scihist layers)
+    % Discover and run all test classes (scifor + scidb layers)
     import matlab.unittest.TestSuite
     import matlab.unittest.TestRunner
     import matlab.unittest.plugins.DiagnosticsValidationPlugin
 
-    % addpath(genpath(...)) above put scifor/, scidb/ and scihist/ on ONE
+    % addpath(genpath(...)) above put scifor/ and scidb/ on ONE
     % MATLAB path, and MATLAB resolves a classdef by NAME, not by folder. Two
     % test classes sharing a name therefore shadow each other: whichever folder
     % wins the path order supplies the class for BOTH suites, so one folder's
     % tests run against the other folder's class. Enforce uniqueness rather
     % than trust it — the convention is already in use everywhere else
     % (TestSciforForEach vs TestForEach).
-    assert_unique_test_class_names(this_dir, {'scifor', 'scidb', 'scihist'});
+    assert_unique_test_class_names(this_dir, {'scifor', 'scidb'});
 
     suite_scifor  = TestSuite.fromFolder(fullfile(this_dir, 'scifor'));
     suite_scidb   = TestSuite.fromFolder(fullfile(this_dir, 'scidb'));
-    suite_scihist = TestSuite.fromFolder(fullfile(this_dir, 'scihist'));
-    suite = [suite_scifor, suite_scidb, suite_scihist];
+    suite = [suite_scifor, suite_scidb];
     runner = TestRunner.withTextOutput('Verbosity', 3);
 
     % TestResult.Details.DiagnosticRecord is populated ONLY by

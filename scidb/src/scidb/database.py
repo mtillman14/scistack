@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
+from scicanonicalhash import canonical_hash, frame_path_counts, generate_record_id
 from sciduckdb import (
     SciDuck,
     bulk_df_to_storage_rows,
@@ -19,6 +20,7 @@ from sciduckdb import (
     dataframe_to_storage_rows,
     infer_data_columns,
     record_schema_mismatch,
+    restore_types,
     storage_to_python,
     storage_to_python_column,
     unflatten_dict,
@@ -45,7 +47,6 @@ from .exceptions import (
     NotFoundError,
     NotRegisteredError,
 )
-from .hashing import canonical_hash, frame_path_counts, generate_record_id
 from .log import Log
 from .parameter import parameter_node_name
 from .schema_values import (
@@ -890,7 +891,7 @@ def _run_context() -> str:
     from importlib import metadata
 
     versions = []
-    for pkg in ("scidb", "scifor", "sciduckdb", "scilineage", "scistacklog"):
+    for pkg in ("scidb", "scifor", "sciduckdb", "scicanonicalhash", "scistacklog"):
         try:
             versions.append(f"{pkg}={metadata.version(pkg)}")
         except Exception:
@@ -924,9 +925,8 @@ def get_database() -> "DatabaseManager":
 
 def set_current_database(db) -> None:
     """Install *db* as the thread's current database — what ``get_database``
-    returns. Public so a package that supplies its own database object (the
-    scidb-net remote client) does not reach into ``_local``
-    (cleanup-audit F2/F7: private cross-package imports)."""
+    returns. Public so a caller that supplies its own database object does not
+    reach into ``_local``."""
     _local.database = db
 
 
@@ -3836,7 +3836,7 @@ class DatabaseManager:
 
             # A save carrying non-schema kwargs: anchor those kwargs in the graph
             # as a synthetic save invocation so they are graph-derivable branch
-            # params (the variant role formerly held by the version_keys column).
+            # params.
             if version_keys:
                 save_kwargs = {
                     k: v for k, v in version_keys.items() if not str(k).startswith("__")
@@ -4885,7 +4885,7 @@ class DatabaseManager:
                     else:
                         # Non-DataFrame: restore types, then one value per record_id row.
                         restored = chunk_df[data_cols].copy()
-                        restored = self._duck._restore_types(restored, dtype_meta)
+                        restored = restore_types(restored, dtype_meta)
 
                         if mode == "single_column":
                             col_name = next(iter(columns_meta))

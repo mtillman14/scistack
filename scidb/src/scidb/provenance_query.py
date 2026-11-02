@@ -2761,10 +2761,9 @@ def config_call_id(fn_name: str, cfg: dict) -> str:
 def pipeline_variants(duck, output_type: str | None = None) -> list[dict]:
     """Distinct pipeline step variants, derived from the graph.
 
-    Graph-native replacement for the old ``version_keys``-grouped
-    ``list_pipeline_variants``. A variant is one ``(output_type, function_name,
-    input_types, constants, glue, run options)`` combination — config-level
-    (fn-hash- and instance-independent). Synthetic ``__save__`` invocations are
+    A variant is one ``(output_type, function_name, input_types, constants,
+    glue, run options)`` combination — config-level (fn-hash- and
+    instance-independent). Synthetic ``__save__`` invocations are
     excluded (they are not pipeline steps).
 
     ``output_num`` is **reported but not part of that identity** — see the

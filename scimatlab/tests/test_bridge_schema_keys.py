@@ -14,10 +14,8 @@ from pathlib import Path
 # Add source paths for the monorepo packages (mirrors test_bridge_where.py)
 _root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_root / "src"))
-sys.path.insert(0, str(_root / "scilineage" / "src"))
 sys.path.insert(0, str(_root / "canonical-hash" / "src"))
 sys.path.insert(0, str(_root / "sciduckdb" / "src"))
-sys.path.insert(0, str(_root / "path-gen" / "src"))
 sys.path.insert(0, str(_root / "scimatlab" / "src"))
 
 import numpy as np
@@ -84,7 +82,7 @@ class TestBridgeSchemaKeys:
         assert len(prep["full_combos"]) == 2  # 2 subjects, aggregated over session+trial
 
     def test_schema_filter_on_non_iterated_key_constrains_loaded_data(self, db):
-        """Regression test for the latent bug (docs/claude/
+        """Regression test for the latent bug (docs/claude/archive/
         scidb-for-each-internals.md): schema_filter on a key NOT in
         schema_keys used to be silently ignored. Now it's ANDed into
         where= via SchemaKeyInFilter, so it actually restricts which

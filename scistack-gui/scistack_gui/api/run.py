@@ -1538,7 +1538,7 @@ def _run_matlab_pipeline_in_thread(
         command = result["command"]
 
         # MATLAB opens the same .duckdb file itself — hand it over for the
-        # duration, or its scihist.configure_database call is locked out by
+        # duration, or its scidb.configure_database call is locked out by
         # this process (see external_db_access).
         with external_db_access("MATLAB"):
             success = _drive_sidecar(matlab_sidecar, command, emit)
@@ -1674,7 +1674,7 @@ def _drive_matlab_in_thread(
         # MATLAB opens the same .duckdb file itself. In browser/standalone
         # mode nothing otherwise releases our connection (only the JSON-RPC
         # server drops it between requests), so without this hand-off MATLAB
-        # would fail on its first scihist.configure_database call — locked
+        # would fail on its first scidb.configure_database call — locked
         # out by us.
         with external_db_access("MATLAB"):
             success = _drive_sidecar(matlab_sidecar, command, emit)

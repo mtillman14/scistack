@@ -451,7 +451,7 @@ class TestDatabaseHandoffToMatlab:
     does — in browser/standalone mode (FastAPI) the connection stays open
     for the life of the process, so a sidecar run started from there would
     find the database locked by *us* and die on its first
-    ``scihist.configure_database`` call. ``external_db_access`` hands it
+    ``scidb.configure_database`` call. ``external_db_access`` hands it
     over for the duration.
     """
 

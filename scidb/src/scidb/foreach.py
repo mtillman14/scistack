@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path as _Path
 from typing import TYPE_CHECKING, Any
 
+from scicanonicalhash import compute_function_hash
 from scifor.foreach import resolve_pathinput_discovery as _scifor_resolve_pathinput_discovery
 from scifor.pathinput import PathInput
 from scifor.column_selection import column_value as _column_value
@@ -396,7 +397,8 @@ def for_each(
                     A named ``Parameter`` input supplies its own; see
                     ``scidb.parameter.declared_input_names``.
         _inject_combo_metadata: If True, inject current-combo metadata keys
-                    as extra kwargs to fn (used by scihist for generates_file).
+                    as extra kwargs to fn (set internally for generates_file
+                    functions).
         step: A name for this pipeline STEP, recorded on the run (`_run_step`).
                     Not identity: renaming it re-runs nothing. The GUI uses it
                     to attribute a script run to the canvas node of the same
@@ -415,7 +417,7 @@ def for_each(
         _pre_combo_hook: Internal use only. Called with each fully-expanded
                     combo dict before inputs are loaded. If it returns True
                     the combo is skipped entirely (no load, no call, no save).
-                    Used by scihist.for_each to implement skip_computed.
+                    ``skip_computed=True`` installs one.
         **metadata_iterables: Iterables of metadata values to combine.
 
     Returns:
@@ -543,12 +545,12 @@ def for_each(
         # Store original for version_keys serialization
         where._original_str = original_where_str
 
-    # --- Step 0: Resolve active database + schema_filter/schema_keys (folded
-    #     from scihist.for_each). Seeds metadata_iterables from schema_keys
-    #     when the caller used schema_keys/schema_filter instead of explicit
-    #     iterables; actual DB resolution of the resulting [] placeholders
-    #     happens later, in _for_each_prepare's existing generic empty-list
-    #     resolver — Step 0 itself does no DB querying. ---
+    # --- Step 0: Resolve active database + schema_filter/schema_keys. Seeds
+    #     metadata_iterables from schema_keys when the caller used
+    #     schema_keys/schema_filter instead of explicit iterables; actual DB
+    #     resolution of the resulting [] placeholders happens later, in
+    #     _for_each_prepare's existing generic empty-list resolver — Step 0
+    #     itself does no DB querying. ---
     active_db = db
     if active_db is None and (
         skip_computed or schema_filter is not None or schema_keys is not None
@@ -594,7 +596,7 @@ def for_each(
         # (skipping DB auto-resolution for that key); a key NOT being
         # iterated instead constrains which records are loaded, via a
         # SchemaKeyInFilter ANDed into where= (previously silently ignored —
-        # see docs/claude/scidb-for-each-internals.md).
+        # see docs/claude/archive/scidb-for-each-internals.md).
         if schema_filter:
             from .filters import SchemaKeyInFilter
 
@@ -764,9 +766,7 @@ def for_each(
         Log.debug(f"built skip_computed hook for {getattr(fn, '__name__', repr(fn))}")
 
     # No output wrapping: scifor spreads tuple returns across outputs natively and
-    # flatten/distribute consume the raw return directly. (The former LineageFcn
-    # tuple-unpacking / raw-value wrappers existed only to collapse
-    # LineageFcnResults, which no longer exist.)
+    # flatten/distribute consume the raw return directly.
 
     fn_name = _function_name(fn)
 
@@ -1381,7 +1381,7 @@ def _guard_pathoutput_collisions(
 
 
 # ---------------------------------------------------------------------------
-# skip_computed pre-combo hook (folded from scihist.for_each)
+# skip_computed pre-combo hook
 # ---------------------------------------------------------------------------
 
 
@@ -1560,8 +1560,6 @@ def _build_skip_hook(
     its exact consumed-rid set (see ``_find_skip_gate_record``) instead of
     the per-param rid comparison.
     """
-    from scilineage.hashing import compute_function_hash
-
     from scicanonicalhash import canonical_hash as _chash
 
     from . import provenance_query
@@ -3398,7 +3396,7 @@ def _apply_pre_combo_hook(
 ) -> "tuple[list, int]":
     """Prepare stage: drop the combos the pre-combo hook (skip_computed)
     claims. Returns ``(full_combos, skipped_count)``."""
-    # Step 14: Apply pre-combo hook (e.g. skip_computed from scihist): filter out any
+    # Step 14: Apply the pre-combo hook (e.g. skip_computed): filter out any
     # combos where the hook returns True.
     _skip_computed_count = 0
     if _pre_combo_hook is not None:
@@ -3872,8 +3870,8 @@ def _normalize_variable_inputs(
     (dict-of-arrays) variables (scifor's _extract_data strips the dict wrapper
     when there is exactly one data column). Non-variable params pass through.
 
-    This is the value the function previously received as ``BaseVariable.data``
-    after LineageFcn unwrapped its reconstructed input — now produced directly.
+    This is the value the function receives: the raw data, not a
+    ``BaseVariable``.
 
     ``as_table_params`` is what the caller asked to receive as whole DataFrames,
     and those are passed through untouched. Unwrapping them was a real bug with a
@@ -3975,8 +3973,7 @@ def _normalize_variable_inputs(
                         data_value = {col: row[col] for col in data_cols}
 
         # Pass the normalized raw data (DataFrame → array, dict structure
-        # restored for multi-column variables) — exactly the value the function
-        # used to receive as ``BaseVariable.data`` after LineageFcn unwrapped it.
+        # restored for multi-column variables) — the raw value, not a BaseVariable.
         reconstructed[param_name] = data_value
 
     return reconstructed
@@ -5746,7 +5743,7 @@ def _save_results(
     contributes its ``__rid_*`` / ``__vsig_*`` columns and nothing else.
 
     The for_each save path adds config_keys and branch_params tracking on top of the
-    direct save, as documented in scidb-identity-and-data-flow.md.
+    direct save, as documented in docs/claude/archive/scidb-identity-and-data-flow.md.
     """
     import pandas as pd
 
@@ -5959,10 +5956,10 @@ def _save_results(
         save_metadata = {col: row[col] for col in meta_cols if not col.startswith("__")}
         save_metadata.update(config_keys)
 
-        # Unpack constants as direct keys so downstream consumers (e.g. scihist's
-        # _save_with_lineage) see them in the metadata dict.  They are also stored
-        # as __constants (JSON) in config_keys, so _stringify_meta can strip them
-        # when loading back — preventing them from polluting input DataFrames.
+        # Unpack constants as direct keys so downstream consumers see them in the
+        # metadata dict.  They are also stored as __constants (JSON) in
+        # config_keys, so _stringify_meta can strip them when loading back —
+        # preventing them from polluting input DataFrames.
         for k, v in direct_constants.items():
             if k not in save_metadata:
                 save_metadata[k] = v

@@ -153,7 +153,7 @@ def constant_record_id_from_hash(content_hash: str) -> str:
 
     The hash must be ``canonical_hash(value)`` so this agrees with
     :func:`compute_constant_record_id`. Used by the lineage save path, which has
-    the constant's hash (scilineage's ``value_hash`` == ``canonical_hash``) but
+    the constant's hash (``canonical_hash``) but
     not always the raw value.
     """
     return _sha16(CONSTANT_TYPE, f"content:{content_hash}")
@@ -581,7 +581,7 @@ def ensure_provenance_tables(duck) -> None:
     # "not captured", never "different code".
     #
     # One row per *unit*, not per function, because the Python hash is recursive
-    # over user-defined callees (``scilineage.hashing._hash_source``): a helper's
+    # over user-defined callees (``scicanonicalhash.functions._hash_source``): a helper's
     # body is part of what the hash identifies, so the entry point alone would
     # not reconstitute the hashed code. ``is_entry`` marks the function the hash
     # is named for; the rest are its closure.

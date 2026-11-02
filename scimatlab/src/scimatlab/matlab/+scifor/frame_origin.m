@@ -2,7 +2,7 @@ function origin = frame_origin(file)
 %SCIFOR.FRAME_ORIGIN  'user' | 'framework' | 'library' for a stack frame's file.
 %
 %   The ONE MATLAB frame classifier (Python's is scifor.failures.frame_origin).
-%   framework: inside scimatlab's MATLAB directory (+scifor, +scidb, +scihist
+%   framework: inside scimatlab's MATLAB directory (+scifor, +scidb
 %   ...). library: inside matlabroot (toolboxes, built-ins). Everything else,
 %   including an empty file (an anonymous function typed at the prompt), is
 %   the user's.

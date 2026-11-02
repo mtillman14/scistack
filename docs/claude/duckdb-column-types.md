@@ -122,7 +122,7 @@ exactly 1 DuckDB row with its own `record_id`.
 ## Key files
 
 - `sciduck/src/sciduck/sciduck.py`: `infer_data_columns` (type inference),
-  `dataframe_to_storage_rows` (per-row storage), `SciDuck.save/load`
+  `dataframe_to_storage_rows` (per-row storage), `restore_types`
 - `src/scidb/database.py`: `_save_native`, `save_batch`,
   `_load_by_record_row`, `load_all_as_df`
 - Tests: `TestTableRoundTrip.m`, `TestDuckDBTypes.m`

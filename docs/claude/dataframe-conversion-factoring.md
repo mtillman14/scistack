@@ -12,7 +12,7 @@ All the substantive conversion logic lives here as module-level functions:
 - `infer_data_columns()` — infers column schema from a sample value; handles DataFrame "mode" (one DuckDB row per DataFrame row), dict mode (multi-column), and single-column mode
 - `dataframe_to_storage_rows()` — converts all rows of a DataFrame to storage-ready lists
 - `_convert_for_json()` — recursively converts ndarrays/DataFrames to JSON-serializable form
-- `_restore_types()` — applies `dtype_meta` restoration to a loaded DuckDB result DataFrame
+- `restore_types()` — applies `dtype_meta` restoration to a loaded DuckDB result DataFrame
 
 These all share a common `dtype_meta` dict format that encodes round-trip type information (e.g., `{"python_type": "ndarray", "numpy_dtype": "float64", "ndim": 2}`).
 

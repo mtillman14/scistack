@@ -40,8 +40,8 @@ from scistacklog import Log
 #: import (the running SciStack is not the bundle's to change).
 PROTECTED = frozenset({
     "scistack", "scistack-gui", "scistack-db", "scidb", "scifor", "scimatlab",
-    "sciduckdb", "scilineage", "scihist", "scistacklog", "scistackplot",
-    "scistackplotdb", "scicanonicalhash", "scidb-net",
+    "sciduckdb", "scistacklog", "scistackplot", "scistackplotdb",
+    "scistackstats", "scistackstatsdb", "scicanonicalhash",
 })
 
 

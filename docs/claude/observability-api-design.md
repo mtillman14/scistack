@@ -11,7 +11,7 @@
 > the presentation layer.
 >
 > Companion reading: `database-model.md` (canonical data model),
-> `scistack-gui-backend-internals.md` (the GUI's existing graph consumption,
+> `archive/scistack-gui-backend-internals.md` (the GUI's existing graph consumption,
 > which Phase 2 partially moves down into scidb).
 
 ## The question inventory

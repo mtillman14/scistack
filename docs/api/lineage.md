@@ -22,7 +22,7 @@ For task usage see [Tracking Lineage](../guide/lineage.md); for the model see
     The `lineage_fcn` decorator and the `LineageFcn*` types are **re-exported by
     `scihist`** — import them as `from scihist import lineage_fcn`. The
     lower-level extractors (`extract_lineage`, `get_upstream_lineage`) live in the
-    internal engine, [scilineage](../internals/scilineage.md); import those
+    internal engine, [scicanonicalhash](../internals/scicanonicalhash.md); import those
     directly only when you need them.
 
 ---

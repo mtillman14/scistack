@@ -242,5 +242,50 @@ With P2's layer test in place, move the clusters into `scidb/model/`,
    - The user checks Plot Studio by hand. Add a manual-test entry per
      extracted group: "every control in <group> still changes the preview".
 
+## Stage 10 — loaded scalars are Python scalars, not numpy scalars
+
+Found in P1 (2026-11-01), when `SciDuck.load` was deleted: a saved Python
+`True` / `42` / `3.14` loads from scidb as `np.True_` / `np.int64` /
+`np.float64`. Then `x is True` is False, and `json.dumps(x)` raises for
+`np.bool_` and `np.int64`. `storage_to_python` already returns the Python
+scalar. The numpy type comes back because `sciduckdb.restore_types` assigns
+the restored list back into a DataFrame column (`df[col] = [...]`), pandas
+re-infers a numpy dtype, and scidb's single-column load then returns
+`restored[col].iloc[i]` (`database.py`, the non-DataFrame branch of the
+chunked load). The old `SciDuck.load` hid this by running `storage_to_python`
+a second time.
+
+**Owner:** `sciduckdb.restore_types` (the codec). Fix it there, not with a
+second pass in scidb.
+
+1. **Measure first.** Grep every reader of `restore_types` and every
+   single-column read in scidb (`load`, `load_all`, `load_all_as_df`, the
+   MATLAB bridge's `from_python` path). Log once per load, at DEBUG, how many
+   restored columns hold Python scalars against numpy scalars, so the change
+   is visible in `scistack-debug.log`.
+2. **Identity check before changing anything.** A re-save of a loaded value
+   must keep its record id. Check whether `canonical_hash(np.True_) ==
+   canonical_hash(True)` (and the same for `int64`/`int` and
+   `float64`/`float`). If they differ, this change alters record ids on
+   re-save. Stop and ask the user before going further.
+3. **Fix.** In `restore_types`, keep scalar columns whose meta is
+   `bool`/`int`/`float`/`str` as an object column of Python values
+   (`pd.Series(values, index=df.index, dtype=object)`). Leave array, dict
+   and datetime columns as they are. Where whole-table loads
+   (`load_all_as_df`) want numpy dtypes for speed, they use
+   `storage_to_python_column`, which this stage does not touch. Confirm that
+   in step 1.
+4. **Tests.**
+   - sciduckdb: `test_sciduck.py::TestCodecRoundTrip::test_save_and_load_bool`
+     goes back to `assert loaded is True`. Add the same check for int and
+     float (`type(loaded) is int` / `float`).
+   - scidb: `BaseVariable.save(True)` → `.load().data is True`, and
+     `json.dumps(loaded.data)` works.
+   - Hash parity: a loaded-then-re-saved scalar keeps its record id.
+5. User runs `python -m pytest sciduckdb/tests -x -q`, then
+   `python -m pytest scidb/tests -x -q`, then
+   `python -m pytest scimatlab/tests -x -q` (MATLAB receives these values
+   through `from_python`).
+
 ## Progress
 - (none yet)

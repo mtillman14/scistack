@@ -595,7 +595,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
     else:
         logger.warning(
             "generate_matlab_command: scimatlab MATLAB directory not found; "
-            "scihist.* / scidb.* may be unavailable in MATLAB"
+            "scidb.* may be unavailable in MATLAB"
         )
 
     # Variable bindings come from the ONE derivation the Python run uses
@@ -1008,7 +1008,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     else:
         logger.warning(
             "generate_matlab_pipeline_command: scimatlab MATLAB directory not "
-            "found; scihist.* / scidb.* may be unavailable in MATLAB"
+            "found; scidb.* may be unavailable in MATLAB"
         )
 
     _root = _reg.get_project_root()

@@ -170,5 +170,5 @@ run had pooled, so such a node could never plan green.
 
 - `docs/claude/variant-selection.md` — code-as-a-dimension, the one-hop trap
 - `docs/claude/function-version-variants.md` — why `function_hash` is not in the collapse key
-- `docs/claude/scidb-for-each-internals.md` §aggregation — the auto-split
-- `docs/claude/scidb-identity-and-data-flow.md` — `CallSite`, `invocation_id`, `record_id`
+- `docs/claude/archive/scidb-for-each-internals.md` §aggregation — the auto-split
+- `docs/claude/archive/scidb-identity-and-data-flow.md` — `CallSite`, `invocation_id`, `record_id`

@@ -1,7 +1,7 @@
 # Repo-wide lint/format defaults for the SciStack monorepo.
-# Packages that define their own [tool.ruff] (scicanonicalhash, scilineage,
-# sciduckdb, scipathgen) override this for files under them; everything else
-# uses these settings. Keep this in sync with those per-package blocks.
+# Packages that define their own [tool.ruff] (scicanonicalhash, sciduckdb)
+# override this for files under them; everything else uses these settings.
+# Keep this in sync with those per-package blocks.
 
 target-version = "py310"
 line-length = 88

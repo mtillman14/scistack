@@ -69,7 +69,7 @@ def record_direct_save(
     ``_invocation`` (``function_name = SAVE_FUNCTION_NAME``, no real function), a
     ``_invocation_input`` edge per kwarg, and one ``_invocation_output`` edge
     (output_num 0) to the saved record. ``derived_branch_params`` then recovers
-    the kwargs — replacing the old ``version_keys`` variant-distinguisher role.
+    the kwargs as branch params.
 
     Runs **inside the caller's transaction** (no begin/commit). Idempotent via
     ON CONFLICT DO NOTHING. No-op when ``kwargs`` is empty.

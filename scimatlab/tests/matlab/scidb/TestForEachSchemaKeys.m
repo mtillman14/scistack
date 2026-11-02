@@ -9,7 +9,7 @@ classdef TestForEachSchemaKeys < matlab.unittest.TestCase
 %       rest (one call per iterated-key value, not per record)
 %     - schema_filter on a key NOT in schema_keys constrains which records
 %       load (regression test for a latent bug where this was silently
-%       ignored — see docs/claude/scidb-for-each-internals.md)
+%       ignored — see docs/claude/archive/scidb-for-each-internals.md)
 %     - schema_keys conflicts with explicit metadata name-value pairs
 
     properties

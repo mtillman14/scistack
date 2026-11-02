@@ -1,14 +1,8 @@
 # Installation
 
 <!-- Ground truth (source win over prose). Verified against:
-     on-disk package folders each with pyproject.toml: scicanonicalhash, path-gen (pkg
-     scipathgen), scifor, sciduckdb, scilineage, scidb, scimatlab, scihist, scidb-net;
-     declared [dependencies] giving the layer order; dev-install.sh (editable install in
-     dependency order — but it has stale paths: "sciscicanonicalhash" typo and a "thunk/scirun"
-     comment); run_tests.sh (per-package pytest; scimatlab skipped unless `matlab` on PATH);
-     docs/requirements.txt (mkdocs docs build); .readthedocs.yaml.
-     NOTE: folder `path-gen` ships package `scipathgen`; folder `scicanonicalhash` ships
-     `scicanonicalhash`. Install editable in dependency order. -->
+     scistack/pyproject.toml (`pip install scistack` pulls in every package);
+     scimatlab (MATLAB setup); docs/requirements.txt (mkdocs docs build). -->
 
 /// tip | New to coding, or on a new computer?
 Start with [New to Coding?](new-to-coding.md): it covers installing VS Code and Python, creating a virtual environment, and the extensions to install.

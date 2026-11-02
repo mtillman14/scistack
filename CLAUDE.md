@@ -12,11 +12,9 @@ There are several submodules in this package. Here are the folders that they are
 
 - scifor: The lowest level iteration orchestrator
 - scimatlab: MATLAB wrapper
-- scidb-net (optional)
 - sciduckdb: DuckDB database layer
 - scidb: The core user-facing abstractions
-- scilineage: Lineage package
-- scihist: Processing history package
+- scicanonicalhash: Canonical hashing of data and function source
 
 Each package's folder has a README.md file. When you go to look for implementation details, please start by reading the relevant README.md. If you have sufficient information after that, then please answer the question without exploring additional unnecessary files.
 

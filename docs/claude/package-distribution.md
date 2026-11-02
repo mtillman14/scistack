@@ -1,6 +1,6 @@
 # Package Distribution: Versioning, Dependencies & the Dev-Install Contract
 
-How the 14 packages in this monorepo are versioned, released, wired together in
+How the packages in this monorepo are versioned, released, wired together in
 development, and what that machinery hides. Rewritten 2026-09-13 — the previous
 version of this file documented package names and a tagging scheme that no
 longer exist (`canonicalhash`, `thunk`, `pipelinedb`, `scirun`, `scidb-matlab`,
@@ -13,36 +13,36 @@ and per-package `<package>-v<version>` tags). If you find those names in a stale
 |---|---|---|---|
 | `scistacklog/` | `scistacklog` | `scistacklog` | yes |
 | `scicanonicalhash/` | `scicanonicalhash` | `scicanonicalhash` | yes |
-| `path-gen/` | `scipathgen` | `scipathgen` | yes |
 | `sciduckdb/` | `sciduckdb` | `sciduckdb` | yes |
 | `scifor/` | `scifor` | `scifor` | yes |
-| `scilineage/` | `scilineage` | `scilineage` | yes |
 | `scistackplot/` | `scistackplot` | `scistackplot` | yes |
 | `scidb/` | **`scistack-db`** | **`scidb`** | yes |
 | `scimatlab/` | `scimatlab` | `scimatlab` | yes |
-| `scihist/` | `scihist` | `scihist` | yes |
 | `scistackplotdb/` | `scistackplotdb` | `scistackplotdb` | yes |
+| `scistackstats/` | `scistackstats` | `scistackstats` | yes |
+| `scistackstatsdb/` | `scistackstatsdb` | `scistackstatsdb` | yes |
 | `scistack/` | `scistack` | `scistack` | yes |
 | `scistack-gui/` | `scistack-gui` | `scistack_gui` | **not yet** — see "Publishing the GUI" below |
-| `scidb-net/` | `scidb-net` | `scidbnet` | **no** — outdated, slated for removal |
 
 Two names to keep straight: the directory `scidb/` builds the distribution
 `scistack-db`, which installs the import package `scidb`. So `pip install
 scistack-db` but `import scidb`, and in a `dependencies` list you write
 `scistack-db`. Everything else is import-name == distribution-name, except
-`path-gen/` → `scipathgen` and `scistack-gui/` → `scistack_gui`.
+`scistack-gui/` → `scistack_gui`.
 
 ## Layering
 
 ```
-Layer 0   scistacklog, scicanonicalhash, scipathgen, sciduckdb
+Layer 0   scistacklog, scicanonicalhash, sciduckdb
 Layer 0.5 scifor        (→ scistacklog)
           scistackplot  (→ scistacklog)          in-memory plotting, no DB
-Layer 1   scilineage    (→ scicanonicalhash)
-Layer 2   scistack-db   (→ scipathgen, scicanonicalhash, sciduckdb, scifor, scistacklog)
-Layer 3   scistackplotdb (→ scistackplot, scistack-db)
-          scimatlab, scihist, scidb-net, scistack  (→ scistack-db)
-Layer 4   scistack-gui  (→ everything)
+          scistackstats (→ scistackplot)
+Layer 1   scistack-db   (→ scicanonicalhash, sciduckdb, scifor, scistacklog)
+Layer 2   scistackplotdb (→ scistackplot, scistack-db)
+          scistackstatsdb (→ scistackstats, scistack-db)
+          scimatlab     (→ scistack-db)
+Layer 3   scistack-gui  (→ everything)
+Layer 4   scistack      (→ scistack-gui; the one-stop `pip install`)
 ```
 
 The plotting split matters: `scistackplot` is deliberately database-free — it
@@ -84,7 +84,7 @@ numbers carry no per-package meaning.** `scistackplot 0.1.27` and
 A sibling dependency is listed **unversioned** in `[project] dependencies`.
 At build time the `hatch-dependency-coversion` metadata hook (pinned in
 `[build-system] requires`) rewrites each one to `==<this build's version>`, so
-the `v0.1.33` wheel of `scihist` requires `scistack-db==0.1.33`. Only
+the `v0.1.33` wheel of `scimatlab` requires `scistack-db==0.1.33`. Only
 same-version sets are ever tested together, so exact pins are the honest
 statement. Three things make it work, all per `pyproject.toml`:
 
@@ -138,12 +138,12 @@ someone doing a real `pip install` of one package.
 
 ### Accidental-satisfaction traps this creates
 
-- **Transitive third-party deps.** `scidbnet/client.py` imports `pandas` at
-  module level and `scidb-net` never declares it — it arrives via `scistack-db`.
-  Correct today, silently broken the day `scistack-db` drops pandas.
+- **Transitive third-party deps.** A package that imports `pandas` at module
+  level without declaring it gets it via `scistack-db`. Correct until the day
+  `scistack-db` drops pandas.
 - **A test-only dependency propping up a runtime import.** Six modules do a hard
   `tomllib` → `tomli` fallback (`scifor/discovery.py:37`, `scidb/discover.py:52`,
-  `scidb/entities.py:90`, `scistack/user_config.py:40`,
+  `scidb/entities.py:90`,
   `scistack/uv_wrapper.py:48`, `scistack_gui/config.py:33`). `tomllib` is 3.11+,
   CI's floor is 3.10, and no package declares `tomli` at runtime. CI passes
   because `pytest-cov` → `coverage` → `tomli; python_full_version<="3.11.0a6"`.
@@ -155,12 +155,12 @@ someone doing a real `pip install` of one package.
 module level, including things a sibling happens to supply. Metadata states
 intent; transitive availability is a coincidence, not a contract.
 
-**Enforced in CI (2026-10-14):** the build job `pip install`s `scistack` and
-`scihist` from the fresh wheels into an EMPTY venv and imports every module of
+**Enforced in CI (2026-10-14):** the build job `pip install`s `scistack`
+from the fresh wheels into an EMPTY venv and imports every module of
 every SciStack package (`.github/scripts/smoke_install.py`). A
 `ModuleNotFoundError` naming a sibling fails the build; a missing third-party
 module is a warning (optional extras are absent there). It exists because
-`scistack-db` imported `scilineage` undeclared and v0.1.32 shipped a GUI that
+`scistack-db` imported a sibling undeclared and v0.1.32 shipped a GUI that
 failed at startup for every fresh install.
 
 ## Python version floor
@@ -168,8 +168,8 @@ failed at startup for every fresh install.
 The real floor is **3.10**, for a reason unrelated to policy: many modules use
 PEP 604 unions (`str | None`) in `def` signatures without
 `from __future__ import annotations`, and those annotations evaluate at
-definition time. `scifor/pathinput.py:55`, `scidb/database.py:163`,
-`scihist/database.py:14` and roughly a dozen others raise on 3.9 at import.
+definition time. `scifor/pathinput.py:55`, `scidb/database.py:163`
+and roughly a dozen others raise on 3.9 at import.
 
 Everything except the `requires-python` field already agrees on 3.10:
 `ruff.target-version = "py310"`, `mypy.python_version = "3.10"`, the trove
@@ -210,9 +210,7 @@ enough: the save/export path calls `render_matplotlib`, so the GUI needs
 
 ## Publishing the GUI
 
-`scistack-gui` and `scidb-net` are the two packages `publish.yml` excludes.
-`scidb-net` is excluded because it is outdated and slated for removal. The GUI's
-exclusion carries this comment:
+`scistack-gui` was once excluded from `publish.yml`, with this comment:
 
 > scistack-gui is intentionally excluded — it needs a JS frontend build before it
 > can ship a correct wheel.
@@ -256,26 +254,15 @@ lockfile staleness check — was removed with uv itself on 2026-10-08.
 
 ## What CI actually covers
 
-`ci.yml` runs pytest per package over a fixed list:
-
-```
-scistacklog scicanonicalhash path-gen scifor sciduckdb
-scilineage scidb scihist scistackplot scistackplotdb
-(+ scimatlab only when a `matlab` binary exists)
-```
-
-Not in that list, and therefore never run: **`scistack-gui` (47 test files)** and
-`scistack` (5). The `build` job does build `scidb-net` and `scistack` and runs
-`twine check`, but never imports them.
+`.github/scripts/test-shards.sh` is the one owner of which packages CI tests
+and how they are sharded (`SHARD_GROUPS`, `EXCLUDED`); `ci.yml` builds its test
+matrix from it, and `test-shards.sh check` fails when a `tests/` folder is
+unaccounted for. `scimatlab` is excluded (it needs a MATLAB licence).
 
 Each package gets its own `pytest` invocation. That is required, not stylistic:
 several packages have a top-level `conftest.py` and `from conftest import ...`
 in their tests, so spanning two `tests/` directories in one invocation collides
 on collection.
-
-`typecheck` runs mypy only on the four packages that declare `[tool.mypy]`
-(`scicanonicalhash`, `path-gen`, `sciduckdb`, `scilineage`) and is
-`continue-on-error: true`.
 
 ## Where to look
 

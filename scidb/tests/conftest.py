@@ -2,6 +2,7 @@
 
 # Add all local packages to path for imports
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pandas as pd
@@ -10,11 +11,8 @@ import pytest
 _root = Path(__file__).parent.parent
 sys.path.insert(0, str(_root / "src"))
 sys.path.insert(0, str(_root / "canonical-hash" / "src"))
-sys.path.insert(0, str(_root / "scilineage" / "src"))
-sys.path.insert(0, str(_root / "path-gen" / "src"))
 sys.path.insert(0, str(_root / "sciduckdb" / "src"))
 sys.path.insert(0, str(_root / "scifor" / "src"))
-sys.path.insert(0, str(_root / "scihist" / "src"))
 
 from scidb.database import _local
 
@@ -127,3 +125,35 @@ def dataframe_class():
 @pytest.fixture
 def custom_dataframe_class():
     return CustomDataFrameValue
+
+
+def make_simple_mock_db():
+    """Minimal mock DB for tests that only need save_batch to work.
+
+    Uses empty dataset_schema_keys so schema values are not coerced to strings,
+    keeping assertions like ``meta["subject"] == 42`` valid.
+    """
+
+    class _SimpleMockDB:
+        dataset_schema_keys = []
+
+        def distinct_schema_values(self, key):
+            return []
+
+        def distinct_schema_combinations(self, keys):
+            return []
+
+        def save_batch(self, variable_class, data_items, profile=False):
+            ids = []
+            for data, meta in data_items:
+                variable_class.save(data, **meta)
+                ids.append(f"mock-id-{len(ids)}")
+            return ids
+
+        def _save_lineage_rows_batch(self, items, output_type):
+            pass  # mock: lineage rows not tracked
+
+        def transaction(self, label=""):
+            return nullcontext()  # mock: for_each saves inside one transaction
+
+    return _SimpleMockDB()

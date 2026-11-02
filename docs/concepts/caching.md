@@ -60,7 +60,7 @@ result2  = double(reloaded)                    # cache hit — call_count STILL 
 
 This works because `scihist` registers the `scidb` database as the lineage cache
 backend, so lineage hashes are looked up against everything already stored (see
-[Internals — scilineage](../internals/scilineage.md)).
+[Internals — scicanonicalhash](../internals/scicanonicalhash.md)).
 
 ### 2. `skip_computed` — per combo in batch processing
 

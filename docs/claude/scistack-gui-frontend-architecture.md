@@ -2,7 +2,7 @@
 
 Written 2026-07-18, immediately after the nested-pipelines frontend
 checkpoint (checkpoint 4 of `.claude/plan-gui-nested-pipelines.md`).
-Companion to `scistack-gui-backend-internals.md` (server side) and
+Companion to `archive/scistack-gui-backend-internals.md` (server side) and
 `endpoint-first-pipelines.md` (the design story). Read this before
 touching `scistack-gui/frontend/src` — it records the load-bearing
 decisions that are easy to violate from inside a single component.

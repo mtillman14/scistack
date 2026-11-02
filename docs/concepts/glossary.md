@@ -4,9 +4,9 @@
      scidb/src/scidb/{variable,fixed,variant,each_of,column_selection,colname}.py;
      scifor/src/scifor/{merge,pathinput,pathoutput}.py;
      scicanonicalhash/src/scicanonicalhash/hashing.py (canonical_hash, generate_record_id);
-     scilineage/src/scilineage/{core,hashing,inputs,backend}.py;
+     scicanonicalhash/src/scicanonicalhash/functions.py (compute_function_hash);
      scidb/src/scidb/database.py (configure_database, content_hash/record_id, call_id);
-     scihist/src/scihist/{foreach,state,database}.py (skip_computed, node state, configure_backend);
+     scidb/src/scidb/{foreach,state}.py (skip_computed, node state);
      scidb/src/scidb/library.py + scistack_gui/services/library_authoring.py and
      library_service.py (Library, Step value, Tunables);
      and the tests cited in the sibling Concepts pages. Keep definitions consistent
@@ -39,10 +39,6 @@ a `for_each` input. `MyVar.for_columns()` runs the function once per column.
 **Combo state** — The per-combination classification underlying node state:
 `up_to_date`, `stale`, or `missing`. → [Node States](node-states.md)
 
-**configure_backend** — Registers a cache backend with the lineage engine so
-lineage hashes can be looked up; `scihist` wires the `scidb` database in as this
-backend. → [Computation Caching](caching.md)
-
 **configure_database** — One-call setup that opens the DuckDB database, declares
 the dataset schema keys, and auto-registers known variable types.
 → [Variables & Storage](variables.md)
@@ -70,8 +66,8 @@ of the current iteration's — e.g. always comparing against a baseline session.
 → [Guide: Batch Processing](../guide/for_each.md)
 
 **for_each** — The batch engine that runs a function over every combination of
-schema values. `scifor.for_each` works on plain tables; `scidb.for_each` and
-`scihist.for_each` load inputs from and save outputs to the database by metadata.
+schema values. `scifor.for_each` works on plain tables; `scidb.for_each` loads inputs from and
+saves outputs to the database by metadata.
 → [Architecture & Layers](architecture.md)
 
 **Function hash** — A bytecode-based SHA-256 fingerprint of a function.
@@ -161,16 +157,14 @@ chosen branch_param variant at load time. → [Node States](node-states.md)
 
 ## Packages
 
-The three **user-facing** layers are all you import (see
+The two **user-facing** layers are all you import (see
 [Architecture & Layers](architecture.md) for how they stack):
 
 | Package | Role |
 |---|---|
 | `scifor` | The batch-iteration engine over plain tables (no database) |
-| `scidb` | Typed, versioned variable storage + DB-backed `for_each` |
-| `scihist` | Lineage-wrapped `for_each` + node-state / staleness (re-exports the lineage decorator) |
+| `scidb` | Typed, versioned variable storage, DB-backed `for_each`, provenance and node state |
 
 Everything else is an **internal package** you reach through those layers,
-documented under [Internals](../internals/index.md): `scilineage` (provenance
-engine), `sciduckdb` (DuckDB storage), `scicanonicalhash` (hashing), `scipathgen`
-(path generation), `scimatlab` (MATLAB bridge), and `scidb-net` (networking).
+documented under [Internals](../internals/index.md): `sciduckdb` (DuckDB storage),
+`scicanonicalhash` (content and function hashing) and `scimatlab` (MATLAB bridge).

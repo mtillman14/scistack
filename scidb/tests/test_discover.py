@@ -474,13 +474,13 @@ class TestConfiguredLibraries:
         root = project_factory(
             package_name="fix_lib_scan",
             files={},
-            packages=["scilineage"],  # scilineage is importable in test env
+            packages=["scicanonicalhash"],  # scicanonicalhash is importable in test env
         )
         result = scan_project(root)
-        assert "scilineage" in result.libraries
+        assert "scicanonicalhash" in result.libraries
         # No hard claim about exports — only that the top-level package was
         # scanned (submodules with optional imports may record errors).
-        assert result.libraries["scilineage"].name == "scilineage"
+        assert result.libraries["scicanonicalhash"].name == "scicanonicalhash"
 
     def test_zero_export_library_returned_not_filtered(self, project_factory):
         """The scanner returns zero-export libraries; the panel layer filters."""
@@ -511,16 +511,16 @@ class TestConfiguredLibraries:
         root = project_factory(
             package_name="fix_self",
             files={},
-            packages=["fix_self", "scilineage"],
+            packages=["fix_self", "scicanonicalhash"],
         )
         result = scan_project(root)
         assert "fix_self" not in result.libraries
-        assert "scilineage" in result.libraries
+        assert "scicanonicalhash" in result.libraries
 
     def test_a_uv_lock_is_never_read(self, project_factory):
         root = project_factory(package_name="fix_uv", files={})
         (root / "uv.lock").write_text(
-            'version = 1\n\n[[package]]\nname = "scilineage"\nversion = "0"\n'
+            'version = 1\n\n[[package]]\nname = "scicanonicalhash"\nversion = "0"\n'
         )
         assert scan_project(root).libraries == {}
 
@@ -528,7 +528,7 @@ class TestConfiguredLibraries:
         root = project_factory(
             package_name="fix_tool",
             files={},
-            pyproject_extra='\n[tool.scistack]\npackages = ["scilineage"]\n',
+            pyproject_extra='\n[tool.scistack]\npackages = ["scicanonicalhash"]\n',
         )
         assert scan_project(root).libraries == {}
 

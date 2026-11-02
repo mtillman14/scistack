@@ -344,28 +344,5 @@ classdef TestForEachReturnValue < matlab.unittest.TestCase
                 'AbsTol', 1e-10);
         end
 
-        function test_scihist_shim_forwards_arity(testCase)
-            % +scihist/for_each.m must forward nargout. If it assigns
-            % unconditionally, nargout is 1 inside scidb.for_each for every
-            % shim call and the gate above never fires.
-            RawSignal().save([10 20 30], 'subject', 1, 'session', 'A');
-
-            % Statement call through the shim: must save without error.
-            scihist.for_each(@double_values, ...
-                struct('x', RawSignal()), ...
-                {ProcessedSignal()}, ...
-                'subject', 1, 'session', "A");
-            testCase.verifyEqual(numel(ProcessedSignal().load()), 1);
-
-            % Assigned call through the shim: must still return the payload.
-            result = scihist.for_each(@double_values, ...
-                struct('x', RawSignal()), ...
-                {ProcessedSignal()}, ...
-                'subject', 1, 'session', "A");
-            testCase.verifyEqual(height(result), 1);
-            testCase.verifyEqual(result.ProcessedSignal{1}, [20 40 60]', ...
-                'AbsTol', 1e-10);
-        end
-
     end
 end

@@ -59,10 +59,10 @@ scidb.include_schema("re-reviewed, recording was valid", 'subject', 1, 'trial', 
 tbl = scidb.list_exclusions()
 ```
 
-Exclusions are applied automatically by `for_each` before the iteration loop.
-The full exclusion table is hashed and stored in `version_keys`
-(`__schema_overrides_hash`) so that adding or removing an exclusion
-invalidates cached results.
+Exclusions live in the `__scidb_schema_overrides` table (one row per change,
+with its reason) and are applied automatically by `for_each` before the
+iteration loop: an excluded location is not run. They are not part of any
+record or invocation identity.
 
 ```python
 from scidb import configure_database, BaseVariable
@@ -112,20 +112,17 @@ GUI's 📋 Inventory button shows the same table. Details:
 
 ## Logging
 
-Every scidb operation logs through the shared [`scistacklog`](../scistacklog/README.md) facade. `configure_database()` points the file sink at `scistack.log` next to the database file and writes a run-context header (package versions, Python version, pid), so each log file is self-describing.
+Every scidb operation logs through the shared [`scistacklog`](../scistacklog/README.md) facade. `configure_database()` points both log files beside the database file and writes a run-context header (package versions, Python version, pid), so each log file is self-describing:
 
-Two sinks with independent levels, both defaulting to INFO:
-
-- **console** (stderr): the pipeline narrative — for_each banner, periodic progress, run summary with failure reasons, `[timing]` summaries.
-- **file** (`scistack.log`): the same narrative, with date + millisecond timestamps and the originating layer (`[scidb]`, `[scifor]`, `[matlab]`, …) on every line; one record per line.
-
-For debugging, raise a sink to DEBUG to capture the full execution trace (named internal steps with durations, per-iteration `[run]`/`[skip]` lines, per-phase `[timing]` tables, column/dtype dumps):
+- **journal** (`scistack.log`): for the scientist. One block per run: what ran, the counts, how long, and each failure labelled with who can fix it.
+- **debug file** (`scistack-debug.log`): for whoever debugs SciStack. Everything, at DEBUG by default (named internal steps with durations, per-iteration `[run]`/`[skip]` lines, per-phase `[timing]` tables), with the originating layer (`[scidb]`, `[scifor]`, `[matlab]`, …) and the run id on every line.
+- **console** (stderr): the pipeline narrative, at INFO.
 
 ```python
 from scidb import Log
 
-Log.set_level("DEBUG", sink="file")   # full detail in scistack.log only
-Log.set_level("DEBUG")                # both sinks
+Log.set_level("INFO", sink="file")   # a quieter debug file
+Log.set_level("DEBUG")               # both sinks
 ```
 
 or set the `SCIDB_LOG_LEVEL` environment variable, or pass `-v` to the `scidb` CLI.

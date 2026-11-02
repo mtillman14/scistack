@@ -245,6 +245,8 @@ consume". In practice the GUI goes around both, straight to
 | B5 | Make deferred registration explicit: `pipe.for_each(...)` or `for_each(..., pipeline=pipe)` only, with no ambient registration. | weakness 5 (pipeline half) |
 | B6 | Refresh the README and the two stale `docs/claude` walkthroughs, or mark them archived and point to `database-model.md`. Drop the `hashing`/`paths` shims. | weakness 6 |
 
+> **Done (2026-11-01, P1):** B6 — `scidb.hashing` and `scidb.paths` deleted; `scidb-for-each-internals.md` and `scidb-identity-and-data-flow.md` archived to `docs/claude/archive/`; README exclusion and Logging sections refreshed.
+
 **Open question (answered below, 2026-11-01).** Where should "project runtime"
 live: config, entities, display settings, discovery, bundles? Today it is
 split between scifor group C (~1,230 lines) and scidb's project cluster

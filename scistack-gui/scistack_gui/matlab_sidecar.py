@@ -177,7 +177,7 @@ class MatlabSidecar:
 
         ``start()`` only checks that ``matlab`` is on PATH. A MATLAB that
         launches fine but has no ``pyenv`` configured fails on the FIRST
-        ``py.*`` call — which happens deep inside ``scihist.configure_database``,
+        ``py.*`` call — which happens deep inside ``scidb.configure_database``,
         so it surfaces to the user as a pipeline error rather than the setup
         problem it is. Probing once, up front, lets the caller say so
         plainly (same spirit as docs/claude/phase-8-startup-diagnostics.md).

@@ -76,9 +76,9 @@ Log.debug("combo detail: %s", combo, layer="scifor")
 Log.error("save failed", layer="scidb", exc_info=True)
 ```
 
-`layer` must be one of `scistacklog.LAYERS`
-(`scidb`, `scifor`, `sciduck`, `scihist`, `scilineage`, `scistack`,
-`scistack_gui`, `matlab`).
+`layer` must be one of `scistacklog.LAYERS`:
+`scidb`, `scifor`, `sciduck`, `scicanonicalhash`, `scistack`, `scistack_gui`,
+`scistackplot`, `scistackplotdb`, `scistackstats`, `scistackstatsdb`, `matlab`.
 
 ## Timing a hot path
 

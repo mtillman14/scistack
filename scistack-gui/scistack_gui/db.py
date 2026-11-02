@@ -452,7 +452,7 @@ def external_db_access(holder: str = "MATLAB"):
     does — in browser/standalone mode (FastAPI) the connection stays open
     for the life of the process. A MATLAB sidecar run started from there
     would therefore find the database locked by *us* and fail on its first
-    ``scihist.configure_database`` call. So: close the connection, and mark
+    ``scidb.configure_database`` call. So: close the connection, and mark
     the database externally owned so a concurrent request can't quietly
     reopen it and steal the lock back mid-run — such a request gets a
     :class:`DatabaseLockedError` naming the holder, which is both true and

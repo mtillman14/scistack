@@ -21,17 +21,13 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: import name -> distribution name. scidbnet is left out (slated for removal;
-#: its imports may not be installed) but the source scan still covers it.
+#: import name -> distribution name.
 VERSIONED = {
     "scifor": "scifor",
     "scidb": "scistack-db",
-    "scilineage": "scilineage",
     "scicanonicalhash": "scicanonicalhash",
     "scistackplot": "scistackplot",
     "scistack_gui": "scistack-gui",
-    "scipathgen": "scipathgen",
-    "scihist": "scihist",
     "scistack": "scistack",
     "scistackplotdb": "scistackplotdb",
 }

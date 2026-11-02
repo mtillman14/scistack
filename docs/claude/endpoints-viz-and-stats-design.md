@@ -36,7 +36,7 @@ viz owns the genuinely new surface (draft mode, artifact provenance).
 2. **Fan-in (aggregation mode).** Iterating a strict subset of schema keys
    delivers a multi-row DataFrame per combo; zero iterated keys = grand
    aggregation (all rows, one call — the paired-t-test-across-subjects shape).
-   See [scidb-for-each-internals.md](scidb-for-each-internals.md) Step 12.
+   See [archive/scidb-for-each-internals.md](archive/scidb-for-each-internals.md) Step 12.
    *Fan-in data delivery is done; endpoints need no new loading machinery.*
 3. **Non-contiguous schema keys.** Save/load with any subset of schema keys —
    built for cross-cutting analyses. See
@@ -94,7 +94,7 @@ Implementation cautions:
   Note the ragged-groups warning can still fire on this shape (each aligned
   group covers only its own locations) — it is advisory there.
 - This supersedes the pooling default described in the aggregation section of
-  [scidb-for-each-internals.md](scidb-for-each-internals.md) and implements
+  [archive/scidb-for-each-internals.md](archive/scidb-for-each-internals.md) and implements
   the "auto-grouping" future work named in
   [variant-branch-param-pinning.md](variant-branch-param-pinning.md).
 
@@ -353,7 +353,7 @@ Design together (done above), implement staged:
 - [plotting-leaf-nodes.md](plotting-leaf-nodes.md) — shipped `plot_` v1
 - [variant-branch-param-pinning.md](variant-branch-param-pinning.md) —
   `Variant`/`EachOf`; D1 implements its named future work
-- [scidb-for-each-internals.md](scidb-for-each-internals.md) — aggregation
+- [archive/scidb-for-each-internals.md](archive/scidb-for-each-internals.md) — aggregation
   mode (Step 12); D1 supersedes its pooling default
 - [schema-hierarchy-contiguity.md](schema-hierarchy-contiguity.md) —
   non-contiguous key support

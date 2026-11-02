@@ -6,25 +6,22 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from scilineage.hashing import (
-    compute_function_hash,
-    compute_function_hash_with_sources,
-)
+from scicanonicalhash import compute_function_hash, compute_function_hash_with_sources
 
 from .names import function_name
 
 
 def _compute_fn_hash(fn: Callable) -> str:
-    """Compute a stable hash of the function's bytecode and constants.
+    """Compute a stable hash of the function's source.
 
-    Uses bytecode-based hashing (via scilineage.hashing.compute_function_hash),
-    which only changes when the function's actual logic changes. Ignores cosmetic
-    changes like whitespace, comments, and formatting.
+    Uses AST-based recursive hashing (``scicanonicalhash.compute_function_hash``),
+    which only changes when the logic of the function or a helper it calls
+    changes. Ignores cosmetic changes like whitespace, comments, and formatting.
 
     Returns 16 hex chars (truncated SHA-256) for version_keys storage.
 
     Args:
-        fn: The function to hash (can be plain function or LineageFcn wrapper).
+        fn: The function to hash.
 
     Returns:
         16-character hex string hash.
@@ -110,7 +107,7 @@ def function_sources_for(fn) -> tuple[str, str | None, dict]:
 # The canonical for_each call-site identity is captured by exactly these
 # version_keys fields (see ForEachConfig.to_version_keys()).  Anything else
 # in a saved version_keys dict — direct constants unpacked as top-level
-# keys, ``__upstream``, ``__output_num``, scihist's lineage extras — is
+# keys, ``__upstream``, ``__output_num`` — is
 # per-record bookkeeping and must not affect the call_id.
 #
 # ``__fn_hash`` is intentionally excluded too, so cosmetic source edits to
@@ -285,10 +282,11 @@ class ForEachConfig:
     inputs (which variable types / Fixed wrappers are used), where= filter,
     and other behavioral flags.
 
-    These keys are merged into save_metadata so that changing the config
-    (e.g. switching smoothing=0.2 to smoothing=0.3, or adding a where= filter)
-    creates a new version_keys group rather than silently overwriting existing
-    results.
+    These keys are merged into save_metadata, where they reach the record id
+    and invocation identity, so changing the config (e.g. switching
+    smoothing=0.2 to smoothing=0.3, or adding a where= filter) records a new
+    variant rather than silently overwriting existing results. A subset of
+    them names the call site (:meth:`to_call_id`).
     """
 
     def __init__(

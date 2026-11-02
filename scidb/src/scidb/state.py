@@ -4,18 +4,14 @@ Pipeline node staleness API.
 Provides per-combo and per-node run state queries that use the full lineage
 provenance graph rather than simple record-count approximations.
 
-Staleness check priority (most to least authoritative):
+A record saved by ``for_each`` has a producing invocation in the graph:
 
-1. **Lineage record exists** (scihist.for_each output):
-   - Function staleness: stored ``function_hash`` vs current ``LineageFcn.hash``.
-   - Input staleness: stored input ``record_id`` vs current latest record_id.
-   - No timestamps used.
+- Function staleness: the invocation's stored ``function_hash`` vs
+  ``function_hash_for(fn)`` now.
+- Input staleness: any ancestor ``record_id`` superseded by a newer record at
+  the same location. No timestamps are used.
 
-2. **No lineage, but ``__fn_hash`` in version_keys** (scidb.for_each output):
-   - Function staleness: stored ``__fn_hash`` vs ``_compute_fn_hash(fn)``.
-   - Input staleness: output record timestamp vs latest input record timestamp
-     at the same schema_id.  Timestamps used only here, as the minimum
-     unavoidable fallback when exact input record_ids are unavailable.
+A record with no producing invocation (raw/manual save) is up to date.
 
 Typical usage::
 
@@ -56,7 +52,7 @@ def check_combo_state(
     """Check the staleness of a single (function, schema_combo) pair.
 
     Args:
-        fn: The pipeline function (plain callable or LineageFcn).
+        fn: The pipeline function.
         outputs: List of output variable classes produced by fn.
         schema_combo: Dict of schema key → value identifying the specific
             data location, e.g. ``{"subject": 1, "session": "pre"}``.
@@ -120,7 +116,7 @@ def _check_via_graph(
     Scope (see docs/guide/node-states.md, "Propagation"):
 
     - ✅ Ancestor data re-saved (record_id superseded) → stale.
-    - ✅ Python fn's own function hash mismatched → stale (Python ``LineageFcn``
+    - ✅ Python fn's own function hash mismatched → stale (Python functions
       only; MATLAB proxies use a different hashing pipeline that can produce
       false mismatches — see ``.claude/defer-function-hash-staleness.md``).
     - ❌ Ancestor function code changed but not yet re-run → NOT detected here
@@ -388,15 +384,18 @@ def check_node_state(
 ) -> dict:
     """Aggregate run state across all known combos for a pipeline function.
 
-    Enumerates combos by comparing:
-    - *actual* combos: output records in the DB whose version_keys.__fn matches fn.
-    - *expected* combos: schema_ids present in the input variables for each variant.
+    Compares invocations:
+    - *expected*: the ``(invocation_id, schema_id)`` pairs derived live from
+      the current input data over each variant config ``fn`` has run with
+      (``provenance_query.expected_invocations_for_function``).
+    - *present*: the expected pairs that exist in ``_invocation``.
 
-    Combos in actual → checked via :func:`check_combo_state` (up_to_date or stale).
-    Combos in expected but absent from actual → "missing".
+    An expected pair that is present is "up_to_date"; one that is absent is
+    "missing". A changed input or edited function shifts the expected id, so
+    "stale" shows up as "missing" here.
 
     Args:
-        fn: The pipeline function (plain callable or LineageFcn).
+        fn: The pipeline function.
         outputs: List of output variable classes produced by fn.
         inputs: Optional dict mapping parameter names to input variable types
             (same format as ``for_each``'s ``inputs``).  Used as a fallback to
@@ -955,13 +954,12 @@ def _schema_id_to_combo(db, schema_id) -> dict:
 
 
 def _get_latest_record_at_location(db, record_id: str) -> str | None:
-    """Get the latest record_id at the same (variable_name, schema_id),
-    ignoring version_keys.
+    """Get the latest non-excluded record_id at the same (type, schema_id),
+    whichever variant or save path wrote it.
 
-    Used by ``_has_superseded_ancestor`` to detect direct ``.save()``
-    updates that don't carry ``__fn`` in version_keys — they would be
-    in a different partition from pipeline-produced records and invisible
-    to ``get_latest_record_id_for_variant``.
+    Used by ``_has_superseded_ancestor``: a direct ``.save()`` at an
+    ancestor's location supersedes a pipeline-produced record there even
+    though it has no producing invocation.
     """
     rows = db._duck._fetchall(
         "SELECT type, schema_id FROM _record WHERE record_id = ? LIMIT 1",

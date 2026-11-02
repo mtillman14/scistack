@@ -221,7 +221,7 @@ def test_partial_run_reddens_only_its_own_variant_chip(tmp_path):
 # DIFFERENT input/output variable type, must neither graduate into the
 # executed call site's canonical id (merge_manual_nodes matches candidates
 # by (type, label) only) nor inherit its green run state
-# (_own_state_for_function's scihist.check_node_state call had no call_id,
+# (_own_state_for_function's scidb.check_node_state call had no call_id,
 # so it answered "has this FUNCTION NAME ever produced these outputs",
 # blind to which inputs actually fed it). Found via a real GUI session:
 # a second compute_rolling_vo2 wired to RawHeartRate (instead of RawVO2)

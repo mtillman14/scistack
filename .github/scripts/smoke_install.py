@@ -2,11 +2,12 @@
 
     <fresh-venv>/bin/python -I .github/scripts/smoke_install.py <dist-dir>
 
-Run it after `pip install --find-links <dist-dir> scistack==V scihist==V` into
+Run it after `pip install --find-links <dist-dir> scistack==V` into
 an empty venv, so only what the packages DECLARE is present. Development (one
 venv, every package editable with --no-deps) can never see an undeclared
-dependency; a user's `pip install` sees it at once. Example: scistack-db imported
-scilineage without declaring it, and the GUI failed at startup for every user.
+dependency; a user's `pip install` sees it at once. Example: scistack-db once
+imported a sibling without declaring it, and the GUI failed at startup for
+every user.
 
 Fails on every ModuleNotFoundError except a module that is legitimately
 absent: one a SciStack package declares only as an OPTIONAL extra (seaborn,

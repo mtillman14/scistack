@@ -91,3 +91,5 @@ flowchart TB
 | U2 | Decide taps: either schedule them (and give the GUI a path to them through a lower package), or mark the module hidden until Phase 7. | weakness 2 |
 | U3 | Remove the stray `src/scistack/__init__.py` (and the empty `src/` folder). | weakness 3 |
 | U4 | Document `scistack` as the CLI and `scidb` as an alias for its database commands. | weakness 4 |
+
+> **Done (2026-11-01, P1):** U2 — taps (`scistack.user_config`) deleted (D7). U3 — stray `src/scistack/` removed.

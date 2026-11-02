@@ -28,10 +28,6 @@ dependencies = [
     # too, pinned to this release like every sibling. The dependency runs one
     # way only; scistack-gui must never declare scistack, or the graph cycles.
     "scistack-gui",
-    # user_config.py reads TOML at module import. Python 3.11+
-    # has tomllib built in; 3.10 needs the tomli backport it falls back to.
-    # This was previously in the dev extra, which never installed it for users.
-    "tomli>=2.0 ; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

@@ -19,9 +19,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # name|packages|shards — tune shards from the --durations output of past runs.
 # A group of several packages must have 1 shard.
 SHARD_GROUPS=(
-    "small|scistacklog scicanonicalhash path-gen sciduckdb scilineage scistack|1"
+    "small|scistacklog scicanonicalhash sciduckdb scistack|1"
     "scifor|scifor|1"
-    "scihist|scihist|1"
     "scistackplotdb|scistackplotdb|1"
     "scistackstats|scistackstats scistackstatsdb|1"
     "scistackplot|scistackplot|3"
@@ -32,7 +31,6 @@ SHARD_GROUPS=(
 # tests/ dirs deliberately not run in CI, with the reason.
 EXCLUDED=(
     "scimatlab|needs a MATLAB licence"
-    "scidb-net|outdated, slated for removal"
     "tests|repo-level integration suite, run by hand"
 )
 

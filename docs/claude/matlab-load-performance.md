@@ -87,7 +87,7 @@ This meant types like tables (DataFrames stored with `custom=True` dtype) would 
    - `struct_columns`: unflatten dot-separated columns back to nested dicts
    - Raw DataFrame: return sub-DataFrame as-is (most common case for tables)
 
-2. **Native pids**: Existing bulk path (column-specific SELECT, type restoration via `_restore_types`)
+2. **Native pids**: Existing bulk path (column-specific SELECT, type restoration via `restore_types`)
 
 3. Both lookups are merged in a single instance-construction loop.
 

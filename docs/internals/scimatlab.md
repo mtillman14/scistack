@@ -46,7 +46,7 @@ Variables declared in the project's entities file need no class file. `scidb.ent
 
 ## Function identity
 
-A MATLAB function's hash is computed from the raw bytes of its `.m` file. Any edit to the file, including a comment change, marks its results out of date. Python functions are hashed from their parsed code instead ([scilineage](scilineage.md)), so a Python function and a MATLAB function never share a hash.
+A MATLAB function's hash is computed from the raw bytes of its `.m` file. Any edit to the file, including a comment change, marks its results out of date. Python functions are hashed from their parsed code instead ([scicanonicalhash](scicanonicalhash.md)), so a Python function and a MATLAB function never share a hash.
 
 ## Python-side API
 

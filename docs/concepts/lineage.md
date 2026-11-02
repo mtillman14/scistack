@@ -26,7 +26,7 @@ the same lineage means the same result, so work can be reused instead of repeate
 This page explains the model. Lineage is **Python-only**; you reach it through
 `scihist`, which re-exports the `lineage_fcn` decorator and wraps your functions
 for you. (The engine itself is the internal `scilineage` package — see
-[Internals](../internals/scilineage.md).)
+[Internals](../internals/scicanonicalhash.md).)
 
 ## Functions that remember their inputs
 
@@ -134,7 +134,7 @@ classified inputs, giving the stable cache key that
 ## Reading the provenance graph
 
 Two helpers turn a result into inspectable lineage. They live in the lineage
-engine itself (see [Internals](../internals/scilineage.md)):
+engine itself (see [Internals](../internals/scicanonicalhash.md)):
 
 ```python
 from scilineage import extract_lineage, get_upstream_lineage
@@ -177,7 +177,7 @@ still records function and input identity (`__fn`, `__fn_hash`, `__inputs`,
 `__constants`, and namespaced `branch_params`) for its own version tracking. The
 full provenance graph and automatic function wrapping come from `scihist`, which
 decorates your functions for you. (Implementation:
-[Internals — scilineage](../internals/scilineage.md).)
+[Internals — scicanonicalhash](../internals/scicanonicalhash.md).)
 
 **Next:** [Computation Caching](caching.md) ·
 [Versioning & Content Hashing](hashing.md) · [Node States](node-states.md) ·

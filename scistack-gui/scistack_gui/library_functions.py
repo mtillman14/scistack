@@ -147,7 +147,7 @@ def with_qualified_name(fn, canonical: str):
     ``inspect.getsourcelines`` does — pairing them naively yields this
     file's path with pandas' line number. ``pipeline_service
     .get_function_source`` calls ``inspect.unwrap`` first for that reason.
-    (``scilineage.hashing`` already unwraps, so the function hash is
+    (``scicanonicalhash.compute_function_hash`` already unwraps, so the function hash is
     unaffected.)
 
     Precedent: ``scidb.foreach``'s Merge wrapper exists for the same reason

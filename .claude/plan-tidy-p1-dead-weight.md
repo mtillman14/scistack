@@ -235,4 +235,43 @@ renamed in P4 (W5 rename), not here.
    (`> **Done (date, commit):** …`), and tick P1 in the index.
 
 ## Progress
-- (none yet)
+Session 2026-11-01. All stages were edited in one pass (the shared config lines
+in `dev-install.sh`, CI, shards and the version test list all four removed
+packages, so each line was edited once). Nothing committed.
+
+- **Stage 1** done: scidb-net deleted with all references.
+- **Stage 2** done: 13 test files moved as `scidb/tests/test_hist_*.py` (shim
+  test dropped), data to `scidb/tests/data/hist/`, `make_simple_mock_db` in
+  scidb's conftest. **Deviation:** the 2 MATLAB tests under
+  `scimatlab/tests/matlab/scihist/` never called `scihist.*`, so they moved to
+  `scidb/TestHist{EndToEnd,Provenance}.m` instead of being deleted. **Found:**
+  the GUI's generated MATLAB preamble called `scihist.configure_database`; it
+  now emits `scidb.configure_database` (test_matlab.py updated, plus
+  `test_scidb_configure_database_present`).
+- **Stage 3** done. `scimatlab/setup.md` install block now says
+  `bash dev-install.sh` (the old list named folders that no longer exist).
+- **Stage 4** done. Baseline hash captured by the user from scilineage
+  (`807520b3…605e8b`) and pinned in `test_function_hash.py`; scilineage deleted. `LAYERS` gained
+  `scicanonicalhash`, lost `scihist`/`scilineage`.
+- **Stage 5** done. User chose: delete the methods, rewrite the codec tests.
+  `save`/`load`/`list_versions`/`delete` + `_schema_key_columns`,
+  `_entries_from_dataframe`, `_infer_data_columns`, `_value_to_storage_row`,
+  `_ensure_variable_table` deleted. `_restore_types` → public module function
+  `restore_types` (scidb's load uses it). New `sciduckdb/tests/codec_roundtrip.py`
+  (`store`/`fetch`/`roundtrip`, mirrors scidb's load); codec tests converted;
+  Mode A/C, latest-wins, list_versions, delete, schema_level-default and
+  load-filter tests deleted with the methods. **Kept** `_get_or_create_schema_id`:
+  scidb calls it at 3 sites (P2 promotes it).
+- **Stage 6** done (also removed `tomli` from scistack's deps; also the stray
+  `'src'` entry in `scimatlab/tests/matlab/setup_paths.m`).
+- **Stage 7** done. Noticed `exclusions.get_schema_overrides_hash` is called
+  only by its tests (dead); not removed.
+- **Stage 8** done. **Deviation:** also archived
+  `scihist-for-each-internals.md` and `scihist-for-each-execution.md`.
+- **Not done (out of the plan's file list):** non-nav user docs still describe
+  scihist as a layer (`docs/api/scihist.md`, `docs/guide/{lineage,caching,for_each}.md`,
+  `docs/concepts/{lineage,caching,node-states}.md`, `docs/quickstart.md`,
+  `docs/getting-started/choosing-a-layer.md`, `docs/project/faq.md`, …).
+- Tests: first run (user) — only failures were the unpinned hash and
+  `_SimpleMockDB` lacking `transaction` (P0 made for_each save inside
+  `db.transaction`); mocks given a no-op `transaction`. Second run pending.

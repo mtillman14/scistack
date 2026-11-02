@@ -67,7 +67,7 @@ on `<col>__tz IS NULL` to tell the two apart.
     `(instant text, label)`. Used by `value_to_storage_row`,
     `dataframe_to_storage_rows`, `bulk_df_to_storage_rows`.
   - `merge_tz_columns(df, meta)`: THE load-side fold, called right after the
-    fetch in `SciDuck.load`, scidb `load_all_as_df` and `load`. One zone ->
+    fetch in scidb `load_all_as_df` and `load`. One zone ->
     `datetime64[ns, tz]`; several zones or naive+aware -> object column of
     Timestamps; none -> `datetime64[ns]`.
   - `stored_tz_companions(stored_types)`: recognises a companion from the bare
@@ -119,8 +119,8 @@ TIMESTAMP_NS fetches as `datetime64[ns]`, but pandas defaults to `[us]` on
 some versions, and the DataFrame hash includes the dtype. So a `[us]` column
 loaded as `[ns]` made re-saves new records. `_batch_column_type` now records
 `"unit"` in a datetime64 column's metadata; `merge_tz_columns` restores it
-(`Series.dt.as_unit`). The per-record DataFrame loaders (`SciDuck.load`,
-scidb `load`) keep the restored Series instead of rebuilding a list, which
+(`Series.dt.as_unit`). The per-record DataFrame loader (scidb
+`load`) keeps the restored Series instead of rebuilding a list, which
 would re-infer the dtype. Scalars hash unit-free, so they need none of this.
 
 ## MATLAB (built 2026-10-22, second pass)

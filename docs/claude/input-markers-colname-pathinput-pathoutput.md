@@ -177,7 +177,7 @@ MATLAB pipelines need per-column output filenames.
 - `docs/claude/for-columns-iteration.md` — the column-wise fan-out/reassembly
   that `{ColName}` resolution rides on.
 - `docs/claude/scifor-for-each-internals.md` — the standalone loop.
-- `docs/claude/scidb-for-each-internals.md` — input conversion + the delegation
+- `docs/claude/archive/scidb-for-each-internals.md` — input conversion + the delegation
   to `scifor.for_each`.
 - `docs/claude/scifor-scidb-modifier-unification.md` — the full unification
   (`Fixed`/`Merge`/`ColumnSelection`/`ColName`/`EachOf`/`PathInput`

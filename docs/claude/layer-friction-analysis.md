@@ -54,7 +54,7 @@ You can use scidb without scihist if you don't need lineage.
 
 **The problem:** There are TWO incompatible systems for tracking computation variants:
 
-#### System 1: scidb's branch_params (scidb-for-each-internals.md, lines 83-106)
+#### System 1: scidb's branch_params (archive/scidb-for-each-internals.md, lines 83-106)
 
 ```python
 # scidb.for_each outputs have:
@@ -72,7 +72,7 @@ You can use scidb without scihist if you don't need lineage.
 }
 ```
 
-#### System 2: scihist's \_lineage (scihist-for-each-internals.md, lines 698-717)
+#### System 2: scihist's \_lineage (archive/scihist-for-each-internals.md, lines 698-717)
 
 ```python
 # scihist.for_each outputs have:
@@ -96,7 +96,7 @@ You can use scidb without scihist if you don't need lineage.
 3. **Namespace mismatch:** scidb uses `fn.param` in branch_params, scihist expects un-namespaced constants (scihist doc line 495)
 4. **Incomplete metadata:** scihist outputs lack `__inputs` and `__constants` in version_keys
 
-**Reference:** scihist-for-each-internals.md lines 698-717
+**Reference:** archive/scihist-for-each-internals.md lines 698-717
 
 ---
 
@@ -129,7 +129,7 @@ You can use scidb without scihist if you don't need lineage.
 - `_lineage.inputs` only has `rid_tracking` entries (no actual input entries)
 - `_get_lineage_variants()` must recover variable types by parsing `__rid_{param}` and looking up `record_id` in `_record_metadata`
 
-**Reference:** scihist-for-each-internals.md lines 546-556, MEMORY.md "Scihist + Scilineage Input Classification Quirk"
+**Reference:** archive/scihist-for-each-internals.md lines 546-556, MEMORY.md "Scihist + Scilineage Input Classification Quirk"
 
 **Better design:** Preserve `BaseVariable` wrapper through to scilineage, or pass metadata alongside raw data.
 
@@ -154,7 +154,7 @@ branch_params["bandpass.low_hz"] = 20
 metadata["low_hz"] = 20
 ```
 
-**Reference:** scidb-for-each-internals.md lines 664-666
+**Reference:** archive/scidb-for-each-internals.md lines 664-666
 
 **Consequences:**
 
@@ -220,7 +220,7 @@ metadata["low_hz"] = 20
 # → no variant expansion based on this input
 ```
 
-**Reference:** scidb-for-each-internals.md lines 794-795
+**Reference:** archive/scidb-for-each-internals.md lines 794-795
 
 **scihist (Step 6):** Fixed inputs ARE tracked via `fixed_rids` for staleness
 
@@ -232,7 +232,7 @@ metadata["low_hz"] = 20
 # → checked by skip_computed
 ```
 
-**Reference:** scihist-for-each-internals.md lines 151-154
+**Reference:** archive/scihist-for-each-internals.md lines 151-154
 
 **Consequences:**
 
@@ -257,7 +257,7 @@ scifor.set_schema(["subject", "session", "__rid_signal"])
 scifor.set_schema(["subject", "session"])  # MUST NOT FAIL
 ```
 
-**Reference:** scidb-for-each-internals.md lines 549-626
+**Reference:** archive/scidb-for-each-internals.md lines 549-626
 
 **Risk:** If Step 18 fails (exception, early return, cancel), subsequent `for_each` calls in the same Python session will see the extended schema and fail.
 
@@ -286,7 +286,7 @@ From scidb doc line 625:
 3. scidb wraps the function (Step 16) to unwrap them just before the call
 4. The function receives the unwrapped data
 
-**Reference:** scidb-for-each-internals.md lines 844-856
+**Reference:** archive/scidb-for-each-internals.md lines 844-856
 
 **Fragility:**
 
@@ -314,7 +314,7 @@ From scidb doc line 625:
 **scidb:** Queries database via SQL
 
 ```python
-# scidb-for-each-internals.md lines 225-241
+# archive/scidb-for-each-internals.md lines 225-241
 # Calls db.distinct_schema_values(key) → SELECT DISTINCT FROM _schema
 ```
 
@@ -348,7 +348,7 @@ From scidb doc line 625:
 - `distribute` validation would fail or produce wrong results
 - No error would be raised - just silent incorrect behavior
 
-**Reference:** scidb-for-each-internals.md lines 274-280
+**Reference:** archive/scidb-for-each-internals.md lines 274-280
 
 **Better design:** Schema as explicit parameter, not global state.
 
@@ -384,7 +384,7 @@ version_keys = {
 branch_params = {}  # ALWAYS EMPTY
 ```
 
-**Reference:** scihist-for-each-internals.md lines 702-709
+**Reference:** archive/scihist-for-each-internals.md lines 702-709
 
 **Consequences:**
 

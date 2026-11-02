@@ -408,7 +408,7 @@ Despite these optimizations, the MATLAB-driven loop still costs N MATLAB↔Pytho
 
 ## File-of-record references
 
-- Python redesign: `docs/claude/scifor-for-each-internals.md`, `docs/claude/scidb-for-each-internals.md`, `docs/claude/scihist-for-each-internals.md`.
+- Python redesign: `docs/claude/scifor-for-each-internals.md`, `docs/claude/archive/scidb-for-each-internals.md`, `docs/claude/archive/scihist-for-each-internals.md`.
 - Layer friction analysis (Python only): `docs/claude/layer-friction-analysis.md`.
 - Redesign plan for MATLAB: `.claude/matlab-for-each-redesign-plan.md`.
 - MEMORY.md notes: matlab/GUI hash recipes agree (2026-04-19); user runs tests themselves; latest-record selection across hashes deferred.

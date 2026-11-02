@@ -11,7 +11,7 @@ name, although its code did not change.
 
 **The rule.** An invocation of an OLD name is carried when the function now
 recorded under the NEW name has the SAME code hash
-(``scilineage.hashing`` / MATLAB's own source hash: the caller passes the
+(``scicanonicalhash.compute_function_hash`` / MATLAB's own source hash: the caller passes the
 current hash, see :func:`rename_functions`) and every one of its variable
 inputs is either untouched or was itself carried in this pass. Carrying
 writes, through the owners the save path uses:

@@ -59,10 +59,9 @@ jobs:
           # here rebuilds it, so a stale commit ships a stale UI — rebuild and
           # commit the bundle before tagging. The "webview" vite target and the
           # VS Code extension itself ship via the publish-vscode job below.
-          # scidb-net is excluded — outdated, slated for removal.
-          for pkg in scicanonicalhash path-gen scistacklog sciduckdb \
-                     scifor scilineage scistackplot scistackstats scidb \
-                     scimatlab scihist scistackplotdb scistackstatsdb scistack \
+          for pkg in scicanonicalhash scistacklog sciduckdb \
+                     scifor scistackplot scistackstats scidb \
+                     scimatlab scistackplotdb scistackstatsdb scistack \
                      scistack-gui; do
             echo "== build $pkg =="
             python -m build --outdir dist "$pkg"

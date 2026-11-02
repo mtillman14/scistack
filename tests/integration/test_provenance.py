@@ -1,5 +1,5 @@
 """
-scidb.inspect (+ scilineage / scihist underneath): every record the pipeline
+scidb.inspect: every record the pipeline
 wrote can say what produced it.
 """
 

@@ -33,7 +33,6 @@ from .datetimes import (
     datetime_series_to_storage,
     datetime_to_storage,
     is_datetime_meta,
-    merge_tz_columns,
     storage_column_names,
     storage_column_types,
     tz_column_name,
@@ -335,8 +334,8 @@ def array_from_storage(value: Any, dtype: np.dtype) -> np.ndarray:
     # yields INT_MIN silently. This fires when the DECLARED dtype cannot hold a
     # NaN the value actually has — either a column that acquired a NULL after
     # its dtype was recorded, or a second restoration pass over an array this
-    # function already upcast (SciDuck.load runs _restore_types AND then
-    # storage_to_python on the same cell, so restoration must be idempotent).
+    # function already upcast (scidb's multi-column load runs restore_types AND
+    # then storage_to_python on the same cell, so restoration must be idempotent).
     arr = np.asarray(value)
     if dtype.kind != "f" and arr.dtype.kind == "f" and arr.size and np.isnan(arr).any():
         logger.debug(
@@ -510,6 +509,31 @@ def storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
     # NULL list elements are restored as NaN inside storage_to_python; the
     # caller aggregates count_null_list_elements() into one INFO line per load.
     return series.apply(lambda v: storage_to_python(v, meta))
+
+
+def restore_types(df: pd.DataFrame, dtype_meta: dict) -> pd.DataFrame:
+    """Restore the Python types of a non-DataFrame variable's data columns, in place.
+
+    ``df`` holds stored rows (one per record) as DuckDB returned them, after
+    ``merge_tz_columns``. NULL list elements come back as NaN; their count is
+    logged once per call.
+    """
+    columns_meta = dtype_meta.get("columns", {})
+    null_counts: dict = {}
+    for col_name, col_meta in columns_meta.items():
+        if col_name in df.columns:
+            n_null = count_null_list_elements(df[col_name])
+            if n_null:
+                null_counts[col_name] = n_null
+            df[col_name] = [
+                storage_to_python(df[col_name].iloc[i], col_meta)
+                for i in range(len(df))
+            ]
+    if null_counts:
+        logger.debug(
+            "restore_types: restored NULL list element(s) as NaN: %s", null_counts
+        )
+    return df
 
 
 def _flatten_dict(d, _prefix=()):
@@ -1813,11 +1837,6 @@ class SciDuck:
     # Schema entry management
     # ------------------------------------------------------------------
 
-    def _schema_key_columns(self, schema_level: str) -> list[str]:
-        """Return schema columns from the top down to (and including) schema_level."""
-        idx = self.dataset_schema.index(schema_level)
-        return self.dataset_schema[: idx + 1]
-
     def _get_or_create_schema_id(self, schema_level: str, key_values: dict) -> int:
         """Look up or insert a row in _schema.  Return the schema_id."""
         key_cols = [k for k in self.dataset_schema if k in key_values]
@@ -1945,344 +1964,6 @@ class SciDuck:
         return result
 
     # ------------------------------------------------------------------
-    # Save
-    # ------------------------------------------------------------------
-
-    def save(
-        self,
-        name: str,
-        data: Any,
-        schema_level: str | None = None,
-        description: str = "",
-        force: bool = False,
-        **schema_keys,
-    ):
-        """
-        Save a variable to the database.
-
-        Parameters
-        ----------
-        name : str
-            Variable name (becomes the table name).
-        data : Any
-            The data to save.  Can be:
-            - pd.DataFrame with schema-level columns (Mode A)
-            - Any Python/numpy object + schema_keys kwargs (Mode B, single entry)
-            - dict mapping tuples → values (Mode C, batch)
-        schema_level : str, optional
-            Which schema level to store at.  Defaults to the lowest level.
-        description : str
-            Optional description for this variable.
-        force : bool
-            Deprecated, kept for backward compatibility.
-        **schema_keys
-            Keyword arguments specifying the schema entry for Mode B.
-            e.g. subject="S01", session=1, trial=3.
-            Note: all schema key values are coerced to strings before storage.
-        """
-        # --- Determine save mode ---
-        data_col_name = None  # Override for single-column name preservation
-
-        # Mode B: single entry via kwargs
-        if schema_keys:
-            provided_schema_cols = [k for k in self.dataset_schema if k in schema_keys]
-            if schema_level is None:
-                schema_level = (
-                    provided_schema_cols[-1]
-                    if provided_schema_cols
-                    else self.dataset_schema[-1]
-                )
-            if schema_level not in self.dataset_schema:
-                raise ValueError(
-                    f"schema_level '{schema_level}' not in {self.dataset_schema}"
-                )
-            key_cols = provided_schema_cols
-            entries = [
-                (
-                    {k: schema_keys[k] for k in key_cols},
-                    data,
-                )
-            ]
-
-        else:
-            if schema_level is None:
-                schema_level = self.dataset_schema[-1]
-            if schema_level not in self.dataset_schema:
-                raise ValueError(
-                    f"schema_level '{schema_level}' not in {self.dataset_schema}"
-                )
-            key_cols = self._schema_key_columns(schema_level)
-
-            # Mode A: DataFrame with schema columns
-            if isinstance(data, pd.DataFrame) and all(
-                c in data.columns for c in key_cols
-            ):
-                entries, data_col_name = self._entries_from_dataframe(
-                    data, key_cols, schema_level
-                )
-
-            # Mode C: dict with tuple keys
-            elif (
-                isinstance(data, dict)
-                and data
-                and isinstance(next(iter(data.keys())), tuple)
-            ):
-                entries = []
-                for key_tuple, value in data.items():
-                    if len(key_tuple) != len(key_cols):
-                        raise ValueError(
-                            f"Key tuple length {len(key_tuple)} != "
-                            f"expected {len(key_cols)} for level '{schema_level}'"
-                        )
-                    key_dict = dict(zip(key_cols, key_tuple, strict=False))
-                    entries.append((key_dict, value))
-
-            else:
-                raise ValueError(
-                    "Cannot determine save mode.  Provide either:\n"
-                    "  (A) a DataFrame with schema-level columns,\n"
-                    "  (B) schema key kwargs (e.g. subject='S01', session=1), or\n"
-                    "  (C) a dict mapping tuples to values."
-                )
-
-        # --- Determine column types from the first entry's data ---
-        sample_value = entries[0][1]
-        data_col_types, dtype_meta = self._infer_data_columns(
-            sample_value, data_col_name
-        )
-
-        # --- Ensure the variable table exists ---
-        is_dataframe = dtype_meta.get("mode") == "dataframe"
-        self._ensure_variable_table(
-            name, data_col_types, schema_level, is_dataframe=is_dataframe
-        )
-
-        # --- Insert rows (INSERT OR REPLACE for "latest wins" semantics) ---
-        col_names = ["schema_id"] + list(data_col_types.keys())
-        col_str = ", ".join(f'"{c}"' for c in col_names)
-        placeholders = ", ".join(["?"] * len(col_names))
-
-        for key_dict, value in entries:
-            schema_id = self._get_or_create_schema_id(schema_level, key_dict)
-            if isinstance(value, pd.DataFrame):
-                # Delete old rows for this schema_id, then insert one per DataFrame row.
-                self._execute(f'DELETE FROM "{name}" WHERE schema_id = ?', [schema_id])
-                for storage_row in dataframe_to_storage_rows(value, dtype_meta):
-                    self._execute(
-                        f'INSERT INTO "{name}" ({col_str}) VALUES ({placeholders})',
-                        [schema_id] + storage_row,
-                    )
-            else:
-                storage_values = self._value_to_storage_row(value, dtype_meta)
-                row = [schema_id] + storage_values
-                self._execute(
-                    f'INSERT OR REPLACE INTO "{name}" ({col_str}) VALUES ({placeholders})',
-                    row,
-                )
-
-        # --- Register in _variables (one row per variable) ---
-        self._execute(
-            "INSERT INTO _variables (variable_name, schema_level, dtype, description) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT (variable_name) DO UPDATE SET dtype = excluded.dtype",
-            [name, schema_level, json.dumps(dtype_meta), description],
-        )
-
-    def _entries_from_dataframe(
-        self, df: pd.DataFrame, key_cols: list[str], schema_level: str
-    ) -> tuple[list[tuple[dict, Any]], str | None]:
-        """
-        Convert a DataFrame (Mode A) into a list of (key_dict, row_data) entries.
-
-        Each row in the DataFrame becomes one entry.  The non-schema columns
-        become the stored data (as a dict / single value).
-
-        Returns (entries, single_col_name) where single_col_name is set if
-        there's exactly one data column (so we can preserve its name).
-        """
-        data_cols = [c for c in df.columns if c not in key_cols]
-        entries = []
-        single_col_name = data_cols[0] if len(data_cols) == 1 else None
-        for _, row in df.iterrows():
-            key_dict = {k: row[k] for k in key_cols}
-            if len(data_cols) == 1:
-                value = row[data_cols[0]]
-                # Convert numpy types to Python types for cleaner handling
-                if isinstance(value, (np.integer,)):
-                    value = int(value)
-                elif isinstance(value, (np.floating,)):
-                    value = float(value)
-                elif isinstance(value, (np.bool_,)):
-                    value = bool(value)
-            else:
-                value = {c: row[c] for c in data_cols}
-            entries.append((key_dict, value))
-        return entries, single_col_name
-
-    def _infer_data_columns(
-        self, sample_value: Any, data_col_name: str | None = None
-    ) -> tuple[dict, dict]:
-        """Delegate to module-level infer_data_columns."""
-        return infer_data_columns(sample_value, data_col_name)
-
-    def _value_to_storage_row(self, value: Any, dtype_meta: dict) -> list:
-        """Delegate to module-level value_to_storage_row."""
-        return value_to_storage_row(value, dtype_meta)
-
-    def _ensure_variable_table(
-        self,
-        name: str,
-        data_col_types: dict,
-        schema_level: str,
-        is_dataframe: bool = False,
-    ):
-        """Create the variable table if it doesn't exist."""
-        if self._table_exists(name):
-            return
-        data_cols_sql = ", ".join(
-            f'"{col}" {dtype}' for col, dtype in data_col_types.items()
-        )
-        # DataFrames store one DuckDB row per table row: no unique constraint
-        # on schema_id.  Other types use schema_id as a primary key so that
-        # INSERT OR REPLACE gives "latest wins" semantics.
-        if is_dataframe:
-            schema_id_col = "schema_id INTEGER NOT NULL"
-        else:
-            schema_id_col = "schema_id INTEGER PRIMARY KEY"
-        self._execute(f"""
-            CREATE TABLE "{name}" (
-                {schema_id_col},
-                {data_cols_sql}
-            )
-        """)
-
-    # ------------------------------------------------------------------
-    # Load
-    # ------------------------------------------------------------------
-
-    def load(
-        self,
-        name: str,
-        raw: bool = True,
-        **schema_keys,
-    ) -> pd.DataFrame | Any:
-        """
-        Load a variable from the database.
-
-        Parameters
-        ----------
-        name : str
-            Variable name.
-        raw : bool
-            If True and the result is a single row, return the reconstructed
-            Python object instead of a DataFrame.
-        **schema_keys
-            Optional filters, e.g. subject="S01" to load a subset.
-
-        Returns
-        -------
-        pd.DataFrame or Python object (if raw=True and single row).
-        """
-        if not self._table_exists(name):
-            raise KeyError(f"Variable '{name}' not found in database.")
-
-        # Get metadata
-        rows = self._fetchall(
-            "SELECT schema_level, dtype FROM _variables WHERE variable_name = ?",
-            [name],
-        )
-        if not rows:
-            raise KeyError(f"Variable '{name}' not found.")
-        schema_level, dtype_json = rows[0]
-        dtype_meta = json.loads(dtype_json)
-
-        # Select all schema columns so non-contiguous keys appear in results
-        all_schema_cols = self.dataset_schema
-        schema_select = ", ".join(f's."{c}"' for c in all_schema_cols)
-        data_cols = storage_column_names(dtype_meta)
-        data_select = ", ".join(f'v."{c}"' for c in data_cols)
-
-        sql = (
-            f"SELECT {schema_select}, {data_select} "
-            f'FROM "{name}" v '
-            f"JOIN _schema s ON v.schema_id = s.schema_id"
-        )
-        params: list = []
-
-        # Apply schema key filters (any valid schema column)
-        conditions = []
-        for col, val in schema_keys.items():
-            if col in all_schema_cols:
-                conditions.append(f's."{col}" = ?')
-                params.append(_schema_str(val))
-        if conditions:
-            sql += " WHERE " + " AND ".join(conditions)
-
-        df = self._fetchdf(sql, params or None)
-        merge_tz_columns(df, dtype_meta, where=f"SciDuck.load({name})")
-
-        mode = dtype_meta.get("mode", "single_column")
-        columns_meta = dtype_meta.get("columns", {})
-
-        if mode == "dataframe":
-            # One DuckDB row per DataFrame row: apply storage_to_python per cell.
-            # Drop schema columns; keep only data columns.
-            data_cols = list(columns_meta.keys())
-            result = {}
-            for c, meta in columns_meta.items():
-                if c not in df.columns:
-                    continue
-                if is_datetime_meta(meta):
-                    # Already restored by merge_tz_columns; the Series keeps
-                    # its dtype (unit, zone), a list would not.
-                    result[c] = df[c].reset_index(drop=True)
-                    continue
-                result[c] = [
-                    storage_to_python(df[c].iloc[i], meta) for i in range(len(df))
-                ]
-            df_columns = dtype_meta.get("df_columns", data_cols)
-            return pd.DataFrame(result, columns=df_columns)
-
-        # Non-DataFrame: restore types then return raw object if single row
-        df = self._restore_types(df, dtype_meta)
-
-        if raw and len(df) == 1:
-            if mode == "single_column":
-                col_name = next(iter(columns_meta))
-                col_meta = columns_meta[col_name]
-                raw_val = df[col_name].iloc[0]
-                return storage_to_python(raw_val, col_meta)
-            elif mode == "multi_column":
-                result = {}
-                for c, meta in columns_meta.items():
-                    result[c] = storage_to_python(df[c].iloc[0], meta)
-                if dtype_meta.get("nested"):
-                    return unflatten_dict(result, dtype_meta["path_map"])
-                return result
-
-        return df
-
-    def _restore_types(self, df: pd.DataFrame, dtype_meta: dict) -> pd.DataFrame:
-        """Apply type restoration to data columns of a loaded DataFrame."""
-        columns_meta = dtype_meta.get("columns", {})
-        null_counts: dict = {}
-        for col_name, col_meta in columns_meta.items():
-            if col_name in df.columns:
-                n_null = count_null_list_elements(df[col_name])
-                if n_null:
-                    null_counts[col_name] = n_null
-                restored = [
-                    storage_to_python(df[col_name].iloc[i], col_meta)
-                    for i in range(len(df))
-                ]
-                df[col_name] = restored
-        if null_counts:
-            logger.debug(
-                "_restore_types: restored NULL list element(s) as NaN: %s", null_counts
-            )
-        return df
-
-    # ------------------------------------------------------------------
     # List / inspect
     # ------------------------------------------------------------------
 
@@ -2306,34 +1987,6 @@ class SciDuck:
         concurrent ``close()`` cannot slip between them.
         """
         return self._fetchdf_if_open(self._LIST_VARIABLES_SQL)
-
-    def list_versions(self, name: str) -> pd.DataFrame:
-        """
-        List variable metadata and all distinct schema entries saved for it.
-        """
-        if not self._table_exists(name):
-            return pd.DataFrame()
-        return self._fetchdf(
-            "SELECT v.variable_name, v.schema_level, v.created_at, v.description, "
-            "COUNT(d.schema_id) AS num_entries "
-            f'FROM _variables v LEFT JOIN "{name}" d ON 1=1 '
-            "WHERE v.variable_name = ? "
-            "GROUP BY v.variable_name, v.schema_level, v.created_at, v.description",
-            [name],
-        )
-
-    # ------------------------------------------------------------------
-    # Delete
-    # ------------------------------------------------------------------
-
-    def delete(self, name: str):
-        """
-        Delete a variable, dropping its data table and all metadata records.
-        """
-        if self._table_exists(name):
-            self._execute(f'DROP TABLE "{name}"')
-        self._execute("DELETE FROM _variables WHERE variable_name = ?", [name])
-        self._execute("DELETE FROM _variable_groups WHERE variable_name = ?", [name])
 
     # ------------------------------------------------------------------
     # Groups

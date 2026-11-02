@@ -215,7 +215,7 @@ def _find_scimatlab_matlab_dir() -> str | None:
     editable check is kept explicit for clarity and robustness.
 
     The returned path must be on MATLAB's ``addpath`` so that the
-    ``+scihist``, ``+scidb``, and ``+scifor`` package folders resolve.
+    ``+scidb`` and ``+scifor`` package folders resolve.
     """
     import importlib.metadata
     import importlib.util
@@ -895,7 +895,7 @@ def main():
     except Exception:
         logger.debug("[startup] run-marker sweep failed", exc_info=True)
 
-    # Bridge Python logging → scistack.log so that scihist/scistack_gui logger
+    # Bridge Python logging → scistack.log so that scidb/scistack_gui logger
     # calls appear in the unified log file.
     from scidb.log import Log
 

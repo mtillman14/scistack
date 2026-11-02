@@ -119,9 +119,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf dist_ci && mkdir dist_ci
-          for pkg in scicanonicalhash path-gen scistacklog scifor sciduckdb \
-                     scilineage scistackplot scistackstats scidb \
-                     scimatlab scihist scistackplotdb scistackstatsdb scidb-net scistack \
+          for pkg in scicanonicalhash scistacklog scifor sciduckdb \
+                     scistackplot scistackstats scidb \
+                     scimatlab scistackplotdb scistackstatsdb scistack \
                      scistack-gui; do
             echo "== build $pkg =="
             python -m build --outdir dist_ci "$pkg"
@@ -132,7 +132,7 @@ jobs:
       - name: Fresh-venv install imports cleanly (catches undeclared dependencies)
         # A real `pip install` from the wheels just built: only what the
         # packages declare is present, unlike the --no-deps dev/test venv.
-        # scistack pulls in the GUI and nearly everything; scihist adds the rest.
+        # scistack pulls in the GUI and, through it, every other package.
         timeout-minutes: 15
         run: |
           set -euo pipefail
@@ -140,7 +140,7 @@ jobs:
           echo "version under test: $ver"
           python -m venv /tmp/fresh
           /tmp/fresh/bin/pip install --upgrade pip
-          /tmp/fresh/bin/pip install --find-links dist_ci "scistack==$ver" "scihist==$ver"
+          /tmp/fresh/bin/pip install --find-links dist_ci "scistack==$ver"
           /tmp/fresh/bin/pip list
           /tmp/fresh/bin/python -I .github/scripts/smoke_install.py dist_ci
 

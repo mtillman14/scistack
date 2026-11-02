@@ -115,7 +115,7 @@ db.has_lineage(record_id)   # True if this record was produced with lineage
 ## Inspect lineage without saving
 
 To examine provenance in memory, use the lineage engine's extractors (see
-[Internals — scilineage](../internals/scilineage.md)):
+[Internals — scicanonicalhash](../internals/scicanonicalhash.md)):
 
 ```python
 from scilineage import extract_lineage, get_upstream_lineage

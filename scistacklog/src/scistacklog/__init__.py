@@ -32,7 +32,7 @@ Usage::
 
 Every emit goes through a stdlib logger named after the layer (``scidb``,
 ``scifor``, …), so existing module loggers such as ``scidb.discover`` or
-``scilineage.hashing`` are covered automatically as children. Level
+``scicanonicalhash.functions`` are covered automatically as children. Level
 filtering happens on the two handlers, never on the loggers: records always
 propagate to the root logger, so pytest's ``caplog`` captures them
 regardless of sink levels.
@@ -61,8 +61,7 @@ LAYERS = (
     "scidb",
     "scifor",
     "sciduck",
-    "scihist",
-    "scilineage",
+    "scicanonicalhash",
     "scistack",
     "scistack_gui",
     "scistackplot",

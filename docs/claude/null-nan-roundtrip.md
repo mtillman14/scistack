@@ -85,8 +85,8 @@ Two consequences worth knowing:
 
 ### Restoration must be idempotent
 
-`SciDuck.load` restores each cell **twice** — `_restore_types` walks every
-column, then the `multi_column` / `single_column` branch calls
+scidb's load restores a multi-column cell **twice** — `restore_types` walks
+every column, then the `multi_column` branch calls
 `storage_to_python` again on the same cell. That was harmless while
 restoration was a pure re-cast, and stopped being harmless the moment the
 upcast existed: the second pass sees a plain `float64` array whose *declared*
@@ -123,7 +123,7 @@ at the same location. After the fix the round trip is a fixed point. Pinned by
 | `array column(s) contain NaN — stored as NULL, reload as NaN: {col: n}` | sciduckdb, INFO | save side: this many NaN went in |
 | `load_all_as_df(T): restored N NULL list element(s) as NaN in M column(s): {…}` | scidb, INFO | bulk load (the `for_each` path) restored them |
 | `load(T, <rid>): restored NULL list element(s) as NaN: {…}` | scidb, DEBUG | per-record load; DEBUG because a bulk MATLAB load would emit one per record |
-| `_restore_types: restored NULL list element(s) as NaN: {…}` | sciduckdb, DEBUG | the non-DataFrame mode path |
+| `restore_types: restored NULL list element(s) as NaN: {…}` | sciduckdb, DEBUG | the non-DataFrame mode path |
 
 If the save line reports NaN and no load line reports a restore, the NULLs
 never came back as masked arrays — that is the regression this doc exists for.
