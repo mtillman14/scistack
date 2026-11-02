@@ -195,7 +195,7 @@ places, but also imports `provenance_query` (8 imports),
 | Q3 | Route all GUI reads through `Inspector`, adding methods where the GUI needs them, and add the B4 import-boundary test. | weakness 3 |
 | Q4 | Fix the `version_keys` docstrings as part of W5 ([04b](04b-scidb-write-path.md)). | weakness 4 |
 
-> **Done (2026-11-01, P1):** Q4 — `check_node_state` and `_get_latest_record_at_location` docstrings rewritten.
+> **Done (2026-11-01, e129c3bf):** Q4 — `check_node_state` and `_get_latest_record_at_location` docstrings rewritten.
 
 ---
 

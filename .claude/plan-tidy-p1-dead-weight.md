@@ -274,4 +274,6 @@ packages, so each line was edited once). Nothing committed.
   `docs/getting-started/choosing-a-layer.md`, `docs/project/faq.md`, …).
 - Tests: first run (user) — only failures were the unpinned hash and
   `_SimpleMockDB` lacking `transaction` (P0 made for_each save inside
-  `db.transaction`); mocks given a no-op `transaction`. Second run pending.
+  `db.transaction`); mocks given a no-op `transaction`. Second run: the
+  bool identity test and the doubles' missing `_duck` fixed; then all
+  suites green. Committed e129c3bf.

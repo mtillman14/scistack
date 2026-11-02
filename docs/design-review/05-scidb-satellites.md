@@ -77,7 +77,7 @@ flowchart LR
 
 Users lose nothing, and the tests end up beside the code they test.
 
-> **Done (2026-11-01, P1):** tests moved to `scidb/tests/test_hist_*.py` (MATLAB ones to `scimatlab/tests/matlab/scidb/TestHist*.m`); scihist and `+scihist` deleted; the GUI emits `scidb.configure_database`.
+> **Done (2026-11-01, e129c3bf):** tests moved to `scidb/tests/test_hist_*.py` (MATLAB ones to `scimatlab/tests/matlab/scidb/TestHist*.m`); scihist and `+scihist` deleted; the GUI emits `scidb.configure_database`.
 
 ---
 
@@ -130,7 +130,7 @@ sequenceDiagram
 `dev-install.sh`, docs). If multi-machine access returns as a requirement,
 design it against the facades from B2/Q2, not against `DatabaseManager`.
 
-> **Done (2026-11-01, P1):** scidb-net deleted with its CI, dev-install and docs entries.
+> **Done (2026-11-01, e129c3bf):** scidb-net deleted with its CI, dev-install and docs entries.
 
 ---
 
@@ -286,7 +286,7 @@ wrappers, glue application and option parsing.*
 | M4 | Move option parsing to Python: MATLAB passes the raw name/value pairs, and Python validates them against `scidb.for_each`'s signature. | `split_options` mirror |
 | M5 | Delete `PathGenerator.m` and `+scihist` with their Python twins (01, H1). Merge `+scidb/Log.m` into `+scifor/Log.m`, or make one a one-line alias. Rename `MatlabLineageFcn` to what it is (`MatlabFunctionIdentity`). | weaknesses 4, 5 |
 
-> **Done (2026-11-01, P1):** M5, delete half — `PathGenerator.m` and `+scihist` deleted. The `Log.m` merge and the rename remain.
+> **Done (2026-11-01, e129c3bf):** M5, delete half — `PathGenerator.m` and `+scihist` deleted. The `Log.m` merge and the rename remain.
 
 M3 is the large one, and it depends on scifor R1 landing first. M1, M2, M4
 and M5 are independent and small.
