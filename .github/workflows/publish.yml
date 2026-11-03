@@ -87,14 +87,42 @@ jobs:
           fi
           echo "All artifacts are clean release versions."
 
-      - name: Publish to PyPI
+      # Attestations are best-effort. The action signs every dist (2 per
+      # package, ~24 in all) against Sigstore's Rekor log before uploading
+      # anything, with no retry, so one transient Rekor 502 fails the whole
+      # release while status.sigstore.dev still shows green. So: try once
+      # WITH attestations; if that step fails, publish the same dist/ again
+      # WITHOUT them. That release then ships unsigned (a warning on the run
+      # says so), but it ships.
+      - name: Publish to PyPI (with attestations)
+        id: pypi_attested
+        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist
           # Resumable: an upload that stops partway (v0.1.41, v0.1.42: a
           # project without a trusted publisher) leaves the earlier packages
           # on PyPI; a re-run then skips those instead of failing on the first.
+          # The fallback below relies on this too: anything the first attempt
+          # already uploaded is skipped, not re-uploaded.
           skip-existing: true
+
+      - name: Report attestation fallback
+        if: steps.pypi_attested.outcome == 'failure'
+        run: |
+          echo "::warning title=PyPI attestations skipped::The attested publish failed (see the 'Publish to PyPI (with attestations)' log; usually a transient Sigstore/Rekor error). Retrying with attestations: false. Packages not yet on PyPI will ship WITHOUT attestations for ${GITHUB_REF_NAME}."
+          echo "-- dist/ contents being retried --"
+          ls -la dist
+
+      # If this one also fails, the cause was not Sigstore (e.g. a missing
+      # trusted publisher), and the job fails as it always did.
+      - name: Publish to PyPI (fallback, no attestations)
+        if: steps.pypi_attested.outcome == 'failure'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          skip-existing: true
+          attestations: false
 
   # The VS Code extension ships from the SAME tag as the PyPI packages, so its
   # version always equals theirs: package.json holds the placeholder 0.0.0 in
