@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import {
   applyAction, canGoTo, clampToBlocked, currentStep, goTo, next, previous, stepStatus, type GuideStep,
 } from './guideSteps.js'
-import type { StatsSpec } from '../statsSpec.js'
+import { analyses, type StatsSpec } from '../statsSpec.js'
 
 const step = (id: string, blocked: string | null = null): GuideStep => ({
   id, title: id, question: id, concepts: [], facts: [], cards: [], recommendation: null, blocked,
@@ -69,12 +69,12 @@ test('the actions edit the spec through the spec helpers', () => {
   assert.deepEqual(applyAction(spec, { op: 'set_role', factor: 'session', role: 'iterate' }).design.groups, ['group'])
   assert.deepEqual(applyAction(spec, { op: 'set_primary', factor: 'session' }).design.groups, ['session', 'group'])
   const kind = applyAction(spec, { op: 'set_override', analysis: 'a1', factor: 'session', kind: 'within' })
-  assert.deepEqual(kind.comparisons[0].overrides, { session: 'within' })
+  assert.deepEqual(analyses(kind)[0].overrides, { session: 'within' })
   const cleared = applyAction(kind, { op: 'set_override', analysis: 'a1', factor: 'session', kind: null })
-  assert.deepEqual(cleared.comparisons[0].overrides, {})
+  assert.deepEqual(analyses(cleared)[0].overrides, {})
   const patched = applyAction(spec, { op: 'set_analysis', patch: { correction: 'bonferroni', effect_size: null } })
-  assert.equal(patched.comparisons[0].correction, 'bonferroni')
-  assert.equal('effect_size' in patched.comparisons[0], false)
+  assert.equal(analyses(patched)[0].correction, 'bonferroni')
+  assert.equal('effect_size' in analyses(patched)[0], false)
   const left = applyAction(spec, { op: 'exclude_level', factor: 'session', level: 'MO3' })
   assert.deepEqual(left.design.filters, [{ column: 'session', exclude: ['MO3'] }])
   assert.deepEqual(applyAction(spec, null), spec)
@@ -83,8 +83,8 @@ test('the actions edit the spec through the spec helpers', () => {
 test('set_analysis on a table with no analysis adds one first', () => {
   const spec = { ...base(), comparisons: [] }
   const patched = applyAction(spec, { op: 'set_analysis', patch: { missing: 'complete_cases' } })
-  assert.equal(patched.comparisons.length, 1)
-  assert.equal(patched.comparisons[0].missing, 'complete_cases')
+  assert.equal(analyses(patched).length, 1)
+  assert.equal(analyses(patched)[0].missing, 'complete_cases')
 })
 
 // The wizard words nothing about statistics: every term comes from

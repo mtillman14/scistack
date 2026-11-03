@@ -7,7 +7,10 @@ module turns the whole table into ONE JSON Schema document:
 
 * ``$defs`` — every request model (and the models they nest);
 * ``properties`` — method name -> ``$ref`` to its request model, so the
-  TypeScript emitted from it has an ``ApiParams`` interface keyed by method.
+  TypeScript emitted from it has an ``ApiParams`` interface keyed by method;
+* the spec wire models (:mod:`scistack_gui.api.spec_wire`: ``PlotSpec``,
+  ``StatsSpec`` and their parts) as further ``$defs``, so the frontend's spec
+  types are generated too.
 
 ``frontend/src/generated/api-schema.json`` is this document;
 ``npm run gen:types`` turns it into ``frontend/src/generated/api-types.ts``
@@ -21,11 +24,16 @@ Bodiless handlers (``params is None``) are not listed: they take ``{}``.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+from typing import Any
 
 from pydantic.json_schema import models_json_schema
 
+from scistack_gui.api.spec_wire import SPEC_MODELS
 from scistack_gui.api.tables import ALL_HANDLERS
+
+logger = logging.getLogger(__name__)
 
 #: Where the committed schema lives, relative to the scistack-gui folder.
 SCHEMA_PATH = Path("frontend") / "src" / "generated" / "api-schema.json"
@@ -40,8 +48,11 @@ def api_json_schema() -> dict:
     models = sorted(
         {model for _, model in with_params}, key=lambda m: (m.__name__, m.__module__)
     )
+    logger.debug(
+        "[wire_schema] %d request models, %d spec models", len(models), len(SPEC_MODELS)
+    )
     refs, document = models_json_schema(
-        [(model, "validation") for model in models],
+        [(model, "validation") for model in (*models, *SPEC_MODELS)],
         ref_template="#/$defs/{model}",
     )
     return {
@@ -57,8 +68,61 @@ def api_json_schema() -> dict:
         },
         "required": [name for name, _ in with_params],
         "additionalProperties": False,
-        "$defs": {name: _untitled_properties(d) for name, d in document.get("$defs", {}).items()},
+        "$defs": {name: _definition(name, d) for name, d in document.get("$defs", {}).items()},
     }
+
+
+def _definition(name: str, definition: dict) -> dict:
+    """One ``$defs`` entry as the TypeScript generator should see it.
+
+    A request model's free-form ``dict`` field (no declared shape) becomes
+    TypeScript ``object``: json-schema-to-typescript would emit
+    ``{[k: string]: unknown}``, which no named TypeScript interface is
+    assignable to, though any JSON object is what the backend accepts. The
+    spec wire models (the ``Wire`` suffix, :mod:`scistack_gui.api.spec_wire`)
+    keep their index signatures: a variant selection IS read by key."""
+    definition = _untyped_as_unknown(_untitled_properties(definition))
+    if name.endswith("Wire"):
+        return definition
+    return _free_objects_as_ts_object(definition)
+
+
+#: Keywords that give a schema a type. A property with none of them is
+#: ``Any`` in Python (pydantic writes only its default).
+_TYPING_KEYWORDS = ("type", "$ref", "anyOf", "allOf", "oneOf", "enum", "const", "items")
+
+
+def _untyped_as_unknown(definition: dict) -> dict:
+    """An ``Any`` field is TypeScript ``unknown``: with no type at all,
+    json-schema-to-typescript would emit ``{[k: string]: unknown}``, an object."""
+    properties = definition.get("properties")
+    if not properties:
+        return definition
+    return {
+        **definition,
+        "properties": {
+            name: (
+                prop
+                if any(key in prop for key in _TYPING_KEYWORDS)
+                else {**prop, "tsType": "unknown"}
+            )
+            for name, prop in properties.items()
+        },
+    }
+
+
+def _free_objects_as_ts_object(node: Any) -> Any:
+    if isinstance(node, list):
+        return [_free_objects_as_ts_object(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    if (
+        node.get("type") == "object"
+        and node.get("additionalProperties") is True
+        and "properties" not in node
+    ):
+        return {**node, "tsType": "object"}
+    return {key: _free_objects_as_ts_object(value) for key, value in node.items()}
 
 
 def _untitled_properties(definition: dict) -> dict:

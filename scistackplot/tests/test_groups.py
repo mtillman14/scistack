@@ -16,8 +16,10 @@ import pandas as pd
 import pytest
 
 from scistackplot import LongTable, PlotKind, PlotSpec, Role, capabilities, resolve
-from scistackplot.reduce.groups import apply_level_groups
+from scistackplot.export.reduction_code import emit_combine
 from scistackplot.model.spec import LevelGroup
+from scistackplot.reduce.groups import apply_level_groups
+from scistackplot.reduce.reduction import CombineLevels
 
 PHASES = {"pre": "baseline", "post": "post"}
 
@@ -209,7 +211,9 @@ def test_generated_code_reproduces_the_bucketing(phased_table):
     )
     source = generate_plot_function(spec, phased_table)
 
-    assert "'Phase'" in source and "map(_groups)" in source
+    # The combine is printed from the step the preview applies (one rule).
+    for line in emit_combine(CombineLevels.of(_group())):
+        assert line in source
 
     namespace: dict = {}
     exec(compile(source, "<generated>", "exec"), namespace)  # noqa: S102
@@ -489,4 +493,8 @@ def test_generated_code_applies_only_active_combines_with_empty_labels_dropped(
     # The emitted combine lines (the embedded spec JSON names every combine).
     assert "# condition -> Stim" in source
     assert "# condition -> Other" not in source
-    assert "_groups = {'stim1': 'STIM', 'stim2': 'STIM'}" in source
+    # The active combine, printed from its step: the empty label is gone
+    # from the mapping (`CombineLevels.of`).
+    for line in emit_combine(CombineLevels.of(spec.level_groups[0])):
+        assert line in source
+    assert "'sham'" not in emit_combine(CombineLevels.of(spec.level_groups[0]))[2]

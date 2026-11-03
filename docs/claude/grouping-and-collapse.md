@@ -163,8 +163,11 @@ its source. Plan: `.claude/plot-studio-combine-section.md`.
   had no depth, and both `ordered_groups` and `placeGroupLayer` put it
   INSIDE its own source — one bucket tick per source bracket.
 * **Which combines apply** is `groups.active_level_groups` (first active per
-  source), and each one's mapping is `groups.effective_mapping` (empty label
-  = no bucket). `codegen` reads both, so the export combines like the preview.
+  source). Each becomes a `reduction.CombineLevels` step (`groups.combine_steps`),
+  which owns the effective mapping (empty label = no bucket) and the skip rule
+  (missing source, name already a column). `apply_level_groups` applies the
+  step and `codegen` prints it (`reduction_code.emit_combine`), at the same
+  point: before the cell collapse, the categorical rewrite and the filters.
 * `validate` refuses: two active combines of one source; a combine named
   like an existing factor; colour on a replaced source.
 * Keeping the source *alongside* a coarser label is deliberately not a mode:

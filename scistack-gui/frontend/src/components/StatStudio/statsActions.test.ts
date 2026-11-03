@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { pendingActions, recommendedFor } from './statsActions.js'
+import { pendingActions, recommendedFor, type StratumAction } from './statsActions.js'
 
-const action = { factor: 'session', message: 'Comparisons need one decision: …', choices: ['within', 'between'] }
+const action: StratumAction = { factor: 'session', message: 'Comparisons need one decision: …', choices: ['within', 'between'] }
 
 test('one pending action per analysis and factor, however many strata repeat it', () => {
   const results = [{ id: 'a1', strata: [{ action }, { action }, { action: null }] }]

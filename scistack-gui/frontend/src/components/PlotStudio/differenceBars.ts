@@ -12,15 +12,12 @@
  * panel a bar belongs to, and never turns a level into text itself.
  */
 
-/** `scistackplot.diffbars.DifferenceBar`. */
-export interface DifferenceBar {
-  /** The panel's separate-figure + subplot values, as text. */
-  match: Record<string, string>
-  /** The two ticks, `{x layer: level}`. Unordered. */
-  a: Record<string, string>
-  b: Record<string, string>
-  label?: string
-}
+/** `scistackplot.diffbars.DifferenceBar`: `match` is the panel's
+ *  separate-figure + subplot values as text, `a` / `b` the two ticks
+ *  (`{x layer: level}`, unordered). GENERATED from the backend's wire model. */
+import type { DifferenceBar } from '../../generated/api-types.js'
+
+export type { DifferenceBar }
 
 /** One tick a bar can end on (`difference_meta` panel `targets`). */
 export interface DiffTarget {
@@ -123,7 +120,8 @@ export function dictId(values: Record<string, string> | null | undefined): strin
   return JSON.stringify(Object.keys(dict).sort().map(name => [name, dict[name]]))
 }
 
-export function sameDict(a: Record<string, string>, b: Record<string, string>): boolean {
+/** Absent (a `match`, `a` or `b` the spec left out) is `{}`, as `from_dict` reads it. */
+export function sameDict(a: Record<string, string> = {}, b: Record<string, string> = {}): boolean {
   return dictId(a) === dictId(b)
 }
 
@@ -215,7 +213,7 @@ export function setLabel(
 
 /** "pre ↔ post": each end by its tick's text in this panel when known. */
 export function barText(bar: DifferenceBar, panel?: DiffPanelMeta): string {
-  const name = (end: Record<string, string>) =>
+  const name = (end: Record<string, string> = {}) =>
     panel?.targets.find(t => sameDict(t.values, end))?.label ?? Object.values(end).join(' · ')
   return `${name(bar.a)} ↔ ${name(bar.b)}`
 }

@@ -40,13 +40,13 @@ from __future__ import annotations
 import time
 from dataclasses import replace
 
-import numpy as np
 import pandas as pd
 from scistacklog import Log
 
 from ..model.shape import Shape
 from ..model.spec import CategoricalStat, Filter, PlotKind, PlotSpec, Role
-from ..model.table import MISSING_LEVEL, FactorInfo, LongTable, category_levels, category_text
+from ..model.table import FactorInfo, LongTable, category_levels, category_text
+from .reduction import CATEGORY_TEXT_COLUMN, CategoricalRewrite
 
 LAYER = "scistackplot"
 
@@ -289,18 +289,72 @@ def measure_label(display: str, mode: CategoricalStat, level: str | None) -> str
 # ---------------------------------------------------------------------------
 
 
+def categorical_step(spec: PlotSpec, table: LongTable) -> CategoricalRewrite | None:
+    """The rewrite ``spec`` asks of this table's text measure, or None (a
+    numeric measure, or a table already rewritten): what
+    :func:`apply_categorical` applies and ``codegen`` prints
+    (``export.reduction_code.emit_categorical``), so the export is the
+    preview. Every choice is made here, from the table the rewrite runs on:
+    the level order, the record filters, and the (field, category) pairs the
+    one-hot spans — stated, so every figure of an exported fan-out offers
+    the categories the plot holds."""
+    mode = categorical_mode(spec, table)
+    if mode is None or table.measure(spec.y_measure).categorical is not None:
+        return None
+    measure = spec.y_measure
+    text = category_text(table.frame[measure])
+    levels = list(table.measure(measure).levels) or category_levels(text)
+    # Text the table's level list does not name (it was built by a source
+    # that ordered a subset): appended in natural order, never dropped.
+    extra = [level for level in category_levels(text) if level not in set(levels)]
+    levels = [str(level) for level in [*levels, *extra]]
+    own, _rest = measure_filters(spec)
+    record_filters = tuple(
+        (
+            None if f.include is None else tuple(str(v) for v in f.include),
+            None if f.exclude is None else tuple(str(v) for v in f.exclude),
+        )
+        for f in own
+        if f.include is not None or f.exclude is not None
+    )
+    step = CategoricalRewrite(
+        measure=measure,
+        mode=mode,
+        levels=tuple(levels),
+        words=_STAT_WORDS[mode],
+        record_filters=record_filters,
+    )
+    if mode is CategoricalStat.VALUE:
+        return step
+    name = _level_name(spec, table)
+    fields = [f.name for f in table.factors if f.is_field and f.name in table.frame.columns]
+    kept = step.record_mask(text)
+    work = table.frame.loc[kept, fields].assign(**{CATEGORY_TEXT_COLUMN: text[kept].to_numpy()})
+    pairs = _observed_pairs(work, fields, name, spec.categorical.level, levels)
+    return replace(
+        step,
+        level_name=name,
+        fields=tuple(fields),
+        pairs=tuple(tuple(row) for row in pairs.itertuples(index=False, name=None)),
+        level=spec.categorical.level,
+        scale=PERCENT if mode is CategoricalStat.PROPORTION else 1.0,
+    )
+
+
 def apply_categorical(spec: PlotSpec, table: LongTable) -> tuple[PlotSpec, LongTable]:
     """``(spec, table)`` with the text measure rewritten into numbers, or both
     unchanged for a numeric measure (or a table already rewritten).
 
     The returned spec has the measure's include / exclude filters consumed
     (applied to the text here); a range filter on it is left for
-    ``validate`` to refuse with :func:`categorical_problem`'s reason.
+    ``validate`` to refuse with :func:`categorical_problem`'s reason. The
+    rewrite itself is :func:`categorical_step`'s step.
     """
     mode = categorical_mode(spec, table)
     if mode is None:
         return spec, table
-    if table.measure(spec.y_measure).categorical is not None:
+    step = categorical_step(spec, table)
+    if step is None:
         # Already rewritten (codegen re-resolves the table it rewrote): that
         # rewrite applied the measure's record filters, so they are consumed
         # here too rather than run again on numbers.
@@ -308,34 +362,45 @@ def apply_categorical(spec: PlotSpec, table: LongTable) -> tuple[PlotSpec, LongT
 
     started = time.perf_counter()
     measure = spec.y_measure
-    info = table.measure(measure)
     frame = table.frame
-    text = category_text(frame[measure])
-    levels = list(info.levels) or category_levels(text)
-    # Text the table's level list does not name (it was built by a source
-    # that ordered a subset): appended in natural order, never dropped.
-    extra = [level for level in category_levels(text) if level not in set(levels)]
-    levels = [*levels, *extra]
-
-    own, _rest = measure_filters(spec)
-    keep = _record_mask(own, text)
-    if not bool(keep.all()):
-        frame, text = frame[keep], text[keep]
+    rows_in = int(step.record_mask(category_text(frame[measure])).to_numpy().sum())
     spec = _consumed(spec, table, mode)
+    out = step.apply(frame)
 
-    rows_in = len(frame)
+    factors = list(table.factors)
     if mode is CategoricalStat.VALUE:
-        out, new_factors = _category_positions(frame, text, measure, levels), list(table.factors)
-        detail = f"{len(levels)} categor(ies) as positions 0..{max(len(levels) - 1, 0)}"
+        detail = f"{len(step.levels)} categor(ies) as positions 0..{max(len(step.levels) - 1, 0)}"
+    elif step.level is not None:
+        # One category: a constant factor is no factor (synthetic-factors.md
+        # invariant 6), and the axis title already names the category.
+        detail = f"one category ({step.level!r})"
+        if not step.pairs:
+            Log.warn(
+                "categorical %r: category %r is not in the data — nothing to draw "
+                "(categories: %s)",
+                measure,
+                step.level,
+                list(step.levels[:12]),
+                layer=LAYER,
+            )
     else:
-        out, new_factors, detail = _one_hot(spec, table, frame, text, levels, mode)
+        held = {row[-1] for row in step.pairs}
+        present = [level for level in step.levels if level in held]
+        factors.append(
+            FactorInfo(
+                name=step.level_name,
+                levels=present,
+                label=table.measure(measure).display,
+            )
+        )
+        detail = f"{len(present)} categor(ies) one-hot as factor {step.level_name!r}"
 
     measures = [
         replace(
             m,
             shape=Shape.SCALAR,
             categorical=mode,
-            levels=levels,
+            levels=list(step.levels),
             label=measure_label(m.display, mode, spec.categorical.level) or m.label,
         )
         if m.name == measure
@@ -352,11 +417,11 @@ def apply_categorical(spec: PlotSpec, table: LongTable) -> tuple[PlotSpec, LongT
         detail,
         rows_in,
         len(out),
-        f", {len(table.frame) - rows_in} filtered by category" if rows_in != len(table.frame) else "",
+        f", {len(frame) - rows_in} filtered by category" if rows_in != len(frame) else "",
         time.perf_counter() - started,
         layer=LAYER,
     )
-    return spec, replace(table, frame=out, factors=new_factors, measures=measures)
+    return spec, replace(table, frame=out, factors=factors, measures=measures)
 
 
 def _consumed(spec: PlotSpec, table: LongTable, mode: CategoricalStat) -> PlotSpec:
@@ -382,18 +447,6 @@ def _consumed(spec: PlotSpec, table: LongTable, mode: CategoricalStat) -> PlotSp
     return spec
 
 
-def _record_mask(own: list[Filter], text: pd.Series) -> pd.Series:
-    """Which records the filters ON the text measure keep (include / exclude
-    by category text). One rule for the preview and the code it emits."""
-    keep = pd.Series(True, index=text.index)
-    for flt in own:
-        if flt.include is not None:
-            keep &= text.isin([str(v) for v in flt.include])
-        if flt.exclude is not None:
-            keep &= ~text.isin([str(v) for v in flt.exclude])
-    return keep
-
-
 def _observed_pairs(
     work: pd.DataFrame,
     fields: list[str],
@@ -403,10 +456,12 @@ def _observed_pairs(
 ) -> pd.DataFrame:
     """Every (field, category) pair the data holds — the rows each record is
     one-hot over — in field then category order. ``work`` carries the
-    category text in `_TEXT`. Shared by the preview's one-hot and the code
-    that repeats it, which states these pairs as a literal so every figure
-    of an exported fan-out offers the same categories as the preview."""
-    observed = work[[*fields, _TEXT]].drop_duplicates().rename(columns={_TEXT: name})
+    category text in ``CATEGORY_TEXT_COLUMN``."""
+    observed = (
+        work[[*fields, CATEGORY_TEXT_COLUMN]]
+        .drop_duplicates()
+        .rename(columns={CATEGORY_TEXT_COLUMN: name})
+    )
     if level is not None:
         observed = observed[observed[name] == level]
     rank = {lv: i for i, lv in enumerate(levels)}
@@ -416,158 +471,3 @@ def _observed_pairs(
         .drop(columns="_rank")
         .reset_index(drop=True)
     )
-
-
-def _category_positions(
-    frame: pd.DataFrame, text: pd.Series, measure: str, levels: list[str]
-) -> pd.DataFrame:
-    """VALUE mode: each value's index in ``levels`` (0 = the first category)."""
-    codes = pd.Categorical(text, categories=levels).codes.astype("float64")
-    codes[codes < 0] = np.nan
-    out = frame.copy()
-    out[measure] = codes
-    return out
-
-
-def _one_hot(
-    spec: PlotSpec,
-    table: LongTable,
-    frame: pd.DataFrame,
-    text: pd.Series,
-    levels: list[str],
-    mode: CategoricalStat,
-) -> tuple[pd.DataFrame, list[FactorInfo], str]:
-    """COUNT / PROPORTION: one row per (record, category of its field).
-
-    Per FIELD: a melted wide variable (``Gait (text)`` with ``Outcome`` and
-    ``Side``) one-hots each field over its own categories only, so
-    ``Outcome``'s records never make zero rows for ``Side``'s categories.
-    Within a field every category the field holds anywhere gets a row for
-    every record — a subject with no falls has a 0 for "fall", which is what
-    makes the sum a count and the mean a proportion."""
-    measure = spec.y_measure
-    level = spec.categorical.level
-    name = _level_name(spec, table)
-    fields = [f.name for f in table.factors if f.is_field and f.name in frame.columns]
-    work = frame.assign(**{_TEXT: text.to_numpy()})
-    observed = _observed_pairs(work, fields, name, level, levels)
-    if fields:
-        out = work.merge(observed, on=fields, how="inner", sort=False)
-    else:
-        out = work.merge(observed, how="cross")
-    scale = PERCENT if mode is CategoricalStat.PROPORTION else 1.0
-    out[measure] = (out[_TEXT] == out[name]).astype("float64") * scale
-    out = out.drop(columns=[_TEXT])
-
-    factors = list(table.factors)
-    if level is not None:
-        # One category: a constant factor is no factor (synthetic-factors.md
-        # invariant 6), and the axis title already names the category.
-        out = out.drop(columns=[name])
-        detail = f"one category ({level!r})"
-        if observed.empty:
-            Log.warn(
-                "categorical %r: category %r is not in the data — nothing to draw "
-                "(categories: %s)",
-                measure,
-                level,
-                levels[:12],
-                layer=LAYER,
-            )
-    else:
-        present = [lv for lv in levels if lv in set(observed[name])]
-        factors.append(
-            FactorInfo(
-                name=name,
-                levels=present,
-                label=table.measure(measure).display,
-            )
-        )
-        detail = f"{len(present)} categor(ies) one-hot as factor {name!r}"
-    return out.reset_index(drop=True), factors, detail
-
-
-#: The working column holding each record's category text during the one-hot.
-_TEXT = "__category_text"
-
-
-# ---------------------------------------------------------------------------
-# The same rewrite, as code (codegen)
-# ---------------------------------------------------------------------------
-
-
-def categorical_code(spec: PlotSpec, table: LongTable) -> list[str]:
-    """The lines a generated ``plot_`` function runs to make the same numbers
-    :func:`apply_categorical` makes — emitted by its owner, so the export is
-    the preview (``spec`` and ``table`` BEFORE the rewrite). ``[]`` for a
-    numeric measure.
-
-    Order, as in ``apply_categorical``: the category text, the filters on the
-    measure (records), then the one-hot or the positions. The same two pandas
-    calls name the text (`table.category_text`)."""
-    mode = categorical_mode(spec, table)
-    if mode is None or table.measure(spec.y_measure).categorical is not None:
-        return []
-    y = spec.y_measure
-    info = table.measure(y)
-    levels = [str(level) for level in info.levels]
-    lines = [
-        f"# {y} holds text: drawn as {_STAT_WORDS[mode]} "
-        f"(collapsed keys are pooled, never averaged)",
-        f"_text = df[{y!r}].astype(object).where(df[{y!r}].notna(), "
-        f"{MISSING_LEVEL!r}).astype(str)",
-    ]
-    own, _rest = measure_filters(spec)
-    for flt in own:
-        if flt.include is not None:
-            lines.append(f"df, _text = df[_text.isin({[str(v) for v in flt.include]!r})], "
-                         f"_text[_text.isin({[str(v) for v in flt.include]!r})]")
-        if flt.exclude is not None:
-            lines.append(f"df, _text = df[~_text.isin({[str(v) for v in flt.exclude]!r})], "
-                         f"_text[~_text.isin({[str(v) for v in flt.exclude]!r})]")
-    if mode is CategoricalStat.VALUE:
-        lines.extend(
-            [
-                f"_categories = {levels!r}",
-                "# each category's position on the y axis (0 = the first)",
-                f"df[{y!r}] = pd.Categorical(_text, categories=_categories).codes.astype(float)",
-                f"df.loc[df[{y!r}] < 0, {y!r}] = float(\"nan\")",
-                "",
-            ]
-        )
-        return lines
-
-    name = _level_name(spec, table)
-    fields = [f.name for f in table.factors if f.is_field and f.name in table.frame.columns]
-    level = spec.categorical.level
-    # The preview's pairs, stated: the figures of a fan-out each see a subset
-    # of the records, and must still offer every category the plot holds.
-    # The pairs of the records the measure's filters keep, as the preview
-    # one-hots after filtering them.
-    text = category_text(table.frame[y])
-    kept = _record_mask(own, text)
-    pairs = _observed_pairs(
-        table.frame.loc[kept, fields].assign(**{_TEXT: text[kept].to_numpy()}),
-        fields, name, level, levels,
-    )
-    literal = {column: [str(v) for v in pairs[column]] for column in pairs.columns}
-    scale = PERCENT if mode is CategoricalStat.PROPORTION else 1.0
-    merge = (
-        f"df = df.merge(_observed, on={fields!r}, how=\"inner\", sort=False)"
-        if fields
-        else 'df = df.merge(_observed, how="cross")'
-    )
-    lines.extend(
-        [
-            "# one row per (record, category of its field): 1 where the record "
-            "IS that category, else 0"
-            + (" — x100, a %" if scale == PERCENT else ""),
-            f"df[{_TEXT!r}] = _text.to_numpy()",
-            f"_observed = pd.DataFrame({literal!r})",
-            merge,
-            f"df[{y!r}] = (df[{_TEXT!r}] == df[{name!r}]).astype(float) * {scale!r}",
-            f"df = df.drop(columns=[{_TEXT!r}" + (f", {name!r}" if level is not None else "") + "])",
-            "",
-        ]
-    )
-    return lines

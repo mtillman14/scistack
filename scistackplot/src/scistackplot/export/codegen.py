@@ -15,8 +15,8 @@ of a file the user has since hand-edited.
 from __future__ import annotations
 
 import json
-import math
 import keyword
+import math
 import re
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -28,13 +28,14 @@ from ..text.aliases import DisplayText, check_distinct, display_text
 from ..text.colors import mark_colors
 from ..reduce.categorical import (
     apply_categorical,
-    categorical_code,
     categorical_mode,
+    categorical_step,
     pooled_reduction,
 )
-from ..reduce.cell import cell_collapses, effective_shape
+from ..reduce.cell import cell_collapses, collapse_step, effective_shape
+from ..reduce.chain import collapse_passes
 from ..reduce.compare import comparison_title, plan_comparison
-from ..reduce.groups import active_level_groups, apply_level_groups, effective_mapping
+from ..reduce.groups import apply_level_groups, combine_steps
 from ..reduce.panels import Y_TITLES_FIRST_COLUMN, overrides_by_key, panel_key_text
 from ..reduce.resolve import (
     apply_filters,
@@ -91,7 +92,14 @@ from ..reduce.temporal import (
     mpl_date_axis_code,
     normalize_mode,
 )
-from .reduction_code import emit_location_mask, emit_plan
+from .reduction_code import (
+    emit_collapse_levels,
+    emit_compare,
+    emit_location_mask,
+    emit_plan,
+    emit_step,
+    identifier,
+)
 from ..reduce.weights import SAMPLE_EDGE_WIDTH, sample_weight, spaghetti_weight
 from ..reduce.ylimits import GLOBAL_KEY, pinned_ends
 from ..reduce.variants import (
@@ -230,12 +238,14 @@ def _generate_plot_function(
     name = function_name or default_function_name(spec)
     base = table
     table = apply_level_groups(spec, apply_variant_sets(spec, table))
-    # A text measure: the rewrite into numbers is EMITTED (its owner writes
-    # the code, `categorical.categorical_code`), and everything below reads
+    # A text measure: the rewrite into numbers is EMITTED (printed from the
+    # step `categorical.apply_categorical` applies, `reduction.CategoricalRewrite`),
+    # and everything below reads
     # the rewritten table — its `Level` factor, its scalar shape — as the
     # preview does. The spec is kept as given: its filters on the measure are
     # in the emitted block, and the plan calls below re-run the rewrite.
-    categorical_lines = categorical_code(spec, table)
+    rewrite = categorical_step(spec, table)
+    categorical_lines = emit_step(rewrite) if rewrite is not None else []
     _categorical_spec, table = apply_categorical(spec, table)
     # The collapse is NOT applied to `table` — the endpoint receives the frame
     # as the data holds it, so the reduction has to be EMITTED (`_preamble`),
@@ -394,17 +404,6 @@ def single_variant_variable(spec: PlotSpec) -> str | None:
         return None
     variable = sets[0].variable
     return variable if variable and variable != spec.y_measure else None
-
-
-def _slug(name: str) -> str:
-    """A variable name as a Python identifier fragment.
-
-    Generated helpers are named after the variable they act on — a reader of an
-    exported endpoint should see ``_collapse_rawemg`` rather than ``_collapse``
-    and know which measure it belongs to without scrolling.
-    """
-    slug = re.sub(r"[^0-9a-zA-Z]+", "_", name).strip("_").lower() or "value"
-    return f"v_{slug}" if slug[0].isdigit() or keyword.iskeyword(slug) else slug
 
 
 def group_param(group: FactorVariable) -> str:
@@ -635,7 +634,7 @@ def _row_split_lines(spec, table) -> list[str]:
 def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> list[str]:
     """Melt, filters, 1-D explosion, aggregation — the order resolve() uses.
 
-    ``categorical_lines`` (`categorical.categorical_code`) rewrite a text
+    ``categorical_lines`` (`reduction_code.emit_categorical`) rewrite a text
     measure into numbers after the locations and before the other filters,
     where `reduce` applies `categorical.apply_categorical`; a filter on the
     text measure itself is in them, so it is skipped below."""
@@ -750,37 +749,22 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
     ):
         lines.extend([*conversion_code(x_measure, spec.time_zone), ""])
 
+    # Combines: printed from the steps `groups.apply_level_groups` applies
+    # (`reduction.CombineLevels`), at the point the preview applies them:
+    # after the variants and the table's own columns, before the cell collapse,
+    # the categorical rewrite and every filter, so a filter or a count over a
+    # combined factor finds its column. The replaced source's collapse needs
+    # nothing here: it is a COLLAPSE role like any other.
+    lines.extend(emit_plan(combine_steps(spec)))
+
     # A 1-D measure drawn by a scalar kind is collapsed to one value per record
     # BEFORE anything is filtered — the same order `reduce._build_plan_timed`
     # uses, and the reason is the same: a range filter on the measure filters
-    # the collapsed value, which is the only thing it could mean.
-    #
-    # Written as a named helper rather than `df[y].map(np.nanmean)` for two
-    # reasons: `np.nanmean` warns on an all-NaN cell (the interactive path
-    # silences it, and a generated endpoint printing RuntimeWarnings per record
-    # is noise nobody can act on), and the export is meant to READ as what it
-    # does. The semantics are pandas' `Series.mean()` — NaN samples skipped —
-    # which is what `series_stats.collapse_cells` computes.
-    if cell_collapses(spec, table):
-        y = spec.y_measure
-        reduction = (
-            "np.median(_samples)"
-            if spec.cell_statistic is Statistic.MEDIAN
-            else "_samples.mean()"
-        )
-        lines.extend(
-            [
-                f"# {y}: one value per record, the {spec.cell_statistic} of "
-                f"each vector",
-                f"def _collapse_{_slug(y)}(_cell):",
-                '    _samples = np.asarray(_cell, dtype="float64").ravel()',
-                "    _samples = _samples[~np.isnan(_samples)]",
-                f'    return float({reduction}) if _samples.size else float("nan")',
-                "",
-                f"df[{y!r}] = df[{y!r}].map(_collapse_{_slug(y)})",
-                "",
-            ]
-        )
+    # the collapsed value, which is the only thing it could mean. Printed from
+    # the step `cell.apply_cell_collapse` applies (`reduction.CollapseCells`).
+    collapse = collapse_step(spec, table)
+    if collapse is not None:
+        lines.extend(emit_step(collapse))
 
     # Schema locations. Emitted as one vectorised comparison per (prefix, key),
     # which is the SAME rule reduce._location_mask applies — a ragged selection
@@ -788,8 +772,10 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
     # cross-product, so it has to be a mask inside the function body. The
     # `if _k in df.columns` guard is not defensive clutter: it is how a key the
     # frame lacks goes unconstrained, matching the interactive path exactly.
-    lines.extend(_location_lines(spec))
+    # After the categorical rewrite, as the preview applies it (one-hot rows
+    # carry their record's schema keys, so the mask keeps the same records).
     lines.extend(categorical_lines)
+    lines.extend(_location_lines(spec))
 
     # Value filters: printed from the steps `reduce` applies
     # (`reduction.ValueFilter`), so the export filters by the preview's rule. A
@@ -801,28 +787,6 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
     )
     if filter_lines:
         lines.extend([*filter_lines, ""])
-
-    # Derived grouping factors. The interactive path builds these in
-    # `groups.apply_level_groups`; the endpoint receives the raw table, so the
-    # same mapping has to be emitted here or the exported figure is not the one
-    # that was previewed.
-    # Only the combines in effect, and each one's effective mapping — the same
-    # two functions the preview reads (`groups.py`). The replaced source's
-    # collapse needs nothing here: it is a COLLAPSE role like any other.
-    for group in active_level_groups(spec):
-        mapping = effective_mapping(group)
-        lines.append(f"# {group.source} -> {group.name}")
-        lines.append(f"_groups = {mapping!r}")
-        lines.append(
-            f"df[{group.name!r}] = df[{group.source!r}].astype(str).map(_groups)"
-        )
-        if group.unmatched is None:
-            lines.append(f"df = df[df[{group.name!r}].notna()]")
-        else:
-            lines.append(
-                f"df[{group.name!r}] = df[{group.name!r}].fillna({group.unmatched!r})"
-            )
-        lines.append("")
 
     # No factor on x and not a 1-D measure: every point shares one categorical
     # position. The preview builds that column in reduce; the endpoint has to
@@ -888,53 +852,57 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
     # `final` is non-empty only for a spaghetti whose sample cannot be joined
     # across x (roles.spaghetti_sample_repeats): each line is its mean.
     #
-    # A text measure POOLS (`categorical.pooled_reduction`, which
-    # `reduce._collapse_levels` reads): every pre key in ONE groupby, summed
-    # for a count, averaged for a %.
+    # Printed from the passes `reduce._collapse_levels` applies
+    # (`chain.collapse_passes` -> `reduction.CollapseLevels`): nested, one per
+    # key, or — for a text measure, which POOLS (`categorical.pooled_reduction`)
+    # — one pass dropping them all, summed for a count, averaged for a %.
     reduction = pooled_reduction(spec, table)
-    passes: list[list[str]] = (
-        [list(steps.pre)] if reduction is not None and steps.pre else [[k] for k in steps.pre]
+    one_d_index = index_column if shape is Shape.SERIES_1D else None
+    # The composed x column is built above from layer columns that are all
+    # kept, so it is constant within each group — but pandas drops any column
+    # not named in the groupby, and the plot call then asks for it.
+    carry = (
+        [_X_NESTED]
+        if layers
+        else [_X_CONSTANT] if _x_expression(spec, table, roles, shape) == _X_CONSTANT else []
     )
-    passes.extend([k] for k in steps.final)
-    for dropped in passes:
-        key = dropped[0]
-        if comparison is not None and not compared and key in steps.final:
+    factors = list(kept)
+    passes = [
+        *(("pre", step) for step in collapse_passes(
+            steps.pre, spec, table, one_d_index, factors=factors, carry=carry
+        )),
+        *(("final", step) for step in collapse_passes(
+            steps.final, spec, table, one_d_index, factors=factors, carry=carry
+        )),
+    ]
+    for stage, step in passes:
+        if comparison is not None and not compared and stage == "final":
             lines.extend(
-                _compare_lines(comparison, spec, kept, shape, index_column, overlay_drawn)
+                _compare_step_lines(comparison, spec, kept, shape, index_column, overlay_drawn)
             )
             compared = True
-        dropped = [name for name in dropped if name in kept]
-        if not dropped:
+        columns = [*kept, *([one_d_index] if one_d_index else []), *carry]
+        if not step.applies_to(columns):
             continue
+        dropped = [name for name in step.dropped if name in kept]
         kept = [name for name in kept if name not in dropped]
-        keep = list(kept)
-        if shape is Shape.SERIES_1D:
-            keep.append(index_column)
-        if layers:
-            # The composed nested-x column is built above from layer
-            # columns that are all kept, so it is constant within each
-            # group — but pandas drops any column not named here, and the
-            # plot call then asked for an `_x` that no longer existed.
-            keep.append(_X_NESTED)
-        elif _x_expression(spec, table, roles, shape) == _X_CONSTANT:
-            keep.append(_X_CONSTANT)
-        measures = [spec.y_measure, *([spec.x_measure] if spec.x_measure else [])]
         within = f" within {', '.join(kept)}" if kept else ""
-        how = reduction or "mean"
         what = (
-            ("summed — a count" if how == "sum" else "pooled — one % each")
+            ("summed — a count" if step.how == "sum" else "pooled — one % each")
             if reduction is not None
-            else ("each line's mean" if key in steps.final else "averaged away")
+            else ("each line's mean" if stage == "final" else "averaged away")
         )
         lines.extend(
             [
                 f"# collapse {' x '.join(dropped)}{within} — {what}",
-                f"df = df.groupby({keep!r}, as_index=False)[{measures!r}].{how}()",
+                *emit_collapse_levels(step, columns),
                 "",
             ]
         )
     if comparison is not None and not compared:
-        lines.extend(_compare_lines(comparison, spec, kept, shape, index_column, overlay_drawn))
+        lines.extend(
+            _compare_step_lines(comparison, spec, kept, shape, index_column, overlay_drawn)
+        )
     if steps.sample and spec.kind in SUMMARY_KINDS:
         lines.append(
             f"# the sample: {' x '.join(steps.sample)} — seaborn's estimator and "
@@ -1489,7 +1457,6 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
     if found is None:
         return []
     steps, join = found
-    y = spec.y_measure
     kept = [
         name
         for name, role in roles.items()
@@ -1505,20 +1472,24 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
     lines = [f"# show sample: {what}"]
     if not averaged:
         lines.append(f"{_SAMPLE_FRAME} = df.copy()")
-    elif spec.aggregate.pooled:
-        keep = [name for name in kept if name not in averaged] + extra
-        lines.append(
-            f"{_SAMPLE_FRAME} = df.groupby({keep!r}, as_index=False)[[{y!r}]].mean()"
-            f"  # pooled (weight by N)"
-        )
     else:
+        # The passes `reduce._collapse_levels` applies to the overlay
+        # (`chain.collapse_passes`): nested, or pooled ("weight by N").
+        passes = collapse_passes(
+            averaged, spec, table, None, pooled=spec.aggregate.pooled, factors=kept, carry=extra
+        )
         source = "df"
-        for key in averaged:
-            kept = [name for name in kept if name != key]
-            keep = [*kept, *extra]
-            lines.append(
-                f"{_SAMPLE_FRAME} = {source}.groupby({keep!r}, as_index=False)[[{y!r}]].mean()"
+        for step in passes:
+            lines.extend(
+                emit_collapse_levels(
+                    step,
+                    [*kept, *extra],
+                    frame=_SAMPLE_FRAME,
+                    source=source,
+                    note="# pooled (weight by N)" if spec.aggregate.pooled else "",
+                )
             )
+            kept = [name for name in kept if name not in step.dropped]
             source = _SAMPLE_FRAME
     shown = [name for name in steps.shown if table.has_factor(name)]
     lines.append(
@@ -1529,93 +1500,21 @@ def _sample_preamble_lines(spec, table: LongTable, roles, shape, layers) -> list
     return lines
 
 
-def _compare_lines(
+def _compare_step_lines(
     comparison, spec, kept: list[str], shape, index_column: str, overlay: bool
 ) -> list[str]:
-    """Compare to reference, restated in plain pandas: ``compare.baseline`` +
-    ``compare.apply`` on ``df`` (the sample rows) and, when "Show sample" is
-    drawn, on ``_sample`` against the same baseline. ``kept``: the factor
-    columns left after the pre-collapse, the columns the preview's baseline
-    is keyed by (plan D2; ITERATE factors are constant within one figure)."""
-    from ..reduce.compare import CompareMode
-
-    y = spec.y_measure
-    one_d = shape is Shape.SERIES_1D
-    keys = [
-        name
-        for name in kept
-        if name != comparison.layer and (comparison.paired or name not in comparison.sample)
-    ]
-    if one_d:
-        keys.append(index_column)
-    unit = [name for name in keys if name != index_column]
-    centre = "median" if (not comparison.paired and comparison.statistic == "median") else "mean"
-    lines = [
-        f"# compare to reference: {comparison.describe()}",
-        f"# ({comparison.reason})",
-        f"_is_ref = df[{comparison.layer!r}].map("
-        f"lambda v: 'nan' if pd.isna(v) else str(v)) == {comparison.level!r}",
-    ]
-    if keys:
-        lines.append(f"_compare_keys = {keys!r}")
-        lines.append(
-            f"_base = df[_is_ref].groupby(_compare_keys, dropna=False)[{y!r}]"
-            f".{centre}().rename('_ref').reset_index()"
-        )
-    else:
-        lines.append(f"_base = pd.DataFrame({{'_ref': [df.loc[_is_ref, {y!r}].{centre}()]}})")
-    if comparison.mode is CompareMode.PERCENT:
-        lines.append("_base = _base[_base['_ref'] > 0]  # % change is undefined for a reference <= 0")
-
-    def compared(frame: str, series: list[str]) -> list[str]:
-        out = (
-            [f"{frame} = {frame}.merge(_base, on=_compare_keys, how='left')"]
-            if keys
-            else [f"{frame}['_ref'] = _base['_ref'].iloc[0] if len(_base) else float('nan')"]
-        )
-        if one_d:
-            # A series keeps exactly its baseline's positions, or is dropped
-            # whole (never resampled).
-            series_ids = (
-                f"{frame}.groupby({series!r}, dropna=False).ngroup()" if series else "0"
-            )
-            out += [
-                f"_series_id = pd.Series({series_ids}, index={frame}.index)",
-                "_rows = _series_id.map(_series_id.value_counts())",
-                f"_with_ref = {frame}['_ref'].notna().groupby(_series_id).transform('sum')",
-                (
-                    f"_base_n = {frame}[{unit!r}].merge(_base.groupby({unit!r}, dropna=False)"
-                    f".size().rename('_n').reset_index(), on={unit!r}, how='left')['_n']"
-                    f".fillna(0).to_numpy()"
-                    if unit
-                    else "_base_n = len(_base)"
-                ),
-                f"{frame} = {frame}[(_with_ref > 0) & (_with_ref == _rows) & (_rows == _base_n)]",
-            ]
-        else:
-            out.append(f"{frame} = {frame}[{frame}['_ref'].notna()]")
-        if comparison.mode is CompareMode.PERCENT:
-            out.append(
-                f"{frame}[{y!r}] = 100 * ({frame}[{y!r}] - {frame}['_ref']) / {frame}['_ref']"
-            )
-        else:
-            if comparison.scale != 1.0:
-                # A datetime difference is a duration, in the plan's unit (hours).
-                out.append(
-                    f"{frame}[{y!r}] = ({frame}[{y!r}] - {frame}['_ref']) * {comparison.scale!r}"
-                )
-            else:
-                out.append(f"{frame}[{y!r}] = {frame}[{y!r}] - {frame}['_ref']")
-        out.append(f"{frame} = {frame}.drop(columns='_ref').reset_index(drop=True)")
-        return out
-
-    series = [name for name in kept if name != index_column]
-    lines += compared("df", series)
-    if overlay:
-        lines.append("# the sample points, against the same reference")
-        lines += compared(_SAMPLE_FRAME, [])
-    lines.append("")
-    return lines
+    """The comparison step (`compare.ComparisonPlan`) printed by its emitter
+    (`reduction_code.emit_compare`) on `df` (the sample rows) and, when
+    "Show sample" is drawn, on `_sample` against the same baseline. `kept`:
+    the factor columns left after the pre-collapse (ITERATE factors are
+    constant within one figure)."""
+    return emit_compare(
+        comparison,
+        spec.y_measure,
+        kept,
+        index_column if shape is Shape.SERIES_1D else None,
+        ("df", _SAMPLE_FRAME) if overlay else ("df",),
+    )
 
 
 def _mark_palette(style) -> str:

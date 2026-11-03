@@ -7,6 +7,142 @@
  */
 
 /**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "ErrorBand".
+ */
+export type ErrorBand = 'none' | 'sd' | 'sem' | 'ci95' | 'iqr'
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "Statistic".
+ */
+export type Statistic = 'mean' | 'median'
+/**
+ * What a text (categorical) measure is drawn as. ``categorical`` owns
+ * which kinds read which (``categorical.mode_for_kind``); inert on every
+ * numeric measure.
+ *
+ * For all three, a COLLAPSED key is **pooled**, never averaged (user,
+ * 2026-11-01): its records are merged into one bucket.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "CategoricalStat".
+ */
+export type CategoricalStat = 'count' | 'proportion' | 'value'
+/**
+ * The formula. The reference level lands at 0 in both.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "CompareMode".
+ */
+export type CompareMode = 'difference' | 'percent'
+/**
+ * How a facet-layout rule tests a panel's label.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "MatchOp".
+ */
+export type MatchOp = 'starts_with' | 'ends_with' | 'contains' | 'not_contains' | 'equals' | 'regex'
+/**
+ * How a histogram's bins are chosen (``scistackplot.reduce.bins`` owns the rule).
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "BinMode".
+ */
+export type BinMode = 'auto' | 'count' | 'width'
+/**
+ * How the histograms of several colour levels share one panel.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "HistMultiple".
+ */
+export type HistMultiple = 'layer' | 'stack' | 'dodge'
+/**
+ * What a histogram bar's height is. Percent and density are per colour
+ * level within a panel (seaborn ``common_norm=False``; user, 2026-10-22).
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "HistStat".
+ */
+export type HistStat = 'count' | 'percent' | 'density'
+/**
+ * The visual form of the plot.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "PlotKind".
+ */
+export type PlotKind =
+  | 'scatter'
+  | 'strip'
+  | 'spaghetti'
+  | 'line'
+  | 'box'
+  | 'violin'
+  | 'bar'
+  | 'hbar'
+  | 'band'
+  | 'heatmap'
+  | 'histogram'
+  | 'kde'
+  | 'regression'
+  | 'custom'
+/**
+ * Which points one regression line is fitted through.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "FitBy".
+ */
+export type FitBy = 'color' | 'pooled'
+/**
+ * Where in a panel the R² / p text sits.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "StatsCorner".
+ */
+export type StatsCorner = 'upper_left' | 'upper_right' | 'lower_left' | 'lower_right'
+/**
+ * What a factor column does in a plot.
+ *
+ * Every factor carries exactly **one** role. That invariant is the whole
+ * reason this enum exists: the R/Shiny proof of concept spread the same
+ * information across four independent widgets and spent most of its length
+ * keeping them consistent with each other via ``setdiff``.
+ *
+ * Four roles, in two panes (docs/claude/grouping-and-collapse.md):
+ *
+ * * **Grouping pane** — ``GROUP``: one *mark* per level combination, where a
+ *   mark is whatever the kind draws (a bar, a box, a line). The grouped
+ *   factors are ORDERED by :attr:`PlotSpec.groups`, innermost first, and one
+ *   of them may be tagged as the colour (:attr:`PlotSpec.color`). Colour is
+ *   not a role: it never split data, it labelled a split that a grouping
+ *   layer had already made.
+ * * **Factors pane** — ``FACET`` (one subplot per level), ``ITERATE`` (one
+ *   figure per level) and ``COLLAPSE`` (averaged away). The outermost
+ *   collapsed key is the *sample* the kind's statistic is computed over.
+ *
+ * The old ``X`` / ``COLOR`` / ``AGGREGATE`` / ``FREE`` vocabulary is gone
+ * outright (2026-09-17): ``FREE`` meant "let the kind decide", which is the
+ * ambiguity the two-pane model removes, and a saved spec carrying it is
+ * refused by :meth:`PlotSpec.from_dict` rather than guessed at.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "Role".
+ */
+export type Role = 'group' | 'facet' | 'iterate' | 'collapse'
+export type Label = string | null
+export type Origin = string | null
+export type Label1 = string | null
+export type Origin1 = string | null
+export type Label2 = string | null
+export type Origin2 = string | null
+export type FollowLatest = boolean
+export type Name = string | null
+export type Selection = object
+export type Variable = string | null
+export type Column = string | null
+export type Variable1 = string
+export type Variant = object | null
+
+/**
  * GENERATED from scistack_gui.api.wire_schema.api_json_schema. The request params of every GUI backend method, by method name.
  */
 export interface ApiParams {
@@ -159,7 +295,7 @@ export interface ApiParams {
   stats_open: OpenRequest
   stats_overlay_bars: PairRequest
   stats_overlay_for_plot: OverlayForPlotRequest
-  stats_plot_guide: ComputeRequest
+  stats_plot_guide: PlotGuideRequest
   stats_preset_apply: PresetIdRequest
   stats_preset_hide: PresetIdRequest
   stats_preset_rename: PresetIdRequest
@@ -195,9 +331,7 @@ export interface LibraryName {
  * via the `definition` "UseCreate".
  */
 export interface UseCreate {
-  binding?: {
-    [k: string]: unknown
-  } | null
+  binding?: object | null
   child_pipeline_id: string
   parent_pipeline_id: string
   x?: number | null
@@ -358,9 +492,7 @@ export interface DeleteRequest {
  */
 export interface ParameterValue {
   parameter: string
-  value?: {
-    [k: string]: unknown
-  }
+  value?: unknown
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -380,9 +512,365 @@ export interface DeletePlanRequest {
  */
 export interface DesignRequest {
   plot_id: string
-  spec: {
+  spec: PlotSpec
+}
+/**
+ * ``scistackplot.PlotSpec.to_dict()``: a complete plot description.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "PlotSpecWire".
+ */
+export interface PlotSpec {
+  aggregate?: Aggregation
+  aliases?: {
+    [k: string]: Alias
+  }
+  bar?: BarOptions | null
+  categorical?: CategoricalOptions | null
+  cell_statistic?: Statistic
+  color?: string | null
+  colors?: {
+    [k: string]: {
+      [k: string]: string
+    }
+  }
+  comparison?: Comparison | null
+  custom?: CustomPlot | null
+  difference_bars?: DifferenceBar[]
+  facet?: FacetOptions
+  factor_variables?: FactorVariable[]
+  filters?: Filter[]
+  groups?: string[]
+  histogram?: HistogramOptions | null
+  index_column?: string | null
+  join_sample?: boolean | null
+  kde?: KdeOptions | null
+  kind?: PlotKind
+  level_groups?: LevelGroup[]
+  location_filter?: LocationFilter
+  measures: string[]
+  panel_overrides?: PanelOverride[]
+  regression?: RegressionOptions | null
+  roles?: {
+    [k: string]: Role
+  }
+  sample_color?: string | null
+  sample_in_legend?: boolean
+  show_missing_levels?: boolean
+  show_sample?: string[]
+  style?: StyleOptions | null
+  time_zone?: string
+  variant_sets?: VariantSet[]
+  x_measure?: string | null
+  y_axis?: YAxis
+}
+/**
+ * ``scistackplot.Aggregation``: centre and spread over the sample.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "AggregationWire".
+ */
+export interface Aggregation {
+  error?: ErrorBand
+  pooled?: boolean
+  statistic?: Statistic
+}
+/**
+ * ``scistackplot.Alias``: what a thing and its levels read as.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "AliasWire".
+ */
+export interface Alias {
+  levels?: {
+    [k: string]: string
+  }
+  name?: string | null
+}
+/**
+ * ``scistackplot.BarOptions``.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "BarOptionsWire".
+ */
+export interface BarOptions {
+  stack?: boolean
+}
+/**
+ * ``scistackplot.CategoricalOptions``: how a text measure is drawn.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "CategoricalOptionsWire".
+ */
+export interface CategoricalOptions {
+  level?: string | null
+  stat?: CategoricalStat
+}
+/**
+ * ``scistackplot.Comparison``: compare to a reference level.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "ComparisonWire".
+ */
+export interface Comparison {
+  active?: boolean
+  layer: string
+  level: string
+  mode?: CompareMode
+}
+/**
+ * ``scistackplot.CustomPlot``: the ``plot_`` function drawing a custom figure.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "CustomPlotWire".
+ */
+export interface CustomPlot {
+  as_table?: boolean | string[]
+  function?: string
+  inputs?: {
+    [k: string]: string
+  }
+  node?: string
+}
+/**
+ * ``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.
+ * ``origin`` is written only when not ``"manual"``.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "DifferenceBarWire".
+ */
+export interface DifferenceBar {
+  a?: {
+    [k: string]: string
+  }
+  b?: {
+    [k: string]: string
+  }
+  label?: string | null
+  match?: {
+    [k: string]: string
+  }
+  origin?: string | null
+}
+/**
+ * ``scistackplot.FacetOptions``: the facet grid.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "FacetOptionsWire".
+ */
+export interface FacetOptions {
+  cols?: Matcher[]
+  n_cols?: number | null
+  n_rows?: number | null
+  rows?: Matcher[]
+  share_x?: boolean
+}
+/**
+ * ``scistackplot.Matcher``: one facet-grid row or column rule.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "MatcherWire".
+ */
+export interface Matcher {
+  label?: string | null
+  op?: MatchOp
+  value?: string
+}
+/**
+ * ``scistackplot.FactorVariable``: a variable (or one column) joined in
+ * as a factor. ``variant`` is the selection as an object.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "FactorVariableWire".
+ */
+export interface FactorVariable {
+  column?: string | null
+  variable: string
+  variant?: {
+    [k: string]: unknown
+  } | null
+}
+/**
+ * ``scistackplot.Filter``: one row filter.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "FilterWire".
+ */
+export interface Filter {
+  column: string
+  exclude?: unknown[] | null
+  include?: unknown[] | null
+  maximum?: number | null
+  minimum?: number | null
+}
+/**
+ * ``scistackplot.HistogramOptions``. ``bin_width``: a number, or duration
+ * text on a datetime axis; the range ends: a number or ISO date text.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "HistogramOptionsWire".
+ */
+export interface HistogramOptions {
+  bin_count?: number | null
+  bin_width?: number | string | null
+  bins?: BinMode
+  exact_values?: number[] | string | null
+  multiple?: HistMultiple
+  range_max?: number | string | null
+  range_min?: number | string | null
+  show_nan?: boolean
+  stat?: HistStat
+}
+/**
+ * ``scistackplot.KdeOptions``.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "KdeOptionsWire".
+ */
+export interface KdeOptions {
+  bandwidth_adjust?: number | null
+  cut?: number | null
+  fill?: boolean
+}
+/**
+ * ``scistackplot.LevelGroup``: a combine.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "LevelGroupWire".
+ */
+export interface LevelGroup {
+  active?: boolean
+  mapping?: {
+    [k: string]: string
+  }
+  name: string
+  source: string
+  unmatched?: string | null
+}
+/**
+ * ``scistackplot.LocationFilter``: the schema location picker's selection.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "LocationFilterWire".
+ */
+export interface LocationFilter {
+  exclude_levels?: {
+    [k: string]: string[]
+  }
+  include?: string[][][]
+  keys?: string[]
+}
+/**
+ * ``scistackplot.PanelOverride``: one faceted panel's own y limits and title.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "PanelOverrideWire".
+ */
+export interface PanelOverride {
+  match?: {
+    [k: string]: string
+  }
+  y_label?: string | null
+  y_label_hidden?: boolean | null
+  y_maximum?: number | null
+  y_minimum?: number | null
+}
+/**
+ * ``scistackplot.RegressionOptions``.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "RegressionOptionsWire".
+ */
+export interface RegressionOptions {
+  ci_band?: boolean
+  fit_by?: FitBy
+  fit_line?: boolean
+  show_stats?: boolean
+  stats_corner?: StatsCorner
+}
+/**
+ * ``scistackplot.StyleOptions``. Width and height are inches.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "StyleOptionsWire".
+ */
+export interface StyleOptions {
+  alpha?: number
+  height?: number
+  hide_legend_ticks?: boolean
+  line_weight?: number
+  log_x?: boolean
+  log_y?: boolean
+  mark_color?: string | null
+  marker_size?: number
+  not_plotted_note?: boolean
+  palette?: string | null
+  sample_weight?: number
+  text?: TextSizes
+  tick_every?: number | null
+  tick_rotation?: number | null
+  title?: string | null
+  width?: number
+  x_label?: string | null
+  y_label?: string | null
+  y_titles?: 'every_panel' | 'first_column'
+}
+/**
+ * ``scistackplot.TextSizes``: point sizes per text element.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "TextSizesWire".
+ */
+export interface TextSizes {
+  base?: number | null
+  ceilings?: {
+    [k: string]: number
+  }
+  differences?: number | null
+  floors?: {
+    [k: string]: number
+  }
+  groups?: number | null
+  legend?: number | null
+  legend_title?: number | null
+  ratios?: {
+    [k: string]: number
+  }
+  target?: 'print' | 'slide'
+  title?: number | null
+  x_label?: number | null
+  x_ticks?: number | null
+  y_label?: number | null
+  y_ticks?: number | null
+}
+/**
+ * ``scistackplot.VariantSet``: one row of the Variants section.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "VariantSetWire".
+ */
+export interface VariantSet {
+  follow_latest?: boolean
+  frozen?: {
+    [k: string]: string[]
+  }
+  name?: string | null
+  selection?: {
     [k: string]: unknown
   }
+  variable?: string | null
+}
+/**
+ * ``scistackplot.YAxis``. A limit is a number, or ISO date text on a
+ * datetime axis.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "YAxisWire".
+ */
+export interface YAxis {
+  maximum?: number | string | null
+  minimum?: number | string | null
+  scope?: string[]
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -545,9 +1033,7 @@ export interface VariableName {
 export interface HideComboRequest {
   function_name: string
   node_id?: string | null
-  variant_key: {
-    [k: string]: unknown
-  }
+  variant_key: object
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -587,9 +1073,7 @@ export interface ChangeRef {
  * via the `definition` "ImportPipeline".
  */
 export interface ImportPipeline {
-  document: {
-    [k: string]: unknown
-  }
+  document: object
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -654,9 +1138,7 @@ export interface ReleaseRequest {
  */
 export interface PinRequest {
   reason: string
-  selection: {
-    [k: string]: unknown
-  }
+  selection: object
   variable: string
 }
 /**
@@ -672,9 +1154,7 @@ export interface UseRef {
  */
 export interface ColumnGroupsPlanRequest {
   output_names?: string[]
-  selection?: {
-    [k: string]: unknown
-  } | null
+  selection?: object | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -682,18 +1162,32 @@ export interface ColumnGroupsPlanRequest {
  */
 export interface ExportRequest {
   csv_path?: string | null
-  derived_bars?:
-    | {
-        [k: string]: unknown
-      }[]
-    | null
+  derived_bars?: DifferenceBar1[] | null
   finalized?: boolean | null
   function_name?: string | null
   output_variable?: string | null
   path_template?: string | null
-  spec: {
-    [k: string]: unknown
-  }
+  spec: PlotSpec
+}
+/**
+ * ``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.
+ * ``origin`` is written only when not ``"manual"``.
+ */
+export interface DifferenceBar1 {
+  a?: A
+  b?: B
+  label?: Label
+  match?: Match
+  origin?: Origin
+}
+export interface A {
+  [k: string]: string
+}
+export interface B {
+  [k: string]: string
+}
+export interface Match {
+  [k: string]: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -701,20 +1195,32 @@ export interface ExportRequest {
  */
 export interface SpecRequest {
   csv_path?: string | null
-  derived_bars?:
-    | {
-        [k: string]: unknown
-      }[]
-    | null
+  derived_bars?: DifferenceBar2[] | null
   figure_index?: number | null
   max_points?: number | null
-  preview?: {
-    [k: string]: unknown
-  } | null
+  preview?: object | null
   reuse_resolved?: boolean
-  spec: {
-    [k: string]: unknown
-  }
+  spec: PlotSpec
+}
+/**
+ * ``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.
+ * ``origin`` is written only when not ``"manual"``.
+ */
+export interface DifferenceBar2 {
+  a?: A1
+  b?: B1
+  label?: Label1
+  match?: Match1
+  origin?: Origin1
+}
+export interface A1 {
+  [k: string]: string
+}
+export interface B1 {
+  [k: string]: string
+}
+export interface Match1 {
+  [k: string]: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -767,9 +1273,7 @@ export interface GroupingGraphRequest {
 export interface LocationTreeRequest {
   csv_path?: string | null
   problems_only?: boolean | null
-  selection?: {
-    [k: string]: unknown
-  } | null
+  selection?: object | null
   variable: string
 }
 /**
@@ -778,9 +1282,7 @@ export interface LocationTreeRequest {
  */
 export interface PresetApplyRequest {
   preset_id: string
-  spec: {
-    [k: string]: unknown
-  }
+  spec: PlotSpec
   version?: number | null
 }
 /**
@@ -824,9 +1326,7 @@ export interface PresetSaveRequest {
   made_on_shape?: string | null
   name: string
   overwrite?: boolean | null
-  spec: {
-    [k: string]: unknown
-  }
+  spec: PlotSpec
 }
 /**
  * One edit to the project's ``[aliases]`` (scistack.toml).
@@ -859,21 +1359,35 @@ export interface ProjectColorRequest {
 export interface SaveRequest {
   csv_path?: string | null
   depth?: string | null
-  derived_bars?:
-    | {
-        [k: string]: unknown
-      }[]
-    | null
+  derived_bars?: DifferenceBar3[] | null
   dpi?: number | null
   fields_as_columns?: boolean | null
   figure_index?: number | null
   image_format?: string | null
   job_id?: string | null
   path: string
-  spec: {
-    [k: string]: unknown
-  }
+  spec: PlotSpec
   what?: string | null
+}
+/**
+ * ``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.
+ * ``origin`` is written only when not ``"manual"``.
+ */
+export interface DifferenceBar3 {
+  a?: A2
+  b?: B2
+  label?: Label2
+  match?: Match2
+  origin?: Origin2
+}
+export interface A2 {
+  [k: string]: string
+}
+export interface B2 {
+  [k: string]: string
+}
+export interface Match2 {
+  [k: string]: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -928,13 +1442,9 @@ export interface SavedSaveRequest {
   current_plot_id?: string | null
   name: string
   overwrite?: boolean | null
-  spec: {
-    [k: string]: unknown
-  }
+  spec: PlotSpec
   variable: string
-  view?: {
-    [k: string]: unknown
-  } | null
+  view?: object | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -951,11 +1461,20 @@ export interface VariantGraphRequest {
  */
 export interface VariantSetsRequest {
   variable: string
-  variant_sets?:
-    | {
-        [k: string]: unknown
-      }[]
-    | null
+  variant_sets?: VariantSet1[] | null
+}
+/**
+ * ``scistackplot.VariantSet``: one row of the Variants section.
+ */
+export interface VariantSet1 {
+  follow_latest?: FollowLatest
+  frozen?: Frozen
+  name?: Name
+  selection?: Selection
+  variable?: Variable
+}
+export interface Frozen {
+  [k: string]: string[]
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -994,9 +1513,7 @@ export interface PositionUpdate {
  * via the `definition` "NodeConfigUpdate".
  */
 export interface NodeConfigUpdate {
-  config?: {
-    [k: string]: unknown
-  }
+  config?: object
   node_id: string
 }
 /**
@@ -1021,11 +1538,7 @@ export interface PathInputRename {
  * via the `definition` "CanvasRefreshRequest".
  */
 export interface CanvasRefreshRequest {
-  dropped?:
-    | {
-        [k: string]: unknown
-      }[]
-    | null
+  dropped?: object[] | null
   edges?: number | null
   folded?: number | null
   get_layout_ms?: number | null
@@ -1202,9 +1715,7 @@ export interface ShownArgument {
 export interface StepValueSet {
   key: string
   use_id: string
-  value?: {
-    [k: string]: unknown
-  }
+  value?: unknown
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1245,16 +1756,10 @@ export interface RunRequest {
   node_id?: string | null
   output_types?: string[] | null
   run_id?: string | null
-  run_options?: {
-    [k: string]: unknown
-  } | null
+  run_options?: object | null
   schema_level?: string[] | null
-  schema_selection?: {
-    [k: string]: unknown
-  } | null
-  variants?: {
-    [k: string]: unknown
-  }[]
+  schema_selection?: object | null
+  variants?: object[]
   where_filters?: WhereFilterSpec[] | null
 }
 /**
@@ -1274,9 +1779,110 @@ export interface AddRequest {
   finalized?: boolean | null
   function_name?: string | null
   output_variable?: string | null
-  spec: {
-    [k: string]: unknown
+  spec: StatsSpec
+}
+/**
+ * ``scistackstats.StatsSpec.to_dict()``: a statistics table. ``design``
+ * is the plot spec it analyses.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "StatsSpecWire".
+ */
+export interface StatsSpec {
+  comparisons?: Analysis[]
+  descriptives?: DescriptiveSpec
+  design: PlotSpec
+  dvs?: DV[]
+  format: number
+  formatting?: FormatSpec
+  guide?: GuideState
+  linked_plot?: string | null
+  overlay?: OverlaySpec
+  variant_mode?: 'pinned' | 'sweep'
+}
+/**
+ * ``scistackstats.Analysis``: one analysis on the Comparisons tab.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "AnalysisWire".
+ */
+export interface Analysis {
+  alpha?: number
+  ci_level?: number
+  correction?: string
+  covariates?: FactorVariable[] | null
+  difference_spread?: 'ci' | 'se' | 'sd_diff'
+  effect_size?: string | null
+  equal_var?: boolean
+  family?: 'auto' | 'parametric' | 'nonparametric' | 'mixed_model' | 'spm'
+  family_scope?: 'none' | 'context' | 'stratum' | 'dv' | 'table' | 'variants'
+  formula?: string | null
+  id?: string
+  missing?: 'use_all' | 'complete_cases'
+  omnibus?: boolean
+  omnibus_test?: string | null
+  overrides?: {
+    [k: string]: 'within' | 'between'
   }
+  pairwise?: boolean
+  pairwise_test?: string | null
+  tails?: 'two-sided' | 'greater' | 'less'
+}
+/**
+ * ``scistackstats.DescriptiveSpec``: what the Descriptives tab shows.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "DescriptiveSpecWire".
+ */
+export interface DescriptiveSpec {
+  cell?: 'mean_sd' | 'mean_sem' | 'mean_ci95' | 'median_iqr' | 'none'
+  statistics?: string[]
+}
+/**
+ * ``scistackstats.DV``: one dependent variable, or chosen columns of one.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "DVWire".
+ */
+export interface DV {
+  columns?: string[] | null
+  variable: string
+}
+/**
+ * ``scistackstats.FormatSpec``: how numbers read.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "FormatSpecWire".
+ */
+export interface FormatSpec {
+  decimals?: number | null
+  effect_decimals?: number
+  p_decimals?: number
+  stars?: boolean
+}
+/**
+ * ``scistackstats.GuideState``: the view and the wizard's progress.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "GuideStateWire".
+ */
+export interface GuideState {
+  done?: string[]
+  mode?: 'guided' | 'advanced'
+  step?: string
+}
+/**
+ * ``scistackstats.spec.OverlaySpec``: brackets drawn on the linked figure.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "OverlaySpecWire".
+ */
+export interface OverlaySpec {
+  analysis?: string | null
+  hidden?: string[]
+  label?: 'stars' | 'p'
+  pairs?: 'significant' | 'all' | 'adjacent'
+  show?: boolean
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1284,9 +1890,7 @@ export interface AddRequest {
  */
 export interface ComputeRequest {
   csv_path?: string | null
-  spec: {
-    [k: string]: unknown
-  }
+  spec: StatsSpec
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1296,9 +1900,7 @@ export interface ExportRequest1 {
   csv_path?: string | null
   fmt: string
   path?: string | null
-  spec: {
-    [k: string]: unknown
-  }
+  spec: StatsSpec
   which: string
 }
 /**
@@ -1307,16 +1909,19 @@ export interface ExportRequest1 {
  */
 export interface FormulaRequest {
   analysis_id?: string | null
-  covariates?:
-    | {
-        [k: string]: unknown
-      }[]
-    | null
+  covariates?: FactorVariable1[] | null
   csv_path?: string | null
-  spec: {
-    [k: string]: unknown
-  }
+  spec: StatsSpec
   text?: string | null
+}
+/**
+ * ``scistackplot.FactorVariable``: a variable (or one column) joined in
+ * as a factor. ``variant`` is the selection as an object.
+ */
+export interface FactorVariable1 {
+  column?: Column
+  variable: Variable1
+  variant?: Variant
 }
 /**
  * One wizard event from the webview (StatStudio/Guided), for scistack.log.
@@ -1343,9 +1948,7 @@ export interface LinkedRequest {
 export interface OpenRequest {
   csv_path?: string | null
   plot_id?: string | null
-  seed?: {
-    [k: string]: unknown
-  } | null
+  seed?: PlotSpec | null
   stat_function?: string | null
   stats_id?: string | null
   variable?: string | null
@@ -1358,12 +1961,8 @@ export interface OpenRequest {
 export interface PairRequest {
   csv_path?: string | null
   direction?: string | null
-  plot_spec: {
-    [k: string]: unknown
-  }
-  stats_spec: {
-    [k: string]: unknown
-  }
+  plot_spec: PlotSpec
+  stats_spec: StatsSpec
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1371,9 +1970,17 @@ export interface PairRequest {
  */
 export interface OverlayForPlotRequest {
   plot_id: string
-  plot_spec: {
-    [k: string]: unknown
-  }
+  plot_spec: PlotSpec
+}
+/**
+ * Plot Studio's step-by-step view: the FIGURE's spec, not a table's.
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "PlotGuideRequest".
+ */
+export interface PlotGuideRequest {
+  csv_path?: string | null
+  spec: PlotSpec
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1383,9 +1990,7 @@ export interface PresetIdRequest {
   hidden?: boolean | null
   name?: string | null
   preset_id: string
-  spec?: {
-    [k: string]: unknown
-  } | null
+  spec?: StatsSpec | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1393,9 +1998,7 @@ export interface PresetIdRequest {
  */
 export interface PresetSaveRequest1 {
   name: string
-  spec: {
-    [k: string]: unknown
-  }
+  spec: StatsSpec
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1414,9 +2017,7 @@ export interface SavedSaveRequest1 {
   current_stats_id?: string | null
   name: string
   overwrite?: boolean | null
-  spec: {
-    [k: string]: unknown
-  }
+  spec: StatsSpec
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1443,9 +2044,7 @@ export interface HypothesisUpdate {
  */
 export interface ParameterUpdate {
   description?: string | null
-  group?: {
-    [k: string]: unknown
-  } | null
+  group?: object | null
   name: string
   values?: (number | string | boolean)[]
 }
@@ -1459,11 +2058,7 @@ export interface PathInputUpdate {
       [k: string]: string[]
     }
   } | null
-  alternate_templates?:
-    | {
-        [k: string]: unknown
-      }[]
-    | null
+  alternate_templates?: object[] | null
   key_regex?: {
     [k: string]: string
   } | null
@@ -1476,9 +2071,7 @@ export interface PathInputUpdate {
  * via the `definition` "BindingUpdate".
  */
 export interface BindingUpdate {
-  binding: {
-    [k: string]: unknown
-  }
+  binding: object
   use_id: string
 }
 /**

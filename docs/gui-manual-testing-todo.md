@@ -5981,6 +5981,70 @@ below still changes the preview, and **Undo** reverts each change one step:
 
 ---
 
+## P5 stage 5: generated StatsSpec / CustomPlot types — added 2026-11-02
+
+Types only; nothing should look different. A smoke pass over the code that
+now reads possibly-absent keys:
+
+- **StatStudio, new table.** Open StatStudio from a plot: the Descriptives
+  summary reads "mean_sd; 1 analysis(es)", Add analysis adds a second card,
+  ✕ removes it, every select (family, missing data, correction, family
+  scope, difference spread, variants, bracket pairs/label) still changes the
+  result.
+- **StatStudio, within/between prompt.** When the table asks whether a
+  factor is within or between, both buttons set it.
+- **Step by step.** Plot Studio's and StatStudio's step-by-step views step
+  forward and back as before (Plot Studio's last step is "figure").
+- **Custom plot as_table.** On a `plot_` node's figure, untick then tick an
+  input's "as table" checkbox: the figure redraws each time.
+
+### Specs validated at dispatch (step 4, same day)
+
+Every request that carries a plot or stats spec is now checked against its
+wire model before any service runs. A refusal is an error in the panel, and
+a WARNING `[spec_params] PlotSpecWire refused: <field>: <why>` in
+scistack.log. **Any such WARNING in normal use is a bug**: report the field.
+
+- **Plot Studio, every control once.** Kind tiles (including a text
+  measure's Count / Proportion), X variable, histogram bins (count, width,
+  range, special values typed as "0, -1"), KDE, regression, facet rows/cols
+  rules, y-axis limits (number and a date on a datetime axis), panel
+  overrides, difference bars, compare, combine, location picker, Variants
+  rows, labels and colours, text sizes and proportions, figure size. Then
+  Export code, Save figure, Save plot, Add to pipeline.
+- **StatStudio.** Open from a figure (the seed), compute, change a formula
+  with a covariate, brackets on the figure, save and apply a preset, Add to
+  pipeline.
+- **Plot Studio step by step.** Each step forward and back (stats_plot_guide
+  now has its own request type).
+- **Location tree.** The picker on a plot and on a function node's inputs.
+- **Import pipeline.** Import a valid export file; importing a JSON file
+  that is not an object says so.
+
+### Combines in exported code (P5 stage 6)
+
+- **Export a figure with a combine and a filter on it.** In Plot Studio,
+  combine a factor's levels (Structure > Combine), filter the combined
+  factor to one bucket, Export, and run the code: it draws only that bucket,
+  as the preview does (before, the export drew every bucket).
+
+### Every reduction step in exported code (P5 stage 6, rest)
+
+Export and run each of these; the figure should match the preview.
+
+- **A 1-D measure as a violin or bar** (the cell collapse), including a
+  variable with some empty trials.
+- **A text measure:** a Count bar, a Proportion bar, a strip of categories,
+  and one with a category filter.
+- **Compare to reference** on a bar, difference and % change, with "Show
+  sample" on.
+- **A factor with a missing level** (a session not recorded for some rows),
+  collapsed under another factor: the export keeps the "nan" group, as the
+  preview does (before, those rows vanished from the export).
+- **Show sample** with the subject averaged over trials, nested and pooled.
+
+---
+
 ## Done
 
 (Move items here once checked, with the date and anything noticed.)

@@ -9,36 +9,15 @@
  * module only builds spec patches and reads those reports back as text.
  */
 
-export type BinMode = 'auto' | 'count' | 'width'
-export type HistStat = 'count' | 'percent' | 'density'
-export type HistMultiple = 'layer' | 'stack' | 'dodge'
-export type FitBy = 'color' | 'pooled'
-export type StatsCorner = 'upper_left' | 'upper_right' | 'lower_left' | 'lower_right'
+// The settings' types are GENERATED from the backend's wire models
+// (scistack_gui.api.spec_wire): the enums and option shapes are Python's.
+import type {
+  BinMode, FitBy, HistMultiple, HistStat, HistogramOptions, KdeOptions, PlotKind, RegressionOptions,
+  StatsCorner,
+} from '../../generated/api-types.js'
 
-/** `PlotSpec.histogram` (scistackplot.spec.HistogramOptions). */
-export interface HistogramOptions {
-  bins?: BinMode
-  bin_count?: number | null
-  /** A number, or a duration text ("1h", "7D") on a datetime axis. */
-  bin_width?: number | string | null
-  range_min?: number | string | null
-  range_max?: number | string | null
-  stat?: HistStat
-  multiple?: HistMultiple
-  /** Values with a bar of their own, left of the range. Python parses a
-   *  typed "0, -1" (spec._as_exact_values) and reports the list back. */
-  exact_values?: number[] | string
-  /** The NaN bar, right of the range (on by default). */
-  show_nan?: boolean
-}
-
-/** `PlotSpec.regression` (scistackplot.spec.RegressionOptions). */
-export interface RegressionOptions {
-  fit_line?: boolean
-  show_stats?: boolean
-  ci_band?: boolean
-  fit_by?: FitBy
-  stats_corner?: StatsCorner
+export type {
+  BinMode, FitBy, HistMultiple, HistStat, HistogramOptions, KdeOptions, RegressionOptions, StatsCorner,
 }
 
 /** `capabilities.histogram` (capability.histogram_summary). */
@@ -92,13 +71,14 @@ export interface PanelFitsMeta {
 }
 
 /** The kinds an X variable allows (capability.available_plots). */
-export const X_MEASURE_KINDS = ['scatter', 'line', 'regression']
+export const X_MEASURE_KINDS: readonly PlotKind[] = ['scatter', 'line', 'regression']
 
 /** What picking (or clearing) the X variable does to the kind. With an X
  *  variable only scatter, line and regression draw, so any other kind becomes
  *  a regression (the reason to pick one). Cleared, the x-only kinds become a
- *  scatter. The backend then validates the result as usual. */
-export function kindForXMeasure(kind: string, xMeasure: string | null): string {
+ *  scatter. The backend then validates the result as usual. An absent kind
+ *  is PlotSpec's default, a scatter. */
+export function kindForXMeasure(kind: PlotKind = 'scatter', xMeasure: string | null): PlotKind {
   if (xMeasure) return X_MEASURE_KINDS.includes(kind) ? kind : 'regression'
   return kind === 'regression' || kind === 'line' ? 'scatter' : kind
 }
@@ -181,15 +161,6 @@ export function fitsSummary(panels: PanelFitsMeta[] | null | undefined): string[
 export function exactValuesText(value: HistogramOptions['exact_values']): string {
   if (Array.isArray(value)) return value.map(formatNumber).join(', ')
   return value ?? ''
-}
-
-/** `PlotSpec.kde` (scistackplot.spec.KdeOptions). */
-export interface KdeOptions {
-  /** Multiplies Scott's bandwidth: below 1 follows the data more closely. */
-  bandwidth_adjust?: number | null
-  /** How far past the data's ends the curve runs, in bandwidths. */
-  cut?: number | null
-  fill?: boolean
 }
 
 /** `capabilities.kde` (capability.kde_summary). */

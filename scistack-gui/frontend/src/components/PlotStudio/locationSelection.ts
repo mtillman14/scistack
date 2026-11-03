@@ -31,6 +31,8 @@
  *   because those already draw every level.
  */
 
+import type { Role } from '../../generated/api-types.js'
+
 /** One `[key, value]` step of a location path. */
 export type PathStep = [string, string]
 /** A prefix: the outermost steps of a location. `[]` would mean "everything". */
@@ -594,7 +596,8 @@ export function hasProblem(node: LocationNode): boolean {
 
 // --- role adjustment on pick ------------------------------------------------
 
-export type Role = 'group' | 'facet' | 'iterate' | 'collapse'
+// The role vocabulary is the backend's (scistackplot Role, generated).
+export type { Role }
 
 /**
  * The roles a spec should hold once one location has been picked.
@@ -611,7 +614,7 @@ export type Role = 'group' | 'facet' | 'iterate' | 'collapse'
  * astonishing.
  */
 export function rolesAfterPick(
-  roles: Record<string, Role>,
+  roles: Record<string, Role> = {},
   path: Prefix,
   schemaKeys: string[]
 ): Record<string, Role> {

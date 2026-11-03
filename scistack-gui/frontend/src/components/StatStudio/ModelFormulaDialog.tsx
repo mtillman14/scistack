@@ -15,7 +15,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { callBackend } from '../../api'
 import GroupingDagPopup, { type GroupingCandidate } from '../PlotStudio/GroupingDagPopup'
 import { insertCovariate } from './modelFormulaText'
-import type { CovariateBinding, StatsSpec } from './statsSpec'
+import { analyses, type CovariateBinding, type StatsSpec } from './statsSpec'
 
 interface CheckError { message: string; position?: number; length?: number }
 
@@ -67,7 +67,7 @@ function Marked({ text, errors }: { text: string; errors: CheckError[] }) {
 export default function ModelFormulaDialog({
   spec, analysisId, measure, sourceParams, canPickCovariates, onApply, onCancel,
 }: Props) {
-  const analysis = spec.comparisons.find(a => a.id === analysisId) ?? spec.comparisons[0]
+  const analysis = analyses(spec).find(a => a.id === analysisId) ?? analyses(spec)[0]
   const [text, setText] = useState<string>(analysis?.formula ?? '')
   const [covariates, setCovariates] = useState<CovariateBinding[]>(analysis?.covariates ?? [])
   const [check, setCheck] = useState<Check | null>(null)
@@ -123,7 +123,7 @@ export default function ModelFormulaDialog({
 
   const applyPicked = async (picked: { variable: string; column: string | null; variant: Record<string, unknown> }[]) => {
     setPicker(null)
-    const key = (c: { variable: string; column: string | null }) => `${c.variable}\u0000${c.column ?? ''}`
+    const key = (c: { variable: string; column?: string | null }) => `${c.variable}\u0000${c.column ?? ''}`
     const have = new Set(covariates.map(key))
     const added = picked.filter(p => !have.has(key(p)))
     if (!added.length) return
@@ -286,7 +286,7 @@ export default function ModelFormulaDialog({
           measure={measure}
           candidates={picker.candidates}
           refusals={picker.refusals}
-          selected={covariates.map(c => ({ variable: c.variable, column: c.column }))}
+          selected={covariates.map(c => ({ variable: c.variable, column: c.column ?? null }))}
           sourceParams={sourceParams}
           onCancel={() => setPicker(null)}
           onApply={applyPicked}

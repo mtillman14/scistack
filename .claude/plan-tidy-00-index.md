@@ -155,7 +155,7 @@ If a decision is changed, edit the affected plan's stage before starting it.
 | P2 | 7 | ☑ 2026-11-01 | a5a1d359 |
 | P3 | 1–7 (CLI move declined: U1); stage 6 step 7 + dataset intent follow-up | ☑ 2026-11-01 | 51116d07, 0e5c189d |
 | P4 | 1–10 (5 and 9 in part, see plan) | ☑ 2026-11-01 (pytest green 2026-11-02) | 7f998dab |
-| P5 | 1, 2, 4 done; 5, 6 started; 3 not started (needs MATLAB runs) — see plan | ◐ 2026-11-02 (pytest + npm green; MATLAB suite not yet run) | 7f998dab |
+| P5 | 1, 2, 4, 5 done; 6 done (awaiting the user's test run); 3 not started (needs MATLAB runs) — see plan | ◐ 2026-11-02 (stages 1-2, 4: pytest + npm + MATLAB 792/792 green) | 7f998dab, 12519797 |
 
 ## Handing over between sessions
 

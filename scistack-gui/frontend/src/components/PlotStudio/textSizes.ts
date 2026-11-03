@@ -11,6 +11,8 @@
  * See docs/claude/plot-text-and-labels.md.
  */
 
+import type { TextSizes } from '../../generated/api-types.js'
+
 /** How auto chose the reference (`autosize.AutoTextSize.to_dict()`). */
 export interface AutoTextMeta {
   target: string
@@ -61,11 +63,28 @@ export const TEXT_TABLES = ['ratios', 'floors', 'ceilings'] as const
 export type TextTable = (typeof TEXT_TABLES)[number]
 
 /** `StyleOptions.text` as the panel holds it: only the sizes that are set,
- *  `target` (a string), and the tables (absent when empty). */
-export type TextSizesValue = Record<
-  string,
-  number | string | Record<string, number> | undefined
->
+ *  `target`, and the tables (absent when empty). GENERATED from the
+ *  backend's wire model. */
+export type TextSizesValue = TextSizes
+
+/** The same value read and written by element name: the rows come from
+ *  Python's meta as text keys, and this module is the one place that turns
+ *  those keys into fields. */
+type Entries = Record<string, number | string | Record<string, number> | null | undefined>
+
+function entries(text: TextSizes | undefined): Entries {
+  return { ...(text ?? {}) } as unknown as Entries
+}
+
+function asText(value: Entries): TextSizes {
+  return value as unknown as TextSizes
+}
+
+/** One element's fixed pt size, or undefined while it scales. */
+export function textSizeOf(text: TextSizes | undefined, key: string): number | undefined {
+  const value = entries(text)[key]
+  return typeof value === 'number' ? value : undefined
+}
 
 /** Meta keys that are not an element's box. */
 const NOT_ROWS = new Set(['base', 'pinned', 'auto', 'target', 'targets', 'clamped', 'ratios', 'bounds'])
@@ -123,7 +142,7 @@ export function textSizeRows(
     const value = meta?.[key]
     const known = KNOWN[key]
     // The panel's own spec says what is set; meta lags one render behind.
-    const pinned = typeof text?.[key] === 'number'
+    const pinned = typeof entries(text)[key] === 'number'
     const held = !pinned && meta?.auto ? meta?.clamped?.[key] : undefined
     return {
       key,
@@ -196,7 +215,8 @@ export function textTarget(text: TextSizesValue | undefined): string {
  *  because Python's `to_dict` always writes it (a deleted key would read
  *  as "modified" against a saved plot). */
 export function withTextTarget(text: TextSizesValue | undefined, target: string): TextSizesValue {
-  return { ...(text ?? {}), target }
+  // The toggle's options are Python's TEXT_TARGETS (textTargets).
+  return { ...(text ?? {}), target: target as TextSizes['target'] }
 }
 
 /**
@@ -209,15 +229,15 @@ export function withTextSize(
   key: string,
   value: number | null,
 ): TextSizesValue {
-  const next: TextSizesValue = { ...(text ?? {}) }
+  const next = entries(text)
   if (value === null || !Number.isFinite(value) || value <= 0) delete next[key]
   else next[key] = value
-  return next
+  return asText(next)
 }
 
 /** One table of `style.text` (`ratios` / `floors` / `ceilings`). */
 export function textTable(text: TextSizesValue | undefined, table: TextTable): Record<string, number> {
-  const value = text?.[table]
+  const value = entries(text)[table]
   return value && typeof value === 'object' ? value : {}
 }
 
@@ -233,20 +253,20 @@ export function withTextTable(
   element: string,
   value: number | null,
 ): TextSizesValue {
-  const entries = { ...textTable(text, table) }
-  if (value === null || !Number.isFinite(value) || value <= 0) delete entries[element]
-  else entries[element] = value
-  const next: TextSizesValue = { ...(text ?? {}) }
-  if (Object.keys(entries).length) next[table] = entries
+  const tableEntries = { ...textTable(text, table) }
+  if (value === null || !Number.isFinite(value) || value <= 0) delete tableEntries[element]
+  else tableEntries[element] = value
+  const next = entries(text)
+  if (Object.keys(tableEntries).length) next[table] = tableEntries
   else delete next[table]
-  return next
+  return asText(next)
 }
 
 /** `style.text` with every ratio, floor and ceiling back to the defaults. */
 export function resetTextTables(text: TextSizesValue | undefined): TextSizesValue {
-  const next: TextSizesValue = { ...(text ?? {}) }
+  const next = entries(text)
   for (const table of TEXT_TABLES) delete next[table]
-  return next
+  return asText(next)
 }
 
 /** Whether any ratio, floor or ceiling is set. */
@@ -312,9 +332,10 @@ export function drawnLabel(row: ProportionRow): string {
 /** `style.text` with every per-element size cleared; `base`, `target` and
  *  the proportions are kept. */
 export function resetTextSizes(text: TextSizesValue | undefined): TextSizesValue {
-  const kept: TextSizesValue = {}
-  for (const key of NOT_SIZES) if (text?.[key] !== undefined) kept[key] = text[key]
-  return kept
+  const all = entries(text)
+  const kept: Entries = {}
+  for (const key of NOT_SIZES) if (all[key] !== undefined) kept[key] = all[key]
+  return asText(kept)
 }
 
 /** Whether any element (not `base`, `target` or a table) is set. */

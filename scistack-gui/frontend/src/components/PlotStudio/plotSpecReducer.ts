@@ -23,82 +23,34 @@ import { joinSetting, sampleColorSetting, toggleShowSample, type JoinChoice } fr
 import type { SpecAliases } from './aliasEdit.js'
 import type { SpecColors } from './colorEdit.js'
 
-export type MatchOp = 'starts_with' | 'ends_with' | 'contains' | 'not_contains' | 'equals' | 'regex'
+import type {
+  Aggregation,
+  CategoricalOptions,
+  FacetOptions,
+  MatchOp,
+  Matcher,
+  PlotSpec,
+  Statistic,
+  StyleOptions,
+  YAxis,
+} from '../../generated/api-types.js'
 
-export interface Matcher {
-  op: MatchOp
-  value: string
-  label?: string | null
-}
+// The spec's types are GENERATED from the backend's wire models
+// (scistack_gui.api.spec_wire, the shape of PlotSpec.to_dict()).
+export type { FacetOptions, MatchOp, Matcher, YAxis }
 
-export interface FacetOptions {
-  /** Grid size. null/absent means "compute me from the other one and the panel count". */
-  n_rows?: number | null
-  n_cols?: number | null
-  /** One entry per row / column slot; a blank value is an unset slot. */
-  rows?: Matcher[]
-  cols?: Matcher[]
-  share_x?: boolean
-  // No `share_y` — it became `Spec.y_axis`, see YAxis below.
-}
+/** The `StyleOptions` fields this reducer's Appearance actions edit. The
+ *  tick settings are null for "fitted" (scistackplot.fit_labels) and a
+ *  value for "fixed". */
+export type StylePatch = Partial<
+  Pick<
+    StyleOptions,
+    'width' | 'height' | 'tick_rotation' | 'tick_every' | 'hide_legend_ticks' | 'not_plotted_note' | 'y_titles'
+  >
+>
 
-/**
- * What the y axis spans, and what separates spans.
- *
- * `scope` names the factors that get their OWN limits. Empty means one range
- * across the whole dataset; naming every panel factor means each panel scales
- * to itself; anything between is the useful middle ("one scale per subject").
- * Only factors that separate panels — iterate and facet — may appear, because
- * a colour or replicate factor lives inside a single panel.
- */
-export interface YAxis {
-  scope?: string[]
-  /** A number, or ISO date text on a datetime axis (`temporal.parse_limit`). */
-  minimum?: number | string | null
-  maximum?: number | string | null
-}
-
-/** The `StyleOptions` fields this panel edits. The tick settings are null
- *  for "fitted" (scistackplot.fit_labels) and a value for "fixed". */
-export interface StylePatch {
-  width?: number
-  height?: number
-  tick_rotation?: number | null
-  tick_every?: number | null
-  hide_legend_ticks?: boolean
-  /** The "Not plotted" footnote under the figure (StyleOptions.not_plotted_note). */
-  not_plotted_note?: boolean
-  /** Which panels draw their y title (StyleOptions.y_titles). */
-  y_titles?: YTitles
-}
-
-/** The spec fields this reducer edits. `PlotStudio`'s `Spec` extends it. */
-export interface PlotSpecFields {
-  kind: string
-  x_measure?: string | null
-  color?: string | null
-  aggregate?: { statistic: string; error: string; pooled?: boolean }
-  cell_statistic?: string
-  show_sample?: string[]
-  join_sample?: boolean | null
-  sample_color?: string | null
-  sample_in_legend?: boolean
-  show_missing_levels?: boolean
-  time_zone?: string
-  histogram?: HistogramOptions
-  regression?: RegressionOptions
-  kde?: KdeOptions
-  categorical?: { stat?: string; level?: string | null }
-  bar?: { stack?: boolean }
-  facet?: FacetOptions
-  y_axis?: YAxis
-  style?: { [key: string]: unknown }
-  aliases?: SpecAliases
-  colors?: SpecColors
-  panel_overrides?: PanelOverride[]
-  difference_bars?: DifferenceBar[]
-  comparison?: Comparison | null
-}
+/** The spec this reducer edits: the generated `PlotSpec`. */
+export type PlotSpecFields = PlotSpec
 
 /** One spec edit. Grouped by the rail group that sends it. */
 export type PlotSpecAction =
@@ -106,7 +58,7 @@ export type PlotSpecAction =
   | { type: 'setXMeasure'; name: string | null }
   | { type: 'setTimeZone'; mode: string }
   // Chart
-  | { type: 'setCategorical'; patch: { stat?: string; level?: string | null } }
+  | { type: 'setCategorical'; patch: CategoricalOptions }
   | { type: 'setBarStack'; stack: boolean }
   | { type: 'setHistogram'; patch: HistogramOptions }
   | { type: 'setKde'; patch: KdeOptions }
@@ -116,8 +68,8 @@ export type PlotSpecAction =
   | { type: 'setFacet'; patch: Partial<FacetOptions> }
   | { type: 'setComparison'; comparison: Comparison | null | undefined }
   // Statistics
-  | { type: 'setCellStatistic'; statistic: string }
-  | { type: 'setAggregate'; patch: { statistic?: string; error?: string; pooled?: boolean } }
+  | { type: 'setCellStatistic'; statistic: Statistic }
+  | { type: 'setAggregate'; patch: Aggregation }
   | { type: 'setShowSample'; name: string; on: boolean }
   | { type: 'setJoinSample'; choice: JoinChoice }
   | { type: 'setSampleColor'; choice: string }

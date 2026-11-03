@@ -17,15 +17,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { addNotificationHandler, callBackend, isVSCodeMode } from '../../api'
 import { DESIGN_CHANGED, designChangeFor, newDesignOrigin } from '../Studio/sharedDesign'
+import type { PlotSpec } from '../../generated/api-types'
 
 interface LinkedInfo { stats_id: string; name: string; version: number }
 
 interface Props {
-  spec: Record<string, unknown> | null
+  spec: PlotSpec | null
   plotId: string | null
   variable: string
   csvPath?: string
-  onApplySpec: (spec: Record<string, unknown>) => void
+  onApplySpec: (spec: PlotSpec) => void
   onDerivedBars: (bars: Record<string, unknown>[]) => void
   buttonStyle: React.CSSProperties
 }
@@ -88,7 +89,7 @@ export default function StatsLink({ spec, plotId, variable, csvPath, onApplySpec
     const current = specRef.current
     if (!change || !current || !plotId) return
     callBackend('design_apply', { plot_id: plotId, spec: current }).then(raw => {
-      const r = raw as { spec: Record<string, unknown>; version: number | null }
+      const r = raw as { spec: PlotSpec; version: number | null }
       console.info('[Plot Studio] shared design taken from StatStudio', { plot: plotId, version: r.version })
       onApplySpec(r.spec)
       setNote(`Design updated from the linked stats table${linked ? ` "${linked.name}"` : ''}.`)

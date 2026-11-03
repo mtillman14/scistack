@@ -65,6 +65,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from scistack_gui.api.handlers import Handler, install_routes
+from scistack_gui.api.spec_params import DifferenceBarParam, PlotSpecParam, VariantSetParam
 from scistack_gui.services import plot_preset_service, plot_service, saved_plot_service
 from scistack_gui.services.client_build import report_client_build
 from scistack_gui.services.client_canvas import report_canvas_refresh
@@ -94,7 +95,7 @@ class DescribeFunctionRequest(BaseModel):
 
 
 class SpecRequest(BaseModel):
-    spec: dict
+    spec: PlotSpecParam
     max_points: int | None = None
     #: Which figure of an ITERATE fan-out to render; None renders all of them.
     figure_index: int | None = None
@@ -106,17 +107,17 @@ class SpecRequest(BaseModel):
     reuse_resolved: bool = False
     #: Bars derived by a layer above (StatStudio test brackets), merged for
     #: this request only through `scistackplot.reduce.diffbars.with_derived_bars`.
-    derived_bars: list[dict] | None = None
+    derived_bars: list[DifferenceBarParam] | None = None
 
 
 class ExportRequest(BaseModel):
-    spec: dict
+    spec: PlotSpecParam
     csv_path: str | None = None
     function_name: str | None = None
     output_variable: str | None = None
     path_template: str | None = None
     finalized: bool | None = True
-    derived_bars: list[dict] | None = None
+    derived_bars: list[DifferenceBarParam] | None = None
 
 
 class VariantGraphRequest(BaseModel):
@@ -160,7 +161,7 @@ class LocationTreeRequest(BaseModel):
 
 
 class SaveRequest(BaseModel):
-    spec: dict
+    spec: PlotSpecParam
     path: str
     dpi: int | None = 200
     #: Which figure of an ITERATE fan-out to save; None saves all of them.
@@ -180,12 +181,12 @@ class SaveRequest(BaseModel):
     depth: str | None = None
     #: For "data": one column per struct field (default) or a ColName column.
     fields_as_columns: bool | None = True
-    derived_bars: list[dict] | None = None
+    derived_bars: list[DifferenceBarParam] | None = None
 
 
 class VariantSetsRequest(BaseModel):
     variable: str
-    variant_sets: list[dict] | None = None
+    variant_sets: list[VariantSetParam] | None = None
 
 
 class SavedListRequest(BaseModel):
@@ -195,7 +196,7 @@ class SavedListRequest(BaseModel):
 class SavedSaveRequest(BaseModel):
     variable: str
     name: str
-    spec: dict
+    spec: PlotSpecParam
     #: The panel's own view settings (preview mode, aspect choice, figure
     #: index), stored verbatim; the frontend owns their meaning.
     view: dict | None = None
@@ -265,7 +266,7 @@ class PresetListRequest(BaseModel):
 class PresetSaveRequest(BaseModel):
     name: str
     #: The panel's full spec; the data is taken out by scistackplot.model.presets.
-    spec: dict
+    spec: PlotSpecParam
     #: The panel's raw shape, recorded as "made on ... (shape)".
     made_on_shape: str | None = None
     overwrite: bool | None = True
@@ -275,7 +276,7 @@ class PresetSaveRequest(BaseModel):
 class PresetApplyRequest(BaseModel):
     preset_id: str
     #: The panel's CURRENT spec: its data and variable text are kept.
-    spec: dict
+    spec: PlotSpecParam
     version: int | None = None
 
 
@@ -592,7 +593,7 @@ class DesignRequest(BaseModel):
     """A linked figure + table's shared design (scistackplotdb.designs)."""
 
     plot_id: str
-    spec: dict
+    spec: PlotSpecParam
 
 
 def _design_update(db, req: DesignRequest) -> dict:

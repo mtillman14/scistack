@@ -276,17 +276,22 @@ class ComparisonPlan:
     scale: float = 1.0
 
     def key_columns(self, frame: pd.DataFrame, index_column: str | None) -> list[str]:
-        """What one baseline value is keyed by, among ``frame``'s columns:
-        every factor except the reference layer, and (per summary) except the
-        sample keys, plus a 1-D measure's position."""
+        """What one baseline value is keyed by, among ``frame``'s columns."""
+        return self.keys_among(list(frame.columns), index_column)
+
+    def keys_among(self, columns: list[str], index_column: str | None) -> list[str]:
+        """THE key rule, over a list of column names (the exported code knows
+        its columns when it is generated): every factor except the reference
+        layer, and (per summary) except the sample keys, plus a 1-D measure's
+        position."""
         keys = [
             name
             for name in self.factors
-            if name in frame.columns
+            if name in columns
             and name != self.layer
             and (self.paired or name not in self.sample)
         ]
-        if index_column and index_column in frame.columns and index_column not in keys:
+        if index_column and index_column in columns and index_column not in keys:
             keys.append(index_column)
         return keys
 

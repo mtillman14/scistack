@@ -45,3 +45,25 @@ test(
     )
   }
 )
+
+/** The spec types are generated from the backend's wire models
+ *  (scistack_gui.api.spec_wire). A hand-written twin of one would drift from
+ *  `to_dict` again, so these files may only re-export them. */
+test('the spec types are not hand-written again', () => {
+  const twins: [string, RegExp][] = [
+    [join(root, 'src', 'components', 'StatStudio', 'statsSpec.ts'), /\binterface (StatsSpec|Analysis|DV|CovariateBinding|Formatting|Overlay|GuideState)\b/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'PlotStudio.tsx'), /\binterface (CustomPlotSpec|Spec|FactorVariable|Filter|VariantSet)\b|^type Role = '/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'plotSpecReducer.ts'), /\binterface (PlotSpecFields|FacetOptions|YAxis|Matcher|StylePatch)\b|^export type MatchOp = '/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'continuousKinds.ts'), /\binterface (HistogramOptions|RegressionOptions|KdeOptions)\b|^export type (BinMode|HistStat|HistMultiple|FitBy|StatsCorner) = '/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'compare.ts'), /\binterface Comparison\b|^export type CompareMode = '/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'differenceBars.ts'), /\binterface DifferenceBar\b/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'panelOverrides.ts'), /\binterface PanelOverride\b|^export type YTitles = '/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'combine.ts'), /\binterface LevelGroup\b/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'aliasEdit.ts'), /\binterface AliasEntry\b/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'kindTiles.ts'), /^export type TileRole = '/m],
+    [join(root, 'src', 'components', 'PlotStudio', 'locationSelection.ts'), /^export type Role = '/m],
+  ]
+  for (const [file, pattern] of twins) {
+    assert.doesNotMatch(readFileSync(file, 'utf8'), pattern, `${file} declares a spec type by hand`)
+  }
+})

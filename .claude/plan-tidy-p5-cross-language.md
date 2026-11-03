@@ -242,6 +242,8 @@ pandas/seaborn text (16 `groupby` sites). `reduce.py` has 8.
   (pydantic wire models, or a hand walker that mirrors `to_dict`); (c) the
   typed `callBackend` overload and the `statsSpec.ts`/`CustomPlotSpec`
   replacements (need the generated file to compile against).
+  **2026-11-02:** (b) decided: pydantic wire models in
+  `scistack_gui/api/spec_wire.py`; see `plan-p5-stage5-spec-wire-models.md`.
 - **Stage 6 started (2026-11-02): one step type migrated.**
   `scistackplot/reduce/reduction.py` (`ReductionPlan`, `LocationMask`,
   `ValueFilter`, `filter_steps`); `export/reduction_code.py` (one emitter per
@@ -254,6 +256,63 @@ pandas/seaborn text (16 `groupby` sites). `reduce.py` has 8.
   does the same. Test: `scistackplot/tests/test_reduction_code.py`. Not
   migrated: cell collapse, categorical, level groups, the collapse chain
   (`groupby` sites), compare, bins.
+- **Stage 6, step type 2: combines (2026-11-02, untested).**
+  `reduction.CombineLevels` (`of` owns the effective mapping, `skip_reason`,
+  `apply`, `declared_levels`); `groups.combine_steps`; `apply_level_groups`
+  applies the step; `reduction_code.emit_combine` prints it; the figure's
+  `reduction` records the combines, then the filters. `groups.effective_mapping`
+  is removed (its rule moved into `CombineLevels.of`). Export bugs fixed by
+  the move: a missing source column raised `KeyError` (the preview skipped
+  it); a combine named after an existing column overwrote it (the preview
+  skipped it); and the export combined AFTER the categorical rewrite and the
+  value filters, while the preview combines before both, so a filter on a
+  combined factor kept every level in the export. The step is now printed
+  where the preview applies it, before the 1-D cell collapse. Tests:
+  `scistackplot/tests/test_reduction_combine.py`; `test_groups.py`
+  `test_generated_code_reproduces_the_bucketing` now requires the step's exact
+  lines. Next: cell collapse, categorical, the collapse chain, compare,
+  bins.
+- **Stage 6 finished (2026-11-02, untested; pyright: no new errors).**
+  - **Cell collapse:** `reduction.CollapseCells`, built by
+    `cell.collapse_step`; `apply_cell_collapse` applies it;
+    `emit_collapse_cells` prints it. Export bugs fixed:
+    - a non-array cell had no samples (NaN) in the preview but was its own
+      vector in the export;
+    - a text array was a NaN gap in the preview and raised in the export;
+    - a pre-exploded measure was regrouped in the preview and left one row
+      per sample in the export.
+
+    `codegen._slug` moved to `reduction_code.identifier`, its one owner.
+  - **Categorical rewrite:** `reduction.CategoricalRewrite`;
+    `categorical.categorical_step` makes every choice (level order, record
+    filters, the stated pairs). `categorical_code`, `_one_hot`,
+    `_category_positions` and `_record_mask` are removed. Bug fixed: the
+    export took the category order from the declared levels only, so
+    undeclared categories were NaN. The export's location mask now follows
+    the rewrite, as in the preview (the same rows either way).
+  - **Compare:** `compare.ComparisonPlan` is the step, and its key rule is
+    `keys_among` (`key_columns` reads it). `codegen._compare_lines` moved to
+    `reduction_code.emit_compare`. Bug fixed: the reference level is spelled
+    as `panel_key_text` spells it, not `pd.isna`.
+  - **Collapse chain:** `reduction.CollapseLevels` plus `reduce/chain.py`
+    (`collapse_passes`, the one planner); `resolve._collapse_levels` applies
+    the passes; codegen prints them for the marks and the overlay
+    (`emit_collapse_levels`). Bugs fixed:
+    - missing levels were dropped in the export (`dropna`);
+    - `groupby([])` raised in the export;
+    - a text measure's `final` keys and its overlay now pool as in the
+      preview.
+
+    Preview change: a pass reduces the y and x measures only (before:
+    every name in `spec.measures`, which only ever holds one).
+  - **Bins:** not a step. `bins.py`'s rules are source text the preview
+    runs and the export embeds verbatim (`EDGES_SOURCE` / `BARS_SOURCE`).
+  - **Recorded plan:** `_Plan.reduction` holds the shared steps (combines,
+    cell collapse, categorical, filters). Each figure appends its own (the
+    chain's pre passes, the comparison, the final passes;
+    `_with_plan_steps`).
+  - **Tests:** `test_reduction_{collapse_cells,categorical,compare,collapse_levels}.py`;
+    `test_show_sample_codegen.py` pins the new groupby line.
 
 User commands (one package per invocation):
 

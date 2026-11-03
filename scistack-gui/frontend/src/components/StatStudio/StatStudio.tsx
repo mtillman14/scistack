@@ -41,17 +41,18 @@ import { clampToBlocked, currentStep, type GuidePayload } from './Guided/guideSt
 import ModelFormulaDialog from './ModelFormulaDialog'
 import { pendingActions, recommendedFor, type StratumSummary } from './statsActions'
 import {
-  addAnalysis, addDV, computeKey, guideState, removeAnalysis, removeDV, setCell, setFormatting,
+  addAnalysis, addDV, analyses, computeKey, guideState, removeAnalysis, removeDV, setCell, setFormatting,
   setGuide, setOverlay, setOverride, targets, toggleStatistic, updateAnalysis,
-  type Analysis, type Grid, type StatsSpec,
+  type Analysis, type DescriptiveCell, type FactorKind, type Grid, type Overlay, type StatsSpec,
 } from './statsSpec'
+import type { PlotSpec } from '../../generated/api-types'
 
 export interface StatViewConfig {
   view: 'stat'
   variable?: string | null
   csvPath?: string | null
   statsId?: string | null
-  seed?: Record<string, unknown> | null
+  seed?: PlotSpec | null
   linkedPlot?: string | null
   /** Which way in (Studio/studioOpen.ts), logged once. */
   from?: string | null
@@ -429,7 +430,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
 
   // Plot Studio's design rail edits the design carrier; this tab owns it.
   const onDesign = useCallback((design: Record<string, unknown>) => {
-    setSpec(prev => (prev ? { ...prev, design: design as StatsSpec['design'] } : prev))
+    setSpec(prev => (prev ? { ...prev, design: design as unknown as StatsSpec['design'] } : prev))
   }, [])
   const onDescribe = useCallback((d: { catalog?: { measures?: { name: string; columns?: string[] }[] } }) => {
     setVariables(d.catalog?.measures ?? [])
@@ -439,7 +440,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   if (!spec) return <div style={{ ...plotThemeVars(theme), ...styles.root }}><div style={styles.muted}>Opening StatStudio…</div></div>
 
   const catalog = result?.catalog
-  const firstAnalysis = spec.comparisons[0]
+  const firstAnalysis = analyses(spec)[0]
   const readout = result?.readout ?? []
   // Decisions the user must make before comparisons run (Stage F).
   const actions = pendingActions(result?.comparisons)
@@ -615,10 +616,10 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
       <div key={a.id} style={styles.analysis}>
         <div style={styles.row}>
           <b>{a.id}</b>
-          <select value={a.family} onChange={e => patch({ family: e.target.value })} style={styles.select}>
+          <select value={a.family} onChange={e => patch({ family: e.target.value as Analysis['family'] })} style={styles.select}>
             {(catalog?.families ?? ['auto', 'parametric', 'nonparametric']).map(f => <option key={f} value={f}>{catalog?.family_labels?.[f] ?? f}</option>)}
           </select>
-          {spec.comparisons.length > 1 && (
+          {analyses(spec).length > 1 && (
             <button type="button" style={styles.smallButton} onClick={() => setSpec(removeAnalysis(spec, a.id))}>✕</button>
           )}
         </div>
@@ -647,7 +648,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
               <code style={styles.formula} title={model?.errors.length ? model.errors.map(e => e.message).join('; ') : shown}>
                 {targets(spec)[0]?.variable} ~ {shown}
               </code>
-              <button type="button" style={styles.smallButton} onClick={() => setFormulaFor(a.id)}
+              <button type="button" style={styles.smallButton} onClick={() => setFormulaFor(a.id ?? null)}
                       title="Covariates and custom random effects, as an lme4 formula">
                 Model formula…
               </button>
@@ -656,7 +657,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
           )
         })()}
         <div style={styles.field}>Missing data
-          <select value={a.missing ?? 'use_all'} onChange={e => patch({ missing: e.target.value })} style={styles.select}
+          <select value={a.missing ?? 'use_all'} onChange={e => patch({ missing: e.target.value as Analysis['missing'] })} style={styles.select}
                   title="Recorded with the analysis and stated in every caption">
             {(catalog?.missing_policies ?? [{ id: 'use_all', label: 'Use every observation' }, { id: 'complete_cases', label: 'Complete cases only' }])
               .map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
@@ -683,7 +684,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
           </select>
         </div>
         <div style={styles.field}>Family
-          <select value={a.family_scope ?? 'stratum'} onChange={e => patch({ family_scope: e.target.value })} style={styles.select}>
+          <select value={a.family_scope ?? 'stratum'} onChange={e => patch({ family_scope: e.target.value as Analysis['family_scope'] })} style={styles.select}>
             {(catalog?.scopes ?? []).map(s => <option key={s.id} value={s.id}>{s.id === 'none' ? 'none' : `within each ${s.label}`}</option>)}
           </select>
         </div>
@@ -694,7 +695,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
           </select>
         </div>
         <div style={styles.field}>Difference spread
-          <select value={a.difference_spread ?? 'ci'} onChange={e => patch({ difference_spread: e.target.value })} style={styles.select}>
+          <select value={a.difference_spread ?? 'ci'} onChange={e => patch({ difference_spread: e.target.value as Analysis['difference_spread'] })} style={styles.select}>
             {(catalog?.spreads ?? ['ci', 'se', 'sd_diff']).map(s => <option key={s} value={s}>{{ ci: 'CI of the difference', se: 'SE of the difference', sd_diff: 'SD of the differences (paired)' }[s] ?? s}</option>)}
           </select>
         </div>
@@ -735,7 +736,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             variable={designVariable}
             csvPath={csvPath}
             onClose={() => undefined}
-            design={{ spec: spec.design, onChange: onDesign, roleLabels, between: measuresGroup, onDescribe }}
+            design={{ spec: spec.design as unknown as Record<string, unknown>, onChange: onDesign, roleLabels, between: measuresGroup, onDescribe }}
           />
         )}
 
@@ -743,18 +744,18 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
           title="Statistics"
           open={openGroups.statistics}
           onToggle={() => toggleGroup('statistics')}
-          summary={`${spec.descriptives.cell}; ${spec.comparisons.length} analysis(es)`}
+          summary={`${spec.descriptives?.cell ?? ''}; ${analyses(spec).length} analysis(es)`}
         >
           <Section title="Descriptives">
             <div style={styles.field}>Cell
-              <select value={spec.descriptives.cell} onChange={e => setSpec(setCell(spec, e.target.value))} style={styles.select}>
+              <select value={spec.descriptives?.cell} onChange={e => setSpec(setCell(spec, e.target.value as DescriptiveCell))} style={styles.select}>
                 {(catalog?.cells ?? []).map(c => <option key={c.id} value={c.id}>{c.header}</option>)}
               </select>
             </div>
             <div style={styles.statGrid}>
               {(catalog?.statistics ?? []).map(s => (
                 <label key={s.id} style={styles.check}>
-                  <input type="checkbox" checked={spec.descriptives.statistics.includes(s.id)}
+                  <input type="checkbox" checked={(spec.descriptives?.statistics ?? []).includes(s.id)}
                          onChange={() => setSpec(toggleStatistic(spec, s.id, (catalog?.statistics ?? []).map(x => x.id)))} /> {s.label}
                 </label>
               ))}
@@ -774,7 +775,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
                     </span>
                     {firstAnalysis && (
                       <select value={firstAnalysis.overrides?.[f.name] ?? ''} style={styles.select}
-                              onChange={e => setSpec(setOverride(spec, firstAnalysis.id, f.name, e.target.value || null))}>
+                              onChange={e => setSpec(setOverride(spec, firstAnalysis.id, f.name, (e.target.value || null) as FactorKind | null))}>
                         <option value="">derived ({f.derived})</option>
                         <option value="within">within</option>
                         <option value="between">between</option>
@@ -786,7 +787,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
               </div>
             ))}
             <div style={styles.field}>Variants
-              <select value={spec.variant_mode} onChange={e => setSpec({ ...spec, variant_mode: e.target.value })} style={styles.select}
+              <select value={spec.variant_mode} onChange={e => setSpec({ ...spec, variant_mode: e.target.value as StatsSpec['variant_mode'] })} style={styles.select}
                       title="Sweep: every variant analysed separately, with a specification curve on the Comparisons tab">
                 {(catalog?.variant_modes ?? ['pinned', 'sweep']).map(m => <option key={m} value={m}>{m === 'sweep' ? 'Sweep every variant' : 'Pinned (the design\'s selection)'}</option>)}
               </select>
@@ -794,7 +795,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
           </Section>
 
           <Section title="Comparisons">
-            {spec.comparisons.map(analysisEditor)}
+            {analyses(spec).map(analysisEditor)}
             <button type="button" style={styles.smallButton} onClick={() => setSpec(addAnalysis(spec))}>+ Analysis</button>
           </Section>
         </Group>
@@ -825,12 +826,12 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             <Section title="Brackets on the figure">
               <label style={styles.check}><input type="checkbox" checked={!!spec.overlay?.show} onChange={e => setSpec(setOverlay(spec, { show: e.target.checked }))} /> Draw test brackets on the linked figure</label>
               <div style={styles.field}>Pairs
-                <select value={spec.overlay?.pairs ?? 'significant'} onChange={e => setSpec(setOverlay(spec, { pairs: e.target.value }))} style={styles.select}>
+                <select value={spec.overlay?.pairs ?? 'significant'} onChange={e => setSpec(setOverlay(spec, { pairs: e.target.value as Overlay['pairs'] }))} style={styles.select}>
                   {(catalog?.bar_pairs ?? []).map(p => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <div style={styles.field}>Label
-                <select value={spec.overlay?.label ?? 'stars'} onChange={e => setSpec(setOverlay(spec, { label: e.target.value }))} style={styles.select}>
+                <select value={spec.overlay?.label ?? 'stars'} onChange={e => setSpec(setOverlay(spec, { label: e.target.value as Overlay['label'] }))} style={styles.select}>
                   {(catalog?.bar_labels ?? []).map(p => <option key={p} value={p}>{p === 'p' ? 'adjusted p' : 'stars'}</option>)}
                 </select>
               </div>
@@ -891,7 +892,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
         {result?.refusals.map((r, i) => <div key={i} style={styles.warn}>{r.dv}: {r.reason}</div>)}
         {tab === 'descriptives' && result?.descriptives.map((g, i) => <GridTable key={i} grid={g} />)}
         {tab === 'comparisons' && (
-          spec.comparisons.length === 0
+          analyses(spec).length === 0
             ? <div style={styles.muted}>No analyses: add one in the rail.</div>
             : result?.comparisons.map(c => (
               <div key={c.id}>

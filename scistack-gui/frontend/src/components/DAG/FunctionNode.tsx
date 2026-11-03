@@ -27,6 +27,7 @@ import { inputPorts, optionalPorts, OPTIONAL_ARGS_ATTR } from './inputPorts'
 import type { OptionalPort } from './inputPorts'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { describeOutputHandle } from '../Sidebar/columnGroups'
+import type { WhereFilterSpec } from '../../generated/api-types'
 
 interface FnVariantRow {
   constants: Record<string, unknown>
@@ -255,7 +256,7 @@ function PipelineFunctionNode({ id, data }: Props) {
       }
     }
 
-    const wf = (data as unknown as Record<string, unknown>).whereFilters as unknown[] | undefined
+    const wf = (data as unknown as Record<string, unknown>).whereFilters as WhereFilterSpec[] | undefined
     try {
       await callBackend('start_run', {
         function_name: data.label,

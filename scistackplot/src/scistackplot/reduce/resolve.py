@@ -95,7 +95,7 @@ from ..model.table import LongTable, natural_sort_key
 from ..text.xaxis import LEAF_SEPARATOR, XPlan, plan_x_axis
 from .spaghetti import overlay_offsets, series_offsets
 from .reducer import reducer_for
-from .reduction import ValueFilter, filter_steps
+from .reduction import ReductionPlan, ValueFilter, filter_steps
 from .diffbars import figure_has_bars, log_figure as log_difference_bars
 from .compare import (
     ComparisonPlan,
@@ -107,14 +107,22 @@ from .compare import (
 )
 from .panels import override_for, panel_key_text, unmatched
 from .ylimits import ExtentMode, eligible_scope, limits_for, panel_factors, spread_bounds
-from .groups import apply_level_groups
-from .cell import all_nan_warning, apply_cell_collapse, cell_collapse_note, cell_collapses
+from .groups import apply_level_groups, combine_steps
+from .cell import (
+    all_nan_warning,
+    apply_cell_collapse,
+    cell_collapse_note,
+    cell_collapses,
+    collapse_step,
+)
 from .categorical import (
     CATEGORICAL_KINDS,
     apply_categorical,
     categorical_mode,
+    categorical_step,
     pooled_reduction,
 )
+from .chain import collapse_passes
 from .temporal import LOG_REASON, apply_temporal, apply_temporal_x
 from .variants import apply_variant_sets, strip_answered_roles
 
@@ -413,6 +421,7 @@ def resolve(
         for figure in figures:
             figure.fanout_notes = plan.notes
             figure.data_warnings = plan.data_warnings
+            figure.reduction = _with_plan_steps(plan, figure)
             _attach_temporal(figure, plan)
             _attach_categories(figure, plan)
         for position, figure in enumerate(figures):
@@ -480,6 +489,11 @@ class _Plan:
     #: ``cell.all_nan_warning`` over ``frame``. On the plan, not computed per
     #: figure, so a plan-cache HIT still carries it to every figure.
     data_warnings: list[str] = field(default_factory=list)
+    #: The reduction steps the rows went through, in the order applied
+    #: (``reduction.ReductionPlan``): combines, the cell collapse, the
+    #: categorical rewrite, then the filters. Codegen prints the same steps;
+    #: every figure carries them.
+    reduction: ReductionPlan = field(default_factory=ReductionPlan)
     #: ``{scope values: (low, high)}`` for the WHOLE fan-out, computed here
     #: rather than per figure — a scope of ``[]`` means one range across every
     #: figure, including the ones ``resolve_one`` never builds. Computed off the
@@ -716,6 +730,7 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         # carry it: a violin of trial means and a violin of raw samples look
         # identical and mean entirely different things.
         collapsed_note = cell_collapse_note(spec, table)
+        collapse = collapse_step(spec, table)
         table = apply_cell_collapse(spec, table)
     # The fifth derived table: a text measure becomes numbers — one-hot
     # counts / proportions with a `Level` factor, or category positions
@@ -724,6 +739,7 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
     # a scalar measure. It also returns the SPEC: a filter on the text
     # measure filters records here, before the rewrite, and is consumed.
     with timer.phase("categorical"):
+        rewrite = categorical_step(spec, table)
         spec, table = apply_categorical(spec, table)
     # The fourth derived table: a datetime measure becomes wall-clock ms in
     # the spec's time zone mode (scistackplot.reduce.temporal). Before `validate` and
@@ -828,6 +844,16 @@ def _build_plan_timed(spec: PlotSpec, table: LongTable, timer) -> _Plan:
         temporal=temporal_axis,
         temporal_x=temporal_x,
         data_warnings=[warning] if (warning := all_nan_warning(frame, y_measure)) else [],
+        # The spec here is the one `apply_filters` read: a categorical rewrite
+        # has already consumed a filter on the text measure.
+        reduction=ReductionPlan(
+            (
+                *combine_steps(spec).steps,
+                *([collapse] if collapse is not None else []),
+                *([rewrite] if rewrite is not None else []),
+                *filter_steps(spec).steps,
+            )
+        ),
         groups=groups,
         frame=frame,
         y_scope=eligible_scope(spec.y_axis.scope, roles, table),
@@ -909,6 +935,7 @@ def resolve_one(
         )
         figure.fanout_notes = plan.notes
         figure.data_warnings = plan.data_warnings
+        figure.reduction = _with_plan_steps(plan, figure)
         _attach_temporal(figure, plan)
         _attach_categories(figure, plan)
         siblings = _difference_sibling_indices(plan, position)
@@ -1241,45 +1268,25 @@ def _collapse_levels(
     the one function every chain runs through, so the marks, the overlay,
     the y limits and "Save data" cannot pool one way and draw another.
     """
-    if not keys:
-        return frame
-    reduction = pooled_reduction(spec, table)
-    if reduction is not None:
-        pooled = True
-    how = reduction or "mean"
-    measures = [
-        m for m in dict.fromkeys([*spec.measures, spec.x_measure]) if m and m in frame.columns
-    ]
-    factor_columns = [name for name in table.factor_names if name in frame.columns]
-    present = [key for key in keys if key in frame.columns]
+    passes = collapse_passes(keys, spec, table, index_column, pooled=pooled)
+    text_reduction = pooled_reduction(spec, table)
     for key in keys:
-        if key not in present:
+        if key not in frame.columns:
             Log.debug("collapse %s: not in the frame, nothing to do", key, layer=LAYER)
-    if not present:
-        return frame
-    # One pass per key (nested), or one pass dropping them all (pooled).
-    passes = [[key] for key in present] if not pooled else [present]
-    for dropped in passes:
-        keep = [name for name in factor_columns if name not in dropped and name in frame.columns]
-        if index_column and index_column in frame.columns:
-            keep.append(index_column)
+    for step in passes:
+        if not step.applies_to(frame.columns):
+            continue
         before = len(frame)
-        if keep:
-            frame = (
-                frame.groupby(keep, dropna=False, sort=False)[measures]
-                .agg(how)
-                .reset_index()
-            )
-        else:
-            # Everything collapses to a single value.
-            frame = frame[measures].agg(how).to_frame().T
+        keep = step.keep_among(frame.columns)
+        # The rule is the step's (reduction.CollapseLevels); codegen prints it.
+        frame = step.apply(frame)
         Log.debug(
             "collapse %s within %s: %d -> %d row(s)%s",
-            " x ".join(dropped) + (" (pooled)" if pooled else ""),
+            " x ".join(step.dropped) + (" (pooled)" if len(step.dropped) > 1 else ""),
             keep or "nothing",
             before,
             len(frame),
-            f" ({how} of a text measure's indicators)" if reduction else "",
+            f" ({step.how} of a text measure's indicators)" if text_reduction else "",
             layer=LAYER,
         )
     return frame
@@ -1324,6 +1331,13 @@ def _figure_label(figure_key: dict[str, Any]) -> str:
     produces, available before the figure exists so the log can name what it is
     working on rather than what it finished."""
     return ", ".join(f"{k}={v}" for k, v in figure_key.items())
+
+
+def _with_plan_steps(plan: _Plan, figure: ResolvedPlot) -> ReductionPlan:
+    """The figure's whole reduction: the plan's shared steps (combines, cell
+    collapse, categorical rewrite, filters), then the figure's own (its
+    comparison)."""
+    return ReductionPlan((*plan.reduction.steps, *figure.reduction.steps))
 
 
 def _build_figure(
@@ -1864,10 +1878,6 @@ def _build_figure(
             sample_join_reason=join.reason if join is not None else "",
             sample_offsets=sample_offsets,
             text=figure_text,
-            # The filtering steps this figure was built with (the spec here is
-            # the one `apply_filters` read: a categorical rewrite has already
-            # consumed a filter on the text measure).
-            reduction=filter_steps(spec),
             # The colour pins (`colors`), told which factor paints the marks
             # and which the overlay; `render.base.palette_for` reads them.
             colors=(colors or mark_colors(spec, table)).for_figure(
@@ -1892,6 +1902,17 @@ def _build_figure(
                 comparison_meta(comparison, comparison_outcome)
                 if comparison is not None
                 else None
+            ),
+            # This figure's own steps, in the order applied: the collapse
+            # chain's pre passes, the comparison, the final passes. The plan's
+            # shared steps go in front once the figure is built
+            # (`_with_plan_steps`).
+            reduction=ReductionPlan(
+                (
+                    *collapse_passes(steps.pre, spec, table, index_column),
+                    *((comparison,) if comparison is not None else ()),
+                    *collapse_passes(steps.final, spec, table, index_column),
+                )
             ),
             bins=figure_bins,
             kde_range=kde_range,

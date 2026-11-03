@@ -1,8 +1,9 @@
 """A text measure's exported plot function draws what the preview draws.
 
 The generated code receives the RAW table (text) and has to make the same
-numbers ``categorical.apply_categorical`` made — emitted by its owner
-(``categorical.categorical_code``) — and pool the same way
+numbers ``categorical.apply_categorical`` made — the same step
+(``reduction.CategoricalRewrite``, printed by
+``reduction_code.emit_categorical``) — and pool the same way
 (``reduce._collapse_levels``). Each test runs the generated function and
 reads the drawn bars / ticks / matrix back off the matplotlib figure.
 """

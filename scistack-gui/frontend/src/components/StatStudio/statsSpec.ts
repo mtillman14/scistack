@@ -8,81 +8,34 @@
  * nothing about statistics is decided here.
  */
 
-export interface DV {
-  variable: string
-  columns?: string[]
-}
+/**
+ * The spec types are GENERATED from the backend (scistack_gui.api.spec_wire,
+ * the wire shape of StatsSpec.to_dict()): the backend owns them. The aliases
+ * keep the names this module has always exported.
+ */
+import type {
+  Analysis,
+  DV,
+  DescriptiveSpec,
+  FactorVariable,
+  FormatSpec,
+  GuideState,
+  OverlaySpec,
+  Role,
+  StatsSpec,
+} from '../../generated/api-types.js'
 
-export interface Analysis {
-  id: string
-  family: string
-  omnibus?: boolean
-  pairwise?: boolean
-  omnibus_test?: string
-  pairwise_test?: string
-  equal_var?: boolean
-  alpha?: number
-  ci_level?: number
-  tails?: string
-  correction?: string
-  family_scope?: string
-  effect_size?: string
-  difference_spread?: string
-  overrides?: Record<string, string>
-  /** "use_all" (default) or "complete_cases": recorded and stated in every caption. */
-  missing?: string
-  /** The mixed model's right side, lme4 spelling (scistackstats.model). Absent
-   *  = the default from the design. Written only through the Model formula
-   *  popup's Apply (`stats_formula_apply`), never assembled here. */
-  formula?: string
-  /** Picked covariates (`FactorVariable.to_dict()`), named in the formula by column. */
-  covariates?: CovariateBinding[]
-}
-
+export type { Analysis, DV, DescriptiveSpec, FormatSpec, GuideState, Role, StatsSpec }
 /** A picked covariate. Its NAME in the formula is the backend's
  *  (`FactorVariable.factor_name`, returned by `stats_formula_check` as
  *  `offers.covariates`); the webview never derives it. */
-export interface CovariateBinding {
-  variable: string
-  column: string | null
-  variant: Record<string, unknown>
-}
-
-export interface Formatting {
-  decimals?: number
-  p_decimals?: number
-  effect_decimals?: number
-  stars?: boolean
-}
-
-export interface Overlay {
-  show?: boolean
-  analysis?: string
-  pairs?: string
-  label?: string
-  hidden?: string[]
-}
-
-export interface StatsSpec {
-  format: number
-  design: Record<string, unknown> & { measures?: string[]; roles?: Record<string, string>; groups?: string[] }
-  dvs: DV[]
-  linked_plot?: string
-  descriptives: { cell: string; statistics: string[] }
-  comparisons: Analysis[]
-  variant_mode: string
-  formatting?: Formatting
-  overlay?: Overlay
-  /** The view the table was last used in and the wizard's progress
-   *  (scistackstats.spec.GuideState). Display only: compute ignores it. */
-  guide?: GuideState
-}
-
-export interface GuideState {
-  mode: 'guided' | 'advanced'
-  step?: string
-  done: string[]
-}
+export type CovariateBinding = FactorVariable
+export type Formatting = FormatSpec
+export type Overlay = OverlaySpec
+/** A Descriptives cell layout (scistackstats CELLS). */
+export type DescriptiveCell = NonNullable<DescriptiveSpec['cell']>
+/** How an analysis treats a factor: within or between (scistackstats FACTOR_KINDS). */
+export type FactorKind = NonNullable<Analysis['overrides']>[string]
 
 export interface GridCell { text: string; span: number }
 export interface GridRow { cells: string[]; kind: string }
@@ -95,11 +48,17 @@ export interface Grid {
   label_columns: number
 }
 
+/** The analyses on the Comparisons tab. Absent until one is added (the
+ *  backend writes the list on every spec it sends). */
+export function analyses(spec: StatsSpec): Analysis[] {
+  return spec.comparisons ?? []
+}
+
 // --- DVs ---------------------------------------------------------------------
 
 /** The DVs a spec analyses: its own list, or the design's plotted variable. */
 export function targets(spec: StatsSpec): DV[] {
-  if (spec.dvs.length) return spec.dvs
+  if (spec.dvs?.length) return spec.dvs
   const first = spec.design.measures?.[0]
   return first ? [{ variable: first }] : []
 }
@@ -122,7 +81,7 @@ export function removeDV(spec: StatsSpec, index: number): StatsSpec {
 // --- design (roles and grouping order) ---------------------------------------
 
 /** Set a factor's role in the design carrier. Grouping order keeps GROUP holders only. */
-export function setRole(spec: StatsSpec, factor: string, role: string): StatsSpec {
+export function setRole(spec: StatsSpec, factor: string, role: Role): StatsSpec {
   const roles = { ...(spec.design.roles ?? {}), [factor]: role }
   let groups = (spec.design.groups ?? []).filter(g => roles[g] === 'group')
   if (role === 'group' && !groups.includes(factor)) groups = [...groups, factor]
@@ -170,8 +129,11 @@ export function excludeLevel(spec: StatsSpec, factor: string, level: string): St
 
 // --- the wizard's view state ---------------------------------------------------
 
-export function guideState(spec: StatsSpec): GuideState {
-  return spec.guide ?? { mode: 'advanced', done: [] }
+/** The view state with its two always-meaningful fields filled: a spec
+ *  without one opens in "advanced" with nothing done (scistackstats GuideState). */
+export function guideState(spec: StatsSpec): GuideState & Required<Pick<GuideState, 'mode' | 'done'>> {
+  const guide = spec.guide ?? {}
+  return { ...guide, mode: guide.mode ?? 'advanced', done: guide.done ?? [] }
 }
 
 export function setGuide(spec: StatsSpec, patch: Partial<GuideState>): StatsSpec {
@@ -187,13 +149,13 @@ export function computeKey(spec: StatsSpec): string {
 
 // --- descriptives ------------------------------------------------------------
 
-export function setCell(spec: StatsSpec, cell: string): StatsSpec {
+export function setCell(spec: StatsSpec, cell: DescriptiveCell): StatsSpec {
   return { ...spec, descriptives: { ...spec.descriptives, cell } }
 }
 
 /** Toggle a statistic row, keeping the catalog's order (`order`). */
 export function toggleStatistic(spec: StatsSpec, id: string, order: string[]): StatsSpec {
-  const on = new Set(spec.descriptives.statistics)
+  const on = new Set(spec.descriptives?.statistics ?? [])
   if (on.has(id)) on.delete(id)
   else on.add(id)
   return { ...spec, descriptives: { ...spec.descriptives, statistics: order.filter(s => on.has(s)) } }
@@ -202,25 +164,25 @@ export function toggleStatistic(spec: StatsSpec, id: string, order: string[]): S
 // --- analyses ----------------------------------------------------------------
 
 export function nextAnalysisId(spec: StatsSpec): string {
-  const taken = new Set(spec.comparisons.map(a => a.id))
-  let n = spec.comparisons.length + 1
+  const taken = new Set(analyses(spec).map(a => a.id))
+  let n = analyses(spec).length + 1
   while (taken.has(`a${n}`)) n += 1
   return `a${n}`
 }
 
-export function addAnalysis(spec: StatsSpec, family = 'auto'): StatsSpec {
-  return { ...spec, comparisons: [...spec.comparisons, { id: nextAnalysisId(spec), family }] }
+export function addAnalysis(spec: StatsSpec, family: Analysis['family'] = 'auto'): StatsSpec {
+  return { ...spec, comparisons: [...analyses(spec), { id: nextAnalysisId(spec), family }] }
 }
 
-export function removeAnalysis(spec: StatsSpec, id: string): StatsSpec {
-  return { ...spec, comparisons: spec.comparisons.filter(a => a.id !== id) }
+export function removeAnalysis(spec: StatsSpec, id: Analysis['id']): StatsSpec {
+  return { ...spec, comparisons: analyses(spec).filter(a => a.id !== id) }
 }
 
 /** Patch one analysis. A field set to `undefined` is removed (the backend default). */
-export function updateAnalysis(spec: StatsSpec, id: string, patch: Partial<Analysis>): StatsSpec {
+export function updateAnalysis(spec: StatsSpec, id: Analysis['id'], patch: Partial<Analysis>): StatsSpec {
   return {
     ...spec,
-    comparisons: spec.comparisons.map(a => {
+    comparisons: analyses(spec).map(a => {
       if (a.id !== id) return a
       const next: Record<string, unknown> = { ...a, ...patch }
       for (const [k, v] of Object.entries(patch)) if (v === undefined) delete next[k]
@@ -230,8 +192,8 @@ export function updateAnalysis(spec: StatsSpec, id: string, patch: Partial<Analy
 }
 
 /** Override a factor's within/between kind, or clear it with `null`. */
-export function setOverride(spec: StatsSpec, id: string, factor: string, kind: string | null): StatsSpec {
-  const analysis = spec.comparisons.find(a => a.id === id)
+export function setOverride(spec: StatsSpec, id: Analysis['id'], factor: string, kind: FactorKind | null): StatsSpec {
+  const analysis = analyses(spec).find(a => a.id === id)
   if (!analysis) return spec
   const overrides = { ...(analysis.overrides ?? {}) }
   if (kind) overrides[factor] = kind

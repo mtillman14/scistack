@@ -45,8 +45,10 @@ export interface Colorable {
   truncated: boolean
 }
 
-/** `PlotSpec.colors`: `{thing: {level: colour text}}`. */
-export type SpecColors = Record<string, Record<string, string>>
+/** `PlotSpec.colors`: `{thing: {level: colour text}}` (generated). */
+import type { PlotSpec, StyleOptions } from '../../generated/api-types.js'
+
+export type SpecColors = NonNullable<PlotSpec['colors']>
 
 /** The plot's own colour text for one level, or null when the plot sets none. */
 export function plotColor(colors: SpecColors | undefined, key: string, raw: string): string | null {
@@ -71,7 +73,7 @@ export function withPlotColor(
 }
 
 /** The plot's own single mark colour (`style.mark_color`), or null. */
-export function plotMarkColor(style: Record<string, unknown> | undefined): string | null {
+export function plotMarkColor(style: Pick<StyleOptions, 'mark_color'> | null | undefined): string | null {
   const value = style?.mark_color
   return typeof value === 'string' && value !== '' ? value : null
 }

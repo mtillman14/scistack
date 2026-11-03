@@ -9,15 +9,15 @@
  */
 
 import {
-  addAnalysis, excludeLevel, guideState, setGuide, setOverride, setPrimary, setRole, updateAnalysis,
-  type Analysis, type StatsSpec,
+  addAnalysis, analyses, excludeLevel, guideState, setGuide, setOverride, setPrimary, setRole, updateAnalysis,
+  type Analysis, type FactorKind, type Role, type StatsSpec,
 } from '../statsSpec.js'
 
 export interface GuideAction {
   op: 'set_role' | 'set_primary' | 'set_override' | 'set_analysis' | 'exclude_level'
   factor?: string
-  role?: string
-  kind?: string | null
+  role?: Role
+  kind?: FactorKind | null
   analysis?: string | null
   level?: string
   /** set_analysis: fields to set; a null value clears the field (the backend default). */
@@ -140,8 +140,8 @@ export function previous(spec: StatsSpec, steps: readonly GuideStep[]): StatsSpe
 }
 
 function firstAnalysis(spec: StatsSpec): { spec: StatsSpec; analysis: Analysis } {
-  const s = spec.comparisons.length ? spec : addAnalysis(spec)
-  return { spec: s, analysis: s.comparisons[0] }
+  const s = analyses(spec).length ? spec : addAnalysis(spec)
+  return { spec: s, analysis: analyses(s)[0] }
 }
 
 /** Apply a choice's action (the vocabulary of scistackstats.explain). */

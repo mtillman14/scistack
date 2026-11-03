@@ -48,9 +48,10 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
-from .series_stats import cell_array, cell_arrays, collapse_cells
+from .reduction import CollapseCells
+from .series_stats import cell_array
 from ..model.shape import Shape, classify_value
-from ..model.spec import SCALAR_KINDS, PlotSpec, Statistic
+from ..model.spec import SCALAR_KINDS, PlotSpec
 from ..model.table import LongTable
 
 LAYER = "scistackplot"
@@ -86,24 +87,40 @@ def effective_shape(spec: PlotSpec, table: LongTable) -> Shape:
     return table.shape_of(spec.y_measure) if spec.measures else Shape.UNKNOWN
 
 
+def collapse_step(spec: PlotSpec, table: LongTable) -> CollapseCells | None:
+    """The cell collapse ``spec`` asks of this table, or None
+    (:func:`cell_collapses`): what :func:`apply_cell_collapse` applies and
+    ``codegen`` prints (``export.reduction_code.emit_collapse_cells``)."""
+    if not cell_collapses(spec, table):
+        return None
+    info = table.measure(spec.y_measure)
+    return CollapseCells(
+        measure=spec.y_measure,
+        statistic=spec.cell_statistic,
+        exploded=bool(info.exploded),
+        index_column=table.index_column if info.exploded else None,
+    )
+
+
 def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
     """Reduce the y measure's 1-D cells to one value each, or return ``table``.
 
     Returns the table untouched unless :func:`collapses` — a project that never
     puts a vector on a violin pays nothing.
     """
-    if not cell_collapses(spec, table):
+    step = collapse_step(spec, table)
+    if step is None:
         return table
 
-    measure = spec.y_measure
-    statistic = spec.cell_statistic
+    measure = step.measure
+    statistic = step.statistic
     started = time.perf_counter()
     frame = table.frame
 
-    if table.measure(measure).exploded:
-        collapsed, rows, samples = _collapse_exploded(frame, table, measure, statistic)
-    else:
-        collapsed, rows, samples = _collapse_cells(frame, measure, statistic)
+    if not step.exploded:
+        _warn_non_numeric_cells(frame[measure], measure)
+    # The rule is the step's (reduction.CollapseCells); codegen prints it.
+    collapsed, rows, samples = step.apply(frame)
 
     empty = int(collapsed[measure].isna().sum()) if len(collapsed) else 0
 
@@ -183,51 +200,6 @@ def _warn_non_numeric_cells(values: pd.Series, measure: str) -> None:
             examples,
             layer=LAYER,
         )
-
-
-def _collapse_cells(
-    frame: pd.DataFrame, measure: str, statistic: Statistic
-) -> tuple[pd.DataFrame, int, int]:
-    """The normal path: one array per row becomes one float per row."""
-    _warn_non_numeric_cells(frame[measure], measure)
-    arrays = cell_arrays(frame[measure])
-    values = collapse_cells(arrays, statistic)
-    out = frame.copy()
-    out[measure] = values
-    samples = int(sum(a.size for a in arrays))
-    return out, len(out), samples
-
-
-def _collapse_exploded(
-    frame: pd.DataFrame, table: LongTable, measure: str, statistic: Statistic
-) -> tuple[pd.DataFrame, int, int]:
-    """The pre-exploded path: one row per SAMPLE becomes one row per record.
-
-    A source may hand over a 1-D measure already exploded, with a real
-    within-observation axis of its own (time in seconds, percent of cycle) —
-    ``LongTable.index_column``. No shipped source does today, which is exactly
-    why this is written and tested rather than left to raise: the failure would
-    surface as a violin of every sample of every trial, which looks like a
-    plausible figure.
-    """
-    index_column = table.index_column
-    keys = [
-        column
-        for column in frame.columns
-        if column != measure and column != index_column
-    ]
-    if not keys:
-        value = (
-            frame[measure].median() if statistic is Statistic.MEDIAN
-            else frame[measure].mean()
-        )
-        out = pd.DataFrame({measure: [value]})
-        return out, 1, len(frame)
-
-    grouped = frame.groupby(keys, dropna=False, sort=False)[measure]
-    aggregated = (grouped.median() if statistic is Statistic.MEDIAN else grouped.mean())
-    out = aggregated.reset_index()
-    return out, len(out), len(frame)
 
 
 def _cell_is_nan(value) -> bool:

@@ -7,28 +7,25 @@
  * rule (`categorical.mode_for_kind`, CLAUDE.md NOTE 3).
  */
 
-export type TileRole = 'group' | 'facet' | 'iterate' | 'collapse'
+import type { CategoricalStat, PlotKind, PlotSpec, Role } from '../../generated/api-types.js'
+
+export type TileRole = Role
 
 export interface KindTile {
-  kind: string
+  kind: PlotKind
   /** Distinguishes two tiles of one kind (`"bar:count"`); absent = the kind. */
   id?: string
   available: boolean
   /** The assignment the tile opens with, when the backend re-defaults it. */
   assignment?: { roles: Record<string, TileRole>; groups: string[]; color: string | null } | null
   /** The `spec.categorical` patch a text measure's tile applies. */
-  categorical?: { stat: string } | null
+  categorical?: { stat: CategoricalStat } | null
   /** Whether the current spec IS this tile (backend-decided); absent = kind match. */
   selected?: boolean
 }
 
-export interface TileSpec {
-  kind: string
-  roles: Record<string, TileRole>
-  groups?: string[]
-  color?: string | null
-  categorical?: { stat?: string; level?: string | null }
-}
+/** The spec fields a tile click touches (the generated PlotSpec). */
+export type TileSpec = Pick<PlotSpec, 'kind' | 'roles' | 'groups' | 'color' | 'categorical'>
 
 /** The React key and radio identity of a tile. */
 export function tileKey(tile: KindTile): string {
@@ -36,7 +33,7 @@ export function tileKey(tile: KindTile): string {
 }
 
 /** Whether ``tile`` is the selected radio for ``spec``. */
-export function isTileSelected(tile: KindTile, spec: { kind: string } | null | undefined): boolean {
+export function isTileSelected(tile: KindTile, spec: Pick<PlotSpec, 'kind'> | null | undefined): boolean {
   if (!spec) return false
   return tile.selected ?? spec.kind === tile.kind
 }

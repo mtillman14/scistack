@@ -9,6 +9,7 @@
 
 import { WebviewRpc } from './webviewRpc';
 import { UndoStack, taskChange, type Change } from './undo';
+import type { ApiParams } from './generated/api-types';
 
 // Detect VS Code Webview environment
 const isVSCode = typeof acquireVsCodeApi === 'function';
@@ -158,10 +159,28 @@ function refused(result: unknown): boolean {
   return typeof result === 'object' && result !== null && (result as { ok?: unknown }).ok === false;
 }
 
-export async function callBackend(
-  method: string,
-  params: Record<string, unknown> = {},
-  options: CallOptions = {},
+/**
+ * A method's request params: the generated request model for every method
+ * with one (`ApiParams`, from the backend's handler table, P5 stage 5), so a
+ * misspelled or mistyped field is a compile error. Any other method (no
+ * request model, one registered outside the table, or a name only known at
+ * run time) takes an untyped object, as before.
+ */
+export type BackendParams<M extends string> = M extends keyof ApiParams
+  ? ApiParams[M]
+  : Record<string, unknown>
+
+/** `[params, options]` for `callBackend(method, ...)`: params are required
+ *  when the request model has a required field. */
+export type BackendArgs<M extends string> = M extends keyof ApiParams
+  ? {} extends ApiParams[M]
+    ? [params?: ApiParams[M], options?: CallOptions]
+    : [params: ApiParams[M], options?: CallOptions]
+  : [params?: Record<string, unknown>, options?: CallOptions]
+
+export async function callBackend<M extends string>(
+  method: M,
+  ...[params = {} as BackendParams<M>, options = {}]: BackendArgs<M>
 ): Promise<unknown> {
   // Taken SYNCHRONOUSLY, before any await: requests started in one task
   // share one undo step (undo.ts taskChange).
@@ -183,7 +202,7 @@ export async function callBackend(
       return result;
     }
   }
-  return callUnrecorded(method, params);
+  return callUnrecorded(method, params as Record<string, unknown>);
 }
 
 function callUnrecorded(method: string, params: Record<string, unknown>): Promise<unknown> {

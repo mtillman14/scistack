@@ -28,8 +28,8 @@ export interface MarkWeightsMeta {
  * the key: `PlotSpec.to_dict` would store the default anyway, and a stored
  * default would make a reopened saved plot read as "● modified".
  */
-export function withWeight<T extends Record<string, unknown>>(
-  style: T | undefined,
+export function withWeight<T extends object>(
+  style: T | null | undefined,
   key: WeightKey,
   value: number | null,
 ): T {

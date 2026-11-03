@@ -6,10 +6,12 @@
  * catalog.needed_action / catalog.recommend); this only collects them.
  */
 
+import type { FactorKind } from './statsSpec.js'
+
 export interface StratumAction {
   factor: string
   message: string
-  choices: string[]
+  choices: FactorKind[]
 }
 
 export interface Recommended {
@@ -49,7 +51,7 @@ export function pendingActions(results: readonly AnalysisResult[] | undefined): 
 }
 
 /** The first stratum's recommendation for one analysis, or null. */
-export function recommendedFor(results: readonly AnalysisResult[] | undefined, analysisId: string): Recommended | null {
+export function recommendedFor(results: readonly AnalysisResult[] | undefined, analysisId: string | undefined): Recommended | null {
   const r = (results ?? []).find(x => x.id === analysisId)
   for (const s of r?.strata ?? []) {
     if (s.selection?.recommended) return s.selection.recommended

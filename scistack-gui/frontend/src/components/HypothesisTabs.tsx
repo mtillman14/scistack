@@ -233,6 +233,10 @@ export default function HypothesisTabs() {
         setError('Not a valid pipeline export file (invalid JSON)')
         return
       }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setError('Not a valid pipeline export file (not a JSON object)')
+        return
+      }
       callBackend('import_pipeline', { document: parsed })
         .then(async d => {
           const r = d as {

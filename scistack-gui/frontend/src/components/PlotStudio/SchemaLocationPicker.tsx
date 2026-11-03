@@ -164,12 +164,9 @@ export default function SchemaLocationPicker({
         // plotting tab), or a NODE's inputs intersected (the processing
         // tab). Same payload shape on purpose — a second shape here would
         // be a second renderer.
-        const result = (await callBackend(
-          nodeId ? 'node_location_tree' : 'plot_location_tree',
-          nodeId
-            ? { node_id: nodeId }
-            : { variable, selection, csv_path: csvPath ?? null }
-        )) as LocationTree
+        const result = (await (nodeId
+          ? callBackend('node_location_tree', { node_id: nodeId })
+          : callBackend('plot_location_tree', { variable, selection, csv_path: csvPath ?? null }))) as LocationTree
         if (!cancelled) setTree(result)
       } catch (err) {
         if (!cancelled) setError((err as Error).message)

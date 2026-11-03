@@ -39,6 +39,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from scistack_gui.api.handlers import Handler, install_routes
+from scistack_gui.api.spec_params import FactorVariableParam, PlotSpecParam, StatsSpecParam
 from scistack_gui.services import stats_service
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,8 @@ _BAD_REQUEST = {ValueError: 400, KeyError: 400}
 class OpenRequest(BaseModel):
     stats_id: str | None = None
     version: int | None = None
-    seed: dict | None = None
+    #: A figure's spec to seed a new table from.
+    seed: PlotSpecParam | None = None
     plot_id: str | None = None
     variable: str | None = None
     #: A stat_ function to open on: the spec its generated code embeds.
@@ -60,12 +62,19 @@ class OpenRequest(BaseModel):
 
 
 class ComputeRequest(BaseModel):
-    spec: dict
+    spec: StatsSpecParam
+    csv_path: str | None = None
+
+
+class PlotGuideRequest(BaseModel):
+    """Plot Studio's step-by-step view: the FIGURE's spec, not a table's."""
+
+    spec: PlotSpecParam
     csv_path: str | None = None
 
 
 class ExportRequest(BaseModel):
-    spec: dict
+    spec: StatsSpecParam
     fmt: str
     which: str
     csv_path: str | None = None
@@ -73,15 +82,15 @@ class ExportRequest(BaseModel):
 
 
 class PairRequest(BaseModel):
-    stats_spec: dict
-    plot_spec: dict
+    stats_spec: StatsSpecParam
+    plot_spec: PlotSpecParam
     direction: str | None = None
     csv_path: str | None = None
 
 
 class OverlayForPlotRequest(BaseModel):
     plot_id: str
-    plot_spec: dict
+    plot_spec: PlotSpecParam
 
 
 class LinkedRequest(BaseModel):
@@ -90,7 +99,7 @@ class LinkedRequest(BaseModel):
 
 class SavedSaveRequest(BaseModel):
     name: str
-    spec: dict
+    spec: StatsSpecParam
     overwrite: bool | None = True
     current_stats_id: str | None = None
 
@@ -103,12 +112,12 @@ class SavedIdRequest(BaseModel):
 
 class PresetSaveRequest(BaseModel):
     name: str
-    spec: dict
+    spec: StatsSpecParam
 
 
 class PresetIdRequest(BaseModel):
     preset_id: str
-    spec: dict | None = None
+    spec: StatsSpecParam | None = None
     hidden: bool | None = True
     name: str | None = None
 
@@ -127,18 +136,18 @@ def _guide_log(req: GuideLogRequest) -> dict:
 
 
 class FormulaRequest(BaseModel):
-    spec: dict
+    spec: StatsSpecParam
     #: The analysis the popup edits (default: the first).
     analysis_id: str | None = None
     #: The draft right side; empty = the default model.
     text: str | None = None
     #: The draft's picked covariates (``FactorVariable.to_dict()`` each).
-    covariates: list[dict] | None = None
+    covariates: list[FactorVariableParam] | None = None
     csv_path: str | None = None
 
 
 class AddRequest(BaseModel):
-    spec: dict
+    spec: StatsSpecParam
     function_name: str | None = None
     output_variable: str | None = None
     finalized: bool | None = True
@@ -215,7 +224,7 @@ def _preset_rename(db, req: PresetIdRequest) -> dict:
     return stats_service.presets_rename(db, req.preset_id, req.name or "")
 
 
-def _plot_guide(db, req: ComputeRequest) -> dict:
+def _plot_guide(db, req: PlotGuideRequest) -> dict:
     return stats_service.plot_guide(db, req.spec, csv_path=req.csv_path)
 
 
@@ -274,7 +283,7 @@ STATS_HANDLERS: tuple[Handler, ...] = (
     Handler("stats_preset_rename", "/stats/presets/rename", PresetIdRequest, _preset_rename,
             http_errors=_BAD_REQUEST, undoable=False),
     # Plot Studio's step-by-step view: the screens it shares with the wizard.
-    Handler("stats_plot_guide", "/stats/plot-guide", ComputeRequest, _plot_guide, holds_db_lock=False,
+    Handler("stats_plot_guide", "/stats/plot-guide", PlotGuideRequest, _plot_guide, holds_db_lock=False,
             http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
     # Export code: the stat_ function as text (the same owner Add to pipeline writes from).
     Handler("stats_export_code", "/stats/export-code", ComputeRequest, _export_code, holds_db_lock=False,

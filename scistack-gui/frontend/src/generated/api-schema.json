@@ -36,8 +36,7 @@
           "default": null
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/StatsSpecWire"
         }
       },
       "required": [
@@ -46,10 +45,209 @@
       "title": "AddRequest",
       "type": "object"
     },
+    "AggregationWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.Aggregation``: centre and spread over the sample.",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorBand"
+        },
+        "pooled": {
+          "type": "boolean"
+        },
+        "statistic": {
+          "$ref": "#/$defs/Statistic"
+        }
+      },
+      "title": "Aggregation",
+      "type": "object"
+    },
+    "AliasWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.Alias``: what a thing and its levels read as.",
+      "properties": {
+        "levels": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "Alias",
+      "type": "object"
+    },
+    "AnalysisWire": {
+      "additionalProperties": false,
+      "description": "``scistackstats.Analysis``: one analysis on the Comparisons tab.",
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "ci_level": {
+          "type": "number"
+        },
+        "correction": {
+          "type": "string"
+        },
+        "covariates": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/FactorVariableWire"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "difference_spread": {
+          "enum": [
+            "ci",
+            "se",
+            "sd_diff"
+          ],
+          "type": "string"
+        },
+        "effect_size": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "equal_var": {
+          "type": "boolean"
+        },
+        "family": {
+          "enum": [
+            "auto",
+            "parametric",
+            "nonparametric",
+            "mixed_model",
+            "spm"
+          ],
+          "type": "string"
+        },
+        "family_scope": {
+          "enum": [
+            "none",
+            "context",
+            "stratum",
+            "dv",
+            "table",
+            "variants"
+          ],
+          "type": "string"
+        },
+        "formula": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "missing": {
+          "enum": [
+            "use_all",
+            "complete_cases"
+          ],
+          "type": "string"
+        },
+        "omnibus": {
+          "type": "boolean"
+        },
+        "omnibus_test": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overrides": {
+          "additionalProperties": {
+            "enum": [
+              "within",
+              "between"
+            ],
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pairwise": {
+          "type": "boolean"
+        },
+        "pairwise_test": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tails": {
+          "enum": [
+            "two-sided",
+            "greater",
+            "less"
+          ],
+          "type": "string"
+        }
+      },
+      "title": "Analysis",
+      "type": "object"
+    },
+    "BarOptionsWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.BarOptions``.",
+      "properties": {
+        "stack": {
+          "type": "boolean"
+        }
+      },
+      "title": "BarOptions",
+      "type": "object"
+    },
+    "BinMode": {
+      "description": "How a histogram's bins are chosen (``scistackplot.reduce.bins`` owns the rule).",
+      "enum": [
+        "auto",
+        "count",
+        "width"
+      ],
+      "title": "BinMode",
+      "type": "string"
+    },
     "BindingUpdate": {
       "properties": {
         "binding": {
           "additionalProperties": true,
+          "tsType": "object",
           "type": "object"
         },
         "use_id": {
@@ -71,6 +269,7 @@
             {
               "items": {
                 "additionalProperties": true,
+                "tsType": "object",
                 "type": "object"
               },
               "type": "array"
@@ -205,6 +404,37 @@
       },
       "title": "CanvasRefreshRequest",
       "type": "object"
+    },
+    "CategoricalOptionsWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.CategoricalOptions``: how a text measure is drawn.",
+      "properties": {
+        "level": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stat": {
+          "$ref": "#/$defs/CategoricalStat"
+        }
+      },
+      "title": "CategoricalOptions",
+      "type": "object"
+    },
+    "CategoricalStat": {
+      "description": "What a text (categorical) measure is drawn as. ``categorical`` owns\nwhich kinds read which (``categorical.mode_for_kind``); inert on every\nnumeric measure.\n\nFor all three, a COLLAPSED key is **pooled**, never averaged (user,\n2026-11-01): its records are merged into one bucket.",
+      "enum": [
+        "count",
+        "proportion",
+        "value"
+      ],
+      "title": "CategoricalStat",
+      "type": "string"
     },
     "ChangeRef": {
       "properties": {
@@ -513,6 +743,7 @@
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -523,6 +754,39 @@
         }
       },
       "title": "ColumnGroupsPlanRequest",
+      "type": "object"
+    },
+    "CompareMode": {
+      "description": "The formula. The reference level lands at 0 in both.",
+      "enum": [
+        "difference",
+        "percent"
+      ],
+      "title": "CompareMode",
+      "type": "string"
+    },
+    "ComparisonWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.Comparison``: compare to a reference level.",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "level": {
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/CompareMode"
+        }
+      },
+      "required": [
+        "layer",
+        "level"
+      ],
+      "title": "Comparison",
       "type": "object"
     },
     "ComputeRequest": {
@@ -539,8 +803,7 @@
           "default": null
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/StatsSpecWire"
         }
       },
       "required": [
@@ -671,6 +934,66 @@
         }
       },
       "title": "CreateVariableRequest",
+      "type": "object"
+    },
+    "CustomPlotWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.CustomPlot``: the ``plot_`` function drawing a custom figure.",
+      "properties": {
+        "as_table": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ]
+        },
+        "function": {
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "node": {
+          "type": "string"
+        }
+      },
+      "title": "CustomPlot",
+      "type": "object"
+    },
+    "DVWire": {
+      "additionalProperties": false,
+      "description": "``scistackstats.DV``: one dependent variable, or chosen columns of one.",
+      "properties": {
+        "columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "DV",
       "type": "object"
     },
     "DeclareRequirements": {
@@ -829,6 +1152,30 @@
       "title": "DescribeRequest",
       "type": "object"
     },
+    "DescriptiveSpecWire": {
+      "additionalProperties": false,
+      "description": "``scistackstats.DescriptiveSpec``: what the Descriptives tab shows.",
+      "properties": {
+        "cell": {
+          "enum": [
+            "mean_sd",
+            "mean_sem",
+            "mean_ci95",
+            "median_iqr",
+            "none"
+          ],
+          "type": "string"
+        },
+        "statistics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "DescriptiveSpec",
+      "type": "object"
+    },
     "DesignRequest": {
       "description": "A linked figure + table's shared design (scistackplotdb.designs).",
       "properties": {
@@ -836,8 +1183,7 @@
           "type": "string"
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         }
       },
       "required": [
@@ -845,6 +1191,52 @@
         "spec"
       ],
       "title": "DesignRequest",
+      "type": "object"
+    },
+    "DifferenceBarWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.\n``origin`` is written only when not ``\"manual\"``.",
+      "properties": {
+        "a": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "b": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "match": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "DifferenceBar",
       "type": "object"
     },
     "EdgeCreate": {
@@ -988,6 +1380,17 @@
       "title": "EntityRef",
       "type": "object"
     },
+    "ErrorBand": {
+      "enum": [
+        "none",
+        "sd",
+        "sem",
+        "ci95",
+        "iqr"
+      ],
+      "title": "ErrorBand",
+      "type": "string"
+    },
     "ExportBundle": {
       "properties": {
         "options": {
@@ -1085,6 +1488,176 @@
       "title": "ExtractToSubmodule",
       "type": "object"
     },
+    "FacetOptionsWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.FacetOptions``: the facet grid.",
+      "properties": {
+        "cols": {
+          "items": {
+            "$ref": "#/$defs/MatcherWire"
+          },
+          "type": "array"
+        },
+        "n_cols": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "n_rows": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/MatcherWire"
+          },
+          "type": "array"
+        },
+        "share_x": {
+          "type": "boolean"
+        }
+      },
+      "title": "FacetOptions",
+      "type": "object"
+    },
+    "FactorVariableWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.FactorVariable``: a variable (or one column) joined in\nas a factor. ``variant`` is the selection as an object.",
+      "properties": {
+        "column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "variable": {
+          "type": "string"
+        },
+        "variant": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "FactorVariable",
+      "type": "object"
+    },
+    "FilterWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.Filter``: one row filter.",
+      "properties": {
+        "column": {
+          "type": "string"
+        },
+        "exclude": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "include": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "column"
+      ],
+      "title": "Filter",
+      "type": "object"
+    },
+    "FitBy": {
+      "description": "Which points one regression line is fitted through.",
+      "enum": [
+        "color",
+        "pooled"
+      ],
+      "title": "FitBy",
+      "type": "string"
+    },
+    "FormatSpecWire": {
+      "additionalProperties": false,
+      "description": "``scistackstats.FormatSpec``: how numbers read.",
+      "properties": {
+        "decimals": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effect_decimals": {
+          "type": "integer"
+        },
+        "p_decimals": {
+          "type": "integer"
+        },
+        "stars": {
+          "type": "boolean"
+        }
+      },
+      "title": "FormatSpec",
+      "type": "object"
+    },
     "FormulaRequest": {
       "properties": {
         "analysis_id": {
@@ -1102,7 +1675,42 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
+                "additionalProperties": false,
+                "description": "``scistackplot.FactorVariable``: a variable (or one column) joined in\nas a factor. ``variant`` is the selection as an object.",
+                "properties": {
+                  "column": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Column"
+                  },
+                  "variable": {
+                    "title": "Variable",
+                    "type": "string"
+                  },
+                  "variant": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": true,
+                        "tsType": "object",
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Variant"
+                  }
+                },
+                "required": [
+                  "variable"
+                ],
+                "title": "FactorVariable",
                 "type": "object"
               },
               "type": "array"
@@ -1125,8 +1733,7 @@
           "default": null
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/StatsSpecWire"
         },
         "text": {
           "anyOf": [
@@ -1340,6 +1947,30 @@
       "title": "GuideLogRequest",
       "type": "object"
     },
+    "GuideStateWire": {
+      "additionalProperties": false,
+      "description": "``scistackstats.GuideState``: the view and the wizard's progress.",
+      "properties": {
+        "done": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "enum": [
+            "guided",
+            "advanced"
+          ],
+          "type": "string"
+        },
+        "step": {
+          "type": "string"
+        }
+      },
+      "title": "GuideState",
+      "type": "object"
+    },
     "HiddenEdgesQuery": {
       "properties": {
         "pipeline_id": {
@@ -1375,6 +2006,7 @@
         },
         "variant_key": {
           "additionalProperties": true,
+          "tsType": "object",
           "type": "object"
         }
       },
@@ -1383,6 +2015,111 @@
         "variant_key"
       ],
       "title": "HideComboRequest",
+      "type": "object"
+    },
+    "HistMultiple": {
+      "description": "How the histograms of several colour levels share one panel.",
+      "enum": [
+        "layer",
+        "stack",
+        "dodge"
+      ],
+      "title": "HistMultiple",
+      "type": "string"
+    },
+    "HistStat": {
+      "description": "What a histogram bar's height is. Percent and density are per colour\nlevel within a panel (seaborn ``common_norm=False``; user, 2026-10-22).",
+      "enum": [
+        "count",
+        "percent",
+        "density"
+      ],
+      "title": "HistStat",
+      "type": "string"
+    },
+    "HistogramOptionsWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.HistogramOptions``. ``bin_width``: a number, or duration\ntext on a datetime axis; the range ends: a number or ISO date text.",
+      "properties": {
+        "bin_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bin_width": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bins": {
+          "$ref": "#/$defs/BinMode"
+        },
+        "exact_values": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "multiple": {
+          "$ref": "#/$defs/HistMultiple"
+        },
+        "range_max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "range_min": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "show_nan": {
+          "type": "boolean"
+        },
+        "stat": {
+          "$ref": "#/$defs/HistStat"
+        }
+      },
+      "title": "HistogramOptions",
       "type": "object"
     },
     "HypothesisUpdate": {
@@ -1447,6 +2184,7 @@
       "properties": {
         "document": {
           "additionalProperties": true,
+          "tsType": "object",
           "type": "object"
         }
       },
@@ -1550,6 +2288,74 @@
       "title": "InventoryRowChange",
       "type": "object"
     },
+    "KdeOptionsWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.KdeOptions``.",
+      "properties": {
+        "bandwidth_adjust": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cut": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fill": {
+          "type": "boolean"
+        }
+      },
+      "title": "KdeOptions",
+      "type": "object"
+    },
+    "LevelGroupWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.LevelGroup``: a combine.",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "mapping": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "unmatched": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "title": "LevelGroup",
+      "type": "object"
+    },
     "LibraryName": {
       "properties": {
         "name": {
@@ -1586,6 +2392,41 @@
       "title": "LinkedRequest",
       "type": "object"
     },
+    "LocationFilterWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.LocationFilter``: the schema location picker's selection.",
+      "properties": {
+        "exclude_levels": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "include": {
+          "items": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "LocationFilter",
+      "type": "object"
+    },
     "LocationTreeRequest": {
       "properties": {
         "csv_path": {
@@ -1614,6 +2455,7 @@
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -1630,6 +2472,43 @@
         "variable"
       ],
       "title": "LocationTreeRequest",
+      "type": "object"
+    },
+    "MatchOp": {
+      "description": "How a facet-layout rule tests a panel's label.",
+      "enum": [
+        "starts_with",
+        "ends_with",
+        "contains",
+        "not_contains",
+        "equals",
+        "regex"
+      ],
+      "title": "MatchOp",
+      "type": "string"
+    },
+    "MatcherWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.Matcher``: one facet-grid row or column rule.",
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "op": {
+          "$ref": "#/$defs/MatchOp"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "title": "Matcher",
       "type": "object"
     },
     "MatlabCommandRequest": {
@@ -1725,6 +2604,7 @@
         "config": {
           "additionalProperties": true,
           "default": {},
+          "tsType": "object",
           "type": "object"
         },
         "node_id": {
@@ -1831,8 +2711,7 @@
         "seed": {
           "anyOf": [
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/PlotSpecWire"
             },
             {
               "type": "null"
@@ -1920,8 +2799,7 @@
           "type": "string"
         },
         "plot_spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         }
       },
       "required": [
@@ -1929,6 +2807,48 @@
         "plot_spec"
       ],
       "title": "OverlayForPlotRequest",
+      "type": "object"
+    },
+    "OverlaySpecWire": {
+      "additionalProperties": false,
+      "description": "``scistackstats.spec.OverlaySpec``: brackets drawn on the linked figure.",
+      "properties": {
+        "analysis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hidden": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "label": {
+          "enum": [
+            "stars",
+            "p"
+          ],
+          "type": "string"
+        },
+        "pairs": {
+          "enum": [
+            "significant",
+            "all",
+            "adjacent"
+          ],
+          "type": "string"
+        },
+        "show": {
+          "type": "boolean"
+        }
+      },
+      "title": "OverlaySpec",
       "type": "object"
     },
     "PairRequest": {
@@ -1956,12 +2876,10 @@
           "default": null
         },
         "plot_spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         },
         "stats_spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/StatsSpecWire"
         }
       },
       "required": [
@@ -1969,6 +2887,60 @@
         "plot_spec"
       ],
       "title": "PairRequest",
+      "type": "object"
+    },
+    "PanelOverrideWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.PanelOverride``: one faceted panel's own y limits and title.",
+      "properties": {
+        "match": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "y_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_label_hidden": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "PanelOverride",
       "type": "object"
     },
     "ParameterCreate": {
@@ -2078,6 +3050,7 @@
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -2122,7 +3095,8 @@
           "type": "string"
         },
         "value": {
-          "default": null
+          "default": null,
+          "tsType": "unknown"
         }
       },
       "required": [
@@ -2297,6 +3271,7 @@
             {
               "items": {
                 "additionalProperties": true,
+                "tsType": "object",
                 "type": "object"
               },
               "type": "array"
@@ -2369,6 +3344,7 @@
         },
         "selection": {
           "additionalProperties": true,
+          "tsType": "object",
           "type": "object"
         },
         "variable": {
@@ -2534,6 +3510,294 @@
       "title": "PipelineRunRequest",
       "type": "object"
     },
+    "PlotGuideRequest": {
+      "description": "Plot Studio's step-by-step view: the FIGURE's spec, not a table's.",
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "spec": {
+          "$ref": "#/$defs/PlotSpecWire"
+        }
+      },
+      "required": [
+        "spec"
+      ],
+      "title": "PlotGuideRequest",
+      "type": "object"
+    },
+    "PlotKind": {
+      "description": "The visual form of the plot.",
+      "enum": [
+        "scatter",
+        "strip",
+        "spaghetti",
+        "line",
+        "box",
+        "violin",
+        "bar",
+        "hbar",
+        "band",
+        "heatmap",
+        "histogram",
+        "kde",
+        "regression",
+        "custom"
+      ],
+      "title": "PlotKind",
+      "type": "string"
+    },
+    "PlotSpecWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.PlotSpec.to_dict()``: a complete plot description.",
+      "properties": {
+        "aggregate": {
+          "$ref": "#/$defs/AggregationWire"
+        },
+        "aliases": {
+          "additionalProperties": {
+            "$ref": "#/$defs/AliasWire"
+          },
+          "type": "object"
+        },
+        "bar": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BarOptionsWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "categorical": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CategoricalOptionsWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cell_statistic": {
+          "$ref": "#/$defs/Statistic"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "colors": {
+          "additionalProperties": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "comparison": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ComparisonWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "custom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CustomPlotWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "difference_bars": {
+          "items": {
+            "$ref": "#/$defs/DifferenceBarWire"
+          },
+          "type": "array"
+        },
+        "facet": {
+          "$ref": "#/$defs/FacetOptionsWire"
+        },
+        "factor_variables": {
+          "items": {
+            "$ref": "#/$defs/FactorVariableWire"
+          },
+          "type": "array"
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/FilterWire"
+          },
+          "type": "array"
+        },
+        "groups": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "histogram": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HistogramOptionsWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "index_column": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "join_sample": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kde": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KdeOptionsWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/$defs/PlotKind"
+        },
+        "level_groups": {
+          "items": {
+            "$ref": "#/$defs/LevelGroupWire"
+          },
+          "type": "array"
+        },
+        "location_filter": {
+          "$ref": "#/$defs/LocationFilterWire"
+        },
+        "measures": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "panel_overrides": {
+          "items": {
+            "$ref": "#/$defs/PanelOverrideWire"
+          },
+          "type": "array"
+        },
+        "regression": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RegressionOptionsWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "roles": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Role"
+          },
+          "type": "object"
+        },
+        "sample_color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sample_in_legend": {
+          "type": "boolean"
+        },
+        "show_missing_levels": {
+          "type": "boolean"
+        },
+        "show_sample": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StyleOptionsWire"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "time_zone": {
+          "type": "string"
+        },
+        "variant_sets": {
+          "items": {
+            "$ref": "#/$defs/VariantSetWire"
+          },
+          "type": "array"
+        },
+        "x_measure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_axis": {
+          "$ref": "#/$defs/YAxisWire"
+        }
+      },
+      "required": [
+        "measures"
+      ],
+      "title": "PlotSpec",
+      "type": "object"
+    },
     "PortDirection": {
       "properties": {
         "direction": {
@@ -2613,8 +3877,7 @@
           "type": "string"
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         },
         "version": {
           "anyOf": [
@@ -2711,8 +3974,7 @@
         "spec": {
           "anyOf": [
             {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/StatsSpecWire"
             },
             {
               "type": "null"
@@ -2875,6 +4137,29 @@
       "title": "RecentQuery",
       "type": "object"
     },
+    "RegressionOptionsWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.RegressionOptions``.",
+      "properties": {
+        "ci_band": {
+          "type": "boolean"
+        },
+        "fit_by": {
+          "$ref": "#/$defs/FitBy"
+        },
+        "fit_line": {
+          "type": "boolean"
+        },
+        "show_stats": {
+          "type": "boolean"
+        },
+        "stats_corner": {
+          "$ref": "#/$defs/StatsCorner"
+        }
+      },
+      "title": "RegressionOptions",
+      "type": "object"
+    },
     "ReleaseRequest": {
       "properties": {
         "reason": {
@@ -2890,6 +4175,17 @@
       ],
       "title": "ReleaseRequest",
       "type": "object"
+    },
+    "Role": {
+      "description": "What a factor column does in a plot.\n\nEvery factor carries exactly **one** role. That invariant is the whole\nreason this enum exists: the R/Shiny proof of concept spread the same\ninformation across four independent widgets and spent most of its length\nkeeping them consistent with each other via ``setdiff``.\n\nFour roles, in two panes (docs/claude/grouping-and-collapse.md):\n\n* **Grouping pane** \u2014 ``GROUP``: one *mark* per level combination, where a\n  mark is whatever the kind draws (a bar, a box, a line). The grouped\n  factors are ORDERED by :attr:`PlotSpec.groups`, innermost first, and one\n  of them may be tagged as the colour (:attr:`PlotSpec.color`). Colour is\n  not a role: it never split data, it labelled a split that a grouping\n  layer had already made.\n* **Factors pane** \u2014 ``FACET`` (one subplot per level), ``ITERATE`` (one\n  figure per level) and ``COLLAPSE`` (averaged away). The outermost\n  collapsed key is the *sample* the kind's statistic is computed over.\n\nThe old ``X`` / ``COLOR`` / ``AGGREGATE`` / ``FREE`` vocabulary is gone\noutright (2026-09-17): ``FREE`` meant \"let the kind decide\", which is the\nambiguity the two-pane model removes, and a saved spec carrying it is\nrefused by :meth:`PlotSpec.from_dict` rather than guessed at.",
+      "enum": [
+        "group",
+        "facet",
+        "iterate",
+        "collapse"
+      ],
+      "title": "Role",
+      "type": "string"
     },
     "RunConflictRequest": {
       "properties": {
@@ -2979,6 +4275,7 @@
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -3005,6 +4302,7 @@
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -3017,6 +4315,7 @@
           "default": [],
           "items": {
             "additionalProperties": true,
+            "tsType": "object",
             "type": "object"
           },
           "type": "array"
@@ -3102,7 +4401,54 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
+                "additionalProperties": false,
+                "description": "``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.\n``origin`` is written only when not ``\"manual\"``.",
+                "properties": {
+                  "a": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "A",
+                    "type": "object"
+                  },
+                  "b": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "B",
+                    "type": "object"
+                  },
+                  "label": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Label"
+                  },
+                  "match": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "Match",
+                    "type": "object"
+                  },
+                  "origin": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Origin"
+                  }
+                },
+                "title": "DifferenceBar",
                 "type": "object"
               },
               "type": "array"
@@ -3172,8 +4518,7 @@
           "type": "string"
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         },
         "what": {
           "anyOf": [
@@ -3514,7 +4859,54 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
+                "additionalProperties": false,
+                "description": "``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.\n``origin`` is written only when not ``\"manual\"``.",
+                "properties": {
+                  "a": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "A",
+                    "type": "object"
+                  },
+                  "b": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "B",
+                    "type": "object"
+                  },
+                  "label": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Label"
+                  },
+                  "match": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "Match",
+                    "type": "object"
+                  },
+                  "origin": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Origin"
+                  }
+                },
+                "title": "DifferenceBar",
                 "type": "object"
               },
               "type": "array"
@@ -3551,6 +4943,7 @@
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -3564,14 +4957,91 @@
           "type": "boolean"
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         }
       },
       "required": [
         "spec"
       ],
       "title": "SpecRequest",
+      "type": "object"
+    },
+    "Statistic": {
+      "enum": [
+        "mean",
+        "median"
+      ],
+      "title": "Statistic",
+      "type": "string"
+    },
+    "StatsCorner": {
+      "description": "Where in a panel the R\u00b2 / p text sits.",
+      "enum": [
+        "upper_left",
+        "upper_right",
+        "lower_left",
+        "lower_right"
+      ],
+      "title": "StatsCorner",
+      "type": "string"
+    },
+    "StatsSpecWire": {
+      "additionalProperties": false,
+      "description": "``scistackstats.StatsSpec.to_dict()``: a statistics table. ``design``\nis the plot spec it analyses.",
+      "properties": {
+        "comparisons": {
+          "items": {
+            "$ref": "#/$defs/AnalysisWire"
+          },
+          "type": "array"
+        },
+        "descriptives": {
+          "$ref": "#/$defs/DescriptiveSpecWire"
+        },
+        "design": {
+          "$ref": "#/$defs/PlotSpecWire"
+        },
+        "dvs": {
+          "items": {
+            "$ref": "#/$defs/DVWire"
+          },
+          "type": "array"
+        },
+        "format": {
+          "type": "integer"
+        },
+        "formatting": {
+          "$ref": "#/$defs/FormatSpecWire"
+        },
+        "guide": {
+          "$ref": "#/$defs/GuideStateWire"
+        },
+        "linked_plot": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overlay": {
+          "$ref": "#/$defs/OverlaySpecWire"
+        },
+        "variant_mode": {
+          "enum": [
+            "pinned",
+            "sweep"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "format",
+        "design"
+      ],
+      "title": "StatsSpec",
       "type": "object"
     },
     "StepValuePromote": {
@@ -3603,7 +5073,8 @@
           "type": "string"
         },
         "value": {
-          "default": null
+          "default": null,
+          "tsType": "unknown"
         }
       },
       "required": [
@@ -3659,12 +5130,264 @@
       "title": "StudioOpenRequest",
       "type": "object"
     },
+    "StyleOptionsWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.StyleOptions``. Width and height are inches.",
+      "properties": {
+        "alpha": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        },
+        "hide_legend_ticks": {
+          "type": "boolean"
+        },
+        "line_weight": {
+          "type": "number"
+        },
+        "log_x": {
+          "type": "boolean"
+        },
+        "log_y": {
+          "type": "boolean"
+        },
+        "mark_color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "marker_size": {
+          "type": "number"
+        },
+        "not_plotted_note": {
+          "type": "boolean"
+        },
+        "palette": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sample_weight": {
+          "type": "number"
+        },
+        "text": {
+          "$ref": "#/$defs/TextSizesWire"
+        },
+        "tick_every": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tick_rotation": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "width": {
+          "type": "number"
+        },
+        "x_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_titles": {
+          "enum": [
+            "every_panel",
+            "first_column"
+          ],
+          "type": "string"
+        }
+      },
+      "title": "StyleOptions",
+      "type": "object"
+    },
+    "TextSizesWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.TextSizes``: point sizes per text element.",
+      "properties": {
+        "base": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ceilings": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "differences": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "floors": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "groups": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "legend": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "legend_title": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ratios": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "type": "object"
+        },
+        "target": {
+          "enum": [
+            "print",
+            "slide"
+          ],
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "x_label": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "x_ticks": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_label": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "y_ticks": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "TextSizes",
+      "type": "object"
+    },
     "UseCreate": {
       "properties": {
         "binding": {
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -3810,6 +5533,50 @@
       "title": "VariantGraphRequest",
       "type": "object"
     },
+    "VariantSetWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.VariantSet``: one row of the Variants section.",
+      "properties": {
+        "follow_latest": {
+          "type": "boolean"
+        },
+        "frozen": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selection": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "variable": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "title": "VariantSet",
+      "type": "object"
+    },
     "VariantSetsRequest": {
       "properties": {
         "variable": {
@@ -3819,7 +5586,53 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
+                "additionalProperties": false,
+                "description": "``scistackplot.VariantSet``: one row of the Variants section.",
+                "properties": {
+                  "follow_latest": {
+                    "title": "Follow Latest",
+                    "type": "boolean"
+                  },
+                  "frozen": {
+                    "additionalProperties": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "title": "Frozen",
+                    "type": "object"
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Name"
+                  },
+                  "selection": {
+                    "additionalProperties": true,
+                    "title": "Selection",
+                    "tsType": "object",
+                    "type": "object"
+                  },
+                  "variable": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Variable"
+                  }
+                },
+                "title": "VariantSet",
                 "type": "object"
               },
               "type": "array"
@@ -3896,6 +5709,46 @@
       "title": "WhereFilterSpec",
       "type": "object"
     },
+    "YAxisWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.YAxis``. A limit is a number, or ISO date text on a\ndatetime axis.",
+      "properties": {
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scope": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "title": "YAxis",
+      "type": "object"
+    },
     "scistack_gui__api__artifacts__FunctionName": {
       "properties": {
         "fn_name": {
@@ -3937,7 +5790,54 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
+                "additionalProperties": false,
+                "description": "``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.\n``origin`` is written only when not ``\"manual\"``.",
+                "properties": {
+                  "a": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "A",
+                    "type": "object"
+                  },
+                  "b": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "B",
+                    "type": "object"
+                  },
+                  "label": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Label"
+                  },
+                  "match": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "title": "Match",
+                    "type": "object"
+                  },
+                  "origin": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Origin"
+                  }
+                },
+                "title": "DifferenceBar",
                 "type": "object"
               },
               "type": "array"
@@ -3993,8 +5893,7 @@
           "default": null
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         }
       },
       "required": [
@@ -4042,8 +5941,7 @@
           "default": true
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         }
       },
       "required": [
@@ -4081,8 +5979,7 @@
           "default": true
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/PlotSpecWire"
         },
         "variable": {
           "type": "string"
@@ -4091,6 +5988,7 @@
           "anyOf": [
             {
               "additionalProperties": true,
+              "tsType": "object",
               "type": "object"
             },
             {
@@ -4136,8 +6034,7 @@
           "default": null
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/StatsSpecWire"
         },
         "which": {
           "type": "string"
@@ -4157,8 +6054,7 @@
           "type": "string"
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/StatsSpecWire"
         }
       },
       "required": [
@@ -4196,8 +6092,7 @@
           "default": true
         },
         "spec": {
-          "additionalProperties": true,
-          "type": "object"
+          "$ref": "#/$defs/StatsSpecWire"
         }
       },
       "required": [
@@ -4660,7 +6555,7 @@
       "$ref": "#/$defs/OverlayForPlotRequest"
     },
     "stats_plot_guide": {
-      "$ref": "#/$defs/ComputeRequest"
+      "$ref": "#/$defs/PlotGuideRequest"
     },
     "stats_preset_apply": {
       "$ref": "#/$defs/PresetIdRequest"

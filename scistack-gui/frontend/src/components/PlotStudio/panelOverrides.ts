@@ -11,15 +11,12 @@
  * turns a facet value into text itself.
  */
 
-/** `scistackplot.panels.PanelOverride`. Absent/null fields inherit. */
-export interface PanelOverride {
-  match: Record<string, string>
-  y_minimum?: number | null
-  y_maximum?: number | null
-  y_label?: string | null
-  /** true hides, false forces on against the grid toggle, null follows it. */
-  y_label_hidden?: boolean | null
-}
+/** `scistackplot.panels.PanelOverride`. Absent/null fields inherit;
+ *  `y_label_hidden` true hides, false forces on against the grid toggle,
+ *  null follows it. GENERATED from the backend's wire model. */
+import type { PanelOverride, StyleOptions } from '../../generated/api-types.js'
+
+export type { PanelOverride }
 
 /** One faceted panel as the backend reports it. */
 export interface MetaPanel {
@@ -42,7 +39,8 @@ export interface PanelOverrideMeta {
   shares_y: boolean
 }
 
-export type YTitles = 'every_panel' | 'first_column'
+/** Which panels draw their y title (`StyleOptions.y_titles`, Python's Y_TITLES). */
+export type YTitles = NonNullable<StyleOptions['y_titles']>
 
 /** The per-panel Show control: follow the grid toggle, or force either way. */
 export type ShowState = 'follow' | 'show' | 'hide'
@@ -51,12 +49,16 @@ type Patch = Partial<Omit<PanelOverride, 'match'>>
 
 const FIELDS = ['y_minimum', 'y_maximum', 'y_label', 'y_label_hidden'] as const
 
+/** A panel match as the spec may hold it: absent is `{}`, the one panel of
+ *  a figure with no facet (`PanelOverride.from_dict`). */
+type Match = Record<string, string> | undefined
+
 /** A stable identity for a match, independent of key order (select values). */
-export function matchId(match: Record<string, string>): string {
+export function matchId(match: Match = {}): string {
   return JSON.stringify(Object.keys(match).sort().map(name => [name, match[name]]))
 }
 
-export function sameMatch(a: Record<string, string>, b: Record<string, string>): boolean {
+export function sameMatch(a: Match, b: Match): boolean {
   return matchId(a) === matchId(b)
 }
 
@@ -73,12 +75,12 @@ export function isEmptyOverride(override: PanelOverride): boolean {
  */
 export function upsertOverride(
   list: PanelOverride[] | undefined,
-  match: Record<string, string>,
+  match: Match,
   patch: Patch,
 ): PanelOverride[] {
   const current = list ?? []
   const last = [...current].reverse().find(entry => sameMatch(entry.match, match))
-  const merged: PanelOverride = { ...(last ?? { match: { ...match } }) }
+  const merged: PanelOverride = { ...(last ?? { match: { ...(match ?? {}) } }) }
   for (const field of FIELDS) {
     if (!(field in patch)) continue
     const value = patch[field]
@@ -92,7 +94,7 @@ export function upsertOverride(
 /** Every entry for `match` removed ("Clear" for one panel). */
 export function clearOverride(
   list: PanelOverride[] | undefined,
-  match: Record<string, string>,
+  match: Match,
 ): PanelOverride[] {
   return (list ?? []).filter(entry => !sameMatch(entry.match, match))
 }
@@ -100,7 +102,7 @@ export function clearOverride(
 /** The spec's entry for a panel (the last with that match), or null. */
 export function overrideFor(
   list: PanelOverride[] | undefined,
-  match: Record<string, string>,
+  match: Match,
 ): PanelOverride | null {
   return [...(list ?? [])].reverse().find(entry => sameMatch(entry.match, match)) ?? null
 }
@@ -127,6 +129,6 @@ export function overrideCount(list: PanelOverride[] | undefined): number {
 }
 
 /** "RQUAD", or "HAM · L" for a two-factor panel — an unmatched entry's name. */
-export function matchLabel(match: Record<string, string>): string {
+export function matchLabel(match: Match = {}): string {
   return Object.values(match).join(' · ')
 }

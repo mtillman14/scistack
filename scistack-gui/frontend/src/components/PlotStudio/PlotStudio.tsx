@@ -20,6 +20,19 @@ import createPlotlyComponent from 'react-plotly.js/factory'
 import Plotly from 'plotly.js-cartesian-dist-min'
 import CustomFigure, { customPreviewBlob, customPreviewSize, type CustomPreviewPayload } from './CustomFigure'
 import ResizeHandle, { useResizablePanel } from '../ResizeHandle'
+import type {
+  Aggregation,
+  CategoricalOptions,
+  CustomPlot,
+  ErrorBand,
+  FactorVariable as GeneratedFactorVariable,
+  Filter as GeneratedFilter,
+  PlotKind,
+  PlotSpec,
+  Role as PlotSpecRole,
+  Statistic,
+  VariantSet as GeneratedVariantSet,
+} from '../../generated/api-types'
 import { callBackend, isVSCodeMode } from '../../api'
 import { UndoStack } from '../../undo'
 import { useHistoryState, useUndoShortcuts } from '../../hooks/useUndo'
@@ -122,7 +135,7 @@ import {
   withTextTable,
   withTextTarget,
   type ResolvedTextSizes,
-  type TextSizesValue,
+  textSizeOf,
   type TextTable,
 } from './textSizes'
 import LabelsSection, { type ProjectAliasEdit, type TitleTexts } from './LabelsSection'
@@ -179,7 +192,6 @@ import {
   type MatchOp,
   type Matcher,
   type PlotSpecAction,
-  type PlotSpecFields,
   type StylePatch,
   type YAxis,
 } from './plotSpecReducer'
@@ -202,7 +214,7 @@ import {
 } from './combine'
 import { PLOT_THEMES, otherPlotTheme, plotThemeVars, screenFigure } from './plotTheme'
 import { blockedClickNotice, toolButtonStyle } from './toolButton'
-import { applyTile, isTileSelected, tileKey } from './kindTiles'
+import { applyTile, isTileSelected, tileKey, type KindTile } from './kindTiles'
 import { setPlotTheme, usePlotTheme } from './usePlotTheme'
 import StatsLink from './StatsLink'
 import {
@@ -249,7 +261,7 @@ const Plot = createPlotlyComponent(Plotly)
  *  `group` is the Grouping section's — an ordered list, innermost first, one
  *  entry optionally coloured — and the Factors dropdown offers the other
  *  three: Separate figures, Separate panels, Collapse. */
-type Role = 'group' | 'facet' | 'iterate' | 'collapse'
+type Role = PlotSpecRole
 
 /** One entry of a factor's role dropdown, as the backend reports it.
  *
@@ -339,15 +351,7 @@ interface FactorInfo {
  *  holds Age, Sex and InterventionGroup at once and so has no value to group
  *  by. The factor lands in the table under the COLUMN's own name, which is
  *  what `name` carries — roles, filters and y-scoping all key on that. */
-interface FactorVariable {
-  variable: string
-  column: string | null
-  /** Which VARIANT of the grouping variable supplies the labels — a selection
-   *  keyed by frame column, exactly like a variant row's. Absent/empty means
-   *  nothing was said: every variant contributes, and where that leaves two
-   *  labels for one schema location the backend warns and takes the first. */
-  variant?: Record<string, unknown>
-}
+type FactorVariable = GeneratedFactorVariable
 
 /** A variable that MAY group this figure — one entry per variable, never per
  *  column.
@@ -369,7 +373,9 @@ interface GroupableVariableInfo {
 }
 
 /** One offer in the Grouping section: a FactorVariable plus what it looks like. */
-interface GroupableInfo extends FactorVariable {
+interface GroupableInfo extends Omit<FactorVariable, 'column'> {
+  /** The offer always names it: null is the variable itself. */
+  column: string | null
   /** Qualified, for display: `Demographics.InterventionGroup`. */
   label: string
   /** The factor name it will occupy in the table. */
@@ -378,16 +384,8 @@ interface GroupableInfo extends FactorVariable {
   level_count: number
 }
 
-/** A row filter, applied before anything else is reduced. */
-interface Filter {
-  column: string
-  /** Keep only these levels. Absent means "every level" — an all-levels list is
-   *  never stored, because it would rot as soon as new data arrived. */
-  include?: (string | number)[]
-  exclude?: (string | number)[]
-  minimum?: number
-  maximum?: number
-}
+/** A row filter, applied before anything else is reduced (generated). */
+type Filter = GeneratedFilter
 
 interface TableInfo {
   factors: FactorInfo[]
@@ -395,28 +393,15 @@ interface TableInfo {
   row_count: number
 }
 
-interface KindInfo {
-  kind: string
-  available: boolean
+/** One kind of the plot-type grid: a tile (`kindTiles.KindTile`, the one owner
+ *  of the tile fields) plus what the grid shows about it. */
+interface KindInfo extends KindTile {
   reason: string | null
   /** A plot_ function's name, for its one entry (custom plot kinds). */
   label?: string
   /** Whether picking this kind reduces a 1-D measure to one value per record
    *  first. The kind IS the request to collapse; there is no separate toggle. */
   collapses?: boolean
-  /** The assignment (roles, grouping order, colour) this kind should open
-   *  with, when selecting it should re-default them (untouched defaults only —
-   *  `roles.roles_for_kind`). Carried on the option so `setKind` can apply it
-   *  SYNCHRONOUSLY with the click: an RPC would race the resolve queue and
-   *  could land after the user had set a role, overwriting the one thing the
-   *  rule promises not to touch. */
-  assignment?: { roles: Record<string, Role>; groups: string[]; color: string | null } | null
-  /** A text measure's tiles (`capability.categorical_kind_entries`): two of one
-   *  kind are told apart by `id` ("bar:count" / "bar:proportion"), the click
-   *  applies `categorical`, and `selected` says which one the spec IS. */
-  id?: string
-  categorical?: { stat: string } | null
-  selected?: boolean
 }
 
 /** One variant factor as the picker renders it. Built entirely by
@@ -547,14 +532,6 @@ interface DataExport {
   /** The struct field factor (`ColName`) the "one column per field"
    *  checkbox spreads; null when no depth keeps one (no checkbox). */
   field_factor: string | null
-}
-
-/** `PlotSpec.custom`: the user's plot_ function and how it is called. */
-interface CustomPlotSpec {
-  function: string
-  node: string
-  as_table: boolean | string[]
-  inputs: Record<string, string>
 }
 
 /** `capabilities.custom` (scistackplot.custom.custom_capabilities). */
@@ -716,114 +693,11 @@ interface GridMeta {
 
 type AxisSide = 'bottom' | 'left'
 
-interface VariantSet {
-  name: string | null
-  selection: Record<string, unknown>
-  /** Which variable this row draws from; null/absent means the primary measure.
-   *  Rows over different variables stack into the same `Variant` factor, which
-   *  is how "Raw vs Filtered" and "v1 vs v2" become one mechanism. */
-  variable?: string | null
-  /** A reopened saved plot's code versions, `{"Code:fn": ["v1"]}` — filled in by
-   *  the backend on open (scistackplotdb.saved.thaw_code), never by the panel.
-   *  Cleared when the user edits the row's selection: their choice then rules.
-   *  docs/claude/variant-row-selection.md */
-  frozen?: Record<string, string[]>
-  /** True once the user answered "switch to latest": never frozen again. */
-  follow_latest?: boolean
-}
+type VariantSet = GeneratedVariantSet
 
-interface Spec extends PlotSpecFields {
-  measures: string[]
-  /** Variable supplying the x axis of a relational plot. Separate from
-   *  `measures` because it JOINS (one x per y) where extra series STACK. */
-  x_measure?: string | null
-  roles: Record<string, Role>
-  /* The grouping layers, INNERMOST FIRST. Membership is `roles`; this is only
-     the order, so assigning a role can never make the spec invalid. */
-  groups?: string[]
-  /* The grouping layer labelled by the legend, or null. */
-  color?: string | null
-  kind: string
-  /** The plot_ function drawing a `custom` figure (scistackplot CustomPlot). */
-  custom?: CustomPlotSpec | null
-  /* Centre and spread over the SAMPLE — the outermost collapsed key's levels
-     after the inner collapses. `pooled` drops every collapsed key in one
-     groupby instead ("weight by N"). */
-  aggregate?: { statistic: string; error: string; pooled?: boolean }
-  /* How a 1-D measure's CELLS are reduced to one value each when a scalar
-     kind is selected for it. Only meaningful while that is true — there is no
-     "collapse on/off", the kind decides. */
-  cell_statistic?: string
-  /* "Show sample": the collapsed keys whose data is overlaid as points; a
-     deeper key implies the shallower ones. `join_sample` null = automatic. */
-  show_sample?: string[]
-  join_sample?: boolean | null
-  /** The shown key colouring the overlay points (null: the mark's colour). */
-  sample_color?: string | null
-  /** Whether the overlay's own colour levels are listed in the legend
-   *  (`roles.overlay_in_legend`); absent = true. */
-  sample_in_legend?: boolean
-  /** Whether an x level the plot holds but this figure has no data for
-   *  keeps an empty tick (PlotSpec.show_missing_levels); absent = true. */
-  show_missing_levels?: boolean
-  /** How datetimes holding several zones share the figure: "local" (each
-   *  value's own clock) or a zone to convert to (`scistackplot.temporal`). */
-  time_zone?: string
-  /** A histogram's bins and heights (scistackplot.spec.HistogramOptions). */
-  histogram?: HistogramOptions
-  /** A regression's line and annotation (scistackplot.spec.RegressionOptions). */
-  regression?: RegressionOptions
-  /** A KDE's bandwidth, reach and fill (scistackplot.spec.KdeOptions). */
-  kde?: KdeOptions
-  /** How a TEXT measure is drawn (scistackplot.spec.CategoricalOptions): its
-   *  count or %, and optionally one category only. Inert on a numeric one. */
-  categorical?: { stat?: string; level?: string | null }
-  /** Stacked bars (scistackplot.spec.BarOptions). */
-  bar?: { stack?: boolean }
-  facet?: FacetOptions
-  /* Which factors get their own y limits, plus manual overrides. */
-  y_axis?: YAxis
-  /* Variables — or single columns of them — joined in as FACTORS rather than
-     plotted: a subject-level Condition holding stim/sham, or the
-     InterventionGroup column of a wide demographics table. They take a role
-     like any other factor. `column: null` means the variable itself. */
-  factor_variables?: FactorVariable[]
-  /* Factors derived by bucketing another factor's levels (session -> Phase). */
-  level_groups?: LevelGroup[]
-  /* Row filters. The Filters section writes these. Schema keys no longer do:
-     they are the location picker's, which needs a shape `Filter` cannot hold
-     (see `location_filter`). A cleared filter removes its entry entirely rather
-     than storing every level. */
-  filters?: Filter[]
-  /* Which schema locations to draw, as hierarchy prefixes — the location
-     picker's storage. Separate from `filters` because a tree of checkboxes
-     means something RAGGED (all of subject 01, plus trials 1-3 of subject 02)
-     and per-column include-lists can only express a Cartesian product.
-     Empty `include` is inert: everything is drawn. */
-  location_filter?: { keys: string[]; include: PathStep[][]; exclude_levels?: Record<string, string[]> }
-  /* One entry per row of the Variants section. One row is a pin (the figure
-     shows that variant); several are a comparison, and a `Variant` factor
-     appears in Factors carrying whichever role the user gives it. */
-  variant_sets?: VariantSet[]
-  /* Cosmetics. `width`/`height` are INCHES and size the SAVED figure (and
-     the exported code); the preview fills its pane regardless. */
-  style?: { width?: number; height?: number; text?: TextSizesValue; [key: string]: unknown }
-  /** What this plot's factors, levels and measure read as (`PlotSpec.aliases`):
-   *  over the project's `[aliases]`. Edited by the Labels section. */
-  aliases?: SpecAliases
-  /** What colour this plot paints each level in (`PlotSpec.colors`): over
-   *  the project's `[colors]`. Edited by the Colours section. */
-  colors?: SpecColors
-  /** One faceted panel's own y limits / y title (`PlotSpec.panel_overrides`).
-   *  Edited by Appearance > Panels through panelOverrides.ts. */
-  panel_overrides?: PanelOverride[]
-  /** Bars joining two marks of a panel (`PlotSpec.difference_bars`). Edited by
-   *  Statistics > Difference bars through differenceBars.ts. */
-  difference_bars?: DifferenceBar[]
-  /** Compare to reference (`PlotSpec.comparison`). Edited by Structure >
-   *  Compare through compare.ts; null or absent = raw values. */
-  comparison?: Comparison | null
-}
+/** The figure's spec: `PlotSpec.to_dict()` (GENERATED from the backend's wire
+ *  model, scistack_gui.api.spec_wire; each field is documented there). */
+type Spec = PlotSpec
 
 /**
  * Show one schema location and nothing else.
@@ -1181,7 +1055,7 @@ export default function PlotStudio({
   }, [])
   // StatStudio "Sync to PlotStudio": its design copied onto this spec (StatsLink).
   const applyLinkedSpec = useCallback(
-    (next: Record<string, unknown>) => setSpec(next as unknown as Spec),
+    (next: Spec) => setSpec(next),
     [setSpec]
   )
   const [restoreNotes, setRestoreNotes] = useState<RestoreNote[]>([])
@@ -1690,7 +1564,8 @@ export default function PlotStudio({
   const setInputAsTable = useCallback((param: string, on: boolean, all: string[]) => {
     setSpec(prev => {
       if (!prev?.custom) return prev
-      const current = prev.custom.as_table
+      // The backend always writes as_table; absent would mean its default (all).
+      const current = prev.custom.as_table ?? true
       const tables = new Set(
         current === true ? all : current === false ? [] : current.filter(p => all.includes(p))
       )
@@ -1701,11 +1576,11 @@ export default function PlotStudio({
     })
   }, [])
 
-  const setCellStatistic = useCallback((statistic: string) => {
+  const setCellStatistic = useCallback((statistic: Statistic) => {
     dispatchSpec({ type: 'setCellStatistic', statistic })
   }, [])
 
-  const setAggregate = useCallback((patch: { statistic?: string; error?: string; pooled?: boolean }) => {
+  const setAggregate = useCallback((patch: Aggregation) => {
     dispatchSpec({ type: 'setAggregate', patch })
   }, [])
 
@@ -1746,7 +1621,7 @@ export default function PlotStudio({
   }, [])
 
   /** Chart > Categories: merge into `spec.categorical` (a text measure). */
-  const setCategorical = useCallback((patch: { stat?: string; level?: string | null }) => {
+  const setCategorical = useCallback((patch: CategoricalOptions) => {
     console.info('[Plot Studio] categorical_set', patch)
     dispatchSpec({ type: 'setCategorical', patch })
   }, [])
@@ -2392,7 +2267,7 @@ export default function PlotStudio({
       (spec?.variant_sets ?? []).map((set, index) => {
         const info = capabilities?.variants?.sets?.[index]
         return {
-          explicitName: set.name,
+          explicitName: set.name ?? null,
           autoLabel: info?.auto_label ?? '(not set)',
           // Naming a variable is saying something, so such a row is defined
           // even with nothing selected: "also plot FilteredEMG, all of it".
@@ -2653,7 +2528,7 @@ export default function PlotStudio({
 
   // --- export -------------------------------------------------------------
   const handleExport = useCallback(() => {
-    if (!spec) return
+    if (!spec || !outputSpec) return
     setNotice('')
     callBackend('plot_export', { spec: outputSpec, ...resolveParams })
       .then(raw => setCode((raw as { source: string }).source))
@@ -2752,7 +2627,7 @@ export default function PlotStudio({
    *  for. No timeout value fixes that, so neither one asks for an answer. */
   const saveFigures = useCallback(
     async (scope: 'current' | 'all') => {
-      if (!spec) return
+      if (!spec || !outputSpec) return
       setNotice('')
       // A fan-out asks for a FOLDER. Its N filenames are the figure labels —
       // not the user's to choose — so asking for a name only raised the
@@ -2942,7 +2817,7 @@ export default function PlotStudio({
   )
 
   const handleAddToPipeline = useCallback(() => {
-    if (!spec) return
+    if (!spec || !outputSpec) return
     setNotice('Writing endpoint…')
     callBackend('plot_add_to_pipeline', { spec: outputSpec, ...(derivedBars.length ? { derived_bars: derivedBars } : {}) }, { stack: undo })
       .then(raw => {
@@ -3569,7 +3444,7 @@ export default function PlotStudio({
                     <span style={styles.factorName}>Per-record value</span>
                     <select
                       value={spec?.cell_statistic ?? 'mean'}
-                      onChange={e => setCellStatistic(e.target.value)}
+                      onChange={e => setCellStatistic(e.target.value as Statistic)}
                       style={styles.select}
                     >
                       <option value="mean">Mean</option>
@@ -3631,7 +3506,7 @@ export default function PlotStudio({
                 hint="The measure's values binned along x. Bins are shared by every panel of the figure. Percent and density are within each colour, so groups of different sizes compare by shape."
               >
                 <HistogramSection
-                  options={spec.histogram}
+                  options={spec.histogram ?? undefined}
                   capability={capabilities?.histogram}
                   meta={binsMeta}
                   onChange={setHistogram}
@@ -3643,7 +3518,7 @@ export default function PlotStudio({
                 title="Density curve"
                 hint="A smoothed histogram: a Gaussian kernel density estimate of the measure, one curve per colour, each with area 1 so groups of different sizes compare by shape. Finer than bins, but it smooths over gaps and spikes (a pile of zeros reads as a bump)."
               >
-                <KdeSection options={spec.kde} capability={capabilities?.kde} onChange={setKde} />
+                <KdeSection options={spec.kde ?? undefined} capability={capabilities?.kde} onChange={setKde} />
               </Section>
             )}
             {spec?.kind === 'regression' && (
@@ -3652,7 +3527,7 @@ export default function PlotStudio({
                 hint="A least-squares line through each colour's points (or all of a panel's), with R², p (slope ≠ 0) and n on the plot."
               >
                 <RegressionSection
-                  options={spec.regression}
+                  options={spec.regression ?? undefined}
                   capability={capabilities?.regression}
                   fits={fitsMeta}
                   onChange={setRegression}
@@ -3923,7 +3798,7 @@ export default function PlotStudio({
                     <span style={styles.factorName}>Centre</span>
                     <select
                       value={spec?.aggregate?.statistic ?? 'mean'}
-                      onChange={e => setAggregate({ statistic: e.target.value })}
+                      onChange={e => setAggregate({ statistic: e.target.value as Statistic })}
                       style={styles.select}
                     >
                       <option value="mean">Mean</option>
@@ -3934,7 +3809,7 @@ export default function PlotStudio({
                     <span style={styles.factorName}>Spread</span>
                     <select
                       value={spec?.aggregate?.error ?? 'sd'}
-                      onChange={e => setAggregate({ error: e.target.value })}
+                      onChange={e => setAggregate({ error: e.target.value as ErrorBand })}
                       style={styles.select}
                     >
                       <option value="sd">SD</option>
@@ -4403,7 +4278,7 @@ export default function PlotStudio({
                 }}
               >
                 {textSizeRows(textMeta, spec?.style?.text).map(row => {
-                  const value = spec?.style?.text?.[row.key]
+                  const value = textSizeOf(spec?.style?.text, row.key)
                   return (
                     <SizeInput
                       key={row.key}
@@ -4853,7 +4728,7 @@ export default function PlotStudio({
         )}
         {!capabilities?.custom && (
           <StatsLink
-            spec={spec as Record<string, unknown> | null}
+            spec={spec}
             plotId={loadedPlot?.plot_id ?? null}
             variable={describe?.variable ?? variable}
             csvPath={csvPath}

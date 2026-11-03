@@ -37,7 +37,7 @@ export function initialView(stored: string | null, opts: { plotNode?: boolean })
 export function asGuideSpec(plotSpec: Record<string, unknown>, guide: GuideState): StatsSpec {
   return {
     format: 1,
-    design: plotSpec as StatsSpec['design'],
+    design: plotSpec as unknown as StatsSpec['design'],
     dvs: [],
     descriptives: { cell: 'mean_sd', statistics: [] },
     comparisons: [],

@@ -141,7 +141,7 @@ export default function DifferenceBarsSection({
           {meta.not_in_figure.map(bar => (
             <div key={dictId(bar.match) + dictId(bar.a) + dictId(bar.b)} style={styles.row}>
               <span style={styles.pair}>
-                {Object.values(bar.match).join(' · ')}: {barText(bar)}
+                {Object.values(bar.match ?? {}).join(' · ')}: {barText(bar)}
               </span>
               <button
                 type="button"

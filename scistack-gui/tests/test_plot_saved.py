@@ -174,7 +174,10 @@ def test_refusals_are_400s_over_http(client, populated_db):
         "/api/plot/saved/save",
         json={"variable": "RawSignal", "name": "x", "spec": {**spec, "x_layers": []}},
     )
-    assert legacy.status_code == 400
+    # Refused at the boundary by the spec's wire model (scistack_gui.api.
+    # spec_params), naming the key, before any service reads it.
+    assert legacy.status_code == 422
+    assert "x_layers" in legacy.text
 
     missing = client.post("/api/plot/saved/open", json={"plot_id": "nope"})
     assert missing.status_code == 400

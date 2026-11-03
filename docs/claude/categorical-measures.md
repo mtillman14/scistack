@@ -43,7 +43,7 @@ rewritten the same day for the finished state. Companion to
 | What a text measure cannot do | `categorical.categorical_problem` (validate + capability) |
 | Free text threshold | `categorical.MAX_CATEGORY_LEVELS` (= `scistackplotdb.MAX_GROUP_LEVELS`) |
 | Category text of a cell | `table.category_text` / `category_levels` |
-| The same rewrite as code | `categorical.categorical_code` (codegen) |
+| The rewrite as a step, and as code | `categorical.categorical_step` -> `reduction.CategoricalRewrite` (applied by `apply_categorical`, printed by `reduction_code.emit_categorical`) |
 | Default roles per tile | `roles.categorical_assignment` / `categorical_roles_for` |
 | Kind tiles | `capability.CATEGORICAL_TILES` / `categorical_kind_entries` |
 | `Var (text)` name | `scistackplotdb.text_fields` |

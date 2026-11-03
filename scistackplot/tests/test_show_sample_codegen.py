@@ -119,7 +119,10 @@ def test_no_selection_emits_no_overlay(table):
 def test_show_subject_averages_trials_before_the_marks_chain(table):
     source = generate_plot_function(_spec(["subject"]), table)
     assert "# show sample: one point per subject; trial averaged within it" in source
-    assert "_sample = df.groupby(['subject', 'session'], as_index=False)[['M']].mean()" in source
+    assert (
+        "_sample = df.groupby(['subject', 'session'], dropna=False, sort=False)"
+        "[['M']].agg('mean').reset_index()"
+    ) in source
     # Built BEFORE the marks' own chain consumes df.
     assert source.index("_sample = df.groupby") < source.index("# collapse trial")
     assert "lines join each subject" in source

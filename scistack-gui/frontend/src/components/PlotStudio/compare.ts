@@ -9,14 +9,10 @@
  * .claude/plan-compare-to-reference.md.
  */
 
-export type CompareMode = 'difference' | 'percent'
+// GENERATED from the backend's wire model (scistack_gui.api.spec_wire).
+import type { CompareMode, Comparison } from '../../generated/api-types.js'
 
-export interface Comparison {
-  layer: string
-  level: string
-  mode: CompareMode
-  active?: boolean
-}
+export type { CompareMode, Comparison }
 
 /** `capabilities.comparison` (`compare.comparison_summary`). */
 export interface CompareCapability {
@@ -58,7 +54,8 @@ export const MODE_LABELS: Record<ModeChoice, string> = {
 
 export function modeChoice(comparison: Comparison | null | undefined): ModeChoice {
   if (!comparison || comparison.active === false) return 'off'
-  return comparison.mode
+  // Absent is Comparison's default (scistackplot CompareMode.DIFFERENCE).
+  return comparison.mode ?? 'difference'
 }
 
 /**

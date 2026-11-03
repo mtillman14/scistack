@@ -17,19 +17,13 @@
  * React-free, so `npm test` runs it.
  */
 
-export interface LevelGroup {
-  /** The combined factor's name, e.g. "Stim". */
-  name: string
-  /** The factor whose levels are combined, e.g. "condition". */
-  source: string
-  /** `{level: bucket label}`; a level absent (or labelled "") is dropped. */
-  mapping: Record<string, string>
-  /** null DROPS rows in no bucket; a string is the catch-all bucket. */
-  unmatched: string | null
-  /** Whether this combine replaces its source right now. At most one per
-   *  source; absent reads as true (the backend's default). */
-  active?: boolean
-}
+/** `scistackplot.LevelGroup`, a combine: `mapping` is `{level: bucket
+ *  label}` (a level absent or labelled "" is dropped), `unmatched` null drops
+ *  rows in no bucket, `active` absent reads as true. GENERATED from the
+ *  backend's wire model. */
+import type { LevelGroup } from '../../generated/api-types.js'
+
+export type { LevelGroup }
 
 /** The slice of a spec a slot switch touches. */
 export interface SlotSpec {
@@ -153,7 +147,7 @@ export interface Bucket {
 export function readBuckets(group: LevelGroup, sourceLevels: (string | number)[]): Bucket[] {
   const order: string[] = []
   const members = new Map<string, Set<string>>()
-  for (const [level, label] of Object.entries(group.mapping)) {
+  for (const [level, label] of Object.entries(group.mapping ?? {})) {
     if (label === '' || label === null || label === undefined) continue
     if (!members.has(label)) {
       order.push(label)

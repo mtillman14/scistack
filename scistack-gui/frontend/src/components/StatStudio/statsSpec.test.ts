@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  addAnalysis, addDV, gridToTsv, gridWidth, moveGroup, nextAnalysisId, removeAnalysis, removeDV,
+  addAnalysis, addDV, analyses, gridToTsv, gridWidth, moveGroup, nextAnalysisId, removeAnalysis, removeDV,
   setCell, setFormatting, setOverride, setRole, targets, toggleHiddenBracket, toggleStatistic,
   updateAnalysis, type Grid, type StatsSpec,
 } from './statsSpec.js'
@@ -23,7 +23,7 @@ test('addDV keeps the implicit first DV and refuses duplicates', () => {
   const two = addDV(base(), 'EMG', ['TA', 'SOL'])
   assert.deepEqual(two.dvs, [{ variable: 'Ratings' }, { variable: 'EMG', columns: ['TA', 'SOL'] }])
   assert.equal(addDV(two, 'EMG', ['TA', 'SOL']), two)
-  assert.equal(removeDV(base(), 0).dvs.length, 0, 'the last DV cannot be removed')
+  assert.equal(removeDV(base(), 0).dvs?.length, 0, 'the last DV cannot be removed')
   assert.deepEqual(removeDV(two, 0).dvs, [{ variable: 'EMG', columns: ['TA', 'SOL'] }])
 })
 
@@ -41,23 +41,23 @@ test('statistics toggle in catalog order', () => {
   const order = ['n', 'mean', 'sd', 'skewness']
   let spec = toggleStatistic(base(), 'skewness', order)
   spec = toggleStatistic(spec, 'mean', order)
-  assert.deepEqual(spec.descriptives.statistics, ['n', 'mean', 'skewness'])
-  assert.equal(setCell(spec, 'median_iqr').descriptives.cell, 'median_iqr')
+  assert.deepEqual(spec.descriptives?.statistics, ['n', 'mean', 'skewness'])
+  assert.equal(setCell(spec, 'median_iqr').descriptives?.cell, 'median_iqr')
 })
 
 test('analyses: unique ids, patch, clear a field, overrides', () => {
   let spec = addAnalysis(base(), 'nonparametric')
-  assert.equal(spec.comparisons[1].id, 'a2')
+  assert.equal(analyses(spec)[1].id, 'a2')
   assert.equal(nextAnalysisId(spec), 'a3')
   spec = updateAnalysis(spec, 'a2', { correction: 'fdr_bh', pairwise_test: 'wilcoxon' })
   spec = updateAnalysis(spec, 'a2', { pairwise_test: undefined })
-  assert.equal(spec.comparisons[1].correction, 'fdr_bh')
-  assert.equal('pairwise_test' in spec.comparisons[1], false)
+  assert.equal(analyses(spec)[1].correction, 'fdr_bh')
+  assert.equal('pairwise_test' in analyses(spec)[1], false)
   spec = setOverride(spec, 'a2', 'brand', 'within')
-  assert.deepEqual(spec.comparisons[1].overrides, { brand: 'within' })
+  assert.deepEqual(analyses(spec)[1].overrides, { brand: 'within' })
   spec = setOverride(spec, 'a2', 'brand', null)
-  assert.deepEqual(spec.comparisons[1].overrides, {})
-  assert.equal(removeAnalysis(spec, 'a1').comparisons.length, 1)
+  assert.deepEqual(analyses(spec)[1].overrides, {})
+  assert.equal(analyses(removeAnalysis(spec, 'a1')).length, 1)
 })
 
 test('formatting: undefined decimals means automatic', () => {

@@ -35,13 +35,14 @@ export interface Labelable {
   truncated: boolean
 }
 
-/** One `PlotSpec.aliases` entry: `Alias(name, levels)`. */
-export interface AliasEntry {
-  name?: string | null
-  levels?: Record<string, string>
-}
+/** One `PlotSpec.aliases` entry: `Alias(name, levels)`. GENERATED from the
+ *  backend's wire model, like the map that holds them. */
+import type { Alias, PlotSpec } from '../../generated/api-types.js'
 
-export type SpecAliases = Record<string, AliasEntry>
+export type AliasEntry = Alias
+
+export type SpecAliases = NonNullable<PlotSpec['aliases']>
+
 
 /** The plot's own name alias for `key`, or null when the plot sets none. */
 export function plotName(aliases: SpecAliases | undefined, key: string): string | null {
