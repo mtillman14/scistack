@@ -1,24 +1,22 @@
-"""Flat-table export for ``scifor.Merge``: inner-join constituents into one frame.
+"""Flat-table export for ``scifor.Merge``: join constituents into one frame (THE Merge rule).
 
 ``merge_to_dataframe`` builds the joined pandas DataFrame; ``export_merge_csv`` is
 a thin wrapper that writes it to a ``.csv``. Both back ``Merge.as_df`` and
 ``Merge.to_csv`` respectively.
 
-Unlike the ``for_each`` merge path (``_prepare_merge``/``merge_parts`` in
-``foreach.py``), which combo-filters each constituent then positionally
-concatenates after *dropping* the schema columns, this performs a real
-``pd.merge(how="inner")`` across the constituents and keeps a single copy of the
-shared schema columns. There is no per-combo iteration here — the whole
-constituent DataFrames are joined at once.
-
-Non-schema columns are assumed not to overlap between constituents (caller
-guarantee), so the columns common to any two constituents are exactly the shared
-schema columns, which become the join keys.
+The join is THE Merge rule (``scifor.merge.merge_frames``; spec:
+docs/claude/merge-cases.json), the same one the per-combo loop uses: join on
+shared schema columns, a shared data column or a key present on one side only
+is an error (never a silent drop). The only difference here is
+``positional=False``: whole tables have no row-position meaning, so
+constituents sharing no schema column are an error.
 """
 
 from typing import Any
 
 from scistacklog import Log
+
+from .merge import merge_frames
 
 
 def merge_to_dataframe(
@@ -28,7 +26,7 @@ def merge_to_dataframe(
     verbose: bool = False,
     **metadata: Any,
 ) -> "Any":
-    """Inner-join a ``Merge``'s constituents and return the joined DataFrame.
+    """Join a ``Merge``'s constituents and return the joined DataFrame.
 
     Args:
         merge: A ``scifor.Merge`` instance.
@@ -43,7 +41,7 @@ def merge_to_dataframe(
             membership. Keys absent from a given constituent are skipped.
 
     Returns:
-        The inner-joined pandas DataFrame with one copy of the shared schema
+        The joined pandas DataFrame with one copy of the shared schema
         columns plus every selected data column.
     """
     import pandas as pd
@@ -101,22 +99,15 @@ def merge_to_dataframe(
         )
         parts.append((label, part_df))
 
-    # Fold an inner join across the constituents on their shared schema columns.
-    acc_label, acc = parts[0]
-    for label, part in parts[1:]:
-        join_keys = [c for c in acc.columns if c in part.columns]
-        if schema_keys:
-            join_keys = [c for c in join_keys if c in schema_keys]
-        if not join_keys:
-            raise ValueError(
-                f"Cannot inner-join {acc_label} and {label}: no shared schema "
-                f"column to join on. {acc_label} columns: {list(acc.columns)}; "
-                f"{label} columns: {list(part.columns)}. Schema keys: "
-                f"{schema_keys or '(unset — call set_schema())'}."
-            )
-        _log(f"merge: joining {label} into {acc_label} on {join_keys}")
-        acc = pd.merge(acc, part, on=join_keys, how="inner")
-        acc_label = f"{acc_label}+{label}"
+    # THE Merge rule, over whole tables (no positional fallback).
+    labels = [label for label, _ in parts]
+    _log(f"merge: joining {labels} on shared schema columns")
+    acc = merge_frames(
+        [part for _, part in parts],
+        schema_keys or None,
+        labels=labels,
+        positional=False,
+    )
 
     # The where= predicate spans the merged row, so apply it once to the joined
     # table (a constituent need not contain every column the filter references).
@@ -137,7 +128,7 @@ def export_merge_csv(
     verbose: bool = False,
     **metadata: Any,
 ) -> None:
-    """Inner-join a ``Merge``'s constituents and write the result to ``filename``.
+    """Join a ``Merge``'s constituents and write the result to ``filename``.
 
     Thin wrapper over ``merge_to_dataframe``; ``filename`` must end with ``.csv``.
     """
@@ -162,21 +153,24 @@ def export_merge_csv(
 def _filter_rows_by_metadata(df: "Any", metadata: dict) -> "Any":
     """Filter df rows by metadata for any matching column (scalar or list).
 
-    Mirrors ``_filter_df_for_combo`` but accepts list/tuple/set values (matched
-    by membership) in addition to scalars (matched by equality). Keys not
+    Same key-match rule as ``_filter_df_for_combo`` (``scifor.keys``), and
+    list/tuple/set values match by membership (any value matches). Keys not
     present as columns in ``df`` are skipped.
     """
-    import pandas as pd
+    import numpy as np
+
+    from .keys import series_mask
 
     if len(df.columns) == 0:
         return df.reset_index(drop=True)
 
-    mask = pd.Series([True] * len(df), index=df.index)
+    mask = np.ones(len(df), dtype=bool)
     for key, val in metadata.items():
         if key not in df.columns:
             continue
-        if isinstance(val, (list, tuple, set)):
-            mask = mask & df[key].isin(list(val))
-        else:
-            mask = mask & (df[key] == val)
+        values = list(val) if isinstance(val, (list, tuple, set)) else [val]
+        col_mask = np.zeros(len(df), dtype=bool)
+        for v in values:
+            col_mask |= series_mask(df[key], v)
+        mask &= col_mask
     return df[mask].reset_index(drop=True)

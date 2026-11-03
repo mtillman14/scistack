@@ -205,7 +205,7 @@ class TestSchemaIds:
     def test_schema_row_has_nulls_for_skipped_keys(self, wide_duck):
         """Skipped schema keys should be NULL in _schema table."""
         wide_duck.batch_get_or_create_schema_ids(dict([_speed_combo("S01", "SSV")]))
-        row = wide_duck.query(
+        row = wide_duck.fetchdf(
             "SELECT * FROM _schema WHERE schema_level = ?",
             params=["speed"],
         )
@@ -220,7 +220,7 @@ class TestSchemaIds:
             dict([_speed_combo("S01", "SSV"), _speed_combo("S01", "FV")])
         )
         assert len(set(ids.values())) == 2
-        schema_rows = wide_duck.query(
+        schema_rows = wide_duck.fetchdf(
             "SELECT * FROM _schema WHERE schema_level = 'speed'"
         )
         assert set(schema_rows["speed"]) == {"SSV", "FV"}

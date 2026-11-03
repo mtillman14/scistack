@@ -666,7 +666,7 @@ class TestDirectQuery:
     def test_query_returns_dataframe(self, duck):
         """query() should return a pandas DataFrame."""
         store(duck, "qvar", 42)
-        result = duck.query('SELECT * FROM "qvar"')
+        result = duck.fetchdf('SELECT * FROM "qvar"')
         assert isinstance(result, pd.DataFrame)
         assert len(result) >= 1
 
@@ -716,6 +716,10 @@ _STATEMENT_CALLS = {
     ),
     "_fetchdf_with_frame": lambda db: db._fetchdf_with_frame(
         "SELECT * FROM _query_frame", pd.DataFrame({"a": [1]})
+    ),
+    "insert_frame": lambda db: (
+        db.execute("CREATE TABLE IF NOT EXISTS _if_t (a INTEGER)"),
+        db.insert_frame("_if_t", pd.DataFrame({"a": [1]})),
     ),
 }
 

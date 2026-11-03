@@ -79,7 +79,7 @@ Wrappers change how one input is sliced for each call. They nest, and the same c
 | Wrapper | What it does | Typical use |
 |---|---|---|
 | `Fixed(data, **meta)` | Slice this input with fixed values for some keys instead of the current ones. | Compare every session to `Fixed(df, session="BL")`. |
-| `Merge(a, b, ...)` | Slice each constituent, then join them column-wise into one DataFrame. | A function that needs kinematics and force together. |
+| `Merge(a, b, ...)` | Slice each constituent, then join them on shared schema keys into one DataFrame. | A function that needs kinematics and force together. |
 | `ColumnSelection(data, cols, iterate=False)` | Pass only some columns. One column arrives as its value when the combination has one row, else as a numpy array (`column_value`); several arrive as a DataFrame. With `iterate=True`, call `fn` once per column and reassemble. | Run one function over every channel of a table. |
 | `ColName(df)` / `ColName()` | A constant that resolves to a column *name*: the single data column of `df`, or the column currently being iterated. | Label a result with the channel name. |
 | `EachOf(a, b, ...)` | Alternatives for an input, constant, or `where=`. Each alternative is a separate run; several `EachOf`s form a Cartesian product. | Try `EachOf(10, 20, 30)` cutoffs in one call. |

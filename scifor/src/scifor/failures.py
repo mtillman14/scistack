@@ -635,6 +635,38 @@ def _definition_site(fn: Any) -> str:
     return f" (defined at {file}:{line})" if file else ""
 
 
+SEAM_FALLBACK_TAG = "[seam_fallback]"
+_SEAM_TAIL = " — no check names this cause yet"
+
+
+def parse_seam_fallback(line: str) -> "dict | None":
+    """One ``[seam_fallback]`` log line as ``{time, stage, fn, output,
+    exc_type, message}``, or ``None`` for any other line.
+
+    The reader of the line :func:`as_user_value_error` writes (one owner of
+    the format: writer and reader live together). ``scidb seams`` counts
+    them: each frequent ``(stage, exc_type)`` is a step that needs a
+    ``diagnose`` check, so the GUI can name the cause instead of "probable".
+    """
+    at = line.find(SEAM_FALLBACK_TAG)
+    if at < 0:
+        return None
+    body = line[at + len(SEAM_FALLBACK_TAG):].strip()
+    if body.endswith(_SEAM_TAIL.strip()):
+        body = body[: -len(_SEAM_TAIL.strip())].rstrip(" —")
+    fields: dict = {"time": line[:23] if line[:4].isdigit() else ""}
+    for name in ("stage", "fn", "output"):
+        prefix = f"{name}="
+        if not body.startswith(prefix):
+            return None
+        value, _, body = body[len(prefix):].partition(" ")
+        fields[name] = value
+    exc_type, _, message = body.partition(": ")
+    fields["exc_type"] = exc_type.strip()
+    fields["message"] = message.strip()
+    return fields
+
+
 def as_user_value_error(
     exc: BaseException,
     *,
@@ -676,8 +708,8 @@ def as_user_value_error(
             probable=True,
         )
         Log.warn(
-            f"[seam_fallback] stage={stage} fn={fn_name} output={output} "
-            f"{type(exc).__name__}: {exc} — no check names this cause yet",
+            f"{SEAM_FALLBACK_TAG} stage={stage} fn={fn_name} output={output} "
+            f"{type(exc).__name__}: {exc}{_SEAM_TAIL}",
             layer="scifor",
         )
     new.__cause__ = exc

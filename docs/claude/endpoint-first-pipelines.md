@@ -194,6 +194,18 @@ never-run steps, which E cannot.
 
 ### Option D′ — ambient current pipeline, kwarg as override (user proposal 2026-07-16)
 
+> **Revised 2026-11-02 (user decision, `.claude/plan-p6-behaviour.md` stage 9).**
+> Python now uses Option B's `with` block for the scope, plus an explicit
+> `pipe.for_each(...)`: `db.pipeline(name)` no longer activates, and leaving
+> the block always ends registration, including on an exception. The
+> footgun below (registration leaking into every later call, including
+> later notebook cells) happened, so the scope is now visible in the code.
+> MATLAB has no `with`, so `scidb.Pipeline(...)` still activates until a
+> run or `deactivate()`, and `pipe.for_each(...)` is its leak-free form. A
+> `db.pipeline()` that is never entered or used logs a warning with the
+> new form, because a script written the old way runs its `for_each` calls
+> immediately.
+
 Per-call `pipeline=` is noisy when a whole file is one pipeline (the common
 case for this user base: linear scientist scripts). Instead, creating a
 pipeline **activates** it as the ambient registration target; subsequent

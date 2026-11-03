@@ -43,7 +43,10 @@ def _cache_pipeline(pipe) -> int:
 
 @matlab_entry
 def pipeline_create(name: str, db=None, activate: bool = True) -> int:
-    """Create (and by default activate) a Pipeline; returns a cache handle."""
+    """Create (and by default activate) a Pipeline; returns a cache handle.
+
+    MATLAB has no ``with``, so its scidb.Pipeline constructor keeps the
+    activate-until-run form (Python registers only inside ``with pipe:``)."""
     from scidb.run.pipeline import Pipeline
 
     _db = db if db is not None and not isinstance(db, type(None)) else None
@@ -56,7 +59,7 @@ def pipeline_create(name: str, db=None, activate: bool = True) -> int:
             _db = None
     pipe = Pipeline(name, db=_db)
     if activate:
-        pipe.activate()
+        pipe._activate()
     return _cache_pipeline(pipe)
 
 
@@ -72,7 +75,8 @@ def pipeline_active_name() -> str:
 
 @matlab_entry
 def pipeline_deactivate(handle: int) -> None:
-    _pipeline_cache[int(handle)].deactivate()
+    """MATLAB's explicit escape: stop registering, without running."""
+    _pipeline_cache[int(handle)]._deactivate(acknowledge=True)
 
 
 @matlab_entry

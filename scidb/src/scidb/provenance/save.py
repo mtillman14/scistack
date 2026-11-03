@@ -96,7 +96,6 @@ def record_direct_save(
         )
         input_edges.append((save_inv_id, str(name), crid, None))
 
-    con = duck.con
     duck.bulk_insert(
         "_record",
         (
@@ -117,7 +116,7 @@ def record_direct_save(
         constant_rows,
         conflict_cols=["record_id"],
     )
-    con.execute(
+    duck.execute(
         "INSERT INTO _invocation "
         "(invocation_id, function_name, function_hash, as_table, distribute) "
         "VALUES (?, ?, ?, ?, ?) ON CONFLICT (invocation_id) DO NOTHING",
@@ -129,7 +128,7 @@ def record_direct_save(
         input_edges,
         conflict_cols=["invocation_id", "param_name", "input_record_id"],
     )
-    con.execute(
+    duck.execute(
         "INSERT INTO _invocation_output (invocation_id, output_num, output_record_id) "
         "VALUES (?, ?, ?) ON CONFLICT (invocation_id, output_num) DO NOTHING",
         [save_inv_id, 0, output_record_id],
@@ -1368,7 +1367,7 @@ def _commit_graph(
         # started the run, read here by the one place that records it.
         from scidb.provenance.intent import current_origin, current_step
 
-        duck.con.execute(
+        duck.execute(
             "INSERT INTO _run (run_id, timestamp, function_name, "
             "where_clause, origin) VALUES (?, ?, ?, ?, ?)",
             [run_id, created_at, function_name, where_clause, current_origin()],
@@ -1376,14 +1375,14 @@ def _commit_graph(
         # The step name, when the call gave one (for_each(step=...)).
         step = current_step()
         if step:
-            duck.con.execute(
+            duck.execute(
                 "INSERT INTO _run_step (run_id, step) VALUES (?, ?) "
                 "ON CONFLICT (run_id) DO NOTHING",
                 [run_id, step],
             )
             logger.info("run %s of %s recorded as step %r", run_id, function_name, step)
         if output_types:
-            duck.con.execute(
+            duck.execute(
                 "INSERT INTO _run_outputs (run_id, outputs, output_params) VALUES (?, ?, ?) "
                 "ON CONFLICT (run_id) DO NOTHING",
                 [

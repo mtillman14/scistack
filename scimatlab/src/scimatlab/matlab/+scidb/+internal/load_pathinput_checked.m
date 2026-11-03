@@ -3,9 +3,10 @@ function filepath = load_pathinput_checked(pi_obj, meta_nv, key_types, schema_ke
 %
 %   FILEPATH = load_pathinput_checked(PI, META_NV, KEY_TYPES, SCHEMA_KEYS)
 %
-%   MATLAB mirror of Python scidb.run.foreach._load_pathinput_checked — the
-%   policy half of the zero-padded-filename contract (the reporting half
-%   lives in scifor.PathInput.load_with_captures, which stays policy-free):
+%   The policy is Python's (scidb.run.foreach.pathinput_numeric_eligible and
+%   pathinput_key_type_offender, also used by _load_pathinput_checked); this
+%   file only calls it and raises the MATLAB error. The reporting half lives
+%   in scifor.PathInput.load_with_captures, which stays policy-free:
 %
 %   - 'string'-declared keys are excluded from the numeric-equivalence
 %     fallback entirely: spelling is identity, "1" never matches "001".
@@ -19,54 +20,53 @@ function filepath = load_pathinput_checked(pi_obj, meta_nv, key_types, schema_ke
 %   KEY_TYPES is a struct (key -> 'numeric'|'string'); SCHEMA_KEYS a string
 %   array.  META_NV is the combo's name-value cell.
 
+    py_kt = py.dict();
     kt_fields = fieldnames(key_types);
-    string_keys = strings(0);
-    numeric_keys = strings(0);
     for i = 1:numel(kt_fields)
-        t = string(key_types.(kt_fields{i}));
-        if t == "string"
-            string_keys(end+1) = string(kt_fields{i}); %#ok<AGROW>
-        elseif t == "numeric"
-            numeric_keys(end+1) = string(kt_fields{i}); %#ok<AGROW>
-        end
+        py_kt{kt_fields{i}} = char(string(key_types.(kt_fields{i})));
     end
-
     meta_keys = strings(1, numel(meta_nv) / 2);
     for i = 1:2:numel(meta_nv)
         meta_keys((i + 1) / 2) = string(meta_nv{i});
     end
-    eligible = setdiff(meta_keys, string_keys, 'stable');
+    policy = py.importlib.import_module('scidb.run.foreach');
+    eligible = string(cellfun(@char, cell(policy.pathinput_numeric_eligible( ...
+        py.list(cellstr(meta_keys)), py_kt)), 'UniformOutput', false));
 
     % Numeric bridges only: an alias spelling ("Baseline" for canonical
     % "BL") is a declared equivalence. scifor owns which kind a bridge was.
     [filepath, resolutions] = pi_obj.load_with_captures(meta_nv, eligible, "numeric");
 
     res_fields = fieldnames(resolutions);
+    py_res = py.dict();
     for i = 1:numel(res_fields)
-        key = string(res_fields{i});
-        if ismember(key, string(schema_keys)) && ~ismember(key, numeric_keys)
-            % Recover the given value for the error message.
-            given = "";
-            for j = 1:2:numel(meta_nv)
-                if string(meta_nv{j}) == key
-                    given = string(meta_nv{j+1});
-                    break;
-                end
+        py_res{res_fields{i}} = char(resolutions.(res_fields{i}));
+    end
+    offender = policy.pathinput_key_type_offender(py_res, py_kt, ...
+        py.list(cellstr(string(schema_keys))));
+    if ~isa(offender, 'py.NoneType')
+        key = string(char(offender{1}));
+        spelling = string(char(offender{2}));
+        % Recover the given value for the error message.
+        given = "";
+        for j = 1:2:numel(meta_nv)
+            if string(meta_nv{j}) == key
+                given = string(meta_nv{j+1});
+                break;
             end
-            error('scidb:SchemaKeyTypeError', ...
-                ['PathInput resolved %s=%s to ''%s'' on disk (template ' ...
-                 '''%s'') — the spelling of schema key ''%s'' is ambiguous ' ...
-                 '(zero-padded filenames). Declare its type once to fix ' ...
-                 'its identity (it is stored in the database): tick ' ...
-                 '''Numeric'' for ''%s'' in the GUI, or call ' ...
-                 'scidb.configure_database(..., ' ...
-                 'schema_key_types=struct(''%s'', ''numeric'')) once, to treat ' ...
-                 'values as numbers (canonical, no leading zeros), or ' ...
-                 '''string'' to make spelling significant (exact matches ' ...
-                 'only).'], ...
-                key, given, resolutions.(res_fields{i}), ...
-                pi_obj.path_template, key, key, key);
         end
+        error('scidb:SchemaKeyTypeError', ...
+            ['PathInput resolved %s=%s to ''%s'' on disk (template ' ...
+             '''%s'') — the spelling of schema key ''%s'' is ambiguous ' ...
+             '(zero-padded filenames). Declare its type once to fix ' ...
+             'its identity (it is stored in the database): tick ' ...
+             '''Numeric'' for ''%s'' in the GUI, or call ' ...
+             'scidb.configure_database(..., ' ...
+             'schema_key_types=struct(''%s'', ''numeric'')) once, to treat ' ...
+             'values as numbers (canonical, no leading zeros), or ' ...
+             '''string'' to make spelling significant (exact matches ' ...
+             'only).'], ...
+            key, given, spelling, pi_obj.path_template, key, key, key);
     end
 
     if ~isempty(res_fields)

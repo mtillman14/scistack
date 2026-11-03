@@ -6,7 +6,7 @@
 
 | File | Reader | Content | Written by |
 |---|---|---|---|
-| `scistack.log` (**journal**) | the scientist | one block per run: what ran, counts, duration, each failure labelled with **who can fix it**; data notes; failed GUI actions | `Log.journal` only (via `Log.run`, `Log.journal_note`, `Log.journal_json`) |
+| `scistack.log` (**journal**) | the scientist | one block per run: what ran, counts, duration, each failure labelled with **who can fix it**; data notes; failed GUI actions | `Log.journal` only (via `Log.run`, `Log.journal_note`) |
 | `scistack-debug.log` | whoever debugs SciStack | everything, **DEBUG by default**, `run=<id>` on every line inside a run | every `Log.*` call / layer logger |
 
 Both sit beside the database. `scidb.model.log.attach_log_file(db)` sets both (`log_path_for` = journal, `debug_log_path_for` = debug; the debug name is derived by `scistacklog.debug_path_for`). `configure_database` (Python and MATLAB), the GUI server and the `scidb` CLI all call it.
@@ -45,7 +45,6 @@ Log.journal(event) ─► scistacklog.journal.render(event) ─► append to sci
 - What feeds a block: scifor's summary event (`journal.add_summary`, same dict as the `summary` progress event), scidb's `count("saved", n)` (in `_save_results`) and `count("up_to_date", n)` (skip_computed).
 - **Rendering** (`scistacklog/journal.py`): plain dicts in, text out, never raises. `blame_headline` is the ONE wording of each blame category. It is also sent to the GUI as `blame_label` on every failure group, so the TS code holds no copy.
 - `Log.journal_note(text, key=)`: once per key per process. Used by scistackplotdb's field-coverage check (one note per variable + column set, instead of a WARN per column per load).
-- `Log.journal_json(text)`: the MATLAB entry. `+scifor/for_each.m`'s `write_journal` builds the same event and calls it after the outputs are built (or, with `error`, when building them fails).
 - GUI actions: `server._journal_action_failure` writes `action_failed` for a failed non-read RPC, and puts ` [run=<id>]` on the debug-file `RPC << … FAILED` line. Read RPCs (`get_*`/`list_*`) are left out: they repeat on every refresh.
 
 ## Level policy (debug file and console)

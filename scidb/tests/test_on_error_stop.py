@@ -84,15 +84,15 @@ def test_stop_halts_a_pipeline(db):
 
     _reset_pipeline_state()
     try:
-        pipe = db.pipeline("stop_pipe")
-        handle = for_each(
-            third_fails,
-            {"x": StopIn},
-            [StopOut],
-            subject=[1, 2, 3, 4],
-            on_error="stop",
-            db=db,
-        )
+        with db.pipeline("stop_pipe") as pipe:
+            handle = for_each(
+                third_fails,
+                {"x": StopIn},
+                [StopOut],
+                subject=[1, 2, 3, 4],
+                on_error="stop",
+                db=db,
+            )
         handle.spec.tag = "node-7"
         with pytest.raises(ZeroDivisionError):
             pipe.run_all()

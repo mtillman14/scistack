@@ -417,7 +417,8 @@ def for_each(
                     export writes it). Consequence: ``step`` is a reserved
                     name and cannot be used as a schema key.
         pipeline: Deferred-registration control. Omitted (default): if a
-                    Pipeline is active (``db.pipeline(name)``), REGISTER this
+                    Pipeline is active (inside ``with db.pipeline(name):``,
+                    or MATLAB's activated scidb.Pipeline), REGISTER this
                     call as a deferred step and return a Step handle — nothing
                     executes until ``pipeline.run_all()/run_until()``; with no
                     active pipeline, execute eagerly as always. Pass ``None``
@@ -1005,7 +1006,9 @@ def _for_each_execute(
                         schema_keys=_schema_keys_for_types,
                     )
                 elif isinstance(v, PerComboLoaderMerge):
-                    resolved[k] = _resolve_per_combo_merge(v, load_kw)
+                    resolved[k] = _resolve_per_combo_merge(
+                        v, load_kw, schema_keys=_schema_keys_for_types
+                    )
                 else:
                     resolved[k] = v
 
@@ -5534,6 +5537,30 @@ def _load_var_type_as_spread(
 # ---------------------------------------------------------------------------
 
 
+def pathinput_numeric_eligible(keys: "list[str]", key_types: dict) -> "list[str]":
+    """THE PathInput key-type policy, half 1 (MATLAB calls it too, through
+    +scidb/+internal/load_pathinput_checked.m): the keys whose value may match
+    a differently-spelled filename by number. A ``"string"``-declared key is
+    never eligible — spelling is identity, "1" never matches "001"."""
+    string_keys = {k for k, t in (key_types or {}).items() if t == "string"}
+    return [k for k in keys if k not in string_keys]
+
+
+def pathinput_key_type_offender(
+    resolutions: dict, key_types: dict, schema_keys: "list | set"
+) -> "tuple[str, str] | None":
+    """THE PathInput key-type policy, half 2: the first ``(key, on-disk
+    spelling)`` whose bridged spelling makes the dataset's identity ambiguous
+    — an UNDECLARED schema key (a ``"numeric"``-declared one is canonical;
+    a non-schema key's spelling defines nothing). ``None`` when there is none."""
+    numeric_keys = {k for k, t in (key_types or {}).items() if t == "numeric"}
+    schema = set(schema_keys or [])
+    for key, spelling in dict(resolutions or {}).items():
+        if key in schema and key not in numeric_keys:
+            return str(key), str(spelling)
+    return None
+
+
 def _load_pathinput_checked(
     pi: "PathInput",
     load_kw: dict,
@@ -5554,8 +5581,7 @@ def _load_pathinput_checked(
     from scidb.model.exceptions import SchemaKeyTypeError
 
     key_types = key_types or {}
-    string_keys = {k for k, t in key_types.items() if t == "string"}
-    eligible = {k for k in load_kw if k not in string_keys}
+    eligible = set(pathinput_numeric_eligible(list(load_kw), key_types))
     # Numeric bridges only: an alias spelling ("Baseline" for canonical "BL")
     # is a DECLARED equivalence, never the ambiguity this policy guards. scifor
     # owns which kind each bridge was.
@@ -5563,14 +5589,9 @@ def _load_pathinput_checked(
         load_kw, numeric_match=eligible, report="numeric"
     )
     if resolutions:
-        numeric_keys = {k for k, t in key_types.items() if t == "numeric"}
-        offending = {
-            k: spelling
-            for k, spelling in resolutions.items()
-            if k in set(schema_keys or []) and k not in numeric_keys
-        }
-        if offending:
-            key, spelling = next(iter(offending.items()))
+        offender = pathinput_key_type_offender(resolutions, key_types, schema_keys)
+        if offender:
+            key, spelling = offender
             raise SchemaKeyTypeError(
                 f"PathInput resolved {key}={load_kw[key]!r} to '{spelling}' "
                 f"on disk (template {pi.path_template!r}) — the spelling of "
@@ -5631,12 +5652,15 @@ def _resolve_per_combo_loader(
 
 
 def _resolve_per_combo_merge(
-    pcl_merge: "PerComboLoaderMerge", load_kw: dict
+    pcl_merge: "PerComboLoaderMerge", load_kw: dict, schema_keys=()
 ) -> "pd.DataFrame":
-    """Resolve a PerComboLoaderMerge per-combo by loading each constituent."""
-    from scifor.foreach import merge_parts as _scifor_merge_parts
+    """Resolve a PerComboLoaderMerge per-combo by loading each constituent,
+    then combine them by THE Merge rule (``scifor.merge``): constant schema-key
+    columns drop, shared varying ones join, a shared data column errors."""
+    from scifor.merge import drop_constant_keys, merge_frames
 
     parts = []
+    labels: list[str] = []
     for spec in pcl_merge.merge_spec.tables:
         effective_kw = dict(load_kw)
         columns = None
@@ -5677,9 +5701,11 @@ def _resolve_per_combo_merge(
             else:
                 part_df = part_df[columns]
 
+        part_df, _dropped = drop_constant_keys(part_df, schema_keys)
         parts.append(part_df)
+        labels.append(cls_name)
 
-    return _scifor_merge_parts(parts)
+    return merge_frames(parts, list(schema_keys), labels=labels)
 
 
 def _to_dataframe(data: Any, cls_name: str) -> "pd.DataFrame":

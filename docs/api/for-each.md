@@ -99,7 +99,8 @@ baseline): `Fixed(StepLength, session="BL")`.
 ```python
 Merge(A, B, ...)
 ```
-Inner-join several variables column-wise into one table input per iteration.
+Join several variables on their shared schema keys into one table input per
+iteration (a shared non-key column, or a location on one side only, is an error).
 Constituents may be `Fixed`/column selections. Has `.to_csv(path)` and
 `.as_df(where=None, **metadata)` for export (see [Browsing](../guide/browsing.md)).
 

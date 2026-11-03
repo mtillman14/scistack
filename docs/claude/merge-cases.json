@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "about": [
+    "THE Merge rule, as data. Owner: scifor.merge (drop_constant_keys +",
+    "merge_frames). MATLAB runs the same rule natively on MATLAB tables",
+    "(+scifor/merge_tables.m), so both read this file:",
+    "  python  scifor/tests/test_merge_cases.py",
+    "  matlab  scimatlab/tests/matlab/scifor/TestMergeCases.m",
+    "",
+    "The rule (decided 2026-11-02, plan .claude/plan-p6-behaviour.md stage 1):",
+    "  1. a per-combo constituent ('drop' true) drops its schema-key columns",
+    "     that hold one value; varying keys stay and become join keys",
+    "  2. constituents join on the schema-key columns they share; a shared",
+    "     NON-key column is an error (never a join on data values)",
+    "  3. no row is dropped silently: a key value on one side only is an",
+    "     error, so is a many-to-many pairing; rows follow the side whose keys",
+    "     repeat (else the left); columns are left's, then right's minus keys",
+    "  4. no shared key: column-wise, a 1-row constituent broadcasts, other",
+    "     height mismatches are an error; with positional=false (flat-table",
+    "     export) no shared key is an error",
+    "  5. a constituent with no rows is an error",
+    "",
+    "parts: one object per constituent, column name -> values, in column",
+    "order. expect: the merged frame in the same form, OR error: a kind.",
+    "Error kinds and the message fragment each implementation must raise:",
+    "  conflict      'Column name conflict in Merge'",
+    "  empty         'has no rows'",
+    "  heights       'different row counts'",
+    "  no_key        'no shared schema column'",
+    "  unmatched     'Merge would drop rows'",
+    "  many_to_many  'both repeat key values'",
+    "schema_keys null = every shared column is a key (a flat-table export",
+    "with no schema set); Python only, so applies_to omits matlab.",
+    "today: what each language did before stage 1, from reading the code;",
+    "informational, not asserted."
+  ],
+  "cases": [
+    {
+      "id": 1, "name": "disjoint_equal_heights",
+      "schema_keys": ["subject"],
+      "parts": [{"force": [10, 20]}, {"emg": [0.1, 0.2]}],
+      "expect": {"force": [10, 20], "emg": [0.1, 0.2]},
+      "today": {"python": "same", "matlab": "same"}
+    },
+    {
+      "id": 2, "name": "one_row_broadcasts",
+      "schema_keys": ["subject"],
+      "parts": [{"force": [10, 20]}, {"height": [180]}],
+      "expect": {"force": [10, 20], "height": [180, 180]},
+      "today": {"python": "same", "matlab": "same"}
+    },
+    {
+      "id": 3, "name": "height_mismatch",
+      "schema_keys": ["subject"],
+      "parts": [{"a": [1, 2]}, {"b": [1, 2, 3]}],
+      "error": "heights",
+      "today": {"python": "same", "matlab": "same"}
+    },
+    {
+      "id": 4, "name": "join_on_varying_key",
+      "schema_keys": ["subject", "trial"],
+      "parts": [
+        {"trial": [1, 2], "force": [10, 20]},
+        {"trial": [2, 1], "emg": [0.2, 0.1]}
+      ],
+      "expect": {"trial": [1, 2], "force": [10, 20], "emg": [0.1, 0.2]},
+      "today": {
+        "python": "dropped trial from both, paired rows by POSITION: force 10 with emg 0.2 (wrong)",
+        "matlab": "innerjoin on trial: right values, rows sorted by key"
+      }
+    },
+    {
+      "id": 5, "name": "key_on_one_side_only",
+      "schema_keys": ["subject", "trial"],
+      "parts": [
+        {"trial": [1, 2, 3], "force": [10, 20, 30]},
+        {"trial": [1, 2], "emg": [0.1, 0.2]}
+      ],
+      "error": "unmatched",
+      "today": {
+        "python": "row-count error after dropping trial",
+        "matlab": "innerjoin silently dropped trial 3"
+      }
+    },
+    {
+      "id": 6, "name": "shared_data_column",
+      "schema_keys": ["subject"],
+      "parts": [{"force": [1, 2]}, {"force": [3, 4]}],
+      "error": "conflict",
+      "today": {
+        "python": "same",
+        "matlab": "innerjoin ON force: 0 rows, then 'No data for this combo'"
+      }
+    },
+    {
+      "id": 7, "name": "empty_constituent",
+      "schema_keys": ["subject"],
+      "parts": [{"force": []}, {"emg": [1]}],
+      "error": "empty",
+      "today": {
+        "python": "NaN-padded rows",
+        "matlab": "same"
+      }
+    },
+    {
+      "id": 8, "name": "many_to_one_keeps_left_order",
+      "schema_keys": ["subject", "trial", "side"],
+      "parts": [
+        {"trial": [1, 1, 2, 2], "side": ["L", "R", "L", "R"], "force": [1, 2, 3, 4]},
+        {"trial": [1, 2], "speed": [1.1, 1.2]}
+      ],
+      "expect": {
+        "trial": [1, 1, 2, 2], "side": ["L", "R", "L", "R"],
+        "force": [1, 2, 3, 4], "speed": [1.1, 1.1, 1.2, 1.2]
+      },
+      "today": {
+        "python": "row-count error (4 vs 2) after dropping trial and side",
+        "matlab": "innerjoin: same values"
+      }
+    },
+    {
+      "id": 9, "name": "one_to_many_follows_right_order",
+      "schema_keys": ["subject", "trial", "side"],
+      "parts": [
+        {"trial": [1, 2], "speed": [1.1, 1.2]},
+        {"trial": [2, 2, 1, 1], "side": ["L", "R", "L", "R"], "force": [1, 2, 3, 4]}
+      ],
+      "expect": {
+        "trial": [2, 2, 1, 1], "speed": [1.2, 1.2, 1.1, 1.1],
+        "side": ["L", "R", "L", "R"], "force": [1, 2, 3, 4]
+      },
+      "today": {
+        "python": "row-count error (2 vs 4)",
+        "matlab": "innerjoin: same values, rows sorted by trial"
+      }
+    },
+    {
+      "id": 10, "name": "many_to_many",
+      "schema_keys": ["subject", "trial"],
+      "parts": [{"trial": [1, 1], "a": [1, 2]}, {"trial": [1, 1], "b": [3, 4]}],
+      "error": "many_to_many",
+      "today": {
+        "python": "paired by position, silently",
+        "matlab": "innerjoin: 4 rows (every pairing)"
+      }
+    },
+    {
+      "id": 11, "name": "key_type_mismatch_is_unmatched",
+      "schema_keys": ["subject", "trial"],
+      "parts": [{"trial": [1, 2], "a": [1, 2]}, {"trial": ["1", "2"], "b": [3, 4]}],
+      "error": "unmatched",
+      "today": {
+        "python": "paired by position",
+        "matlab": "innerjoin error on mismatched key types"
+      }
+    },
+    {
+      "id": 12, "name": "no_shared_key_without_positional",
+      "schema_keys": ["subject", "trial"],
+      "positional": false,
+      "parts": [{"subject": [1], "a": [1]}, {"trial": [1], "b": [2]}],
+      "error": "no_key",
+      "today": {"python": "same (to_csv)", "matlab": "n/a (to_csv runs in Python)"}
+    },
+    {
+      "id": 13, "name": "three_constituents_fold_left",
+      "schema_keys": ["subject", "trial"],
+      "parts": [
+        {"trial": [1, 2], "a": [1, 2]},
+        {"trial": [1, 2], "b": [3, 4]},
+        {"c": [9]}
+      ],
+      "expect": {"trial": [1, 2], "a": [1, 2], "b": [3, 4], "c": [9, 9]},
+      "today": {"python": "dropped trial, positional", "matlab": "same values"}
+    },
+    {
+      "id": 14, "name": "constant_keys_drop_varying_join",
+      "schema_keys": ["subject", "trial"],
+      "drop": [true, true],
+      "parts": [
+        {"subject": [1, 1], "trial": [1, 2], "force": [10, 20]},
+        {"subject": [1, 1], "trial": [2, 1], "emg": [0.2, 0.1]}
+      ],
+      "expect": {"trial": [1, 2], "force": [10, 20], "emg": [0.1, 0.2]},
+      "today": {
+        "python": "dropped subject AND trial, paired by position (wrong)",
+        "matlab": "dropped subject, innerjoin on trial"
+      }
+    },
+    {
+      "id": 15, "name": "key_only_constituent_keeps_its_key",
+      "schema_keys": ["subject"],
+      "drop": [true, true],
+      "parts": [{"subject": [1]}, {"x": [5]}],
+      "expect": {"subject": [1], "x": [5]},
+      "today": {"python": "same", "matlab": "same"}
+    },
+    {
+      "id": 16, "name": "no_schema_joins_on_every_shared_column",
+      "applies_to": ["python"],
+      "schema_keys": null,
+      "positional": false,
+      "parts": [{"subject": [1, 2], "a": [1, 2]}, {"subject": [2, 1], "b": [4, 3]}],
+      "expect": {"subject": [1, 2], "a": [1, 2], "b": [3, 4]},
+      "today": {"python": "inner join, same rows", "matlab": "n/a"}
+    }
+  ]
+}

@@ -32,6 +32,10 @@ MOVED = [
     "warn_on_arity_mismatch", "filter_table_for_combo", "select_rows_by_id", "is_per_combo_table",
     "format_inputs", "print_dry_run_iteration", "format_value_preview",
     "count_distinct_combo_values", "failure_groups", "write_journal", "is_data_input",
+    # THE Merge rule lives in +scifor/merge_tables.m (cases: merge-cases.json).
+    "merge_two_tables", "merge_parts_columnwise", "all_identical",
+    # THE no-data rule lives in +scifor/has_no_data.m (missing-value-cases.json).
+    "group_has_no_data", "all_missing", "cell_missing",
 ]
 
 

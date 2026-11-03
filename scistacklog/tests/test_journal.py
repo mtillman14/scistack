@@ -15,7 +15,6 @@ Pins:
 See docs/claude/logging-architecture.md.
 """
 
-import json
 import pathlib
 import re
 
@@ -156,21 +155,6 @@ def test_journal_note_once_per_key(files):
     text = journal.read_text(encoding="utf-8")
     assert text.count("LoadedData: 3 text columns") == 1
     assert "note: other" in text
-
-
-def test_journal_json_reads_matlab_events(files):
-    journal, _ = files
-    event = {
-        "kind": "run", "name": "clean_m", "language": "matlab", "completed": 1,
-        "failed": 1, "no_data": 0, "total": 2, "error": [],
-        # jsonencode: a 1-element struct array is an object; a 1-element
-        # cellstr is a bare string.
-        "failures": {**_group(combos=()), "combos": "subject=1"},
-    }
-    Log.journal_json(json.dumps(event))
-    text = journal.read_text(encoding="utf-8")
-    assert "clean_m" in text and "Error in your function clean" in text
-    assert "combos: subject=1" in text
 
 
 def test_journal_without_a_file_still_reaches_the_debug_stream(tmp_path):

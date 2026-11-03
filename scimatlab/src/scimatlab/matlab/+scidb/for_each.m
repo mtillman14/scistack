@@ -243,6 +243,15 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         py_meta{key} = scidb.internal.to_python(val);
     end
 
+    % F10 diagnostic (plan stage 5, temporary): SCISTACK_NO_KEY_COERCE=1 skips
+    % both MATLAB-side casts of schema-key columns back to the classes the
+    % caller passed, so TestSchemaKeyRoundTrip can show what a function and
+    % the result table get without them. Delete once the test has decided.
+    skip_key_coerce = strcmp(getenv('SCISTACK_NO_KEY_COERCE'), '1');
+    if skip_key_coerce
+        scifor.Log.warn('[key_coerce] SCISTACK_NO_KEY_COERCE=1: schema-key columns are NOT cast back (diagnostic)');
+    end
+
     % --- Build kind-tagged inputs spec for the bridge ---
     input_names = fieldnames(inputs);
     py_inputs_spec = py.dict();
@@ -516,8 +525,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         % table (as_table=true) expect the original metadata types.
         % Coerce schema-key columns back based on the originally-supplied
         % MATLAB classes tracked in meta_original_classes.
-        scifor_inputs.(k) = coerce_meta_columns( ...
-            scifor_inputs.(k), meta_original_classes);
+        if ~skip_key_coerce
+            scifor_inputs.(k) = coerce_meta_columns( ...
+                scifor_inputs.(k), meta_original_classes);
+        end
         % One line per input: this is the phase that hung on a 1.7e8-sample
         % EMG variable, and per-input granularity is what names the culprit.
         scifor.Log.info('for_each: converted input ''%s'' in %.3fs (%s)', ...
@@ -636,8 +647,8 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     if ~isempty(find_pathinput(inputs))
         scifor_opts{end+1} = '_resolve_pathinput';
         scifor_opts{end+1} = true;
-        % Schema-key-type policy for per-combo PathInput loads (mirrors
-        % Python's _load_pathinput_checked; the MATLAB loop resolves
+        % Schema-key-type policy for per-combo PathInput loads (Python owns
+        % it: scidb.run.foreach.pathinput_*; the MATLAB loop resolves
         % PathInput itself, so the policy callback is injected here and
         % scifor stays policy-free). string keys: exact only; undeclared
         % keys needing a spelling bridge: scidb:SchemaKeyTypeError.
@@ -879,7 +890,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     %     is consistent (numeric DB values vs. user-supplied strings); we
     %     reverse that here so numeric inputs round-trip as numeric.
     t0_tr = tic;
-    if ~isempty(result_tbl) && istable(result_tbl)
+    if ~skip_key_coerce && ~isempty(result_tbl) && istable(result_tbl)
         meta_keys_tracked = keys(meta_original_classes);
         for mi = 1:numel(meta_keys_tracked)
             k = meta_keys_tracked{mi};

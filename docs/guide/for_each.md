@@ -123,12 +123,23 @@ Variable-type inputs can be wrapped to change *what* gets loaded:
            outputs=[Delta], subject=[], session=[])
   ```
 
-- **`Merge(A, B)`** — combine several variables column-wise into one table input.
-  Constituents may themselves be `Fixed`/column selections:
+- **`Merge(A, B)`** — combine several variables into one table input per
+  iteration. Constituents may themselves be `Fixed`/column selections:
 
   ```python
   inputs={"gait": Merge(GaitData, ForceData)}
   ```
+
+  The rule is the same in Python, MATLAB and `to_csv`:
+  - a schema key that varies inside the iteration (e.g. `trial` when iterating
+    `session`) is a join key: rows are paired by its value, never by position;
+  - a column name that is not a schema key may appear in only one constituent
+    (select it from one with a column selection, or rename it);
+  - a location present in one constituent but not the other is an error that
+    names it — nothing is dropped silently. Narrow both with `where=` or
+    metadata first;
+  - constituents with no shared key are placed side by side; a one-row
+    constituent repeats for every row of the other.
 
 - **Column selection** — `Var["col"]` feeds one column (as an array);
   `Var[["a", "b"]]` feeds a subset (as a DataFrame); `Var.for_columns()` runs the

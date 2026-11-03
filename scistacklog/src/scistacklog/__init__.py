@@ -40,7 +40,6 @@ regardless of sink levels.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -759,19 +758,6 @@ class Log:
                 cls.error(f"[journal] could not write {path}: {e}", layer="scistack")
         cls.info("[journal]\n" + text, layer="scistack")
         return text
-
-    @classmethod
-    def journal_json(cls, event_json: str) -> str:
-        """:meth:`journal` for a JSON-encoded event (the MATLAB bridge)."""
-        try:
-            event = json.loads(str(event_json))
-        except ValueError as e:
-            cls.error(f"[journal] unreadable event from MATLAB: {e}", layer="scistack")
-            return ""
-        if not isinstance(event, dict):
-            cls.error(f"[journal] event is not an object: {str(event_json)[:200]}", layer="scistack")
-            return ""
-        return cls.journal(event)
 
     @classmethod
     def journal_note(cls, text: str, *, key: str | None = None) -> None:

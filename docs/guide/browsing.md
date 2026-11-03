@@ -64,8 +64,11 @@ It raises `NotFoundError` if nothing matches.
 ## Export merged variables (joined)
 
 To export several variables side by side, join them with `Merge` and call
-`to_csv` on the result. The constituents are inner-joined on their shared schema
-columns, so only matching rows appear and the schema keys aren't duplicated:
+`to_csv` on the result. The constituents are joined on their shared schema
+columns, so the schema keys aren't duplicated. Every location must be present in
+every constituent: a row on one side only is an error naming it rather than a
+silent drop (narrow both with metadata or `where=` first). A coarser variable
+(one value per subject) repeats across the finer one's rows:
 
 ```python
 from scidb import Merge

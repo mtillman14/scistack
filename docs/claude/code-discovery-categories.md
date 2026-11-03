@@ -338,9 +338,8 @@ match with `PipelineBinding.key_map`/`.params`/`.iterate`.
 A user's file can define a pipeline in source:
 
 ```python
-pipe = Pipeline("gait_analysis")   # deliberately no db= -- see module docstring
-pipe.activate()
-for_each(bandpass_filter, {"signal": RawSignal, "low_hz": 20}, [Filtered], ...)
+with Pipeline("gait_analysis") as pipe:   # deliberately no db= -- see module docstring
+    for_each(bandpass_filter, {"signal": RawSignal, "low_hz": 20}, [Filtered], ...)
 ```
 
 `Pipeline` registration is side-effect-free until `run_*` is called — the

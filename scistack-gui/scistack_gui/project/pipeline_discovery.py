@@ -9,12 +9,14 @@ A user's Python file can define a reusable, composable pipeline in source:
     from my_pipeline_fns import bandpass_filter, compute_speed
     from my_variables import RawSignal, Filtered, Speed
 
-    pipe = Pipeline("gait_analysis")   # deliberately no db= -- see below
-    pipe.activate()
-    for_each(bandpass_filter, {"signal": RawSignal, "low_hz": 20},
-             [Filtered], subject=["1", "2"])
-    for_each(compute_speed, {"filtered": Filtered}, [Speed],
-             subject=["1", "2"])
+    with Pipeline("gait_analysis") as pipe:   # deliberately no db= -- see below
+        for_each(bandpass_filter, {"signal": RawSignal, "low_hz": 20},
+                 [Filtered], subject=["1", "2"])
+        for_each(compute_speed, {"filtered": Filtered}, [Speed],
+                 subject=["1", "2"])
+
+(``pipe.for_each(...)`` works too. A bare ``pipe.activate()`` no longer
+exists: Python registers only inside the block, plan-p6-behaviour stage 9.)
 
 ``Pipeline`` registration is side-effect-free (``StepSpec`` registration is
 "zero side effects beyond the log") — the same property that already lets

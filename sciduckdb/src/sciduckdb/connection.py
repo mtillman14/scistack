@@ -234,52 +234,75 @@ class DuckConnection:
                 self._recover_from_autocommit_failure()
                 raise
 
-    def bulk_insert(self, table: str, columns, rows, conflict_cols=None) -> None:
-        """Insert many rows with a single vectorized ``INSERT ... SELECT``.
+    def insert_frame(self, table: str, frame, *, conflict=None) -> int:
+        """Insert every row of *frame* (a pandas DataFrame or a pyarrow Table)
+        into *table* with one ``INSERT ... SELECT``, under the lock.
 
-        DuckDB's ``executemany`` re-runs the prepared single-row statement once
-        per row; against a PRIMARY-KEY / indexed table that is pathologically
-        slow (per-row index probe + maintenance), e.g. ~497s for 8k rows into
-        ``_record``. This registers the rows as one DataFrame and issues a single
-        bulk insert instead (sub-second for the same data).
-
-        ``rows`` is an iterable of value tuples in ``columns`` order. When
-        ``conflict_cols`` is given, appends ``ON CONFLICT (...) DO NOTHING`` so
-        the insert stays idempotent. Safe to call inside an open transaction
-        (the register/insert/unregister run on the same connection).
+        THE one way to insert a frame: register, insert, unregister on this
+        connection, with the same contention log and autocommit-failure
+        recovery as :meth:`execute`. Before 2026-11-02 scidb's bulk Arrow
+        inserts (``RecordStore``) reached past the connection to the raw
+        ``duckdb`` handle and skipped both (design review F14). Columns are
+        the frame's, by name. ``conflict`` (column names) appends
+        ``ON CONFLICT (...) DO NOTHING``. Safe inside an open transaction.
+        Returns the number of rows handed in.
         """
-        rows = list(rows)
-        if not rows:
-            return
-        columns = list(columns)
-        df = pd.DataFrame(rows, columns=columns)
+        columns = list(getattr(frame, "column_names", None) or frame.columns)
+        n_rows = frame.num_rows if hasattr(frame, "num_rows") else len(frame)
+        if n_rows == 0:
+            return 0
+        view = "_insert_frame"
         col_str = ", ".join(f'"{c}"' for c in columns)
-        sql = f'INSERT INTO "{table}" ({col_str}) SELECT * FROM _bulk_insert_df'
-        if conflict_cols:
-            conflict_str = ", ".join(f'"{c}"' for c in conflict_cols)
+        sql = f'INSERT INTO "{table}" ({col_str}) SELECT {col_str} FROM {view}'
+        if conflict:
+            conflict_str = ", ".join(f'"{c}"' for c in conflict)
             sql += f" ON CONFLICT ({conflict_str}) DO NOTHING"
         thread = threading.get_ident()
         wait_start = time.monotonic()
         with self._lock:
             waited = time.monotonic() - wait_start
             foreign_tx = self._tx_owner is not None and self._tx_owner != thread
-            logger.debug(
-                "bulk_insert thread=%d waited=%.4fs tx_owner=%s foreign_tx=%s "
-                "table=%s rows=%d",
-                thread, waited, self._tx_owner, foreign_tx, table, len(rows),
-            )
-            self.con.register("_bulk_insert_df", df)
+            self._log_contended("insert_frame", thread, waited, foreign_tx, sql,
+                                detail=f"table={table} rows={n_rows} ")
+            t0 = time.perf_counter()
+            self.con.register(view, frame)
             try:
                 self.con.execute(sql)
             except Exception:
                 logger.exception(
-                    "bulk_insert FAILED thread=%d tx_owner=%s foreign_tx=%s table=%s",
-                    thread, self._tx_owner, foreign_tx, table,
+                    "insert_frame FAILED thread=%d tx_owner=%s foreign_tx=%s "
+                    "table=%s rows=%d",
+                    thread, self._tx_owner, foreign_tx, table, n_rows,
                 )
                 self._recover_from_autocommit_failure()
                 raise
             finally:
-                self._unregister_frame("_bulk_insert_df")
+                self._unregister_frame(view)
+            logger.debug(
+                "[insert_frame] table=%s rows=%d ms=%.1f", table, n_rows,
+                (time.perf_counter() - t0) * 1000.0,
+            )
+        return n_rows
+
+    def bulk_insert(self, table: str, columns, rows, conflict_cols=None) -> None:
+        """Insert many rows with a single vectorized ``INSERT ... SELECT``.
+
+        DuckDB's ``executemany`` re-runs the prepared single-row statement once
+        per row; against a PRIMARY-KEY / indexed table that is pathologically
+        slow (per-row index probe + maintenance), e.g. ~497s for 8k rows into
+        ``_record``. This builds the rows into one DataFrame and inserts it
+        through :meth:`insert_frame` (sub-second for the same data).
+
+        ``rows`` is an iterable of value tuples in ``columns`` order. When
+        ``conflict_cols`` is given, appends ``ON CONFLICT (...) DO NOTHING`` so
+        the insert stays idempotent. Safe to call inside an open transaction.
+        """
+        rows = list(rows)
+        if not rows:
+            return
+        self.insert_frame(
+            table, pd.DataFrame(rows, columns=list(columns)), conflict=conflict_cols
+        )
 
     def bulk_update(self, table: str, key_cols, set_cols, rows) -> int:
         """Update many rows with a single vectorized ``UPDATE ... FROM``.
@@ -674,10 +697,6 @@ class DuckConnection:
     # ------------------------------------------------------------------
     # Direct query access
     # ------------------------------------------------------------------
-
-    def query(self, sql: str, params=None) -> pd.DataFrame:
-        """Execute arbitrary SQL and return a DataFrame."""
-        return self.fetchdf(sql, params)
 
     # ------------------------------------------------------------------
     # Context manager / cleanup

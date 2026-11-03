@@ -6,7 +6,11 @@ classdef Pipeline < handle
 %   pipe = scidb.Pipeline("gait", 'uses', ...
 %              {loading.bind('params', struct('low_hz', 30))});
 %
-%   While a pipeline is active, scidb.for_each calls REGISTER as deferred
+%   pipe.for_each(@fn, inputs, outputs, ...)  % registers into THIS pipeline
+%
+%   MATLAB has no `with` block, so the constructor still activates (Python
+%   registers only inside `with db.pipeline(...) as p:`). While a pipeline
+%   is active, scidb.for_each calls REGISTER as deferred
 %   steps instead of executing (pass 'pipeline','none' to force an eager
 %   call). Execute with run_all() / run_until(target) / run_endpoints();
 %   preview with plan().
@@ -131,6 +135,22 @@ classdef Pipeline < handle
         function deactivate(obj)
             %DEACTIVATE  Stop ambient registration without running.
             py.scimatlab.bridge.pipeline_deactivate(obj.py_handle);
+        end
+
+        function step = for_each(obj, fn, inputs, outputs, varargin)
+            %FOR_EACH  Register one scidb.for_each call in THIS pipeline —
+            %   the explicit form, with no ambient state:
+            %       pipe.for_each(@filter_emg, struct('x', RawEMG()), {FilteredEMG()}, ...
+            %                     'subject', [1 2]);
+            %   Same as scidb.for_each(..., 'pipeline', pipe): one
+            %   registration path (Python: Pipeline.for_each).
+            for i = 1:2:numel(varargin)
+                if strcmpi(string(varargin{i}), "pipeline")
+                    error('scidb:Pipeline', ...
+                        'pipe.for_each() targets its own pipeline; drop ''pipeline''.');
+                end
+            end
+            step = scidb.for_each(fn, inputs, outputs, varargin{:}, 'pipeline', obj);
         end
 
         function entries = plan(obj, target)

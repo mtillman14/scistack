@@ -552,6 +552,82 @@ def _cmd_clear_data(mut: Mutator, args) -> None:
     _emit_json(result) if args.json else print(render.render_mutation_result(result))
 
 
+def seam_fallback_counts(log_paths, since: str = "") -> "list[dict]":
+    """Group the ``[seam_fallback]`` lines of *log_paths* by ``(stage,
+    exc_type)``, most frequent first: ``{stage, exc_type, count, fns,
+    first, last, example}``. Lines older than *since* (a ``YYYY-MM-DD``
+    or ``YYYY-MM-DD HH:MM:SS`` prefix) are skipped. The format is read by
+    its writer's owner, ``scifor.failures.parse_seam_fallback``."""
+    from scifor.failures import SEAM_FALLBACK_TAG, parse_seam_fallback
+
+    groups: dict = {}
+    for path in log_paths:
+        try:
+            handle = open(path, encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        with handle:
+            for line in handle:
+                if SEAM_FALLBACK_TAG not in line:
+                    continue
+                rec = parse_seam_fallback(line)
+                if rec is None or (since and rec["time"] and rec["time"] < since):
+                    continue
+                g = groups.setdefault(
+                    (rec["stage"], rec["exc_type"]),
+                    {"stage": rec["stage"], "exc_type": rec["exc_type"], "count": 0,
+                     "fns": {}, "first": rec["time"], "last": rec["time"],
+                     "example": rec["message"]},
+                )
+                g["count"] += 1
+                g["fns"][rec["fn"]] = g["fns"].get(rec["fn"], 0) + 1
+                g["last"] = rec["time"] or g["last"]
+    out = sorted(groups.values(), key=lambda g: (-g["count"], g["stage"]))
+    for g in out:
+        g["fns"] = [fn for fn, _ in sorted(g["fns"].items(), key=lambda kv: -kv[1])]
+    return out
+
+
+def _seam_log_paths() -> "list[Path]":
+    """The debug log beside the database (``[seam_fallback]`` is a WARN in
+    it), plus rotated copies (``scistack-debug.log.1`` ...), oldest first."""
+    current = Log.get_path()
+    if not current:
+        return []
+    base = Path(current)
+    rotated = sorted(
+        base.parent.glob(base.name + ".*"),
+        key=lambda p: -int(p.suffix[1:]) if p.suffix[1:].isdigit() else 0,
+    )
+    return [p for p in rotated if p.suffix[1:].isdigit()] + [base]
+
+
+def _cmd_seams(insp: Inspector, args) -> None:
+    paths = _seam_log_paths()
+    groups = seam_fallback_counts(paths, since=args.since or "")
+    Log.info(
+        f"scidb seams: {sum(g['count'] for g in groups)} hedged failure(s) in "
+        f"{len(groups)} group(s) from {[str(p) for p in paths]}"
+    )
+    if args.json:
+        _emit_json(groups)
+        return
+    if not groups:
+        print("(no [seam_fallback] lines: every failure named its cause)")
+        return
+    rows = [
+        [g["count"], g["stage"], g["exc_type"], ", ".join(g["fns"][:3]),
+         g["last"], (g["example"] or "")[:60]]
+        for g in groups
+    ]
+    print(render.format_table(["count", "stage", "exception", "functions", "last", "example"], rows))
+    print(
+        "\nEach row is a step with no check for this cause: the GUI showed "
+        "these as 'probable'. Add a diagnose= check (and a regression test) "
+        "for the top rows."
+    )
+
+
 def _cmd_tombstones(insp: Inspector, args) -> None:
     stones = insp.tombstones(args.name)
     if args.json:
@@ -1340,6 +1416,16 @@ def _add_commands(
         help="Copy the database to <name>.duckdb.bak-<timestamp> first.",
     )
     p.set_defaults(_write_handler=_cmd_clear_data)
+
+    p = sub.add_parser(
+        "seams",
+        parents=[parent],
+        help="Count the hedged ('probable') failures in the log, by step and exception.",
+    )
+    p.add_argument(
+        "--since", default="", help="Only lines at or after this time (YYYY-MM-DD[ HH:MM:SS])."
+    )
+    p.set_defaults(_handler=_cmd_seams)
 
     p = sub.add_parser(
         "tombstones", parents=[parent], help="Every variant deletion ever made."

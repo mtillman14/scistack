@@ -1,8 +1,9 @@
 """Tests for scifor.Merge.to_csv() flat-table inner-join export.
 
-to_csv() inner-joins the Merge constituents on their shared schema columns,
+to_csv() joins the Merge constituents on their shared schema columns (THE
+Merge rule, docs/claude/merge-cases.json),
 keeps one copy of those columns, and writes one flat CSV. Non-schema columns
-are assumed not to overlap.
+may not overlap, and a location on one side only is an error.
 """
 
 import pandas as pd
@@ -45,8 +46,9 @@ def test_two_dataframes_inner_join_one_copy_of_schema(tmp_path):
     assert row.StepLength == 0.6 and row.Speed == 1.2
 
 
-def test_inner_join_drops_non_matching_rows(tmp_path):
-    """Rows present in only one constituent are dropped (inner join)."""
+def test_rows_on_one_side_only_raise(tmp_path):
+    """A location present in only one constituent is an error naming it, never
+    a silent drop (THE Merge rule, docs/claude/merge-cases.json)."""
     set_schema(["subject", "trial"])
     step = pd.DataFrame(
         {"subject": [1, 1, 2], "trial": [1, 2, 1], "StepLength": [0.5, 0.6, 0.7]}
@@ -56,11 +58,9 @@ def test_inner_join_drops_non_matching_rows(tmp_path):
         {"subject": [1, 2, 3], "trial": [1, 1, 1], "Speed": [1.1, 1.3, 9.9]}
     )
     out = tmp_path / "gait.csv"
-    Merge(step, speed).to_csv(str(out))
-
-    df = _read(out)
-    keys = set(zip(df.subject, df.trial, strict=False))
-    assert keys == {(1, 1), (2, 1)}  # only the intersection
+    with pytest.raises(ValueError, match="Merge would drop rows"):
+        Merge(step, speed).to_csv(str(out))
+    assert not out.exists()
 
 
 def test_partial_schema_overlap_joins_on_common_keys(tmp_path):

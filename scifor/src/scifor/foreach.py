@@ -60,7 +60,8 @@ from .failures import (
 from .fixed import Fixed
 from .hooks import LoopHooks
 from .locations import LocationFilter, filter_combos
-from .merge import Merge
+from .keys import series_mask, warn_if_type_mismatch
+from .merge import Merge, drop_constant_keys, merge_frames
 from .outputs import NoOutput, discard_db_only_kwargs, is_no_output, output_column_name
 from .pathinput import PathInput
 from .pathoutput import PathOutput
@@ -210,6 +211,15 @@ class RunPlan:
     dry_run: bool
     #: Non-default options, for the run banner.
     option_parts: "tuple[str, ...]"
+
+    @property
+    def filter_keys(self) -> "list[str]":
+        """The keys that filter a per-combo table and that extraction drops:
+        the schema, or with no schema the iterated keys. One rule for both
+        languages (MATLAB's plan wire sends this list); decided 2026-11-02,
+        plan stage 3. Before, a Python run with no schema handed every combo
+        the whole table."""
+        return list(self.schema_keys) or list(self.keys)
 
     @property
     def total(self) -> int:
@@ -1327,6 +1337,11 @@ def _announce(plan: RunPlan) -> None:
         )
 
     Log.info(f"inputs: {_format_inputs(plan.inputs)}", layer="scifor")
+    if not plan.schema_keys and plan.keys:
+        Log.info(
+            f"[plan] no schema: filtering inputs by the iterated keys {plan.keys}",
+            layer="scifor",
+        )
     _warn_repeated_static_path_inputs(plan.fn_name, plan.inputs, total, display_keys)
     for k in display_keys:
         formatted = ", ".join(repr(v) for v in plan.metadata_iterables[k])
@@ -1439,7 +1454,7 @@ def _prepare_combo_inputs(
                 iterate_dfs[param_name] = _prepare_iterate_df(
                     var_spec,
                     metadata,
-                    plan.schema_keys,
+                    plan.filter_keys,
                     plan.where,
                     select_rows=hooks.select_rows,
                     param_name=param_name,
@@ -1448,7 +1463,7 @@ def _prepare_combo_inputs(
             filtered_inputs[param_name] = _prepare_input(
                 var_spec,
                 metadata,
-                plan.schema_keys,
+                plan.filter_keys,
                 param_name in plan.as_table_set,
                 plan.where,
                 mapping_cols=(hooks.mapping_inputs or {}).get(param_name),
@@ -1533,7 +1548,7 @@ def _call_at_combo(
             call_inputs,
             iterate_dfs,
             fc.groups,
-            plan.schema_keys,
+            plan.filter_keys,
             plan.as_table_set,
             metadata,
             path_input_resolver=plan.path_input_resolver,
@@ -2484,15 +2499,19 @@ def _compute_shared_limits(
 def _filter_df_for_combo(
     df: "pd.DataFrame", metadata: dict, schema_keys: list[str]
 ) -> "pd.DataFrame":
-    """Filter df rows to match combo metadata for schema key columns present in df."""
-    import pandas as pd
+    """Filter df rows to match combo metadata for schema key columns present
+    in df, by THE key-match rule (``scifor.keys``; spec
+    docs/claude/key-match-cases.json): numeric columns parse text values,
+    text columns compare exact text, missing cells match nothing."""
+    import numpy as np
 
-    mask = pd.Series([True] * len(df), index=df.index)
+    mask = np.ones(len(df), dtype=bool)
     for key in schema_keys:
         if key in df.columns and key in metadata:
-            col_vals = df[key]
-            meta_val = metadata[key]
-            mask = mask & (col_vals == meta_val)
+            col_mask = series_mask(df[key], metadata[key])
+            if len(df) and not col_mask.any():
+                warn_if_type_mismatch(key, df[key], metadata[key])
+            mask &= col_mask
     return df[mask].reset_index(drop=True)
 
 
@@ -2753,10 +2772,18 @@ def _prepare_merge(
     schema_keys: list[str],
     where=None,
 ) -> "pd.DataFrame":
-    """Filter each constituent of a Merge and combine into a single DataFrame."""
+    """Filter each constituent of a Merge and combine them by THE Merge rule
+    (``scifor.merge.merge_frames``; spec: docs/claude/merge-cases.json).
+
+    Each per-combo constituent is filtered to the combo and drops its
+    constant schema-key columns (varying ones become join keys); ``where=``
+    applies once to the merged frame, so it may name a column from any
+    constituent (the flat-table exports and MATLAB do the same).
+    """
     import pandas as pd
 
     parts = []
+    labels = []
 
     for i, spec in enumerate(merge_spec.tables):
         label = f"merge[{i}]"
@@ -2765,13 +2792,11 @@ def _prepare_merge(
 
         if _is_per_combo_df(df, schema_keys):
             filtered = _filter_df_for_combo(df, effective_metadata, schema_keys)
-            filtered = _apply_where_filter(filtered, where)
-            # Drop schema key columns for merge
-            data_cols = [c for c in filtered.columns if c not in schema_keys]
-            if data_cols and set(data_cols) != set(filtered.columns):
-                part_df = filtered[data_cols].reset_index(drop=True)
-            else:
-                part_df = filtered.reset_index(drop=True)
+            if len(filtered) == 0:
+                # A sparse grid, as for any other per-combo input: an expected
+                # skip, never a NaN-padded merge.
+                raise NoDataError(f"No data for this combo in {label}.")
+            part_df, _dropped = drop_constant_keys(filtered, schema_keys)
         else:
             part_df = df.reset_index(drop=True)
 
@@ -2790,48 +2815,12 @@ def _prepare_merge(
                 part_df = part_df[column_selection]
 
         parts.append(part_df)
+        labels.append(label)
 
-    return merge_parts(parts)
-
-
-def merge_parts(parts: list["pd.DataFrame"]) -> "pd.DataFrame":
-    """Merge multiple DataFrames column-wise."""
-    import pandas as pd
-
-    if not parts:
-        raise ValueError("Merge has no constituents.")
-
-    # Check for column name conflicts
-    seen_columns: set[str] = set()
-    for df in parts:
-        for col in df.columns:
-            if col in seen_columns:
-                raise KeyError(
-                    f"Column name conflict in Merge: "
-                    f"column '{col}' appears in multiple constituents."
-                )
-            seen_columns.add(col)
-
-    # Check row count compatibility
-    row_counts = [(len(df), df) for df in parts if len(df) > 1]
-    if row_counts:
-        unique_counts = {n for n, _ in row_counts}
-        if len(unique_counts) > 1:
-            detail = ", ".join(str(n) for n, _ in row_counts)
-            raise ValueError(
-                f"Cannot merge constituents with different row counts: {detail}."
-            )
-        target_len = row_counts[0][0]
-    else:
-        target_len = 1
-
-    expanded = []
-    for df in parts:
-        if len(df) == 1 and target_len > 1:
-            df = pd.concat([df] * target_len, ignore_index=True)
-        expanded.append(df)
-
-    return pd.concat(expanded, axis=1)
+    merged = _apply_where_filter(merge_frames(parts, schema_keys, labels=labels), where)
+    if len(merged) == 0:
+        raise NoDataError("No data for this combo after merge.")
+    return merged
 
 
 # ---------------------------------------------------------------------------

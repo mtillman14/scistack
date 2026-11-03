@@ -105,7 +105,7 @@ with its classified inputs. It is the cache key.
 out-of-band edit, recording it as a first-class `"manual"` lineage step.
 → [Lineage & Provenance](lineage.md)
 
-**Merge** — `Merge(...)`: combine two or more table inputs column-wise into a
+**Merge** — `Merge(...)`: combine two or more table inputs, joined on shared schema keys, into a
 single input per iteration. → [Guide: Batch Processing](../guide/for_each.md)
 
 **Node state** (green / grey / red) — A function or variable node's run state:

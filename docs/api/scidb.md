@@ -130,9 +130,12 @@ scidb.for_each(@bandpass, ...
 A pipeline collects `for_each` calls without running them, then runs them in dependency order.
 
 ```python
-pipe = db.pipeline("emg")     # activates: for_each calls now register, not run
-for_each(bandpass, ..., outputs=[Filtered])
-for_each(rms, inputs={"x": Filtered}, outputs=[RMS])
+with db.pipeline("emg") as pipe:    # inside the block, for_each registers
+    for_each(bandpass, ..., outputs=[Filtered])
+    for_each(rms, inputs={"x": Filtered}, outputs=[RMS])
+# after the block, for_each runs immediately again (also after an error)
+
+pipe.for_each(zscore, inputs={"x": RMS}, outputs=[RMSz])   # or register explicitly
 
 pipe.run_until(RMS)       # RMS and whatever it needs
 pipe.run_all()            # every step (skip_computed=True by default)
@@ -140,11 +143,12 @@ pipe.run_all()            # every step (skip_computed=True by default)
 
 | Name | Purpose |
 |---|---|
-| `db.pipeline(name, uses=())` / `Pipeline(name, db=)` | Create a pipeline and start registering `for_each` calls into it. |
+| `db.pipeline(name, uses=())` / `Pipeline(name, db=)` | Create a pipeline. It registers nothing by itself: use `with pipe:` or `pipe.for_each(...)`. |
+| `with pipe:` | Inside the block, `for_each` calls register into `pipe`; leaving it (also on an error) ends that. Blocks nest. |
+| `for_each(fn, inputs, outputs, **kw)` | Register one call into this pipeline, no block needed. |
 | `plan(target=None)` / `execution_order()` | Show what would run, and in what order. |
 | `run_all()` / `run_until(target)` / `run_endpoints()` | Run every step, a target plus its ancestors, or every `plot_`/`stat_` endpoint with its ancestors. |
 | `show(target)` | Draft-run one endpoint to look at it: nothing is recorded; returns figure paths or stat results. |
-| `deactivate()` | Stop registering; later `for_each` calls run immediately again. |
 | `use(other)` / `bind(key_map=, params=, iterate=)` → `PipelineBinding` | Compose pipelines. `bind` adapts another pipeline's schema keys or parameters without modifying it. |
 | `last_run_report` | Per-step completed, failed and no-data counts from the most recent run. |
 | `active_pipeline()` | The pipeline currently receiving registrations. A registered call returns a `Step` handle, not data. |

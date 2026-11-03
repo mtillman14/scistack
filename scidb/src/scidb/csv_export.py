@@ -196,11 +196,12 @@ def _constituent_flat_df(var_type, columns, *, where, version, db, metadata):
 def build_flat_table(spec, *, where, version, db, metadata):
     """Resolve ``spec`` and return the flat export DataFrame.
 
-    For a ``Merge``, each constituent is loaded independently and inner-joined
-    on its shared schema keys, so e.g. a subject-level covariate broadcasts
-    across a trial-level measure.
+    For a ``Merge``, each constituent is loaded independently and joined on
+    its shared schema keys by THE Merge rule (``scifor.merge.merge_frames``),
+    so e.g. a subject-level covariate broadcasts across a trial-level measure.
     """
     from scifor import Merge
+    from scifor.merge import merge_frames
 
     from scidb.store.database import get_database
 
@@ -223,16 +224,17 @@ def build_flat_table(spec, *, where, version, db, metadata):
         )
         part_dfs.append(part)
 
-    result = part_dfs[0]
-    schema_key_set = set(_db.dataset_schema_keys)
-    for nxt in part_dfs[1:]:
-        shared = [c for c in result.columns if c in nxt.columns and c in schema_key_set]
-        if not shared:
-            raise ValueError(
-                "Merge constituents share no schema keys to join on; cannot "
-                "combine them into one table."
-            )
-        result = result.merge(nxt, on=shared, how="inner")
+    # THE Merge rule (scifor.merge.merge_frames), over whole tables: join on
+    # shared schema keys; a shared data column, a location on one side only or
+    # no shared key is an error, never a silent drop.
+    labels = [var_type.__name__ for var_type, _c, _e in constituents]
+    result = (
+        part_dfs[0]
+        if len(part_dfs) == 1
+        else merge_frames(
+            part_dfs, list(_db.dataset_schema_keys), labels=labels, positional=False
+        )
+    )
 
     # Order: schema keys (in dataset order) first, then data columns.
     ordered_schema = [k for k in _db.dataset_schema_keys if k in result.columns]

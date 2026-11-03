@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "about": [
+    "THE no-data rule for a for_columns group, as data: is every cell of a",
+    "column missing? Owner: scifor.missing (frame_has_no_data). MATLAB runs",
+    "it natively on MATLAB tables (+scifor/has_no_data.m). Readers:",
+    "  python  scifor/tests/test_missing_value_cases.py",
+    "  matlab  scimatlab/tests/matlab/scifor/TestMissingValueCases.m",
+    "",
+    "column.class and how each language builds it (JSON null = missing):",
+    "  float        float64 / double (null -> NaN)",
+    "  text         object column of str|None / string array (null -> <missing>)",
+    "  text_cell    object column / cellstr-like cell (null -> {[]})",
+    "  datetime     datetime64 / datetime, from ISO text (null -> NaT)",
+    "  categorical  category dtype / categorical (null -> <undefined>)",
+    "  bool         bool / logical",
+    "  array_cell   object column of numpy arrays / cell of double arrays",
+    "               (null -> None / {[]})",
+    "no_data: the expected answer. An empty column (no rows) has no data."
+  ],
+  "cases": [
+    {"id": 1, "name": "float_all_nan", "column": {"class": "float", "values": [null, null]}, "no_data": true},
+    {"id": 2, "name": "float_one_value", "column": {"class": "float", "values": [null, 1.5]}, "no_data": false},
+    {"id": 3, "name": "float_zero_is_data", "column": {"class": "float", "values": [0]}, "no_data": false},
+    {"id": 4, "name": "text_all_missing", "column": {"class": "text", "values": [null, null]}, "no_data": true},
+    {"id": 5, "name": "text_blank_is_missing", "column": {"class": "text", "values": ["", "   ", null]}, "no_data": true},
+    {"id": 6, "name": "text_placeholder_is_data", "column": {"class": "text", "values": ["—", null]}, "no_data": false},
+    {"id": 7, "name": "text_cell_blank_and_null", "column": {"class": "text_cell", "values": [" ", null]}, "no_data": true},
+    {"id": 8, "name": "text_cell_value", "column": {"class": "text_cell", "values": ["a", null]}, "no_data": false},
+    {"id": 9, "name": "datetime_all_nat", "column": {"class": "datetime", "values": [null, null]}, "no_data": true},
+    {"id": 10, "name": "datetime_one_value", "column": {"class": "datetime", "values": [null, "2026-01-02T03:04:05"]}, "no_data": false},
+    {"id": 11, "name": "categorical_all_undefined", "column": {"class": "categorical", "values": [null, null]}, "no_data": true},
+    {"id": 12, "name": "categorical_value", "column": {"class": "categorical", "values": ["L", null]}, "no_data": false},
+    {"id": 13, "name": "bool_false_is_data", "column": {"class": "bool", "values": [false]}, "no_data": false},
+    {"id": 14, "name": "array_cell_nan_array_is_data", "column": {"class": "array_cell", "values": [[null, null]]}, "no_data": false},
+    {"id": 15, "name": "array_cell_null_is_missing", "column": {"class": "array_cell", "values": [null, null]}, "no_data": true},
+    {"id": 16, "name": "array_cell_array_is_data", "column": {"class": "array_cell", "values": [[1, 2], null]}, "no_data": false},
+    {"id": 17, "name": "no_rows_no_data", "column": {"class": "float", "values": []}, "no_data": true}
+  ]
+}

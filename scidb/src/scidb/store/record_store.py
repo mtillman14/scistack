@@ -346,18 +346,10 @@ class RecordStore:
             arrow_inner = numpy_to_arrow.get(numpy_dtype, pa.float64())
             arrow_data[col_name] = pa.array(np_list, type=pa.list_(arrow_inner))
         arrow_table = pa.table(arrow_data)
-        col_str = ", ".join(f'"{c}"' for c in arrow_data)
         rows.timings["data_df_create"] = time.perf_counter() - t_start
 
         t6b = time.perf_counter()
-        self._duck.con.register("arrow_table", arrow_table)
-        try:
-            self._duck.con.execute(
-                f'INSERT INTO "{rows.table_name}" ({col_str}) SELECT * FROM arrow_table '
-                f"ON CONFLICT (record_id) DO NOTHING"
-            )
-        finally:
-            self._duck.con.unregister("arrow_table")
+        self._duck.insert_frame(rows.table_name, arrow_table, conflict=["record_id"])
         rows.timings["data_insert"] = time.perf_counter() - t6b
         return len(rows.record_ids)
 
@@ -399,15 +391,7 @@ class RecordStore:
             )
             return 0
         insert_df = new_parts[0] if len(new_parts) == 1 else pd.concat(new_parts, ignore_index=True)
-        col_str = ", ".join(f'"{c}"' for c in insert_df.columns)
-        self._duck.con.register("__columnar_insert", insert_df)
-        try:
-            self._duck.con.execute(
-                f'INSERT INTO "{table_name}" ({col_str}) '
-                f"SELECT {col_str} FROM __columnar_insert"
-            )
-        finally:
-            self._duck.con.unregister("__columnar_insert")
+        self._duck.insert_frame(table_name, insert_df)
         Log.debug(
             f"_insert_columnar_frames: inserted {len(new_parts)} record(s), "
             f"{len(insert_df)} row(s) into '{table_name}' "

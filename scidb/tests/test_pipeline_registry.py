@@ -1,8 +1,10 @@
 """Pipeline registry: deferred for_each registration and pull execution.
 
-``db.pipeline(name)`` activates a Pipeline as the ambient registration
-target: subsequent ``for_each`` calls register StepSpecs (returning Step
-handles) instead of executing. ``pipeline=None`` forces an eager call;
+Python registers ``for_each`` calls only inside ``with db.pipeline(name) as
+pipe:`` (or through ``pipe.for_each``): TestWithBlockScope pins that. The
+graph and execution tests below use ``_activated(...)``, the activate-until-
+run mode MATLAB's scidb.Pipeline still uses, so ``for_each`` calls register
+StepSpecs (returning Step handles) instead of executing until a run. ``pipeline=None`` forces an eager call;
 ``pipeline=other`` targets a non-ambient pipeline. Dependency edges are
 inferred from variable types, so ``run_all``/``run_until`` execute in
 topological order regardless of registration order, with
@@ -45,6 +47,14 @@ def db(tmp_path):
     if hasattr(_local, "database"):
         delattr(_local, "database")
     _reset_pipeline_state()
+
+
+def _activated(pipe):
+    """The activate-until-run mode (MATLAB's scidb.Pipeline constructor, via
+    the bridge): registration stays on until a run_* call or _deactivate.
+    Graph and execution tests use it so they need no block around their
+    registrations; the Python-facing scope is pinned by TestWithBlockScope."""
+    return pipe._activate()
 
 
 class RawSignal(BaseVariable):
@@ -128,7 +138,7 @@ def _register_chain(db):
 class TestRegistration:
     def test_ambient_registration_defers_execution(self, db):
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         assert active_pipeline() is pipe
 
         handle = for_each(
@@ -148,7 +158,7 @@ class TestRegistration:
 
     def test_pipeline_none_forces_eager_while_active(self, db):
         _seed(db)
-        db.pipeline("gait")
+        _activated(db.pipeline("gait"))
 
         result = for_each(
             halve,
@@ -165,7 +175,7 @@ class TestRegistration:
         assert Filtered.load(subject="1", trial="1") is not None
 
     def test_pipeline_kwarg_targets_non_ambient_pipeline(self, db):
-        ambient = db.pipeline("ambient")
+        ambient = _activated(db.pipeline("ambient"))
         other = Pipeline("other", db=db)  # created, NOT activated
 
         for_each(
@@ -208,7 +218,7 @@ class TestRegistration:
             )
 
     def test_step_handle_fails_fast_on_data_use(self, db):
-        db.pipeline("gait")
+        _activated(db.pipeline("gait"))
         handle = for_each(
             halve,
             {"signal": RawSignal},
@@ -232,7 +242,7 @@ class TestRegistration:
 class TestExecution:
     def test_run_all_executes_in_dependency_order(self, db):
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         _register_chain(db)  # consumer registered BEFORE its producer
 
         pipe.run_all()
@@ -249,7 +259,7 @@ class TestExecution:
 
     def test_run_until_runs_only_ancestors_and_target(self, db):
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         _register_chain(db)
 
         pipe.run_until(mean_of)
@@ -262,7 +272,7 @@ class TestExecution:
 
     def test_second_run_skips_current_steps(self, db):
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         _register_chain(db)
         pipe.run_until(mean_of)
         calls_after_first = (halve.calls, mean_of.calls)
@@ -276,7 +286,7 @@ class TestExecution:
         identity as the same call run eagerly: an eager re-run with
         skip_computed=True must skip every combo (zero fn calls)."""
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -303,7 +313,7 @@ class TestExecution:
 
     def test_run_deactivates_pipeline(self, db):
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -328,7 +338,7 @@ class TestExecution:
         assert not isinstance(result, Step)
 
     def test_run_until_unknown_target_raises(self, db):
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -341,7 +351,7 @@ class TestExecution:
             pipe.run_until(mean_of)
 
     def test_cycle_raises(self, db):
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
 
         def refine(filtered):
             return filtered
@@ -420,7 +430,7 @@ class TestLastRunReport:
         them (regression: GUI showed success for completed=0/failed=N runs,
         2026-07-18)."""
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -468,7 +478,7 @@ class TestLastRunReport:
         import scidb.run.foreach as scidb_foreach
 
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -507,7 +517,7 @@ class TestLastRunReport:
         """skip_computed removes up-to-date combos BEFORE the loop — they
         must never inflate the report's failed count."""
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -536,7 +546,7 @@ class TestLastRunReport:
 class TestPlan:
     def test_plan_reports_red_then_green(self, db):
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         _register_chain(db)
 
         before = pipe.plan()
@@ -551,7 +561,7 @@ class TestPlan:
 
     def test_plan_with_target_excludes_unrelated_branch(self, db):
         _seed(db)
-        pipe = db.pipeline("gait")
+        pipe = _activated(db.pipeline("gait"))
         _register_chain(db)
 
         entries = pipe.plan(target=mean_of)
@@ -568,7 +578,7 @@ class TestPlan:
 
 class TestNeverRunWarning:
     def test_unrun_pipeline_is_flagged(self, db):
-        pipe = db.pipeline("forgotten")
+        pipe = _activated(db.pipeline("forgotten"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -582,7 +592,7 @@ class TestNeverRunWarning:
 
     def test_run_plan_or_deactivate_acknowledges(self, db):
         _seed(db)
-        ran = db.pipeline("ran")
+        ran = _activated(db.pipeline("ran"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -594,7 +604,7 @@ class TestNeverRunWarning:
         ran.run_all()
         assert ran not in _unrun_pipelines()
 
-        planned = db.pipeline("planned")
+        planned = _activated(db.pipeline("planned"))
         for_each(
             mean_of,
             {"filtered": Filtered},
@@ -606,7 +616,7 @@ class TestNeverRunWarning:
         planned.plan()
         assert planned not in _unrun_pipelines()
 
-        escaped = db.pipeline("escaped")
+        escaped = _activated(db.pipeline("escaped"))
         for_each(
             negate,
             {"unrelated": Unrelated},
@@ -615,12 +625,12 @@ class TestNeverRunWarning:
             trial=TRIALS,
             db=db,
         )
-        escaped.deactivate()
+        escaped._deactivate(acknowledge=True)
         assert escaped not in _unrun_pipelines()
 
     def test_empty_pipeline_is_not_flagged(self, db):
-        pipe = db.pipeline("empty")
-        pipe.deactivate()
+        pipe = _activated(db.pipeline("empty"))
+        pipe._deactivate(acknowledge=True)
         assert pipe not in _unrun_pipelines()
 
 
@@ -648,7 +658,7 @@ class TestEndpointFinalized:
         _seed(db)
         plots = tmp_path / "figs"
         plots.mkdir()
-        pipe = db.pipeline("report")
+        pipe = _activated(db.pipeline("report"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -716,7 +726,7 @@ class TestComposition:
         return loading
 
     def _analysis_using(self, db, loading):
-        analysis = db.pipeline("analysis", uses=[loading])
+        analysis = _activated(db.pipeline("analysis", uses=[loading]))
         for_each(
             mean_of,
             {"filtered": Filtered},
@@ -752,7 +762,7 @@ class TestComposition:
 
     def test_run_all_with_no_own_steps_runs_nothing(self, db):
         loading = self._loading(db)
-        umbrella = db.pipeline("umbrella", uses=[loading])
+        umbrella = _activated(db.pipeline("umbrella", uses=[loading]))
 
         results = umbrella.run_all()
 
@@ -815,7 +825,7 @@ class TestComposition:
             trial=TRIALS,
             pipeline=loading,
         )
-        analysis = db.pipeline("analysis", uses=[loading])
+        analysis = _activated(db.pipeline("analysis", uses=[loading]))
         for_each(
             mean_of,
             {"filtered": Filtered},
@@ -844,7 +854,7 @@ class TestComposition:
             pipeline=spare,
         )
 
-        analysis = db.pipeline("analysis", uses=[loading, spare])
+        analysis = _activated(db.pipeline("analysis", uses=[loading, spare]))
         for_each(
             mean_of,
             {"filtered": Filtered},
@@ -874,7 +884,7 @@ class TestComposition:
         """interface() = the pipeline node's ports: consumed-not-produced
         types in, produced types out — across the composed graph."""
         analysis = self._analysis_using(db, self._loading(db))
-        analysis.deactivate()
+        analysis._deactivate(acknowledge=True)
 
         iface = analysis.interface()
 
@@ -931,7 +941,7 @@ class TestBinding:
     def test_params_override_reaches_the_function(self, db):
         _seed(db)
         scaling = self._scaling()
-        analysis = db.pipeline("analysis", uses=[scaling.bind(params={"factor": 3})])
+        analysis = _activated(db.pipeline("analysis", uses=[scaling.bind(params={"factor": 3})]))
         for_each(
             mean_of,
             {"filtered": Filtered},
@@ -967,7 +977,7 @@ class TestBinding:
     def test_original_pipeline_unaffected_by_binding(self, db):
         _seed(db)
         scaling = self._scaling(db=db)
-        db.pipeline("analysis", uses=[scaling.bind(params={"factor": 3})])
+        _activated(db.pipeline("analysis", uses=[scaling.bind(params={"factor": 3})]))
         scaling.run_all()  # the UNBOUND pipeline still runs factor=2
 
         assert scale_by.calls == [2, 2, 2, 2]
@@ -976,10 +986,10 @@ class TestBinding:
         _seed(db)
         scaling = self._scaling()
 
-        a = db.pipeline("a", uses=[scaling.bind(params={"factor": 3})])
-        a.deactivate()
-        b = db.pipeline("b", uses=[scaling.bind(params={"factor": 5})])
-        b.deactivate()
+        a = _activated(db.pipeline("a", uses=[scaling.bind(params={"factor": 3})]))
+        a._deactivate(acknowledge=True)
+        b = _activated(db.pipeline("b", uses=[scaling.bind(params={"factor": 5})]))
+        b._deactivate(acknowledge=True)
 
         a.run_until(scale_by)
         b.run_until(scale_by)
@@ -1064,9 +1074,9 @@ class TestBinding:
             pipeline=foreign,
         )
 
-        analysis = db.pipeline(
+        analysis = _activated(db.pipeline(
             "analysis", uses=[foreign.bind(key_map={"session": "subject"})]
-        )
+        ))
         for_each(
             mean_of,
             {"filtered": Filtered},
@@ -1203,14 +1213,14 @@ class TestBinding:
         )
         mid = Pipeline("mid", uses=[base])  # identity edge
 
-        analysis = db.pipeline(
+        analysis = _activated(db.pipeline(
             "analysis",
             uses=[
                 mid.bind(
                     key_map={"session": "subject"}, iterate={"subject": SUBJECTS}
                 ),  # post-map key
             ],
-        )
+        ))
         for_each(
             mean_of,
             {"filtered": Filtered},
@@ -1249,7 +1259,7 @@ class TestEndpointVerbs:
 
         plots = tmp_path / "verb_figs"
         plots.mkdir(exist_ok=True)
-        pipe = db.pipeline("report")
+        pipe = _activated(db.pipeline("report"))
         for_each(
             halve,
             {"signal": RawSignal},
@@ -1315,8 +1325,8 @@ class TestEndpointVerbs:
         included with include_used=True."""
         _seed(db)
         sub, plots, VerbFigure = self._with_plot(db, tmp_path)
-        sub.deactivate()
-        parent = db.pipeline("parent", uses=[sub])
+        sub._deactivate(acknowledge=True)
+        parent = _activated(db.pipeline("parent", uses=[sub]))
 
         assert parent.run_endpoints() == []  # own endpoints: none
         assert not (plots / "1_1.png").exists()
@@ -1368,3 +1378,106 @@ class TestLocationsSurviveDeferral:
             "include": [[["subject", "1"]]],
             "exclude_levels": {"subject": ["2"]},
         }
+
+
+# ---------------------------------------------------------------------------
+# Python's registration scope: `with` blocks (plan-p6-behaviour stage 9)
+# ---------------------------------------------------------------------------
+
+
+def _halve_call(db, **extra):
+    return for_each(
+        halve, {"signal": RawSignal}, [Filtered],
+        subject=SUBJECTS, trial=TRIALS, db=db, **extra,
+    )
+
+
+class TestWithBlockScope:
+    def test_registers_only_inside_the_block(self, db):
+        _seed(db)
+        with db.pipeline("gait") as pipe:
+            assert active_pipeline() is pipe
+            assert isinstance(_halve_call(db), Step)
+        assert active_pipeline() is None
+        assert len(pipe.steps) == 1 and halve.calls == 0
+
+    def test_for_each_after_the_block_runs_eagerly(self, db):
+        _seed(db)
+        with db.pipeline("gait"):
+            pass
+        assert not isinstance(_halve_call(db), Step)
+        assert halve.calls == len(SUBJECTS) * len(TRIALS)
+
+    def test_exception_inside_the_block_still_deactivates(self, db):
+        with pytest.raises(RuntimeError, match="boom"):
+            with db.pipeline("gait"):
+                raise RuntimeError("boom")
+        assert active_pipeline() is None
+
+    def test_nested_blocks_register_to_the_inner_pipeline(self, db):
+        with db.pipeline("outer") as outer:
+            with db.pipeline("inner") as inner:
+                _halve_call(db)
+            assert active_pipeline() is outer
+            _halve_call(db)
+        assert (len(outer.steps), len(inner.steps)) == (1, 1)
+        assert active_pipeline() is None
+
+    def test_pipe_for_each_registers_without_a_block(self, db):
+        pipe = db.pipeline("gait")
+        handle = pipe.for_each(
+            halve, {"signal": RawSignal}, [Filtered], subject=SUBJECTS, trial=TRIALS, db=db
+        )
+        assert isinstance(handle, Step)
+        assert len(pipe.steps) == 1 and active_pipeline() is None
+
+    def test_pipe_for_each_rejects_a_pipeline_kwarg(self, db):
+        pipe = db.pipeline("gait")
+        with pytest.raises(TypeError, match="drop pipeline="):
+            pipe.for_each(halve, {"signal": RawSignal}, [Filtered], pipeline=None)
+
+    def test_bare_db_pipeline_does_not_activate(self, db):
+        _seed(db)
+        pipe = db.pipeline("gait")
+        assert active_pipeline() is None
+        assert not isinstance(_halve_call(db), Step)  # ran immediately
+        assert pipe.steps == []
+
+    def test_run_inside_the_block_keeps_registering(self, db):
+        _seed(db)
+        with db.pipeline("gait") as pipe:
+            _halve_call(db)
+            pipe.run_all()
+            assert active_pipeline() is pipe  # the block, not the run, decides
+            assert isinstance(_halve_call(db, skip_computed=True), Step)
+        assert halve.calls == len(SUBJECTS) * len(TRIALS)
+
+    def test_never_used_pipeline_warns_with_the_remedy(self, db, caplog):
+        import logging
+
+        from scidb.run.pipeline import _never_used_pipelines, _warn_unrun_pipelines
+
+        _seed(db)
+        pipe = db.pipeline("old_style")
+        _halve_call(db)  # an old-style script: this ran eagerly
+        assert _never_used_pipelines() == [pipe]
+        with caplog.at_level(logging.WARNING, logger="scidb"):
+            _warn_unrun_pipelines()
+        msgs = [r.getMessage() for r in caplog.records]
+        assert any("'old_style' was created but never entered or used" in m
+                   and "with db.pipeline('old_style') as p:" in m for m in msgs)
+
+    def test_run_all_on_a_never_used_pipeline_warns_now(self, db, caplog):
+        import logging
+
+        pipe = db.pipeline("old_style")
+        with caplog.at_level(logging.WARNING, logger="scidb"):
+            assert pipe.run_all() == []
+        assert any("run_all found no steps" in r.getMessage() for r in caplog.records)
+
+    def test_entered_pipeline_is_not_never_used(self, db):
+        from scidb.run.pipeline import _never_used_pipelines
+
+        with db.pipeline("gait"):
+            pass
+        assert _never_used_pipelines() == []

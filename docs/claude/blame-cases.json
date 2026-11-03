@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "about": [
+    "THE blame rule, as data: who can fix a failed combination. Owner:",
+    "scifor.failures.classify_blame. MATLAB runs it natively",
+    "(+scifor/classify_blame.m) because it needs the MException. Readers:",
+    "  python  scifor/tests/test_blame_cases.py",
+    "  matlab  scimatlab/tests/matlab/scifor/TestBlameCases.m",
+    "",
+    "error: what was raised, per language:",
+    "  plain                RuntimeError                / identifier 'MATLAB:test'",
+    "  setup                ActionableError             / 'scidb:Test'",
+    "  user_value           UserValueError              / 'scistack:userValue'",
+    "  user_value_probable  UserValueError(probable)    / 'scistack:userValue:probable'",
+    "frames: origins OUTERMOST first (user | framework | library).",
+    "no_data: a NoDataError / scifor:NoData combination.",
+    "today: MATLAB before stage 4, where it differed (it checked the frames",
+    "before the setup identifier; Python checks ActionableError first)."
+  ],
+  "cases": [
+    {"id": 1, "name": "no_data", "error": "plain", "frames": ["framework"], "no_data": true, "blame": "no_data", "probable": false},
+    {"id": 2, "name": "user_frame_innermost", "error": "plain", "frames": ["framework", "user"], "blame": "user_code", "probable": false},
+    {"id": 3, "name": "library_inside_user", "error": "plain", "frames": ["framework", "user", "library"], "blame": "user_code", "probable": false},
+    {"id": 4, "name": "scistack_only", "error": "plain", "frames": ["framework"], "blame": "internal", "probable": false},
+    {"id": 5, "name": "scistack_called_by_user_unmarked", "error": "plain", "frames": ["framework", "user", "framework"], "blame": "internal", "probable": false},
+    {"id": 6, "name": "setup_from_scistack", "error": "setup", "frames": ["framework", "user", "framework"], "blame": "setup", "probable": false},
+    {"id": 7, "name": "setup_raised_in_user_frame", "error": "setup", "frames": ["framework", "user"], "blame": "setup", "probable": false, "today": "matlab: user_code"},
+    {"id": 8, "name": "user_value", "error": "user_value", "frames": ["framework"], "blame": "user_value", "probable": false},
+    {"id": 9, "name": "user_value_probable", "error": "user_value_probable", "frames": ["framework"], "blame": "user_value", "probable": true},
+    {"id": 10, "name": "no_frames", "error": "plain", "frames": [], "blame": "internal", "probable": false},
+    {"id": 11, "name": "library_only", "error": "plain", "frames": ["library"], "blame": "internal", "probable": false}
+  ]
+}

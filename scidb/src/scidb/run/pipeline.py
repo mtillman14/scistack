@@ -9,11 +9,14 @@ Two related pieces live here:
    function or change its return value.
 
 2. **The ``Pipeline`` registry** — deferred ``for_each`` registration for
-   endpoint-first (pull) execution. Creating a pipeline via
-   ``db.pipeline(name)`` activates it as the ambient registration target:
-   subsequent ``for_each`` calls register a :class:`StepSpec` instead of
-   executing (pass ``pipeline=None`` to force an eager call, or
-   ``pipeline=other`` to target a non-ambient pipeline). Dependency edges
+   endpoint-first (pull) execution. Inside ``with db.pipeline(name) as
+   pipe:`` the pipeline is the ambient registration target: ``for_each``
+   calls register a :class:`StepSpec` instead of executing (pass
+   ``pipeline=None`` to force an eager call, or ``pipeline=other`` /
+   ``other.for_each(...)`` to target another pipeline). Leaving the block
+   ends registration, also on an exception; ``db.pipeline(name)`` alone
+   does not activate. (MATLAB has no ``with``: its scidb.Pipeline
+   constructor activates until a run.) Dependency edges
    are inferred from variable types — a step that consumes ``Filtered``
    depends on every registered step that produces ``Filtered`` — so
    :meth:`Pipeline.run_until` can walk backward from a target and run only
@@ -29,12 +32,11 @@ Usage::
     def bandpass(signal, low_hz):
         return ...
 
-    pipe = db.pipeline("gait_analysis")          # activates
-
-    for_each(bandpass, {"signal": RawSignal, "low_hz": 20},
-             [Filtered], subject=["1", "2"])     # registers (deferred)
-    for_each(compute_speed, {"filtered": Filtered},
-             [Speed], subject=["1", "2"])        # registers (deferred)
+    with db.pipeline("gait_analysis") as pipe:
+        for_each(bandpass, {"signal": RawSignal, "low_hz": 20},
+                 [Filtered], subject=["1", "2"])     # registers (deferred)
+        for_each(compute_speed, {"filtered": Filtered},
+                 [Speed], subject=["1", "2"])        # registers (deferred)
 
     pipe.plan()                                  # dry-run: green/red per step
     pipe.run_until(compute_speed)                # runs ancestors + target
@@ -579,13 +581,34 @@ def _unrun_pipelines() -> list[Pipeline]:
     return [p for p in _all_pipelines if p.steps and not p._acknowledged]
 
 
+def _never_used_pipelines() -> list[Pipeline]:
+    """db.pipeline() pipelines that never registered a step, were never
+    entered and never run: almost always a script written for the old
+    activating db.pipeline(), whose for_each calls ran eagerly."""
+    return [
+        p for p in _all_pipelines
+        if p._from_db_pipeline and not p.steps and not p._entered and not p._acknowledged
+    ]
+
+
+def _warn_never_used(p: Pipeline, when: str) -> None:
+    Log.warn(
+        f"[pipeline] '{p.name}' was created but never entered or used ({when}): "
+        f"db.pipeline() no longer activates, so for_each calls after it ran "
+        f"immediately. Register steps with `with db.pipeline('{p.name}') as p:` "
+        f"or p.for_each(...)."
+    )
+
+
 def _warn_unrun_pipelines() -> None:
     for p in _unrun_pipelines():
         Log.warn(
             f"pipeline_never_run: pipeline '{p.name}' registered "
-            f"{len(p.steps)} step(s) but none of run_all/run_until/plan/"
-            f"deactivate was called — nothing was executed"
+            f"{len(p.steps)} step(s) but none of run_all/run_until/plan "
+            f"was called — nothing was executed"
         )
+    for p in _never_used_pipelines():
+        _warn_never_used(p, "at exit")
 
 
 atexit.register(_warn_unrun_pipelines)
@@ -594,8 +617,9 @@ atexit.register(_warn_unrun_pipelines)
 class Pipeline:
     """A named collection of deferred ``for_each`` steps with pull execution.
 
-    Create via ``db.pipeline(name)`` (binds + activates) or directly
-    (``Pipeline("name", db=db)``, activate explicitly). Registration order
+    Create via ``db.pipeline(name)`` (binds to the database) or directly
+    (``Pipeline("name", db=db)``); register inside ``with pipe:`` or with
+    ``pipe.for_each(...)``. Registration order
     does not matter: execution order is topologically sorted from
     variable-type edges. Multiple producers of one variable type (variant
     branches) all become prerequisites of that type's consumers; variant
@@ -622,6 +646,13 @@ class Pipeline:
         # True once run_all/run_until/plan/deactivate acknowledged this
         # pipeline; guards the never-run atexit warning.
         self._acknowledged = False
+        # Open ``with`` blocks on this pipeline (nesting), and whether one was
+        # ever entered (the never-used warning for old-style scripts).
+        self._with_depth = 0
+        self._entered = False
+        # Made by db.pipeline(name): before stage 9 that call activated, so an
+        # old-style script's for_each calls now run eagerly instead.
+        self._from_db_pipeline = False
         # Per-step outcome of the most recent _run (run_all/run_until/
         # run_endpoints): [{"step", "label", "pipeline", "completed",
         # "failed", "no_data", "total", "cancelled"}]. for_each's
@@ -749,19 +780,66 @@ class Pipeline:
         pairs.extend((self, s) for s in self.steps)
         return pairs
 
-    # -- activation ---------------------------------------------------------
+    # -- registration scope ---------------------------------------------------
+    #
+    # Python registers for_each calls only inside ``with pipe:`` (or through
+    # ``pipe.for_each(...)``); leaving the block always ends registration,
+    # also on an exception. ``db.pipeline(name)`` no longer activates (plan
+    # .claude/plan-p6-behaviour.md stage 9): the ambient target used to stay
+    # on until a run popped it, leaking into every later call. MATLAB has no
+    # ``with``: its scidb.Pipeline constructor still activates through the
+    # bridge (``_activate``) until run_* / deactivate.
 
-    def activate(self) -> Pipeline:
-        """Make this pipeline the ambient ``for_each`` registration target."""
+    def __enter__(self) -> Pipeline:
+        self._with_depth += 1
+        self._entered = True
+        self._activate()
+        Log.debug(f"[pipeline] enter '{self.name}' (stack depth {len(_active_stack)})")
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self._with_depth -= 1
+        if self._with_depth <= 0:
+            self._with_depth = 0
+            self._deactivate()
+        Log.debug(
+            f"[pipeline] exit '{self.name}': {len(self.steps)} step(s) registered"
+            + (f" (block raised {exc_type.__name__})" if exc_type else "")
+        )
+        return False
+
+    def for_each(self, fn: Callable, inputs: dict, outputs: list, **kwargs: Any) -> Any:
+        """Register one ``for_each`` call in this pipeline — the explicit
+        form, no block needed. Routes through ``scidb.for_each(...,
+        pipeline=self)``, so there is one registration path."""
+        if "pipeline" in kwargs:
+            raise TypeError("Pipeline.for_each() targets its own pipeline; drop pipeline=.")
+        from scidb.run.foreach import for_each as _for_each
+
+        return _for_each(fn, inputs, outputs, pipeline=self, **kwargs)
+
+    def _activate(self) -> Pipeline:
+        """Push this pipeline as the ambient registration target (``with``
+        and the MATLAB bridge only)."""
         if active_pipeline() is not self:
             _active_stack.append(self)
         return self
 
-    def deactivate(self) -> None:
-        """Stop ambient registration without running (explicit escape)."""
-        self._acknowledged = True
+    def _deactivate(self, acknowledge: bool = False) -> None:
+        """Pop this pipeline as the ambient target. ``acknowledge`` also
+        silences the never-run warning (MATLAB's explicit deactivate)."""
+        if acknowledge:
+            self._acknowledged = True
         while self in _active_stack:
             _active_stack.remove(self)
+
+    def _end_registration(self) -> None:
+        """A run_* call: the steps were looked at. Outside a ``with`` block
+        this also ends ambient registration (MATLAB's activated pipelines);
+        inside one, the block decides (replays are eager regardless)."""
+        self._acknowledged = True
+        if self._with_depth == 0:
+            self._deactivate()
 
     def discard(self) -> None:
         """Deactivate AND drop this pipeline from the session registry.
@@ -770,7 +848,7 @@ class Pipeline:
         request): a long-lived process would otherwise accumulate every
         compiled pipeline in the never-run bookkeeping forever.
         """
-        self.deactivate()
+        self._deactivate(acknowledge=True)
         while self in _all_pipelines:
             _all_pipelines.remove(self)
 
@@ -1015,7 +1093,7 @@ class Pipeline:
         """
         pairs, order, targets = self._select("endpoints", include_used=include_used)
         if not order:
-            self.deactivate()
+            self._end_registration()
             Log.warn(
                 f"pipeline_run_skipped: run_endpoints on '{self.name}': no "
                 f"endpoint (plot_/stat_) steps"
@@ -1093,7 +1171,9 @@ class Pipeline:
         """
         pairs, order, _ = self._select("all")
         if not order:
-            self.deactivate()
+            if self._from_db_pipeline and not self.steps and not self._entered:
+                _warn_never_used(self, "run_all found no steps")
+            self._end_registration()
             if pairs:
                 Log.warn(
                     f"pipeline_run_skipped: run_all on '{self.name}': no own "
@@ -1113,7 +1193,7 @@ class Pipeline:
         E3), every used step IS the point."""
         pairs = self._composed_steps()
         if not pairs:
-            self.deactivate()
+            self._end_registration()
             return []
         order = self._topo_order(pairs, set(range(len(pairs))))
         return self._run(pairs, order, skip_computed=skip_computed)
@@ -1197,8 +1277,7 @@ class Pipeline:
         from scifor import PathOutput
 
         pairs, order, targets = self._select(mode, target, include_used)
-        self._acknowledged = True
-        self.deactivate()
+        self._end_registration()
         descriptors = []
         for i in order:
             owner, spec = pairs[i]
@@ -1254,8 +1333,7 @@ class Pipeline:
                 f"run this pipeline from MATLAB (pipe.run_until(...)), which "
                 f"drives execution through Pipeline.execution_order()."
             )
-        self._acknowledged = True
-        self.deactivate()
+        self._end_registration()
         names = [self._step_label(pairs[i][0], pairs[i][1], self) for i in order]
         Log.info(
             f"pipeline_run_started: '{self.name}' {len(order)} step(s) in "

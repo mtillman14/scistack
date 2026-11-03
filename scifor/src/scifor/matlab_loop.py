@@ -93,6 +93,8 @@ from .foreach import (
     ProgressReporter,
 )
 from .hooks import LoopHooks
+from .keys import key_text as matlab_text
+from .keys import numeric_mask, text_mask
 from .locations import filter_combo_indices, locations_from_text
 from .merge import Merge
 from .outputs import NoOutput
@@ -140,41 +142,8 @@ def matlab_number(x: float) -> "int | float":
     return float(x)
 
 
-def matlab_text(value: Any) -> str:
-    """``string(value)`` as MATLAB spells it, for comparing a value with a
-    text key column: whole numbers in full, other numbers with 5 significant
-    digits, logicals as ``true``/``false``."""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (bool, np.bool_)):
-        return "true" if value else "false"
-    if isinstance(value, (int, np.integer)):
-        return str(int(value))
-    if isinstance(value, (float, np.floating)):
-        f = float(value)
-        if math.isnan(f):
-            return "NaN"
-        if math.isinf(f):
-            return "Inf" if f > 0 else "-Inf"
-        if f == int(f) and abs(f) < 1e15:
-            return str(int(f))
-        return "%.5g" % f
-    return str(value)
-
-
-def _matlab_number_of(value: Any) -> float:
-    """A combo value compared with a numeric key column (MATLAB parses text
-    with ``str2double``; anything unparsable matches nothing)."""
-    if isinstance(value, (bool, np.bool_)):
-        return float(value)
-    if isinstance(value, (int, float, np.integer, np.floating)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value.strip())
-        except ValueError:
-            return math.nan
-    return math.nan
+# matlab_text (MATLAB's string() spelling) and the number parse are THE
+# key-match rule's, owned by scifor.keys (spec: key-match-cases.json).
 
 
 # ---------------------------------------------------------------------------
@@ -688,8 +657,8 @@ def _key_mask(column: _KeyColumn, value: Any) -> np.ndarray:
     a numeric column compares numbers (text values parsed), every other
     column compares text."""
     if column.numeric:
-        return column.match == _matlab_number_of(value)
-    return column.match == matlab_text(value)
+        return numeric_mask(column.match, value)
+    return text_mask(column.match, value)
 
 
 class _Slicer:
@@ -1121,9 +1090,9 @@ def _plan_wire(desc: _Description, items: "tuple[_Input, ...]", run: RunPlan,
                sources: "list[int] | None", row_selection: "list | None",
                resolved_path_outputs: "dict | None") -> "tuple[dict, dict[str, bytes]]":
     combos = run.combos
-    # MATLAB's effective keys: the schema, or with no schema the iterated
-    # keys, decide which columns filter a table and which extraction drops.
-    filter_keys = list(run.schema_keys) or list(run.keys)
+    # The effective keys (RunPlan.filter_keys owns the rule, for both
+    # languages): which columns filter a table and which extraction drops.
+    filter_keys = run.filter_keys
     keys, pools, index = _combo_wire(combos)
     slicer = _Slicer(len(combos))
     deliveries = []

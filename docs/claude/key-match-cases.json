@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "about": [
+    "THE key-match rule, as data: which rows of a schema-key column a combo",
+    "value selects. Owner: scifor.keys (series_mask for pandas columns;",
+    "numeric_mask / text_mask for MATLAB's described columns). Readers:",
+    "  python  scifor/tests/test_key_match_cases.py (series_mask directly)",
+    "  matlab  scimatlab/tests/matlab/scifor/TestKeyMatchCases.m (end to end:",
+    "          scifor.for_each over a MATLAB table, k=value)",
+    "",
+    "Decided 2026-11-02 (plan stage 2): MATLAB's rule in both languages.",
+    "  numeric column (int/float/bool): compare numbers, text values parsed",
+    "  text column: exact text; numbers spelled as MATLAB string() does",
+    "  missing cells match nothing",
+    "",
+    "column.class: int | float | text | bool | categorical (both languages),",
+    "object_mixed (pandas object column of mixed Python values; python only).",
+    "In MATLAB int and float are double, text a string array, bool logical.",
+    "expect: 0-based indices of the matching rows.",
+    "today: Python before stage 2 (raw ==), where it differed."
+  ],
+  "cases": [
+    {"id": 1, "name": "int_by_int", "column": {"class": "int", "values": [1, 2, 3]}, "value": 2, "expect": [1]},
+    {"id": 2, "name": "int_by_text", "column": {"class": "int", "values": [1, 2, 3]}, "value": "2", "expect": [1], "today": "python: no rows"},
+    {"id": 3, "name": "int_by_padded_text", "column": {"class": "int", "values": [1, 2, 3]}, "value": "02", "expect": [1], "today": "python: no rows"},
+    {"id": 4, "name": "int_by_float", "column": {"class": "int", "values": [1, 2, 3]}, "value": 2.0, "expect": [1]},
+    {"id": 5, "name": "int_by_unparsable_text", "column": {"class": "int", "values": [1, 2, 3]}, "value": "abc", "expect": []},
+    {"id": 6, "name": "float_by_float", "column": {"class": "float", "values": [1.5, 2.5]}, "value": 1.5, "expect": [0]},
+    {"id": 7, "name": "float_missing_never_matches", "column": {"class": "float", "values": [1, null]}, "value": 1, "expect": [0]},
+    {"id": 8, "name": "padded_text_by_padded_text", "column": {"class": "text", "values": ["01", "02", "1"]}, "value": "01", "expect": [0]},
+    {"id": 9, "name": "padded_text_by_int_keeps_padding", "column": {"class": "text", "values": ["01", "02", "1"]}, "value": 1, "expect": [2]},
+    {"id": 10, "name": "text_by_int", "column": {"class": "text", "values": ["1", "2"]}, "value": 1, "expect": [0], "today": "python: no rows"},
+    {"id": 11, "name": "text_by_bool", "column": {"class": "text", "values": ["true", "false"]}, "value": true, "expect": [0], "today": "python: no rows"},
+    {"id": 12, "name": "bool_by_bool", "column": {"class": "bool", "values": [true, false]}, "value": true, "expect": [0]},
+    {"id": 13, "name": "bool_by_number", "column": {"class": "bool", "values": [true, false]}, "value": 0, "expect": [1]},
+    {"id": 14, "name": "text_missing_never_matches", "column": {"class": "text", "values": ["a", null]}, "value": "a", "expect": [0]},
+    {"id": 15, "name": "text_is_case_sensitive", "column": {"class": "text", "values": ["a", "b"]}, "value": "A", "expect": []},
+    {"id": 16, "name": "categorical_by_text", "column": {"class": "categorical", "values": ["L", "R"]}, "value": "R", "expect": [1]},
+    {"id": 17, "name": "text_by_fraction", "column": {"class": "text", "values": ["1.5", "2"]}, "value": 1.5, "expect": [0], "today": "python: no rows"},
+    {"id": 18, "name": "object_mixed_spells_cells", "applies_to": ["python"], "column": {"class": "object_mixed", "values": [1, "1", "01"]}, "value": 1, "expect": [0, 1], "today": "python: [0]"}
+  ]
+}

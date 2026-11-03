@@ -1062,67 +1062,36 @@ end
 
 
 function result = prepare_merge(merge_spec, d, plan, c, metadata, opts)
-%PREPARE_MERGE  Each constituent's rows (from the plan), its constant
-%   schema-key columns dropped, joined column-wise; where=; then the
-%   schema columns the join lost are added back. The join and the add-back
-%   are value operations on MATLAB tables.
+%PREPARE_MERGE  Each constituent's rows (from the plan), then THE Merge rule
+%   (scifor.merge_tables; Python owner scifor.merge, cases in
+%   docs/claude/merge-cases.json): constant schema-key columns drop, shared
+%   varying keys join, a shared data column or an unmatched key is an error.
+%   Then where=, then the schema columns the merge lost are added back.
     schema_keys = plan.filter_keys;
     parts_d = as_cell(d.constituents);
     n = numel(merge_spec.tables);
     parts = cell(1, n);
-    % The constant value of every schema-key column dropped from a
-    % constituent, so a free (non-iterated) dimension can be restored after
-    % the merge; a key whose constituents disagree is left out (broadcast).
-    dropped_const = containers.Map('KeyType', 'char', 'ValueType', 'any');
-    dropped_conflict = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+    drop = false(1, n);
+    columns = cell(1, n);
     for i = 1:n
         pd = parts_d{i};
         tbl = raw_table_of(merge_spec.tables{i});
         if pd.per_combo
-            filtered = tbl(slice_rows(plan, pd.slice, c), :);
-            col_names = string(filtered.Properties.VariableNames);
-            cols_to_drop = string.empty;
-            for sk = schema_keys(ismember(schema_keys, col_names))
-                col_data = filtered.(char(sk));
-                if height(filtered) <= 1 || all_identical(col_data)
-                    cols_to_drop(end+1) = sk; %#ok<AGROW>
-                    ck = char(sk);
-                    if iscell(col_data)
-                        cv = col_data{1};
-                    else
-                        cv = col_data(1);
-                    end
-                    if isKey(dropped_const, ck)
-                        if ~isequaln(dropped_const(ck), cv)
-                            dropped_conflict(ck) = true;
-                        end
-                    else
-                        dropped_const(ck) = cv;
-                    end
-                end
+            parts{i} = tbl(slice_rows(plan, pd.slice, c), :);
+            if height(parts{i}) == 0
+                % A sparse grid, as for any other per-combo input: an
+                % expected skip (Python: NoDataError).
+                error('scifor:NoData', 'No data for this combo in merge[%d].', i - 1);
             end
-            keep_cols = setdiff(col_names, cols_to_drop, 'stable');
-            if ~isempty(keep_cols) && numel(keep_cols) < numel(col_names)
-                part_tbl = filtered(:, cellstr(keep_cols));
-            else
-                part_tbl = filtered;
-            end
+            drop(i) = true;
         else
-            part_tbl = tbl;
+            parts{i} = tbl;
         end
-        col_sel = string(as_cellstr(pd.columns));
-        if ~isempty(col_sel)
-            missing_cols = col_sel(~ismember(col_sel, part_tbl.Properties.VariableNames));
-            if ~isempty(missing_cols)
-                error('scifor:Merge', 'Column ''%s'' not found in merge constituent %d. Available: %s', ...
-                    missing_cols(1), i, strjoin(part_tbl.Properties.VariableNames, ', '));
-            end
-            part_tbl = part_tbl(:, cellstr(col_sel));
-        end
-        parts{i} = part_tbl;
+        columns{i} = string(as_cellstr(pd.columns));
     end
 
-    merged = merge_parts_columnwise(parts);
+    [merged, dropped_const] = scifor.merge_tables(parts, schema_keys, ...
+        'Drop', drop, 'Columns', columns);
     if ~isempty(opts.where)
         merged = apply_where_filter(merged, opts.where);
     end
@@ -1140,8 +1109,8 @@ function result = prepare_merge(merge_spec, d, plan, c, metadata, opts)
         end
         if isfield(metadata, sk)
             val = metadata.(sk);
-        elseif isKey(dropped_const, sk) && ~(isKey(dropped_conflict, sk) && dropped_conflict(sk))
-            val = dropped_const(sk);
+        elseif isfield(dropped_const, sk)
+            val = dropped_const.(sk);
         else
             continue;
         end
@@ -1430,7 +1399,7 @@ function [result, slot_skips, produced] = run_column_iteration(fn, base_args, it
         gcols = column_groups(gi).columns;
         no_data = true;
         for qi = 1:numel(iter_positions)
-            if ~group_has_no_data(iterate_tables{iter_positions(qi)}, gcols)
+            if ~scifor.has_no_data(iterate_tables{iter_positions(qi)}, gcols)
                 no_data = false;
                 break
             end
@@ -1513,63 +1482,6 @@ function [result, slot_skips, produced] = run_column_iteration(fn, base_args, it
         result = slots;
     else
         result = {cell2table(out_values, 'VariableNames', out_names)};
-    end
-end
-
-
-
-function tf = group_has_no_data(t, cols)
-%GROUP_HAS_NO_DATA  Is every value of every column in COLS missing? Port of
-%   Python scifor.missing (the owner): NaN / NaT / <missing> / undefined, an
-%   empty cell, and an empty or whitespace-only string are missing;
-%   placeholder text such as "—" is data. A table with no rows has no data.
-    tf = true;
-    if height(t) == 0
-        return;
-    end
-    for c = 1:numel(cols)
-        if ~all_missing(t.(char(cols(c))))
-            tf = false;
-            return;
-        end
-    end
-end
-
-
-
-function tf = all_missing(v)
-    if isnumeric(v)
-        tf = all(isnan(double(v(:))));
-    elseif isdatetime(v)
-        tf = all(isnat(v(:)));
-    elseif isduration(v)
-        tf = all(isnan(v(:)));
-    elseif isstring(v)
-        tf = all(ismissing(v(:)) | strlength(strtrim(v(:))) == 0);
-    elseif ischar(v)
-        tf = isempty(strtrim(v));
-    elseif iscategorical(v)
-        tf = all(isundefined(v(:)));
-    elseif iscell(v)
-        tf = all(cellfun(@cell_missing, v(:)));
-    else
-        tf = false;
-    end
-end
-
-
-
-function tf = cell_missing(e)
-    if isempty(e)
-        tf = true;
-    elseif ischar(e) || isstring(e)
-        tf = all(ismissing(string(e))) || all(strlength(strtrim(string(e))) == 0);
-    elseif isnumeric(e) && isscalar(e)
-        tf = isnan(double(e));
-    elseif isdatetime(e) && isscalar(e)
-        tf = isnat(e);
-    else
-        tf = false;
     end
 end
 
@@ -1762,17 +1674,6 @@ end
 
 
 
-function tf = all_identical(col_data)
-%ALL_IDENTICAL  Return true if every element in col_data is the same.
-    if isnumeric(col_data) || islogical(col_data)
-        tf = all(col_data == col_data(1));
-    else
-        tf = all(string(col_data) == string(col_data(1)));
-    end
-end
-
-
-
 function result = apply_column_selection_on_table(tbl, cols)
 %APPLY_COLUMN_SELECTION_ON_TABLE  Extract selected columns from a table.
 %   Single column -> returns column values as array.
@@ -1802,61 +1703,6 @@ function filtered = apply_where_filter(tbl, where_filter)
 %APPLY_WHERE_FILTER  Apply a scifor.ColFilter to table rows.
     mask = where_filter.apply(tbl);
     filtered = tbl(mask, :);
-end
-
-
-
-function result = merge_parts_columnwise(parts)
-%MERGE_PARTS_COLUMNWISE  Merge table fragments column-wise with broadcast.
-%   When columns overlap between constituents, performs an inner join on the
-%   shared columns.  Otherwise concatenates column-wise, broadcasting
-%   single-row tables to match multi-row tables.
-
-    if numel(parts) < 2
-        if numel(parts) == 1
-            result = parts{1};
-        else
-            result = table();
-        end
-        return;
-    end
-
-    % Build result iteratively by merging one part at a time
-    result = parts{1};
-    for i = 2:numel(parts)
-        result = merge_two_tables(result, parts{i});
-    end
-end
-
-
-
-function result = merge_two_tables(left, right)
-%MERGE_TWO_TABLES  Merge two tables: join on shared columns, broadcast otherwise.
-    if isempty(left) || isempty(right)
-        error('scifor:Merge', 'Cannot merge: one or more constituents have no data.');
-    end
-
-    left_cols = string(left.Properties.VariableNames);
-    right_cols = string(right.Properties.VariableNames);
-    shared = intersect(left_cols, right_cols, 'stable');
-
-    if ~isempty(shared)
-        % Inner join on shared columns
-        result = innerjoin(left, right, 'Keys', cellstr(shared));
-    else
-        % No shared columns — column-wise concatenation with broadcast
-        lh = height(left);
-        rh = height(right);
-        if lh == 1 && rh > 1
-            left = repmat(left, rh, 1);
-        elseif rh == 1 && lh > 1
-            right = repmat(right, lh, 1);
-        elseif lh ~= rh && lh > 1 && rh > 1
-            error('scifor:Merge', ...
-                'Cannot merge constituents with different row counts (%d vs %d).', lh, rh);
-        end
-        result = [left, right];
-    end
 end
 
 
