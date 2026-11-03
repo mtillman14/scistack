@@ -1245,7 +1245,17 @@ function [state, k] = record_iteration_failure(state, err, c, metadata_str, cont
         k = failures.index(reason);
         failures.list{k}.combos(end+1) = c;
     else
-        record = scifor.failure_from_mexception(err, fn_name, metadata_str, stage, is_no_data);
+        try
+            record = scifor.failure_from_mexception(err, fn_name, metadata_str, stage, is_no_data);
+        catch rec_err
+            % Recording the failure must never hide it: log the user's
+            % error first, then surface it with the recorder's as a cause.
+            scifor.Log.err(['iteration failed: %s — %s: %s, and recording that ' ...
+                'failure failed too (%s: %s)\n%s'], ...
+                metadata_str, context, err.message, rec_err.identifier, rec_err.message, ...
+                getReport(err, 'extended', 'hyperlinks', 'off'));
+            throw(addCause(err, rec_err));
+        end
         failures.list{end+1} = struct('record', record, 'combos', c);
         k = numel(failures.list);
         failures.index(reason) = k;

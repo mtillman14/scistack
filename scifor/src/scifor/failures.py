@@ -37,6 +37,7 @@ import importlib.util
 import inspect
 import linecache
 import os
+import sys
 import sysconfig
 import traceback
 from collections.abc import Callable
@@ -198,14 +199,33 @@ def _framework_dirs() -> tuple[str, ...]:
 
 @lru_cache(maxsize=1)
 def _library_dirs() -> tuple[str, ...]:
+    """The standard library and site-packages roots of THIS interpreter.
+
+    ``sysconfig`` is the source; ``os.__file__`` and ``sys._stdlib_dir`` are
+    optional extras. An embedded interpreter (MATLAB's in-process Python
+    3.11) loads ``os`` frozen and, when it cannot locate its stdlib, sets
+    neither — reading ``os.__file__`` there raised AttributeError inside the
+    MATLAB failure recorder and masked the user's error (2026-11-03).
+    """
     paths = sysconfig.get_paths()
     dirs = {
         _norm(paths[k])
         for k in ("stdlib", "platstdlib", "purelib", "platlib")
         if paths.get(k)
     }
-    dirs.add(_norm(os.path.dirname(os.__file__)))
-    return tuple(sorted(dirs))
+    os_file = getattr(os, "__file__", None)
+    stdlib_dir = getattr(sys, "_stdlib_dir", None)
+    if os_file:
+        dirs.add(_norm(os.path.dirname(os_file)))
+    if stdlib_dir:
+        dirs.add(_norm(stdlib_dir))
+    result = tuple(sorted(dirs))
+    Log.debug(
+        f"[frame_origin] library dirs {list(result)} "
+        f"(os.__file__={os_file!r}, sys._stdlib_dir={stdlib_dir!r})",
+        layer="scifor",
+    )
+    return result
 
 
 def _under(path: str, dirs: tuple[str, ...]) -> bool:
@@ -228,9 +248,27 @@ def frame_origin(
     built-in frames classify as ``"library"``. MATLAB's own framework files
     (``+scifor``, ``+scidb``) live inside the ``scimatlab`` package directory,
     so the framework rule already covers them.
+
+    It runs while a failure is being REPORTED, so it never raises: if the
+    classification itself fails, the frame is the user's (shown, not hidden)
+    and a warning names why — a classifier error must not mask the user's.
     """
     if not filename or filename.startswith("<"):
         return "user"
+    try:
+        return _classify_frame(filename, extra_library_dirs)
+    except Exception as exc:  # noqa: BLE001 — reporting must not mask the failure
+        Log.warn(
+            f"[frame_origin] could not classify {filename!r} ({exc!r}); "
+            "treating it as user code",
+            layer="scifor",
+        )
+        return "user"
+
+
+def _classify_frame(
+    filename: str, extra_library_dirs: tuple[str, ...]
+) -> FrameOrigin:
     path = _norm(filename)
     if _under(path, _framework_dirs()):
         return "framework"

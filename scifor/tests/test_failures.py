@@ -400,3 +400,52 @@ def test_remedy_from_matlab_wire_undoes_jsonencode_quirks():
     assert g["remedy"]["n_more"] == 0
     (none,) = groups_from_wire([{"reason": "r", "remedy": []}])
     assert none["remedy"] is None
+
+
+# ---------------------------------------------------------------------------
+# frame_origin under an embedded interpreter (MATLAB's in-process Python)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _fresh_frame_caches():
+    from scifor import failures
+
+    caches = (failures.frame_origin, failures._library_dirs)
+    for cached in caches:
+        cached.cache_clear()
+    yield failures
+    for cached in caches:
+        cached.cache_clear()
+
+
+def test_frame_origin_without_os_file(monkeypatch, _fresh_frame_caches):
+    """MATLAB R2023b's embedded Python 3.11 loads ``os`` frozen with no
+    ``__file__`` and ``sys._stdlib_dir`` None. Reading ``os.__file__`` there
+    raised AttributeError inside the MATLAB failure recorder and replaced the
+    user's own error (2026-11-03). sysconfig alone still finds the stdlib."""
+    import os
+    import sys
+
+    monkeypatch.delattr(os, "__file__")
+    monkeypatch.setattr(sys, "_stdlib_dir", None, raising=False)
+    assert frame_origin(json.__file__) == "library"
+    assert frame_origin(pd.__file__) == "library"
+    assert frame_origin(scifor.__file__) == "framework"
+    assert frame_origin(THIS_FILE) == "user"
+
+
+def test_frame_origin_never_raises(monkeypatch, caplog, _fresh_frame_caches):
+    """frame_origin runs while a failure is being reported: if classifying
+    fails, the frame is the user's and a warning says why — never a raise."""
+    failures = _fresh_frame_caches
+
+    def broken():
+        raise AttributeError("module 'os' has no attribute '__file__'")
+
+    monkeypatch.setattr(failures, "_library_dirs", broken)
+    with caplog.at_level(logging.WARNING, logger="scifor"):
+        assert frame_origin(THIS_FILE) == "user"
+    text = "\n".join(r.getMessage() for r in caplog.records)
+    assert "[frame_origin] could not classify" in text
+    assert "__file__" in text

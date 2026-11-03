@@ -127,6 +127,32 @@ classdef TestSciforForEachParity < matlab.unittest.TestCase
             tc.verifyEqual(scifor.frame_origin(mfilename('fullpath')), 'user');
         end
 
+        function test_broken_classifier_never_masks_the_user_error(tc)
+            % 2026-11-03: under MATLAB R2023b's embedded Python 3.11,
+            % os.__file__ was missing; classifying a frame raised, and that
+            % error replaced the user's own in for_each. Break the
+            % classifier's library lookup and check the record still
+            % carries the user's message and frame_origin does not throw.
+            pyrun(['import scifor.failures as f' newline ...
+                'f._saved_library_dirs = f._library_dirs' newline ...
+                'def _broken():' newline ...
+                '    raise AttributeError("module os has no attribute __file__")' newline ...
+                'f._library_dirs = _broken' newline ...
+                'f.frame_origin.cache_clear()']);
+            tc.addTeardown(@() pyrun(['import scifor.failures as f' newline ...
+                'f._library_dirs = f._saved_library_dirs' newline ...
+                'f.frame_origin.cache_clear()']));
+
+            tc.verifyEqual(scifor.frame_origin(which('strjoin')), 'user');
+            try
+                error('user:boom', 'the user error');
+            catch err
+            end
+            record = scifor.failure_from_mexception(err, 'fn', 'subject=1', 'call', false);
+            tc.verifyEqual(record.message, 'the user error');
+            tc.verifyEqual(record.exc_type, 'user:boom');
+        end
+
         % --- scidb.Log is scifor.Log ------------------------------------
 
         function test_scidb_log_inherits_scifor_log(tc)
