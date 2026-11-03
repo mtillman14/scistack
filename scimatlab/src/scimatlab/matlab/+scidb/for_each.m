@@ -491,25 +491,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % Pre-resolved PathOutput paths, aligned with full_combos (Python
     % resolves branch_param placeholders whose dotted names cannot cross
     % as MATLAB struct fields; {ColName} stays for the for_columns loop).
-    t0_rpo = tic;
-    resolved_paths = struct();
-    try
-        py_rpo = prep{'resolved_path_outputs'};
-        rpo_keys = cell(py.list(py_rpo.keys()));
-        for ri = 1:numel(rpo_keys)
-            k_rpo = char(rpo_keys{ri});
-            vals = cell(py.list(py_rpo{k_rpo}));
-            cs = cell(1, numel(vals));
-            for vi = 1:numel(vals)
-                cs{vi} = char(vals{vi});
-            end
-            resolved_paths.(k_rpo) = cs;
-        end
-    catch rpo_err
-        scifor.Log.warn('for_each: could not convert resolved_path_outputs: %s', ...
-            rpo_err.message);
-    end
-    t_resolved_paths = toc(t0_rpo);
+    % They stay a py.dict: scifor's plan (py.scifor.matlab_loop) reads them
+    % in Python, so they never become MATLAB values.
+    py_resolved_paths = prep{'resolved_path_outputs'};
 
     % --- Convert prepared inputs to a MATLAB struct for scifor.
     %     Each loaded value may be a DataFrame, a Python scifor.Fixed /
@@ -574,32 +558,17 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     end
     t_meta = toc(t0_meta);
 
-    % --- Convert full_combos (py.list of dicts) to MATLAB cell of structs ---
-    t0_combos = tic;
+    % --- full_combos stay a py.list: scifor's plan reads them in Python and
+    %     sends MATLAB one index matrix (no per-combo conversion). ---
     py_full_combos = prep{'full_combos'};
     n_combos = int64(py.len(py_full_combos));
-    all_combos = cell(1, n_combos);
-    for ci = 1:n_combos
-        d = py_full_combos{ci};
-        s = struct();
-        ks = cell(py.list(d.keys()));
-        for kii = 1:numel(ks)
-            field_name = char(ks{kii});
-            % Field names with leading __ become valid MATLAB fields via
-            % the same x__ auto-sanitization MATLAB uses for jsondecode;
-            % use dynamic field access to preserve original keys, and
-            % rely on MATLAB's automatic prefixing for invalid names.
-            s.(field_name) = scidb.internal.from_python(d{field_name});
-        end
-        all_combos{ci} = s;
-    end
-    t_combos = toc(t0_combos);
 
     scifor.Log.info(['[timing] for_each_convert_inputs: %d input(s), ' ...
-        '%d combo(s), TOTAL=%.3fs (resolved_paths=%.3fs, loaded_inputs=%.3fs, ' ...
-        'glue=%.3fs, metadata_iterables=%.3fs, full_combos=%.3fs)'], ...
-        numel(loaded_keys), n_combos, toc(convert_t0), t_resolved_paths, ...
-        t_inputs, t_glue, t_meta, t_combos);
+        '%d combo(s), TOTAL=%.3fs (loaded_inputs=%.3fs, ' ...
+        'glue=%.3fs, metadata_iterables=%.3fs; combos, row selection and ' ...
+        'PathOutput paths pass to the plan as Python objects)'], ...
+        numel(loaded_keys), n_combos, toc(convert_t0), ...
+        t_inputs, t_glue, t_meta);
 
     % --- Output names returned by Python prepare ---
     py_output_names = prep{'output_names'};
@@ -636,27 +605,14 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
     % loop applies through scifor's _select_rows hook. Replaces the schema
     % extension with x__rid_*/x__vsig_* keys (2026-09-20).
     py_row_sel = prep{'row_selection'};
-    n_sel = int64(py.len(py_row_sel));
-    row_selection = cell(1, n_sel);
-    for si = 1:n_sel
-        d = py_row_sel{si};
-        s = struct();
-        ks = cell(py.list(d.keys()));
-        for kii = 1:numel(ks)
-            pname = char(ks{kii});
-            s.(pname) = string(cellfun(@char, cell(py.list(d{pname})), ...
-                'UniformOutput', false));
-        end
-        row_selection{si} = s;
-    end
     record_id_column = string(prep{'record_id_column'});
 
     % --- Build scifor options for the inner loop ---
     scifor_opts = {};
     scifor_opts{end+1} = '_all_combos';
-    scifor_opts{end+1} = all_combos;
+    scifor_opts{end+1} = py_full_combos;
     scifor_opts{end+1} = '_row_selection';
-    scifor_opts{end+1} = row_selection;
+    scifor_opts{end+1} = py_row_sel;
     scifor_opts{end+1} = '_record_id_column';
     scifor_opts{end+1} = record_id_column;
     scifor_opts{end+1} = '_nest_table_outputs';
@@ -712,9 +668,9 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         scifor_opts{end+1} = 'distribute';
         scifor_opts{end+1} = true;
     end
-    if ~isempty(fieldnames(resolved_paths))
+    if double(py.len(py_resolved_paths)) > 0
         scifor_opts{end+1} = '_resolved_path_outputs';
-        scifor_opts{end+1} = resolved_paths;
+        scifor_opts{end+1} = py_resolved_paths;
     end
     if ~isempty(fieldnames(opts.share_limits))
         scifor_opts{end+1} = 'share_limits';

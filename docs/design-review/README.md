@@ -1,5 +1,9 @@
 # Design review — the as-built SciStack architecture
 
+> **Follow-up (2026-11-02):** the architecture after plans P0–P5 is reviewed
+> in [`docs/design-review-post/`](../design-review-post/README.md), with
+> each refactor ID here marked done, in part, or open there.
+
 *Started 2026-11-01 against `main` @ `dd91f8da`. Every number here is measured
 (`wc -l`, `grep -c`), not estimated. The diagrams are Mermaid; they render in
 VS Code's Markdown preview (with a Mermaid extension) and on GitHub.*

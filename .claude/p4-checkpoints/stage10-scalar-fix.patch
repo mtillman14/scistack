@@ -1,0 +1,24 @@
+--- a/sciduckdb/src/sciduckdb/codec.py	2026-11-01 23:39:30.750703005 -0800
++++ b/sciduckdb/src/sciduckdb/codec.py	2026-11-01 23:39:30.752703005 -0800
+@@ -495,10 +495,20 @@
+             n_null = count_null_list_elements(df[col_name])
+             if n_null:
+                 null_counts[col_name] = n_null
+-            df[col_name] = [
++            values = [
+                 storage_to_python(df[col_name].iloc[i], col_meta)
+                 for i in range(len(df))
+             ]
++            if col_meta.get("python_type") in SCALAR_PTYPES:
++                # An object column keeps the Python scalars storage_to_python
++                # returned; a list assignment let pandas re-infer a numpy
++                # dtype, and a saved True / 42 loaded as np.True_ / np.int64
++                # (`x is True` False, json.dumps raising, a re-save hashing
++                # differently: scicanonicalhash takes the ndarray branch for
++                # numpy ints and bools).
++                df[col_name] = pd.Series(values, index=df.index, dtype=object)
++            else:
++                df[col_name] = values
+     if null_counts:
+         logger.debug(
+             "restore_types: restored NULL list element(s) as NaN: %s", null_counts

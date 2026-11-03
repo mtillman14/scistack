@@ -124,7 +124,8 @@ slow conversion used to be pure silence. Three INFO/WARN lines now cover it:
 
 ```
 for_each: converted input 'loaded_data' in 6.412s (table 419x17, 1.30GB)
-[timing] for_each_convert_inputs: 3 input(s), 419 combo(s), TOTAL=7.104s (resolved_paths=0.001s, loaded_inputs=6.418s, glue=0.102s, metadata_iterables=0.004s, full_combos=0.579s)
+[timing] for_each_convert_inputs: 3 input(s), 419 combo(s), TOTAL=<s> (loaded_inputs=<s>, glue=<s>, metadata_iterables=<s>; combos, row selection and PathOutput paths pass to the plan as Python objects)
+[timing] matlab_plan: <s> (describe <s>, python <s>, decode <s>)
 [timing] convert_dataframe: 419x17, TOTAL=6.390s (slowest: data=6.201s, __record_id=0.102s)
 ```
 
@@ -163,6 +164,18 @@ for_each: converted input 'loaded_data' in 6.412s (table 419x17, 1.30GB)
 | Buffer contract tests (no MATLAB needed) | `scimatlab/tests/test_bridge_ndarray_buffer.py` |
 | MATLAB-side conversion tests | `scimatlab/tests/matlab/scidb/TestFromPython.m` |
 | Type-contract tests the buffer path must not break | `scimatlab/tests/matlab/scidb/TestDataRoundTrip.m` |
+
+## The plan crossing (P5 stage 3)
+
+`+scifor/for_each.m` no longer receives scidb's combos, row selection or
+PathOutput paths as MATLAB values: they stay Python objects and go straight
+to `py.scifor.matlab_loop.plan` (the element-wise `full_combos` conversion,
+0.579s above for 419 combos, is gone). MATLAB sends its tables' key columns
+as ONE float64 `py.bytes` plus JSON; the plan comes back as JSON plus
+int32/int64/float64 buffers (`combo_index`, `row_index` + `row_offsets`,
+`limits`), read with `typecast(uint8(b), class)`. Lines to read:
+`[matlab-plan] received ...`, `[matlab-plan] planned ...` (Python) and
+`[timing] matlab_plan` / `matlab_loop` / `matlab_assemble` (MATLAB).
 
 ## Still open
 

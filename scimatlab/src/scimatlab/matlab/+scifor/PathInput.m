@@ -161,16 +161,7 @@ classdef PathInput < handle
                     py_path = obj.py_obj.load(pyargs(kw_cell{:}));
                 end
             catch err
-                % Translate Python's no-match / multi-match exceptions
-                % into the MATLAB error IDs the existing tests expect.
-                msg = err.message;
-                if contains(msg, 'matched no files')
-                    error('scifor:PathInput:NoMatch', '%s', msg);
-                elseif contains(msg, 'matched') && contains(msg, 'files')
-                    error('scifor:PathInput:MultipleMatches', '%s', msg);
-                else
-                    rethrow(err);
-                end
+                rethrow_with_id(err);
             end
             filepath = string(char(py.str(py_path)));
         end
@@ -227,14 +218,7 @@ classdef PathInput < handle
                 res = obj.py_obj.load_with_captures(py_meta, ...
                     pyargs('numeric_match', py_eligible, 'report', char(report)));
             catch err
-                msg = err.message;
-                if contains(msg, 'matched no files')
-                    error('scifor:PathInput:NoMatch', '%s', msg);
-                elseif contains(msg, 'matched') && contains(msg, 'files')
-                    error('scifor:PathInput:MultipleMatches', '%s', msg);
-                else
-                    rethrow(err);
-                end
+                rethrow_with_id(err);
             end
 
             filepath = string(char(py.str(res{1})));
@@ -526,4 +510,17 @@ classdef PathInput < handle
             end
         end
     end
+end
+
+
+function rethrow_with_id(err)
+%RETHROW_WITH_ID  A failed Python load as the MATLAB error the tests and
+%   callers expect (scifor:PathInput:NoMatch / :MultipleMatches). The rule
+%   is Python's scifor.pathinput.matlab_error_id, which also names the
+%   per-combo path errors MATLAB's for_each gets from its plan.
+    id = char(py.scifor.pathinput.matlab_error_id(err.message));
+    if strcmp(id, 'scifor:PathInput:LoadError')
+        rethrow(err);
+    end
+    error(id, '%s', err.message);
 end

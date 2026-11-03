@@ -207,16 +207,24 @@ pandas/seaborn text (16 `groupby` sites). `reduce.py` has 8.
   `FOR_EACH_OPTIONS` (order now follows the declaration: `as_table` before
   `distribute`). Tests: `scimatlab/tests/test_matlab_for_each_parity.py`
   (rewritten), `scistack-gui/tests/test_matlab_option_parity.py`.
-- **Stage 3 NOT started (2026-11-02), deliberately.** Its slices (a)-(d) each
-  need the MATLAB parity suite green before the next, and this session cannot
-  run MATLAB (or Python). Rewriting the 3,900-line `+scifor/for_each.m` blind
-  would risk every MATLAB run. Note for the next session: the scidb path
-  ALREADY gets its combos (`_all_combos`) and per-combo record ids
-  (`_row_selection`) from Python's `for_each_prepare`; what MATLAB still
-  derives itself is the STANDALONE scifor path (combos from MATLAB tables,
-  `[]` resolution, distribute targeting, as_table, share_limits, NoOutput,
-  column groups, summary). Start with slice (a) for the standalone path, in a
-  session where the user can run `scimatlab/tests/matlab` after each slice.
+- **Stage 3 done (2026-11-02; pytest + MATLAB suite green after three fix rounds, see the stage plan).** All four
+  slices in one session, as the user asked (they test once at the end).
+  Detail and the responsibility map: `.claude/plan-p5-stage3-matlab-for-each.md`.
+  Owner: `scifor.matlab_loop` (`plan`, `log_progress`, `assemble`, `close`,
+  `discard`) runs `scifor.foreach.plan_run` on surrogate frames built from
+  MATLAB's description. Deviations: (1) the entries live in scifor, not
+  `scimatlab.bridge`, and so do not use `@matlab_entry` (importing scimatlab
+  imports scidb); the wire is JSON + bytes only. (2) Assembly decisions move,
+  the table stacking stays in MATLAB (per-value `to_python` would be per-row
+  crossings). (3) `where=`, the Merge join and extraction shapes stay MATLAB
+  (value operations). Behaviour changes for MATLAB (Python's rules now):
+  outputs `output_1..N` NOT adopted (MATLAB keeps `output` per table); a
+  PathInput with no match fails that combo instead of aborting the run;
+  `Fixed(PathInput)` no longer drives discovery; an empty `ColumnSelection()`
+  selects every data column; labels/banner/summary text are Python's.
+  Tests: `scimatlab/tests/test_bridge_plan_roundtrip.py`,
+  `test_matlab_loop_source.py`, `scifor/tests/test_failure_from_dict.py`,
+  MATLAB `TestSciforForEachPlan.m`.
 - **Stage 4 done (2026-11-02).** Steps 1-3 already held: scifor
   (`test_locations.py`), scistackplot (`test_location_filter.py`: reduce AND
   the executed codegen mask) and the GUI (`locationSelection.test.ts`) all

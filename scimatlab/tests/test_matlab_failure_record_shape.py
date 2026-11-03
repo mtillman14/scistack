@@ -1,11 +1,13 @@
 """MATLAB's failure record has Python's shape (runs without MATLAB).
 
-``+scifor/failure_from_mexception.m`` and ``+scifor/for_each.m``'s
-``failure_groups`` emit the wire shape of Python's
-``scifor.failures.ComboFailure.to_dict`` / ``FailureGroup.to_dict``, so the
-GUI reads either language's failures without knowing which ran. This guard
-parses the field names out of the .m source and holds them to the Python
-keys; ``groups_from_wire`` is pinned on MATLAB ``jsonencode``'s quirks.
+``+scifor/failure_from_mexception.m`` emits the wire shape of Python's
+``scifor.failures.ComboFailure.to_dict``, so the GUI reads either language's
+failures without knowing which ran. This guard parses the field names out of
+the .m source and holds them to the Python keys. MATLAB no longer builds the
+failure GROUPS: ``scifor.matlab_loop.assemble`` makes them from MATLAB's
+records with ``FailureGroup.to_dict`` (P5 stage 3), which the group test
+checks end to end. ``groups_from_wire`` is pinned on MATLAB ``jsonencode``'s
+quirks.
 See docs/claude/error-surfacing.md.
 """
 
@@ -51,11 +53,36 @@ def test_matlab_frame_fields_match_python_frame():
     assert matlab == set(_python_example().frames[0].to_dict())
 
 
-def test_matlab_group_fields_match_python_group():
+def test_matlab_groups_are_built_by_python():
+    """A MATLAB record, as jsonencode writes it, becomes a group with exactly
+    Python's group fields; MATLAB's loop defines no group builder of its own."""
+    import json
+
+    import scifor
+    from scifor import matlab_loop
+
     text = (_MATLAB / "+scifor" / "for_each.m").read_text()
-    matlab = _struct_fields(text, "groups{k} = struct(")
+    assert "groups{k} = struct(" not in text
+
+    scifor.set_schema([])
+    desc = {"fn_name": "f", "outputs": {"kind": "default"}, "fn_nargout": 1,
+            "metadata": [{"key": "s", "values": {"texts": ["1"]}}], "inputs": [], "options": {}}
+    token = json.loads(matlab_loop.plan(json.dumps(desc), b"")["json"])["token"]
+    frame = {"file": "/p/f.m", "line": 3, "function": "f", "code": "", "origin": "user"}
+    record = {"fn_name": "f", "metadata": {}, "combo": "s=1", "stage": "call",
+              "exc_type": "test:bad", "message": "m", "reason": "test:bad: m",
+              "frames": frame, "user_frame": frame, "no_data": False,
+              "blame": "user_code", "probable": False, "remedy": []}
+    outcome = {"completed": 0, "skipped": 1, "elapsed": 0.0,
+               "failures": [{"record": record, "combos": 1}]}
+    try:
+        out = json.loads(matlab_loop.assemble(token, json.dumps(outcome)))
+    finally:
+        matlab_loop.discard(token)
+    (group,) = out["summary"]["failures"]
     python = set(FailureGroup(example=_python_example(), combos=["s=1"]).to_dict())
-    assert matlab == python
+    assert set(group) == python
+    assert group["combos"] == ["s=1"] and group["user_frame"]["line"] == 3
 
 
 def test_groups_from_wire_undoes_jsonencode_quirks():

@@ -229,12 +229,14 @@ wrappers, glue application and option parsing.*
 | `.m` source hash | `scimatlab.source_hash` | calls Python | **shared** (consolidated after a BOM/code-page bug) |
 | PathInput resolution | `scifor.PathInput` | `PathInput.m`, 41 `py.` calls | mostly shared |
 | failure record shape | `scifor.failures` | `failure_from_mexception.m` emits the same wire shape | shared shape, separate builder (unavoidable: MException) |
-| the per-combo loop | `scifor.for_each` (1,226 lines) | `+scifor/for_each.m` (3,941 lines) | **mirrored**; parity tests exist (`test_matlab_for_each_parity.py`, `test_bridge_spread_parity.py`) |
-| frame classification | `scifor.failures.frame_origin` | `frame_origin.m`: "The ONE MATLAB frame classifier" | **mirrored** |
-| output column naming | `scifor.output_column_name` | `output_column_name.m`: "same rule as Python's" | **mirrored** |
+| run plan: combos, `[]` resolution, discovery, locations, distribute target, as_table, column groups, share_limits grouping, per-combo paths, banner | `scifor.foreach.plan_run` via `scifor.matlab_loop.plan` | `+scifor/for_each.m` describes its tables once; slices by Python's row indices | **shared** (P5 stage 3) |
+| run summary, failure groups, combine columns, journal | `scifor.foreach._log_summary` via `scifor.matlab_loop.assemble` / `close` | reports counts and failure records | **shared** (P5 stage 3) |
+| the per-combo call: slicing, extraction, Merge join, `where=`, for_columns calls, distribute splitting, result tables | `scifor.foreach.run_combo` | `+scifor/for_each.m` (2,570 lines, from 3,914) | **mirrored by necessity** (MATLAB values); `test_matlab_loop_source.py` keeps the moved decisions out |
+| frame classification | `scifor.failures.frame_origin` | `frame_origin.m`: "The ONE MATLAB frame classifier" | **shared** (P5 stage 1) |
+| output column naming | `scifor.output_column_name` | `output_column_name.m`: "same rule as Python's" | **shared** (P5 stage 1) |
 | input wrappers | `scifor` `Fixed`, `Merge`, `ColumnSelection`, `ColName`, `EachOf` | pure-MATLAB classes, rebuilt in Python by `bridge.py` from wire form | **mirrored** value objects |
 | plot_/stat_ endpoint wrapping | `scidb.run.foreach._make_plot_wrapper` / `_make_stat_wrapper` | `plot_endpoint_call` / `stat_endpoint_call` in `for_each.m` | **mirrored**; `foreach.py` says "WRAPPING is language-specific" |
-| `for_each` options | `scidb.for_each` signature (28 params) | `split_options` in `for_each.m` | **mirrored** |
+| `for_each` options | `scidb.for_each` signature (28 params) | `split_options` in `for_each.m` | **shared** names (P5 stage 2); MATLAB keeps value types |
 | `PathGenerator` | `scipathgen` | `PathGenerator.m` (pure MATLAB) | mirrored, and both unused ([01](01-foundations.md#scipathgen)) |
 
 ### Assessment
@@ -288,6 +290,7 @@ wrappers, glue application and option parsing.*
 
 > **Done (2026-11-02, P5 stage 1, uncommitted):** M1 + M5 Log half — both .m files delegate to Python (`frame_origin` gained `extra_library_dirs` for `matlabroot`; `scifor.outputs.output_column_name_from` is the text rule). `+scidb/Log.m` is a member-free subclass of `scifor.Log`.
 > **Done (2026-11-02, P5 stage 2, uncommitted):** M4 — `scifor.options.classify_for_each_args` decides which names are options (from `FOR_EACH_OPTIONS` + `MATLAB_ONLY_OPTIONS`); MATLAB sends only names (values stay MATLAB-side for type coercion).
+> **Done (2026-11-02, P5 stage 3, uncommitted; pytest + MATLAB suite green):** M3 -- `+scifor/for_each.m` describes its inputs once (key columns as one float64 buffer + JSON) to `scifor.matlab_loop.plan`, which runs `scifor.foreach.plan_run` on surrogate frames and returns combos (value pools + index matrix), row slices (one int64 buffer), per-combo paths and limits; MATLAB keeps the per-combo call; `assemble` / `close` write the summary and the journal. `+scidb/for_each.m` passes `full_combos` / `row_selection` / `resolved_path_outputs` through as Python objects (no per-combo conversion). Still MATLAB: `where=`, the Merge join, extraction shapes, `scifor.missing`'s twin `group_has_no_data`, `classify_blame`. See `.claude/plan-p5-stage3-matlab-for-each.md`.
 
 > **Done (2026-11-01, e129c3bf):** M5, delete half — `PathGenerator.m` and `+scihist` deleted. The `Log.m` merge and the rename remain.
 > **Done (2026-11-01, P4 stage 9):** M2 — `scimatlab.bridge` is a package: `entry` (the two-pass for_each, batch save/load, entities, project root, batch cache), `wire` (spec -> wrapper reconstruction, the function sentinel, surrogates and codecs), `convert` (buffers, datetimes, nested values), `pipeline` (the registry by handle). `bridge/__init__.py` re-exports every `py.scimatlab.bridge.<name>`; `scimatlab/tests/test_bridge_entry_points.py` scans the .m sources and fails on any name without an export. `MatlabLineageFcn` -> `MatlabFunctionIdentity`.

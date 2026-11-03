@@ -161,6 +161,18 @@ def key_regex_is_digit_only(pattern: Any) -> bool:
         return False
 
 
+def matlab_error_id(message: str) -> str:
+    """The MATLAB error identifier for a failed load, from its message
+    (``matched no files`` / ``matched N files``). The one rule for
+    ``PathInput.m``'s own ``load`` and for the per-combo paths MATLAB's loop
+    gets from ``scifor.matlab_loop``."""
+    if "matched no files" in message:
+        return "scifor:PathInput:NoMatch"
+    if "matched" in message and "files" in message:
+        return "scifor:PathInput:MultipleMatches"
+    return "scifor:PathInput:LoadError"
+
+
 def clear_listing_cache() -> None:
     """Forget every cached directory listing."""
     _DIR_CACHE.clear()

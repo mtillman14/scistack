@@ -347,17 +347,60 @@ class ProgressReporter:
         ):
             return
         self._last_emit = now
-        total = self._plan.total
         tally = self._tally
         Log.info(
-            f"progress: {self._key}={value} "
-            f"({self._seen}/{self._key_total}) — "
-            f"{combo_idx}/{total} combos "
-            f"({100.0 * combo_idx / total:.1f}%), "
-            f"completed={tally.completed}, failed={tally.failed}, "
-            f"no_data={tally.no_data}, elapsed={now:.1f}s",
+            progress_line(
+                self._key,
+                value,
+                seen=self._seen,
+                key_total=self._key_total,
+                combo_idx=combo_idx,
+                total=self._plan.total,
+                completed=tally.completed,
+                failed=tally.failed,
+                no_data=tally.no_data,
+                elapsed=now,
+            ),
             layer="scifor",
         )
+
+    @property
+    def key(self) -> "str | None":
+        """The outermost displayed key, whose value changes start a line."""
+        return self._key
+
+    @property
+    def key_total(self) -> int:
+        """How many distinct values of :attr:`key` the combos hold."""
+        return self._key_total
+
+
+def progress_line(
+    key: str,
+    value: Any,
+    *,
+    seen: int,
+    key_total: int,
+    combo_idx: int,
+    total: int,
+    completed: int,
+    failed: int,
+    no_data: int,
+    elapsed: float,
+) -> str:
+    """The periodic progress line's text (Python's loop and MATLAB's)."""
+    return (
+        f"progress: {key}={value} ({seen}/{key_total}) — "
+        f"{combo_idx}/{total} combos ({100.0 * combo_idx / total:.1f}%), "
+        f"completed={completed}, failed={failed}, no_data={no_data}, "
+        f"elapsed={elapsed:.1f}s"
+    )
+
+
+def progress_guards() -> "tuple[float, float]":
+    """``(start delay, min interval)`` in seconds for the progress line. Read
+    at call time so a test's monkeypatch of the module constants applies."""
+    return _PROGRESS_START_DELAY_S, _PROGRESS_MIN_INTERVAL_S
 
 
 @journaled
@@ -941,6 +984,13 @@ def _apply_declared_key_types(
     return combos, resolver
 
 
+def iterated_schema_keys(schema_keys: "list[str]", metadata_iterables: dict) -> "list[str]":
+    """The schema keys this run iterates, in schema order. Empty means
+    ``distribute=True`` falls back to the top of the schema (nothing at a
+    schema level is iterated), which MATLAB's loop marks on its result."""
+    return [k for k in schema_keys if k in metadata_iterables]
+
+
 def _distribute_target(schema_keys: "list[str]", metadata_iterables: dict) -> str:
     """The schema key ``distribute=True`` expands outputs to.
 
@@ -961,7 +1011,7 @@ def _distribute_target(schema_keys: "list[str]", metadata_iterables: dict) -> st
             "distribute=True requires a schema. Call set_schema() or "
             "configure_database() first."
         )
-    iter_keys_in_schema = [k for k in real_schema_keys if k in metadata_iterables]
+    iter_keys_in_schema = iterated_schema_keys(real_schema_keys, metadata_iterables)
     if not iter_keys_in_schema:
         # Nothing is being iterated at a schema level (e.g. a fully static
         # PathInput with no {key} placeholders, or no metadata_iterables at
@@ -1572,9 +1622,7 @@ def assemble(
     if tally.stop is not None:
         stop_exc, stop_failure = tally.stop
         Log.info(
-            f"for_each({plan.fn_name}): on_error=stop — stopped at "
-            f"{stop_exc.__class__.__name__} {format_user_frame(stop_failure.user_frame)}; "
-            f"{tally.completed} combo(s) completed before it, re-raising the original exception",
+            stop_line(plan.fn_name, stop_failure, tally.completed),
             layer="scifor",
         )
         attach_stopped_run(
@@ -1583,6 +1631,15 @@ def assemble(
         )
         raise stop_exc
     return result_df
+
+
+def stop_line(fn_name: str, failure: ComboFailure, completed: int) -> str:
+    """The ``on_error="stop"`` line (Python's loop and MATLAB's)."""
+    return (
+        f"for_each({fn_name}): on_error=stop — stopped at "
+        f"{failure.exc_type} {format_user_frame(failure.user_frame)}; "
+        f"{completed} combo(s) completed before it, re-raising the original exception"
+    )
 
 
 def _log_summary(plan: RunPlan, tally: RunTally, elapsed: float) -> dict:

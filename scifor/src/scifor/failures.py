@@ -59,6 +59,25 @@ BLAME_VALUES = ("no_data", "user_value", "setup", "user_code", "internal")
 # error), recorded by a caller that catches what escaped for_each.
 FailureStage = Literal["prepare_inputs", "call", "run"]
 
+
+def _origin_of(raw: Any) -> FrameOrigin:
+    """A wire frame's ``origin``; anything unknown reads as the user's."""
+    if raw == "framework":
+        return "framework"
+    if raw == "library":
+        return "library"
+    return "user"
+
+
+def _stage_of(raw: Any) -> FailureStage:
+    """A wire failure's ``stage``; anything unknown reads as ``call``."""
+    if raw == "prepare_inputs":
+        return "prepare_inputs"
+    if raw == "run":
+        return "run"
+    return "call"
+
+
 # Wire-size caps: a failure travels in progress events and run_done messages.
 MESSAGE_MAX_CHARS = 2000
 FRAMES_MAX = 50
@@ -243,6 +262,17 @@ class FailureFrame:
             "origin": self.origin,
         }
 
+    @classmethod
+    def from_dict(cls, raw: dict) -> "FailureFrame":
+        """The inverse of :meth:`to_dict` (a MATLAB frame has an empty ``code``)."""
+        return cls(
+            file=str(raw.get("file") or ""),
+            line=int(raw.get("line") or 0),
+            function=str(raw.get("function") or ""),
+            code=str(raw.get("code") or ""),
+            origin=_origin_of(raw.get("origin")),
+        )
+
 
 @dataclass(frozen=True)
 class ComboFailure:
@@ -278,6 +308,32 @@ class ComboFailure:
             "probable": self.probable,
             "remedy": self.remedy,
         }
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "ComboFailure":
+        """The inverse of :meth:`to_dict`. MATLAB's
+        ``+scifor/failure_from_mexception.m`` writes this shape; read it
+        through :func:`groups_from_wire` first when it came through
+        ``jsonencode`` (a one-element frame list arrives as an object)."""
+        metadata = raw.get("metadata")
+        user_frame = raw.get("user_frame")
+        return cls(
+            fn_name=str(raw.get("fn_name") or ""),
+            metadata={str(k): str(v) for k, v in metadata.items()}
+            if isinstance(metadata, dict)
+            else {},
+            stage=_stage_of(raw.get("stage")),
+            exc_type=str(raw.get("exc_type") or ""),
+            message=str(raw.get("message") or ""),
+            frames=tuple(
+                FailureFrame.from_dict(f) for f in raw.get("frames") or () if isinstance(f, dict)
+            ),
+            user_frame=FailureFrame.from_dict(user_frame) if isinstance(user_frame, dict) else None,
+            no_data=bool(raw.get("no_data")),
+            blame=str(raw.get("blame") or "internal"),
+            probable=bool(raw.get("probable")),
+            remedy=raw.get("remedy") if isinstance(raw.get("remedy"), dict) else None,
+        )
 
 
 @dataclass

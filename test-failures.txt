@@ -1,0 +1,28 @@
+MATLAB test failure diagnostics
+Generated: 2026-11-02 20:23:21
+1 failing test(s)
+
+==============================================================================
+[1/1] TestForColumns/test_missing_column_raises
+Passed=0  Failed=1  Incomplete=0  Duration=1.229s
+==============================================================================
+
+--- record 1/1: VerificationFailed (TestMethod) ---
+Verification failed in TestForColumns/test_missing_column_raises.
+    ---------------------
+    Framework Diagnostic:
+    ---------------------
+    verifyError failed.
+    --> The function did not throw any exception.
+        
+        Expected Exception:
+            ?MException
+    
+    Evaluated Function:
+      function_handle with value:
+    
+        @()scidb.for_each(@col_mean,struct('value',GaitData().for_columns(["StepLength","DoesNotExist"])),{DeltaGait()},'subject',[],'session',[])
+    ------------------
+    Stack Information:
+    ------------------
+    In /Users/mitchelltillman/Documents/general-sqlite-database/scimatlab/tests/matlab/scidb/TestForColumns.m (TestForColumns.test_missing_column_raises) at 186
