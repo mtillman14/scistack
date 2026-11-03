@@ -87,8 +87,10 @@ flowchart LR
 ```
 
 **Contract.** scidb (9 edges), scimatlab (5), sciduckdb (2, datetimes),
-the GUI and scistackplot (1 each). The function hash is pinned by
-`test_function_hash_unchanged_by_move`.
+the GUI and scistackplot (1 each). The function hash is checked by
+behaviour tests only (`tests/test_function_hash.py`): a pinned value cannot
+hold across Python versions, because `ast.dump`'s text changes in 3.12
+and 3.13.
 
 **Assessment.**
 - The merge of scilineage (D4) removed the third `canonical_hash` import

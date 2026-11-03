@@ -6,7 +6,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-from pathlib import Path
 
 import pytest
 
@@ -405,20 +404,3 @@ class TestRecursiveFunctionHash:
         assert hash_with(v1, recursive=False) == hash_with(v2, recursive=False)
         # recursive path picks up bar's change
         assert hash_with(v1, recursive=True) != hash_with(v2, recursive=True)
-
-
-# Captured with scilineage.compute_function_hash before the function hash moved
-# into scicanonicalhash (2026-11-01). Stored ``_invocation.function_hash``
-# values depend on this recipe, so it must never drift.
-EXPECTED_FIXTURE_HASH = "807520b3ef10a4e530ea0ce8ed251285db3197c180b4649f794737e80a605e8b"
-
-
-def test_function_hash_unchanged_by_move():
-    """Regression: moving the hash out of scilineage must not change any
-    stored function hash (every pipeline step would read as outdated)."""
-    path = Path(__file__).with_name("function_hash_fixture.py")
-    spec = importlib.util.spec_from_file_location("function_hash_fixture", path)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert compute_function_hash(mod.f, truncate=64) == EXPECTED_FIXTURE_HASH
