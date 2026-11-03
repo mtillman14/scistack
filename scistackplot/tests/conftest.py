@@ -13,6 +13,22 @@ import pytest
 
 from scistackplot import LongTable
 
+
+@pytest.fixture(autouse=True)
+def _fresh_layout_caches():
+    """Every test starts with no cached layout. The layout caches are keyed
+    on CONTENT (``ResolvedPlot.layout_key``), so two tests that build the
+    same figure would otherwise share one, and a test that counts renders or
+    reads a trial's log line would see the other test's work."""
+    try:
+        from scistackplot.render.mpl import clear_layout_caches
+    except ImportError:  # matplotlib not installed: nothing is cached
+        yield
+        return
+    clear_layout_caches()
+    yield
+    clear_layout_caches()
+
 SUBJECTS = ["01", "02", "03"]
 SESSIONS = ["pre", "post"]
 TRIALS = ["1", "2", "3", "4"]

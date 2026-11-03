@@ -158,3 +158,40 @@ one.
    in `test_autosize.py`.
 5. Add the rule to the table above and to "Automatic size" in
    `plot-text-and-labels.md`.
+
+## Caching (added 2026-11-03)
+
+The search costs one full matplotlib layout per candidate: 5 layouts and 22 s
+on a 105-position bar chart where no candidate fits (scistack-debug.log
+2026-11-03). Two caches keep it from running again for the same figure:
+
+| Cache | Holds | Key |
+|---|---|---|
+| `autosize._MEMO` | the chosen `AutoTextSize` | `(layout_key, width, height, text)` |
+| `render.mpl._DECISIONS` | `layout_decisions` output | `(layout_key, width, height)` |
+
+`ResolvedPlot.layout_key()` is the ONE owner of "same layout". It is a
+blake2b digest of the pickle of every field, except `auto_text` (only its
+`reference` is added back), `reduction`, `custom`, and `difference_siblings`
+(each sibling enters by its own key). Because it digests everything instead of
+listing the fields that move text, it can only miss too often (a colour change
+lays out again), never hit wrongly. If a figure cannot be pickled, the key is
+None. The memo then falls back to `id()`, nothing is shared across requests,
+and a WARN fires once for each reason. A custom kind's decisions are never
+cached.
+
+Tests: `test_layout_cache.py`. `tests/conftest.py` clears both caches around
+every test (`render.mpl.clear_layout_caches`), because content keys would
+otherwise carry one test's layouts into the next.
+
+Timing: `[timing] layout_decisions` has a `layout_key` phase. Each trial logs
+`[timing] layout_report` (render / overflow_by_element / tick_and_title_rules)
+and `[timing] fit_x_labels` (fit / tight_layout_after_fit / refit /
+draw_brackets / tight_layout_after_brackets / verify). Inside a trial these are
+demoted to DEBUG by `Log.trial`.
+
+Known gap (adversarial review 2026-11-03,
+`.claude/plan-autosize-analytic-reference.md`): the binary search assumes larger
+text never makes a layout cleaner. The numeric tick locator breaks that
+assumption: smaller text can pick more ticks with wider labels. Heatmap
+category labels are never fitted and no rule checks them.

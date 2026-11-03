@@ -9,8 +9,10 @@ expected to reproduce.
 
 from __future__ import annotations
 
+import copy
 import threading
 import time
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from typing import Any
@@ -19,6 +21,7 @@ import numpy as np
 import pandas as pd
 from scistacklog import Log
 
+from ..text.autosize import clear_memo as clear_auto_size_memo
 from ..text.figsize import aspect_name
 from ..reduce.resolved import (
     GRID_COLUMN_FACTOR,
@@ -1467,30 +1470,44 @@ def _fit_x_labels(fig, labelled: list[Any], resolved: ResolvedPlot, rect) -> Non
     ticks = _collect_x_ticks(labelled, resolved)
     if not ticks:
         return
-    fit, rows = _fit_x_ticks(fig, ticks, resolved)
-    _apply_x_fit(ticks, fit)
-    fig.tight_layout(rect=rect)
-    refit, rows = _fit_x_ticks(fig, ticks, resolved)
-    if not _same_decision(fit, refit):
-        Log.debug("x tick labels refitted after layout: %s", refit.describe(), layer=LAYER)
-        _apply_x_fit(ticks, refit)
-        fig.tight_layout(rect=rect)
-        fit = refit
-    _log_fit("x tick labels", fit, rows, _text_measure(fig))
-    drawn = _draw_x_groups(fig, ticks, resolved)
-    brackets, geometry = drawn if drawn is not None else (None, None)
-    if drawn is not None:
-        fig.tight_layout(rect=rect)
-    # The decisions travel with the Figure, so a caller (a test today, the
-    # GUI's "labels still overlap" notice later) can read what was decided
-    # instead of re-deriving it from the drawing.
-    setattr(
-        fig,
-        LABEL_FIT_ATTR,
-        {"ticks": fit, "brackets": brackets, "bracket_geometry": geometry},
-    )
-    if fit.fits:
-        _verify_x_ticks(fig, ticks, fit)
+    positions = sum(len(t.labels) for t in ticks)
+    # Phases, because this is the largest phase of render_mpl on a crowded
+    # axis (scistack-debug.log 2026-11-03: 1.7-2.4 s of a 4.3 s layout at 105
+    # positions) and which of the fits, layouts or brackets costs it was
+    # unknown. Each tight_layout is its own phase.
+    with Log.timer("fit_x_labels", layer=LAYER, extra=f"{positions} label(s)") as timer:
+        with timer.phase("fit"):
+            fit, rows = _fit_x_ticks(fig, ticks, resolved)
+            _apply_x_fit(ticks, fit)
+        with timer.phase("tight_layout_after_fit"):
+            fig.tight_layout(rect=rect)
+        with timer.phase("refit"):
+            refit, rows = _fit_x_ticks(fig, ticks, resolved)
+        if not _same_decision(fit, refit):
+            Log.debug("x tick labels refitted after layout: %s", refit.describe(), layer=LAYER)
+            with timer.phase("tight_layout_after_refit"):
+                _apply_x_fit(ticks, refit)
+                fig.tight_layout(rect=rect)
+            fit = refit
+        with timer.phase("log_fit"):
+            _log_fit("x tick labels", fit, rows, _text_measure(fig))
+        with timer.phase("draw_brackets"):
+            drawn = _draw_x_groups(fig, ticks, resolved)
+        brackets, geometry = drawn if drawn is not None else (None, None)
+        if drawn is not None:
+            with timer.phase("tight_layout_after_brackets"):
+                fig.tight_layout(rect=rect)
+        # The decisions travel with the Figure, so a caller (a test today, the
+        # GUI's "labels still overlap" notice later) can read what was decided
+        # instead of re-deriving it from the drawing.
+        setattr(
+            fig,
+            LABEL_FIT_ATTR,
+            {"ticks": fit, "brackets": brackets, "bracket_geometry": geometry},
+        )
+        if fit.fits:
+            with timer.phase("verify"):
+                _verify_x_ticks(fig, ticks, fit)
 
 
 # ---------------------------------------------------------------------------
@@ -2436,6 +2453,27 @@ def _apply_difference_bars(panel_axes, placement, resolved: ResolvedPlot, sizes)
 # The decisions, for a renderer that cannot measure text (the plotly preview)
 
 
+#: ``(resolved.layout_key(), width_in, height_in)`` -> ``layout_decisions``
+#: output. A GUI request rebuilds an equal figure from the plan cache every
+#: time, and laying it out again cost the whole auto-size search (22 s on a
+#: 105-position bar chart, scistack-debug.log 2026-11-03). Stored and
+#: returned as deep copies, so a caller cannot change what the next one
+#: gets. A custom kind is never cached: its decisions come from a draw that
+#: calls the user's function, whose code can change under the same data.
+_DECISIONS: "OrderedDict[tuple, dict]" = OrderedDict()
+_DECISIONS_SIZE = 32
+
+
+def clear_layout_caches() -> None:
+    """Forget every cached layout: ``layout_decisions``' decisions and
+    ``autosize.settle``'s chosen sizes. For tests that patch the renderer and
+    count what it draws; nothing in the product needs it (the keys are
+    content, so a changed figure never hits)."""
+    with _MPL_LOCK:
+        _DECISIONS.clear()
+        clear_auto_size_memo()
+
+
 def layout_decisions(
     resolved: ResolvedPlot,
     *,
@@ -2471,7 +2509,32 @@ def layout_decisions(
     height = float(height_in or style.height)
     with _one_figure_at_a_time("layout_decisions"), Log.timer(
         "layout_decisions", layer=LAYER, extra=f"{width:.2f}x{height:.2f}in"
-    ):
+    ) as timer:
+        # A phase of its own: the digest pickles every panel frame, and its
+        # cost must stay visible next to the layouts it saves.
+        with timer.phase("layout_key"):
+            content = resolved.layout_key() if resolved.kind is not PlotKind.CUSTOM else None
+        cache_key = (content, width, height) if content is not None else None
+        cached = _DECISIONS.get(cache_key) if cache_key is not None else None
+        if content is not None and cache_key is not None and cached is not None:
+            _DECISIONS.move_to_end(cache_key)
+            Log.info(
+                "layout_decisions%s: reused the layout of an identical figure "
+                "(content %s at %.2fx%.2fin); no matplotlib layout",
+                f" ({resolved.figure_label})" if resolved.figure_label else "",
+                content[:8],
+                width,
+                height,
+                layer=LAYER,
+            )
+            return copy.deepcopy(cached)
+        Log.debug(
+            "layout_decisions: %s",
+            f"not cached yet (content {content[:8]})" if content is not None
+            else "custom kind, never cached" if resolved.kind is PlotKind.CUSTOM
+            else "no layout key, not cached",
+            layer=LAYER,
+        )
         # {reference: decisions} of each auto-size trial laid out here.
         trials: dict[float, dict] = {}
 
@@ -2483,8 +2546,9 @@ def layout_decisions(
 
         reusable = resolved.kind is not PlotKind.CUSTOM
         # Auto text is chosen at the size being decided (the pane's, in Fit
-        # pane), keyed on the caller's object so the preview's later
-        # render_plotly and a Save of the same resolve reuse it.
+        # pane), keyed on the figure's content (ResolvedPlot.layout_key) so
+        # the preview's later render_plotly, a Save of the same resolve and
+        # the next request's equal figure reuse it.
         target = at_size(
             settle(
                 resolved,
@@ -2521,7 +2585,7 @@ def layout_decisions(
                 decisions = _figure_decisions(fig)
             finally:
                 plt.close(fig)
-        return {
+        result = {
             **decisions,
             # autosize.AutoTextSize, or None when the size is fixed: the
             # preview draws at these sizes rather than searching again.
@@ -2529,6 +2593,11 @@ def layout_decisions(
             "width_in": width,
             "height_in": height,
         }
+        if cache_key is not None:
+            _DECISIONS[cache_key] = copy.deepcopy(result)
+            while len(_DECISIONS) > _DECISIONS_SIZE:
+                _DECISIONS.popitem(last=False)
+        return result
 
 
 def _figure_decisions(fig) -> dict:
@@ -2573,33 +2642,39 @@ def _layout_report(resolved: ResolvedPlot, *, decisions_out: dict | None = None)
     from ..text.autosize import LayoutReport
     from ..export.custom import measuring
 
-    # A custom figure's marks do not move the labels measured here, so a
-    # trial layout does not call the user's function (custom.measuring).
-    with measuring():
-        fig = render(resolved)
-    try:
-        if decisions_out is not None:
-            decisions_out.update(_figure_decisions(fig))
-        fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
-        ticks, brackets = fits.get("ticks"), fits.get("brackets")
-        legend = getattr(fig, LEGEND_ATTR, None) or {}
-        reach = getattr(fig, GRID_REACH_ATTR, None)
-        by_element, unattributed = _overflow_by_element(fig)
-        rules = _tick_and_title_rules(fig)
-        return LayoutReport(
-            tick_steps=tuple(ticks.steps) if ticks is not None else (),
-            ticks_fit=ticks.fits if ticks is not None else True,
-            bracket_steps=tuple(brackets.steps) if brackets is not None else (),
-            brackets_fit=brackets.fits if brackets is not None else True,
-            legend_steps=tuple(legend.get("steps", ())),
-            left_overlap_pt=reach.left_overlap_pt if reach is not None else 0.0,
-            below_overlap_pt=reach.below_overlap_pt if reach is not None else 0.0,
-            overflow_by_element=by_element,
-            unattributed_overflow_in=unattributed,
-            **rules,
-        )
-    finally:
-        plt.close(fig)
+    # Phases: one auto-size trial = render + these reads, and the ~0.4-0.6 s
+    # between render_mpl's TOTAL and the trial's own time was unaccounted for
+    # (scistack-debug.log 2026-11-03).
+    with Log.timer("layout_report", layer=LAYER, extra=str(resolved.kind)) as timer:
+        # A custom figure's marks do not move the labels measured here, so a
+        # trial layout does not call the user's function (custom.measuring).
+        with timer.phase("render"), measuring():
+            fig = render(resolved)
+        try:
+            if decisions_out is not None:
+                decisions_out.update(_figure_decisions(fig))
+            fits = getattr(fig, LABEL_FIT_ATTR, None) or {}
+            ticks, brackets = fits.get("ticks"), fits.get("brackets")
+            legend = getattr(fig, LEGEND_ATTR, None) or {}
+            reach = getattr(fig, GRID_REACH_ATTR, None)
+            with timer.phase("overflow_by_element"):
+                by_element, unattributed = _overflow_by_element(fig)
+            with timer.phase("tick_and_title_rules"):
+                rules = _tick_and_title_rules(fig)
+            return LayoutReport(
+                tick_steps=tuple(ticks.steps) if ticks is not None else (),
+                ticks_fit=ticks.fits if ticks is not None else True,
+                bracket_steps=tuple(brackets.steps) if brackets is not None else (),
+                brackets_fit=brackets.fits if brackets is not None else True,
+                legend_steps=tuple(legend.get("steps", ())),
+                left_overlap_pt=reach.left_overlap_pt if reach is not None else 0.0,
+                below_overlap_pt=reach.below_overlap_pt if reach is not None else 0.0,
+                overflow_by_element=by_element,
+                unattributed_overflow_in=unattributed,
+                **rules,
+            )
+        finally:
+            plt.close(fig)
 
 
 #: Drawn tick labels may touch by this much (points) before they collide.

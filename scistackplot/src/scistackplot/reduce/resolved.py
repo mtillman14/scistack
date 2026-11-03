@@ -16,10 +16,13 @@ is a new leaf, not a redesign.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import hashlib
+import pickle
+from dataclasses import dataclass, field, fields
 from typing import Any
 
 import pandas as pd
+from scistacklog import Log
 
 from ..text.aliases import DisplayText
 from ..text.colors import MarkColors
@@ -212,6 +215,12 @@ class Panel:
         return " Â· ".join(str(v) for v in self.key.values())
 
 
+#: Fields ``ResolvedPlot.layout_key`` leaves out (its docstring says why each).
+_LAYOUT_KEY_SKIPPED = frozenset({"auto_text", "reduction", "custom", "difference_siblings"})
+#: Reasons a layout key could not be taken, WARNed once each.
+_LAYOUT_KEY_FAILURES: set[str] = set()
+
+
 @dataclass
 class ResolvedPlot:
     """
@@ -387,6 +396,64 @@ class ResolvedPlot:
     #: What the figure leaves out (``omissions.OmissionReport``): the "Not
     #: plotted" button, its popup and the optional footnote read this.
     omissions: Any = None
+
+    def layout_key(self) -> str | None:
+        """A digest of everything a layout of this figure reads, or None when
+        one cannot be taken (then nothing is cached: the old behaviour).
+
+        The ONE owner of "same layout". ``autosize.settle`` (the chosen text
+        size) and ``render.mpl.layout_decisions`` (the export's decisions)
+        key their caches on it, so the two cannot disagree about when a
+        figure is the same.
+
+        Why content, not ``id()``: a GUI request rebuilds the figure from the
+        plan cache every time, so an ``id()`` key never matched across
+        requests, and an identical request ran the whole auto-size search
+        again (scistack-debug.log 2026-11-03: 22 s after a plan-cache HIT).
+
+        Why a digest of EVERY field rather than a list of the fields thought
+        to move text: a hand-picked list is a second owner of "what a layout
+        reads" and goes stale when a field is added. A digest of everything
+        can only miss too often (a colour change re-lays out), never hit
+        wrongly.
+
+        Left out, each for a stated reason:
+        ``auto_text``: a layout reads only its ``reference`` (added back);
+        ``reduction``: renderers never read it;
+        ``custom``: the user's function is not called by an auto-size trial
+        (``custom.measuring``), and ``layout_decisions`` never caches a
+        custom kind;
+        ``difference_siblings``: enter through their own keys.
+        """
+        try:
+            siblings = []
+            for sibling in self.difference_siblings:
+                key = sibling.layout_key()
+                if key is None:
+                    return None
+                siblings.append(key)
+            state = [
+                (f.name, getattr(self, f.name))
+                for f in fields(self)
+                if f.name not in _LAYOUT_KEY_SKIPPED
+            ]
+            state.append(("auto_reference", getattr(self.auto_text, "reference", None)))
+            state.append(("difference_siblings", siblings))
+            blob = pickle.dumps(state, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception as exc:  # noqa: BLE001 — reported, and only disables caching
+            reason = f"{type(exc).__name__}: {exc}"
+            if reason not in _LAYOUT_KEY_FAILURES:
+                _LAYOUT_KEY_FAILURES.add(reason)
+                # WARN once per reason: silently never caching IS the slow bug.
+                Log.warn(
+                    "layout key: cannot digest %s figure (%s); its layouts are "
+                    "not cached and every request lays it out again",
+                    self.kind,
+                    reason,
+                    layer="scistackplot",
+                )
+            return None
+        return hashlib.blake2b(blob, digest_size=16).hexdigest()
 
     @property
     def figure_label(self) -> str:

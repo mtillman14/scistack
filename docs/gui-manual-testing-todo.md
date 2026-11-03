@@ -11,6 +11,34 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzz. Plot Studio: repeating a plot reuses its layout — added 2026-11-03
+
+**What changed:** scistackplot now remembers the text-size and label layout of
+a figure by its content. Before this, an identical request (same spec, same
+data, same pane size) re-ran the whole auto text-size search: 22 s per
+request on the C-Brace CosmedData bar chart with 105 x positions. New
+`[timing] fit_x_labels` and `[timing] layout_report` lines break down where
+one layout spends its time.
+
+**Backend**
+1. Restart the GUI server (reload the VS Code window).
+
+**Frontend**
+1. Open the CosmedData bar chart grouped by minute, session and group (the
+   slow one), with **Fit pane** on. Wait for it to draw: still ~20 s the
+   first time.
+2. Change something that alters the figure (e.g. add a subject to the
+   location filter), then change it back. The second draw of the original
+   state should appear in about a second.
+3. In `scistack-debug.log`, the fast draw shows `layout_decisions: reused the
+   layout of an identical figure (content … at …in); no matplotlib layout`.
+4. Resize the pane. That is a new size, so it lays out again (slow). That is
+   expected.
+5. Send me the `[timing] fit_x_labels` and `[timing] layout_report` lines
+   from a slow draw: they decide what to speed up next.
+
+---
+
 ## 0zzzzzzzz. GUI still opens and runs after the backend module reorg — added 2026-11-01
 
 **What changed:** no behaviour change intended. The backend's Python modules

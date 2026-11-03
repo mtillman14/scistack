@@ -363,12 +363,20 @@ def is_auto(resolved: "ResolvedPlot") -> bool:
     return resolved.spec.style.text.base is None
 
 
-#: ``(id(resolved), width, height, text)`` -> ``(weakref(resolved), result)``.
+#: ``(resolved.layout_key(), width, height, text)`` -> ``(weakref(resolved), result)``.
 #: One resolve is laid out by the preview's decisions, then drawn by plotly,
-#: then perhaps saved: the search runs once. The weak reference guards
-#: against a recycled id.
+#: then perhaps saved, and the next GUI request rebuilds an EQUAL figure:
+#: the search runs once for all of them. Keyed on content (the key's one
+#: owner is ``ResolvedPlot.layout_key``); when no key can be taken it falls
+#: back to ``("id", id(resolved))``, where the weak reference guards against
+#: a recycled id.
 _MEMO: "OrderedDict[tuple, tuple]" = OrderedDict()
 _MEMO_SIZE = 32
+
+
+def clear_memo() -> None:
+    """Forget every chosen size (``render.mpl.clear_layout_caches`` calls it)."""
+    _MEMO.clear()
 
 
 def settle(
@@ -393,11 +401,17 @@ def settle(
     style = resolved.spec.style
     width = float(width_in or style.width)
     height = float(height_in or style.height)
-    key = (id(resolved), width, height, text)
+    content = resolved.layout_key()
+    key = (content if content is not None else ("id", id(resolved)), width, height, text)
     hit = _MEMO.get(key)
-    if hit is not None and hit[0]() is resolved:
+    if hit is not None and (content is not None or hit[0]() is resolved):
         _MEMO.move_to_end(key)
-        Log.debug("auto text size: reused (reference %gpt)", hit[1].reference, layer=LAYER)
+        Log.debug(
+            "auto text size: reused (reference %gpt, %s)",
+            hit[1].reference,
+            f"same content {content[:8]}" if content is not None else "same object",
+            layer=LAYER,
+        )
         return with_sizes(resolved, hit[1])
 
     if measure is None:
