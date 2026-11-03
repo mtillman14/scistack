@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from scicanonicalhash import canonical_hash, frame_path_counts, generate_record_id
+from scifor.outputs import is_empty_table
 from sciduckdb import (
     bulk_df_to_storage_rows,
     column_type_change,
@@ -2321,6 +2322,20 @@ class DatabaseManager:
         ``rows``; returns that reference item's value."""
         type_name = rows.variable_class.__name__
         first_data = data_items[0][0]
+        if not rows.is_custom and is_empty_table(first_data):
+            # An empty frame (pd.DataFrame(), or 0 rows) must not define the
+            # table: zero columns made CREATE TABLE fail, or a stored table's
+            # column set "change". The first non-empty frame does; the empty
+            # ones are skipped by _validate_batch_items.
+            first_data = next(
+                (d for d, _ in data_items if not is_empty_table(d)), first_data
+            )
+            Log.debug(
+                f"save_batch({type_name}): first record is an empty table; "
+                f"reference schema taken from "
+                + ("the first non-empty one" if not is_empty_table(first_data) else
+                   "nothing (every record is empty)")
+            )
         if rows.is_custom:
             rows.data_col_types = {c: str(first_data[c].dtype) for c in first_data.columns}
             rows.dtype_meta = {"custom": True}
@@ -2390,8 +2405,28 @@ class DatabaseManager:
         """
         type_name = rows.variable_class.__name__
         if rows.is_dataframe:
-            rows.valid_orig_idx = list(range(len(data_items)))
-            return data_items
+            # An EMPTY frame (no rows) has nothing to store: written, it was a
+            # record with no data rows. for_each already turns an empty return
+            # into "no output" (scifor.outputs.is_empty_table); this catches
+            # every other caller of save_batch.
+            valid_items = []
+            for _idx, (_dv, _fm) in enumerate(data_items):
+                if is_empty_table(_dv):
+                    rows.skipped = True
+                    _meta_str = (
+                        ", ".join(
+                            f"{k}={v}" for k, v in _fm.items() if not str(k).startswith("__")
+                        )
+                        or f"item #{_idx}"
+                    )
+                    Log.warn(
+                        f"[batch_save] {type_name}: SKIPPED record ({_meta_str}) — "
+                        f"the table is empty (no rows); nothing to save"
+                    )
+                    continue
+                valid_items.append((_dv, _fm))
+                rows.valid_orig_idx.append(_idx)
+            return valid_items
         valid_items = []
         for _idx, (_dv, _fm) in enumerate(data_items):
             if rows.is_custom:

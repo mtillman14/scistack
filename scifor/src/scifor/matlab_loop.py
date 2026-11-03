@@ -97,7 +97,7 @@ from .keys import key_text as matlab_text
 from .keys import numeric_mask, text_mask
 from .locations import filter_combo_indices, locations_from_text
 from .merge import Merge
-from .outputs import NoOutput
+from .outputs import EMPTY_TABLE_DETAIL, NoOutput
 from .pathinput import PathInput, matlab_error_id
 from .pathoutput import PathOutput
 from .project.root import project_root as current_project_root
@@ -1132,6 +1132,9 @@ def _plan_wire(desc: _Description, items: "tuple[_Input, ...]", run: RunPlan,
         and not iterated_schema_keys(run.schema_keys, run.metadata_iterables),
         "column_types": _column_types(items, type_keys),
         "fatal_ids": list(FATAL_IDS),
+        # scifor.outputs owns the empty-table rule; MATLAB applies it with
+        # this detail so both loops report and group it identically.
+        "empty_table_detail": EMPTY_TABLE_DETAIL,
         "limits": {
             "names": limit_names,
             "inject": _limits_fit(desc.fn_nargin, len(items), len(limit_names)),
@@ -1217,10 +1220,24 @@ def _output_skips(raw: list, labels: "list[str]") -> "dict[str, list[tuple[str, 
     return out
 
 
+def _empty_returns(raw: list, labels: "list[str]") -> "dict[str, list[str]]":
+    """MATLAB's report of outputs returned as empty tables -> the tally's
+    ``empty_returns`` (output -> [combo label]), which _log_summary WARNs."""
+    out: "dict[str, list[str]]" = {}
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        idx = int(entry.get("combo") or 0)
+        label = labels[idx - 1] if 0 < idx <= len(labels) else ""
+        out.setdefault(str(entry.get("output") or ""), []).append(label)
+    return out
+
+
 def assemble(token: int, outcome_json: str) -> str:
     """The end-of-run summary of a MATLAB run, from what MATLAB reports:
     ``{completed, skipped, elapsed, failures: [{record, combos}], stop:
     {group} | null, output_skips: [{output, combo, reason, detail}],
+    empty_returns: [{output, combo}],
     group_columns: [{name, columns}], no_data_groups: [{name, combos}],
     distribute_from_column}`` (combos are 1-based plan indices). Logs the
     summary (``_log_summary``, the same lines as Python's loop) and returns
@@ -1236,6 +1253,7 @@ def assemble(token: int, outcome_json: str) -> str:
                      skipped=int(outcome.get("skipped") or 0))
     tally.failure_groups = groups
     tally.output_skips = _output_skips(_listify(outcome.get("output_skips")), labels)
+    tally.empty_returns = _empty_returns(_listify(outcome.get("empty_returns")), labels)
     for g in _listify(outcome.get("no_data_groups")):
         if isinstance(g, dict):
             tally.no_data_groups[str(g.get("name"))] = [

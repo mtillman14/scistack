@@ -671,6 +671,7 @@ function plan = decode_plan(plan, res)
     plan.inputs = as_cell(plan.inputs);
     plan.limits.names = as_cellstr(plan.limits.names);
     plan.fatal_ids = as_cellstr(plan.fatal_ids);
+    plan.empty_table_detail = char(plan.empty_table_detail);
     plan.distribute_key = char(plan.distribute_key);
     if isempty(plan.column_types)
         plan.column_types = struct();
@@ -801,6 +802,7 @@ function [state, stop_err] = run_combos(fn, fn_name, inputs, plan, opts)
     state = struct('completed', 0, 'skipped', 0, 'no_data', 0, ...
         'collected', {repmat({{}}, 1, max(n_outputs, 1))}, ...
         'failures', new_failures(), 'output_skips', {{}}, ...
+        'empty_returns', {{}}, ...
         'no_data_groups', containers.Map('KeyType', 'char', 'ValueType', 'any'), ...
         'group_columns', containers.Map('KeyType', 'char', 'ValueType', 'any'), ...
         'distribute_from_column', 0, 'stop_group', 0, 'elapsed', 0);
@@ -885,8 +887,23 @@ function [state, stop_err] = run_combos(fn, fn_name, inputs, plan, opts)
             continue;
         end
 
+        % --- Outputs returned as an EMPTY table: nothing to save there ---
+        empty_slots = [];
+        if isempty(fc)
+            [state, empty_slots, all_empty_err] = note_empty_returns(state, result, ...
+                c, metadata_str, plan, n_outputs);
+            if ~isempty(all_empty_err)
+                % Every output empty: one no-data combination, as Python's
+                % _raise_if_every_output_skipped counts it.
+                state = record_iteration_failure(state, all_empty_err, c, metadata_str, ...
+                    sprintf('%s raised', fn_name), fn_name, 'call');
+                state.skipped = state.skipped + 1;
+                continue;
+            end
+        end
+
         state = collect_result(state, result, metadata, metadata_str, c, plan, opts, ...
-            slot_skips, produced, n_outputs);
+            slot_skips, produced, n_outputs, empty_slots);
         state.completed = state.completed + 1;
     end
     state.elapsed = toc(loop_t0);
@@ -1126,11 +1143,56 @@ function result = prepare_merge(merge_spec, d, plan, c, metadata, opts)
 end
 
 
-function state = collect_result(state, result, metadata, metadata_str, c, plan, opts, slot_skips, produced, n_outputs)
+function [state, empty_slots, all_empty_err] = note_empty_returns(state, result, c, metadata_str, plan, n_outputs)
+%NOTE_EMPTY_RETURNS  The outputs this call returned as an EMPTY table
+%   (height 0, any columns: the rule scifor.outputs.is_empty_table owns).
+%   Each is reported for the end-of-run WARN (empty_returns). When only
+%   some outputs are empty they are left out of their output's table (the
+%   bridge turns the gap into NoOutput) and reported as output_skips, as
+%   Python's loop does; when ALL are, ALL_EMPTY_ERR is the scifor:NoData
+%   error that counts the combination as no data.
+    empty_slots = [];
+    all_empty_err = [];
+    n = min(n_outputs, numel(result));
+    for o = 1:n
+        v = result{o};
+        if istable(v) && height(v) == 0
+            empty_slots(end+1) = o; %#ok<AGROW>
+        end
+    end
+    if isempty(empty_slots)
+        return;
+    end
+    detail = plan.empty_table_detail;
+    parts = cell(1, numel(empty_slots));
+    for k = 1:numel(empty_slots)
+        name = plan.output_names{empty_slots(k)};
+        state.empty_returns{end+1} = struct('output', name, 'combo', c);
+        parts{k} = sprintf('%s: %s', name, detail);
+        scifor.Log.debug('%s: output %s is an empty table - nothing to save here', ...
+            metadata_str, name);
+    end
+    if numel(empty_slots) == n
+        all_empty_err = MException('scifor:NoData', 'No data for any output (%s).', ...
+            strjoin(parts, '; '));
+        return;
+    end
+    for k = 1:numel(empty_slots)
+        state.output_skips{end+1} = struct('output', plan.output_names{empty_slots(k)}, ...
+            'combo', c, 'reason', 'no_data', 'detail', detail);
+    end
+end
+
+
+function state = collect_result(state, result, metadata, metadata_str, c, plan, opts, slot_skips, produced, n_outputs, empty_slots)
 %COLLECT_RESULT  Keep this combo's outputs: one row each, or (distribute)
 %   one row per piece at the plan's distribute key. A for_columns group
-%   skipped here is reported for the summary; a skipped split slot adds no
-%   row to its output, which is how the gap reaches the bridge.
+%   skipped here is reported for the summary; a skipped split slot, or an
+%   output returned as an empty table (EMPTY_SLOTS), adds no row to its
+%   output, which is how the gap reaches the bridge.
+    if nargin < 11
+        empty_slots = [];
+    end
     if ~isempty(plan.distribute_key)
         state = collect_distributed(state, result, metadata, metadata_str, plan, opts, n_outputs);
         return;
@@ -1161,7 +1223,7 @@ function state = collect_result(state, result, metadata, metadata_str, c, plan, 
         end
     end
     for o = 1:min(n_outputs, numel(result))
-        if is_split && ismember(o, skipped_slots)
+        if (is_split && ismember(o, skipped_slots)) || ismember(o, empty_slots)
             continue
         end
         state.collected{o}{end+1} = {metadata, result{o}};
@@ -1303,6 +1365,7 @@ function summary = assemble_run(plan, state, opts, stop_err)
         'failures', {state.failures.list}, ...
         'stop', [], ...
         'output_skips', {state.output_skips}, ...
+        'empty_returns', {state.empty_returns}, ...
         'group_columns', {map_to_entries(state.group_columns, 'columns', true)}, ...
         'no_data_groups', {map_to_entries(state.no_data_groups, 'combos', false)}, ...
         'distribute_from_column', state.distribute_from_column);

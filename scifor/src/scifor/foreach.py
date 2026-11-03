@@ -62,7 +62,13 @@ from .hooks import LoopHooks
 from .locations import LocationFilter, filter_combos
 from .keys import series_mask, warn_if_type_mismatch
 from .merge import Merge, drop_constant_keys, merge_frames
-from .outputs import NoOutput, discard_db_only_kwargs, is_no_output, output_column_name
+from .outputs import (
+    NoOutput,
+    discard_db_only_kwargs,
+    empty_tables_to_no_output,
+    is_no_output,
+    output_column_name,
+)
 from .pathinput import PathInput
 from .pathoutput import PathOutput
 from .project.root import project_root as current_project_root
@@ -256,6 +262,10 @@ class RunTally:
     #: Outputs skipped at a combination whose other outputs were kept
     #: (NoOutput slots): output label -> [(combo text, NoOutput)].
     output_skips: "dict[str, list[tuple[str, NoOutput]]]" = field(default_factory=dict)
+    #: Output label -> [combo text] where the function returned an EMPTY
+    #: table (scifor.outputs.is_empty_table). Summarised as one WARN per
+    #: output; the slots themselves are NoOutput (or the combo is no data).
+    empty_returns: "dict[str, list[str]]" = field(default_factory=dict)
     #: for_columns combine: group name -> [combo text] where it had no data.
     no_data_groups: "dict[str, list[str]]" = field(default_factory=dict)
     #: for_columns combine: group name -> output columns, first-seen order.
@@ -1565,6 +1575,7 @@ def _call_at_combo(
         resolved = _resolve_path_outputs(call_inputs, metadata, None)
         resolved = _resolve_path_inputs(resolved, metadata, resolver=plan.path_input_resolver)
         result = _call_fn(plan.fn, resolved, plan.n_outputs)
+        result = _mark_empty_returns(result, plan.output_names, metadata_str, tally)
     Log.debug(
         "[done] %s: %s completed in %.3fs",
         metadata_str,
@@ -1583,6 +1594,9 @@ def _distribute_rows(
     ``distribute_key``."""
     rows: "list[tuple[dict, tuple]]" = []
     for output_value in result:
+        if is_no_output(output_value):
+            # Nothing to split (e.g. an empty table); already tallied.
+            continue
         try:
             key_values, pieces, from_column = _distribute_pieces(output_value, distribute_key)
         except TypeError as e:
@@ -1705,6 +1719,8 @@ def _log_summary(plan: RunPlan, tally: RunTally, elapsed: float) -> dict:
             )
     for line in _describe_output_skips(tally.output_skips):
         Log.info(line, layer="scifor")
+    for line in _describe_empty_returns(tally.empty_returns):
+        Log.warn(line, layer="scifor")
     for name, combos in tally.no_data_groups.items():
         shown = combos[:_SUMMARY_COMBOS_MAX]
         more = f" (+{len(combos) - len(shown)} more)" if len(combos) > len(shown) else ""
@@ -1871,6 +1887,42 @@ class ColumnFunctionError(ValueError):
 def _output_label(output_names: "list[str]", i: int) -> str:
     """The summary label of output slot ``i`` (its result column name)."""
     return output_names[i] if i < len(output_names) else f"output_{i + 1}"
+
+
+def _mark_empty_returns(
+    result: Any, output_names: "list[str]", metadata_str: str, tally: "RunTally"
+) -> Any:
+    """Each output the function returned as an EMPTY table becomes a
+    ``NoOutput("no_data", EMPTY_TABLE_DETAIL)`` slot (``scifor.outputs``
+    owns the rule) and is tallied for the end-of-run WARN. When every slot is
+    empty, ``_raise_if_every_output_skipped`` then counts the combination as
+    no data; otherwise only the empty outputs save nothing here."""
+    result, empty = empty_tables_to_no_output(result)
+    for i in empty:
+        label = _output_label(output_names, i)
+        tally.empty_returns.setdefault(label, []).append(metadata_str)
+        Log.debug(
+            "%s: output %s is an empty table — nothing to save here",
+            metadata_str,
+            label,
+            layer="scifor",
+        )
+    return result
+
+
+def _describe_empty_returns(empty_returns: "dict[str, list[str]]") -> "list[str]":
+    """The end-of-run WARN lines for outputs returned as empty tables: one
+    per output, naming (up to the summary cap) the combinations."""
+    lines = []
+    for name, combos in empty_returns.items():
+        shown = combos[:_SUMMARY_COMBOS_MAX]
+        more = f" (+{len(combos) - len(shown)} more)" if len(combos) > len(shown) else ""
+        lines.append(
+            f"output {name}: the function returned an empty table at "
+            f"{len(combos)} combination(s) — nothing saved there: "
+            f"{'; '.join(shown)}{more}"
+        )
+    return lines
 
 
 def _raise_if_every_output_skipped(result: Any, output_names: "list[str]") -> None:

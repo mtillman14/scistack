@@ -12,6 +12,10 @@ stay drop-in replacements for one another:
   scidb names its result columns (and matches them back to the variable types
   it saves) through this same function, so the two layers cannot name one
   output differently.
+* :func:`is_empty_table` — a returned table with no rows is "nothing to save
+  here" (a ``NoOutput`` slot / a no-data combination), for Python's loop,
+  the MATLAB loop (which applies it with :data:`EMPTY_TABLE_DETAIL`) and
+  ``save_batch``.
 """
 
 from typing import Any
@@ -132,3 +136,49 @@ class NoOutput:
 def is_no_output(value: Any) -> bool:
     """Is *value* a :class:`NoOutput` slot? The one test every consumer uses."""
     return isinstance(value, NoOutput)
+
+
+#: ``NoOutput.detail`` of a slot whose function returned a table with no
+#: rows. The one spelling: the summary lines, the MATLAB loop's wire report
+#: and the tests all read it from here.
+EMPTY_TABLE_DETAIL = "returned an empty table"
+
+
+def is_empty_table(value: Any) -> bool:
+    """Did a function return an EMPTY table for this output?
+
+    The one owner of "empty return" for both loops: a pandas DataFrame with
+    no rows, whatever its columns (``pd.DataFrame()`` and a 0-row frame
+    alike). A MATLAB ``table()`` reaches Python as such a frame and the
+    MATLAB loop applies the same test (``height(t) == 0``) before it does.
+
+    An empty table means "nothing to save at this combination": the slot
+    becomes ``NoOutput("no_data", EMPTY_TABLE_DETAIL)``, so no record is
+    written and the run's summary WARNs naming the combinations. Before
+    2026-11-03 it reached the save as a record value: a phantom record with
+    no data rows, or (when it happened to be the batch's first item) a
+    zero-column reference schema that failed or dropped the batch.
+    """
+    try:
+        import pandas as pd
+    except ImportError:  # pragma: no cover - pandas is a scifor dependency
+        return False
+    return isinstance(value, pd.DataFrame) and len(value) == 0
+
+
+def empty_tables_to_no_output(result: Any) -> "tuple[Any, list[int]]":
+    """Replace every empty-table slot of one call's ``result`` with
+    ``NoOutput("no_data", EMPTY_TABLE_DETAIL)``.
+
+    ``result`` is a call's return value: a tuple (one slot per output) or a
+    single value. The shape is kept. Returns ``(result, empty slot indices)``.
+    """
+    slots = result if isinstance(result, tuple) else (result,)
+    empty = [i for i, v in enumerate(slots) if is_empty_table(v)]
+    if not empty:
+        return result, []
+    replaced = tuple(
+        NoOutput("no_data", EMPTY_TABLE_DETAIL) if i in empty else v
+        for i, v in enumerate(slots)
+    )
+    return (replaced if isinstance(result, tuple) else replaced[0]), empty
