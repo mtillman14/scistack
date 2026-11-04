@@ -204,3 +204,35 @@ Guards:
   or calls `.save_variable(` / the filter classes directly.
 - `TestDatetimeRoundTrip` (`test_scalar_crosses_boxed`, `test_nat_crosses_boxed`,
   `test_timedelta_crosses_boxed_as_duration`).
+
+## As a schema key
+
+Added 2026-11-04. A schema key is a VARCHAR, so a date or datetime key needs one
+text spelling. The owner is `scicanonicalhash.datetime_key_text`; `sciduckdb.schema_str`
+is the one writer, and `scidb.store.schema_values` re-exports it.
+
+| Value | Stored text | Loads as |
+|---|---|---|
+| `datetime.date` | `2026-07-09` | `datetime.date` |
+| naive `Timestamp`, `datetime`, `np.datetime64` | `2026-07-09T15:12:00` | naive `pd.Timestamp` |
+| aware, named zone | `2026-07-09T15:12:00-05:00[America/Chicago]` | aware `pd.Timestamp` in that zone |
+| aware, fixed offset | `2026-07-09T15:12:00+02:00` | aware `pd.Timestamp` |
+
+- Fractional seconds appear only when non-zero, always 9 digits.
+- A day and a midnight timestamp are different addresses, on purpose. They may mix in
+  one key, which then loads as an object column.
+- **Whether a key loads as dates is a property of the key:**
+  `DatabaseManager.schema_key_is_datetime`. Every stored value must be the exact spelling
+  of one, and no type may be declared. One other value makes the whole key text.
+- `_split_metadata` spells the value before the record id is hashed, so a value, its text
+  and its loaded copy are one record.
+- **Stored text is the identity.** `for_each` inputs load with `stringify_schema=True`,
+  so `scifor`'s key match compares text and needs no datetime rule, and standalone scifor
+  does not depend on this spelling.
+- **MATLAB reads a date key as its text**, not a MATLAB `datetime`
+  (`bridge.crossing.datetime_keys_as_text`): the conversion would turn a named zone into a
+  fixed offset and the value would re-save elsewhere. A MATLAB `datetime` passed as a key
+  is spelled by Python (`datetime_key_text_of`).
+- A database saved before this holds `str()` spellings such as
+  `2026-07-09 15:12:00-05:00`. Those stay text. Re-run to get dates. No migration.
+- A blank value in a spreading key raises `MissingSchemaKeyError`.

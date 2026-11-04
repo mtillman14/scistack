@@ -8,6 +8,7 @@ facade; import from `sciduckdb`, not from the modules.
 
 from .connection import DuckConnection, TransactionRolledBackError
 from .codec import (
+    schema_str,
     bulk_df_to_storage_rows,
     column_type_change,
     dataframe_to_storage_rows,
@@ -35,6 +36,7 @@ from .datetimes import (
 )
 
 __all__ = [
+    "schema_str",
     "DuckConnection",
     "TransactionRolledBackError",
     "array_from_storage",

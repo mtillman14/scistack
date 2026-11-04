@@ -18,7 +18,7 @@ export interface SchemaKeyTypeInfo {
   key: string
   key_type: SchemaKeyType | null
   /** How the key's stored values load today (declared, else inferred). */
-  loads_as: 'numbers' | 'strings'
+  loads_as: 'numbers' | 'dates' | 'strings'
   n_values: number
 }
 

@@ -7,6 +7,8 @@ and reproducibility in data pipelines.
 """
 
 from scicanonicalhash.datetimes import (
+    datetime_key_text,
+    parse_datetime_key_text,
     is_datetime_value,
     is_missing_datetime,
     utc_ns,
@@ -24,6 +26,8 @@ from scicanonicalhash.hashing import (
 )
 
 __all__ = [
+    "datetime_key_text",
+    "parse_datetime_key_text",
     "canonical_hash",
     "compute_function_hash",
     "compute_function_hash_with_sources",

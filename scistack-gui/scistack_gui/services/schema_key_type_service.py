@@ -39,7 +39,7 @@ def get_schema_key_types(db) -> dict:
             {
                 "key": key,
                 "key_type": key_types.get(key),
-                "loads_as": "numbers" if db.schema_key_is_numeric(key) else "strings",
+                "loads_as": db.schema_key_loads_as(key),
                 "n_values": n_values,
             }
         )

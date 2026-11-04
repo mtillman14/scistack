@@ -1531,7 +1531,7 @@ class Inspector:
             {
                 "key": key,
                 "key_type": declared.get(key),
-                "loads_as": "numbers" if self._db.schema_key_is_numeric(key) else "strings",
+                "loads_as": self._db.schema_key_loads_as(key),
                 "n_values": len(self._duck.distinct_schema_values(key)),
             }
             for key in self._db.dataset_schema_keys

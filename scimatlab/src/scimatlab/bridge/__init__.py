@@ -34,6 +34,8 @@ from .convert import (
     split_flat_to_lists,
 )
 from .crossing import (
+    datetime_key_text_of,
+    datetime_keys_as_text,
     DatetimeCrossing,
     DurationCrossing,
     box_datetimes,

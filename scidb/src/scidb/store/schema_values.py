@@ -10,6 +10,10 @@ in DuckDB. Two rules live here and NOWHERE else:
   each other's records. ``filters`` carried a copy of this rule
   (``_to_schema_str``, "mirrors database._schema_str") until 2026-09-20.
 
+* :func:`from_datetime_key_text` — a date or datetime key back to its type,
+  when every value of the KEY has that spelling (the spelling is
+  ``scicanonicalhash.datetime_key_text``).
+
 * :func:`from_schema_str` — the ONE spelling a value gets on the way OUT,
   when the KEY is declared numeric. Per key, never per value: applied per
   value, ``"01"``..``"09"`` stayed strings while ``"10"`` became ``10`` and
@@ -29,9 +33,13 @@ A leaf: ``database`` (which wraps DuckDB), ``foreach``, ``state``,
 
 from __future__ import annotations
 
+import datetime
 from contextlib import contextmanager
 from typing import Any
 
+import pandas as pd
+from scicanonicalhash import datetime_key_text, parse_datetime_key_text, zone_from_label
+from sciduckdb import schema_str  # noqa: F401 - re-export; the owner of the spelling
 from scifor.schema_types import VALID_SCHEMA_KEY_TYPES  # noqa: F401 - re-export
 from scifor.schema_types import SchemaKeyTypeError as _SciforSchemaKeyTypeError
 from scifor.schema_types import canonical_numeric_value as _scifor_canonical_numeric_value
@@ -39,16 +47,32 @@ from scifor.schema_types import canonical_numeric_value as _scifor_canonical_num
 from scidb.model.exceptions import SchemaKeyTypeError
 
 
-def schema_str(value: Any) -> str:
-    """Stringify a schema key value, converting whole-number floats to int.
+def from_datetime_key_text(value: Any) -> Any:
+    """A date or datetime from its schema-key spelling, else *value* unchanged.
 
-    Schema keys are stored as VARCHAR in DuckDB.  str(1.0) → "1.0" but
-    str(1) → "1".  MATLAB sends all numbers as float, so without this
-    conversion, queries and cache lookups fail because "1.0" ≠ "1".
+    A day loads as ``datetime.date``, a datetime as ``pd.Timestamp`` (aware ones
+    in their own zone). Only a value that spells back to exactly the same text
+    is converted, so re-saving a loaded value keeps its address.
+
+    **Never call this on a loaded value directly**: use
+    :meth:`DatabaseManager.restore_schema_value`, which decides per KEY.
     """
-    if isinstance(value, float) and value.is_integer():
-        return str(int(value))
-    return str(value)
+    if not isinstance(value, str):
+        return value
+    parts = parse_datetime_key_text(value)
+    if parts is None:
+        return value
+    wall, offset, zone = parts
+    try:
+        if "T" not in wall:
+            restored = datetime.date.fromisoformat(wall)
+        elif offset is None:
+            restored = pd.Timestamp(wall)
+        else:
+            restored = pd.Timestamp(wall + offset).tz_convert(zone_from_label(zone or offset))
+    except (ValueError, KeyError, OverflowError):
+        return value
+    return restored if datetime_key_text(restored) == value else value
 
 
 def canonical_numeric_value(key: str, value: Any) -> Any:

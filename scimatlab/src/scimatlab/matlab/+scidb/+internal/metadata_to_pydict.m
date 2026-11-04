@@ -32,6 +32,10 @@ function py_dict = metadata_to_pydict(varargin)
             py_dict{key} = scidb.internal.number_to_python(val).tolist();
         elseif ischar(val)
             py_dict{key} = py.str(val);
+        elseif isdatetime(val) && isscalar(val)
+            % The one spelling of a date key (Python owns it).
+            py_dict{key} = py.scimatlab.bridge.datetime_key_text_of( ...
+                scidb.internal.datetime_to_python(val, 'scalar'));
         elseif isstruct(val)
             % Structs may contain arrays that aren't JSON-serializable on
             % the Python side.  Encode the whole struct as a JSON string so

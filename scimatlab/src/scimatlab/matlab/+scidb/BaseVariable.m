@@ -739,7 +739,7 @@ classdef BaseVariable < dynamicprops
             for i = 1:n
                 py_dict = py_list{i};
                 versions(i).record_id     = string(py_dict{'record_id'});
-                versions(i).schema        = scidb.internal.pydict_to_struct(py_dict{'schema'});
+                versions(i).schema        = scidb.internal.pydict_to_struct(py.scimatlab.bridge.datetime_keys_as_text(py_dict{'schema'}));
                 versions(i).branch_params = scidb.internal.pydict_to_struct(py_dict{'branch_params'});
                 versions(i).timestamp     = string(py_dict{'timestamp'});
             end
@@ -988,7 +988,7 @@ classdef BaseVariable < dynamicprops
             v.record_id = string(py_var.record_id);
             v.content_hash = string(py_var.content_hash);
 
-            py_meta = py_var.metadata;
+            py_meta = py.scimatlab.bridge.datetime_keys_as_text(py_var.metadata);
             if ~isa(py_meta, 'py.NoneType')
                 v.metadata = scidb.internal.pydict_to_struct(py_meta);
             end

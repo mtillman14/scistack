@@ -130,3 +130,85 @@ class TestInstant:
         assert is_missing_datetime(pd.NaT)
         assert is_missing_datetime(np.datetime64("NaT"))
         assert not is_missing_datetime(pd.Timestamp("2026-01-01"))
+
+
+class TestSchemaKeySpelling:
+    """One value has one address, whatever type holds it."""
+
+    def test_a_day(self):
+        from scicanonicalhash import datetime_key_text
+
+        assert datetime_key_text(datetime.date(2026, 7, 9)) == "2026-07-09"
+
+    def test_a_naive_datetime(self):
+        from scicanonicalhash import datetime_key_text
+
+        text = datetime_key_text(datetime.datetime(2026, 7, 9, 15, 12))
+        assert text == "2026-07-09T15:12:00"
+
+    def test_a_named_zone_keeps_its_name(self):
+        from scicanonicalhash import datetime_key_text
+
+        value = datetime.datetime(2026, 7, 9, 15, 12, tzinfo=zoneinfo.ZoneInfo("America/Chicago"))
+        assert datetime_key_text(value) == "2026-07-09T15:12:00-05:00[America/Chicago]"
+
+    def test_a_fixed_offset_has_no_name(self):
+        from scicanonicalhash import datetime_key_text
+
+        tz = datetime.timezone(datetime.timedelta(hours=2))
+        value = datetime.datetime(2026, 7, 9, 15, 12, tzinfo=tz)
+        assert datetime_key_text(value) == "2026-07-09T15:12:00+02:00"
+
+    def test_fractions_are_nine_digits_only_when_present(self):
+        from scicanonicalhash import datetime_key_text
+
+        value = datetime.datetime(2026, 7, 9, 15, 12, 1, 500)
+        assert datetime_key_text(value) == "2026-07-09T15:12:01.000500000"
+
+    def test_every_type_spells_one_value_the_same(self):
+        np = pytest.importorskip("numpy")
+        pd = pytest.importorskip("pandas")
+        from scicanonicalhash import datetime_key_text
+
+        expected = "2026-07-09T15:12:00"
+        assert datetime_key_text(pd.Timestamp(expected)) == expected
+        assert datetime_key_text(np.datetime64(expected)) == expected
+        assert datetime_key_text(np.datetime64("2026-07-09")) == "2026-07-09"
+
+    def test_a_day_and_midnight_differ(self):
+        from scicanonicalhash import datetime_key_text
+
+        assert datetime_key_text(datetime.date(2026, 7, 9)) != datetime_key_text(
+            datetime.datetime(2026, 7, 9)
+        )
+
+    def test_not_a_date_and_missing_have_no_spelling(self):
+        pd = pytest.importorskip("pandas")
+        from scicanonicalhash import datetime_key_text
+
+        assert datetime_key_text("2026-07-09") is None
+        assert datetime_key_text(3) is None
+        assert datetime_key_text(pd.NaT) is None
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "2026-07-09",
+            "2026-07-09T15:12:00",
+            "2026-07-09T15:12:00.000500000",
+            "2026-07-09T15:12:00+02:00",
+            "2026-07-09T15:12:00-05:00[America/Chicago]",
+        ],
+    )
+    def test_parse_accepts_every_spelling(self, text):
+        from scicanonicalhash import parse_datetime_key_text
+
+        assert parse_datetime_key_text(text) is not None
+
+    @pytest.mark.parametrize(
+        "text", ["S01", "20260709", "2026-07-09 15:12:00", "2026-07-09+02:00", "2026-07-09T15:12"]
+    )
+    def test_parse_refuses_anything_else(self, text):
+        from scicanonicalhash import parse_datetime_key_text
+
+        assert parse_datetime_key_text(text) is None

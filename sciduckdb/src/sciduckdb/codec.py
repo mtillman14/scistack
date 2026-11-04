@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scicanonicalhash import is_missing_datetime
+from scicanonicalhash import datetime_key_text, is_missing_datetime
 
 from .datetimes import (
     DATETIME_PTYPE,
@@ -33,16 +33,19 @@ from .datetimes import (
 logger = logging.getLogger("sciduck")
 
 
-def _schema_str(value):
-    """Stringify a schema key value, converting whole-number floats to int.
+def schema_str(value):
+    """The ONE spelling a schema key value gets in the database (a VARCHAR).
 
-    Schema keys are stored as VARCHAR.  str(1.0) → "1.0" but str(1) → "1".
-    MATLAB sends all numbers as float, so without this conversion queries
-    and cache lookups fail because "1.0" ≠ "1".
+    A whole-number float is spelled as an int: ``str(1.0)`` is ``"1.0"`` but
+    ``str(1)`` is ``"1"``, MATLAB sends every number as a double, and queries
+    would otherwise miss. A date or datetime is spelled by
+    ``scicanonicalhash.datetime_key_text``, so every type holding one value
+    gets one address and a loaded value re-saves at the same one.
     """
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return str(value)
+    text = datetime_key_text(value)
+    return str(value) if text is None else text
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +213,7 @@ def _str_to_storage(value: Any) -> Any:
     Empty (None / NaN / pd.NA / NaT) -> NULL, so a blank never becomes the
     text 'nan'. A non-string (a number arriving in a text column, or a
     batch mixing numbers and strings) -> its text, integral floats without
-    '.0' (``_schema_str``: 123.0 -> "123", as a CSV wrote it).
+    '.0' (``schema_str``: 123.0 -> "123", as a CSV wrote it).
     """
     if isinstance(value, np.generic):
         value = value.item()
@@ -218,7 +221,7 @@ def _str_to_storage(value: Any) -> Any:
         return None
     if isinstance(value, str):
         return value
-    return _schema_str(value)
+    return schema_str(value)
 
 
 def _python_to_storage(value: Any, meta: dict) -> Any:

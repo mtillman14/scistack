@@ -182,3 +182,61 @@ def datetime_hash_bytes(value: Any) -> bytes | None:
             return NAT_BYTES
         return b"datetime:" + _datetime64_ns_text(value).encode()
     return None
+
+
+_KEY_TEXT_RE = re.compile(
+    r"^(?P<wall>\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d{9})?)?)"
+    r"(?:(?P<offset>[+-]\d{2}:\d{2}(?::\d{2})?)(?:\[(?P<zone>[^\]]+)\])?)?$"
+)
+
+
+def datetime_key_text(value: Any) -> str | None:
+    """The ONE spelling of a date or datetime used as a schema key, or ``None``
+    when *value* is neither (a missing datetime included).
+
+    - a calendar day: ``2026-07-09`` (``datetime.date``, or ``np.datetime64``
+      with a calendar unit);
+    - a naive datetime: ``2026-07-09T15:12:00``;
+    - an aware one: ``2026-07-09T15:12:00-05:00[America/Chicago]``. The offset
+      alone when the zone has no name.
+
+    Fractional seconds appear only when non-zero, always as 9 digits.
+    ``datetime.datetime``, ``pd.Timestamp`` and ``np.datetime64`` holding one
+    value spell it the same. A day and a midnight timestamp differ on purpose:
+    they are different addresses.
+    """
+    if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if not is_datetime_value(value) or is_missing_datetime(value):
+        return None
+    if not isinstance(value, datetime.datetime):
+        np = sys.modules["numpy"]
+        unit = np.datetime_data(value.dtype)[0]
+        if unit in ("Y", "M", "W", "D"):
+            return str(value.astype("datetime64[D]"))
+        text = np.datetime_as_string(value.astype("datetime64[ns]"))
+        wall, _, fraction = text.partition(".")
+        return wall if not fraction.strip("0") else f"{wall}.{fraction}"
+    wall = datetime.datetime(
+        value.year, value.month, value.day, value.hour, value.minute, value.second
+    ).isoformat()
+    fraction = value.microsecond * 1000 + int(getattr(value, "nanosecond", 0))
+    text = f"{wall}.{fraction:09d}" if fraction else wall
+    label = zone_label(value)
+    if label is None:
+        return text
+    offset = _offset_label(value.utcoffset())
+    return f"{text}{offset}" if label == offset else f"{text}{offset}[{label}]"
+
+
+def parse_datetime_key_text(text: str) -> "tuple[str, str | None, str | None] | None":
+    """``(wall, offset, zone)`` of a :func:`datetime_key_text` spelling, or
+    ``None`` when *text* has not that shape. Shape only: the caller builds the
+    value, which is where an impossible date is found out."""
+    match = _KEY_TEXT_RE.match(text)
+    if match is None:
+        return None
+    wall, offset = match.group("wall"), match.group("offset")
+    if offset is not None and "T" not in wall:
+        return None
+    return wall, offset, match.group("zone")

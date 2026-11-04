@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
-from scicanonicalhash import canonical_hash, frame_path_counts, generate_record_id
+from scicanonicalhash import canonical_hash, datetime_key_text, frame_path_counts, generate_record_id
 from scifor.outputs import is_empty_table
 from sciduckdb import (
     bulk_df_to_storage_rows,
@@ -51,6 +51,7 @@ from scidb.store.record_store import BatchRows, RecordStore
 from scidb.store.sciduck import SciDuck
 from scidb.store.schema_values import (
     canonical_numeric_value,
+    from_datetime_key_text,
     from_schema_str,
     schema_str,
 )
@@ -1579,7 +1580,10 @@ class DatabaseManager:
         version = {}
         for key, value in flat_metadata.items():
             if key in self.dataset_schema_keys:
-                schema[key] = value
+                # A date or datetime enters the record id as its one spelling,
+                # so a value and its loaded copy are one record.
+                text = datetime_key_text(value)
+                schema[key] = value if text is None else text
             else:
                 version[key] = value
         return {"schema": schema, "version": version}
@@ -3543,7 +3547,7 @@ class DatabaseManager:
                     if k.startswith("__") or k in const_keys:
                         continue
                     result[k] = (
-                        str(v)
+                        schema_str(v)
                         if (k in schema_keys_set and stringify_schema and v is not None)
                         else v
                     )
@@ -3669,6 +3673,15 @@ class DatabaseManager:
                 if stringify_schema:
                     # Values come back as strings from DuckDB VARCHAR columns
                     meta_dict[key] = col_series.values
+                elif self.schema_key_is_datetime(key):
+                    # Object cells: pandas would collapse aware timestamps to
+                    # naive UTC, and days and timestamps may mix in one key.
+                    cells = np.empty(len(col_series), dtype=object)
+                    cells[:] = [
+                        None if v is None else self.restore_schema_value(key, v)
+                        for v in col_series.tolist()
+                    ]
+                    meta_dict[key] = cells
                 else:
                     meta_dict[key] = col_series.apply(
                         lambda v, _key=key: (
@@ -5067,16 +5080,45 @@ class DatabaseManager:
         cache[key] = numeric
         return numeric
 
+    def schema_key_is_datetime(self, key: str) -> bool:
+        """Whether loaded values of ``key`` are restored to dates and datetimes:
+        no declared type, and EVERY stored value is the exact spelling of one
+        (``scicanonicalhash.datetime_key_text``). Days and timestamps may mix
+        in one key. Cached like :meth:`schema_key_is_numeric`."""
+        cache = self.__dict__.setdefault("_schema_key_datetime_cache", {})
+        if key in cache:
+            return cache[key]
+        values = [v for v in self._duck.distinct_schema_values(key) if v is not None]
+        answer = (
+            (self.dataset_schema_key_types or {}).get(key) not in ("numeric", "string")
+            and bool(values)
+            and all(not isinstance(from_datetime_key_text(v), str) for v in values)
+        )
+        if answer:
+            Log.debug(f"schema key {key!r} loads as dates: every stored value is one")
+        cache[key] = answer
+        return answer
+
+    def schema_key_loads_as(self, key: str) -> str:
+        """``"numbers"``, ``"dates"`` or ``"strings"``: what a loaded value of
+        ``key`` is."""
+        if self.schema_key_is_numeric(key):
+            return "numbers"
+        return "dates" if self.schema_key_is_datetime(key) else "strings"
+
     def restore_schema_value(self, key: str, value):
         """A loaded schema value with the type its KEY has — see
-        :meth:`schema_key_is_numeric`. The one restore every load path uses."""
+        :meth:`schema_key_loads_as`. The one restore every load path uses."""
         if value is None or not isinstance(value, str):
             return value
-        return from_schema_str(value) if self.schema_key_is_numeric(key) else value
+        if self.schema_key_is_numeric(key):
+            return from_schema_str(value)
+        return from_datetime_key_text(value) if self.schema_key_is_datetime(key) else value
 
     def _forget_schema_key_kinds(self) -> None:
-        """Drop the per-key numeric/string cache — called after any save."""
+        """Drop the per-key type caches — called after any save."""
         self.__dict__.pop("_schema_key_numeric_cache", None)
+        self.__dict__.pop("_schema_key_datetime_cache", None)
 
     def transaction(self, label: str = ""):
         """One transaction around the block (re-entrant; see

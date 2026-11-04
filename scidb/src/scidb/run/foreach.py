@@ -2488,7 +2488,7 @@ def _track_variants(loaded_inputs: dict):
             _pinned = df
             for _k, _v in (getattr(data, "fixed_metadata", None) or {}).items():
                 if _k in _pinned.columns:
-                    _pinned = _pinned[_pinned[_k].astype(str) == str(_v)]
+                    _pinned = _pinned[_pinned[_k].astype(str) == schema_str(_v)]
             # Count RECORDS, not rows: a table-valued record (DataFrame mode,
             # or a custom to_db table) is loaded as one row per stored row,
             # all carrying its record id. Counting rows called one 2-row
@@ -2672,7 +2672,7 @@ def _build_rid_index(
                 raw_key = combo_vals if isinstance(combo_vals, tuple) else (combo_vals,)
                 # Expand to ALL _lookup_keys, filling missing cols with ""
                 col_val = {
-                    sk: ("" if v is None else str(v))
+                    sk: ("" if v is None else schema_str(v))
                     for sk, v in zip(schema_cols_in_df, raw_key, strict=False)
                 }
                 key = tuple(col_val.get(sk, "") for sk in _lookup_keys)
@@ -2713,7 +2713,7 @@ def _build_rid_index(
             for combo_vals, _group in df.groupby(schema_cols_in_df, sort=False):
                 raw_key = combo_vals if isinstance(combo_vals, tuple) else (combo_vals,)
                 col_val = {
-                    sk: ("" if v is None else str(v))
+                    sk: ("" if v is None else schema_str(v))
                     for sk, v in zip(schema_cols_in_df, raw_key, strict=False)
                 }
                 present.add(tuple(col_val.get(sk, "") for sk in _lookup_keys))
@@ -5423,7 +5423,7 @@ def _load_var_type_as_spread(
             except Exception:
                 pass
         return {
-            k: str(v) if k in _schema_keys and v is not None else v
+            k: schema_str(v) if k in _schema_keys and v is not None else v
             for k, v in meta.items()
             if not k.startswith("__") and k not in const_keys
         }

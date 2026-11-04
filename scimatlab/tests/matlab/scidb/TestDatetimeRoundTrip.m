@@ -42,6 +42,22 @@ classdef TestDatetimeRoundTrip < matlab.unittest.TestCase
     end
 
     methods (Test)
+        function test_datetime_schema_key_round_trips(testCase)
+            % A date key loads as its exact text and re-saves at one address.
+            % Python owns the spelling (scicanonicalhash.datetime_key_text).
+            scidb.configure_database( ...
+                fullfile(testCase.test_dir, 'dates.duckdb'), ["subject", "date"]);
+            d = datetime(2026, 7, 9, 15, 12, 0, 'TimeZone', 'America/Chicago');
+            ScalarVar().save(1.5, 'subject', 1, 'date', d);
+            r = ScalarVar().load('subject', 1);
+            testCase.verifyEqual(string(r.metadata.date), ...
+                "2026-07-09T15:12:00-05:00[America/Chicago]");
+            ScalarVar().save(1.5, 'subject', 1, 'date', string(r.metadata.date));
+            again = ScalarVar().load('subject', 1, 'date', d);
+            testCase.verifyEqual(numel(again), 1);
+            testCase.verifyEqual(again.data, 1.5, 'AbsTol', 1e-10);
+        end
+
         function test_unzoned_scalar(testCase)
             d = datetime(2026, 1, 1, 10, 30, 15.25);
             ScalarVar().save(d, 'subject', 1);

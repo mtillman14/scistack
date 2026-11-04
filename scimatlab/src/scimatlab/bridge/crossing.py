@@ -147,3 +147,33 @@ def matlab_entry(fn: F) -> F:
 
     wrapper.__matlab_entry__ = True  # type: ignore[attr-defined]
     return wrapper  # type: ignore[return-value]
+
+
+def datetime_keys_as_text(metadata: dict) -> dict:
+    """*metadata* with each date or datetime value as its schema-key text
+    (``scicanonicalhash.datetime_key_text``), for MATLAB to read.
+
+    A date key reaches MATLAB as that exact text, not a MATLAB ``datetime``:
+    the conversion would turn a named zone into a fixed offset, and the value
+    would then re-save at a different address.
+    """
+    from scicanonicalhash import datetime_key_text
+
+    out = {}
+    for key, value in dict(metadata).items():
+        text = datetime_key_text(value)
+        out[key] = value if text is None else text
+    return out
+
+
+def datetime_key_text_of(value: Any) -> str:
+    """The schema-key text of one MATLAB ``datetime`` metadata value, handed
+    over as ``datetime_to_python(dt, 'scalar')`` crosses it (boxed)."""
+    from scicanonicalhash import datetime_key_text
+
+    if isinstance(value, DatetimeCrossing):
+        value = value.value
+    text = datetime_key_text(value)
+    if text is None:
+        raise ValueError(f"a datetime schema key must have a value, got {value!r}")
+    return text
