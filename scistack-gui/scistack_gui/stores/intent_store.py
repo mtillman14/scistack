@@ -429,6 +429,45 @@ def copy_subject(
     return len(rows)
 
 
+def move_subject_scope(db, node_id: str, src_scope: str, dst_scope: str) -> int:
+    """Move one subject's statements to another canvas, which is what moving
+    its node does: a statement applies on the canvas it was made on
+    (:func:`scope_of_node`), so one left behind no longer reaches the node.
+
+    Only the rows made on *src_scope* move. Another canvas's own statements stay
+    there, and so do legacy ``global`` rows, which apply everywhere anyway.
+    Returns how many moved.
+    """
+    from dataclasses import replace
+
+    from scistack_gui.ids import strip_placement
+
+    if src_scope == dst_scope:
+        return 0
+    bare = strip_placement(node_id)
+    # load_statements adds `global` to any scope filter, so narrow it here.
+    rows = [
+        st
+        for st in load_statements(db, subject_refs=[bare], scopes=[src_scope])
+        if st.scope == src_scope
+    ]
+    if not rows:
+        return 0
+    put_statements(db, [replace(st, scope=dst_scope) for st in rows])
+    where, params = "subject_ref = ? AND scope = ?", [bare, src_scope]
+    _check_deletion(db, where, params, "moving a node's settings")
+    _duck(db).execute(f"DELETE FROM _intent WHERE {where}", params)
+    logger.info(
+        "[intent_store] moved %d statement(s) of %s: %s -> %s (%s)",
+        len(rows),
+        bare,
+        src_scope,
+        dst_scope,
+        sorted({st.aspect for st in rows}),
+    )
+    return len(rows)
+
+
 def copy_scope(db, src_scope: str, dst_scope: str) -> int:
     """Copy a scope's statements to another — what duplicating a hypothesis
     does.

@@ -602,6 +602,20 @@ class TestExtractUndo:
         assert edge["source"] == ids.placement_id("fn_a", pid)
         assert edge["target"] == ids.placement_id("fn_b", pid)
 
+    def test_a_folded_node_and_stated_settings_are_restored(self, canvas):
+        """Extract moves a folded node's row (under its bare id) and every
+        statement, and undo must put back both."""
+        from scistack_gui.stores import intent_store
+
+        layout_store.move_node_position(
+            "mv_in", "main", new_node_id=ids.placement_id("mv_in", "main")
+        )
+        intent_store.set_run_options(get_db(), "mf_proc", {"dry_run": True})
+
+        self._assert_round_trip(canvas, [ids.placement_id("mv_in", "main"), "mf_proc"])
+
+        assert ps.get_node_config(get_db(), "mf_proc")["runOptions"] == {"dry_run": True}
+
     def test_undo_still_applies_after_the_canvas_refreshes(self, canvas):
         """The GUI refreshes after every edit, so a variable that already has
         data has folded into its canonical node before anyone extracts."""

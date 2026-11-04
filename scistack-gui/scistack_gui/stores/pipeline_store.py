@@ -681,6 +681,20 @@ def delete_node(db, node_id: str) -> None:
     logger.info("[pipeline_store] Node deleted from _pipeline_nodes table")
 
 
+def manual_node_row(db, node_id: str) -> "tuple[str, str] | None":
+    """``(node_type, pipeline_id)`` of the row stored under exactly *node_id*.
+
+    A folded entity's row is under its bare id while the canvas calls it
+    ``{bare}::{scope}`` (:func:`graduate_manual_node`), so a caller holding a
+    placed id must ask for the bare one too.
+    """
+    row = _duck(db).fetchone(
+        "SELECT node_type, pipeline_id FROM _pipeline_nodes WHERE node_id = ?",
+        [node_id],
+    )
+    return None if row is None else (row[0], row[1] or ROOT_SCOPE)
+
+
 def move_pipeline_use_parent(db, use_id: str, new_parent_pipeline_id: str) -> None:
     """Move an existing pipeline-node PLACEMENT to a new parent scope
     (extract-to-submodule regrouping a selection that includes one).

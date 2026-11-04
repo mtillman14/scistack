@@ -98,6 +98,9 @@ cost placement paths, per-placement compiles and display workarounds).
 | One wiring per submodule | `ports.placement_conflict`, called by `put_edge` |
 | A value has one owner | `execution_service._refuse_params_on_ports`, at compile |
 | Which ports a selection needs | `ports.plan_boundary`, written by `scope_service.extract_to_submodule` |
+| Moving a node to another canvas | `layout.move_node_to_canvas`: row, position, edges, statements |
+| A step into a submodule | `context/descendInto.ts`, called by `ScopeProvider.descend` |
+| Whether a canvas response is drawn | `CanvasRefreshLog.whyDiscard`, called by `PipelineDAG.fetchPipeline` |
 | A connection's legality through ports | `ports.illegal_reason`; `put_edge` refuses, a stored one binds nothing |
 
 With no input/output node on any canvas, `port_wiring` is `None` and
@@ -105,6 +108,44 @@ With no input/output node on any canvas, `port_wiring` is `None` and
 
 **Choosing a reader:** drawing or cycle checking uses `drawn_list`. Anything
 asking what a node takes or produces uses `wiring_list`.
+
+## Moving a node: three ids can disagree
+
+A node that was folded into its entity has its parts under different spellings:
+
+| Part | Where | Example |
+|---|---|---|
+| Row (`_pipeline_nodes`) | Bare id, one per node across all canvases | `var__X`, `pipeline_id = main` |
+| Position | Placed id, one per canvas | `var__X::main` |
+| Statements (`_intent`) | Bare id, plus a `scope` column | `var__X`, `scope = main` |
+
+So the canvas's id doesn't find the row. An update under `var__X::main` matches
+nothing, without any error, and `_resolve_in_scope` falls back to the row and keeps
+drawing the node on the old canvas.
+
+Statements apply on the canvas they were stated on (`intent_store.scope_of_node`),
+so a node's settings must move with it or they stop reaching it. Other canvases' own
+statements and legacy `global` ones stay where they are.
+
+A duplicated hypothesis draws `var__X::hyp` from the original's row, so the bare row
+moves only if it is on the source canvas. Extracting from the copy leaves the original
+alone. Don't fix this in `_resolve_in_scope`: its row fallback is what keeps that
+original visible.
+
+Use `layout.move_node_to_canvas`, not the separate row and position calls.
+
+## Moving between canvases on screen
+
+The canvas replaces its nodes with each response, and those can come back out of order.
+
+- **Which responses are drawn:** not one for a canvas the user has left, and not one
+  older than what's on screen. A response that is merely superseded is still drawn: the
+  newer one may fail, and steady `db_watcher` traffic could otherwise starve the canvas.
+- **While the new canvas loads:** nodes are cleared on a scope switch, so nothing from
+  the old canvas can be dragged or clicked. Every write already names the new scope, and
+  a position written there moves the node.
+- **Breadcrumb:** a pipeline already on the path goes back to its crumb, because nesting
+  can't repeat (`add_pipeline_use` refuses a cycle).
 
 ## Behaviour
 

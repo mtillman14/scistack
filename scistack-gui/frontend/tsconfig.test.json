@@ -108,6 +108,8 @@
     "src/components/DAG/nodeSelection.test.ts",
     "src/context/survivingBreadcrumb.ts",
     "src/context/survivingBreadcrumb.test.ts",
+    "src/context/descendInto.ts",
+    "src/context/descendInto.test.ts",
     "src/components/Sidebar/sourceLocation.ts",
     "src/components/Sidebar/sourceLocation.test.ts",
     "src/components/Sidebar/pathInputAliases.ts",

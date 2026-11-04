@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import pytest
 
+from scistack_gui import ids
 from scistack_gui.domain import ports
 from scistack_gui.domain.adoption import plan_adoption
 from scistack_gui.domain.edge_view import effective_edges
 from scistack_gui.domain.graph_builder import edge_connection_id
 from scistack_gui.runtime.db import get_db
+from scistack_gui.stores import intent_store
+from scistack_gui.stores import layout as layout_store
 from scistack_gui.stores import pipeline_store as ps
 
 A, B, C, D, E = "pathInput__A", "mf_B", "mv_C", "mf_D", "mv_E"
@@ -707,3 +710,206 @@ class TestAdoption:
             stated_values={},
         )
         assert plan.edges == []
+
+
+# ---------------------------------------------------------------------------
+# Moving a folded node: its row is under the bare id, the canvas says ::main
+# ---------------------------------------------------------------------------
+
+PATH_INPUT, VARIABLE = "pathInput__data_path", "var__VarC"
+
+
+def _fold(node_id: str, scope: str = "main") -> str:
+    """The shape a hand-placed entity box folds into once its entity has history:
+    the row under the bare id, the position under ``{bare}::{scope}``
+    (``graduate_manual_node``). Returns the id the canvas draws it under."""
+    placed = ids.placement_id(node_id, scope)
+    layout_store.move_node_position(node_id, scope, new_node_id=placed)
+    return placed
+
+
+def _labels_on(client, scope: str) -> set[str]:
+    nodes = client.get("/api/pipeline", params={"pipeline_id": scope}).json()["nodes"]
+    return {n["data"]["label"] for n in nodes if n["type"] not in ports.PORT_NODE_TYPES}
+
+
+@pytest.fixture
+def folded(client):
+    """data_path -> fcn_b -> VarC -> fcn_d, the two entities folded. Matches the
+    canvas in scistack-debug.log 2026-11-04 09:19."""
+    _place(client, PATH_INPUT, "pathInputNode", "data_path")
+    _place(client, "mf_b", "functionNode", "fcn_b")
+    _place(client, VARIABLE, "variableNode", "VarC")
+    _place(client, "mf_d", "functionNode", "fcn_d")
+    client.put("/api/edges/e_ab", json={"source": PATH_INPUT, "target": "mf_b", "target_handle": "in__path"})
+    client.put("/api/edges/e_bc", json={"source": "mf_b", "target": VARIABLE})
+    client.put("/api/edges/e_cd", json={"source": VARIABLE, "target": "mf_d", "target_handle": "in__signal"})
+    _fold(PATH_INPUT)
+    _fold(VARIABLE)
+    return client
+
+
+def _extract_folded(client, source="main"):
+    r = client.post(
+        f"/api/pipelines/{source}/extract",
+        json={
+            "node_ids": [
+                ids.placement_id(PATH_INPUT, source),
+                "mf_b",
+                ids.placement_id(VARIABLE, source),
+            ],
+            "name": "load",
+        },
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["pipeline_id"]
+
+
+class TestMovingAFoldedNode:
+    def test_it_leaves_the_parent_canvas(self, folded):
+        """Both were drawn on main and in the submodule, main's copy disconnected."""
+        moved = {"data_path", "fcn_b", "VarC"}
+        before = _labels_on(folded, "main")  # includes the fixture's seeded run
+        assert moved <= before
+
+        pid = _extract_folded(folded)
+
+        assert _labels_on(folded, "main") == (before - moved) | {"load"}
+        assert _labels_on(folded, pid) == moved
+
+    def test_its_row_moves_with_it(self, folded):
+        pid = _extract_folded(folded)
+        db = get_db()
+        assert ps.manual_node_row(db, PATH_INPUT) == ("pathInputNode", pid)
+        assert ps.manual_node_row(db, VARIABLE) == ("variableNode", pid)
+
+    def test_the_connection_out_of_the_submodule_survives(self, folded):
+        before = _connections()
+        _extract_folded(folded)
+        assert _connections() == before
+
+    def test_a_bare_selected_id_still_moves(self, chain):
+        """The spelling that always worked."""
+        r = _extract(chain, "ABC")
+        assert r.status_code == 200, r.text
+        assert ps.manual_node_row(get_db(), A)[1] == r.json()["pipeline_id"]
+
+    def test_a_copy_on_another_canvas_keeps_the_original(self, folded):
+        """A duplicated hypothesis draws ``var__VarC::hyp`` from main's row, so
+        extracting there must not take the node off main."""
+        hyp = folded.post("/api/pipelines", json={"name": "hyp"}).json()["pipeline_id"]
+        placed = ids.placement_id(VARIABLE, hyp)
+        layout_store.write_node_position(placed, 5, 6, pipeline_id=hyp)
+        intent_store.set_run_options(get_db(), VARIABLE, {"dry_run": True}, scope="main")
+
+        r = folded.post(
+            f"/api/pipelines/{hyp}/extract", json={"node_ids": [placed], "name": "sub"}
+        )
+        assert r.status_code == 200, r.text
+        sub = r.json()["pipeline_id"]
+
+        db = get_db()
+        assert ps.manual_node_row(db, VARIABLE)[1] == "main"
+        assert "VarC" in _labels_on(folded, "main")
+        assert "VarC" in _labels_on(folded, sub)
+        assert "VarC" not in _labels_on(folded, hyp)
+        assert ps.get_node_config(db, ids.placement_id(VARIABLE, "main"))["runOptions"] == {"dry_run": True}
+
+
+class TestSettingsFollowTheNode:
+    """Statements apply on the canvas they were stated on. ``read_csv`` lost its
+    run options and schema location when extract left them on main (scistack-debug.log
+    2026-11-04: orphan WARN 0 times before the extract, 8 after)."""
+
+    RUN_OPTIONS = {"dry_run": True}
+    LOCATION = {"schemaLevel": ["subject"]}
+
+    @pytest.fixture
+    def stated(self, folded):
+        db = get_db()
+        intent_store.set_run_options(db, "mf_b", self.RUN_OPTIONS)
+        intent_store.set_schema_location(db, "mf_b", self.LOCATION)
+        return folded
+
+    def test_a_function_reads_the_same_settings_inside(self, stated):
+        db = get_db()
+        before = ps.get_node_config(db, "mf_b")
+        assert before["runOptions"] == self.RUN_OPTIONS
+        assert before["schemaLevel"] == self.LOCATION["schemaLevel"]
+
+        pid = _extract_folded(stated)
+
+        assert ps.get_node_config(db, "mf_b") == before
+        assert ps.get_node_configs(db, pid)["mf_b"]["runOptions"] == self.RUN_OPTIONS
+
+    def test_the_parent_no_longer_holds_them(self, stated):
+        db = get_db()
+        _extract_folded(stated)
+        assert "mf_b" not in ps.get_node_configs(db, "main")
+
+    def test_a_folded_node_keeps_its_settings_too(self, folded):
+        db = get_db()
+        placed = ids.placement_id(VARIABLE, "main")
+        intent_store.set_run_options(db, placed, self.RUN_OPTIONS)
+
+        pid = _extract_folded(folded)
+
+        moved = ids.placement_id(VARIABLE, pid)
+        assert ps.get_node_config(db, moved)["runOptions"] == self.RUN_OPTIONS
+        assert ps.get_node_config(db, VARIABLE)["runOptions"] == self.RUN_OPTIONS
+
+    def test_another_canvas_keeps_its_own(self, stated):
+        """Only what was stated on the source canvas moves."""
+        db = get_db()
+        other = stated.post("/api/pipelines", json={"name": "other"}).json()["pipeline_id"]
+        intent_store.set_run_options(db, "mf_b", {"dry_run": False}, scope=other)
+        _extract_folded(stated)
+        assert ps.get_node_configs(db, other)["mf_b"]["runOptions"] == {"dry_run": False}
+
+    def test_a_legacy_global_statement_stays_global(self, folded):
+        db = get_db()
+        intent_store.set_run_options(db, "mf_b", self.RUN_OPTIONS, scope="global")
+        _extract_folded(folded)
+        rows = intent_store.load_statements(db, subject_refs=["mf_b"], aspect="run_options")
+        assert [st.scope for st in rows] == ["global"]
+
+    def test_a_stated_setting_gives_the_same_targets(self, client):
+        """The seeded run: a moved function's settings still reach its targets."""
+        from scistack_gui.services.execution_service import _target_key, derive_target_for_node
+
+        nodes = client.get("/api/pipeline").json()["nodes"]
+        fn = next(n["id"] for n in nodes if n["type"] == "functionNode")
+        db = get_db()
+        intent_store.set_schema_location(db, fn, self.LOCATION)
+        before = sorted(_target_key(t) for t in derive_target_for_node(db, fn))
+        assert before
+
+        r = client.post("/api/pipelines/main/extract", json={"node_ids": [fn], "name": "sub"})
+        assert r.status_code == 200, r.text
+        inside = client.get("/api/pipeline", params={"pipeline_id": r.json()["pipeline_id"]}).json()["nodes"]
+        fn_inside = next(n["id"] for n in inside if n["type"] == "functionNode")
+
+        assert sorted(_target_key(t) for t in derive_target_for_node(db, fn_inside)) == before
+        assert ps.get_node_config(db, fn_inside)["schemaLevel"] == self.LOCATION["schemaLevel"]
+
+
+class TestAlreadyRunDownstream:
+    def test_a_recorded_edge_is_not_drawn_back_onto_the_parent(self, client):
+        """RawSignal -> bandpass_filter has history. Extracting only the variable
+        must leave the recorded edge drawn on neither canvas, through refreshes
+        (adoption runs in each build), with the line coming from the placement."""
+        _place(client, "mv_box", "variableNode", "RawSignal")
+        nodes = client.get("/api/pipeline").json()["nodes"]
+        raw = next(n["id"] for n in nodes if n["data"]["label"] == "RawSignal")
+
+        r = client.post("/api/pipelines/main/extract", json={"node_ids": [raw], "name": "sub"})
+        assert r.status_code == 200, r.text
+        use_id = r.json()["use_id"]
+
+        for _ in range(2):
+            graph = client.get("/api/pipeline").json()
+            assert "RawSignal" not in {n["data"]["label"] for n in graph["nodes"]}
+            on_canvas = {n["id"] for n in graph["nodes"]}
+            for e in graph["edges"]:
+                assert e["source"] in on_canvas and e["target"] in on_canvas
+            assert any(e["source"] == use_id for e in graph["edges"])

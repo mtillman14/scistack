@@ -53,7 +53,7 @@ def test_one_info_line_per_refresh_with_counts_timings_and_supersession(logged):
     assert info == (
         "[client] canvas refresh #7 (dag_updated:db_watcher, scope=main): applied "
         "3 node(s), 2 edge(s); get_pipeline 702 ms + get_layout 151 ms = 853 ms; "
-        "pending settled 0, folded 0, wiped 1; SUPERSEDED by #8 (an older picture applied)"
+        "pending settled 0, folded 0, wiped 1; a newer refresh #8 had started"
     )
 
 
@@ -86,7 +86,42 @@ def test_a_clean_refresh_has_no_warning_and_no_superseded_suffix(logged):
     report_canvas_refresh({"seq": 1, "trigger": "effect:graph_version=0", "settled": 1})
     assert not [r for r in logged.records if r.levelno == logging.WARNING]
     (info,) = [r.getMessage() for r in logged.records]
-    assert "SUPERSEDED" not in info and "settled 1" in info
+    assert "newer refresh" not in info and "settled 1" in info
+
+
+def test_a_discarded_refresh_says_why_and_reports_nothing_wiped(logged):
+    result = report_canvas_refresh({
+        "seq": 13,
+        "trigger": "dag_updated:db_watcher",
+        "scope": "main",
+        "total_ms": 1741,
+        "superseded_by": 14,
+        "discarded": "scope_changed",
+    })
+    assert result["discarded"] == "scope_changed" and result["wiped"] == 0
+    (info,) = [r.getMessage() for r in logged.records]
+    assert "#13" in info and "DISCARDED, scope_changed" in info and "not drawn" in info
+    assert "applied" not in info
+
+
+def test_a_new_crumb_and_a_repeated_one_are_told_apart(logged):
+    from scistack_gui.services.client_canvas import report_scope_navigation
+
+    assert report_scope_navigation(
+        {"pipeline_id": "pipe_a", "before": ["main"], "after": ["main", "pipe_a"]}
+    )["repeated"] is False
+    assert report_scope_navigation(
+        {"pipeline_id": "pipe_a", "before": ["main", "pipe_a"], "after": ["main", "pipe_a"]}
+    )["repeated"] is True
+    first, second = [r.getMessage() for r in logged.records]
+    assert "no new crumb" not in first
+    assert "no new crumb" in second
+
+
+def test_the_breadcrumb_rpc_needs_no_database():
+    from scistack_gui import server
+
+    assert server.METHODS["report_scope_navigation"].handler.needs_db is False
 
 
 def test_the_rpc_is_registered_and_needs_no_database():

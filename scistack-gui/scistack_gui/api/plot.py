@@ -68,7 +68,10 @@ from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.api.spec_params import DifferenceBarParam, PlotSpecParam, VariantSetParam
 from scistack_gui.services import plot_preset_service, plot_service, saved_plot_service
 from scistack_gui.services.client_build import report_client_build
-from scistack_gui.services.client_canvas import report_canvas_refresh
+from scistack_gui.services.client_canvas import (
+    report_canvas_refresh,
+    report_scope_navigation,
+)
 from scistack_gui.services.client_errors import report_client_error
 from scistack_gui.services.client_timing import report_client_timing
 
@@ -347,6 +350,15 @@ class CanvasRefreshRequest(BaseModel):
     settled: int | None = None
     folded: int | None = None
     dropped: list[dict] | None = None
+    discarded: str | None = None
+
+
+class ScopeNavigationRequest(BaseModel):
+    """One step into a submodule (frontend context/descendInto.ts)."""
+
+    pipeline_id: str | None = None
+    before: list[str] | None = None
+    after: list[str] | None = None
 
 
 # --- the calls ---------------------------------------------------------------
@@ -636,6 +648,11 @@ def _canvas_refresh(req: CanvasRefreshRequest) -> dict:
     return report_canvas_refresh(req.model_dump())
 
 
+def _scope_navigation(req: ScopeNavigationRequest) -> dict:
+    """The breadcrumb took a step into a submodule; write it into the log."""
+    return report_scope_navigation(req.model_dump())
+
+
 # ``db_optional=True`` on every row whose request model carries a
 # ``csv_path``: with one set, the service builds a ``CsvSource`` and the
 # database is never opened (each entry point is already written as
@@ -816,6 +833,11 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "report_canvas_refresh", "/client-canvas-refresh", CanvasRefreshRequest,
         _canvas_refresh, holds_db_lock=False, needs_db=False, undoable=False,
+    ),
+    # And again: one breadcrumb line, no database.
+    Handler(
+        "report_scope_navigation", "/client-scope-navigation", ScopeNavigationRequest,
+        _scope_navigation, holds_db_lock=False, needs_db=False, undoable=False,
     ),
     # The shared design of a linked figure + table (studio-unification Stage
     # 6): one row set both studios read and write.

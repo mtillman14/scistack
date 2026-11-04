@@ -327,26 +327,7 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
                     n_rewritten += 1
 
             for nid in node_id_set:
-                # A selected node may itself be an existing submodule placement —
-                # its rendering scope is the USE row's parent, not just its
-                # _pipeline_nodes row (see move_pipeline_use_parent's docstring);
-                # both must move together.
-                if manual_nodes.get(nid, {}).get("type") == "pipelineNode":
-                    ps.move_pipeline_use_parent(db, nid, new_pid)
-                ps.move_node_scope(db, nid, new_pid)
-
-                # A graduated (placement-qualified) DB-derived node's id embeds
-                # its OLD scope — node_scope trusts that suffix over which bucket
-                # holds the position, so simply re-writing the position under the
-                # unchanged key would go stale. Re-key it for the new scope and
-                # rewrite any internal edges that referenced the old key.
-                parsed = ids.parse_placement_id(nid)
-                new_node_id = (
-                    ids.placement_id(parsed[0], new_pid) if parsed else None
-                )
-                layout_store.move_node_position(nid, new_pid, new_node_id=new_node_id)
-                if new_node_id:
-                    ps.rename_edge_endpoints(db, nid, new_node_id)
+                layout_store.move_node_to_canvas(db, nid, pipeline_id, new_pid)
     except Exception as exc:
         logger.warning(
             "[scope_service] extract_to_submodule: rolled back, nothing moved "

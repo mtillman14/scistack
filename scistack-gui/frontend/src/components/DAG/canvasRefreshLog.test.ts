@@ -96,3 +96,67 @@ test('entity boxes fold by type+label; function nodes never do', () => {
   assert.strictEqual(report.folded, 1)
   assert.strictEqual(report.dropped.length, 0)
 })
+
+test('a response for a canvas the user left is discarded', () => {
+  // scistack-debug.log 2026-11-04: #13 for main came back after #14 drew the submodule.
+  const log = new CanvasRefreshLog()
+  const r13 = log.start('dag_updated:db_watcher', 0)
+  const r14 = log.start('effect:graph_version=1', 10)
+  assert.strictEqual(log.whyDiscard(r14, 'sub', 'sub'), null)
+  log.apply(r14, { scope: 'sub', nodeIds: [], edgeIds: [] }, T, 1500)
+  assert.strictEqual(log.whyDiscard(r13, 'main', 'sub'), 'scope_changed')
+})
+
+test('leaving a canvas discards its response even before anything newer is drawn', () => {
+  const log = new CanvasRefreshLog()
+  const r = log.start('a', 0)
+  assert.strictEqual(log.whyDiscard(r, 'main', 'sub'), 'scope_changed')
+})
+
+test('a response older than the picture on screen is discarded', () => {
+  const log = new CanvasRefreshLog()
+  const older = log.start('a', 0)
+  const newer = log.start('b', 10)
+  log.apply(newer, { scope: 'main', nodeIds: [], edgeIds: [] }, T, 100)
+  assert.strictEqual(log.whyDiscard(older, 'main', 'main'), 'newer_applied')
+})
+
+test('superseded but with nothing newer drawn yet is still drawn', () => {
+  // The newer one may fail, and steady traffic must not starve the canvas.
+  const log = new CanvasRefreshLog()
+  const older = log.start('a', 0)
+  log.start('b', 10)
+  assert.strictEqual(log.whyDiscard(older, 'main', 'main'), null)
+})
+
+test('A to B and back: a response from the first visit is still the open canvas', () => {
+  const log = new CanvasRefreshLog()
+  const firstVisit = log.start('a', 0)
+  const b = log.start('b', 10)
+  const secondVisit = log.start('c', 20)
+  assert.strictEqual(log.whyDiscard(b, 'B', 'A'), 'scope_changed')
+  assert.strictEqual(log.whyDiscard(firstVisit, 'A', 'A'), null)
+  log.apply(secondVisit, { scope: 'A', nodeIds: [], edgeIds: [] }, T, 100)
+  assert.strictEqual(log.whyDiscard(firstVisit, 'A', 'A'), 'newer_applied')
+})
+
+test('a discarded refresh settles nothing, and the next applied one still can', () => {
+  const log = new CanvasRefreshLog()
+  log.addPending('fn__x__a', 'node', 0)
+  const r = log.start('a', 10)
+  const report = log.discard(r, 'main', 'scope_changed', T, 50)
+  assert.strictEqual(report.discarded, 'scope_changed')
+  assert.strictEqual(report.settled, 0)
+  assert.deepStrictEqual(report.dropped, [])
+  assert.strictEqual(log.pendingCount(), 1)
+  const next = log.apply(log.start('b', 60), { scope: 'main', nodeIds: ['fn__x__a'], edgeIds: [] }, T, 70)
+  assert.strictEqual(next.settled, 1)
+  assert.strictEqual(next.discarded, null)
+})
+
+test('a discarded refresh does not count as the picture on screen', () => {
+  const log = new CanvasRefreshLog()
+  const older = log.start('a', 0)
+  log.discard(log.start('b', 10), 'main', 'scope_changed', T, 50)
+  assert.strictEqual(log.whyDiscard(older, 'main', 'main'), null)
+})

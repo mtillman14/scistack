@@ -56,6 +56,9 @@ export interface RefreshStart {
   startedAt: number
 }
 
+/** Why a response isn't drawn. See {@link CanvasRefreshLog.whyDiscard}. */
+export type DiscardReason = 'scope_changed' | 'newer_applied'
+
 export interface RefreshReport {
   seq: number
   trigger: string
@@ -65,8 +68,10 @@ export interface RefreshReport {
   get_pipeline_ms: number
   get_layout_ms: number
   total_ms: number
-  /** A newer refresh had already started when this one was applied. */
+  /** A newer refresh had already started when this one came back. */
   superseded_by: number | null
+  /** Why this refresh was not drawn; null when it was. */
+  discarded: DiscardReason | null
   dropped: DroppedItem[]
   /** Optimistic items this snapshot carried (now confirmed on screen). */
   settled: number
@@ -92,6 +97,7 @@ export const PENDING_TTL_MS = 60_000
 export class CanvasRefreshLog {
   private seq = 0
   private pending = new Map<string, PendingItem>()
+  private lastAppliedSeq = 0
 
   /** A refresh is starting; returns its handle. */
   start(trigger: string, now: number): RefreshStart {
@@ -102,6 +108,50 @@ export class CanvasRefreshLog {
   /** The newest refresh number handed out. */
   get latestSeq(): number {
     return this.seq
+  }
+
+  /**
+   * Whether a response that just came back must not be drawn.
+   *
+   * Other scope: the user left that canvas, and drawing it puts one canvas's
+   * nodes under another's breadcrumb, where every write goes to the wrong scope
+   * (2026-11-04: main drawn over an open submodule). Older than what's on screen:
+   * it would undo a newer picture.
+   *
+   * Being merely superseded is NOT a reason. A refresh in flight may never be
+   * drawn (it can fail), and refreshes can arrive faster than they finish, so
+   * dropping those could leave the canvas never updating.
+   */
+  whyDiscard(start: RefreshStart, requestedScope: string, openScope: string): DiscardReason | null {
+    if (requestedScope !== openScope) return 'scope_changed'
+    if (start.seq < this.lastAppliedSeq) return 'newer_applied'
+    return null
+  }
+
+  /** The report for a response that won't be drawn. Pending items stay pending:
+   *  this snapshot says nothing about what is on screen. */
+  discard(
+    start: RefreshStart,
+    scope: string,
+    reason: DiscardReason,
+    timings: { get_pipeline_ms: number; get_layout_ms: number },
+    now: number,
+  ): RefreshReport {
+    return {
+      seq: start.seq,
+      trigger: start.trigger,
+      scope,
+      nodes: 0,
+      edges: 0,
+      get_pipeline_ms: Math.round(timings.get_pipeline_ms),
+      get_layout_ms: Math.round(timings.get_layout_ms),
+      total_ms: Math.round(now - start.startedAt),
+      superseded_by: this.seq > start.seq ? this.seq : null,
+      discarded: reason,
+      dropped: [],
+      settled: 0,
+      folded: 0,
+    }
   }
 
   /** An item was drawn before the server confirmed it. */
@@ -142,6 +192,7 @@ export class CanvasRefreshLog {
     timings: { get_pipeline_ms: number; get_layout_ms: number },
     now: number,
   ): RefreshReport {
+    this.lastAppliedSeq = Math.max(this.lastAppliedSeq, start.seq)
     const nodeIds = new Set(snapshot.nodeIds)
     const edgeIds = new Set(snapshot.edgeIds)
     const matchKeys = new Set(snapshot.matchKeys ?? [])
@@ -190,6 +241,7 @@ export class CanvasRefreshLog {
       get_layout_ms: Math.round(timings.get_layout_ms),
       total_ms: Math.round(now - start.startedAt),
       superseded_by: this.seq > start.seq ? this.seq : null,
+      discarded: null,
       dropped,
       settled,
       folded,

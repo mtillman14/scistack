@@ -13,7 +13,7 @@
  *   - Background / Controls / Panel: built-in UI chrome from React Flow
  */
 
-import { useEffect, useCallback, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useCallback, useRef, useState } from 'react'
 import {
   ReactFlow,
   addEdge,
@@ -133,6 +133,10 @@ export default function PipelineDAG() {
   // The scope the on-screen nodes belong to — on a scope switch, on-screen
   // positions must NOT carry over to the new canvas.
   const loadedScope = useRef<string | null>(null)
+  // The scope open right now. A response compares against this, not against the
+  // `currentScope` its own closure captured, which is the one it was asked for.
+  const openScope = useRef(currentScope)
+  openScope.current = currentScope
   // Nodes dropped onto the canvas, keyed by id, waiting for React Flow to
   // measure their rendered size so the DROP POINT can be re-centered under
   // the node (dropped nodes start pinned by their top-left corner, since
@@ -179,11 +183,26 @@ export default function PipelineDAG() {
 
   const fetchPipeline = useCallback(async (trigger: string = 'unknown') => {
     const refresh = refreshLog.current.start(trigger, performance.now())
+    const requestedScope = currentScope
+    // Checked after each await and before anything takes effect, because the
+    // canvas may have moved on while this was out. Report it, so a dropped
+    // refresh still shows in scistack.log.
+    const discardedAfter = (getPipelineMs: number, getLayoutMs: number) => {
+      const reason = refreshLog.current.whyDiscard(refresh, requestedScope, openScope.current)
+      if (reason === null) return false
+      const report = refreshLog.current.discard(
+        refresh, requestedScope, reason,
+        { get_pipeline_ms: getPipelineMs, get_layout_ms: getLayoutMs }, performance.now(),
+      )
+      callBackend('report_canvas_refresh', { ...report }).catch(() => {})
+      return true
+    }
     // Fetch pipeline first — _build_graph has a side effect (graduate_manual_node)
     // that writes to layout.json. Layout must be read AFTER that write, otherwise
     // savedPositions will have stale keys and dagre will recalculate positions.
     const data = await callBackend('get_pipeline', { pipeline_id: currentScope }) as { nodes: Node[]; edges: Edge[]; warnings?: GraphWarning[] }
     const tPipeline = performance.now()
+    if (discardedAfter(tPipeline - refresh.startedAt, 0)) return
     // §7b of docs/claude/node-identity.md: two nodes wired identically
     // compute the same thing, so runs are attributed to one of them until
     // they differ. That is surprising and recoverable, so it is a popup and
@@ -200,6 +219,7 @@ export default function PipelineDAG() {
     })
     const layoutData = await callBackend('get_layout', { pipeline_id: currentScope }) as Record<string, unknown>
     const tLayout = performance.now()
+    if (discardedAfter(tPipeline - refresh.startedAt, tLayout - tPipeline)) return
     const report = refreshLog.current.apply(
       refresh,
       {
@@ -273,6 +293,19 @@ export default function PipelineDAG() {
     }
 
   }, [setNodes, setEdges, fitView, currentScope, getDirtyPatch])
+
+  // Leaving a canvas takes its nodes off the screen straight away. Until the new
+  // canvas loads (about a second in the 2026-11-04 log) they would otherwise stay
+  // draggable, deletable and double-clickable while every write already names the
+  // new scope, and a position written there moves the node, since position is
+  // what says which canvas a node is on.
+  useLayoutEffect(() => {
+    if (loadedScope.current === null || loadedScope.current === currentScope) return
+    setNodes([])
+    setEdges([])
+    setSelectedIds([])
+    setContextMenu(null)
+  }, [currentScope, setNodes, setEdges])
 
   useEffect(() => {
     // Mount, scope switch, or bumpGraph() (graph_version counts the bumps).

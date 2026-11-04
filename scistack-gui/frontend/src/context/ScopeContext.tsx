@@ -25,6 +25,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import { callBackend, pageUndo } from '../api'
 import { survivingBreadcrumb } from './survivingBreadcrumb'
+import { descendInto } from './descendInto'
 
 export interface BindingSpec {
   key_map?: Record<string, string>
@@ -82,8 +83,22 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   const [breadcrumb, setBreadcrumb] = useState<Crumb[]>([ROOT_CRUMB])
   const [graphVersion, setGraphVersion] = useState(0)
 
+  // The path as of the last step, not the last render: two clicks in one tick
+  // must see each other. Read outside the state updater so the report below
+  // goes out once, since StrictMode runs updaters twice.
+  const pathRef = useRef(breadcrumb)
+  pathRef.current = breadcrumb
+
   const descend = useCallback((crumb: Crumb) => {
-    setBreadcrumb(prev => [...prev, crumb])
+    const before = pathRef.current
+    const after = descendInto(before, crumb)
+    pathRef.current = after
+    setBreadcrumb(after)
+    callBackend('report_scope_navigation', {
+      pipeline_id: crumb.pipeline_id,
+      before: before.map(c => c.pipeline_id),
+      after: after.map(c => c.pipeline_id),
+    }).catch(() => {})
   }, [])
 
   const ascendTo = useCallback((index: number) => {

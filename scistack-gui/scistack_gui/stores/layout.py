@@ -524,6 +524,74 @@ def rebase_node_positions(
     return moved
 
 
+def move_node_to_canvas(
+    db, node_id: str, source_pipeline_id: str, new_pipeline_id: str
+) -> "str":
+    """Move a node from one canvas to another, and everything that says where
+    it is. The one owner of this move (extract-to-submodule).
+
+    ``node_id`` is the id the source canvas draws it under. Four things move:
+
+    - **Row.** A folded entity's row is under its bare id, so a placed
+      ``var__X::main`` also moves the row of ``var__X``, but only if that row is
+      on the source canvas: a duplicated hypothesis draws ``var__X::hyp`` from
+      the original's row, and taking it would empty the original. Left behind,
+      the row keeps the node on the source canvas as well (scope_filter's row
+      fallback; scistack-debug.log 2026-11-04 09:19).
+    - **Position.** Under the new canvas's placed id if it had one.
+    - **Edges** naming the old placed id.
+    - **Statements.** A setting applies on the canvas it was stated on, so one
+      left behind stops reaching the node. ``read_csv`` lost its run options and
+      schema location this way (same log).
+
+    Returns the node's id on the new canvas.
+    """
+    from scistack_gui.ids import parse_placement_id, placement_id, strip_placement
+    from scistack_gui.stores import intent_store
+
+    statements_from = intent_store.scope_of_node(db, node_id)
+
+    # A selected node may itself be an existing submodule placement: its
+    # rendering scope is the USE row's parent, not just its _pipeline_nodes row
+    # (move_pipeline_use_parent's docstring), so both move together.
+    own_row = pipeline_store.manual_node_row(db, node_id)
+    if own_row is not None and own_row[0] == "pipelineNode":
+        pipeline_store.move_pipeline_use_parent(db, node_id, new_pipeline_id)
+    # Unconditional, row or not: this is also the library-lock check for a node
+    # that has no row at all.
+    pipeline_store.move_node_scope(db, node_id, new_pipeline_id)
+    moved_rows = [node_id] if own_row is not None else []
+    bare = strip_placement(node_id)
+    if bare != node_id:
+        bare_row = pipeline_store.manual_node_row(db, bare)
+        if bare_row is not None and bare_row[1] == source_pipeline_id:
+            pipeline_store.move_node_scope(db, bare, new_pipeline_id)
+            moved_rows.append(bare)
+
+    # A placed id embeds its OLD scope, which node_scope trusts over the bucket
+    # holding the position, so re-key it for the new canvas.
+    parsed = parse_placement_id(node_id)
+    new_node_id = placement_id(parsed[0], new_pipeline_id) if parsed else None
+    move_node_position(node_id, new_pipeline_id, new_node_id=new_node_id)
+    if new_node_id:
+        pipeline_store.rename_edge_endpoints(db, node_id, new_node_id)
+    final_id = new_node_id or node_id
+
+    # Asked of the store rather than assumed, so this can't disagree with what
+    # readers resolve: the scope the old id read from, and the one the new reads.
+    statements_to = intent_store.scope_of_node(db, final_id)
+    moved_statements = intent_store.move_subject_scope(
+        db, node_id, statements_from, statements_to
+    )
+    logger.info(
+        "[layout] move_node_to_canvas: %s -> %s (%s -> %s); row(s) moved %s, "
+        "%d statement(s) moved (%s -> %s)",
+        node_id, final_id, source_pipeline_id, new_pipeline_id, moved_rows,
+        moved_statements, statements_from, statements_to,
+    )
+    return final_id
+
+
 @_library_lock.internal
 def graduate_manual_node(old_id: str, new_id: str, take_old_position: bool = False) -> None:
     """Transfer position from a manual node to a DB-derived node ID and

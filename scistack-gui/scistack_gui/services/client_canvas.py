@@ -16,8 +16,13 @@ and reports every applied refresh here:
 - INFO, one line per refresh: number, trigger (``dag_updated:db_watcher`` =
   the extension's ``.duckdb`` watcher, ``dag_updated:server`` = a server
   push, ``effect:graph_version=N`` = mount / scope switch / bumpGraph),
-  counts, timings, and ``superseded by #N`` when a newer refresh had already
-  started (an older picture applied over a newer one).
+  counts, timings, and ``a newer refresh #N had started`` when one was in
+  flight.
+- INFO, a refresh that was NOT drawn: ``DISCARDED`` with the reason.
+  ``scope_changed`` = the user had left that canvas by the time it came back;
+  ``newer_applied`` = a newer refresh was already on screen. Drawing either
+  put the wrong picture up (scistack-debug.log 2026-11-04 09:19:45.680, main
+  drawn over an open submodule).
 - WARN, one line per wiped item: ``stale_snapshot`` = the refresh started
   before the item's write was confirmed (the race; fix in the frontend /
   watcher); ``server_omitted`` = it started after the confirm and the
@@ -49,8 +54,9 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
 
     ``params``: ``seq``, ``trigger``, ``scope``, ``nodes``, ``edges``,
     ``get_pipeline_ms``, ``get_layout_ms``, ``total_ms``, ``superseded_by``,
-    ``settled``, ``folded`` and ``dropped`` (a list of ``{kind, id, age_ms,
-    confirm_after_start_ms, verdict}``). Returns a summary of what was logged.
+    ``settled``, ``folded``, ``dropped`` (a list of ``{kind, id, age_ms,
+    confirm_after_start_ms, verdict}``) and ``discarded`` (why this refresh was
+    not drawn, else None). Returns a summary of what was logged.
     """
     seq = _int(params.get("seq"))
     trigger = str(params.get("trigger") or "unknown")[:120]
@@ -59,6 +65,20 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
     settled = _int(params.get("settled"), 0)
     folded = _int(params.get("folded"), 0)
     dropped = [d for d in (params.get("dropped") or []) if isinstance(d, dict)][:50]
+
+    discarded = params.get("discarded")
+    if discarded:
+        logger.info(
+            "[client] canvas refresh #%d (%s, scope=%s): DISCARDED, %s; not drawn, "
+            "%d ms; newest refresh started #%d",
+            seq,
+            trigger,
+            scope,
+            str(discarded)[:40],
+            _int(params.get("total_ms")),
+            _int(superseded_by, seq),
+        )
+        return {"seq": seq, "trigger": trigger, "wiped": 0, "discarded": str(discarded)[:40]}
 
     logger.info(
         "[client] canvas refresh #%d (%s, scope=%s): applied %d node(s), %d "
@@ -75,7 +95,7 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
         settled,
         folded,
         len(dropped),
-        f"; SUPERSEDED by #{_int(superseded_by)} (an older picture applied)"
+        f"; a newer refresh #{_int(superseded_by)} had started"
         if superseded_by is not None
         else "",
     )
@@ -100,3 +120,26 @@ def report_canvas_refresh(params: dict[str, Any]) -> dict[str, Any]:
             str(d.get("verdict") or "?")[:40],
         )
     return {"seq": seq, "trigger": trigger, "wiped": len(dropped)}
+
+
+def report_scope_navigation(params: dict[str, Any]) -> dict[str, Any]:
+    """Log one step into a submodule, as the breadcrumb took it.
+
+    ``params``: ``pipeline_id`` (the submodule), ``before`` and ``after`` (the path,
+    as pipeline ids). An ``after`` that doesn't end by adding the submodule means
+    it was already on the path, so the breadcrumb went back to it instead
+    (``context/descendInto.ts``). Nothing else can see this: the same scope
+    fetches nothing, so repeated crumbs left no trace (2026-11-04).
+    """
+    pipeline_id = str(params.get("pipeline_id") or "?")[:200]
+    before = [str(p)[:200] for p in (params.get("before") or [])][:50]
+    after = [str(p)[:200] for p in (params.get("after") or [])][:50]
+    repeated = pipeline_id in before
+    logger.info(
+        "[client] breadcrumb: into %s, path %s -> %s%s",
+        pipeline_id,
+        before,
+        after,
+        " (already on the path, no new crumb)" if repeated else "",
+    )
+    return {"pipeline_id": pipeline_id, "repeated": repeated}
