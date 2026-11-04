@@ -561,7 +561,7 @@ kept; Q6 step names deferred.
 | run from the document (Stage 4) | `execution_service.derive_target_for_node` (stated wiring → recorded rows of it → else edges + values), `derive_fn_targets` (union over stored nodes), `document_disconnected_ports`, `ensure_document`, `_scope_function_node_ids` (reads the built canvas) |
 | hides, never deletes | `layout_service.delete_edge`, `layout.delete_node` |
 | deleted (Stage 5) | function-node graduation passes, `_wiring_conflicts_with_candidate`, `_find_db_fn_candidate`, `_own_state_for_function`, `drop_superseded_manual_edges`, `collect_manual_input_overrides`, `overlay_manual_inputs`, `reconcile_manual_inputs`, `HISTORY_WIRING_KEY`, `_apply_manual_output_types` |
-| clear data (GUI half) | `services/clear_service.py`, RPCs `clear_data_plan` / `clear_data`, dialog `frontend/src/components/DAG/ClearDataDialog.tsx` ("Clear data…" in the canvas toolbar) |
+| clear data (GUI half) | `services/clear_service.py`, RPCs `clear_data_plan` / `clear_data`, dialog `frontend/src/components/DAG/ClearDataDialog.tsx` ("Clear data…" in the header bar above the canvas, `ClearDataButton.tsx`) |
 | MATLAB terminal runs (Stage 6) | nothing MATLAB-specific: they are recorded history, adopted like a script run. Needs a real MATLAB run to confirm. |
 | tests | `scistack-gui/tests/test_canvas_document.py`, updated `test_canvas_shape.py`, `test_graph_builder.py`, `test_api.py`, `test_pipeline_call_sites.py`, `test_pipeline_scopes.py`, `test_variant_resolver.py`, `test_constants_identity_gui.py` |
 

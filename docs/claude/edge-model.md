@@ -76,7 +76,6 @@ through it:
 | run targets (no node named) | all scopes |
 | run targets (node named), "why can't this run", MATLAB single command | the clicked node's scope (`run_scope`) |
 | pipeline-run report, MATLAB pipeline command | that pipeline |
-| submodule interface | the submodule |
 
 The visibility rule (`visible_manual_edges`) is applied there and NOWHERE else. The
 binding functions (`manual_edge_handle_index`, `edge_resolver.resolve_function_edges`,
@@ -84,9 +83,12 @@ binding functions (`manual_edge_handle_index`, `edge_resolver.resolve_function_e
 nothing. Functions that ask whether a HISTORY edge is hidden take `hidden_edge_ids`, because history
 edges are rebuilt from the database and are not in the view's drawn list.
 
+A connection crossing a submodule is two drawn edges. `drawn_list` is what a canvas
+draws, `wiring_list` is what a node is wired to (`submodule-ports.md`).
+
 `tests/test_edge_view_guard.py` fails if a new reader reads stored edges or
 hidden ids directly. Mutators (`put_edge`, `delete_edge`,
-`extract_to_submodule`, `read_layout`) are on its allow-list, each with a reason.
+`rename_port`, `read_layout`) are on its allow-list, each with a reason.
 
 ### One port per argument: `in__X`
 

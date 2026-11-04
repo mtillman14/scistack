@@ -53,7 +53,7 @@ def _pipeline(tmp_path) -> dict[str, dict]:
         },
         outputs=[StepLengthFigure],
         as_table=True,
-        finalized=False,
+        save=False,
         subject=[],
     )
     by_subject = {}

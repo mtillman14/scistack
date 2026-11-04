@@ -12,9 +12,16 @@ from __future__ import annotations
 
 import logging
 
+from scifor.failures import ActionableError
+
+from scistack_gui.domain import ports
 from scistack_gui.ids import in_handle, out_handle
 
 logger = logging.getLogger(__name__)
+
+#: Where extract places input/output nodes around the moved nodes.
+PORT_NODE_MARGIN = 220.0
+PORT_NODE_SPACING = 100.0
 
 
 def list_pipelines() -> dict:
@@ -161,49 +168,36 @@ def update_use_binding(use_id: str, binding: dict) -> dict:
     return {"ok": True}
 
 
+class SubmoduleSelectionError(ActionableError, ValueError):
+    """A selection can't become a submodule. A refusal whose message says what
+    to select instead, so the journal files it as a setup problem."""
+
+
+class PortError(ActionableError, ValueError):
+    """A port can't be created, renamed or moved as asked."""
+
+
 def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> dict:
-    """Select existing nodes on ``pipeline_id``'s canvas and turn them into
-    a new, immediately-reusable submodule pipeline.
+    """Turn nodes selected on ``pipeline_id``'s canvas into a new submodule.
 
-    This is a MOVE (the selected nodes disappear from the parent canvas),
-    replaced by one pipeline node placing the new submodule at the
-    selection's centroid.
+    A MOVE: the nodes leave the parent canvas, replaced by one placement at the
+    selection's centroid. Each connection crossing the boundary is rewritten
+    into an inner edge and an outer edge through a port
+    (``domain.ports``, ``docs/claude/submodule-ports.md``), so both canvases
+    only ever store edges with both ends on them. Reading through the ports
+    gives back the original connection, so nothing about what ran or what is
+    current changes.
 
-    Boundary edges (exactly one endpoint moved) are deliberately left
-    UNCHANGED, not deleted — ``domain.scope_filter.document_interface``
-    computes a scope's ports purely from which edges touch nodes IN that
-    scope, regardless of where the other endpoint lives, so the original
-    edge is exactly what makes the new submodule's interface (inputs/
-    outputs) compute correctly. It simply stops rendering on either
-    canvas once its endpoints split across two scopes (``resolve_scope_view``
-    requires both endpoints to resolve within the same scope) — which
-    is fine, since the moved node no longer renders on the parent canvas
-    either. What the parent canvas needs INSTEAD is a new, additional edge
-    from the kept node to the placed pipeline node's port, purely for
-    visual continuity (matching how a hand-built submodule is normally
-    wired: variable nodes connect to `in__{type}`/`out__{type}` handles).
-
-    Every boundary edge is var<->fn (never var<->var or fn<->fn), but
-    EITHER side may be the one that moved — a selection can carry a
-    variable node into the submodule while leaving a downstream function
-    behind (e.g. a leaf variable used by one function outside the
-    extracted set), not just the reverse. So the variable label is looked
-    up on the KEPT side first, falling back to the MOVED side when the
-    kept side isn't a variable-type node itself. The in__/out__ direction
-    on the placed node's port still follows which side moved (moved-as-
-    source -> out__, moved-as-target -> in__), since that describes flow
-    across the new scope boundary regardless of which endpoint supplied
-    the label. A boundary edge where NEITHER side is a variable-type node
-    has no expressible port and is left without a visual replacement
-    (rare/unsupported wiring) — it still contributes to the interface via
-    the mechanism above.
+    A crossing edge hidden on this canvas is left as it is: it binds nothing,
+    and redrawing it restores it. A selection a path leaves and re-enters is
+    refused (:func:`domain.ports.find_reentry`).
     """
     from scistack_gui import ids
     from scistack_gui.stores import layout as layout_store
     from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.runtime.db import get_db
-    from scistack_gui.domain import graph_builder
     from scistack_gui.domain.edge_resolver import node_id_to_var_label
+    from scistack_gui.domain.edge_view import effective_edges
     from scistack_gui.domain.scope_filter import node_scope
 
     db = get_db()
@@ -211,108 +205,236 @@ def extract_to_submodule(pipeline_id: str, node_ids: list[str], name: str) -> di
     if not node_id_set:
         raise ValueError("select at least one node to extract")
 
-    manual_nodes = ps.get_manual_nodes(db)
+    view = effective_edges(db, pipeline_id, caller="extract_to_submodule")
+    manual_nodes = view.manual_nodes
     positions_by_scope = layout_store.read_positions_by_scope()
     for nid in node_id_set:
         scope = node_scope(nid, manual_nodes, positions_by_scope)
         if scope != pipeline_id:
             raise ValueError(f"node '{nid}' is not on pipeline '{pipeline_id}'")
 
-    all_edges = ps.get_manual_edges(db)
+    bare_selected = {ids.strip_placement(n) for n in node_id_set}
 
-    # Classify boundary edges (exactly one endpoint moved) — see docstring
-    # for why the originals are kept rather than deleted.
-    new_edges: list[dict] = []  # {source, target, sourceHandle, targetHandle}
-    for e in all_edges:
-        src, tgt = e["source"], e["target"]
-        src_moved, tgt_moved = src in node_id_set, tgt in node_id_set
-        if src_moved == tgt_moved:
-            continue  # both moved (internal) or neither (irrelevant) — untouched
+    def is_moved(end: str) -> bool:
+        # An edge may name a selected node by its bare or its placed spelling.
+        if end in node_id_set:
+            return True
+        parsed = ids.parse_placement_id(end)
+        if parsed is not None and parsed[1] != pipeline_id:
+            return False
+        return ids.strip_placement(end) in bare_selected
 
-        if src_moved:
-            kept_id, moved_id = tgt, src
-        else:
-            kept_id, moved_id = src, tgt
-        # Kept side first (the common case: a function moved, its
-        # connected variable stayed put); fall back to the moved side
-        # (e.g. a variable itself moved, leaving a downstream function
-        # behind) — either endpoint may be the variable-type one.
-        var_label = node_id_to_var_label(kept_id, {}, manual_nodes)
-        if var_label is None:
-            var_label = node_id_to_var_label(moved_id, {}, manual_nodes)
-        if var_label is None:
-            logger.warning(
-                "[scope_service] extract_to_submodule: boundary edge "
-                "%s -> %s has no variable-type node on either side; "
-                "no visual replacement added", src, tgt,
-            )
-            continue
-        if src_moved:
-            new_edges.append({
-                "source": "__NEW_USE__", "target": tgt,
-                "sourceHandle": out_handle(var_label), "targetHandle": e.get("targetHandle"),
-            })
-        else:
-            new_edges.append({
-                "source": src, "target": "__NEW_USE__",
-                "sourceHandle": e.get("sourceHandle"), "targetHandle": in_handle(var_label),
-            })
+    def is_here(end: str) -> bool:
+        return node_scope(end, manual_nodes, positions_by_scope) == pipeline_id
+
+    def label_of(end: str) -> str:
+        meta = manual_nodes.get(end) or manual_nodes.get(ids.strip_placement(end)) or {}
+        return meta.get("label") or ids.strip_placement(end)
+
+    def var_label_of(end: str) -> "str | None":
+        return node_id_to_var_label(end, {}, manual_nodes)
+
+    here = [
+        e for e in view.drawn_list
+        if is_here(e.get("source") or "") and is_here(e.get("target") or "")
+    ]
+    crossing = [e for e in here if is_moved(e["source"]) != is_moved(e["target"])]
+
+    reentry = ports.find_reentry(crossing, here, is_moved)
+    if reentry is not None:
+        path = " -> ".join(label_of(n) for n in reentry)
+        logger.warning(
+            "[scope_service] extract_to_submodule refused: %d selected node(s) on "
+            "'%s', a path leaves and re-enters the selection: %s",
+            len(node_id_set), pipeline_id, path,
+        )
+        raise SubmoduleSelectionError(
+            f"Can't make a submodule from this selection: {path} leaves the "
+            "selection and comes back into it. Select the nodes in between too, "
+            "or leave out the node it returns to."
+        )
+
+    planned = ports.plan_boundary(crossing, is_moved, var_label_of, label_of)
 
     # Centroid of the selection's CURRENT positions, for the placed node.
     parent_positions = positions_by_scope.get(pipeline_id, {})
     selected_positions = [parent_positions[n] for n in node_id_set if n in parent_positions]
     cx = sum(p["x"] for p in selected_positions) / len(selected_positions) if selected_positions else 0.0
     cy = sum(p["y"] for p in selected_positions) / len(selected_positions) if selected_positions else 0.0
+    min_x = min((p["x"] for p in selected_positions), default=0.0)
+    max_x = max((p["x"] for p in selected_positions), default=0.0)
+    min_y = min((p["y"] for p in selected_positions), default=0.0)
 
-    new_pid = ps.create_pipeline(db, name)
+    # One transaction: a failure partway must not leave nodes half-moved. A call
+    # that raises records no undo step (history.recording), so anything it had
+    # already written could never be undone.
+    n_rewritten = 0
+    try:
+        with ps.transaction(db, "extract_to_submodule"):
+            new_pid = ps.create_pipeline(db, name)
+            use_id = add_pipeline_use(pipeline_id, new_pid, None, cx, cy)["use_id"]
 
-    for nid in node_id_set:
-        # A selected node may itself be an existing submodule placement —
-        # its rendering scope is the USE row's parent, not just its
-        # _pipeline_nodes row (see move_pipeline_use_parent's docstring);
-        # both must move together.
-        if manual_nodes.get(nid, {}).get("type") == "pipelineNode":
-            ps.move_pipeline_use_parent(db, nid, new_pid)
-        ps.move_node_scope(db, nid, new_pid)
+            rows = {ports.INPUT_PORT_NODE: 0, ports.OUTPUT_PORT_NODE: 0}
+            for port in planned:
+                is_input = port.direction == ports.INPUT_PORT_NODE
+                order = rows[port.direction]
+                rows[port.direction] += 1
+                port_id = ids.new_manual_node_id(port.direction, port.name)
+                layout_store.write_manual_node(
+                    port_id,
+                    min_x - PORT_NODE_MARGIN if is_input else max_x + PORT_NODE_MARGIN,
+                    min_y + order * PORT_NODE_SPACING,
+                    port.direction,
+                    port.name,
+                    pipeline_id=new_pid,
+                )
 
-        # A graduated (placement-qualified) DB-derived node's id embeds
-        # its OLD scope — node_scope trusts that suffix over which bucket
-        # holds the position, so simply re-writing the position under the
-        # unchanged key would go stale. Re-key it for the new scope and
-        # rewrite any internal edges that referenced the old key.
-        parsed = ids.parse_placement_id(nid)
-        new_node_id = (
-            ids.placement_id(parsed[0], new_pid) if parsed else None
+                outer_written: set[tuple] = set()
+                for e in port.edges:
+                    inner = {"id": ids.new_manual_edge_id()}
+                    if is_input:
+                        inner.update(source=port_id, target=e["target"])
+                        if e.get("targetHandle"):
+                            inner["targetHandle"] = e["targetHandle"]
+                        outer = {
+                            "source": e["source"],
+                            "target": use_id,
+                            "sourceHandle": e.get("sourceHandle"),
+                            "targetHandle": in_handle(port.name),
+                        }
+                    else:
+                        inner.update(source=e["source"], target=port_id)
+                        if e.get("sourceHandle"):
+                            inner["sourceHandle"] = e["sourceHandle"]
+                        outer = {
+                            "source": use_id,
+                            "target": e["target"],
+                            "sourceHandle": out_handle(port.name),
+                            "targetHandle": e.get("targetHandle"),
+                        }
+                    ps.delete_manual_edge(db, e["id"])
+                    # Fan-out: a source feeding several inner nodes is one port
+                    # and one outer edge; an output feeding several outer nodes
+                    # is one port and one inner edge.
+                    side = (outer["source"], outer["target"], outer["targetHandle"])
+                    inner_side = (inner["source"], inner["target"], inner.get("targetHandle"))
+                    if inner_side not in outer_written:
+                        outer_written.add(inner_side)
+                        ps.write_manual_edge(db, inner)
+                    if side not in outer_written:
+                        outer_written.add(side)
+                        ps.write_manual_edge(db, {"id": ids.new_manual_edge_id(), **outer})
+                    n_rewritten += 1
+
+            for nid in node_id_set:
+                # A selected node may itself be an existing submodule placement —
+                # its rendering scope is the USE row's parent, not just its
+                # _pipeline_nodes row (see move_pipeline_use_parent's docstring);
+                # both must move together.
+                if manual_nodes.get(nid, {}).get("type") == "pipelineNode":
+                    ps.move_pipeline_use_parent(db, nid, new_pid)
+                ps.move_node_scope(db, nid, new_pid)
+
+                # A graduated (placement-qualified) DB-derived node's id embeds
+                # its OLD scope — node_scope trusts that suffix over which bucket
+                # holds the position, so simply re-writing the position under the
+                # unchanged key would go stale. Re-key it for the new scope and
+                # rewrite any internal edges that referenced the old key.
+                parsed = ids.parse_placement_id(nid)
+                new_node_id = (
+                    ids.placement_id(parsed[0], new_pid) if parsed else None
+                )
+                layout_store.move_node_position(nid, new_pid, new_node_id=new_node_id)
+                if new_node_id:
+                    ps.rename_edge_endpoints(db, nid, new_node_id)
+    except Exception as exc:
+        logger.warning(
+            "[scope_service] extract_to_submodule: rolled back, nothing moved "
+            "(%d node(s) from '%s', name=%r): %s: %s",
+            len(node_id_set), pipeline_id, name, type(exc).__name__, exc,
         )
-        layout_store.move_node_position(nid, new_pid, new_node_id=new_node_id)
-        if new_node_id:
-            ps.rename_edge_endpoints(db, nid, new_node_id)
-
-    use_result = add_pipeline_use(pipeline_id, new_pid, None, cx, cy)
-    use_id = use_result["use_id"]
-
-    seen: set[tuple] = set()
-    for spec in new_edges:
-        source = use_id if spec["source"] == "__NEW_USE__" else spec["source"]
-        target = use_id if spec["target"] == "__NEW_USE__" else spec["target"]
-        key = (source, target, spec["sourceHandle"], spec["targetHandle"])
-        if key in seen:
-            continue  # de-dupe: multiple original edges collapsing onto one port
-        seen.add(key)
-        ps.write_manual_edge(db, {
-            "id": ids.new_manual_edge_id(),
-            "source": source,
-            "target": target,
-            "sourceHandle": spec["sourceHandle"],
-            "targetHandle": spec["targetHandle"],
-        })
+        raise
 
     logger.info(
         "[scope_service] extract_to_submodule: %d node(s) from '%s' -> new "
-        "pipeline '%s' (%s), %d boundary edge(s) added for visual continuity",
-        len(node_id_set), pipeline_id, name, new_pid, len(seen),
+        "pipeline '%s' (%s), %d port(s) %s, %d crossing edge(s) rewritten",
+        len(node_id_set), pipeline_id, name, new_pid, len(planned),
+        [(p.direction, p.name) for p in planned], n_rewritten,
     )
     return {"ok": True, "pipeline_id": new_pid, "use_id": use_id}
+
+
+def check_new_port(db, node_type: str, label: str, pipeline_id: str) -> None:
+    """Refuse a port on a canvas nothing can place, or a duplicate name.
+
+    One rule for ``put_layout`` (the user inserting a node); extract names its
+    own ports through ``ports.unique_port_name``.
+    """
+    from scistack_gui.stores import pipeline_store as ps
+
+    if pipeline_id in {h["pipeline_id"] for h in ps.list_hypotheses(db)}:
+        raise PortError(
+            "Input and output nodes belong inside a submodule. This canvas is a "
+            "hypothesis, which nothing places, so its ports could never connect."
+        )
+    existing = ports.ports_of_scope(
+        pipeline_id, ps.get_manual_nodes(db), ps.get_hidden_node_ids(db, pipeline_id)
+    )
+    direction = "inputs" if node_type == ports.INPUT_PORT_NODE else "outputs"
+    if label in existing[direction]:
+        raise PortError(
+            f"This submodule already has an {direction[:-1]} port named '{label}'. "
+            "Choose another name."
+        )
+
+
+def rename_port(node_id: str, name: str) -> dict:
+    """Rename an input/output node, and the outer edges on every placement
+    that connect to its port. Wiring and identity don't change."""
+    from scistack_gui.runtime.db import get_db
+    from scistack_gui.stores import pipeline_store as ps
+
+    db = get_db()
+    name = name.strip()
+    meta = ps.get_manual_nodes(db).get(node_id)
+    if meta is None or meta.get("type") not in ports.PORT_NODE_TYPES:
+        raise PortError(f"'{node_id}' is not an input or output node.")
+    if not name:
+        raise PortError("A port needs a name.")
+    if name == meta["label"]:
+        return {"ok": True}
+    check_new_port(db, meta["type"], name, meta["pipeline_id"])
+
+    is_input = meta["type"] == ports.INPUT_PORT_NODE
+    old_handle = in_handle(meta["label"]) if is_input else out_handle(meta["label"])
+    new_handle = in_handle(name) if is_input else out_handle(name)
+    placements = {
+        u["use_id"]
+        for u in ps.get_pipeline_uses(db)
+        if u["child_pipeline_id"] == meta["pipeline_id"]
+    }
+    field_end, field_handle = (
+        ("target", "targetHandle") if is_input else ("source", "sourceHandle")
+    )
+    n_edges = 0
+    with ps.transaction(db, "rename_port"):
+        ps.write_manual_node(db, node_id, meta["type"], name, meta["pipeline_id"])
+        for edge in ps.get_manual_edges(db):
+            if edge.get(field_end) in placements and edge.get(field_handle) == old_handle:
+                ps.write_manual_edge(db, {**edge, field_handle: new_handle})
+                n_edges += 1
+    logger.info(
+        "[scope_service] rename_port: %s '%s' -> '%s' on '%s' (%d outer edge(s))",
+        meta["type"], meta["label"], name, meta["pipeline_id"], n_edges,
+    )
+    _notify_scope_changed("rename_port")
+    return {"ok": True}
+
+
+def _notify_scope_changed(source: str) -> None:
+    from scistack_gui.services.layout_service import _notify_dag_updated
+
+    _notify_dag_updated(source)
 
 
 def _clone_nodes(
@@ -473,6 +595,28 @@ def duplicate_pipeline(pipeline_id: str, new_name: str) -> dict:
     return {"ok": True, "pipeline_id": new_pid}
 
 
+def duplicate_placement(use_id: str, new_name: str) -> dict:
+    """Give one placement its own independent copy of its submodule: the copy
+    replaces the submodule on this placement, in place. Its connections stay (the
+    copy has the same ports), and from here they can differ from the original's,
+    which is how a submodule with one wiring gets connected differently."""
+    from scistack_gui.stores import pipeline_store as ps
+    from scistack_gui.runtime.db import get_db
+
+    db = get_db()
+    use = next((u for u in ps.get_pipeline_uses(db) if u["use_id"] == use_id), None)
+    if use is None:
+        raise ValueError(f"no placement {use_id!r}")
+    new_pid = duplicate_pipeline(use["child_pipeline_id"], new_name)["pipeline_id"]
+    ps.set_use_child(db, use_id, new_pid, new_name)
+    logger.info(
+        "[scope_service] duplicate_placement: %s now places '%s' (%s), a copy of %s",
+        use_id, new_name, new_pid, use["child_pipeline_id"],
+    )
+    _notify_scope_changed("duplicate_placement")
+    return {"ok": True, "pipeline_id": new_pid, "use_id": use_id}
+
+
 def paste_nodes(
     source_pipeline_id: str,
     node_ids: list,
@@ -527,27 +671,18 @@ def duplicate_hypothesis(pipeline_id: str, new_name: str) -> dict:
 
 
 def pipeline_interface(pipeline_id: str) -> dict:
-    """A scope's ports from the document graph (see domain.scope_filter)."""
+    """A submodule's ports, in order, from its input/output nodes (the one
+    owner: ``domain.ports.ports_of_scope``)."""
     from scistack_gui.stores import layout as layout_store
     from scistack_gui.stores import pipeline_store as ps
     from scistack_gui.runtime.db import get_db
-    from scistack_gui.domain.scope_filter import document_interface
-
-    from scistack_gui.domain.edge_view import effective_edges
 
     db = get_db()
-    # The ports a scope exposes come from the edges ITS canvas draws
-    # (edge_view, the one owner). Raw rows included edges hidden there.
-    view = effective_edges(db, pipeline_id, caller=f"pipeline_interface({pipeline_id})")
-    manual_nodes = view.manual_nodes
-    edges = view.drawn_list
-    uses_by_parent: dict = {}
-    for use in ps.get_pipeline_uses(db):
-        uses_by_parent.setdefault(use["parent_pipeline_id"], []).append(use)
-    positions_by_scope = layout_store.read_positions_by_scope()
-    hidden_ports = ps.get_hidden_ports_by_scope(db)
-    return document_interface(
-        pipeline_id, manual_nodes, edges, uses_by_parent, positions_by_scope, hidden_ports
+    return ports.ports_of_scope(
+        pipeline_id,
+        ps.get_manual_nodes(db),
+        ps.get_hidden_node_ids(db, pipeline_id),
+        layout_store.read_positions_by_scope().get(pipeline_id),
     )
 
 
@@ -556,33 +691,22 @@ def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
     ``scope_id``, carrying the child's name, binding, and ports."""
     from scistack_gui.stores import layout as layout_store
     from scistack_gui.stores import pipeline_store as ps
-    from scistack_gui.domain.scope_filter import document_interface
 
-    all_uses = ps.get_pipeline_uses(db)
-    uses_by_parent: dict = {}
-    for use in all_uses:
-        uses_by_parent.setdefault(use["parent_pipeline_id"], []).append(use)
-    if not uses_by_parent.get(scope_id):
+    uses = ps.get_pipeline_uses(db, scope_id)
+    if not uses:
         return []
-
-    from scistack_gui.domain.edge_view import effective_edges
-
+    manual_nodes = ps.get_manual_nodes(db)
     positions_by_scope = layout_store.read_positions_by_scope()
-    hidden_ports = ps.get_hidden_ports_by_scope(db)
     names = {p["pipeline_id"]: p["name"] for p in ps.list_pipelines(db)}
 
     nodes = []
-    for use in uses_by_parent[scope_id]:
+    for use in uses:
         child_id = use["child_pipeline_id"]
-        # The child's ports come from the edges the CHILD's canvas draws.
-        view = effective_edges(db, child_id, caller=f"build_pipeline_nodes({child_id})")
-        iface = document_interface(
+        iface = ports.ports_of_scope(
             child_id,
-            view.manual_nodes,
-            view.drawn_list,
-            uses_by_parent,
-            positions_by_scope,
-            hidden_ports,
+            manual_nodes,
+            ps.get_hidden_node_ids(db, child_id),
+            positions_by_scope.get(child_id),
         )
         nodes.append(
             {
@@ -602,35 +726,6 @@ def build_pipeline_nodes(db, scope_id: str) -> list[dict]:
         "[scope_service] built %d pipelineNode(s) for scope %s", len(nodes), scope_id
     )
     return nodes
-
-
-def hide_port(pipeline_id: str, direction: str, var_type: str) -> dict:
-    """Suppress a variable type's exposed port on ``pipeline_id``'s
-    interface (to-do #9) — see pipeline_store.hide_port /
-    domain.scope_filter.document_interface."""
-    from scistack_gui.stores import pipeline_store as ps
-    from scistack_gui.runtime.db import get_db
-
-    ps.hide_port(get_db(), pipeline_id, direction, var_type)
-    return {"ok": True}
-
-
-def unhide_port(pipeline_id: str, direction: str, var_type: str) -> dict:
-    from scistack_gui.stores import pipeline_store as ps
-    from scistack_gui.runtime.db import get_db
-
-    ps.unhide_port(get_db(), pipeline_id, direction, var_type)
-    return {"ok": True}
-
-
-def get_hidden_ports(pipeline_id: str) -> dict:
-    """One scope's hidden ports as JSON-friendly lists (the frontend
-    context menu's Show/Hide label needs to know current state)."""
-    from scistack_gui.stores import pipeline_store as ps
-    from scistack_gui.runtime.db import get_db
-
-    hidden = ps.get_hidden_ports(get_db(), pipeline_id)
-    return {"input": sorted(hidden["input"]), "output": sorted(hidden["output"])}
 
 
 def export_pipeline(pipeline_id: str) -> dict:

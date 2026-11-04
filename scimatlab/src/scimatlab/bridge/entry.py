@@ -61,7 +61,7 @@ def for_each_prepare(
     db=None,
     dry_run: bool = False,
     skip_computed: bool = False,
-    finalized: bool = False,
+    save: bool = True,
     schema_keys=None,
     schema_filter=None,
     glue=None,
@@ -126,11 +126,11 @@ def for_each_prepare(
         in MATLAB's loop. The hook is fed the MATLAB-computed ``fn_hash`` so
         its function-hash comparison matches what the save path stored.
         No-op (with a warning) when no database is available.
-    finalized : bool
-        Endpoint (``plot_``/``stat_`` fn_name prefix) draft/record flag (D3).
-        Policy is computed by scidb's ``_endpoint_policy`` (shared with the
-        Python path): drafts suppress the save phase in ``for_each_save``;
-        stat_ functions default ``as_table`` on. MATLAB does its own fn
+    save : bool
+        MATLAB's ``save`` option. Prepare only needs it for the endpoint notice and
+        policy (``_endpoint_policy``, shared with the Python path); the save
+        phase itself is decided by ``for_each_save``'s own ``save``. stat_
+        functions default ``as_table`` on. MATLAB does its own fn
         wrapping using the returned ``endpoint_kind``/``path_param``.
     glue : dict or None
         ``{param_name: [{name, source_text, per_schema_key}, ...]}`` — the
@@ -264,13 +264,16 @@ def for_each_prepare(
     else:
         as_table_arg = list(as_table)
 
-    # Endpoint policy (plot_/stat_ prefixes + finalized): shared with the
-    # Python path via scidb's _endpoint_policy — detection, the
-    # plot-requires-PathOutput contract, the stat_ as_table default, draft
-    # save suppression (applied in for_each_save), and warnings. MATLAB does
+    from scifor.options import reject_removed_options
+
+    reject_removed_options(dict(metadata_iterables))
+
+    # Endpoint policy (plot_/stat_ prefixes): shared with the Python path via
+    # scidb's _endpoint_policy — detection, the plot-requires-PathOutput
+    # contract, the stat_ as_table default, and the draft notice. MATLAB does
     # the language-specific fn wrapping itself from the returned kind.
-    endpoint_kind, endpoint_path_param, as_table_arg, save_suppressed = (
-        external_loop.endpoint_policy(str(fn_name), inputs, bool(finalized), as_table_arg)
+    endpoint_kind, endpoint_path_param, as_table_arg = external_loop.endpoint_policy(
+        str(fn_name), inputs, bool(save), as_table_arg
     )
 
     # Glue chains: MATLAB structs → GlueSpec, language "matlab". Bodies stay
@@ -369,8 +372,9 @@ def for_each_prepare(
     # fn's own hash would never match, forcing eternal recompute. The hook is
     # applied inside _for_each_prepare's Step 14 combo filter, so the returned
     # full_combos already exclude skippable combos.
+    # An endpoint draft never skips (same rule as scidb.for_each).
     pre_combo_hook = None
-    if skip_computed and outputs:
+    if skip_computed and outputs and (endpoint_kind is None or save):
         skip_db = resolved_db
         if skip_db is None:
             try:
@@ -571,7 +575,6 @@ def for_each_prepare(
         "rid_rename_map": rid_rename_map,
         "where": where,
         "endpoint_kind": endpoint_kind,
-        "save_suppressed": save_suppressed,
     }
 
     from scidb.model.log import Log as _BridgeLog
@@ -804,12 +807,6 @@ def for_each_save(
     outputs = cached["outputs"]
     db = cached["db"]
     rid_rename_map = cached.get("rid_rename_map", {})
-    # Endpoint DRAFT (finalized=False): policy computed once in prepare via
-    # _endpoint_policy; the save phase is suppressed here Python-side so
-    # MATLAB never re-implements the rule. Draft artifact stamping still
-    # runs inside _for_each_save_resolved.
-    if cached.get("save_suppressed"):
-        save = False
 
     # Reverse the bridge-boundary sanitization on the way back: MATLAB
     # produced result tables whose columns include the sanitized combo handle
@@ -963,7 +960,6 @@ def run_failure_group_json(exc, fn_name: str) -> str:
 def normalize_stat_result(
     json_str: str,
     report_path: str = "",
-    finalized: bool = False,
     fn_name: str = "stat_fn",
 ) -> str:
     """Bridge entry: canonicalize a MATLAB stat_ result into the stored
@@ -981,7 +977,6 @@ def normalize_stat_result(
     return normalize_stat_payload(
         str(json_str),
         str(report_path) or None,
-        bool(finalized),
         fn_name=str(fn_name),
     )
 

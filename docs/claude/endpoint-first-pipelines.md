@@ -92,8 +92,8 @@ With the registry, `run_until(plot_gait, ...)` is:
 1. Find registered ancestors of the target step (walk input-type ←
    output-type edges).
 2. Topologically sort.
-3. Run each with `skip_computed=True` (endpoints obey their own
-   `finalized` draft/record semantics as usual).
+3. Run each with `skip_computed=True` (endpoints record like any
+   other step).
 
 A GUI pipeline builder then falls out: every node the user places is an
 endpoint (or step) spec; edges are inferred from variable types; "show me
@@ -260,7 +260,7 @@ pipe.step(compute_speed, FilteredSignal, subject=SUBJECTS)
 pipe.step(plot_gait, Speed, PathOutput("figs/gait_{subject}.png"),
           subject=SUBJECTS)
 
-pipe.run_until(plot_gait, finalized=True)   # or pipe.run_all()
+pipe.run_until(plot_gait)   # or pipe.run_all()
 ```
 
 `step()` takes exactly the `for_each` signature but defers execution. Zero
@@ -430,12 +430,12 @@ Python and MATLAB (`+scifor/for_each.m`, `+scidb/for_each.m`).
 Pull execution made every step target-addressable but not endpoints
 *privileged* — half-intentional: a plot being an ordinary step is what
 gives it lineage, skip_computed, variant identity, and stamping for free.
-The endpoint machinery (draft/finalized, PathOutput, stamps, report CLI)
+The endpoint machinery (drafts, PathOutput, stamps, report CLI)
 already covers their leaf semantics. What remains is a thin vocabulary on
 `Pipeline`, cheap because `_endpoint_policy` already detects endpoints:
 
 - `pipe.endpoints()` — the endpoint steps (the GUI's top-level cards).
-- `pipe.run_endpoints(finalized=...)` — "make all my figures and stats";
+- `pipe.run_endpoints()` — "make all my figures and stats";
   each endpoint pulls its own ancestry.
 - `pipe.show(plot_gait)` — draft-run one endpoint + ancestors, return the
   rendered artifact paths (the everyday "let me look at it" verb).

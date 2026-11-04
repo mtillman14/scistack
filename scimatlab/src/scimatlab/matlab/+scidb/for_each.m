@@ -37,11 +37,6 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
 %       db            - Optional DatabaseManager for load/save operations
 %       where         - Optional scidb.Filter for input loading
 %       as_table      - Controls which inputs are passed as full tables
-%       finalized     - Endpoint (plot_/stat_ NAMED functions) draft/record
-%                       flag. Default false = DRAFT: plot_ figures still
-%                       render to their PathOutput path, stat_ results are
-%                       printed, but NOTHING is recorded. Pass true to save
-%                       records with full lineage (+ artifact stamping).
 %       glue          - struct: input name -> a NAMED glue_ function handle
 %                       (or a cell array of them, applied in order) that
 %                       reshapes that input's loaded table in memory before
@@ -211,14 +206,6 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
         fn_hash = '';
     end
 
-    % Endpoint (plot_/stat_) detection needs a NAMED function handle:
-    % func2str(@(x)...) starts with '@' and can never match the prefix.
-    if opts.finalized && startsWith(fn_name, '@')
-        scifor.Log.warn(['finalized=true passed with an anonymous function ' ...
-            'handle: endpoint detection requires a NAMED plot_*/stat_* ' ...
-            'function, so the flag will be ignored.']);
-    end
-
     scifor.Log.info('===== for_each(%s) start =====', fn_name);
 
     % Dry-run is handled below by passing dry_run=true through the bridge
@@ -373,7 +360,6 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                        'distribute', logical(opts.distribute), ...
                        'as_table', py_as_table, ...
                        'save', logical(do_save), ...
-                       'finalized', logical(opts.finalized), ...
                        'skip_computed', logical(opts.skip_computed), ...
                        'schema_keys', py_schema_keys, ...
                        'schema_filter', py_schema_filter, ...
@@ -405,7 +391,7 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                'db', py_db, ...
                'dry_run', logical(dry_run), ...
                'skip_computed', logical(opts.skip_computed), ...
-               'finalized', logical(opts.finalized), ...
+               'save', logical(do_save), ...
                'schema_keys', py_schema_keys, ...
                'schema_filter', py_schema_filter, ...
                'glue', py_glue, ...
@@ -711,10 +697,10 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                 fn_name, varargin{:});
         else
             fn = @(varargin) stat_endpoint_call(user_fn, endpoint_path_idx, ...
-                logical(opts.finalized), fn_name, varargin{:});
+                logical(do_save), fn_name, varargin{:});
         end
-        scifor.Log.info('for_each(%s): wrapped as %s endpoint (finalized=%d)', ...
-            fn_name, endpoint_kind, opts.finalized);
+        scifor.Log.info('for_each(%s): wrapped as %s endpoint (save=%d)', ...
+            fn_name, endpoint_kind, do_save);
     end
 
     % --- MATLAB inner loop: scifor.for_each ---
@@ -1496,7 +1482,7 @@ function export_endpoint_figure(fig, out_path)
 end
 
 
-function out = stat_endpoint_call(user_fn, path_idx, finalized, fn_name, varargin)
+function out = stat_endpoint_call(user_fn, path_idx, do_save, fn_name, varargin)
 %STAT_ENDPOINT_CALL  MATLAB side of the stat_ endpoint wrapper.
 %   Mirrors Python's _make_stat_wrapper: in DRAFT mode the resolved
 %   PathOutput arg is replaced with [] (report writers should skip their
@@ -1507,7 +1493,7 @@ function out = stat_endpoint_call(user_fn, path_idx, finalized, fn_name, varargi
 %   normalization point.
     report_path = '';
     if ~isempty(path_idx) && path_idx <= numel(varargin)
-        if finalized
+        if do_save
             report_path = char(string(varargin{path_idx}));
         else
             varargin{path_idx} = [];
@@ -1524,8 +1510,8 @@ function out = stat_endpoint_call(user_fn, path_idx, finalized, fn_name, varargi
              'result) or a JSON char; got %s.'], fn_name, class(r));
     end
     out = char(py.scimatlab.bridge.normalize_stat_result( ...
-        json_str, report_path, finalized, fn_name));
-    if ~finalized
+        json_str, report_path, fn_name));
+    if ~do_save
         try
             pretty = jsonencode(jsondecode(out), 'PrettyPrint', true);
         catch
@@ -1975,7 +1961,6 @@ function [meta_args, opts] = split_options(varargin)
     opts.on_error = 'continue';  % scifor owns it; validated there (Python)
     opts.on_duplicate = 'error';  % scidb.run.combine owns it; validated there (Python)
     opts.skip_computed = false;
-    opts.finalized = false;
     opts.categorical = false;   % scifor option; applied to the returned table
     opts.share_limits = struct();
     opts.schema_keys = string.empty;
@@ -2050,8 +2035,6 @@ function [meta_args, opts] = split_options(varargin)
                 opts.skip_computed = logical(val);
             case "categorical"
                 opts.categorical = logical(val);
-            case "finalized"
-                opts.finalized = logical(val);
             case "share_limits"
                 opts.share_limits = val;
             case "schema_keys"

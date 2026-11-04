@@ -2,8 +2,8 @@
  * PipelineRunController — the plan-preview gate for pipeline runs (R2/G2).
  *
  * Renders the plan-preview dialog whenever a run control posts a
- * PlanRequest (function-node "Run until here", pipeline-node "Run",
- * canvas "Run endpoints"), and routes the run's WebSocket/JSON-RPC
+ * PlanRequest (function-node "Run until here", pipeline-node "Run"),
+ * and routes the run's WebSocket/JSON-RPC
  * messages (run_output / run_done) into the existing run console
  * (RunLogContext → Runs tab).
  *
@@ -82,7 +82,6 @@ export default function PipelineRunController() {
         pipeline_id: req.pipeline_id,
         mode: req.mode,
         target: req.target ?? '',
-        finalized: req.finalized ?? null,
         skip_computed: true,
         run_id: runId,
       })
@@ -116,9 +115,6 @@ const STATE_CHIP: Record<string, { color: string; background: string }> = {
 
 function modeDescription(req: PlanRequest): string {
   if (req.mode === 'until') return `Run every step up to and including '${req.target}'`
-  if (req.mode === 'endpoints') {
-    return `Run all endpoints (${req.finalized ? 'finalized' : 'draft'})`
-  }
   return 'Run all steps'
 }
 

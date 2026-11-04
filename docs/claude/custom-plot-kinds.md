@@ -17,7 +17,7 @@ which draws the figure while Plot Studio's settings still apply.
   Studio never offers custom kinds.
 - **The node's edges bind the inputs**, read through the same owners a run
   uses: `edge_view.effective_edges` and `edge_resolver.resolve_function_edges`.
-  A node with no drawn input edges that has run with `finalized=True` takes
+  A node with no drawn input edges that has run and recorded takes
   its wiring from history (`derive_target_for_node`). Edges are read again on
   every request, because `CustomPlot.node` names the node rather than its
   inputs.

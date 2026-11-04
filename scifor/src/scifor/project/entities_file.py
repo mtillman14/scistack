@@ -1130,6 +1130,125 @@ def rename_entry(text: str, section: str, old: str, new: str) -> str:
     return splice(text, key_span, new)
 
 
+def remove_entry(text: str, section: str, name: str) -> str:
+    """*text* with the entry ``name`` in *section* removed.
+
+    The whole entry goes: its key, its value (however many lines it spans)
+    and a comment on the line the value ends on, which describes that entry.
+    Every other byte -- neighbours, blank lines, comments on lines of their
+    own, the section header even if it is left empty -- survives. Raises
+    ``ValueError`` when ``name`` is not in *section*, so a caller can never
+    report a delete that removed nothing.
+
+    The undo of this lives in the GUI's history (the file's bytes are
+    snapshotted before the write), not here: a removed entry is not kept
+    anywhere in the file.
+    """
+    entry = _scan(text).get(f"{section}.{name}")
+    if entry is None:
+        raise ValueError(f"No entry '{name}' in [{section}].")
+    key_span, value_span = entry
+    start = text.rfind("\n", 0, key_span.start) + 1
+    nl = text.find("\n", value_span.end)
+    end = len(text) if nl == -1 else nl + 1
+    Log.info(
+        "[entities] remove_entry: [%s] %s (lines %d-%d): %r",
+        section,
+        name,
+        line_number(text, start),
+        line_number(text, max(start, end - 1)),
+        text[start:end],
+    )
+    return text[:start] + text[end:]
+
+
+def remove_variable(text: str, name: str) -> str:
+    """*text* with *name* removed from the ``variables`` array.
+
+    Only that element goes. On a multi-line array its whole line goes with
+    it (a trailing ``# comment`` there describes the element); on a single
+    line the element and one adjoining comma go. Comments on other lines,
+    the other elements and their order survive. Removing the only element
+    leaves ``variables = []``, which is valid and declares nothing. Raises
+    ``ValueError`` when *name* is not in the array.
+    """
+    span = find_entry_span(text, None, VARIABLES)
+    if span is None:
+        raise ValueError(f"No variable '{name}' in the entities file.")
+    current = text[span.start : span.end]
+    element = _array_element_span(current, name)
+    if element is None:
+        raise ValueError(f"No variable '{name}' in the entities file.")
+    start, end = element
+
+    line_start = current.rfind("\n", 0, start) + 1
+    nl = current.find("\n", end)
+    line_end = len(current) if nl == -1 else nl
+    after = current[end:line_end]
+    after_code = _code_part(after).strip()
+    if (
+        "\n" in current
+        and not current[line_start:start].strip()
+        and after_code in ("", ",")
+    ):
+        # The element owns its line: drop the line, newline included.
+        replacement = current[:line_start] + current[line_end + 1 :]
+    else:
+        # Shares a line with other elements: drop it and ONE adjoining
+        # comma -- the following one, else the preceding one (it was last).
+        j = end
+        while j < len(current) and current[j] in " \t":
+            j += 1
+        if j < len(current) and current[j] == ",":
+            j += 1
+            while j < len(current) and current[j] in " \t":
+                j += 1
+            replacement = current[:start] + current[j:]
+        else:
+            i = start
+            while i > 0 and current[i - 1] in " \t":
+                i -= 1
+            if i > 0 and current[i - 1] == ",":
+                i -= 1
+            replacement = current[:i] + current[end:]
+    Log.info(
+        "[entities] remove_variable: %s (line %d)",
+        name,
+        line_number(text, span.start + start),
+    )
+    return splice(text, span, replacement)
+
+
+def _array_element_span(rendered: str, name: str) -> "tuple[int, int] | None":
+    """``(start, end)`` of the string literal for *name* inside the
+    rendered array *rendered* (offsets into *rendered*), or None.
+
+    Literals are found with the same string skipper the scanner uses and
+    decoded by tomllib, so ``"A"`` and ``'A'`` both match and a ``#`` or
+    comma inside a string is never mistaken for structure.
+    """
+    i = 0
+    n = len(rendered)
+    while i < n:
+        c = rendered[i]
+        if c == "#":
+            nl = rendered.find("\n", i)
+            i = n if nl == -1 else nl
+            continue
+        if c in "\"'":
+            end = _skip_string(rendered, i)
+            try:
+                value = tomllib.loads(f"v = {rendered[i:end]}")["v"]
+            except Exception:
+                value = None
+            if value == name:
+                return i, end
+            i = end
+            continue
+        i += 1
+    return None
+
+
 def upsert_entry(text: str, section: str, name: str, rendered: str) -> str:
     """*text* with ``name = rendered`` set in *section*.
 

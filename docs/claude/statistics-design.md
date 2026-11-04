@@ -12,9 +12,9 @@ lifecycle. Two surfaces already exist and are **not** replaced:
 
 - **`stat_` leaf functions** ([endpoints-viz-and-stats-design.md](endpoints-viz-and-stats-design.md)
   D5, [plotting-leaf-nodes.md](plotting-leaf-nodes.md)) — the user writes the
-  test; results are JSON records with lineage, `finalized` draft/record, MATLAB
+  test; results are JSON records with lineage, drafts via `save=False`, MATLAB
   parity via `normalize_stat_payload`.
-- **`scidb report`** — stats tables + `stats.csv` for finalized records.
+- **`scidb report`** — stats tables + `stats.csv` for recorded results.
 
 What is new is the **interactive, no-code layer** — the stats equivalent of
 Plot Studio: choose a design from the same roles, preview numbers and plot
@@ -140,7 +140,7 @@ decides three ownership questions:
   never sees a stats result type.
 
 **O5 folded in**: the `stat_` leaf stays the only write path. A Studio-built
-analysis runs as a `stat_` function calling `scistackstats`, so `finalized`,
+analysis runs as a `stat_` function calling `scistackstats`, so
 lineage and `scidb report` apply unchanged.
 
 ## Component inventory
@@ -210,7 +210,7 @@ lineage and `scidb report` apply unchanged.
 - Validation suite against reference values (R output, textbook datasets)
 
 **Confirmatory vs. exploratory**
-- Build on the Hypothesis tabs + `finalized`: declare the analysis plan first,
+- Build on the Hypothesis tabs: declare the analysis plan first,
   tag each result confirmatory or exploratory, and filter the report on it
 
 ### S9. Compared figures do not feed difference bars — **DEFERRED** (2026-09-27)

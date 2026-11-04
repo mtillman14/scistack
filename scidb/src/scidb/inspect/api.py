@@ -432,15 +432,14 @@ class Inspector:
             "COUNT(DISTINCT CASE WHEN NOT COALESCE(r.excluded, FALSE) "
             "                    THEN r.record_id END) AS record_count, "
             "COUNT(DISTINCT CASE WHEN COALESCE(r.excluded, FALSE) "
-            "                    THEN r.record_id END) AS excluded_count, "
-            "MAX(rs.timestamp) AS last_saved "
+            "                    THEN r.record_id END) AS excluded_count "
             "FROM _variables v "
             "LEFT JOIN _record r ON r.type = v.variable_name "
-            "LEFT JOIN _record_save rs ON rs.record_id = r.record_id "
             "GROUP BY v.variable_name, v.schema_level, v.dtype, v.description "
             "ORDER BY v.variable_name"
         )
         variant_counts = self._variant_counts()
+        last_saved = self.last_saved_by_variable()
         return [
             VariableSummary(
                 name=name,
@@ -450,10 +449,38 @@ class Inspector:
                 record_count=int(n),
                 excluded_count=int(n_ex),
                 variant_count=variant_counts.get(name, 0),
-                last_saved=_iso(last),
+                last_saved=last_saved.get(name),
             )
-            for name, level, dtype, desc, n, n_ex, last in rows
+            for name, level, dtype, desc, n, n_ex in rows
         ]
+
+    @_timed
+    def last_saved_by_variable(self) -> dict[str, str]:
+        """``{variable type: ISO time of its newest save}`` -- the ONE owner
+        of "when was this variable last saved to".
+
+        Per-save recency: ``MAX(_record_save.timestamp)``, never
+        ``_record.created_at``, which is frozen at a record's FIRST save, so
+        re-saving identical content must still move the time. Excluded
+        records count -- they were saved. A type with no saves is absent,
+        not ``None``, so a caller sorting by it puts never-saved types last
+        by testing membership. One batched query (the sidebar asks on every
+        registry fetch), and ``{}`` on a database without the tables.
+        """
+        try:
+            rows = self._duck.fetchall(
+                "SELECT r.type, MAX(rs.timestamp) "
+                "FROM _record r "
+                "JOIN _record_save rs ON rs.record_id = r.record_id "
+                "JOIN _variables v ON v.variable_name = r.type "
+                "GROUP BY r.type"
+            )
+        except Exception as e:  # pre-provenance database: no _record_save
+            Log.debug(f"last_saved_by_variable query failed ({e}); returning {{}}")
+            return {}
+        out = {name: iso for name, ts in rows if (iso := _iso(ts)) is not None}
+        Log.debug(f"last_saved_by_variable: {len(out)} variable type(s) with saves")
+        return out
 
     @_timed
     def variable(self, name: str) -> VariableDetail:
@@ -1601,7 +1628,7 @@ class Inspector:
 
     @_timed
     def report(self, fn: str | None = None, variable=None, all_versions: bool = False):
-        """Collect every finalized endpoint (plot_/stat_) record into a
+        """Collect every endpoint (plot_/stat_) record into a
         ReportData manifest: figures with artifact paths + stamp
         verification, stats with parsed result JSON, per-entry warnings.
         Drafts never appear (no records). See inspect/report.py.

@@ -635,12 +635,12 @@ class TestNeverRunWarning:
 
 
 # ---------------------------------------------------------------------------
-# Endpoint interaction (finalized targeting)
+# Endpoint interaction
 # ---------------------------------------------------------------------------
 
 
-class TestEndpointFinalized:
-    def test_finalized_applies_to_target_endpoint_only(self, db, tmp_path):
+class TestEndpointRuns:
+    def test_run_until_records_the_endpoint(self, db, tmp_path):
         matplotlib = pytest.importorskip("matplotlib")
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
@@ -677,11 +677,11 @@ class TestEndpointFinalized:
             subject=SUBJECTS,
             trial=TRIALS,
             db=db,
-        )  # registered as DRAFT
+        )
 
-        pipe.run_until("plot_filtered", finalized=True)
+        pipe.run_until("plot_filtered")
 
-        # Upstream processing saved normally; endpoint recorded (not draft).
+        # Upstream processing saved normally; endpoint recorded too.
         assert Filtered.load(subject="1", trial="1") is not None
         assert GaitFigure.load(subject="1", trial="1") is not None
         assert (plots / "1_1.png").exists()
@@ -1306,16 +1306,28 @@ class TestEndpointVerbs:
             VerbFigure.load(subject="1", trial="1")  # draft: no record
         assert halve.calls == 4  # ancestry pulled
 
+    def test_show_after_a_recorded_run_still_renders(self, db, tmp_path):
+        """Show must not skip an endpoint just because its record is current."""
+        _seed(db)
+        pipe, plots, VerbFigure = self._with_plot(db, tmp_path)
+        pipe.run_endpoints()
+        (plots / "1_1.png").unlink()
+
+        paths = pipe.show("plot_filtered")
+
+        assert len(paths) == 4
+        assert (plots / "1_1.png").exists()
+
     def test_show_rejects_processing_steps(self, db, tmp_path):
         pipe, _, _ = self._with_plot(db, tmp_path)
         with pytest.raises(ValueError, match="endpoints"):
             pipe.show(halve)
 
-    def test_run_endpoints_finalized_records(self, db, tmp_path):
+    def test_run_endpoints_records(self, db, tmp_path):
         _seed(db)
         pipe, plots, VerbFigure = self._with_plot(db, tmp_path)
 
-        pipe.run_endpoints(finalized=True)
+        pipe.run_endpoints()
 
         assert VerbFigure.load(subject="1", trial="1") is not None
         assert (plots / "2_2.png").exists()
@@ -1331,7 +1343,7 @@ class TestEndpointVerbs:
         assert parent.run_endpoints() == []  # own endpoints: none
         assert not (plots / "1_1.png").exists()
 
-        parent.run_endpoints(include_used=True, finalized=True)
+        parent.run_endpoints(include_used=True)
         assert (plots / "1_1.png").exists()
 
 

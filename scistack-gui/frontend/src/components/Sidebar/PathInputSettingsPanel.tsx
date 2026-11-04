@@ -36,7 +36,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { callBackend } from '../../api'
 import { useScope } from '../../context/ScopeContext'
 import type { PathInputAlternate } from '../DAG/PathInputNode'
-import ReadOnlyDeclarationBanner from './ReadOnlyDeclarationBanner'
+import PanelHeader from './PanelHeader'
 import {
   aliasCount,
   aliasRows,
@@ -216,26 +216,30 @@ export default function PathInputSettingsPanel({ id, label, template, root_folde
 
   return (
     <div style={styles.root}>
-      <input
-        style={locked ? { ...styles.name, ...styles.nameLocked } : styles.name}
-        value={nameDraft}
-        disabled={inputsDisabled}
-        aria-label="PathInput name"
-        title={locked ? undefined : 'Rename — Enter to save, Escape to cancel'}
-        onChange={e => { setNameDraft(e.target.value); clearError() }}
-        onBlur={saveName}
-        onKeyDown={e => {
-          // Enter saves BY blurring, so the save runs once — calling
-          // saveName here as well would fire a second rename of the
-          // already-renamed old name when the panel unmounts.
-          if (e.key === 'Enter') e.currentTarget.blur()
-          if (e.key === 'Escape') { setNameDraft(label); clearError() }
-        }}
+      <PanelHeader
+        kind="pathInput"
+        name={label}
+        nameSlot={(
+            <input
+              style={locked ? { ...styles.name, ...styles.nameLocked } : styles.name}
+              value={nameDraft}
+              disabled={inputsDisabled}
+              aria-label="PathInput name"
+              title={locked ? undefined : 'Rename — Enter to save, Escape to cancel'}
+              onChange={e => { setNameDraft(e.target.value); clearError() }}
+              onBlur={saveName}
+              onKeyDown={e => {
+                // Enter saves BY blurring, so the save runs once — calling
+                // saveName here as well would fire a second rename of the
+                // already-renamed old name when the panel unmounts.
+                if (e.key === 'Enter') e.currentTarget.blur()
+                if (e.key === 'Escape') { setNameDraft(label); clearError() }
+              }}
+            />
+        )}
+        source={editability?.file ? { file: editability.file, line: editability.line } : null}
+        readOnly={locked && editability?.file ? { file: editability.file, line: editability.line } : null}
       />
-
-      {locked && editability?.file && (
-        <ReadOnlyDeclarationBanner file={editability.file} line={editability.line} />
-      )}
 
       <section style={styles.section}>
         <div style={styles.sectionTitle}>Path Template</div>

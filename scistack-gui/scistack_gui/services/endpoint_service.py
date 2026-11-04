@@ -3,7 +3,7 @@ Endpoint service — artifact/stat presentation data for endpoint nodes
 (plan-endpoint-presentation.md, Part B item 1).
 
 Read side rides on scidb's inspect facade: ``inspector.report(fn=...)``
-already collects finalized endpoint records with stamp verification
+already collects endpoint records with stamp verification
 (figures) and parsed result JSON (stats) — this service only converts the
 manifest dataclasses to JSON-safe dicts. Draft outputs never have records;
 they reach the frontend through the show-run's ``show_rendered`` push, not
@@ -22,7 +22,7 @@ REPORT_DIRNAME = "scidb_report"
 
 
 def endpoint_artifacts(db, fn_name: str) -> dict:
-    """Finalized artifacts/stats for one endpoint function, JSON-safe.
+    """Recorded artifacts/stats for one endpoint function, JSON-safe.
 
     Shape: {"figures": [FigureEntry...], "stats": [StatEntry...],
     "warnings": [...]} — see scidb.inspect.report for the entry fields

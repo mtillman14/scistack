@@ -389,17 +389,22 @@ def _run_in_thread(
 
     # Extract run options (dry_run, save, distribute, as_table).
     logger.info("[run_thread] Extracting run options (run_id=%s)", run_id)
+    # Defaults come from scidb.for_each's signature (domain.run_options),
+    # the same answer the sidebar's non-default badges compare against.
+    from scistack_gui.domain.run_options import run_option_defaults
+
+    defaults = run_option_defaults()
     opts = run_options or {}
-    opt_dry_run = opts.get("dry_run", False)
-    opt_save = opts.get("save", True)
-    opt_distribute = opts.get("distribute", False)
+    opt_dry_run = opts.get("dry_run", defaults["dry_run"])
+    opt_save = opts.get("save", defaults["save"])
+    opt_distribute = opts.get("distribute", defaults["distribute"])
     from scistack_gui.services.run_failures import (
         RunFailures,
         on_duplicate_from_config,
         on_error_from_config,
     )
 
-    opt_as_table = opts.get("as_table", False)
+    opt_as_table = opts.get("as_table", defaults["as_table"])
     opt_on_error = on_error_from_config(opts)
     opt_on_duplicate = on_duplicate_from_config(opts)
     logger.debug(
@@ -1292,7 +1297,6 @@ def _run_pipeline_in_thread(
     pipeline_id: str,
     mode: str,
     target: str,
-    finalized,
     skip_computed: bool,
     db: DatabaseManager,
 ):
@@ -1363,7 +1367,6 @@ def _run_pipeline_in_thread(
                 pipeline_id,
                 mode=mode,
                 target=target,
-                finalized=finalized,
                 skip_computed=skip_computed,
                 report_sink=report_sink,
             )
@@ -1475,7 +1478,6 @@ def _run_matlab_pipeline_in_thread(
     pipeline_id: str,
     mode: str,
     target: str,
-    finalized,
     skip_computed: bool,
     db: DatabaseManager,
 ) -> None:
@@ -1528,7 +1530,6 @@ def _run_matlab_pipeline_in_thread(
             {
                 "mode": mode,
                 "target": target,
-                "finalized": finalized,
                 "skip_computed": skip_computed,
             },
         )
@@ -1773,7 +1774,6 @@ def start_pipeline_run(
     pipeline_id: str,
     mode: str = "all",
     target: str = "",
-    finalized=None,
     skip_computed: bool = True,
     run_id: "str | None" = None,
     host_can_dispatch_matlab: bool = False,
@@ -1842,7 +1842,7 @@ def start_pipeline_run(
         _start_run_thread(
             rid,
             _run_matlab_pipeline_in_thread,
-            (rid, pipeline_id, mode, target, finalized, skip_computed, db),
+            (rid, pipeline_id, mode, target, skip_computed, db),
             matlab_sidecar=True,
         )
         return {"run_id": rid}
@@ -1850,7 +1850,7 @@ def start_pipeline_run(
     _start_run_thread(
         rid,
         _run_pipeline_in_thread,
-        (rid, pipeline_id, mode, target, finalized, skip_computed, db),
+        (rid, pipeline_id, mode, target, skip_computed, db),
     )
     return {"run_id": rid}
 

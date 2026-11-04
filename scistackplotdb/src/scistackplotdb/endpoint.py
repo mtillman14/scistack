@@ -14,8 +14,7 @@ If those two ever disagree, the exported pipeline is not what the user
 previewed — the worst failure mode this layer has, and what
 ``tests/test_fanout_parity.py`` exists to prevent.
 
-Everything else the endpoint needs already exists in scidb: ``finalized``,
-artifact stamping, ``skip_computed`` and ``scidb report`` are untouched.
+Everything else the endpoint needs already exists in scidb: artifact stamping, ``skip_computed`` and ``scidb report`` are untouched.
 """
 
 from __future__ import annotations
@@ -61,7 +60,6 @@ def generate_endpoint(
     function_name: str | None = None,
     output_variable: str | None = None,
     path_template: str | None = None,
-    finalized: bool = True,
     x_variable: str | None = None,
 ) -> EndpointCode:
     """
@@ -92,16 +90,14 @@ def generate_endpoint(
         output_variable=output,
         path_template=template,
         iterate_keys=iterate_keys,
-        finalized=finalized,
     )
 
     Log.info(
-        "generated endpoint %s: input=%s output=%s iterate=%s finalized=%s",
+        "generated endpoint %s: input=%s output=%s iterate=%s",
         name,
         input_variable,
         output,
         iterate_keys or "none",
-        finalized,
         layer=LAYER,
     )
     return EndpointCode(
@@ -241,7 +237,6 @@ def _foreach_call(
     output_variable: str,
     path_template: str,
     iterate_keys: list[str],
-    finalized: bool,
 ) -> str:
     variant_inputs = variant_params(spec)
     if variant_inputs:
@@ -306,7 +301,6 @@ def _foreach_call(
         # A plot_ function receives the long-format table (schema keys as
         # columns) — as_table defaults ON only for stat_, so say it explicitly.
         f"    as_table={table_inputs!r},",
-        f"    finalized={finalized},",
     ]
     for key in iterate_keys:
         # [] means "every value present" — the same all-values resolution

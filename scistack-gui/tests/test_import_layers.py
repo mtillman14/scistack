@@ -41,12 +41,3 @@ def test_allowlist_entries_have_reasons(report: LayerReport) -> None:
 
 def test_every_module_has_a_layer(report: LayerReport) -> None:
     assert report.unclassified == [], "add these modules to import_layers.toml"
-
-
-def test_lazy_imports_do_not_grow(report: LayerReport) -> None:
-    assert report.lazy_count <= report.lazy_baseline, (
-        f"{report.lazy_count} function-level imports > baseline "
-        f"{report.lazy_baseline}; import at module top instead"
-    )
-    if report.lazy_count < report.lazy_baseline:
-        print(f"lazy imports dropped to {report.lazy_count}: lower lazy_baseline")

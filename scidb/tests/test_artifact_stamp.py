@@ -175,7 +175,6 @@ class TestPlotStamping:
                 "filename": PathOutput(str(tmp_path / "{subject}_{trial}.png")),
             },
             [PlotFigure],
-            finalized=True,
             subject=["S01", "S02"],
             trial=["1"],
         )
@@ -193,7 +192,7 @@ class TestPlotStamping:
         assert blob["inputs"] == {"signal": [raw.record_id]}
 
     def test_draft_stamp_is_full_minus_record_id(self, db, tmp_path):
-        """Drafts embed everything a finalized run would, minus record_id."""
+        """Drafts embed everything a recorded run would, minus record_id."""
         self._seed()
 
         def plot_sig(signal, filename):
@@ -207,7 +206,8 @@ class TestPlotStamping:
                 "signal": RawSignal,
                 "filename": PathOutput(str(tmp_path / "{subject}_{trial}.png")),
             },
-            [PlotFigure],  # finalized default False -> draft
+            [PlotFigure],
+            save=False,
             subject=["S01", "S02"],
             trial=["1"],
         )
@@ -237,7 +237,6 @@ class TestPlotStamping:
                 "filename": PathOutput(str(tmp_path / "{subject}_{trial}.png")),
             },
             "outputs": [PlotFigure],
-            "finalized": True,
             "subject": ["S01"],
             "trial": ["1"],
         }
@@ -276,7 +275,6 @@ class TestStatReportStamping:
             stat_summary,
             {"df": RawSignal, "filename": PathOutput(str(report))},
             [StatResult],
-            finalized=True,
         )  # grand aggregation
 
         rec = StatResult.load()
@@ -308,6 +306,7 @@ class TestStatReportStamping:
             stat_summary,
             {"df": RawSignal, "filename": PathOutput(str(report))},
             [StatResult],
+            save=False,
         )
 
         assert not report.exists()

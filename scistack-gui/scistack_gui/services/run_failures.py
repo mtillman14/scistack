@@ -36,15 +36,19 @@ _CONSOLE_COMBOS_MAX = 3
 def on_error_from_config(run_options: "dict | None") -> str:
     """``"continue"`` | ``"stop"`` from a run-options blob; an unknown value
     is logged and read as the default rather than failing the run."""
-    value = (run_options or {}).get(ON_ERROR_KEY) or "continue"
+    from scistack_gui.domain.run_options import run_option_defaults
+
+    default = run_option_defaults()["on_error"]
+    value = (run_options or {}).get(ON_ERROR_KEY) or default
     try:
         return validate_on_error(value)
     except ValueError:
         logger.warning(
-            "[run_failures] ignoring unknown on_error=%r in run options; using 'continue'",
+            "[run_failures] ignoring unknown on_error=%r in run options; using %r",
             value,
+            default,
         )
-        return "continue"
+        return default
 
 
 def on_duplicate_from_config(run_options: "dict | None") -> str:
@@ -52,15 +56,19 @@ def on_duplicate_from_config(run_options: "dict | None") -> str:
     is logged and read as the default rather than failing the run."""
     from scidb.run.combine import validate_on_duplicate
 
-    value = (run_options or {}).get(ON_DUPLICATE_KEY) or "error"
+    from scistack_gui.domain.run_options import run_option_defaults
+
+    default = run_option_defaults()["on_duplicate"]
+    value = (run_options or {}).get(ON_DUPLICATE_KEY) or default
     try:
         return validate_on_duplicate(value)
     except ValueError:
         logger.warning(
-            "[run_failures] ignoring unknown on_duplicate=%r in run options; using 'error'",
+            "[run_failures] ignoring unknown on_duplicate=%r in run options; using %r",
             value,
+            default,
         )
-        return "error"
+        return default
 
 
 def _console_block(target: str, groups: "list[dict]", completed: "int | None") -> str:

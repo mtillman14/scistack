@@ -1,11 +1,10 @@
 """Tests for statistics leaf nodes: stat_ detection, JSON record storage,
-the finalized draft/record flag (D3), and csv-stats integration (D5).
+draft (save=False) vs. record (D3), and csv-stats integration (D5).
 
 A function whose name starts with ``stat_`` is a statistics leaf: it returns
 a dict (e.g. a csv-stats result) or a JSON string, normalized to a canonical
-JSON string. ``finalized=True`` stores it as a queryable record with lineage;
-the DEFAULT (``finalized=False``) is DRAFT mode — the result is
-pretty-printed, any PathOutput resolves to None (disabling e.g. csv-stats'
+JSON string, stored as a queryable record with lineage. With ``save=False`` it
+is a DRAFT — the result is pretty-printed, any PathOutput resolves to None (disabling e.g. csv-stats'
 PDF side effect), and nothing is written to the database.
 
 stat_ functions receive the LONG-FORMAT table (as_table defaults on): schema
@@ -15,7 +14,6 @@ group_column / repeated_measures_column contract of csv-stats.
 
 from scidb.provenance import query as provenance_query
 import json as _json
-import warnings as _warnings
 
 import matplotlib
 
@@ -100,7 +98,7 @@ class TestStatRecord:
                 "nested": {"alpha": np.float64(0.05)},
             }
 
-        result = for_each(stat_summary, {"df": StepLen}, [TTestResult], finalized=True)
+        result = for_each(stat_summary, {"df": StepLen}, [TTestResult])
         assert len(result) == 1
 
         rec = TTestResult.load()
@@ -119,7 +117,7 @@ class TestStatRecord:
 
 
 # ---------------------------------------------------------------------------
-# 2. Draft default: print, don't record
+# 2. Draft (save=False): print, don't record
 # ---------------------------------------------------------------------------
 
 
@@ -133,7 +131,7 @@ class TestStatDraft:
             return {"test": "demo", "p_value": 0.04}
 
         with caplog.at_level(logging.INFO, logger="scidb"):
-            result = for_each(stat_summary, {"df": StepLen}, [TTestResult])
+            result = for_each(stat_summary, {"df": StepLen}, [TTestResult], save=False)
 
         assert result is not None and len(result) == 1
         assert db.list_versions(TTestResult) == []
@@ -141,9 +139,9 @@ class TestStatDraft:
         out = capsys.readouterr().out
         assert "[stat draft] stat_summary" in out
         assert '"p_value": 0.04' in out
-        # The not-recorded notice + how-to hint is an INFO log record.
+        # The not-recorded notice is an INFO log record.
         messages = [r.getMessage() for r in caplog.records]
-        assert any("[draft]" in m and "finalized=True" in m for m in messages)
+        assert any("[draft]" in m and "save=False" in m for m in messages)
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +162,7 @@ class TestStatPathOutput:
             stat_summary,
             {"df": StepLen, "filename": PathOutput(str(tmp_path / "report.pdf"))},
             [TTestResult],
+            save=False,
         )
 
         assert received["filename"] is None
@@ -185,7 +184,6 @@ class TestStatPathOutput:
             stat_summary,
             {"df": StepLen, "filename": PathOutput(str(tmp_path / "report.pdf"))},
             [TTestResult],
-            finalized=True,
         )
 
         assert isinstance(received["filename"], str)
@@ -218,7 +216,7 @@ class TestStatReturnContract:
         # scifor catches per-combo exceptions, skips the combo, and logs the
         # failure (WARN first occurrence + summary) on the "scifor" logger.
         with caplog.at_level(logging.INFO, logger="scifor"):
-            result = for_each(stat_bad, {"df": StepLen}, [TTestResult], finalized=True)
+            result = for_each(stat_bad, {"df": StepLen}, [TTestResult])
         assert result is None or len(result) == 0
         assert any("must return a dict" in r.getMessage() for r in caplog.records)
 
@@ -228,7 +226,7 @@ class TestStatReturnContract:
         def stat_ready(df):
             return _json.dumps({"test": "prejson", "p": 0.5})
 
-        for_each(stat_ready, {"df": StepLen}, [TTestResult], finalized=True)
+        for_each(stat_ready, {"df": StepLen}, [TTestResult])
         parsed = _json.loads(TTestResult.load().data)
         assert parsed["test"] == "prejson"
 
@@ -242,7 +240,7 @@ class TestStatReturnContract:
 
         with caplog.at_level(logging.INFO, logger="scifor"):
             result = for_each(
-                stat_broken, {"df": StepLen}, [TTestResult], finalized=True
+                stat_broken, {"df": StepLen}, [TTestResult]
             )
         assert result is None or len(result) == 0
         assert any("not valid JSON" in r.getMessage() for r in caplog.records)
@@ -272,7 +270,7 @@ class TestStatWithVariants:
             return {"mean": sum(vals) / len(vals), "n": len(vals)}
 
         result = for_each(
-            stat_group_mean, {"df": Filtered}, [GroupMean], finalized=True
+            stat_group_mean, {"df": Filtered}, [GroupMean]
         )
         assert len(result) == 2, "One stat call per upstream variant group"
 
@@ -288,7 +286,7 @@ class TestStatWithVariants:
 
 
 class TestStatSkipComputed:
-    def test_finalized_run_skips_second_time(self, db):
+    def test_recorded_run_skips_second_time(self, db):
         _seed_step_lengths(db)
         calls = {"n": 0}
 
@@ -299,13 +297,27 @@ class TestStatSkipComputed:
         kwargs = {
             "inputs": {"df": StepLen},
             "outputs": [TTestResult],
-            "finalized": True,
             "skip_computed": True,
         }
         for_each(stat_counting, **kwargs)
         assert calls["n"] == 1
         for_each(stat_counting, **kwargs)
-        assert calls["n"] == 1, "Second identical finalized run skips"
+        assert calls["n"] == 1, "Second identical recorded run skips"
+
+    def test_draft_runs_even_when_a_record_is_current(self, db):
+        _seed_step_lengths(db)
+        calls = {"n": 0}
+
+        def stat_counting(df):
+            calls["n"] += 1
+            return {"n_rows": len(df)}
+
+        kwargs = {"inputs": {"df": StepLen}, "outputs": [TTestResult]}
+        for_each(stat_counting, **kwargs)
+        for_each(stat_counting, **kwargs, skip_computed=True, save=False)
+
+        assert calls["n"] == 2
+        assert len(db.list_versions(TTestResult)) == 1
 
     def test_draft_never_skips(self, db):
         _seed_step_lengths(db)
@@ -319,38 +331,41 @@ class TestStatSkipComputed:
             "inputs": {"df": StepLen},
             "outputs": [TTestResult],
             "skip_computed": True,
-        }  # draft: finalized default False
+            "save": False,
+        }
         for_each(stat_counting, **kwargs)
         for_each(stat_counting, **kwargs)
         assert calls["n"] == 2, "Drafts leave no record, so nothing skips"
 
 
 # ---------------------------------------------------------------------------
-# 7. finalized on a non-endpoint function: warned and ignored
+# 7. Endpoints record by default; the removed option fails loudly
 # ---------------------------------------------------------------------------
 
 
-class TestFinalizedNonEndpoint:
-    def test_warns_and_records_normally(self, db):
-        StepLen.save(1.0, subject="S01", session="pre")
+class TestEndpointsAlwaysRecord:
+    def test_stat_records_without_being_asked(self, db):
+        _seed_step_lengths(db)
 
-        def double(x):
-            return x * 2
+        def stat_summary(df):
+            return {"test": "demo"}
 
-        with _warnings.catch_warnings(record=True) as caught:
-            _warnings.simplefilter("always")
-            for_each(
-                double,
-                {"x": StepLen},
-                [Out],
-                finalized=True,
-                subject=["S01"],
-                session=["pre"],
-            )
+        for_each(stat_summary, {"df": StepLen}, [TTestResult])
 
-        flagged = [w for w in caught if "only applies to endpoint" in str(w.message)]
-        assert flagged, "Expected a finalized-ignored warning"
-        assert len(db.list_versions(Out)) >= 1, "Processing fn records normally"
+        assert len(db.list_versions(TTestResult)) == 1
+
+    def test_stale_finalized_argument_raises(self, db):
+        """for_each takes unknown keywords as iteration keys, so a stale call
+        (e.g. an older Plot Studio export) must not silently iterate over it."""
+        _seed_step_lengths(db)
+
+        def stat_summary(df):
+            return {"test": "demo"}
+
+        with pytest.raises(TypeError, match="no longer takes finalized="):
+            for_each(stat_summary, {"df": StepLen}, [TTestResult], finalized=True)
+
+        assert db.list_versions(TTestResult) == []
 
 
 # ---------------------------------------------------------------------------
@@ -384,7 +399,6 @@ class TestCsvStatsIntegration:
             stat_step_ttest,
             {"df": StepLen, "filename": PathOutput(str(report))},
             [TTestResult],
-            finalized=True,
         )
         assert len(result) == 1
 
@@ -417,6 +431,7 @@ class TestCsvStatsIntegration:
             stat_step_ttest,
             {"df": StepLen, "filename": PathOutput(str(report))},
             [TTestResult],
+            save=False,
         )
 
         assert not report.exists(), "filename=None must disable the PDF"

@@ -54,6 +54,7 @@ nav:
     - Create New Project: getting-started/create-new-project.md
     - Writing Functions: getting-started/writing-functions.md
     - Project Files: getting-started/project-files.md
+    - Architecture: concepts/architecture.md
     - Current State of the Art: getting-started/state-of-the-art.md
   - Example Projects:
     - Best Popcorn - scifor: examples/best-popcorn-scifor.md
@@ -104,7 +105,13 @@ extra_javascript:
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
-  - pymdownx.superfences
+  # The mermaid fence renders ```mermaid blocks as diagrams (Material loads the
+  # Mermaid library on the pages that use one).
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.details
@@ -186,6 +193,7 @@ plugins:
               - Open Existing Project: getting-started/open-existing-project.md
               - Writing Functions: getting-started/writing-functions.md
               - Project Files: getting-started/project-files.md
+              - Architecture: concepts/architecture.md
             - Example Projects:
               - Best Popcorn: examples/best-popcorn.md
               - Best Player: examples/best-player.md

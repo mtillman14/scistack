@@ -102,12 +102,30 @@ FOR_EACH_OPTIONS: "tuple[OptionSpec, ...]" = (
     OptionSpec("locations", None, "mapping", "selection"),
     OptionSpec("share_limits", None, "mapping"),
     OptionSpec("project_root", None, "path"),
-    OptionSpec("finalized", False, "bool", "context", db_only=True),
     OptionSpec("glue", None, "mapping", db_only=True),
     OptionSpec("parameter_names", None, "mapping", "context", db_only=True),
     OptionSpec("step", None, "str", "context", db_only=True),
     OptionSpec("pipeline", UNSET, "object", "context", db_only=True),
 )
+
+# Former options. for_each takes unknown keywords as iteration keys, so without
+# this a stale call would quietly iterate over (and record) the old option.
+REMOVED_OPTIONS: "dict[str, str]" = {
+    "finalized": (
+        "plot_/stat_ functions now always record, like every other function. "
+        "Delete the argument; pass save=False for a preview that records nothing."
+    ),
+}
+
+
+def reject_removed_options(metadata_iterables: "dict[str, Any]") -> None:
+    """Raise ``TypeError`` if a call still passes a removed for_each option."""
+    for name in metadata_iterables:
+        if name in REMOVED_OPTIONS:
+            raise TypeError(
+                f"for_each() no longer takes {name}=. {REMOVED_OPTIONS[name]}"
+            )
+
 
 DB_ONLY_KWARGS: "frozenset[str]" = frozenset(o.name for o in FOR_EACH_OPTIONS if o.db_only)
 

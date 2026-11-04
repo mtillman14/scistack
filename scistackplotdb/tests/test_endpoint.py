@@ -71,16 +71,9 @@ def test_plot_input_is_passed_as_a_table(table, iterating_spec):
     assert "as_table=['df']" in code.foreach_source
 
 
-def test_generated_call_is_finalized_by_default(table, iterating_spec):
+def test_generated_call_has_no_finalized_argument(table, iterating_spec):
     code = generate_endpoint(iterating_spec, table, input_variable="StepLength")
-    assert "finalized=True" in code.foreach_source
-
-
-def test_draft_mode_is_available(table, iterating_spec):
-    code = generate_endpoint(
-        iterating_spec, table, input_variable="StepLength", finalized=False
-    )
-    assert "finalized=False" in code.foreach_source
+    assert "finalized" not in code.foreach_source
 
 
 def test_path_template_names_every_iterate_key():

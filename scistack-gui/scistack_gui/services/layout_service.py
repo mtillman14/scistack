@@ -13,14 +13,21 @@ from scidb import BaseVariable
 from scifor.failures import ActionableError
 
 from scistack_gui.domain.display_order import display_sorted
+from scistack_gui.domain import ports
 from scistack_gui.ids import (
     PATH_INPUT_ID_PREFIX,
     ROOT_SCOPE,
     param_node_id,
     path_input_node_id,
 )
+from scistack_gui.stores import pipeline_store
 
 logger = logging.getLogger(__name__)
+
+
+class PortWiringError(ActionableError, ValueError):
+    """A connection through submodule ports that could not exist as a direct
+    edge (``domain.ports.illegal_reason``)."""
 
 
 class EdgeCycleError(ActionableError, ValueError):
@@ -92,6 +99,10 @@ def put_layout(
                     "reason": "duplicate_path_input",
                     "existing_node_id": existing,
                 }
+        if node_type in ports.PORT_NODE_TYPES and not _is_stored_node(node_id):
+            refusal = _refuse_port(node_type, label, pipeline_id)
+            if refusal is not None:
+                return refusal
         if node_type == "functionNode":
             from scistack_gui.matlab import registry as matlab_registry
 
@@ -144,6 +155,28 @@ def put_layout(
     return {"ok": True}
 
 
+def _refuse_port(node_type: str, label: str, pipeline_id: str) -> "dict | None":
+    """The refusal for a port the user is inserting, or ``None``."""
+    from scistack_gui.runtime.db import get_db
+    from scistack_gui.services.scope_service import PortError, check_new_port
+
+    try:
+        check_new_port(get_db(), node_type, label, pipeline_id)
+    except PortError as exc:
+        logger.info(
+            "[layout_service] Refusing port %r on scope %r: %s", label, pipeline_id, exc
+        )
+        return {"ok": False, "error": str(exc), "reason": "invalid_port"}
+    return None
+
+
+def _is_stored_node(node_id: str) -> bool:
+    """Whether *node_id* is already a row: re-sending a node isn't creating one."""
+    from scistack_gui.runtime.db import get_db
+
+    return node_id in pipeline_store.get_manual_nodes(get_db())
+
+
 def _placed_path_input(label: str, pipeline_id: str) -> "str | None":
     """The id of the node already showing PathInput *label* on scope
     *pipeline_id*'s canvas, or ``None``.
@@ -185,7 +218,6 @@ def put_edge(
     target_handle: str | None = None,
 ) -> dict:
     from scistack_gui.stores import layout as layout_store
-    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.graph_builder import connection_id, find_cycle
     from scistack_gui.domain.scope_filter import node_scope
 
@@ -278,6 +310,7 @@ def put_edge(
             f"connecting '{source}' to '{target}' would create a dependency "
             f"cycle: {' -> '.join(cycle_path)}"
         )
+    _refuse_illegal_port_wire(db, view, existing_edges, edge_id, source, target, source_handle, target_handle)
     pipeline_store.write_manual_edge(
         db,
         {
@@ -301,7 +334,6 @@ def delete_edge(
     source_handle: str | None = None,
     target_handle: str | None = None,
 ) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     logger.info("[layout_service] delete_edge called (edge_id=%r)", edge_id)
     # Every removal is a HIDE, drawn edge or not (user decision D2,
@@ -333,6 +365,62 @@ def delete_edge(
     return {"ok": True}
 
 
+def _refuse_illegal_port_wire(
+    db, view, existing_edges, edge_id, source, target, source_handle, target_handle
+) -> None:
+    """The two rules for a drawn edge touching a port: what it traces to must be
+    legal as a direct edge, and it must match what other placements of the
+    submodule connect that port to (``domain.ports``: one wiring)."""
+
+    if not ports.has_port_nodes(view.manual_nodes):
+        return
+    edge = {
+        "id": edge_id,
+        "source": source,
+        "target": target,
+        "sourceHandle": source_handle,
+        "targetHandle": target_handle,
+    }
+    from scistack_gui.domain.edge_view import effective_edges
+
+    uses = pipeline_store.get_pipeline_uses(db)
+    # Hides from every canvas: a line removed on another placement is not a
+    # connection this one has to match.
+    everywhere = [
+        e
+        for e in effective_edges(db, None, caller="put_edge placement check").drawn
+        if e["id"] != edge_id
+    ]
+    connected = ports.placement_conflict(edge, everywhere, view.manual_nodes, uses)
+    if connected is not None:
+        logger.warning(
+            "[layout_service] put_edge rejected: %s -> %s differs from another "
+            "placement of the same submodule, which connects that port to %s",
+            source,
+            target,
+            connected,
+        )
+        raise PortWiringError(
+            f"Another placement of this submodule connects this port to {connected}, "
+            "and a submodule has one wiring. To connect it differently, click "
+            "⎘ Duplicate on this placement first: it gets its own copy."
+        )
+    wiring = ports.resolve_wiring(existing_edges + [edge], view.manual_nodes, uses)
+    for from_node, to_node, reason, via in wiring.illegal:
+        if edge_id in via:
+            logger.warning(
+                "[layout_service] put_edge rejected: %s -> %s through ports (%s), edges %s",
+                from_node,
+                to_node,
+                reason,
+                list(via),
+            )
+            raise PortWiringError(
+                f"This connection would join '{from_node}' to '{to_node}' through "
+                f"submodule ports, and {reason}."
+            )
+
+
 def _hide_edge_in_its_scope(
     db,
     edge_id: str,
@@ -350,7 +438,6 @@ def _hide_edge_in_its_scope(
     connection on another pipeline's independent placement stays visible
     there (plan-scope-hidden-nodes-edges.md)."""
     from scistack_gui.stores import layout as layout_store
-    from scistack_gui.stores import pipeline_store
     from scistack_gui.domain.scope_filter import node_scope
 
     manual_nodes = pipeline_store.get_manual_nodes(db)
@@ -439,7 +526,6 @@ def disconnect_removed_arguments(db) -> list[dict]:
 
 
 def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] unhide_edge called (edge_id=%r, pipeline_id=%r)",
@@ -452,7 +538,6 @@ def unhide_edge(db, edge_id: str, pipeline_id: str = ROOT_SCOPE) -> dict:
 
 
 def get_hidden_edges(db, pipeline_id: "str | None" = None) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     return {"edges": pipeline_store.list_hidden_edges(db, pipeline_id)}
 
@@ -568,10 +653,26 @@ def delete_parameter(name: str, pipeline_id: str = ROOT_SCOPE) -> dict:
 def get_path_inputs() -> list[dict]:
     """Source-scanned — see docs/claude/code-discovery-categories.md."""
     from scistack_gui.project import registry
-    from scistack_gui.domain.graph_builder import path_input_display
+    from scistack_gui.domain.graph_builder import (
+        is_declared_in_entities_file,
+        path_input_display,
+    )
 
+    entities_file = (
+        str(registry._config.entities_file)
+        if registry._config is not None and registry._config.entities_file is not None
+        else None
+    )
     return [
-        {"name": name, **path_input_display(obj)}
+        {
+            "name": name,
+            **path_input_display(obj),
+            # The palette's Delete eligibility, same comparison as Parameters.
+            "source_file": registry._path_input_sources.get(name),
+            "declared_in_entities_file": is_declared_in_entities_file(
+                registry._path_input_sources.get(name), entities_file
+            ),
+        }
         for name, obj in display_sorted(
             registry.get_path_inputs_registry().items(), name=lambda kv: kv[0]
         )
@@ -814,7 +915,6 @@ def _unique_path_input_name(base: str, existing: dict) -> str:
 
 
 def put_pending_constant(db, name: str, value: str) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] put_pending_constant called (name=%r, value=%r)", name, value
@@ -825,7 +925,6 @@ def put_pending_constant(db, name: str, value: str) -> dict:
 
 
 def delete_pending_constant(db, name: str, value: str) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] delete_pending_constant called (name=%r, value=%r)",
@@ -838,7 +937,6 @@ def delete_pending_constant(db, name: str, value: str) -> dict:
 
 
 def put_node_config(db, node_id: str, config: dict) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     pipeline_store.update_node_config(db, node_id, config)
     return {"ok": True}
@@ -850,7 +948,6 @@ def set_shown_argument(db, node_id: str, argument: str, shown: bool) -> dict:
     rest of the config (``update_node_config`` replaces the whole blob).
     ``graph_builder.port_visibility`` reads it; re-hiding a port something
     feeds changes nothing visible (a fed port is always drawn)."""
-    from scistack_gui.stores import pipeline_store
 
     config = pipeline_store.get_node_config(db, node_id)
     names = [n for n in config.get("shownArguments") or [] if n != argument]
@@ -874,7 +971,6 @@ def set_on_duplicate(db, node_id: str, value: str) -> dict:
     reads it."""
     from scidb.run.combine import validate_on_duplicate
 
-    from scistack_gui.stores import pipeline_store
 
     validate_on_duplicate(value)
     config = pipeline_store.get_node_config(db, node_id)
@@ -906,7 +1002,6 @@ def set_output_ports(db, node_id: str, ports: list, renames: "dict | None" = Non
     connection. An empty list clears the declaration (automatic again).
     """
     from scistack_gui.stores import intent_store
-    from scistack_gui.stores import pipeline_store
     from scistack_gui.ids import (
         OUT_HANDLE_PREFIX,
         VAR_ID_PREFIX,
@@ -1033,7 +1128,6 @@ def hide_variant_combo(
 ) -> dict:
     """Hide one row of a function's constant Cartesian product — never
     deletes data, only excludes it from display and future runs."""
-    from scistack_gui.stores import pipeline_store
     from scistack_gui.ids import fn_node_id
     from scistack_gui.services.execution_service import resolve_combo_call_ids
 
@@ -1057,7 +1151,6 @@ def hide_variant_combo(
 
 
 def unhide_variant_combo(db, node_id: str) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     logger.info("[layout_service] unhide_variant_combo called (node_id=%r)", node_id)
     pipeline_store.unhide_combo(db, node_id)
@@ -1066,7 +1159,6 @@ def unhide_variant_combo(db, node_id: str) -> dict:
 
 
 def get_hidden_combos(db, function_name: str) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     return {"combos": pipeline_store.list_hidden_combos(db, function_name)}
 
@@ -1077,7 +1169,6 @@ def hide_parameter_value(
     """Hide one constant value — excludes it (and, once execution_service
     consults this, every call site using it) from future runs without
     deleting any DB history for it."""
-    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] hide_parameter_value called (const_name=%r, "
@@ -1121,7 +1212,6 @@ def refresh_parameter_source(name: "str | None" = None) -> dict:
 def unhide_parameter_value(
     db, const_name: str, value: str, pipeline_id: str = ROOT_SCOPE
 ) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     logger.info(
         "[layout_service] unhide_parameter_value called (const_name=%r, "
@@ -1145,7 +1235,6 @@ def set_parameter_group_checked(
     a 50-value range is the same N+1 shape as
     ``project_batched_provenance_hot_paths``.
     """
-    from scistack_gui.stores import pipeline_store
 
     members = [str(v) for v in values]
     logger.info(
@@ -1165,7 +1254,6 @@ def set_parameter_group_checked(
 
 
 def get_hidden_constant_values(db, pipeline_id: "str | None" = ROOT_SCOPE) -> dict:
-    from scistack_gui.stores import pipeline_store
 
     return {
         "hidden_values": pipeline_store.list_hidden_parameter_values(db, pipeline_id)

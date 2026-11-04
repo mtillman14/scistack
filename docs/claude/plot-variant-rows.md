@@ -307,7 +307,6 @@ for_each(
     },
     outputs=[StepLengthFigure],
     as_table=["baseline", "new_filter"],
-    finalized=True,
     subject=[],
 )
 ```

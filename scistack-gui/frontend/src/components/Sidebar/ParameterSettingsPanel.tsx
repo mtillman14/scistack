@@ -45,7 +45,7 @@
 
 import { useMemo, useState } from 'react'
 import type { ParameterValue } from '../DAG/ParameterNode'
-import ReadOnlyDeclarationBanner from './ReadOnlyDeclarationBanner'
+import PanelHeader from './PanelHeader'
 import { formatLocation, isLockedForEditing } from './sourceLocation'
 import { useEntityEditability, useSourceEdit } from './useSourceEdit'
 
@@ -206,11 +206,12 @@ export default function ParameterSettingsPanel({ label, values }: Props) {
 
   return (
     <div style={styles.root}>
-      <div style={styles.constName}>{label}</div>
-
-      {locked && editability?.file && (
-        <ReadOnlyDeclarationBanner file={editability.file} line={editability.line} />
-      )}
+      <PanelHeader
+        kind="parameter"
+        name={label}
+        source={editability?.file ? { file: editability.file, line: editability.line } : null}
+        readOnly={locked && editability?.file ? { file: editability.file, line: editability.line } : null}
+      />
 
       <section style={styles.section}>
         <div style={styles.sectionTitle}>

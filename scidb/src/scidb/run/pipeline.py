@@ -1079,19 +1079,17 @@ class Pipeline:
 
     def run_endpoints(
         self,
-        finalized: bool = False,
         skip_computed: bool = True,
         include_used: bool = False,
     ) -> list:
         """Run every endpoint and its ancestry — "make all my figures and
-        stats". One topo pass over the union of ancestries; ``finalized``
-        applies to the endpoint steps only.
+        stats". One topo pass over the union of ancestries.
 
         Default scope is this pipeline's OWN endpoints (consistent with
         run_all's own-steps rule); ``include_used=True`` widens to
         endpoints inside used pipelines.
         """
-        pairs, order, targets = self._select("endpoints", include_used=include_used)
+        pairs, order, _ = self._select("endpoints", include_used=include_used)
         if not order:
             self._end_registration()
             Log.warn(
@@ -1109,13 +1107,11 @@ class Pipeline:
             pairs,
             order,
             skip_computed=skip_computed,
-            finalized=finalized,
-            finalized_for=targets,
         )
 
     def show(self, target: Any, skip_computed: bool = True) -> list:
         """Draft-run one endpoint (+ ancestors) to LOOK at it — the everyday
-        verb. Nothing is recorded (finalized=False); returns the endpoint's
+        verb. The endpoint records nothing (save=False); returns the endpoint's
         rendered outputs: artifact paths for ``plot_``, result payloads for
         ``stat_``. The caller opens the files.
         """
@@ -1140,8 +1136,7 @@ class Pipeline:
             pairs,
             order,
             skip_computed=skip_computed,
-            finalized=False,
-            finalized_for=targets,
+            draft_for=targets,
         )
         rendered: list = []
         target_positions = {pos for pos, i in enumerate(order) if i in targets}
@@ -1201,22 +1196,16 @@ class Pipeline:
     def run_until(
         self,
         target: Any,
-        finalized: bool | None = None,
         skip_computed: bool = True,
     ) -> list:
         """Run ``target`` and its ancestors only — resolved over the
         composed graph, so both may live in used pipelines.
-
-        ``finalized`` (endpoint draft/record mode) applies to the target
-        step(s) only; other steps keep their registered flags.
         """
-        pairs, order, targets = self._select("until", target)
+        pairs, order, _ = self._select("until", target)
         return self._run(
             pairs,
             order,
             skip_computed=skip_computed,
-            finalized=finalized,
-            finalized_for=targets,
         )
 
     def _db_for(self, owner: Pipeline, spec: StepSpec):
@@ -1258,7 +1247,6 @@ class Pipeline:
         mode: str = "all",
         target: Any | None = None,
         include_used: bool = False,
-        finalized: bool | None = None,
         skip_computed: bool = True,
     ) -> list[dict]:
         """The run plan as plain-data descriptors WITHOUT executing —
@@ -1270,13 +1258,13 @@ class Pipeline:
         Descriptor keys: ``pipeline`` (owner name), ``step`` (fn name),
         ``step_index`` (position in the owner's OWN step list, for
         driver-side lookup of what could not cross a language boundary),
-        ``is_matlab``, ``apply_finalized``, ``skip_computed``,
+        ``is_matlab``, ``skip_computed``,
         ``metadata_iterables``/``constant_inputs``/``path_templates``
         (the POST-binding surface as plain data).
         """
         from scifor import PathOutput
 
-        pairs, order, targets = self._select(mode, target, include_used)
+        pairs, order, _ = self._select(mode, target, include_used)
         self._end_registration()
         descriptors = []
         for i in order:
@@ -1292,9 +1280,6 @@ class Pipeline:
                         idx for idx, s in enumerate(owner.steps) if s is origin
                     ),
                     "is_matlab": bool(opts.get("__matlab__", False)),
-                    "apply_finalized": (
-                        finalized if (finalized is not None and i in targets) else None
-                    ),
                     "skip_computed": eff_skip,
                     "metadata_iterables": dict(spec.metadata_iterables),
                     "constant_inputs": {
@@ -1319,8 +1304,7 @@ class Pipeline:
         pairs: list[tuple[Pipeline, StepSpec]],
         order: list[int],
         skip_computed: bool = True,
-        finalized: bool | None = None,
-        finalized_for: set[int] | None = None,
+        draft_for: set[int] | None = None,
     ) -> list:
 
         matlab_steps = sorted(
@@ -1346,15 +1330,9 @@ class Pipeline:
         # entry included, readable by the caller.
         self.last_run_report = report
         for i in order:
-            apply_finalized = (
-                finalized
-                if (finalized is not None and finalized_for and i in finalized_for)
-                else None
-            )
+            draft = draft_for is not None and i in draft_for
             results.append(
-                self._execute_step(
-                    pairs, i, skip_computed, apply_finalized, report=report
-                )
+                self._execute_step(pairs, i, skip_computed, draft, report=report)
             )
         failed_total = sum(e["failed"] for e in report)
         no_data_total = sum(e.get("no_data", 0) for e in report)
@@ -1369,7 +1347,7 @@ class Pipeline:
         pairs: list[tuple[Pipeline, StepSpec]],
         i: int,
         skip_computed: bool = True,
-        finalized: bool | None = None,
+        draft: bool = False,
         report: list[dict] | None = None,
     ):
         """Execute ONE composed step through eager for_each. Shared by the
@@ -1426,8 +1404,8 @@ class Pipeline:
         # Pull execution defaults to memoized runs; a step's explicitly
         # registered skip_computed=True always wins.
         opts["skip_computed"] = opts.get("skip_computed") or skip_computed
-        if finalized is not None:
-            opts["finalized"] = finalized
+        if draft:
+            opts["save"] = False
         Log.info(
             f"pipeline_step_run: "
             f"'{self._step_label(owner, spec, self)}' (via pipeline "

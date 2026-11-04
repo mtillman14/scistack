@@ -1075,7 +1075,7 @@ def _add_commands(
     p = sub.add_parser(
         "report",
         parents=[parent],
-        help="Collect finalized endpoint (plot_/stat_) records "
+        help="Collect endpoint (plot_/stat_) records "
         "into a self-contained HTML report folder "
         "(figures + per-test stats tables + provenance).",
     )

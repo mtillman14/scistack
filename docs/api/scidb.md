@@ -62,7 +62,7 @@ The columns of a variable are fixed by its first save. A later save with a diffe
 for_each(fn, inputs, outputs, *, where=None, skip_computed=False,
          distribute=False, as_table=None, dry_run=False, save=True,
          schema_keys=None, schema_filter=None, locations=None,
-         finalized=False, glue=None, **metadata_iterables)
+         glue=None, **metadata_iterables)
 ```
 
 `for_each` adds the database to [`scifor.for_each`](scifor.md#for_each). Inputs given as variable classes are loaded per combination. Each return value is saved as the matching class in `outputs`, and provenance is recorded for every saved record.
@@ -100,7 +100,6 @@ scidb.for_each(@bandpass, ...
 | `schema_filter={key: [...]}` | Restrict values without spelling every iterable. For a key you are not iterating, it limits which records are loaded. |
 | `locations=` | Run only selected locations ([`LocationFilter`](scifor.md#location-selection)). |
 | `where=` | Load only records that pass a [filter](#filters). |
-| `finalized=` | `plot_` / `stat_` functions only: `False` draws or prints a draft and records nothing; `True` records the result with provenance. |
 | `glue={param: fn}` | Reshape one loaded input in memory before `fn` sees it. Nothing is saved; see [Glue](#glue). |
 
 **Input wrappers specific to scidb** (all nest with `Fixed`, `Merge` and column selection):
@@ -235,7 +234,7 @@ Installing `scidb` adds a `scidb` command for inspecting a database. Most comman
 | `variants NAME`, `trace`, `show TYPE ...`, `pick TYPE ...` | Variants side by side, the full upstream history of a record, the records at a location, one record id. |
 | `locations TYPE`, `inventory`, `exclusions` | Status per location, missing combinations, active exclusions. |
 | `sql "SELECT ..."` | Read-only SQL. |
-| `report` | Collect finalized `plot_`/`stat_` results into an HTML report folder. |
+| `report` | Collect recorded `plot_`/`stat_` results into an HTML report folder. |
 | `verify --against BUNDLE` | Compare a re-run with an exported history (runs no code). |
 | `exclude`, `include`, `pin`, `unpin`, `delete-variant`, `clear-data` | **Write.** Exclusions, a variable's default variant, permanent variant deletion, and `clear-data`: delete every record and its run history while keeping the pipeline, the run log and every declaration (`--backup` copies the database first; refused for a GUI project for now). Both deletes print a plan and stop unless you pass `--yes`. |
 

@@ -283,7 +283,6 @@ def for_each(
     locations: "Any" = None,
     share_limits: "dict[str, list[str]] | None" = None,
     project_root: "str | _Path | None" = None,
-    finalized: bool = False,
     glue: "dict[str, Any] | None" = None,
     parameter_names: "dict[str, str] | None" = None,
     step: "str | None" = None,
@@ -314,7 +313,12 @@ def for_each(
                 Merge wrappers, ColumnSelection wrappers, PathInput, or constants.
         outputs: List of output types/objects with ``.save()``.
         dry_run: If True, only print what would happen without executing.
-        save: If True (default), save each function run's output.
+        save: If True (default), save each function run's output. If False,
+                    nothing is written to the database. For an endpoint
+                    (``plot_``/``stat_``) that makes a DRAFT: a ``plot_`` figure
+                    is still rendered to its PathOutput path and stamped; a
+                    ``stat_`` result is pretty-printed and any PathOutput is
+                    resolved to None, so e.g. csv-stats skips its PDF report.
         as_table: Controls which inputs are passed as full DataFrames.
         db: Optional database instance.
         distribute: If True, split outputs and save each piece at the schema
@@ -383,17 +387,6 @@ def for_each(
                     resolves against; default the process-wide root
                     (``scifor.project.root.project_root``). Passed through to
                     ``scifor.for_each``. Resolution only, never identity.
-        finalized: Endpoint (``plot_``/``stat_``) functions only. Default False
-                    = DRAFT mode: nothing is written to the database — a
-                    ``plot_`` figure is still rendered to its PathOutput path,
-                    a ``stat_`` result is pretty-printed (and any PathOutput is
-                    resolved to None so e.g. csv-stats skips its PDF report).
-                    Pass True to RECORD: outputs saved with full lineage,
-                    skip_computed honored; a ``stat_`` PathOutput is resolved
-                    normally and its path embedded as ``report_path`` in the
-                    stored JSON. Recording requires a re-run of the endpoint
-                    (drafts leave no record to promote). Warned and ignored
-                    for non-endpoint functions.
         glue: Optional ``{param_name: GlueSpec | callable | [GlueSpec, ...]}``.
                     Free-code "glue" nodes applied in memory to that
                     parameter's loaded input before ``fn`` sees it, and never
@@ -436,6 +429,9 @@ def for_each(
         A pandas DataFrame of results, None when dry_run=True, or a Step
         handle when the call was registered into a Pipeline instead of run.
     """
+    from scifor.options import reject_removed_options
+
+    reject_removed_options(metadata_iterables)
     call = ForEachCall.from_options(
         fn,
         inputs,
@@ -457,7 +453,6 @@ def for_each(
         locations=locations,
         share_limits=share_limits,
         project_root=project_root,
-        finalized=finalized,
         glue=glue,
         parameter_names=parameter_names,
         step=step,
@@ -719,22 +714,20 @@ def _run_concrete(call: ForEachCall, active_db: Any) -> "pd.DataFrame | None":
 
     # --- Endpoint leaf detection (plot_/stat_ prefixes) ---
     # Policy (detection, PathOutput requirement, stat as_table default, draft
-    # save suppression, warnings) is shared with the MATLAB bridge via
+    # logging) is shared with the MATLAB bridge via
     # _endpoint_policy — one source of truth for both paths. Only the fn
     # WRAPPING is language-specific: Python wraps here; MATLAB wraps its own
     # fn in +scidb/for_each.m. See docs/claude/endpoints-viz-and-stats-design.md.
-    endpoint_kind, path_param, as_table, save_suppressed = _endpoint_policy(
-        getattr(fn, "__name__", ""), inputs, context.finalized, call.run.as_table
+    endpoint_kind, path_param, as_table = _endpoint_policy(
+        getattr(fn, "__name__", ""), inputs, save, call.run.as_table
     )
     run = replace(call.run, as_table=as_table)
     if endpoint_kind == "plot":
         fn = _make_plot_wrapper(fn, path_param)
         context = replace(context, inject_combo_metadata=True)
     elif endpoint_kind == "stat":
-        fn = _make_stat_wrapper(fn, path_param, context.finalized)
+        fn = _make_stat_wrapper(fn, path_param, save)
         context = replace(context, inject_combo_metadata=True)
-    if save_suppressed and save:
-        save = False
 
     # --- generates_file detection ---
     # No function wrapping: plain functions flow straight through to scifor, which
@@ -766,7 +759,18 @@ def _run_concrete(call: ForEachCall, active_db: Any) -> "pd.DataFrame | None":
     # against the recorded edge, and the edge carries the CONCRETE column
     # list — built on the unresolved `for_columns()` it compared `[]` against
     # `["a", "b"]` and recomputed every combo of a per-column step forever.
-    if call.skip_computed and not call.dry_run and outputs and active_db is not None:
+    # An endpoint draft never skips: looking at the figure or result is its whole
+    # point, and an up-to-date record from an earlier run would leave nothing to show.
+    is_endpoint_draft = endpoint_kind is not None and not save
+    if is_endpoint_draft and call.skip_computed:
+        Log.debug(f"skip_computed ignored for draft of {getattr(fn, '__name__', repr(fn))}")
+    if (
+        call.skip_computed
+        and not is_endpoint_draft
+        and not call.dry_run
+        and outputs
+        and active_db is not None
+    ):
         context = replace(
             context,
             pre_combo_hook=_build_skip_hook(
@@ -3831,9 +3835,9 @@ def _for_each_save_resolved(
     elif result_tbl.empty:
         Log.debug("skipping save (result table is empty)")
 
-    # Endpoint DRAFT stamping (D4): the save was suppressed (finalized=False,
-    # or explicit save=False), but draft artifacts get the same provenance
-    # blob a finalized run would embed — draft:true in place of a record_id.
+    # Endpoint DRAFT stamping (D4): save=False, but draft artifacts get the same
+    # provenance blob a recorded run would embed — draft:true in place of a
+    # record_id.
     if state.endpoint_kind and not (save and outputs) and not result_tbl.empty:
         _stamp_draft_endpoint_artifacts(state.endpoint_kind, result_tbl, state, db)
 
@@ -4843,14 +4847,13 @@ def _make_plot_wrapper(fn: Any, path_param: str) -> Any:
     return wrapped
 
 
-def _endpoint_policy(fn_name: str, inputs: dict, finalized: bool, as_table):
+def _endpoint_policy(fn_name: str, inputs: dict, save: bool, as_table):
     """Endpoint (plot_/stat_) policy shared by scidb.for_each AND the MATLAB
     bridge's for_each_prepare — one source of truth for detection, the
-    plot-requires-PathOutput contract, the stat_ as_table default, draft
-    save-suppression, and the finalized warnings. Callers do their own
-    language-specific fn wrapping.
+    plot-requires-PathOutput contract, the stat_ as_table default, and the
+    draft notice. Callers do their own language-specific fn wrapping.
 
-    Returns ``(endpoint_kind, path_param, as_table, save_suppressed)`` where
+    Returns ``(endpoint_kind, path_param, as_table)`` where
     endpoint_kind is "plot" | "stat" | None and path_param names the (first)
     PathOutput input, if any.
     """
@@ -4872,7 +4875,7 @@ def _endpoint_policy(fn_name: str, inputs: dict, finalized: bool, as_table):
         Log.info(
             f"'{fn_name}' detected as plotting function; "
             f"figure saved to PathOutput input '{path_param}'"
-            + (", path stored as record" if finalized else " (draft: not recorded)")
+            + (", path stored as record" if save else " (draft: not recorded)")
         )
     elif endpoint_kind == "stat":
         # Statistics run on the long-format table: group/repeated-measures
@@ -4891,39 +4894,28 @@ def _endpoint_policy(fn_name: str, inputs: dict, finalized: bool, as_table):
             f"'{fn_name}' detected as statistics function; "
             + (
                 "result JSON stored as record"
-                if finalized
+                if save
                 else "draft: result printed, not recorded"
             )
             + (
                 f"; PathOutput input '{path_param}'"
-                + (" resolved normally" if finalized else " resolved to None")
+                + (" resolved normally" if save else " resolved to None")
                 if path_param
                 else ""
             )
         )
 
-    save_suppressed = endpoint_kind is not None and not finalized
-    if save_suppressed:
-        # DRAFT mode (D3): suppress the entire save phase — no records, no
-        # lineage, no graph. The in-memory result table is still returned.
-        # Recording later requires a re-run with finalized=True (drafts leave
-        # no record to promote; endpoints are cheap to re-run by construction).
-        _draft_msg = (
-            f"[draft] {fn_name}: finalized=False — "
+    if endpoint_kind is not None and not save:
+        # DRAFT (save=False, e.g. Pipeline.show): no records, no lineage, no
+        # graph. The in-memory result table is still returned. Drafts leave no
+        # record to promote; recording later means running again with saving on.
+        Log.info(
+            f"[draft] {fn_name}: save=False — "
             f"{'figures rendered' if endpoint_kind == 'plot' else 'results printed'} "
-            f"but NOT recorded. Pass finalized=True to save with lineage."
+            f"but NOT recorded."
         )
-        Log.info(_draft_msg)
-    elif finalized and endpoint_kind is None:
-        _msg = (
-            f"finalized=True ignored for '{fn_name}': the flag "
-            f"only applies to endpoint functions (plot_/stat_ prefixes); "
-            f"processing functions always record."
-        )
-        warnings.warn(_msg, UserWarning, stacklevel=2)
-        Log.warn(_msg)
 
-    return endpoint_kind, path_param, as_table, save_suppressed
+    return endpoint_kind, path_param, as_table
 
 
 def _jsonify_stat(obj: Any) -> Any:
@@ -4946,7 +4938,7 @@ def _jsonify_stat(obj: Any) -> Any:
     return obj
 
 
-def _make_stat_wrapper(fn: Any, path_param: "str | None", finalized: bool) -> Any:
+def _make_stat_wrapper(fn: Any, path_param: "str | None", save: bool) -> Any:
     """Wrap a statistics (``stat_``) function so its result dict becomes a
     canonical JSON string (the stored record data in record mode).
 
@@ -4958,11 +4950,11 @@ def _make_stat_wrapper(fn: Any, path_param: "str | None", finalized: bool) -> An
       timestamp inside every result, which would make identical reruns store
       different bytes. The database's own save timestamp is the time
       authority.
-    - Draft (``finalized=False``): any PathOutput input is resolved to None
+    - Draft (``save=False``): any PathOutput input is resolved to None
       before calling ``fn`` — handing it straight to csv-stats'
       ``filename=None`` disables the PDF side effect — and the result is
       pretty-printed for interactive exploration.
-    - Record (``finalized=True``): the PathOutput path (if any) passes
+    - Record (``save=True``): the PathOutput path (if any) passes
       through for the fn's report writer, and is embedded as
       ``"report_path"`` in the stored JSON so the artifact is discoverable
       from the record.
@@ -4975,21 +4967,21 @@ def _make_stat_wrapper(fn: Any, path_param: "str | None", finalized: bool) -> An
 
     @functools.wraps(fn)
     def wrapped(**kwargs):
-        if path_param is not None and not finalized:
+        if path_param is not None and not save:
             kwargs[path_param] = None
         result = fn(**kwargs)
 
         report_path = (
             str(kwargs[path_param])
-            if finalized
+            if save
             and path_param is not None
             and kwargs.get(path_param) is not None
             else None
         )
         payload = normalize_stat_payload(
-            result, report_path, finalized, fn_name=getattr(fn, "__name__", "stat_fn")
+            result, report_path, fn_name=getattr(fn, "__name__", "stat_fn")
         )
-        if not finalized:
+        if not save:
             pretty = json.dumps(json.loads(payload), indent=2, sort_keys=True)
             print(f"[stat draft] {getattr(fn, '__name__', 'stat_fn')}:\n{pretty}")
         return payload
@@ -4998,7 +4990,7 @@ def _make_stat_wrapper(fn: Any, path_param: "str | None", finalized: bool) -> An
 
 
 def normalize_stat_payload(
-    result: Any, report_path: "str | None", finalized: bool, fn_name: str = "stat_fn"
+    result: Any, report_path: "str | None", fn_name: str = "stat_fn"
 ) -> str:
     """Canonicalize a stat_ result into the stored JSON payload string.
 
@@ -5034,7 +5026,7 @@ def normalize_stat_payload(
     parsed = _jsonify_stat(parsed)
     if isinstance(parsed, dict):
         parsed.pop("date", None)
-        if finalized and report_path:
+        if report_path:
             parsed["report_path"] = str(report_path)
 
     return json.dumps(parsed, sort_keys=True, default=str)
@@ -5115,7 +5107,7 @@ def _stamp_draft_endpoint_artifacts(
     endpoint_kind: str, result_tbl, state: "_ForEachState", db: Any
 ) -> None:
     """Draft-mode stamping pass: the save phase is suppressed, but draft
-    artifacts get the SAME blob a finalized run would embed (decided
+    artifacts get the SAME blob a recorded run would embed (decided
     2026-07-06), with ``draft: true`` in place of the record_id. Runs from
     ``_for_each_save_resolved``, which executes in both modes.
     """

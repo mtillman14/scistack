@@ -1,179 +1,163 @@
 # Choosing Your Layer
 
 <!-- Ground truth (tests win over prose). Verified against:
-     scifor/tests/test_foreach_standalone.py  (set_schema, for_each, inputs=, returns DataFrame)
-     scidb/tests/test_integration.py + conftest.py  (configure_database, BaseVariable,
-        save->record_id, load->record with .data/.record_id/.metadata)
-     scihist/src/scihist/__init__.py + scihist/tests/test_foreach.py  (for_each + outputs=,
-        auto-wraps in LineageFcn; __init__ RE-EXPORTS lineage_fcn/LineageFcn from scilineage,
-        so user-facing imports use `from scihist import ..., lineage_fcn`)
-     Package __init__ exports; docs/claude/layer-friction-analysis.md (layer separation).
-     NOTE: scilineage is INTERNAL — three user-facing layers only (scifor/scidb/scihist);
-     lineage is presented as a scihist feature. -->
+     scifor/README.md and scifor/tests/test_foreach_standalone.py (set_schema, for_each,
+        inputs=, returns DataFrame);
+     scidb/README.md, scidb/tests/test_integration.py and
+        docs/examples/best-popcorn-scidb.md (configure_database, BaseVariable,
+        save/load, record .data, for_each, get_provenance, MATLAB spellings);
+     scidb/src/scidb/run/foreach.py (skip_computed defaults to False);
+     scistack-gui/README.md (what the GUI does, one database per backend process);
+     scistack/pyproject.toml (`pip install scistack` pulls in every package).
+     Roles and dependencies are owned by concepts/architecture.md; link there. -->
 
-SciStack is a **stack** of three user-facing layers. Each layer adds one
-capability on top of the one below it, and **you can enter at any level**. Start
-with just the piece you need today; adopt the layers above it only when you
-actually need what they add.
-
-```
-  scihist   reproducible pipelines: for_each + automatic lineage + recompute-only-what's-stale
-    │
-  scidb     typed, versioned storage + DB-backed for_each
-    │
-  scifor    batch iteration over conditions on plain tables   (no database)
-```
-
-Each layer re-exports the one below it, so `scihist` exposes the whole API —
-including the lineage decorator — from a single import.
+SciStack gives you three ways to work: two code libraries, `scifor` and `scidb`,
+and a GUI built on top of them. Start with the lightest one that does the job and
+move up when you want more. `pip install scistack` installs all three, so this
+choice doesn't affect your installation.
 
 ## Quick chooser
 
-| You want to… | Use | Import | Languages |
-|---|---|---|---|
-| Replace nested `for` loops over subjects/sessions/trials; data is already in a table | **scifor** | `from scifor import for_each, set_schema` | Python & MATLAB |
-| Persist typed results in a versioned database, loaded/saved by metadata | **scidb** | `from scidb import configure_database, BaseVariable, for_each` | Python & MATLAB |
-| Run a full pipeline that auto-tracks provenance and recomputes only what's stale | **scihist** | `from scihist import for_each, lineage_fcn` | Python (MATLAB via the scidb path) |
+| You want to… | Use | Languages |
+|---|---|---|
+| Replace nested `for` loops, with your data already in tables and nothing saved between runs | **`scifor`** | Python, MATLAB |
+| Save every result in a database, with its versions and a record of how it was made | **`scidb`** | Python, MATLAB |
+| See the pipeline as a diagram, run it from there, and make figures and statistics without writing that code | **SciStack GUI** | Python and MATLAB functions |
 
-If you're unsure, start one layer lower than you think you need — moving up is
-additive and doesn't require rewriting your analysis function.
+If you're unsure, start lower than you think you need. Moving up doesn't require
+rewriting your analysis functions.
 
----
+## scifor: batch iteration, no database
 
-## scifor — batch iteration, no database
+**What it does:** runs a function you already wrote across every combination of
+your experimental conditions. You say which columns are conditions and which
+inputs to slice. scifor filters each table to the matching rows, calls your
+function, and collects the results into one table. It doesn't create or use a
+database.
 
-**What it adds:** turns a function you already wrote into a batch job over every
-combination of experimental conditions. You declare which columns are conditions
-(`set_schema`) and which inputs to slice; scifor filters each table to the
-matching rows, calls your function, and collects the results into one table.
+**Choose this when:** your data is already in a DataFrame or MATLAB table, you
+want to stop writing loops that slice, call, and collect, and you don't need to
+keep anything between runs.
 
-**Choose this when:** your data already lives in a DataFrame (Python) or table
-(MATLAB), you just want to stop writing slice-call-collect loops, and you don't
-need anything persisted between runs.
-
-=== "Python"
-    ```python
-    from scifor import set_schema, for_each
-
-    set_schema(["subject", "session"])
-
-    results = for_each(
-        my_analysis,
-        inputs={"emg": data_table, "cutoff_hz": 20},  # cutoff_hz is a constant
-        subject=[1, 2, 3],
-        session=["pre", "post"],
-    )
-    # -> DataFrame: one row per (subject, session) with an `output` column
-    ```
-
-=== "MATLAB"
-    ```matlab
-    scifor.set_schema(["subject", "session"]);
-
-    results = scifor.for_each(@my_analysis, ...
-        struct('emg', data_table, 'cutoff_hz', 20), ...
-        subject=[1, 2, 3], session=["pre", "post"]);
-    ```
-
-Your function never sees the looping, filtering, or metadata — it just receives
-data and returns a result. No database is created or touched.
-
----
-
-## scidb — typed, versioned storage + DB-backed `for_each`
-
-**What it adds:** a versioned DuckDB database of *typed variables*. You define
-each variable as a `BaseVariable` subclass, then `save`/`load` it by metadata.
-Every save is versioned automatically. `scidb.for_each` is the same iteration
-engine as scifor, but it **loads inputs from the database and saves outputs
-back** — so you pass variable *types* and an `outputs=` list instead of raw
-tables.
-
-**Choose this when:** results need to persist across sessions and be retrieved by
-metadata (subject/session/trial), with version history — but you don't yet need
-automatic provenance.
-
+/// tab | Python
 ```python
-from scidb import configure_database, BaseVariable, for_each
-import numpy as np
+from scifor import set_schema, for_each
 
-db = configure_database("experiment.duckdb", ["subject", "session"])
+set_schema(["subject", "session"])
+
+results = for_each(
+    my_analysis,
+    inputs={"emg": data_table, "cutoff_hz": 20},  # cutoff_hz is a constant
+    subject=[1, 2, 3],
+    session=["pre", "post"],
+)
+# results is a DataFrame with one row per (subject, session)
+```
+///
+
+/// tab | MATLAB
+```matlab
+scifor.set_schema(["subject", "session"]);
+
+results = scifor.for_each(@my_analysis, ...
+    struct('emg', data_table, 'cutoff_hz', 20), ...
+    subject=[1, 2, 3], session=["pre", "post"]);
+```
+///
+
+Your function only receives data and returns a result. It doesn't need to know
+about the looping or filtering.
+
+**Full example:** [Best Popcorn - scifor](../examples/best-popcorn-scifor.md)
+
+## scidb: results that are saved and traceable
+
+**What it adds:** a database of named *variables*. `scidb.for_each` uses scifor
+for the looping, but loads its inputs from the database and saves its outputs
+back, so you pass variable types instead of tables. Each result also records how
+it was made: the function, the data it read, and the settings passed in.
+`skip_computed=True` skips combinations whose results are already up to date.
+
+**Choose this when:** you'll come back to the results later, change the analysis
+and want to keep both versions, or need to show where a number came from.
+
+/// tab | Python
+```python
+from scidb import BaseVariable, configure_database, for_each
+import numpy as np
 
 class RawSignal(BaseVariable):
     schema_version = 1
 
-# Save returns the new record's id; load returns one record object
-RawSignal.save(np.array([1, 2, 3]), subject=1, session="A")
-rec = RawSignal.load(subject=1, session="A")
-rec.data, rec.record_id, rec.metadata   # value + provenance metadata
+class ProcessedSignal(BaseVariable):
+    schema_version = 1
 
-# DB-backed batch: inputs/outputs are variable *types*, loaded and saved for you
+db = configure_database("experiment.duckdb", ["subject", "session"])
+
+RawSignal.save(np.array([1, 2, 3]), subject=1, session="A")
+
 for_each(
     process_signal,
     inputs={"raw": RawSignal},
     outputs=[ProcessedSignal],
-    subject=[1, 2, 3],
-    session=["A", "B"],
+    subject=[1],
+    session=["A"],
 )
+
+print(ProcessedSignal.load(subject=1, session="A").data)  # the saved result
+print(db.get_provenance(ProcessedSignal, subject=1, session="A"))  # how it was made
+```
+///
+
+/// tab | MATLAB
+MATLAB needs each variable in its own file, such as `RawSignal.m`:
+
+```matlab
+classdef RawSignal < scidb.BaseVariable
+end
 ```
 
-`load(..., version="all")` returns a generator over every stored version instead
-of the latest one. scidb has **first-class MATLAB support** via `scidb.*` (see
-[MATLAB Setup](../matlab-setup.md)). Lineage tracking here is *optional* and not
-automatic — for full provenance plus "recompute only what's stale," use
-**scihist**.
+Then, with `ProcessedSignal.m` declared the same way:
 
----
+```matlab
+scidb.configure_database("experiment.duckdb", ["subject", "session"]);
 
-## scihist — full reproducible pipelines
+RawSignal().save([1 2 3], subject=1, session="A");
 
-**What it adds:** everything scidb does, plus it **automatically wraps your
-functions in lineage tracking** and adds node-state / staleness logic — the
-machinery that lets a pipeline recompute only the outputs that are actually out
-of date. It exposes the *same* `for_each` interface as scidb.
+scidb.for_each(@process_signal, ...
+    struct('raw', RawSignal()), ...
+    {ProcessedSignal()}, ...
+    subject=[1], session=["A"]);
 
-**Choose this when:** you want the full story — persisted, versioned results
-*and* automatic provenance *and* "only recompute what's stale" behavior.
-
-```python
-from scihist import for_each, Fixed, configure_database, lineage_fcn
-
-configure_database("experiment.duckdb", ["subject", "session"])
-
-@lineage_fcn
-def process_data(raw, calibration):
-    return raw * calibration
-
-for_each(
-    process_data,
-    inputs={"raw": RawData, "calibration": Fixed(Calibration, session="baseline")},
-    outputs=[ProcessedData],
-    subject=[1, 2, 3],
-    session=["A", "B", "C"],
-)
+disp(ProcessedSignal().load(subject=1, session="A").data)  % the saved result
+p = ProcessedSignal().provenance(subject=1, session="A");  % how it was made
 ```
+///
 
-Because scihist drives the database through scidb, its storage and batch features
-work with the MATLAB bridge; the `@lineage_fcn` decorator itself is Python.
-See [Node States](../concepts/node-states.md) for how staleness is decided.
+**Full example:** [Best Popcorn - scidb](../examples/best-popcorn-scidb.md)
 
----
+## SciStack GUI: see and drive the pipeline
 
-## How the layers stack
+**What it adds:** a VS Code extension, which can also run in a browser, that draws
+your pipeline as a diagram. From there you can run one step or all of them, see
+which results are up to date, compare versions of a result, and find missing data.
+Plot Studio and Stat Studio make figures and run statistics without you writing
+that code. You still write your analysis functions in Python or MATLAB.
 
-Each layer depends only on the ones below it and re-exports its API, so adopting
-a higher layer never takes a capability away:
+**Choose this when:** you want to see the whole pipeline at once, or would rather
+make figures and choose statistics by clicking than by coding.
 
-- **scihist** → scidb (+ automatic lineage and staleness)
-- **scidb** → scifor (+ versioned database storage)
+**Full example:** the [Best Popcorn GUI walkthrough](https://scistack.readthedocs.io/en/latest/ui/examples/best-popcorn/)
 
-Practical path: prototype your analysis function against plain tables with
-**scifor**; move to **scidb** when results need to persist; adopt **scihist**
-when you want provenance and stale-aware recomputation.
+## Moving up
 
-The lineage engine, content hashing, DuckDB layer, and MATLAB bridge are
-**internal packages** you reach through these three layers — see
-[Internals](../internals/index.md) if you want the implementation details.
+- **From scifor to scidb:** keep your function as it is. Declare variables,
+  configure a database, and replace the tables in `inputs=` with variable types,
+  adding an `outputs=` list.
+- **From scidb to the GUI:** open the same database in the GUI. Your functions and
+  results stay as they are, and you can keep running code as well.
 
-**Next:** [Installation](installation.md) · [Quickstart](../quickstart.md) ·
-[Architecture & Layers](../concepts/architecture.md)
+For what each level is responsible for and what it depends on, see
+[Architecture](../concepts/architecture.md). To get set up, see
+[Installation](installation.md), plus [MATLAB Setup](../matlab-setup.md) if you
+use MATLAB.

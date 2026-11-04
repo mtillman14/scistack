@@ -10,7 +10,8 @@ Covers the D7 contracts that pytest can reach:
 - path_output / across_variants spec reconstruction
 - resolved_path_outputs alignment with full_combos (variant placeholders)
 - collision-guard propagation through prepare
-- draft (finalized=False) save suppression through for_each_save
+- draft (save=False) through for_each_save
+- a stale finalized argument is refused at the bridge
 - __vsig_* combo-key sanitization at the MATLAB boundary
 """
 
@@ -78,29 +79,25 @@ class TestEndpointPolicy:
 
         inputs = {"df": object(), "filename": PathOutput("r_{subject}.pdf")}
 
-        kind, pp, at, sup = _endpoint_policy("stat_x", inputs, False, None)
-        assert (kind, pp, at, sup) == ("stat", "filename", True, True)
-
-        kind, pp, at, sup = _endpoint_policy("stat_x", inputs, True, False)
-        assert (kind, pp, at, sup) == ("stat", "filename", False, False)
-
-        kind, pp, at, sup = _endpoint_policy("plot_x", inputs, True, None)
-        assert (kind, pp, at, sup) == ("plot", "filename", None, False)
-
-        kind, pp, at, sup = _endpoint_policy("process", inputs, False, None)
-        assert (kind, pp, at, sup) == (None, None, None, False)
+        assert _endpoint_policy("stat_x", inputs, False, None) == ("stat", "filename", True)
+        assert _endpoint_policy("stat_x", inputs, True, False) == ("stat", "filename", False)
+        assert _endpoint_policy("plot_x", inputs, True, None) == ("plot", "filename", None)
+        assert _endpoint_policy("process", inputs, False, None) == (None, None, None)
 
     def test_plot_requires_pathoutput(self):
         with pytest.raises(ValueError, match="requires a"):
             _endpoint_policy("plot_x", {"signal": object()}, True, None)
 
-    def test_finalized_on_non_endpoint_warns(self):
-        import warnings as _w
-
-        with _w.catch_warnings(record=True) as caught:
-            _w.simplefilter("always")
-            _endpoint_policy("process", {}, True, None)
-        assert any("only applies to endpoint" in str(w.message) for w in caught)
+    def test_stale_finalized_argument_is_refused(self, db):
+        with pytest.raises(TypeError, match="no longer takes finalized="):
+            for_each_prepare(
+                "stat_summary",
+                "hash0",
+                {},
+                [],
+                {"finalized": [True]},
+                db=db,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +113,7 @@ class TestNormalizeStatResult:
             "date": "2026-07-07 09:00:00",
             "nested": {"alpha": np.float64(0.05)},
         }
-        py_payload = normalize_stat_payload(dict(result), "/tmp/r.pdf", True)
+        py_payload = normalize_stat_payload(dict(result), "/tmp/r.pdf")
         # MATLAB path: jsonencode-style string with DIFFERENT key order and
         # already-native types — must canonicalize to the same bytes.
         matlab_json = _json.dumps(
@@ -127,19 +124,19 @@ class TestNormalizeStatResult:
                 "p_value": 0.04,
             }
         )
-        bridge_payload = normalize_stat_result(matlab_json, "/tmp/r.pdf", True)
+        bridge_payload = normalize_stat_result(matlab_json, "/tmp/r.pdf")
         assert bridge_payload == py_payload
         parsed = _json.loads(bridge_payload)
         assert "date" not in parsed
         assert parsed["report_path"] == "/tmp/r.pdf"
 
     def test_draft_has_no_report_path(self):
-        payload = normalize_stat_result('{"p": 0.5}', "", False)
+        payload = normalize_stat_result('{"p": 0.5}', "")
         assert _json.loads(payload) == {"p": 0.5}
 
     def test_invalid_json_raises(self):
         with pytest.raises(TypeError, match="not valid JSON"):
-            normalize_stat_result("not json", "", True)
+            normalize_stat_result("not json", "")
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +199,6 @@ class TestPrepareEndpoints:
             ["StatOut_EP"],
             {"subject": ["S01"]},
             db=db,
-            finalized=True,
         )
         combos = list(prep["full_combos"])
         paths = list(prep["resolved_path_outputs"]["filename"])
@@ -243,7 +239,6 @@ class TestPrepareEndpoints:
                 ["StatOut_EP"],
                 {"subject": ["S01"]},
                 db=db,
-                finalized=True,
             )
 
     def test_plot_requires_pathoutput_through_prepare(self, db):
@@ -257,7 +252,6 @@ class TestPrepareEndpoints:
                 ["PlotOut_EP"],
                 {"subject": ["S01"], "session": ["1"]},
                 db=db,
-                finalized=True,
             )
 
 
@@ -267,7 +261,7 @@ class TestPrepareEndpoints:
 
 
 class TestDraftThroughBridge:
-    def _run_stat_cycle(self, db, finalized):
+    def _run_stat_cycle(self, db, save):
         RawSignal = register_matlab_variable("RawSignal_EP2")
         StatOut = register_matlab_variable("StatOut_EP2")
         db.save_variable(RawSignal, 1.0, subject="S01", session="1")
@@ -280,7 +274,7 @@ class TestDraftThroughBridge:
             ["StatOut_EP2"],
             {"subject": ["S01"]},
             db=db,
-            finalized=finalized,
+            save=save,
         )
         combos = list(prep["full_combos"])
         assert len(combos) == 1
@@ -288,20 +282,20 @@ class TestDraftThroughBridge:
         # Simulate the MATLAB loop + stat wrapper: normalize like
         # stat_endpoint_call does, then build the result table MATLAB
         # would hand back (metadata cols incl. sanitized vsig + output col).
-        payload = normalize_stat_result('{"n": 2}', "", finalized)
+        payload = normalize_stat_result('{"n": 2}', "")
         row = dict(combos[0].items())
         row["StatOut_EP2"] = payload
         result_df = pd.DataFrame([row])
-        result = for_each_save(prep["handle"], [result_df], save=True)
+        result = for_each_save(prep["handle"], [result_df], save=save)
         return db, StatOut, result
 
     def test_draft_suppresses_save(self, db):
-        db, StatOut, result = self._run_stat_cycle(db, finalized=False)
+        db, StatOut, result = self._run_stat_cycle(db, save=False)
         assert result is not None and len(result) == 1
         assert db.list_versions(StatOut) == []
 
-    def test_finalized_saves(self, db):
-        db, StatOut, result = self._run_stat_cycle(db, finalized=True)
+    def test_save_records(self, db):
+        db, StatOut, result = self._run_stat_cycle(db, save=True)
         assert len(db.list_versions(StatOut)) == 1
         rec = next(db.load(StatOut, {"subject": "S01"}, version_id="latest"))
         assert _json.loads(rec.data) == {"n": 2}

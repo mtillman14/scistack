@@ -1,11 +1,10 @@
 """Tests for plotting leaf nodes: plot_ detection, figure save, path record,
-share_limits, and the finalized draft/record flag (D3).
+share_limits, and draft (save=False) vs. record (D3).
 
 A function whose name starts with ``plot_`` is treated as a plotting leaf:
 scidb.for_each saves its returned matplotlib Figure to the combo's PathOutput
-path. With ``finalized=True`` the path string is stored as a normal
-(queryable) record with lineage; the DEFAULT (``finalized=False``) is DRAFT
-mode — the figure file is still rendered (the user needs to look at it) but
+path, and the path string is stored as a normal (queryable) record with
+lineage. With ``save=False`` it is a DRAFT — the figure file is still rendered (the user needs to look at it) but
 nothing is written to the database. ``share_limits`` lets every plot in a
 group share one axis range.
 """
@@ -74,7 +73,6 @@ def test_plot_saves_files_and_registers_paths(db, tmp_path):
             "filename": PathOutput(str(plots_dir / "{subject}_{trial}.png")),
         },
         outputs=[PlotFigure],
-        finalized=True,
         subject=["1", "2"],
         trial=["1", "2", "3"],
         db=db,
@@ -99,7 +97,7 @@ def test_plot_saves_files_and_registers_paths(db, tmp_path):
 
 
 def test_plot_draft_renders_but_records_nothing(db, tmp_path):
-    """Default finalized=False: figure files rendered, NO database writes."""
+    """save=False: figure files rendered, NO database writes."""
     plots_dir = tmp_path / "plots"
     plots_dir.mkdir()
     _seed(db)
@@ -116,6 +114,7 @@ def test_plot_draft_renders_but_records_nothing(db, tmp_path):
             "filename": PathOutput(str(plots_dir / "{subject}_{trial}.png")),
         },
         outputs=[PlotFigure],
+        save=False,
         subject=["1", "2"],
         trial=["1", "2", "3"],
         db=db,
@@ -190,7 +189,6 @@ def test_second_run_skips_rerender(db, tmp_path):
             "filename": PathOutput(str(plots_dir / "{subject}_{trial}.png")),
         },
         "outputs": [PlotFigure],
-        "finalized": True,
         "skip_computed": True,
         "subject": ["1", "2"],
         "trial": ["1", "2", "3"],

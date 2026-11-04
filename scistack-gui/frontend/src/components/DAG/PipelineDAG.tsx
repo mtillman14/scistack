@@ -37,12 +37,12 @@ import FunctionNode from './FunctionNode'
 import ParameterNode, { type ParameterNodeData } from './ParameterNode'
 import PathInputNode from './PathInputNode'
 import PipelineNode, { type PipelineNodeData } from './PipelineNode'
+import PortNode from './PortNode'
 import RunsDock from '../RunsDock'
 import GlueNode from './GlueNode'
 import PlotStudio from '../PlotStudio/PlotStudio'
 import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
 import VariantsPopup from '../Variants/VariantsPopup'
-import ClearDataDialog from './ClearDataDialog'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { optionalPorts, OPTIONAL_ARGS_ATTR, type OptionalPort } from './inputPorts'
 import { SourceLocationDialog } from '../SourceLocationDialog'
@@ -60,6 +60,7 @@ import { useSidebarSelection } from '../../context/SidebarSelectionContext'
 import { useScope } from '../../context/ScopeContext'
 import { usePlanRun } from '../../context/PlanRunContext'
 import { useClipboard } from '../../context/ClipboardContext'
+import { SELECTION_CSS, carrySelection } from './nodeSelection'
 
 // Tell React Flow which React component to render for each node "type" string.
 // These match the "type" field we set in GET /api/pipeline.
@@ -73,6 +74,9 @@ const nodeTypes = {
   parameterNode: ParameterNode,
   pathInputNode: PathInputNode,
   pipelineNode: PipelineNode,
+  // A submodule's generic input / output nodes (domain/ports.py).
+  inputPortNode: PortNode,
+  outputPortNode: PortNode,
 }
 
 interface ContextMenuState {
@@ -83,24 +87,10 @@ interface ContextMenuState {
   /** The function node's own id, for "Open in Plot Studio" on a plot_ node. */
   fnNodeId?: string
   varType?: string
-  // Which single direction this variable node's type plays in the
-  // current scope's interface — a type produced by a function inside the
-  // scope is ALWAYS classified as an output there (document_interface's
-  // inputs = consumed - produced), never an input, even if it's also
-  // consumed further downstream as an intermediate; a type only ever
-  // consumed (never produced) is a pure input. Only one direction is
-  // ever real for a given type in a given scope, so only one toggle is
-  // offered — never both.
-  portDirection?: 'input' | 'output'
   paramLabel?: string
   paramSourceFile?: string | null
   paramSourceLine?: number | null
   paramDeclaredInEntitiesFile?: boolean
-}
-
-interface HiddenPorts {
-  input: string[]
-  output: string[]
 }
 
 /**
@@ -124,14 +114,6 @@ interface GraphWarning {
   chosen?: string
   others?: string[]
   scope?: string
-}
-
-interface HiddenEdge {
-  edge_id: string
-  source: string
-  target: string
-  source_handle: string | null
-  target_handle: string | null
 }
 
 export default function PipelineDAG() {
@@ -180,20 +162,15 @@ export default function PipelineDAG() {
   // arises AT a node, so this is where it opens.
   const [variantsTarget, setVariantsTarget] = useState<string | null>(null)
   const [sourceLoc, setSourceLoc] = useState<SourceLocation | null>(null)
-  const [runFinalized, setRunFinalized] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [extractDraft, setExtractDraft] = useState<{ open: boolean; name: string; error: string }>(
     { open: false, name: '', error: '' }
   )
-  const [hiddenEdges, setHiddenEdges] = useState<HiddenEdge[]>([])
-  const [showHiddenEdges, setShowHiddenEdges] = useState(false)
-  const [hiddenPorts, setHiddenPorts] = useState<HiddenPorts>({ input: [], output: [] })
+  const [portDraft, setPortDraft] = useState<{ nodeType: 'inputPortNode' | 'outputPortNode'; name: string; error: string } | null>(null)
   // Build-time warnings the backend wants the user to SEE, not just log.
   // Today there is one kind (`wiring_ambiguity`); the shape is deliberately
   // generic so the next one does not need a second channel.
   const [graphWarnings, setGraphWarnings] = useState<GraphWarning[]>([])
-  // The "Clear data, keep the pipeline" dialog (ClearDataDialog).
-  const [clearDataOpen, setClearDataOpen] = useState(false)
   const dismissedWarnings = useRef<Set<string>>(new Set())
 
   // Which refresh dropped a just-placed node/edge (canvasRefreshLog.ts):
@@ -281,10 +258,10 @@ export default function PipelineDAG() {
       // from dragging a new node onto the canvas) would silently revert an
       // in-progress, unsaved draft back to the last-saved value.
       if (scopeChanged) return laidOut
-      return laidOut.map(n => {
+      return carrySelection(prev, laidOut.map(n => {
         const patch = getDirtyPatch(n.id)
         return patch ? { ...n, data: { ...n.data, ...patch } } : n
-      })
+      }))
     })
     setEdges(data.edges)
 
@@ -295,21 +272,6 @@ export default function PipelineDAG() {
       setTimeout(() => fitView({ padding: 0.2 }), 50)
     }
 
-    // Hidden edges are scoped per pipeline (a delete in one hypothesis
-    // never hides another hypothesis's independent placement of the same
-    // shared wiring) — refreshed alongside the graph so the restore-panel
-    // count stays live for the currently open scope.
-    callBackend('get_hidden_edges', { pipeline_id: currentScope }).then(res => {
-      setHiddenEdges((res as { edges: HiddenEdge[] }).edges)
-    })
-
-    // This scope's own hidden ports (to-do #9) — right-click a variable
-    // node's Show/Hide label needs current state. Scoped to currentScope
-    // like hidden edges: a hide made in one subpipeline never affects
-    // another's independent interface.
-    callBackend('get_hidden_ports', { pipeline_id: currentScope }).then(res => {
-      setHiddenPorts(res as HiddenPorts)
-    })
   }, [setNodes, setEdges, fitView, currentScope, getDirtyPatch])
 
   useEffect(() => {
@@ -494,23 +456,6 @@ export default function PipelineDAG() {
       .catch(err => setExtractDraft(d => ({ ...d, error: (err as Error).message })))
   }, [extractDraft.name, selectedIds, currentScope, bumpGraph])
 
-  const handleRestoreEdge = useCallback((edgeId: string) => {
-    callBackend('unhide_edge', { edge_id: edgeId, pipeline_id: currentScope })
-      .then(() => bumpGraph())
-      .catch(err => window.alert(`Could not restore edge: ${(err as Error).message}`))
-  }, [bumpGraph, currentScope])
-
-  // Short label for a node id in the restore list — strip prefixes/hashes
-  // rather than showing the raw fn__{fn}__{wiring_id} form.
-  const shortNodeLabel = useCallback((nodeId: string) => {
-    const bare = nodeId.split('::')[0]
-    const m = /^(var|const|pathInput)__(.+)$/.exec(bare)
-    if (m) return m[2]
-    const fm = /^fn__(.+)__[0-9a-f]{16}$/.exec(bare)
-    if (fm) return fm[1]
-    return bare
-  }, [])
-
   // Double-click a pipeline node → descend into the child scope (push the
   // navigation crumb; the crumb carries the binding so the breadcrumb can
   // show why constants display overridden).
@@ -556,27 +501,13 @@ export default function PipelineDAG() {
         paramDeclaredInEntitiesFile: d.declared_in_entities_file,
       })
     } else {
-      // Classify from THIS scope's own edges (already scope-filtered by
-      // the backend, so any edge touching this node id is in-scope): an
-      // edge INTO the variable node means something here produces it
-      // (output); an edge OUT means something here consumes it (input).
-      // Produced wins over consumed — see ContextMenuState.portDirection.
-      const isProduced = edges.some(ed => ed.target === node.id)
-      const isConsumed = edges.some(ed => ed.source === node.id)
-      // Port hiding only means something inside a nested scope, and an
-      // isolated node has no port to hide either. The menu still opens in
-      // both cases — "Plot" applies to any variable node that has records.
-      const portDirection = currentScope === 'main'
-        ? undefined
-        : isProduced ? 'output' : isConsumed ? 'input' : undefined
       setContextMenu({
         ...base,
         nodeType: 'variableNode',
         varType: (node.data as { label: string }).label,
-        portDirection,
       })
     }
-  }, [currentScope, edges])
+  }, [])
 
   const handleRunUntilHere = useCallback(() => {
     if (!contextMenu?.fnLabel) return
@@ -621,39 +552,39 @@ export default function PipelineDAG() {
     }
   }, [contextMenu])
 
-  // Toggle one direction's port for the right-clicked variable type — the
-  // internal node itself is never hidden, only its outward-facing dot on
-  // THIS scope's interface (see domain.scope_filter.document_interface).
-  const handleTogglePort = useCallback((direction: 'input' | 'output') => {
-    const varType = contextMenu?.varType
-    if (!varType) return
-    const isHidden = hiddenPorts[direction].includes(varType)
-    callBackend(isHidden ? 'unhide_port' : 'hide_port', {
+  // Insert a generic input/output node on this submodule's canvas: left of
+  // what's there for an input, right for an output. The backend refuses a
+  // duplicate name or a canvas nothing can place (scope_service.check_new_port).
+  const handleInsertPort = useCallback(() => {
+    if (!portDraft) return
+    const label = portDraft.name.trim()
+    if (!label) return
+    const all = getNodes()
+    const xs = all.map(n => n.position.x)
+    const isInput = portDraft.nodeType === 'inputPortNode'
+    const x = xs.length === 0 ? 0 : isInput ? Math.min(...xs) - 220 : Math.max(...xs) + 220
+    // Height is the port's order: a new port goes below its direction's others.
+    const ys = all.filter(n => n.type === portDraft.nodeType).map(n => n.position.y)
+    const y = ys.length === 0 ? 0 : Math.max(...ys) + 100
+    callBackend('put_layout', {
+      node_id: `${portDraft.nodeType}__${label}__${Math.random().toString(36).slice(2, 10)}`,
+      x,
+      y,
+      node_type: portDraft.nodeType,
+      label,
       pipeline_id: currentScope,
-      direction,
-      var_type: varType,
     })
-      .then(() => {
-        setContextMenu(null)
-        setHiddenPorts(prev => ({
-          ...prev,
-          [direction]: isHidden
-            ? prev[direction].filter(t => t !== varType)
-            : [...prev[direction], varType],
-        }))
+      .then(res => {
+        const r = res as { ok?: boolean; error?: string } | undefined
+        if (r && r.ok === false) {
+          setPortDraft(d => d && { ...d, error: r.error ?? 'Could not add the port.' })
+          return
+        }
+        setPortDraft(null)
         bumpGraph()
       })
-      .catch(err => window.alert(`Could not update port visibility: ${(err as Error).message}`))
-  }, [contextMenu, hiddenPorts, currentScope, bumpGraph])
-
-  const handleRunEndpoints = useCallback(() => {
-    requestPlan({
-      pipeline_id: currentScope,
-      mode: 'endpoints',
-      finalized: runFinalized,
-      label: `${breadcrumb[breadcrumb.length - 1].name} endpoints`,
-    })
-  }, [currentScope, breadcrumb, requestPlan, runFinalized])
+      .catch(err => setPortDraft(d => d && { ...d, error: (err as Error).message }))
+  }, [portDraft, getNodes, currentScope, bumpGraph])
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -957,7 +888,7 @@ export default function PipelineDAG() {
       // deleted — build_edges excludes them on every rebuild until
       // reconnected or restored). Backend decides which based on the id
       // prefix; the frontend just forwards the removed edge's endpoints so
-      // a hidden DB-derived edge can be labeled in the restore panel.
+      // a hidden DB-derived edge keeps a readable record of its endpoints.
       const removed = edges.find(e => e.id === change.id)
       callBackend('delete_edge', {
         edge_id: change.id,
@@ -984,7 +915,7 @@ export default function PipelineDAG() {
       {/* React Flow's default selected-edge color (--xy-edge-stroke-selected-default:
           #555) is a dark gray meant for a light canvas — on this app's dark navy
           background it's nearly invisible, so a click-to-select gives no visible
-          feedback. Override with a bright, on-brand highlight + thicker stroke;
+          feedback. The node and edge highlights come from nodeSelection.ts;
           deselecting (clicking the pane, or Escape) removes the .selected class
           automatically, so the highlight already disappears for free. */}
       <style>{`
@@ -994,11 +925,7 @@ export default function PipelineDAG() {
         .react-flow__edge:hover .react-flow__edge-path {
           stroke: #9d92f5;
         }
-        .react-flow__edge.selected .react-flow__edge-path {
-          stroke: #a78bfa;
-          stroke-width: 3;
-          filter: drop-shadow(0 0 4px rgba(167, 139, 250, 0.6));
-        }
+        ${SELECTION_CSS}
       `}</style>
       <ReactFlow
         nodes={nodes}
@@ -1073,69 +1000,42 @@ export default function PipelineDAG() {
             </div>
           </Panel>
         )}
-        <Panel position="bottom-left">
-          <RunsDock />
-        </Panel>
-        {hiddenEdges.length > 0 && (
-          <Panel position="bottom-left">
-            <div style={styles.hiddenEdgesPanel}>
-              <button
-                style={styles.hiddenEdgesToggle}
-                onClick={() => setShowHiddenEdges(v => !v)}
-                type="button"
-              >
-                {showHiddenEdges ? 'hide' : `${hiddenEdges.length} hidden edge${hiddenEdges.length === 1 ? '' : 's'} — show`}
-              </button>
-              {showHiddenEdges && (
-                <div style={styles.hiddenEdgesList}>
-                  {hiddenEdges.map(he => (
-                    <div key={he.edge_id} style={styles.hiddenEdgeRow}>
-                      <span style={styles.hiddenEdgeText}>
-                        {shortNodeLabel(he.source)} → {shortNodeLabel(he.target)}
-                      </span>
-                      <button
-                        style={styles.hiddenEdgeRestoreBtn}
-                        onClick={() => handleRestoreEdge(he.edge_id)}
-                        type="button"
-                        title="Restore this edge (also unhides — recomputes state fresh from the database)"
-                      >
-                        restore
-                      </button>
-                    </div>
-                  ))}
+        {currentScope !== 'main' && selectedIds.length <= 1 && (
+          <Panel position="top-left">
+            <div style={styles.extractPanel}>
+              {!portDraft ? (
+                <div style={styles.extractForm}>
+                  <button style={styles.extractBtn} type="button" onClick={() => setPortDraft({ nodeType: 'inputPortNode', name: '', error: '' })}>
+                    ⇥ Add input port
+                  </button>
+                  <button style={styles.extractBtn} type="button" onClick={() => setPortDraft({ nodeType: 'outputPortNode', name: '', error: '' })}>
+                    Add output port ⇥
+                  </button>
+                </div>
+              ) : (
+                <div style={styles.extractForm}>
+                  <input
+                    style={styles.extractInput}
+                    autoFocus
+                    value={portDraft.name}
+                    placeholder={portDraft.nodeType === 'inputPortNode' ? 'input port name…' : 'output port name…'}
+                    onChange={e => setPortDraft(d => d && { ...d, name: e.target.value, error: '' })}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') handleInsertPort()
+                      if (e.key === 'Escape') setPortDraft(null)
+                    }}
+                  />
+                  <button style={styles.extractBtn} onClick={handleInsertPort} type="button">
+                    Add
+                  </button>
                 </div>
               )}
+              {portDraft?.error && <div style={styles.extractError}>{portDraft.error}</div>}
             </div>
           </Panel>
         )}
-        <Panel position="top-right">
-          <div style={styles.runPanel}>
-            <label style={styles.finalizedToggle} title="Draft runs preview endpoints without DB writes; finalized runs stamp and record them.">
-              <input
-                type="checkbox"
-                checked={runFinalized}
-                onChange={e => setRunFinalized(e.target.checked)}
-                style={{ margin: 0 }}
-              />
-              finalized
-            </label>
-            <button
-              style={styles.runEndpointsBtn}
-              onClick={handleRunEndpoints}
-              type="button"
-              title="Plan-preview and run every endpoint in this scope (nested pipelines included)"
-            >
-              ▶ Run endpoints
-            </button>
-            <button
-              style={styles.clearDataBtn}
-              onClick={() => setClearDataOpen(true)}
-              type="button"
-              title="Delete every record and its run history; keep every canvas (nodes, edges, values)"
-            >
-              Clear data…
-            </button>
-          </div>
+        <Panel position="bottom-left">
+          <RunsDock />
         </Panel>
       </ReactFlow>
       {argDrop && (
@@ -1182,7 +1082,6 @@ export default function PipelineDAG() {
       )}
       {contextMenu && contextMenu.nodeType === 'variableNode' && (() => {
         const varType = contextMenu.varType ?? ''
-        const direction = contextMenu.portDirection
         if (!varType) return null
         return (
           <div style={{ ...styles.contextMenu, left: contextMenu.x, top: contextMenu.y }}>
@@ -1217,13 +1116,6 @@ export default function PipelineDAG() {
             >
               🧬 Variants…
             </button>
-            {direction && (
-              <button style={styles.contextMenuItem} onClick={() => handleTogglePort(direction)} type="button">
-                {hiddenPorts[direction].includes(varType)
-                  ? `◎ Show as ${direction} port`
-                  : `⊘ Hide as ${direction} port`}
-              </button>
-            )}
           </div>
         )
       })()}
@@ -1268,14 +1160,6 @@ export default function PipelineDAG() {
           onDismiss={() => {
             for (const w of graphWarnings) dismissedWarnings.current.add(w.signature)
             setGraphWarnings([])
-          }}
-        />
-      )}
-      {clearDataOpen && (
-        <ClearDataDialog
-          onClose={() => {
-            setClearDataOpen(false)
-            bumpGraph()
           }}
         />
       )}
@@ -1366,94 +1250,12 @@ const warningStyles: Record<string, React.CSSProperties> = {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  runPanel: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    padding: '4px 8px',
-    background: '#1a1a2e',
-    border: '1px solid #3a3a5a',
-    borderRadius: 6,
-  },
-  finalizedToggle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 4,
-    color: '#ccc',
-    fontSize: 11,
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
-  clearDataBtn: {
-    padding: '4px 10px',
-    background: '#2a2a4a',
-    color: '#e0a0a0',
-    border: '1px solid #5a3a3a',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontSize: 12,
-  },
-  runEndpointsBtn: {
-    padding: '4px 10px',
-    background: '#7b68ee',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontWeight: 600,
-    fontSize: 12,
-  },
   extractPanel: {
     padding: '4px 8px',
     background: '#1a1a2e',
     border: '1px solid #a21caf',
     borderRadius: 6,
     userSelect: 'none',
-  },
-  hiddenEdgesPanel: {
-    padding: '4px 8px',
-    background: '#1a1a2e',
-    border: '1px solid #dc2626',
-    borderRadius: 6,
-  },
-  hiddenEdgesToggle: {
-    padding: '3px 8px',
-    background: 'transparent',
-    color: '#f87171',
-    border: 'none',
-    cursor: 'pointer',
-    fontWeight: 600,
-    fontSize: 11,
-  },
-  hiddenEdgesList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 3,
-    marginTop: 4,
-    maxHeight: 140,
-    overflowY: 'auto',
-  },
-  hiddenEdgeRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  hiddenEdgeText: {
-    fontSize: 10,
-    fontFamily: 'monospace',
-    color: '#ccc',
-    whiteSpace: 'nowrap',
-  },
-  hiddenEdgeRestoreBtn: {
-    padding: '2px 6px',
-    background: '#374151',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 3,
-    cursor: 'pointer',
-    fontSize: 10,
-    flexShrink: 0,
   },
   undoPanel: {
     padding: '4px 8px',

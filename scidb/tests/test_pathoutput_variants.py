@@ -111,7 +111,6 @@ class TestAggregationPlaceholders:
                 "filename": PathOutput(str(tmp_path / "report_{low_hz}.pdf")),
             },
             [StatOut],
-            finalized=True,
             subject=["S01"],
         )
 
@@ -145,7 +144,6 @@ class TestAggregationPlaceholders:
                 "filename": PathOutput(str(tmp_path / "r_{bandpass.low_hz}.pdf")),
             },
             [StatOut],
-            finalized=True,
             subject=["S01"],
         )
 
@@ -176,7 +174,6 @@ class TestFullIterationPlaceholders:
                 ),
             },
             [PlotOut],
-            finalized=True,
             subject=["S01"],
             session=["1"],
         )
@@ -230,7 +227,6 @@ class TestAmbiguity:
                 stat_summary,
                 {"df": Chained, "filename": PathOutput(str(tmp_path / "r_{cut}.pdf"))},
                 [StatOut],
-                finalized=True,
                 subject=["S01"],
             )
 
@@ -249,7 +245,7 @@ class TestVariantToken:
             seen.append(str(filename).rsplit("/", 1)[-1])
             return {"n": len(df)}
 
-        # finalized=True: a draft stat_ resolves PathOutput to None by design,
+        # Recording on: a draft stat_ resolves PathOutput to None by design,
         # so paths are only observable in record mode.
         kwargs = {
             "inputs": {
@@ -257,7 +253,6 @@ class TestVariantToken:
                 "filename": PathOutput(str(tmp_path / "r_{variant}.pdf")),
             },
             "outputs": [StatOut],
-            "finalized": True,
             "subject": ["S01"],
         }
 
@@ -286,7 +281,6 @@ class TestVariantToken:
                 "filename": PathOutput(str(tmp_path / "r_{variant}.pdf")),
             },
             [StatOut],
-            finalized=True,
             subject=["S01"],
         )
         assert len(seen) == 1
@@ -316,7 +310,6 @@ class TestCollisionGuard:
                     "filename": PathOutput(str(tmp_path / "report_{subject}.pdf")),
                 },
                 [StatOut],
-                finalized=True,
                 subject=["S01"],
             )
         assert not (tmp_path / "report_S01.pdf").exists(), (
@@ -393,7 +386,6 @@ class TestMissingPlaceholder:
                     "filename": PathOutput(str(tmp_path / "r_{nope}.pdf")),
                 },
                 [StatOut],
-                finalized=True,
                 subject=["S01"],
             )
 
@@ -420,7 +412,6 @@ class TestPlaceholderHygiene:
             stat_summary,
             {"df": Filtered, "filename": PathOutput(str(tmp_path / "r_{low_hz}.pdf"))},
             [StatOut],
-            finalized=True,
             subject=["S01"],
             introspect=True,
         )
@@ -453,9 +444,10 @@ class TestDraftPlaceholders:
                 "filename": PathOutput(str(tmp_path / "{subject}_{low_hz}.png")),
             },
             [PlotOut],
+            save=False,
             subject=["S01"],
             session=["1"],
-        )  # draft
+        )
 
         assert db.list_versions(PlotOut) == []
         for low_hz in [20, 30]:
@@ -494,7 +486,6 @@ class TestSanitization:
             stat_summary,
             {"df": Filtered, "filename": PathOutput(str(tmp_path / "r_{label}.pdf"))},
             [StatOut],
-            finalized=True,
             subject=["S01"],
         )
         assert seen == ["r_a-b.pdf"]
@@ -527,7 +518,6 @@ class TestVariantTokenIsOneDigest:
                 "filename": PathOutput(str(out_dir / "r_{variant}.pdf")),
             },
             outputs=[StatOut],
-            finalized=True,
             **iterate,
         )
         return sorted(seen)

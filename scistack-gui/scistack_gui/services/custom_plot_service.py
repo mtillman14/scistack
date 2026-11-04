@@ -87,7 +87,7 @@ def node_wiring(db, node_id: str) -> NodeWiring:
 
     resolved = resolve_function_edges(
         fn_node_ids={node_id},
-        manual_edges=view.drawn_list,
+        manual_edges=view.wiring_list,
         manual_nodes=view.manual_nodes,
         existing_node_labels={},
     )

@@ -36,7 +36,7 @@ def stat_signal_mean(filtered):
 
 @pytest.fixture
 def endpoint_client(tmp_path):
-    """bandpass (processing) + a FINALIZED stat_ endpoint run."""
+    """bandpass (processing) + a recorded stat_ endpoint run."""
     if hasattr(_local, "database"):
         delattr(_local, "database")
     _gui_db._db = None
@@ -59,7 +59,6 @@ def endpoint_client(tmp_path):
         outputs=[StatSummary],
         subject=[1, 2],
         session=["pre", "post"],
-        finalized=True,
     )
 
     _gui_db._db = db
@@ -102,7 +101,7 @@ class TestFunctionInfoEndpointKind:
 
 
 class TestArtifactsEndpoint:
-    def test_finalized_stat_records_in_manifest(self, endpoint_client):
+    def test_recorded_stat_in_manifest(self, endpoint_client):
         client, _, _ = endpoint_client
         data = client.get("/api/endpoints/stat_signal_mean/artifacts").json()
         assert data["figures"] == []
@@ -152,7 +151,7 @@ class TestShowMode:
     def test_show_renders_drafts_without_new_records(self, endpoint_client):
         """show = draft-run one endpoint: rendered payloads come back, the
         endpoint writes NO new records. skip_computed=False forces the
-        recompute so the assertion is deterministic even though a finalized
+        recompute so the assertion is deterministic even though a recorded
         run already exists."""
         client, db, _ = endpoint_client
         from scistack_gui.services.execution_service import run_pipeline

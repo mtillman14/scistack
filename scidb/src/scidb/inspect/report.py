@@ -1,4 +1,4 @@
-"""Endpoint report surface: collect finalized plot_/stat_ records into a
+"""Endpoint report surface: collect recorded plot_/stat_ records into a
 self-contained HTML page + stats tables (stage 5 of
 docs/claude/endpoints-viz-and-stats-design.md).
 
@@ -7,7 +7,7 @@ record is one whose PRODUCING invocation's function_name starts with
 ``plot_`` (stored value = the artifact path) or ``stat_`` (stored value =
 the canonical result JSON, whose optional ``report_path`` names a PDF
 artifact). Drafts never appear by construction — they have no records; the
-report is explicitly the FINALIZED surface.
+report is explicitly the RECORDED surface.
 
 Rendering is dependency-free string-template HTML (inline CSS, zero external
 requests): the page must open unchanged from an archive folder years later.
@@ -85,7 +85,7 @@ def collect_report(
     variable: str | None = None,
     all_versions: bool = False,
 ) -> ReportData:
-    """Collect every finalized endpoint record into a ReportData manifest.
+    """Collect every endpoint record into a ReportData manifest.
 
     fn / variable narrow to one producing function / one output type.
     Latest-per-variant by default (the same collapse ``records()`` uses);
@@ -524,7 +524,7 @@ def _render_html(data: ReportData, local_paths: dict, embed: bool) -> str:
         f'<p class="meta">generated {_esc(data.generated_at)}'
         + (f" · filters: {_esc(filters)}" if filters else "")
         + f" · {len(data.figures)} figure(s), {len(data.stats)} stat result(s)."
-        f" Drafts (finalized=False) leave no records and do not appear.</p>"
+        f" Drafts leave no records and do not appear.</p>"
     )
     warn_html = "".join(f'<div class="warn">{_esc(w)}</div>' for w in data.warnings)
 
@@ -559,8 +559,8 @@ def _render_html(data: ReportData, local_paths: dict, embed: bool) -> str:
         + ("<h2>Figures</h2>" + "".join(fig_chunks) if fig_chunks else "")
         + ("<h2>Statistics</h2>" + "".join(stat_chunks) if stat_chunks else "")
         + (
-            "<p class='meta'>No endpoint records found. Endpoint functions "
-            "(plot_*/stat_*) must run with finalized=True to record.</p>"
+            "<p class='meta'>No endpoint records found. Run an endpoint function "
+            "(plot_*/stat_*) to record it; 👁 Show drafts do not record.</p>"
             if not fig_chunks and not stat_chunks
             else ""
         )

@@ -179,5 +179,5 @@ The same indexing also builds column filters (e.g. `MyVar["col_a"] != 0`) used
 in `where=` clauses — see [Filtering & Selection](../guide/filters.md).
 
 **Next:** [Lineage & Provenance](lineage.md) ·
-[Computation Caching](caching.md) · [API: Variables](../api/variables.md) ·
+[Skipping Computed Work](caching.md) · [API: Variables](../api/variables.md) ·
 [Guide: Defining Variables](../guide/variables.md)

@@ -208,12 +208,12 @@ classdef TestPipelineRegistry < matlab.unittest.TestCase
             testCase.verifyEqual(numel(eps), 1);
             testCase.verifyEqual(char(string(eps(1).step)), 'plot_signal_line');
 
-            pipe.run_endpoints('finalized', true);
+            pipe.run_endpoints();
 
             testCase.verifyTrue(isfile(fullfile(plots_dir, 'S01_1.png')));
             rec = ProcessedSignal().load('subject', "S01", 'session', "1");
             testCase.verifyTrue(contains(char(string(rec.data)), '.png'), ...
-                'finalized endpoint must store the figure path record');
+                'endpoint must store the figure path record');
         end
     end
 end

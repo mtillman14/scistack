@@ -102,7 +102,6 @@ for_each(
     },
     outputs=[StepLengthFigure],
     as_table=['df'],
-    finalized=True,
     subject=[],
 )
 ```
@@ -114,7 +113,7 @@ those disagree, the exported pipeline is not what you previewed —
 `tests/test_fanout_parity.py` runs both paths against the same database and
 compares the figure sets.
 
-Everything about *recording* the figure — `finalized`, artifact stamping,
+Everything about *recording* the figure — artifact stamping,
 `skip_computed`, `scidb report` — is SciDB's existing endpoint machinery and is
 untouched.
 

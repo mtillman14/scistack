@@ -531,3 +531,111 @@ class TestDatabaseHandoffToMatlab:
         finally:
             db_mod._external_holder = None
             db_mod._db, db_mod._db_open, db_mod._db_refcount = saved
+
+
+class TestSubmodulesInMatlabPipeline:
+    """Routing looks through submodules (pipeline_has_matlab_steps), so the
+    script must too: a submodule's steps used to vanish with no warning."""
+
+    def _parent_using_child(self, client):
+        child = client.post("/api/pipelines", json={"name": "matlab_child"}).json()["pipeline_id"]
+        _build_matlab_only_scope(client, child)
+        parent = client.post("/api/pipelines", json={"name": "parent"}).json()["pipeline_id"]
+        use_id = client.post(
+            f"/api/pipelines/{parent}/uses", json={"child_pipeline_id": child}
+        ).json()["use_id"]
+        return parent, child, use_id
+
+    def test_a_parent_runs_its_submodules_steps(self, client):
+        from scistack_gui.services.matlab_command_service import (
+            generate_matlab_pipeline_command,
+        )
+
+        _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
+        try:
+            parent, _child, _use = self._parent_using_child(client)
+            result = generate_matlab_pipeline_command(parent, get_db(), {"mode": "all"})
+            assert "scidb.for_each(@matlab_proc, " in result["command"]
+            assert "'signal', RawSignal()" in result["command"]
+        finally:
+            matlab_registry._matlab_functions.pop("matlab_proc", None)
+
+    def test_a_step_extracted_into_a_submodule_still_runs(self, client):
+        """The tidy-up on the canvas must not change what a MATLAB run does."""
+        from scistack_gui.services.matlab_command_service import (
+            generate_matlab_pipeline_command,
+        )
+
+        _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
+        try:
+            pid = client.post("/api/pipelines", json={"name": "scope"}).json()["pipeline_id"]
+            _build_matlab_only_scope(client, pid)
+            before = generate_matlab_pipeline_command(pid, get_db(), {"mode": "all"})
+
+            graph = client.get("/api/pipeline", params={"pipeline_id": pid}).json()
+            fn = next(n["id"] for n in graph["nodes"] if n["type"] == "functionNode")
+            r = client.post(
+                f"/api/pipelines/{pid}/extract", json={"node_ids": [fn], "name": "inner"}
+            )
+            assert r.status_code == 200, r.text
+
+            after = generate_matlab_pipeline_command(pid, get_db(), {"mode": "all"})
+            for fragment in (
+                "scidb.for_each(@matlab_proc, ",
+                "'signal', RawSignal()",
+                "'gain', 2.5",
+                "{MatlabOutput()}",
+            ):
+                assert fragment in before["command"]
+                assert fragment in after["command"]
+        finally:
+            matlab_registry._matlab_functions.pop("matlab_proc", None)
+
+    @pytest.mark.parametrize(
+        "binding,shown",
+        [
+            ({"params": {"gain": 3}}, "params"),
+            ({"key_map": {"session": "subject"}}, "key_map"),
+            ({"iterate": {"subject": [1]}}, "iterate"),
+        ],
+    )
+    def test_a_binding_it_cannot_apply_is_refused(self, client, binding, shown):
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.services.matlab_command_service import (
+            MatlabBindingError,
+            generate_matlab_pipeline_command,
+        )
+
+        _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
+        try:
+            parent, _child, use_id = self._parent_using_child(client)
+            ps.update_use_binding(get_db(), use_id, binding)
+            with pytest.raises(MatlabBindingError, match=f"'matlab_child' sets {shown}"):
+                generate_matlab_pipeline_command(parent, get_db(), {"mode": "all"})
+        finally:
+            matlab_registry._matlab_functions.pop("matlab_proc", None)
+
+    def test_an_empty_binding_runs(self, client):
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.services.matlab_command_service import unapplied_bindings
+
+        _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
+        try:
+            parent, _child, use_id = self._parent_using_child(client)
+            ps.update_use_binding(get_db(), use_id, {"params": {}, "key_map": {}})
+            assert unapplied_bindings(get_db(), parent) == []
+        finally:
+            matlab_registry._matlab_functions.pop("matlab_proc", None)
+
+    def test_running_a_placed_submodule_directly_counts_its_placements_values(self, client):
+        """A Python run applies those (_as_placed), so MATLAB can't ignore them."""
+        from scistack_gui.stores import pipeline_store as ps
+        from scistack_gui.services.matlab_command_service import unapplied_bindings
+
+        _register_fake_matlab_fn("matlab_proc", ["signal", "gain"])
+        try:
+            _parent, child, use_id = self._parent_using_child(client)
+            ps.update_use_binding(get_db(), use_id, {"params": {"gain": 3}})
+            assert unapplied_bindings(get_db(), child) == ["'matlab_child' sets params"]
+        finally:
+            matlab_registry._matlab_functions.pop("matlab_proc", None)

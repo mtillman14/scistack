@@ -102,13 +102,12 @@ Type in the box to filter the list. Each input is listed with its default, so yo
 
 ## Running
 
-There are three ways to run:
+There are two ways to run:
 
 | Control | Where | What it runs |
 |---|---|---|
 | **▶ Run** | On a function node | That one step, for every schema location it covers. |
 | **▶ Run until here** | Right-click a function node | That step and every step before it that isn't up to date. A preview lists the steps first, so you can check before anything runs. |
-| **▶ Run endpoints** | Panel on the canvas | Every `plot_` and `stat_` endpoint, plus whatever they need. Tick **finalized** to save the figures and results as records. Leave it unticked for a quick draft that saves nothing. |
 
 Endpoint nodes also have a **👁 Show** button. It draws the figure or result as a draft, without saving anything, so you can adjust it as often as you like.
 
@@ -201,11 +200,12 @@ Removing a node or edge from the canvas never deletes data. A step you remove is
 ## Larger projects
 
 - **Submodules** pack a group of steps into one node. Double-click it to go inside. The breadcrumb above the canvas shows where you are. To make one from steps already on the canvas, select them and click **⧉ Extract N nodes to submodule**, then name it. Changed your mind? **Ctrl+Z** puts the steps back exactly as they were. Extracting and undoing only rearrange the canvas: no results are lost and nothing needs to run again.
+- **Ports** are how a submodule connects to the rest of the canvas. Extracting creates them for you: one for each connection that crosses the edge of your selection. Inside the submodule they appear as small **in** and **out** nodes. Building one by hand? Open it and click **⇥ Add input port** or **Add output port ⇥**. Double-click a port's name to rename it. Ports run in the same top-to-bottom order as these nodes, so drag one up or down to reorder. A selection where a path leaves and comes back in can't be extracted: include the nodes in between. A submodule has one set of connections, wherever it is placed. To connect one placement differently, click **⎘ Duplicate** on it first: it gets its own copy, keeps its connections, and later edits to one no longer reach the other.
 - **Hypothesis tabs** keep separate research questions on separate canvases while they share the same data and functions.
 
 ## Sharing and reporting
 
-- **📄 Report** collects every finalized figure and statistical result into one web page, each labelled with where it came from.
+- **📄 Report** collects every saved figure and statistical result into one web page, each labelled with where it came from.
 - **⇩ export project** packs the project into a single bundle file. A colleague opens it with **SciStack: Import Project Bundle…** from the Command Palette.
 - **⇩** on a hypothesis tab or submodule node saves just that piece; **⇧ import** adds one to your project.
 - **⇪ Share as library** packages a submodule so other projects can install it and get your updates. The library lives in your project's `libs/` folder and stays editable; **⇪** on its row under **Libraries** publishes your later changes into it.

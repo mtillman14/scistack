@@ -47,6 +47,10 @@ classifiers = [
 ]
 dependencies = [
     "scistacklog",
+    # `import scifor` loads numpy at import time (foreach.py -> keys.py), and
+    # for_each builds its result tables with pandas.
+    "numpy>=1.20.0",
+    "pandas>=1.3.0",
     # discovery.py reads TOML at module import. Python 3.11+ has tomllib built
     # in; 3.10 needs the tomli backport it falls back to.
     "tomli>=2.0 ; python_version < '3.11'",
@@ -56,8 +60,6 @@ dependencies = [
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "pandas",
-    "numpy",
 ]
 
 [tool.hatch.build.targets.sdist]

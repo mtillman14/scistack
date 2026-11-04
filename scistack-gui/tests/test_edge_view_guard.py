@@ -24,6 +24,10 @@ RAW_READS = {"get_manual_edges", "get_hidden_edge_ids"}
 #: (module path relative to scistack_gui/, enclosing function) -> reason.
 ALLOWED: dict[tuple[str, str], str] = {
     ("domain/edge_view.py", "effective_edges"): "the one owner",
+    ("domain/edge_view.py", "_trace_ports"): (
+        "the one owner: a port segment lives on one canvas, so its hide applies "
+        "whichever canvas is asking"
+    ),
     ("services/layout_service.py", "put_edge"): (
         "mutator: unhide-on-redraw checks the scope's hidden ids (cycle "
         "detection uses the view)"
@@ -35,8 +39,8 @@ ALLOWED: dict[tuple[str, str], str] = {
         "mutator: re-points, writes and deletes the node's stored output "
         "edges when its declared Python output ports change"
     ),
-    ("services/scope_service.py", "extract_to_submodule"): (
-        "mutator: moves stored edges into the new submodule"
+    ("services/scope_service.py", "rename_port"): (
+        "mutator: rewrites the port handle on the outer edges of every placement"
     ),
     ("stores/layout.py", "read_layout"): (
         "API passthrough of stored rows (get_layout); the frontend draws "

@@ -150,7 +150,6 @@ class AddRequest(BaseModel):
     spec: StatsSpecParam
     function_name: str | None = None
     output_variable: str | None = None
-    finalized: bool | None = True
 
 
 def _open(db, req: OpenRequest) -> dict:
@@ -244,7 +243,7 @@ def _formula_apply(db, req: FormulaRequest) -> dict:
 
 def _add_to_pipeline(db, req: AddRequest) -> dict:
     return stats_service.add_to_pipeline(db, req.spec, function_name=req.function_name,
-                                         output_variable=req.output_variable, finalized=req.finalized is not False)
+                                         output_variable=req.output_variable)
 
 
 STATS_HANDLERS: tuple[Handler, ...] = (

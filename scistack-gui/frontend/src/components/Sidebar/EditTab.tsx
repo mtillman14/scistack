@@ -30,6 +30,14 @@ import type { SourceLocation } from '../SourceLocationDialog'
 import { formatLocation } from './sourceLocation'
 import LibrariesSection from './LibrariesSection'
 import ShareLibraryButton from './ShareLibraryButton'
+import {
+  filterBySearch,
+  groupByFile,
+  relativeTime,
+  sortByLastSaved,
+  type FunctionSource,
+} from './palette'
+import DeleteEntityDialog, { type DeleteTarget } from './DeleteEntityDialog'
 
 interface LoadError {
   source: string
@@ -51,7 +59,38 @@ interface Registry {
    * dropdown below is pure display and belongs here; what a role IS does not.
    */
   function_roles?: Record<string, FunctionRole>
+  /** Where each palette function is declared, for "By file". */
+  function_sources?: Record<string, FunctionSource>
+  /** Per variable, in `variables` order: Delete eligibility + last save. */
+  variable_entries?: VariableEntry[]
   load_errors?: LoadError[]
+}
+
+interface VariableEntry {
+  name: string
+  source_file: string | null
+  declared_in_entities_file: boolean
+  last_saved: string | null
+}
+
+interface PathInputListItem {
+  name: string
+  source_file?: string | null
+  declared_in_entities_file?: boolean
+}
+
+type FunctionSort = 'file' | 'az'
+type VariableSort = 'az' | 'last_saved'
+/** Per-project sort choice per tab, kept as notes like the role filter. */
+const FN_SORT_NOTE_KEY = 'ui:palette_sort:function'
+const VAR_SORT_NOTE_KEY = 'ui:palette_sort:variable'
+
+/** Palette kind -> the backend's entity kind for delete. */
+type DeletableKind = 'variable' | 'parameter' | 'pathInput'
+const BACKEND_KIND: Record<DeletableKind, 'variable' | 'parameter' | 'path_input'> = {
+  variable: 'variable',
+  parameter: 'parameter',
+  pathInput: 'path_input',
 }
 
 type FunctionRole = 'process' | 'plot' | 'stat' | 'glue'
@@ -121,6 +160,48 @@ export default function EditTab() {
   // Process — the ordinary pipeline step — so a project that accumulates
   // dozens of one-line glue reshapers doesn't drown its real steps.
   const [roleFilter, setRoleFilter] = useState<FunctionRole | 'all'>('process')
+  // Palette search (palette.ts owns matching). Not persisted: it clears
+  // when the palette remounts, e.g. after a node is selected and released.
+  const [search, setSearch] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  const searching = search.trim() !== ''
+  const [fnSort, setFnSort] = useState<FunctionSort>('file')
+  const [varSort, setVarSort] = useState<VariableSort>('az')
+  // Collapsed "By file" groups (keyed by full path). Ignored while searching,
+  // so a match is never hidden inside a closed group.
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
+  const [deleteNotice, setDeleteNotice] = useState('')
+
+  // `/` focuses search (unless the user is typing somewhere); Esc in the box clears it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+      e.preventDefault()
+      searchRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const chooseFnSort = (s: FunctionSort) => {
+    setFnSort(s)
+    callBackend('set_note', { key: FN_SORT_NOTE_KEY, text: s }, { stack: null }).catch(console.error)
+  }
+  const chooseVarSort = (s: VariableSort) => {
+    setVarSort(s)
+    callBackend('set_note', { key: VAR_SORT_NOTE_KEY, text: s }, { stack: null }).catch(console.error)
+  }
+  const toggleFileGroup = (key: string) => {
+    setCollapsedFiles(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
   // discoveryError is the request itself failing (network/RPC error) — a
   // real problem, shown here as a banner. registry.load_errors (some
   // module/file failing to import server-side) is NOT shown here: in
@@ -137,7 +218,7 @@ export default function EditTab() {
   const [constDraft, setConstDraft] = useState('')
   const constInputRef = useRef<HTMLInputElement>(null)
 
-  const [pathInputs, setPathInputs] = useState<string[]>([])
+  const [pathInputs, setPathInputs] = useState<PathInputListItem[]>([])
   const [addingPI, setAddingPI] = useState(false)
   const [piDraft, setPiDraft] = useState('')
   const [piError, setPiError] = useState('')
@@ -206,10 +287,15 @@ export default function EditTab() {
   useEffect(() => {
     callBackend('get_notes')
       .then(d => {
-        const saved = (d as Record<string, string>)[ROLE_NOTE_KEY]
+        const notesSaved = d as Record<string, string>
+        const saved = notesSaved[ROLE_NOTE_KEY]
         if (saved && ROLE_FILTERS.some(r => r.id === saved)) {
           setRoleFilter(saved as FunctionRole | 'all')
         }
+        const fs = notesSaved[FN_SORT_NOTE_KEY]
+        if (fs === 'file' || fs === 'az') setFnSort(fs)
+        const vs = notesSaved[VAR_SORT_NOTE_KEY]
+        if (vs === 'az' || vs === 'last_saved') setVarSort(vs)
       })
       .catch(() => { /* no saved preference is the normal first-open case */ })
   }, [])
@@ -298,8 +384,7 @@ export default function EditTab() {
   function fetchPathInputs() {
     callBackend('get_path_inputs')
       .then((items) => {
-        const arr = items as Array<{ name: string }>
-        setPathInputs(arr.map(i => i.name))
+        setPathInputs(items as PathInputListItem[])
       })
       .catch(err => {
         console.error('[PathInputs] fetch error:', err)
@@ -575,8 +660,73 @@ export default function EditTab() {
     }
   }
 
+  // ---- Palette lists after search (palette.ts). Server order is kept. ----
+  const fnSources = registry.function_sources ?? {}
+  const submoduleItems = pipelines.filter(p => !hypothesisIds.has(p.pipeline_id) && !libraryPipelineIds.has(p.pipeline_id))
+  const shownSubmodules = filterBySearch(submoduleItems, search, p => p.name)
+  const searchedFns = filterBySearch(registry.sidebar_functions ?? [], search, fn => fn, fn => fnSources[fn]?.file)
+  const varEntryByName = new Map((registry.variable_entries ?? []).map(e => [e.name, e]))
+  const searchedVars = filterBySearch(registry.variables, search, v => v)
+  const shownVars = varSort === 'last_saved'
+    ? sortByLastSaved(searchedVars, Object.fromEntries((registry.variable_entries ?? []).map(e => [e.name, e.last_saved])))
+    : searchedVars
+  const shownParams = filterBySearch(parameters, search, p => p.name)
+  const shownPathInputs = filterBySearch(pathInputs, search, p => p.name)
+  const matchCount: Record<TabDef['id'], number> = {
+    submodule: shownSubmodules.length,
+    function: searchedFns.length,
+    variable: shownVars.length,
+    parameter: shownParams.length,
+    pathInput: shownPathInputs.length,
+  }
+
+  const askDelete = (kind: DeletableKind, name: string) => {
+    setDeleteNotice('')
+    setDeleteTarget({ kind: BACKEND_KIND[kind], name })
+  }
+
+  const onDeleted = (kind: DeletableKind, name: string, result: { still_declared_in?: string | null }) => {
+    setDeleteTarget(null)
+    if (selectedItem?.kind === kind && selectedItem.name === name) setSelectedItem(null)
+    if (result.still_declared_in) {
+      setDeleteNotice(
+        `'${name}' was removed from the entities file, but it is still declared in `
+        + `${result.still_declared_in.split(/[\\/]/).pop()} — remove it there to remove it entirely.`,
+      )
+    }
+    fetchRegistry()
+    fetchParameters()
+    fetchPathInputs()
+  }
+
+  const kindOfTarget = (t: DeleteTarget): DeletableKind =>
+    t.kind === 'path_input' ? 'pathInput' : t.kind
+
+  const emptySearch = (what: string) => (
+    <div style={styles.emptyRole}>
+      No {what} match “{search.trim()}”.{' '}
+      <button type="button" style={styles.linkBtn} onClick={() => setSearch('')}>clear</button>
+    </div>
+  )
+
   return (
     <div style={styles.root}>
+      <div style={styles.searchRow}>
+        <input
+          ref={searchRef}
+          style={styles.searchInput}
+          value={search}
+          placeholder="Search…  (/)"
+          aria-label="Search the palette"
+          onChange={e => setSearch(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Escape') { setSearch(''); e.currentTarget.blur() }
+          }}
+        />
+        {searching && (
+          <button type="button" style={styles.rowBtn} onClick={() => setSearch('')} title="Clear search">×</button>
+        )}
+      </div>
       <div style={styles.tabStrip}>
         {TABS.map(tab => (
           <button
@@ -586,15 +736,24 @@ export default function EditTab() {
             style={{
               ...styles.tabBtn,
               ...(activeTab === tab.id ? styles.tabBtnActive : {}),
+              ...(searching && matchCount[tab.id] === 0 ? { opacity: 0.45 } : {}),
             }}
           >
             <span style={styles.tabIcon}>{tab.icon}</span>
-            <span style={styles.tabLabel}>{tab.label}</span>
+            <span style={styles.tabLabel}>
+              {tab.label}{searching ? ` (${matchCount[tab.id]})` : ''}
+            </span>
           </button>
         ))}
       </div>
       <div style={styles.content}>
         {discoveryError && <div style={styles.errorBanner}>{discoveryError}</div>}
+        {deleteNotice && (
+          <div style={styles.noticeBanner}>
+            {deleteNotice}{' '}
+            <button type="button" style={styles.linkBtn} onClick={() => setDeleteNotice('')}>dismiss</button>
+          </div>
+        )}
         {activeTab === 'submodule' && (
           <Section
             action={
@@ -603,7 +762,8 @@ export default function EditTab() {
               </button>
             }
           >
-            {pipelines.filter(p => !hypothesisIds.has(p.pipeline_id) && !libraryPipelineIds.has(p.pipeline_id)).map(p => (
+            {searching && shownSubmodules.length === 0 && emptySearch('submodules')}
+            {shownSubmodules.map(p => (
               renamingPid === p.pipeline_id ? (
                 <input
                   key={p.pipeline_id}
@@ -752,8 +912,9 @@ export default function EditTab() {
           >
             {(() => {
               // Already in display order (scistack_gui/domain/display_order.py);
-              // never re-sorted or concatenated here.
-              const allFns = registry.sidebar_functions ?? []
+              // never re-sorted or concatenated here. Search narrows it first,
+              // so the role counts below are counts of matches.
+              const allFns = searchedFns
               const roles = registry.function_roles ?? {}
               const roleOf = (fn: string): FunctionRole => roles[fn] ?? 'process'
               const counts: Record<string, number> = { all: allFns.length }
@@ -777,26 +938,55 @@ export default function EditTab() {
                       </option>
                     ))}
                   </select>
-                  {shown.map(fn => {
-                    const mismatch = registry.matlab_functions_mismatched?.includes(fn)
-                    const displayLabel = mismatch ? `${fn} (function/file name mismatch)` : fn
-                    const isGlue = roleOf(fn) === 'glue'
-                    return (
-                      <DragItem
-                        key={fn}
-                        label={displayLabel}
-                        color={isGlue ? '#9ca3af' : '#7b68ee'}
-                        selected={selectedItem?.kind === 'function' && selectedItem.name === fn}
-                        onDragStart={e => onDragStart(e, isGlue ? 'glueNode' : 'functionNode', fn)}
-                        onClick={() => selectListItem('function', fn)}
-                      />
-                    )
-                  })}
-                  {shown.length === 0 && (
-                    <div style={styles.emptyRole}>
-                      No {ROLE_FILTERS.find(r => r.id === roleFilter)?.label.toLowerCase()} functions yet.
-                    </div>
-                  )}
+                  <SortSelect
+                    value={fnSort}
+                    options={[['file', 'By file'], ['az', 'A→Z']]}
+                    onChange={v => chooseFnSort(v as FunctionSort)}
+                  />
+                  {(() => {
+                    const renderFn = (fn: string) => {
+                      const mismatch = registry.matlab_functions_mismatched?.includes(fn)
+                      const displayLabel = mismatch ? `${fn} (function/file name mismatch)` : fn
+                      const isGlue = roleOf(fn) === 'glue'
+                      return (
+                        <DragItem
+                          key={fn}
+                          label={displayLabel}
+                          color={isGlue ? '#9ca3af' : '#7b68ee'}
+                          selected={selectedItem?.kind === 'function' && selectedItem.name === fn}
+                          onDragStart={e => onDragStart(e, isGlue ? 'glueNode' : 'functionNode', fn)}
+                          onClick={() => selectListItem('function', fn)}
+                        />
+                      )
+                    }
+                    if (fnSort === 'az') return shown.map(renderFn)
+                    return groupByFile(shown, fnSources).map(g => {
+                      const open = searching || !collapsedFiles.has(g.key)
+                      return (
+                        <div key={g.key} style={styles.fileGroup}>
+                          <button
+                            type="button"
+                            style={styles.fileGroupHeader}
+                            onClick={() => toggleFileGroup(g.key)}
+                            title={g.title}
+                            aria-expanded={open}
+                          >
+                            <span style={styles.fileGroupCaret}>{open ? '▾' : '▸'}</span>
+                            <span style={styles.fileGroupName}>{g.label}</span>
+                            <span style={styles.fileGroupCount}>{g.items.length}</span>
+                          </button>
+                          {open && g.items.map(renderFn)}
+                        </div>
+                      )
+                    })
+                  })()}
+                  {shown.length === 0 && (searching
+                    ? emptySearch(`${ROLE_FILTERS.find(r => r.id === roleFilter)?.label.toLowerCase()} functions`)
+                    : (
+                      <div style={styles.emptyRole}>
+                        No {ROLE_FILTERS.find(r => r.id === roleFilter)?.label.toLowerCase()} functions yet.
+                      </div>
+                    ))}
                 </>
               )
             })()}
@@ -894,16 +1084,28 @@ export default function EditTab() {
               </button>
             }
           >
-            {registry.variables.map(v => (
-              <DragItem
-                key={v}
-                label={v}
-                color="#2a9d8f"
-                selected={selectedItem?.kind === 'variable' && selectedItem.name === v}
-                onDragStart={e => onDragStart(e, 'variableNode', v)}
-                onClick={() => selectListItem('variable', v)}
-              />
-            ))}
+            <SortSelect
+              value={varSort}
+              options={[['az', 'A→Z'], ['last_saved', 'Last saved']]}
+              onChange={v => chooseVarSort(v as VariableSort)}
+            />
+            {shownVars.map(v => {
+              const entry = varEntryByName.get(v)
+              return (
+                <DragItem
+                  key={v}
+                  label={v}
+                  color="#2a9d8f"
+                  selected={selectedItem?.kind === 'variable' && selectedItem.name === v}
+                  onDragStart={e => onDragStart(e, 'variableNode', v)}
+                  onClick={() => selectListItem('variable', v)}
+                  trailing={varSort === 'last_saved' ? relativeTime(entry?.last_saved) : undefined}
+                  trailingTitle={entry?.last_saved ? `Last saved ${entry.last_saved}` : undefined}
+                  onDelete={entry?.declared_in_entities_file ? () => askDelete('variable', v) : undefined}
+                />
+              )
+            })}
+            {searching && shownVars.length === 0 && emptySearch('variables')}
             {addingVar && (
               <>
                 <input
@@ -937,7 +1139,7 @@ export default function EditTab() {
                 is a named thing with one or more values, and which of the
                 two source forms declares it is not a distinction the user
                 makes. Both lists are unioned and de-duplicated by name. */}
-            {parameters.map(c => (
+            {shownParams.map(c => (
               <DragItem
                 key={c.name}
                 label={c.name}
@@ -946,8 +1148,10 @@ export default function EditTab() {
                 onDragStart={e => onDragStart(e, 'parameterNode', c.name)}
                 onClick={() => selectListItem('parameter', c.name)}
                 onContextMenu={c.source_file ? (e) => openParamContextMenu(e, c) : undefined}
+                onDelete={c.declared_in_entities_file ? () => askDelete('parameter', c.name) : undefined}
               />
             ))}
+            {searching && shownParams.length === 0 && emptySearch('parameters')}
             {addingConst && (
               <input
                 ref={constInputRef}
@@ -972,16 +1176,18 @@ export default function EditTab() {
               </button>
             }
           >
-            {pathInputs.map(p => (
+            {shownPathInputs.map(p => (
               <DragItem
-                key={p}
-                label={p}
+                key={p.name}
+                label={p.name}
                 color="#d97706"
-                selected={selectedItem?.kind === 'pathInput' && selectedItem.name === p}
-                onDragStart={e => onDragStart(e, 'pathInputNode', p)}
-                onClick={() => selectListItem('pathInput', p)}
+                selected={selectedItem?.kind === 'pathInput' && selectedItem.name === p.name}
+                onDragStart={e => onDragStart(e, 'pathInputNode', p.name)}
+                onClick={() => selectListItem('pathInput', p.name)}
+                onDelete={p.declared_in_entities_file ? () => askDelete('pathInput', p.name) : undefined}
               />
             ))}
+            {searching && shownPathInputs.length === 0 && emptySearch('path inputs')}
             {addingPI && (
               <>
                 <input
@@ -1034,7 +1240,35 @@ export default function EditTab() {
       {paramSourceLoc && (
         <SourceLocationDialog location={paramSourceLoc} onClose={() => setParamSourceLoc(null)} />
       )}
+      {deleteTarget && (
+        <DeleteEntityDialog
+          target={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={r => onDeleted(kindOfTarget(deleteTarget), deleteTarget.name, r)}
+          onOpenPipeline={(pid, name) => jumpTo(pid, name)}
+        />
+      )}
     </div>
+  )
+}
+
+/** A tab's sort choice: a compact select under the section header. */
+function SortSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string
+  options: Array<[string, string]>
+  onChange: (value: string) => void
+}) {
+  return (
+    <label style={styles.sortRow}>
+      <span style={styles.sortLabel}>Sort</span>
+      <select style={styles.sortSelect} value={value} onChange={e => onChange(e.target.value)}>
+        {options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+      </select>
+    </label>
   )
 }
 
@@ -1159,6 +1393,9 @@ function DragItem({
   onDragStart,
   onClick,
   onContextMenu,
+  trailing,
+  trailingTitle,
+  onDelete,
 }: {
   label: string
   color: string
@@ -1166,16 +1403,43 @@ function DragItem({
   onDragStart: (e: React.DragEvent) => void
   onClick?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
+  /** Muted text at the row's end (e.g. "2 d ago" under Last saved). */
+  trailing?: string
+  trailingTitle?: string
+  /** Shown as a trash button on hover; omitted when Delete isn't allowed. */
+  onDelete?: () => void
 }) {
+  const [hover, setHover] = useState(false)
   return (
     <div
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
       onContextMenu={onContextMenu}
-      style={{ ...styles.item, borderLeftColor: color, ...(selected ? styles.itemSelected : {}) }}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        ...styles.item,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        borderLeftColor: color,
+        ...(selected ? styles.itemSelected : {}),
+      }}
     >
-      {label}
+      <span style={styles.itemLabel}>{label}</span>
+      {trailing && <span style={styles.itemTrailing} title={trailingTitle}>{trailing}</span>}
+      {onDelete && (
+        <button
+          type="button"
+          style={{ ...styles.rowBtn, visibility: hover || selected ? 'visible' : 'hidden' }}
+          title="Delete the declaration (saved data is kept)"
+          aria-label={`Delete ${label}`}
+          onClick={e => { e.stopPropagation(); onDelete() }}
+        >
+          🗑
+        </button>
+      )}
     </div>
   )
 }
@@ -1283,6 +1547,100 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontStyle: 'italic',
     padding: '4px 2px',
+  },
+  searchRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '6px 8px',
+    flexShrink: 0,
+  },
+  searchInput: {
+    flex: 1,
+    minWidth: 0,
+    background: '#1e1e3a',
+    border: '1px solid #2a2a4a',
+    borderRadius: 3,
+    color: '#ddd',
+    fontSize: 12,
+    padding: '4px 6px',
+  },
+  linkBtn: {
+    background: 'none',
+    border: 'none',
+    padding: 0,
+    color: '#60a5fa',
+    textDecoration: 'underline',
+    cursor: 'pointer',
+    fontSize: 11,
+    fontStyle: 'normal',
+  },
+  noticeBanner: {
+    background: 'rgba(245, 158, 11, 0.10)',
+    border: '1px solid #b45309',
+    borderRadius: 4,
+    color: '#fbbf24',
+    fontSize: 11,
+    padding: '6px 8px',
+    margin: '0 8px 8px',
+  },
+  sortRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 11,
+    color: '#999',
+    margin: '0 0 4px',
+  },
+  sortLabel: {
+    flexShrink: 0,
+  },
+  sortSelect: {
+    fontSize: 11,
+  },
+  fileGroup: {
+    marginBottom: 2,
+  },
+  fileGroupHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    width: '100%',
+    background: 'transparent',
+    border: 'none',
+    color: '#aaa',
+    fontSize: 11,
+    fontWeight: 600,
+    padding: '4px 0 2px',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  fileGroupCaret: {
+    width: 10,
+    flexShrink: 0,
+  },
+  fileGroupName: {
+    flex: 1,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontFamily: 'monospace',
+  },
+  fileGroupCount: {
+    color: '#777',
+    fontWeight: 400,
+  },
+  itemLabel: {
+    flex: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  itemTrailing: {
+    flexShrink: 0,
+    color: '#888',
+    fontSize: 10,
   },
   draftInput: {
     display: 'block',

@@ -3,10 +3,10 @@ classdef TestForEachStatEndpoint < matlab.unittest.TestCase
 %
 %   A NAMED stat_* function returns a result struct; the bridge canonicalizes
 %   it (normalize_stat_result) so MATLAB- and Python-run stats store
-%   byte-identical JSON payloads. Draft (default): the resolved PathOutput arg
-%   arrives as [], the result is printed, nothing is recorded. Record
-%   (finalized=true): canonical JSON stored with lineage; report_path
-%   embedded; the report PDF stamped.
+%   byte-identical JSON payloads. Draft (save=false): the resolved PathOutput arg
+%   arrives as [], the result is printed, nothing is recorded. Record (the
+%   default): canonical JSON stored with lineage; report_path embedded; the
+%   report PDF stamped.
 
     properties
         test_dir
@@ -50,14 +50,13 @@ classdef TestForEachStatEndpoint < matlab.unittest.TestCase
     end
 
     methods (Test)
-        function testFinalizedStoresCanonicalJson(testCase)
+        function testStoresCanonicalJson(testCase)
             testCase.seed();
             report = fullfile(testCase.test_dir, 'report.pdf');
             result = scidb.for_each(@stat_row_count, ...
                 struct('df', RawSignal(), ...
                        'filename', scifor.PathOutput(report)), ...
                 {DummyOut()}, ...
-                'finalized', true, ...
                 'subject', "S01");   % session not iterated: aggregation
 
             testCase.verifyEqual(height(result), 1);
@@ -83,7 +82,8 @@ classdef TestForEachStatEndpoint < matlab.unittest.TestCase
                 struct('df', RawSignal(), ...
                        'filename', scifor.PathOutput(report)), ...
                 {DummyOut()}, ...
-                'subject', "S01");   % finalized default false -> draft
+                'save', false, ...
+                'subject', "S01");
 
             testCase.verifyEqual(height(result), 1);
             testCase.verifyFalse(isfile(report), ...
@@ -94,7 +94,7 @@ classdef TestForEachStatEndpoint < matlab.unittest.TestCase
 
         function testSkipComputedSecondRunSkips(testCase)
             % Cross-run identity: the canonical payload + graph identity must
-            % make an identical finalized re-run skip (the byte-identity
+            % make an identical recorded re-run skip (the byte-identity
             % canary for Python-side normalization).
             testCase.seed();
             report = fullfile(testCase.test_dir, 'skip_report.pdf');
@@ -102,14 +102,14 @@ classdef TestForEachStatEndpoint < matlab.unittest.TestCase
                 struct('df', RawSignal(), ...
                        'filename', scifor.PathOutput(report)), ...
                 {DummyOut()}, ...
-                'finalized', true, 'skip_computed', true, ...
+                'skip_computed', true, ...
                 'subject', "S01"};
 
             r1 = scidb.for_each(@stat_row_count, args{:});
             testCase.verifyEqual(height(r1), 1);
             r2 = scidb.for_each(@stat_row_count, args{:});
             testCase.verifyEqual(height(r2), 0, ...
-                'identical finalized re-run must skip every combo');
+                'identical recorded re-run must skip every combo');
         end
     end
 end

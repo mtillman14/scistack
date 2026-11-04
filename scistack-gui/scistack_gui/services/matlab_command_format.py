@@ -1678,7 +1678,6 @@ def generate_matlab_pipeline_command(
     schema_keys: list[str],
     mode: str = "all",
     target: str = "",
-    finalized: bool | None = None,
     skip_computed: bool = True,
     addpath_dirs: list[str] | None = None,
     python_executable: str | None = None,
@@ -1725,7 +1724,7 @@ def generate_matlab_pipeline_command(
         fresh process with no memory of the GUI server's own compiled
         pipeline). Callers must filter ``steps`` to MATLAB functions only
         and separately warn about any excluded Python steps.
-    mode, target, finalized, skip_computed
+    mode, target, skip_computed
         Mirror ``execution_service.run_pipeline``'s dispatch: ``"all"`` ->
         ``pipe.run_all()``, ``"until"`` -> ``pipe.run_until(target)``,
         ``"endpoints"`` -> ``pipe.run_endpoints()``. ``"show"`` has no
@@ -1869,21 +1868,14 @@ def generate_matlab_pipeline_command(
     if mode == "all":
         lines.append(f"    pipe.run_all('skip_computed', {skip_str});")
     elif mode == "until":
-        run_line = (
+        lines.append(
             f"    pipe.run_until('{_escape_matlab_string(target)}', "
-            f"'skip_computed', {skip_str}"
+            f"'skip_computed', {skip_str});"
         )
-        if finalized is not None:
-            run_line += f", 'finalized', {'true' if finalized else 'false'}"
-        lines.append(run_line + ");")
     else:  # "endpoints"
-        run_line = (
-            f"    pipe.run_endpoints('skip_computed', {skip_str}, "
-            "'include_used', true"
+        lines.append(
+            f"    pipe.run_endpoints('skip_computed', {skip_str}, 'include_used', true);"
         )
-        if finalized is not None:
-            run_line += f", 'finalized', {'true' if finalized else 'false'}"
-        lines.append(run_line + ");")
 
     lines.extend(_iteration_failure_check_lines(run_id))
     lines.append("    scidb.close_database(db);")
@@ -2329,7 +2321,6 @@ MATLAB_OPTION_EMISSION: dict[str, str] = {
     "schema_filter": "projected onto the metadata iterables (_format_schema_kwargs)",
     "schema_keys": "emitted as key=[] metadata iterables (_format_schema_kwargs)",
     "skip_computed": "a Pipeline run option (pipe.run_all), not a for_each one",
-    "finalized": "a Pipeline run option (pipe.run_endpoints), not a for_each one",
     "db": "the script opens the database with scidb.configure_database",
     "where": "the GUI has no where= filter",
     "introspect": "a Python-only debugging aid",

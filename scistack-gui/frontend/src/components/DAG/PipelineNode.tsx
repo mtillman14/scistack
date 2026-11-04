@@ -93,7 +93,7 @@ export default function PipelineNode({ id, data }: Props) {
       setDuplicating(false)
       return
     }
-    callBackend('duplicate_pipeline', { pipeline_id: data.child_pipeline_id, name })
+    callBackend('duplicate_placement', { use_id: id, name })
       .then(() => {
         setError('')
         setDuplicating(false)
@@ -101,7 +101,7 @@ export default function PipelineNode({ id, data }: Props) {
         bumpGraph()
       })
       .catch(err => setError((err as Error).message))
-  }, [draftName, data.child_pipeline_id, bumpGraph])
+  }, [draftName, id, bumpGraph])
 
   const handleExport = useCallback((e: React.MouseEvent) => {
     e.stopPropagation()
@@ -172,7 +172,7 @@ export default function PipelineNode({ id, data }: Props) {
           style={styles.button}
           onClick={e => { e.stopPropagation(); setDuplicating(true) }}
           type="button"
-          title="Fork this submodule's own nodes into a new, independent pipeline"
+          title="Give this placement its own independent copy of the submodule. It keeps its connections and can then be connected differently."
         >
           ⎘ Duplicate
         </button>

@@ -37,6 +37,7 @@ import Breadcrumb from "./components/DAG/Breadcrumb";
 import HypothesisTabs from "./components/HypothesisTabs";
 import PathsPopup from "./components/PathsPopup";
 import InventoryPopup from "./components/InventoryPopup";
+import ClearDataButton from "./components/DAG/ClearDataButton";
 import Sidebar from "./components/Sidebar/Sidebar";
 import ResizeHandle, { useResizablePanel } from "./components/ResizeHandle";
 import PipelineRunController from "./components/PipelineRunController";
@@ -393,6 +394,7 @@ export default function App() {
                       >
                         📋 Inventory
                       </button>
+                      <ClearDataButton />
                       {schema.keys.length > 0 && (
                         <span style={styles.schemaKeys}>
                           schema: [{schema.keys.join(", ")}]

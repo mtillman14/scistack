@@ -639,7 +639,7 @@ def export_code(db, spec_payload: dict, *, csv_path: str | None = None) -> dict:
 
 
 def add_to_pipeline(db, spec_payload: dict, *, function_name: str | None = None,
-                    output_variable: str | None = None, finalized: bool = True) -> dict:
+                    output_variable: str | None = None) -> dict:
     """Write the ``stat_`` endpoint into ``scistack_stats.py`` beside the
     entities file and declare its output (the plot path's mechanism)."""
     from pathlib import Path
@@ -658,7 +658,7 @@ def add_to_pipeline(db, spec_payload: dict, *, function_name: str | None = None,
     tables = _tables(db, spec, csv_path=None, label="stats_add_to_pipeline")
     try:
         code = generate_stats_endpoint(spec, tables, function_name=function_name,
-                                       output_variable=output_variable, finalized=finalized)
+                                       output_variable=output_variable)
     except NotExportable as exc:
         return {"ok": False, "error": f"Not exportable yet: {exc}"}
     name_error = validate_entity_name(code.output_variable)

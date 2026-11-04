@@ -1090,7 +1090,6 @@ def export_code(
     function_name: str | None = None,
     output_variable: str | None = None,
     path_template: str | None = None,
-    finalized: bool = True,
     csv_path: str | None = None,
 ) -> dict:
     """Generate the ``plot_`` function and its ``for_each`` call, without writing."""
@@ -1112,7 +1111,6 @@ def export_code(
         function_name=function_name,
         output_variable=output_variable,
         path_template=path_template,
-        finalized=finalized,
     )
     return {
         "ok": True,
@@ -1978,7 +1976,6 @@ def add_to_pipeline(
     function_name: str | None = None,
     output_variable: str | None = None,
     path_template: str | None = None,
-    finalized: bool = True,
 ) -> dict:
     """
     Write the generated endpoint into the project and refresh the registry.
@@ -2007,7 +2004,6 @@ def add_to_pipeline(
         function_name=function_name,
         output_variable=output_variable,
         path_template=path_template,
-        finalized=finalized,
     )
 
     name_error = validate_entity_name(generated["output_variable"])

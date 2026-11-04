@@ -21,8 +21,8 @@ decides tab vs Submodules list. Sharing one moves the same document shape.
 
 | Action | Result | Linked? | Owner |
 |---|---|---|---|
-| Place a submodule twice (drag from Submodules) | two `_pipeline_uses` rows, same `child_pipeline_id` | yes, one pipeline | `add_pipeline_use` |
-| ⎘ Duplicate (submodule node) | its OWN nodes copied with fresh ids; nested placements keep the same `child_pipeline_id` (fresh use_id, binding copied) | own steps no; nested submodules still shared | `scope_service.duplicate_pipeline` |
+| Place a submodule twice (drag from Submodules) | two `_pipeline_uses` rows, same `child_pipeline_id`; one set of port connections (`submodule-ports.md`), `binding` per placement | yes, one pipeline | `add_pipeline_use` |
+| ⎘ Duplicate (submodule node) | its OWN nodes copied with fresh ids; nested placements keep the same `child_pipeline_id` (fresh use_id, binding copied); THIS placement then points at the copy, same use id and connections | own steps no; nested submodules still shared | `scope_service.duplicate_placement` |
 | ⎘ on a hypothesis tab | `duplicate_pipeline` + `tag_as_hypothesis` | same as above | `duplicate_hypothesis` |
 | ⇩ / ⇧ import `.json` | closure document; `pipeline_id` preserved | no: snapshot | `portability_service` |
 | Import, id known locally, identical content (recursive `canvas_snapshot.signature`) | local pipeline REUSED (unhidden) | n/a | `_resolve_pipeline` |
@@ -40,7 +40,8 @@ decides tab vs Submodules list. Sharing one moves the same document shape.
 ## What a `.json` file does NOT carry
 
 No code, no history, no data, no hidden edges (`include_hides=False`:
-hides belong to the sender's run history). Hidden PORTS do travel. Missing
+hides belong to the sender's run history). Ports do travel: they are nodes on
+the submodule's canvas. Missing
 functions/variables come back as `unresolved_labels`. So a `.json` share is
 only useful when the recipient already has the code (same project lineage or
 same installed library).

@@ -7,8 +7,7 @@ owner, so the exported code cannot drift from what StatStudio showed. It
 receives the long-format table ``for_each`` hands a ``stat_`` function
 (schema keys as columns, ``as_table`` on), rebuilds the ``LongTable`` with
 the level order and schema the preview used, and returns the report dict
-(stored by scidb's ``stat_`` machinery: lineage, ``finalized``, ``scidb
-report``).
+(stored by scidb's ``stat_`` machinery: lineage, ``scidb report``).
 
 First pass: a DV must be a single-column Variable whose factors are its
 schema keys. :func:`why_not_exportable` refuses, with the reason, for chosen

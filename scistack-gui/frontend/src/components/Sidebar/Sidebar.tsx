@@ -182,24 +182,27 @@ export default function Sidebar() {
     <div style={styles.root}>
       <div style={styles.content}>
         {!hasNodeSelection && <EditTab />}
-        {isFunctionNode(selectedNode)
-          && (selectedNode.data as FnNodeData).endpoint_kind && (
-          <EndpointPanel
-            fnName={(selectedNode.data as FnNodeData).label}
-            kind={(selectedNode.data as FnNodeData).endpoint_kind!}
-          />
-        )}
         {isFunctionNode(selectedNode) && (
           <FunctionSettingsPanel
             id={selectedNode.id}
             label={(selectedNode.data as FnNodeData).label}
+            endpointKind={(selectedNode.data as FnNodeData).endpoint_kind}
+            // An endpoint's preview sits under the shared header.
+            belowHeader={(selectedNode.data as FnNodeData).endpoint_kind ? (
+              <EndpointPanel
+                fnName={(selectedNode.data as FnNodeData).label}
+                kind={(selectedNode.data as FnNodeData).endpoint_kind!}
+              />
+            ) : undefined}
             variants={variants}
             constantNames={constantNames}
             inputTypeNames={inputTypeNames}
             schemaSelection={(selectedNode.data as FnNodeData).schemaSelection ?? null}
             schemaLevel={(selectedNode.data as FnNodeData).schemaLevel ?? null}
             whereFilters={(selectedNode.data as FnNodeData).whereFilters ?? []}
-            runOptions={(selectedNode.data as FnNodeData).runOptions ?? { dry_run: false, save: true, distribute: false, as_table: false }}
+            // Unset options are the backend's defaults (useRunOptionDefaults,
+            // from scidb.for_each) — never restated here.
+            runOptions={(selectedNode.data as FnNodeData).runOptions}
             inputParams={(selectedNode.data as FnNodeData).input_params ?? {}}
             columnSelections={(selectedNode.data as FnNodeData).columnSelections ?? {}}
             outputTypes={(selectedNode.data as FnNodeData).output_types ?? []}

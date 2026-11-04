@@ -7,8 +7,7 @@ module writes the call around it:
   correction family that spans strata or DVs is computed in one place. scidb
   stores one record per call (a grand aggregation);
 - one input per DV variable, loaded by name;
-- ``finalized`` (record mode) by default, so the result is a lineage record
-  that goes stale when its inputs change and that ``scidb report`` lists.
+- the result is a lineage record that goes stale when its inputs change and that ``scidb report`` lists.
 """
 
 from __future__ import annotations
@@ -48,7 +47,6 @@ def generate_stats_endpoint(
     *,
     function_name: str | None = None,
     output_variable: str | None = None,
-    finalized: bool = True,
 ) -> StatsEndpointCode:
     """The ``stat_`` function and its ``for_each`` call. Raises
     ``scistackstats.codegen.NotExportable`` with the reason when the spec
@@ -61,11 +59,10 @@ def generate_stats_endpoint(
         "    },",
         f"    outputs=[{output}],",
         f"    as_table={list(fn.inputs)!r},",
-        f"    finalized={finalized},",
         ")",
     ]
-    Log.info("[stats endpoint] %s: inputs %s -> %s, finalized=%s (no iteration: one record)",
-             fn.name, fn.inputs, output, finalized, layer=LAYER)
+    Log.info("[stats endpoint] %s: inputs %s -> %s (no iteration: one record)",
+             fn.name, fn.inputs, output, layer=LAYER)
     return StatsEndpointCode(function_name=fn.name, function_source=fn.source,
                              foreach_source="\n".join(lines), output_variable=output, inputs=fn.inputs)
 

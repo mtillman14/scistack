@@ -14,8 +14,11 @@ from pathlib import Path
 
 import pytest
 
+from scistack_gui import ids
+from scistack_gui.runtime.db import get_db
 from scistack_gui.stores import history
 from scistack_gui.stores import layout as layout_store
+from scistack_gui.stores import pipeline_store as ps
 from scistack_gui.api.handlers import CHANGE_HEADER, pop_change, rpc_methods
 from scistack_gui.api.tables import ALL_HANDLERS
 
@@ -522,3 +525,126 @@ class TestRecentChanges:
         )
         r = client.get("/api/history/recent", params={"surface": "page"}).json()
         assert [e["change_id"] for e in r["past"]] == ["h1"]
+
+
+# ---------------------------------------------------------------------------
+# Extract to submodule: one step, back to the exact rows
+# ---------------------------------------------------------------------------
+
+
+def _tracked_rows() -> dict:
+    """Every undoable table's rows, for comparing whole states."""
+    return {t: s.rows for t, s in history._snapshot(history._duck()).items()}
+
+
+class TestExtractUndo:
+    """Extract moves rows across many tables; undo must put back all of them."""
+
+    @pytest.fixture
+    def canvas(self, client):
+        """mv_in -> mf_proc -> mv_out on main, by requests no undo step records."""
+        for node_id, node_type, label in (
+            ("mv_in", "variableNode", "RawSignal"),
+            ("mf_proc", "functionNode", "custom_proc"),
+            ("mv_out", "variableNode", "FilteredSignal"),
+        ):
+            client.put(f"/api/layout/{node_id}", json={
+                "x": 1, "y": 2, "node_type": node_type, "label": label,
+            })
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
+        return client
+
+    def _extract(self, client, node_ids, cid="x1"):
+        return client.post(
+            "/api/pipelines/main/extract",
+            json={"node_ids": node_ids, "name": "sub"},
+            headers=_change(cid),
+        )
+
+    def _assert_round_trip(self, client, node_ids):
+        before = _tracked_rows()
+        r = self._extract(client, node_ids)
+        assert r.status_code == 200, r.text
+        after = _tracked_rows()
+        assert after != before
+
+        assert _undo(client, "x1")["status"] == "ok"
+        assert _tracked_rows() == before
+        assert _redo(client, "x1")["status"] == "ok"
+        assert _tracked_rows() == after
+        return r.json()
+
+    def test_manual_nodes_and_boundary_edges(self, canvas):
+        self._assert_round_trip(canvas, ["mf_proc"])
+
+    def test_a_selection_holding_an_existing_submodule(self, canvas):
+        inner = canvas.post("/api/pipelines", json={"name": "inner"}).json()["pipeline_id"]
+        use_id = canvas.post(
+            "/api/pipelines/main/uses", json={"child_pipeline_id": inner}
+        ).json()["use_id"]
+        self._assert_round_trip(canvas, ["mf_proc", use_id])
+
+    def test_already_run_nodes_are_rekeyed_and_restored(self, canvas):
+        """A placement-qualified id embeds its scope, so extract rewrites the
+        id and the edges naming it. An edge with both ends moved is written
+        twice in the one transaction, which must not trip DuckDB's constraints.
+        """
+        a = ids.placement_id("fn_a", "main")
+        b = ids.placement_id("fn_b", "main")
+        for node_id in (a, b):
+            canvas.put(f"/api/layout/{node_id}", json={"x": 3, "y": 4})
+        ps.write_manual_edge(get_db(), {"id": "e_ab", "source": a, "target": b})
+
+        pid = self._assert_round_trip(canvas, [a, b])["pipeline_id"]
+
+        edge = next(e for e in ps.get_manual_edges(get_db()) if e["id"] == "e_ab")
+        assert edge["source"] == ids.placement_id("fn_a", pid)
+        assert edge["target"] == ids.placement_id("fn_b", pid)
+
+    def test_undo_still_applies_after_the_canvas_refreshes(self, canvas):
+        """The GUI refreshes after every edit, so a variable that already has
+        data has folded into its canonical node before anyone extracts."""
+        canvas.get("/api/pipeline")
+        r = self._extract(canvas, ["mf_proc"])
+        pid = r.json()["pipeline_id"]
+        canvas.get("/api/pipeline")
+        canvas.get("/api/pipeline", params={"pipeline_id": pid})
+
+        result = _undo(canvas, "x1")
+
+        assert result["status"] == "ok", result.get("conflicts")
+        main = ps.get_manual_nodes(get_db(), "main")
+        assert "mf_proc" in main and r.json()["use_id"] not in main
+        assert pid not in _pipeline_ids(canvas)
+
+    def test_a_node_folding_after_extract_refuses_undo_cleanly(self, canvas):
+        """A variable gets its first data after the extract (a run, say): the
+        next refresh folds it into its canonical node, rewriting the boundary
+        edge extract added. Undo cannot restore that edge's old endpoint without
+        undoing the fold too, so it refuses and writes nothing."""
+        self._extract(canvas, ["mf_proc"])
+        canvas.get("/api/pipeline")
+        settled = _tracked_rows()
+
+        result = _undo(canvas, "x1")
+
+        assert result["status"] == "conflict"
+        assert result["conflicts"]
+        assert _tracked_rows() == settled
+
+    def test_a_failure_partway_leaves_nothing_behind(self, canvas, monkeypatch):
+        """No undo step is recorded for a call that raises, so the transaction
+        is the only thing that can put these rows back."""
+        before = _tracked_rows()
+
+        def fail(*_args, **_kwargs):
+            raise ValueError("boom")
+
+        monkeypatch.setattr(ps, "write_manual_edge", fail)
+
+        r = self._extract(canvas, ["mf_proc"])
+
+        assert r.status_code == 400
+        assert history.get_record("x1") is None
+        assert _tracked_rows() == before

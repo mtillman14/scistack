@@ -119,15 +119,13 @@ Root id is hard-coded `'main'` in the frontend (matches
 
 Decision: EVERY pipeline-run control goes through the plan-preview
 dialog (R2 gate). Controls don't run anything themselves; they call
-`requestPlan({pipeline_id, mode, target?, finalized?, label})`:
+`requestPlan({pipeline_id, mode, target?, label})`:
 
 - function-node right-click "Run until here" → `{currentScope,
   mode:'until', target: fnName}`
 - pipeline-node ▶ Run → `{child_pipeline_id, mode:'all'}` — a
   descend-less child run; per-step `until` on a child is deliberately
   not offered (backend has no such verb across the boundary)
-- canvas "Run endpoints" panel → `{currentScope, mode:'endpoints',
-  finalized}` (toggle lives on the canvas panel)
 
 `PipelineRunController` (mounted once in App) renders the dialog for
 the pending request (`get_pipeline_plan`), and on confirm generates the
@@ -151,7 +149,7 @@ nodes (plot_/stat_, tagged `data.endpoint_kind` by scidb's
 "look at it" loop, deliberately ungated. Draft outputs write no records;
 they arrive only on the `show_rendered` push message ({step, rendered}),
 consumed by `Sidebar/EndpointPanel` (shown above FunctionSettingsPanel
-for endpoint nodes: draft section + finalized manifest from
+for endpoint nodes: draft section + recorded manifest from
 `get_endpoint_artifacts`, images via `/api/artifacts/file?path=` which is
 project-dir guarded, 403 outside). The header 📄 Report button calls
 `write_report` and opens the self-contained index.html through the same

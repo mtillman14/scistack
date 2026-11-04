@@ -11,6 +11,174 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzz. Sidebar: palette search, sort, delete; shared panel header; badges — added 2026-11-03
+
+**What changed:** the palette gets a search box, a **Sort** choice (Functions: By file / A→Z; Variables: A→Z / Last saved), and a 🗑 Delete for Variables, Parameters and Path Inputs declared in the entities file. Every node panel now has the same header (kind, name, "declared in", **Open source**, **← Palette**), and the function panel shows chips for settings that aren't the default. Plan: `.claude/plan-palette-order-and-delete.md`.
+
+**Backend**
+1. Regenerate the API types with `python scistack-gui/tools/gen_ts_types.py` (new `delete_entity`, `preview_delete_entity`, `get_run_option_defaults`; `EntityRef.kind` gains `variable`).
+2. Run the tests, one package at a time:
+   - `pytest scifor/tests/test_project_entities_file.py`
+   - `pytest scidb/tests/test_inspect_api.py`
+   - `pytest scistack-gui/tests/test_entity_delete.py scistack-gui/tests/test_api_handlers.py scistack-gui/tests/test_path_input_rename.py scistack-gui/tests/test_history.py`
+3. Restart the GUI.
+4. `scistack.log` has `get_registry: function sources: N function(s) in M group(s) (… ms)` and `get_registry: … variable(s), … deletable`. A delete logs `[entity_delete] entity_placements: …` and `[target_file_service] remove_declaration: … removing '…'`.
+
+**Frontend: palette**
+1. Functions tab: **Sort: By file** (default) shows collapsible file headers with counts; library references are under **Library**. Switch to **A→Z**. Reopen the project: the choice is remembered.
+2. Variables tab: **Sort: Last saved** puts the newest-saved first with "2 d ago" on each row; never-saved ones are last and say "never saved".
+3. Type in **Search… (/)**: every tab label shows its match count, file headers expand, and typing a file name (e.g. `emg_utils`) lists that file's functions. Press Esc to clear. With the canvas focused, `/` jumps to the box. No match shows "No … match" with a **clear** link.
+4. Hover a variable/parameter/path input declared in the entities file: a 🗑 appears (not for ones declared in `.py`/`.m`). Click it: the dialog shows the exact text to be removed. Click **Delete declaration**: the row disappears and `scistack_entities.toml` loses only that entry.
+5. Press Cmd/Ctrl+Z: the entry is back, byte for byte.
+6. Delete one that is on a canvas: the dialog lists the pipelines as links and has no Delete button. Clicking a link opens that pipeline.
+
+**Frontend: node panels**
+1. Select a function, variable, parameter, path input, glue node and submodule node in turn. Each shows the same header: a kind chip, the name, "declared in file:line", **Open source** (opens the file in VS Code; in the browser, shows the location), and **← Palette**.
+2. **← Palette** returns to the palette and the node is no longer highlighted.
+3. On a function, tick **Dry run** and add a filter: the header shows amber **Dry run** and grey **1 filter** chips, and the same chips appear beside the Run Options and Filters titles. Clicking a header chip scrolls to its section.
+4. Untick everything back to the defaults: no chips.
+5. A plot_/stat_ node shows its preview under the header.
+6. A path input's name is still editable in the header (rename still works).
+
+---
+
+## 0zzzzzzzzzzzzzzz. Canvas: submodule ports — added 2026-11-03
+
+**What changed:** a submodule connects through named input and output nodes. Extracting creates them, and you can add them by hand.
+
+**Backend**
+1. Run the tests with `pytest scistack-gui/tests/test_submodule_ports.py`.
+2. Restart the GUI so the new handlers load.
+3. `scistack.log` has `[edge_view] ports:` lines and `extract_to_submodule: ... port(s)`.
+
+**Frontend**
+1. With an already-run `A -> B -> C -> D -> E`, select A and B and extract them. The parent shows `[sub] -> C -> D -> E`, and the nodes stay green.
+2. Double-click the submodule. It shows `A -> B -> out`.
+3. Undo, then repeat for B-D. The submodule has both an input and an output port, and A's line is visible.
+4. Repeat for B-E. The submodule has an input port and no output port.
+5. Select B and D without C and try to extract. You get a message and nothing moves.
+6. Delete the line between the submodule and C. D turns disconnected. Redraw it and D recovers.
+7. Inside a submodule, click **⇥ Add input port** twice, rename one, and drag one above the other. Go back up: the parent node's ports follow that order.
+8. Place the same submodule twice and connect the first. Connecting the second to something different gives a message pointing at **⎘ Duplicate**. Click **⎘ Duplicate** on that placement: it stays where it is with its connections, and you can now connect it differently.
+9. On a hypothesis tab, adding a port gives you a message saying it belongs inside a submodule.
+10. With MATLAB steps: extract some into a submodule and click Run on the parent. They all run, in order. Set a value on the placement (⚙) and run again: it stops with a message naming the placement.
+
+---
+
+## 0zzzzzzzzzzzzzz. Canvas: extract to submodule undoes cleanly — added 2026-11-03
+
+**What changed:** if extract fails partway, nothing moves. If you undo while
+inside the submodule that undo removes, the canvas goes back to its parent.
+
+**Backend**
+1. Run the tests with `pytest scistack-gui/tests/test_history.py -k TestExtractUndo`.
+2. After a failed extract, `scistack.log` has `extract_to_submodule: rolled back`.
+
+**Frontend**
+1. Shift + drag over several nodes, including some with edges to nodes outside
+   the box. Click **⧉ Extract N nodes to submodule** and name it.
+2. Press Cmd/Ctrl+Z. All the nodes and edges return as they were, and the
+   submodule node is gone.
+3. Press Cmd/Ctrl+Shift+Z. The submodule is back.
+4. Double-click the submodule to open it, then press Cmd/Ctrl+Z. The canvas
+   returns to the parent with the nodes restored, and the breadcrumb no longer
+   shows the submodule.
+
+---
+
+## 0zzzzzzzzzzzzz. Canvas: selected nodes get a violet highlight — added 2026-11-03
+
+**What changed:** every node type now shows a faint violet ring on hover, a
+solid violet ring with a glow when selected, and a lifted shadow while dragged.
+Selected edges use the same violet. Selection also now survives a canvas
+refresh; before, a refresh silently deselected the node.
+
+**Backend**
+1. Nothing to do beyond reloading the VS Code window to pick up the new bundle.
+
+**Frontend**
+1. Hover over a function, variable, constant, path input, glue and pipeline
+   node. Each shows a faint ring, set slightly apart from its border.
+2. Click each one. The ring turns solid and glows. On a function node (violet
+   border) the ring is still clearly separate from the border.
+3. Check a green, amber and red node. The run-state border and background stay
+   as they were, with the ring around them.
+4. Click an edge. It is the same violet as the node ring.
+5. Drag a selected node and let go. It stays highlighted after the refresh, and
+   **⧉ Copy 1** stays visible.
+6. Click the empty canvas. The highlight goes away.
+7. Switch VS Code to a light theme and repeat step 2. The ring is still easy to
+   see.
+
+---
+
+## 0zzzzzzzzzzzz. Canvas: the hidden-edges pill is gone — added 2026-11-03
+
+**What changed:** the red **N hidden edges — show** pill at the bottom left of
+the canvas, and its restore list, no longer exist. Removing an edge still only
+hides it. To get it back, press Cmd+Z or draw the edge again.
+
+**Backend**
+1. Nothing to do beyond reloading the VS Code window to pick up the new bundle.
+
+**Frontend**
+1. Select an edge and delete it. No pill appears at the bottom left, and the
+   runs dock stays where it was.
+2. Press Cmd+Z. The edge comes back.
+3. Delete the edge again, then redraw it between the same two ports. The edge
+   comes back and the step is runnable again.
+
+---
+
+## 0zzzzzzzzzzz. Plots and stats save when they run; finalized is gone — added 2026-11-03
+
+**What changed:** the `finalized` option no longer exists anywhere. A `plot_` or
+`stat_` step now saves its records whenever it runs, like every other step.
+**👁 Show** is still a preview that saves nothing. An old call that passes
+`finalized=` now stops with a clear error instead of running.
+
+**Backend**
+1. Reload the VS Code window to restart the server and pick up the new bundle.
+2. In your project, delete any `finalized=` lines left in earlier Plot Studio
+   or Stat Studio exports. Find them with
+   `grep -rn "finalized=" <your project>`.
+3. `scistack.log` shows `[draft] <function>: save=False` for a **👁 Show** run and
+   no such line for a **▶ Run**.
+
+**Frontend**
+1. Pick a hand-written `plot_` or `stat_` node that has never recorded. The
+   sidebar says **Nothing recorded yet. Run this step, or use 👁 Show for a draft
+   preview.**
+2. Click **▶ Run**. Its record appears under **Recorded** in the sidebar.
+3. Click **👁 Show** on it. The draft appears, and the **Recorded** count doesn't
+   change.
+4. Click **📄 Report**. The figure or result from step 2 is in the report.
+5. Add a new endpoint from Plot Studio or Stat Studio, run it, and check it
+   records the same way.
+
+---
+
+## 0zzzzzzzzzz. Canvas controls: Run endpoints removed, Clear data moved — added 2026-11-03
+
+**What changed:** the **finalized** checkbox and **▶ Run endpoints** button are
+gone from the top right of the canvas. **Clear data…** moved to the header bar
+above the canvas, after **📋 Inventory**.
+
+**Backend**
+1. Nothing to do beyond reloading the VS Code window to pick up the new bundle.
+
+**Frontend**
+1. Open the Process view. The top right of the canvas has no **finalized**
+   checkbox and no **▶ Run endpoints** button.
+2. Select a node. **⧉ Copy 1** appears in the top right and nothing covers it.
+3. In the header bar, click **Clear data…**. The dialog opens centred over the
+   whole window and reads normally. Close it without clearing.
+4. Clear data for real on a throwaway project: type `clear` and click
+   **Clear data**. After closing the dialog, the canvas refreshes and every node
+   stays, with its data gone.
+
+---
+
 ## 0zzzzzzzzz. Plot Studio: repeating a plot reuses its layout — added 2026-11-03
 
 **What changed:** scistackplot now remembers the text-size and label layout of
@@ -931,7 +1099,7 @@ What changed (branch `canvas-as-document`, plan
 `docs/claude/canvas-as-document-explained.md`): the first canvas build after a
 script or MATLAB-terminal run STORES the steps it recorded (adoption), with a
 notification. After that only stored nodes and edges are drawn. Removing an
-edge or node hides it (it stays in the restore panel) and it never comes back
+edge or node hides it and it never comes back
 from history. A hand-placed function node no longer folds into a same-named
 history node. New toolbar button **Clear data…**.
 
@@ -948,10 +1116,9 @@ history node. New toolbar button **Clear data…**.
 1. Open a project that has only ever run from a script. A dialog **"Added from
    recorded runs"** names the steps; the canvas looks exactly as before.
 2. Close and reopen the tab: no dialog the second time.
-3. Select an edge into a step and delete it. Refresh: it stays gone. Open the
-   hidden-edges restore panel: it is listed; restore it (or redraw it) and the
-   step is runnable again. With the edge removed, Run on the step says the
-   input is disconnected.
+3. Select an edge into a step and delete it. Refresh: it stays gone. With the
+   edge removed, Run on the step says the input is disconnected. Redraw the edge
+   and the step is runnable again.
 4. Drag a second copy of a function that already has a node from the sidebar:
    both nodes stay on the canvas; the new one is red.
 4b. Rewire a step's output: draw the new output edge, then remove the old one.

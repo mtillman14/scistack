@@ -22,7 +22,7 @@ from typing import Any
 
 from scistacklog import Log
 
-from .options import DB_ONLY_KWARGS
+from .options import DB_ONLY_KWARGS, reject_removed_options
 
 # Class attribute that overrides an output class's result-column name.
 COLUMN_NAME_ATTR = "column_name"
@@ -33,6 +33,7 @@ def discard_db_only_kwargs(metadata_iterables: dict) -> dict:
 
     Logs one INFO line naming what was dropped. The input is not mutated.
     """
+    reject_removed_options(metadata_iterables)
     dropped = sorted(k for k in metadata_iterables if k in DB_ONLY_KWARGS)
     if not dropped:
         return metadata_iterables

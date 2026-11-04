@@ -29,7 +29,7 @@ def test_endpoint_source_shape(seeded):
     assert code.output_variable == "StatStepLengthStats"
     assert '"df": StatStepLength' in code.foreach_source
     assert "subject=" not in code.foreach_source, "no iteration keywords (P7)"
-    assert "finalized=True" in code.foreach_source
+    assert "finalized" not in code.foreach_source
     assert required_declarations(code) == ["StatStepLengthStats"]
     compile(code.source, "<generated>", "exec")
 

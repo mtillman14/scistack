@@ -215,8 +215,8 @@ source project can then switch to the library, so there is one copy.
   PathInput is one project's data layout. A project that wants one on its
   canvas declares its own.
 - **Chaining submodules from several libraries:** matching variable names
-  connect by themselves; differing names are wired with the placed
-  submodule's port bindings (`_pipeline_uses.binding`) or a glue node.
+  connect by themselves; differing names are wired to the placed
+  submodule's ports (`submodule-ports.md`) or through a glue node.
 - **Different schemas:** placing a library submodule into a project with
   other schema keys goes through the same key map as a bundle import
   ("Schema on import").

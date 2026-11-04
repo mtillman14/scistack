@@ -11,6 +11,7 @@ import sys
 
 from scidb.run.foreach_config import RunOptions
 from scidb.provenance.graph import constants_identity_key
+from scifor.failures import ActionableError
 
 logger = logging.getLogger(__name__)
 
@@ -673,7 +674,7 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         caller=f"generate_matlab_command({function_name})",
     )
     manual_nodes = view.manual_nodes
-    manual_edges = view.drawn_list
+    manual_edges = view.wiring_list
     path_input_params = resolve_path_input_params(
         function_name, fn_variants, saved_pis, manual_edges, manual_nodes
     )
@@ -945,10 +946,45 @@ def _drop_project_root_folder(path_inputs: dict, project_root) -> None:
             pi["root_folder"] = None
 
 
+class MatlabBindingError(ActionableError, ValueError):
+    """A MATLAB pipeline script would ignore a placement's ``binding``."""
+
+
+def unapplied_bindings(db, pipeline_id: str) -> list[str]:
+    """What a generated MATLAB script for *pipeline_id* would silently ignore:
+    one line per placement whose ``binding`` sets something.
+
+    Covers the placements inside the pipeline, plus its own placements' step
+    values when it is run directly (a Python run applies those:
+    ``execution_service._as_placed``). The script flattens every step into one
+    ``scidb.Pipeline``, so there is no use edge to carry a binding. One owner: a
+    run refuses on this, and a MATLAB code export warns.
+    """
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.services.portability_service import _closure_pipeline_ids
+
+    closure = set(_closure_pipeline_ids(db, pipeline_id))
+    names = {p["pipeline_id"]: p["name"] for p in pipeline_store.list_pipelines(db)}
+    out: list[str] = []
+    for use in pipeline_store.get_pipeline_uses(db):
+        binding = use.get("binding") or {}
+        if use["parent_pipeline_id"] in closure:
+            keys = sorted(k for k in ("key_map", "params", "iterate") if binding.get(k))
+        elif use["child_pipeline_id"] == pipeline_id and binding.get("params"):
+            keys = ["params"]
+        else:
+            continue
+        if keys:
+            child = names.get(use["child_pipeline_id"], use["child_pipeline_id"])
+            out.append(f"'{child}' sets {', '.join(keys)}")
+    return sorted(set(out))
+
+
 def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict:
     """Generate a ready-to-paste whole-pipeline MATLAB script.
 
-    Scopes to every MATLAB function node in ``pipeline_id`` (via
+    Scopes to every MATLAB function node in ``pipeline_id`` and every
+    submodule it uses (the set ``pipeline_has_matlab_steps`` routes on: via
     ``execution_service._scope_function_node_ids`` +
     ``matlab_registry.is_matlab_function``), resolving each node's
     target(s) with ``execution_service.derive_target_for_node`` — the same
@@ -964,7 +1000,7 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     Args:
         pipeline_id: The GUI pipeline scope id.
         db: DatabaseManager instance.
-        params: Full RPC params dict (``mode``, ``target``, ``finalized``,
+        params: Full RPC params dict (``mode``, ``target``,
             ``skip_computed``, ``schema_filter``, ``schema_level``).
 
     Returns:
@@ -1015,7 +1051,6 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
     project_root: str | None = str(_root) if _root is not None else None
 
     pending_consts = pipeline_store.get_pending_constants(db)
-    hidden_ids = pipeline_store.get_hidden_node_ids(db, pipeline_id)
     saved_pis = {
         name: path_input_display(obj)
         for name, obj in _reg.get_path_inputs_registry().items()
@@ -1024,21 +1059,51 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         name: list(sw.alternatives) for name, sw in _reg.get_parameters_registry().items()
     }
     from scistack_gui.domain.edge_view import effective_edges
+    from scistack_gui.services.portability_service import _closure_pipeline_ids
 
-    # Only the edges this pipeline's canvas draws (edge_view, the one owner).
-    view = effective_edges(
-        db, pipeline_id, caller=f"generate_matlab_pipeline_command({pipeline_id})"
+    unapplied = unapplied_bindings(db, pipeline_id)
+    if unapplied:
+        logger.warning(
+            "generate_matlab_pipeline_command: pipeline=%s refused, placement "
+            "settings it can't apply: %s",
+            pipeline_id,
+            unapplied,
+        )
+        raise MatlabBindingError(
+            "This MATLAB pipeline run can't apply submodule placement settings yet: "
+            f"{'; '.join(unapplied)}. Clear them on the placement to run this pipeline."
+        )
+
+    # A submodule's steps are this pipeline's steps, as in a Python run
+    # (build_backend_pipeline). Each scope's hides come from its own canvas.
+    scoped_nodes = [
+        (scope_id, node_id, fn_label)
+        for scope_id in _closure_pipeline_ids(db, pipeline_id)
+        for node_id, fn_label in _scope_function_node_ids(db, scope_id)
+    ]
+    logger.info(
+        "generate_matlab_pipeline_command: pipeline=%s covers %d function node(s) "
+        "across %d scope(s)",
+        pipeline_id,
+        len(scoped_nodes),
+        len({scope_id for scope_id, _node, _label in scoped_nodes}),
     )
-    manual_nodes = view.manual_nodes
-    manual_edges = view.drawn_list
 
     steps: list[dict] = []
     warnings: list[str] = []
     excluded_python: set[str] = set()
-    for node_id, fn_label in _scope_function_node_ids(db, pipeline_id):
+    for scope_id, node_id, fn_label in scoped_nodes:
         if not matlab_registry.is_matlab_function(fn_label):
             excluded_python.add(fn_label)
             continue
+
+        # Only the edges this node's canvas draws (edge_view, the one owner).
+        view = effective_edges(
+            db, scope_id, caller=f"generate_matlab_pipeline_command({scope_id})"
+        )
+        manual_nodes = view.manual_nodes
+        manual_edges = view.wiring_list
+        hidden_ids = pipeline_store.get_hidden_node_ids(db, scope_id)
 
         # This node's saved run options. A pipeline run has no live canvas
         # state to read -- it runs nodes the user never selected -- so the
@@ -1169,7 +1234,6 @@ def generate_matlab_pipeline_command(pipeline_id: str, db, params: dict) -> dict
         schema_keys=list(db.dataset_schema_keys),
         mode=params.get("mode", "all"),
         target=params.get("target", ""),
-        finalized=params.get("finalized"),
         skip_computed=params.get("skip_computed", True),
         addpath_dirs=addpath_dirs if addpath_dirs else None,
         python_executable=sys.executable,

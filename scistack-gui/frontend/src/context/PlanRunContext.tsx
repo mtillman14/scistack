@@ -2,7 +2,7 @@
  * PlanRunContext — pending plan-preview request for pipeline runs (R2/G2).
  *
  * Every pipeline run control (function-node "Run until here", pipeline-node
- * "Run", canvas "Run endpoints") funnels through requestPlan(); the
+ * "Run") funnels through requestPlan(); the
  * PipelineRunController renders the plan-preview dialog for the pending
  * request and starts the run on confirmation.
  */
@@ -11,10 +11,8 @@ import { createContext, useContext, useState } from 'react'
 
 export interface PlanRequest {
   pipeline_id: string
-  mode: 'all' | 'until' | 'endpoints'
+  mode: 'all' | 'until'
   target?: string
-  /** Endpoint runs: draft (false, default) vs finalized artifacts. */
-  finalized?: boolean
   /** Display name for the dialog title and the Runs-tab card. */
   label: string
 }

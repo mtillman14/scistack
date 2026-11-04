@@ -1,7 +1,7 @@
 """
 Pure scope logic for nested pipelines (plan-gui-nested-pipelines.md Part A).
 
-Three concerns, all side-effect-free:
+Two concerns, both side-effect-free (a submodule's ports: ``domain.ports``):
 
 - **Membership**: which pipeline scope a node belongs to. Manual nodes carry
   a ``pipeline_id`` in the document; DB-derived nodes (var__/fn__/param__/
@@ -13,10 +13,6 @@ Three concerns, all side-effect-free:
   until it is placed or wired.
 - **Filtering**: restrict a fully-built graph to one scope (nodes by
   membership, edges by both-endpoints-kept).
-- **Document interface**: a pipeline scope's ports — variable types consumed
-  inside but not produced inside (inputs) and types produced inside
-  (outputs) — the GUI-document mirror of scidb's ``Pipeline.interface()``,
-  recursing through nested pipeline uses (acyclic by store guard).
 """
 
 from __future__ import annotations
@@ -78,9 +74,8 @@ def _resolve_in_scope(
 
     A DB-derived canonical id can have independent placements in more than
     one scope (see ids.placement_id) — this is the one
-    shared "does X belong to scope Y" answer used by both
-    :func:`resolve_scope_view` and :func:`document_interface`, so scope
-    membership is judged identically everywhere.
+    shared "does X belong to scope Y" answer, so scope membership is judged
+    identically everywhere.
 
     A bare id can ALSO be positioned directly, with no placement suffix at
     all — dragging an existing DB-derived node straight onto a sub-canvas
@@ -303,97 +298,3 @@ def resolve_scope_view(
             off_canvas,
         )
     return kept_nodes, kept_edges
-
-
-def _var_label(node_id: str, manual_nodes: dict) -> str | None:
-    """Variable-type label for a node id, or None if not a variable node.
-
-    ``edge_resolver.node_id_to_var_label`` owns the rule (it also handles a
-    manual variable id's random suffix, ``var__{label}__{rand}``, which a
-    plain prefix strip gets wrong).
-    """
-    from scistack_gui.domain.edge_resolver import node_id_to_var_label
-
-    return node_id_to_var_label(node_id, {}, manual_nodes)
-
-
-def document_interface(
-    scope_id: str,
-    manual_nodes: dict,
-    edges: list[dict],
-    uses_by_parent: dict,
-    positions_by_scope: dict | None = None,
-    hidden_ports: dict | None = None,
-    _visiting: frozenset = frozenset(),
-) -> dict:
-    """A scope's ports from the DOCUMENT graph: ``{"inputs": [...],
-    "outputs": [...]}`` as sorted variable-type labels.
-
-    consumed = variable→function edges inside the scope; produced =
-    function→variable edges inside the scope. Nested pipeline uses recurse:
-    a child's inputs join consumed, its outputs join produced (matching how
-    the composed backend graph would union). ``uses_by_parent`` maps
-    ``parent_pipeline_id -> [{"use_id", "child_pipeline_id", ...}]``.
-
-    ``hidden_ports`` (see ``pipeline_store.get_hidden_ports_by_scope``) is
-    a manual override — ``{pipeline_id: {"input": {type, ...}, "output":
-    {type, ...}}}`` — suppressing one type's port on ONE specific scope,
-    toggled by right-clicking a variable node inside that scope's own
-    canvas (to-do #9). Applied last, after the automatic union (including
-    whatever bubbled up from nested ``uses``), and only against THIS
-    scope's own entry — a hide made two levels down doesn't silently also
-    hide the parent's re-export of that type, and a hide made here doesn't
-    retroactively change what the child scope itself reports.
-    """
-    if scope_id in _visiting:  # defensive; the store rejects cycles
-        return {"inputs": [], "outputs": []}
-    positions_by_scope = positions_by_scope or {}
-    hidden_ports = hidden_ports or {}
-
-    # Scope membership judged per-edge-endpoint via the same resolution
-    # resolve_scope_view uses — a bare id and a placement-qualified id for
-    # the SAME canonical node must both correctly test "in scope_id" here,
-    # since edges can carry either form (bare, pre-graduation; placement-
-    # qualified, after graduate_manual_node rewrites them).
-    consumed: set[str] = set()
-    produced: set[str] = set()
-    for e in edges:
-        src, tgt = e["source"], e["target"]
-        src_label = _var_label(src, manual_nodes)
-        tgt_label = _var_label(tgt, manual_nodes)
-        tgt_in_scope = (
-            _resolve_in_scope(tgt, scope_id, manual_nodes, positions_by_scope)
-            is not None
-        )
-        src_in_scope = (
-            _resolve_in_scope(src, scope_id, manual_nodes, positions_by_scope)
-            is not None
-        )
-        # var -> fn (consumption): source is a variable, target in scope.
-        if src_label is not None and tgt_in_scope:
-            consumed.add(src_label)
-        # fn -> var (production): target is a variable, source in scope.
-        if tgt_label is not None and src_in_scope:
-            produced.add(tgt_label)
-
-    for use in uses_by_parent.get(scope_id, []):
-        child_iface = document_interface(
-            use["child_pipeline_id"],
-            manual_nodes,
-            edges,
-            uses_by_parent,
-            positions_by_scope,
-            hidden_ports,
-            _visiting | {scope_id},
-        )
-        consumed.update(child_iface["inputs"])
-        produced.update(child_iface["outputs"])
-
-    scope_hidden = hidden_ports.get(scope_id, {})
-    hidden_inputs = scope_hidden.get("input", set())
-    hidden_outputs = scope_hidden.get("output", set())
-
-    return {
-        "inputs": sorted((consumed - produced) - hidden_inputs),
-        "outputs": sorted(produced - hidden_outputs),
-    }

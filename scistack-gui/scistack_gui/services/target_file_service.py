@@ -236,6 +236,10 @@ def get_or_create_target_file() -> "tuple[Path | None, str | None]":
 _SOURCE_KIND_REGISTRIES = {
     "parameter": "_parameter_sources",
     "path_input": "_path_input_sources",
+    # Variables too (2026-11-03, palette Delete): the confinement rule in
+    # entity_editability is the ONE owner for every kind the entities file
+    # declares, and _location_of already points a variable at the array.
+    "variable": "_variable_sources",
 }
 
 _source_hashes: dict[str, str] = {}
@@ -464,23 +468,9 @@ def update_declaration(
     except OSError as e:
         return {"ok": False, "error": f"Cannot read {path}: {e}"}
 
-    known_hash = _source_hashes.get(str(path))
-    if known_hash is not None and known_hash != _hash_text(original):
-        logger.info(
-            "[target_file_service] Refusing to edit %s '%s': %s changed on disk "
-            "since the last scan",
-            kind,
-            name,
-            path,
-        )
-        return {
-            "ok": False,
-            "error": (
-                f"{path.name} has changed on disk since it was last read. "
-                f"Hit 🔄 Refresh Code, then try again."
-            ),
-            "reason": "stale",
-        }
+    stale = _stale_refusal(path, original, verb="edit", kind=kind, name=name)
+    if stale is not None:
+        return stale
 
     if is_toml:
         from scifor.project.entities_file import find_entry_span
@@ -652,23 +642,9 @@ def rename_declaration(kind: str, old: str, new: str) -> dict:
     except OSError as e:
         return {"ok": False, "error": f"Cannot read {path}: {e}"}
 
-    known_hash = _source_hashes.get(str(path))
-    if known_hash is not None and known_hash != _hash_text(original):
-        logger.info(
-            "[target_file_service] Refusing to rename %s '%s': %s changed on "
-            "disk since the last scan",
-            kind,
-            old,
-            path,
-        )
-        return {
-            "ok": False,
-            "error": (
-                f"{path.name} has changed on disk since it was last read. "
-                f"Hit 🔄 Refresh Code, then try again."
-            ),
-            "reason": "stale",
-        }
+    stale = _stale_refusal(path, original, verb="rename", kind=kind, name=old)
+    if stale is not None:
+        return stale
 
     try:
         updated = rename_entry(original, section, old, new)
@@ -718,6 +694,194 @@ def rename_declaration(kind: str, old: str, new: str) -> dict:
 
     record_source_hash(path)
     return {"ok": True, "name": new, "old_name": old, "file": str(path)}
+
+
+def _stale_refusal(
+    path: Path, original: str, *, verb: str, kind: str, name: str
+) -> "dict | None":
+    """The refusal for writing over *path* when it changed on disk since the
+    registry last scanned it, else ``None``. The one stale-file guard shared
+    by every rewrite of an existing declaration (edit, rename, remove)."""
+    known_hash = _source_hashes.get(str(path))
+    if known_hash is None or known_hash == _hash_text(original):
+        return None
+    logger.info(
+        "[target_file_service] Refusing to %s %s '%s': %s changed on disk "
+        "since the last scan",
+        verb,
+        kind,
+        name,
+        path,
+    )
+    return {
+        "ok": False,
+        "error": (
+            f"{path.name} has changed on disk since it was last read. "
+            f"Hit 🔄 Refresh Code, then try again."
+        ),
+        "reason": "stale",
+    }
+
+
+def _removed_text(original: str, updated: str) -> str:
+    """The bytes *updated* lacks relative to *original* -- what the confirm
+    dialog shows and the log records.
+
+    A removal is one contiguous cut of length ``L``. The first differing
+    offset is its RIGHTMOST possible start; when neighbours look alike
+    (``"A",`` / ``"B",`` / ``"C",``) the same cut could start earlier, so it
+    is slid left while that stays equivalent, stopping at a line start --
+    giving ``    "B",\\n`` rather than ``B",\\n    "``.
+    """
+    cut = len(original) - len(updated)
+    if cut <= 0:
+        return ""
+    i = 0
+    limit = len(updated)
+    while i < limit and original[i] == updated[i]:
+        i += 1
+    while i > 0 and original[i - 1] != "\n" and original[i - 1] == original[i - 1 + cut]:
+        i -= 1
+    return original[i : i + cut]
+
+
+def remove_declaration(kind: str, name: str, *, preview: bool = False) -> dict:
+    """Remove *name*'s declaration from the TOML entities file.
+
+    The palette's Delete (``.claude/plan-palette-order-and-delete.md``),
+    with :func:`rename_declaration`'s guards: only the configured entities
+    file is written (``entity_editability``), never over a concurrent change
+    (``_stale_refusal``), and a write that leaves the file unreadable is
+    rolled back. **Data is never touched** -- records of a deleted Variable
+    stay in the database, and declaring the name again brings them back.
+
+    *preview* runs every check and computes the cut without writing, so the
+    confirm dialog can show the exact text that would go.
+
+    Undo is not here: the caller's handler is ``undoable`` and
+    :func:`_atomic_write` snapshots the file through ``history.note_write``,
+    so Undo restores the file byte for byte.
+
+    This owns the FILE only. Whether the entity is still placed on a canvas
+    is the caller's (``entity_delete_service``).
+
+    Returns ``{"ok": True, "kind", "name", "file", "removed", "preview",
+    "still_declared_in"}``. ``still_declared_in`` is set when the name
+    resolves again after the reload from some OTHER source -- e.g. a MATLAB
+    classdef stub generated from the entry, which is generated output and
+    deliberately never deleted (``matlab.registry.materialize_variable_stubs``).
+    """
+    from scifor.project.entities_file import remove_entry, remove_variable
+
+    editability = entity_editability(kind, name)
+    if editability["reason"] == "unknown":
+        return {"ok": False, "error": f"No {kind} named '{name}' is registered.",
+                "reason": "unknown"}
+    if not editability["editable"]:
+        logger.info(
+            "[target_file_service] Refusing to remove %s '%s': declared in %s, "
+            "outside the configured entities file",
+            kind,
+            name,
+            editability["file"],
+        )
+        return {
+            "ok": False,
+            "error": editability["message"],
+            "reason": "read_only",
+            "file": editability["file"],
+            "line": editability["line"],
+        }
+
+    path = Path(editability["file"])
+    section = TOML_SECTIONS.get(kind)
+    if path.suffix != ".toml" or (kind != "variable" and section is None):
+        return {
+            "ok": False,
+            "error": (
+                f"Delete is only supported in a TOML entities file; '{name}' "
+                f"is declared in {path.name}. Remove it there and hit "
+                f"🔄 Refresh Code."
+            ),
+            "reason": "unsupported_format",
+        }
+
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError as e:
+        return {"ok": False, "error": f"Cannot read {path}: {e}"}
+
+    stale = _stale_refusal(path, original, verb="remove", kind=kind, name=name)
+    if stale is not None:
+        return stale
+
+    try:
+        if kind == "variable":
+            updated = remove_variable(original, name)
+        else:
+            updated = remove_entry(original, section, name)
+    except ValueError as e:
+        return {"ok": False, "error": str(e), "reason": "unlocatable"}
+    removed = _removed_text(original, updated)
+
+    if preview:
+        logger.info(
+            "[target_file_service] remove_declaration preview: %s '%s' in %s "
+            "would remove %r",
+            kind,
+            name,
+            path,
+            removed,
+        )
+        return {"ok": True, "kind": kind, "name": name, "file": str(path),
+                "removed": removed, "preview": True, "still_declared_in": None}
+
+    logger.info(
+        "[target_file_service] remove_declaration: %s '%s' from %s: removing %r",
+        kind,
+        name,
+        path,
+        removed,
+    )
+    try:
+        _atomic_write(path, updated)
+    except OSError as e:
+        return {"ok": False, "error": f"Failed to write {path}: {e}"}
+    except ValueError as e:
+        # checked_text: the edit would leave invalid TOML; nothing written.
+        return {"ok": False, "error": str(e), "reason": "invalid_toml"}
+
+    refresh_error = _reload_after_write(path)
+    if refresh_error is not None:
+        logger.warning(
+            "[target_file_service] Rolling back removal in %s: %s", path, refresh_error
+        )
+        try:
+            _atomic_write(path, original, check=False)
+        except OSError as e:
+            return {
+                "ok": False,
+                "error": (
+                    f"{refresh_error} — AND restoring {path} failed: {e}. "
+                    f"The file may be left in a bad state."
+                ),
+            }
+        _reload_after_write(path)
+        return {"ok": False, "error": refresh_error, "reason": "verify_failed"}
+
+    record_source_hash(path)
+    still = declaration_source(kind, name)
+    if still is not None:
+        logger.warning(
+            "[target_file_service] remove_declaration: %s '%s' removed from %s, "
+            "but it is still declared in %s",
+            kind,
+            name,
+            path,
+            still,
+        )
+    return {"ok": True, "kind": kind, "name": name, "file": str(path),
+            "removed": removed, "preview": False, "still_declared_in": still}
 
 
 def _record_current_path_input_value(name: str) -> None:

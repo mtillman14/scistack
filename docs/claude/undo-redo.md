@@ -132,3 +132,29 @@ and Plot Studio's, are left out. Replaying a seeded step is as safe as a live
 one: `undo` refuses on conflict. Audit-only rows (adoption events) are never
 seeded. Tests: `tests/test_history.py::TestRecentChanges`,
 `frontend/src/history.test.ts` (`seededStack`).
+
+## Extract to submodule (2026-11-03)
+
+`extract_to_submodule` moves rows across pipeline, position and edge tables, and
+a selection may hold already-run nodes or other submodules. Three things make it
+undo as one step, covered by `TestExtractUndo` in `tests/test_history.py`:
+
+- **One transaction.** `recording()` stores nothing for a call that raises, so
+  writes made before the failure could never be undone. The transaction is what
+  puts them back. A failure logs `extract_to_submodule: rolled back`. Other
+  multi-write handlers can have the same gap: an undoable handler is only as
+  all-or-nothing as its own writes.
+- **Leaving a removed pipeline.** Undo can remove the pipeline on screen.
+  `ScopeProvider` re-checks after every page undo or redo and cuts the breadcrumb
+  at the first pipeline that is gone (`context/survivingBreadcrumb.ts`).
+- **What stays.** Data from running the submodule stays after undo, and the nodes
+  come back unselected. A later write to a row extract touched, from outside the
+  undo stack, makes undo refuse with a conflict.
+
+**Known refusal.** The canvas refresh folds a hand-placed variable into its
+canonical node once that variable has data (`graduate_manual_node`), and the fold
+rewrites every edge naming the old id. If that happens after an extract, the
+boundary edge extract added has changed, so undo refuses. This needs the variable
+to get its first data between the extract and the undo, since a variable that
+already has data folds on the refresh after it is placed. Refusing is deliberate:
+restoring the edge's old endpoint would point it at a node the fold removed.

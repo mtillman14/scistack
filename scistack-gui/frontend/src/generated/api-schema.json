@@ -2,17 +2,6 @@
   "$defs": {
     "AddRequest": {
       "properties": {
-        "finalized": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": true
-        },
         "function_name": {
           "anyOf": [
             {
@@ -1365,7 +1354,8 @@
         "kind": {
           "enum": [
             "parameter",
-            "path_input"
+            "path_input",
+            "variable"
           ],
           "type": "string"
         },
@@ -3445,17 +3435,6 @@
     },
     "PipelineRunRequest": {
       "properties": {
-        "finalized": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "mode": {
           "anyOf": [
             {
@@ -3508,6 +3487,22 @@
         "pipeline_id"
       ],
       "title": "PipelineRunRequest",
+      "type": "object"
+    },
+    "PlacementDuplicate": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "use_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "use_id",
+        "name"
+      ],
+      "title": "PlacementDuplicate",
       "type": "object"
     },
     "PlotGuideRequest": {
@@ -3798,24 +3793,20 @@
       "title": "PlotSpec",
       "type": "object"
     },
-    "PortDirection": {
+    "PortRename": {
       "properties": {
-        "direction": {
+        "name": {
           "type": "string"
         },
-        "pipeline_id": {
-          "type": "string"
-        },
-        "var_type": {
+        "node_id": {
           "type": "string"
         }
       },
       "required": [
-        "pipeline_id",
-        "direction",
-        "var_type"
+        "node_id",
+        "name"
       ],
-      "title": "PortDirection",
+      "title": "PortRename",
       "type": "object"
     },
     "PositionUpdate": {
@@ -5848,17 +5839,6 @@
           ],
           "default": null
         },
-        "finalized": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": true
-        },
         "function_name": {
           "anyOf": [
             {
@@ -6155,6 +6135,9 @@
     "delete_edge": {
       "$ref": "#/$defs/EdgeDelete"
     },
+    "delete_entity": {
+      "$ref": "#/$defs/EntityRef"
+    },
     "delete_glue": {
       "$ref": "#/$defs/GlueName"
     },
@@ -6193,6 +6176,9 @@
     },
     "duplicate_pipeline": {
       "$ref": "#/$defs/PipelineRename"
+    },
+    "duplicate_placement": {
+      "$ref": "#/$defs/PlacementDuplicate"
     },
     "exclude_schema_combo": {
       "$ref": "#/$defs/InventoryRowChange"
@@ -6248,9 +6234,6 @@
     "get_hidden_edges": {
       "$ref": "#/$defs/HiddenEdgesQuery"
     },
-    "get_hidden_ports": {
-      "$ref": "#/$defs/PipelineRef"
-    },
     "get_layout": {
       "$ref": "#/$defs/ScopeQuery"
     },
@@ -6280,9 +6263,6 @@
     },
     "hide_parameter_value": {
       "$ref": "#/$defs/ParameterValueInScope"
-    },
-    "hide_port": {
-      "$ref": "#/$defs/PortDirection"
     },
     "history_recent": {
       "$ref": "#/$defs/RecentQuery"
@@ -6416,6 +6396,9 @@
     "plot_variant_sets_save": {
       "$ref": "#/$defs/VariantSetsRequest"
     },
+    "preview_delete_entity": {
+      "$ref": "#/$defs/EntityRef"
+    },
     "promote_step_value": {
       "$ref": "#/$defs/StepValuePromote"
     },
@@ -6451,6 +6434,9 @@
     },
     "rename_pipeline": {
       "$ref": "#/$defs/PipelineRename"
+    },
+    "rename_port": {
+      "$ref": "#/$defs/PortRename"
     },
     "report_canvas_refresh": {
       "$ref": "#/$defs/CanvasRefreshRequest"
@@ -6599,9 +6585,6 @@
     "unhide_pipeline": {
       "$ref": "#/$defs/PipelineRef"
     },
-    "unhide_port": {
-      "$ref": "#/$defs/PortDirection"
-    },
     "update_hypothesis": {
       "$ref": "#/$defs/HypothesisUpdate"
     },
@@ -6641,6 +6624,7 @@
     "declare_library_requirements",
     "deep_copy_path_input",
     "delete_edge",
+    "delete_entity",
     "delete_glue",
     "delete_hypothesis",
     "delete_layout",
@@ -6654,6 +6638,7 @@
     "design_update",
     "duplicate_hypothesis",
     "duplicate_pipeline",
+    "duplicate_placement",
     "exclude_schema_combo",
     "export_pipeline",
     "export_pipeline_code",
@@ -6672,7 +6657,6 @@
     "get_glue",
     "get_glue_columns",
     "get_hidden_edges",
-    "get_hidden_ports",
     "get_layout",
     "get_pipeline",
     "get_pipeline_interface",
@@ -6683,7 +6667,6 @@
     "get_variable_records",
     "hide_combo",
     "hide_parameter_value",
-    "hide_port",
     "history_recent",
     "history_redo",
     "history_undo",
@@ -6728,6 +6711,7 @@
     "plot_saved_save",
     "plot_variant_graph",
     "plot_variant_sets_save",
+    "preview_delete_entity",
     "promote_step_value",
     "put_edge",
     "put_layout",
@@ -6740,6 +6724,7 @@
     "remove_project_path",
     "rename_path_input",
     "rename_pipeline",
+    "rename_port",
     "report_canvas_refresh",
     "report_client_build",
     "report_client_error",
@@ -6789,7 +6774,6 @@
     "unhide_edge",
     "unhide_parameter_value",
     "unhide_pipeline",
-    "unhide_port",
     "update_hypothesis",
     "update_parameter",
     "update_path_input",

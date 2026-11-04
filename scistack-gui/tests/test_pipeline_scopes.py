@@ -1797,107 +1797,6 @@ class TestDuplicateHypothesis:
 
 
 class TestExtractToSubmodule:
-    def test_extract_moves_node_and_adds_boundary_edges(self, client):
-        client.put("/api/layout/mv_in", json={
-            "x": 0, "y": 0, "node_type": "variableNode", "label": "RawSignal",
-        })
-        client.put("/api/layout/mf_proc", json={
-            "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc",
-        })
-        client.put("/api/layout/mv_out", json={
-            "x": 20, "y": 0, "node_type": "variableNode", "label": "FilteredSignal",
-        })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
-        client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
-
-        r = client.post(
-            "/api/pipelines/main/extract",
-            json={"node_ids": ["mf_proc"], "name": "processing"},
-        )
-        assert r.status_code == 200
-        pid, use_id = r.json()["pipeline_id"], r.json()["use_id"]
-
-        db = get_db()
-        # The function node moved scopes; the boundary variables stayed.
-        assert set(ps.get_manual_nodes(db, pid)) == {"mf_proc"}
-        assert set(ps.get_manual_nodes(db, "main")) == {"mv_in", "mv_out", use_id}
-
-        # Original edges are UNCHANGED (they feed the submodule's own
-        # interface via document_interface — see the function's docstring)
-        # — plus new boundary edges landed on the pipeline node's ports.
-        edges = ps.get_manual_edges(db)
-        assert {"id": "e_in", "source": "mv_in", "target": "mf_proc"} in edges
-        assert {"id": "e_out", "source": "mf_proc", "target": "mv_out"} in edges
-        new_in = [e for e in edges if e["source"] == "mv_in" and e["target"] == use_id]
-        new_out = [e for e in edges if e["source"] == use_id and e["target"] == "mv_out"]
-        assert len(new_in) == 1 and new_in[0]["targetHandle"] == "in__RawSignal"
-        assert len(new_out) == 1 and new_out[0]["sourceHandle"] == "out__FilteredSignal"
-
-        # The submodule's interface computes correctly from the untouched
-        # original edges.
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-        assert iface == {"inputs": ["RawSignal"], "outputs": ["FilteredSignal"]}
-
-        # The pipeline node on main carries the same ports.
-        graph = client.get("/api/pipeline").json()
-        node = next(n for n in graph["nodes"] if n["id"] == use_id)
-        assert node["data"]["inputs"] == ["RawSignal"]
-        assert node["data"]["outputs"] == ["FilteredSignal"]
-
-    def test_extract_boundary_edge_where_moved_side_is_the_variable(self, client):
-        """Regression: a selection can carry a variable node into the
-        submodule while its downstream consuming function stays behind
-        (e.g. RollingVO2 + its producer moved into "rolling_vo2", while
-        stat_vo2_summary stayed on main). The kept side of that boundary
-        edge is a FUNCTION, not a variable — the label must be looked up
-        on the MOVED side instead, or the connection is silently dropped.
-        """
-        client.put("/api/layout/mv_in", json={
-            "x": 0, "y": 0, "node_type": "variableNode", "label": "RawSignal",
-        })
-        client.put("/api/layout/mf_proc", json={
-            "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc",
-        })
-        client.put("/api/layout/mv_out", json={
-            "x": 20, "y": 0, "node_type": "variableNode", "label": "RollingVO2",
-        })
-        client.put("/api/layout/mf_summary", json={
-            "x": 30, "y": 0, "node_type": "functionNode", "label": "stat_vo2_summary",
-        })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
-        client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
-        client.put("/api/edges/e_downstream", json={
-            "source": "mv_out", "target": "mf_summary", "target_handle": "in__RollingVO2",
-        })
-
-        r = client.post(
-            "/api/pipelines/main/extract",
-            json={"node_ids": ["mv_in", "mf_proc", "mv_out"], "name": "rolling_vo2"},
-        )
-        assert r.status_code == 200
-        pid, use_id = r.json()["pipeline_id"], r.json()["use_id"]
-
-        db = get_db()
-        # stat_vo2_summary stayed on main; the other three moved.
-        assert set(ps.get_manual_nodes(db, "main")) == {"mf_summary", use_id}
-
-        # The original boundary edge (mv_out -> mf_summary) is unchanged,
-        # plus a NEW edge from the placed pipeline node's output port
-        # replaces it for visual continuity on main's canvas.
-        edges = ps.get_manual_edges(db)
-        assert {
-            "id": "e_downstream", "source": "mv_out", "target": "mf_summary",
-            "targetHandle": "in__RollingVO2",
-        } in edges
-        replacement = [e for e in edges if e["source"] == use_id and e["target"] == "mf_summary"]
-        assert len(replacement) == 1
-        assert replacement[0]["sourceHandle"] == "out__RollingVO2"
-        assert replacement[0]["targetHandle"] == "in__RollingVO2"
-
-        graph = client.get("/api/pipeline").json()
-        node = next(n for n in graph["nodes"] if n["id"] == use_id)
-        assert "RollingVO2" in node["data"]["outputs"]
-
     def test_extract_rejects_node_outside_scope(self, client):
         pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
             "pipeline_id"
@@ -1922,272 +1821,45 @@ class TestExtractToSubmodule:
 
 
 class TestDocumentInterface:
-    def test_interface_from_manual_document(self, client):
-        """var -> fn -> var wired inside a sub-scope: consumed-not-produced
-        in, produced out."""
+    def test_ports_come_from_input_output_nodes(self, client):
+        """A submodule's ports are its input/output nodes, in order, not
+        anything inferred from its variables (domain.ports)."""
         pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
             "pipeline_id"
         ]
-        client.put(
-            "/api/layout/mv_in",
-            json={
-                "x": 0,
-                "y": 0,
-                "node_type": "variableNode",
-                "label": "RawSignal",
-                "pipeline_id": pid,
-            },
-        )
-        client.put(
-            "/api/layout/mf_proc",
-            json={
-                "x": 0,
-                "y": 0,
-                "node_type": "functionNode",
-                "label": "bandpass_filter",
-                "pipeline_id": pid,
-            },
-        )
-        client.put(
-            "/api/layout/mv_out",
-            json={
-                "x": 0,
-                "y": 0,
-                "node_type": "variableNode",
-                "label": "FilteredSignal",
-                "pipeline_id": pid,
-            },
-        )
+        for node_id, node_type, label in (
+            ("mv_in", "variableNode", "RawSignal"),
+            ("mf_proc", "functionNode", "bandpass_filter"),
+            ("mv_out", "variableNode", "FilteredSignal"),
+        ):
+            client.put(f"/api/layout/{node_id}", json={
+                "x": 0, "y": 0, "node_type": node_type, "label": label, "pipeline_id": pid,
+            })
         client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
-
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-
-        assert iface == {"inputs": ["RawSignal"], "outputs": ["FilteredSignal"]}
-
-        # The pipeline node on the root canvas carries the same ports.
-        use_id = client.post(
-            "/api/pipelines/main/uses", json={"child_pipeline_id": pid}
-        ).json()["use_id"]
-        graph = client.get("/api/pipeline").json()
-        node = next(n for n in graph["nodes"] if n["id"] == use_id)
-        assert node["data"]["inputs"] == ["RawSignal"]
-        assert node["data"]["outputs"] == ["FilteredSignal"]
-
-
-class TestHiddenPorts:
-    """pipeline_store-level coverage for to-do #9's manual port-hiding
-    override (see pipeline_store.hide_port's module docstring)."""
-
-    def test_hide_unhide_roundtrip(self, layout_path):
-        db = get_db()
-        assert ps.get_hidden_ports(db, "main") == {"input": set(), "output": set()}
-
-        ps.hide_port(db, "main", "input", "RawSignal")
-        assert ps.get_hidden_ports(db, "main") == {
-            "input": {"RawSignal"},
-            "output": set(),
+        assert client.get(f"/api/pipelines/{pid}/interface").json() == {
+            "inputs": [],
+            "outputs": [],
         }
 
-        ps.unhide_port(db, "main", "input", "RawSignal")
-        assert ps.get_hidden_ports(db, "main") == {"input": set(), "output": set()}
-
-    def test_hide_is_idempotent(self, layout_path):
-        db = get_db()
-        ps.hide_port(db, "main", "output", "FilteredSignal")
-        ps.hide_port(db, "main", "output", "FilteredSignal")  # ON CONFLICT DO NOTHING
-        assert ps.get_hidden_ports(db, "main") == {
-            "input": set(),
-            "output": {"FilteredSignal"},
-        }
-
-    def test_get_hidden_ports_by_scope_keyed_per_pipeline(self, layout_path):
-        db = get_db()
-        other = ps.create_pipeline(db, "loading")
-        ps.hide_port(db, "main", "input", "RawSignal")
-        ps.hide_port(db, other, "output", "FilteredSignal")
-
-        by_scope = ps.get_hidden_ports_by_scope(db)
-        assert by_scope["main"] == {"input": {"RawSignal"}, "output": set()}
-        assert by_scope[other] == {"input": set(), "output": {"FilteredSignal"}}
-
-
-class TestHiddenPortsFiltering:
-    """API-level coverage: hide-port/unhide-port toggling and its effect
-    on document_interface's computed ports (to-do #9)."""
-
-    def _wire_loading_scope(self, client, pid):
-        client.put(
-            "/api/layout/mv_in",
-            json={
-                "x": 0,
-                "y": 0,
-                "node_type": "variableNode",
-                "label": "RawSignal",
-                "pipeline_id": pid,
-            },
-        )
-        client.put(
-            "/api/layout/mf_proc",
-            json={
-                "x": 0,
-                "y": 0,
-                "node_type": "functionNode",
-                "label": "bandpass_filter",
-                "pipeline_id": pid,
-            },
-        )
-        client.put(
-            "/api/layout/mv_out",
-            json={
-                "x": 0,
-                "y": 0,
-                "node_type": "variableNode",
-                "label": "FilteredSignal",
-                "pipeline_id": pid,
-            },
-        )
-        client.put("/api/edges/e_in", json={
-            "source": "mv_in", "target": "mf_proc", "target_handle": "in__signal",
+        client.put("/api/layout/p_in", json={
+            "x": 0, "y": 0, "node_type": "inputPortNode", "label": "signal", "pipeline_id": pid,
         })
-        client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
-
-    def test_hidden_ports_endpoint_reflects_current_state(self, client):
-        pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
-            "pipeline_id"
-        ]
-        assert client.get(f"/api/pipelines/{pid}/hidden-ports").json() == {
-            "input": [],
-            "output": [],
+        client.put("/api/layout/p_out", json={
+            "x": 0, "y": 0, "node_type": "outputPortNode", "label": "filtered", "pipeline_id": pid,
+        })
+        assert client.get(f"/api/pipelines/{pid}/interface").json() == {
+            "inputs": ["signal"],
+            "outputs": ["filtered"],
         }
 
-        r = client.post(
-            f"/api/pipelines/{pid}/hide-port",
-            json={"direction": "output", "var_type": "FilteredSignal"},
-        )
-        assert r.status_code == 200
-        assert client.get(f"/api/pipelines/{pid}/hidden-ports").json() == {
-            "input": [],
-            "output": ["FilteredSignal"],
-        }
-
-        r = client.post(
-            f"/api/pipelines/{pid}/unhide-port",
-            json={"direction": "output", "var_type": "FilteredSignal"},
-        )
-        assert r.status_code == 200
-        assert client.get(f"/api/pipelines/{pid}/hidden-ports").json() == {
-            "input": [],
-            "output": [],
-        }
-
-    def test_hidden_input_port_suppressed_from_interface_and_use_node(self, client):
-        pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
-            "pipeline_id"
-        ]
-        self._wire_loading_scope(client, pid)
-
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-        assert iface == {"inputs": ["RawSignal"], "outputs": ["FilteredSignal"]}
-
-        client.post(
-            f"/api/pipelines/{pid}/hide-port",
-            json={"direction": "input", "var_type": "RawSignal"},
-        )
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-        assert iface == {"inputs": [], "outputs": ["FilteredSignal"]}
-
-        # The placed pipeline node's port list bubbles the filtered
-        # interface too.
         use_id = client.post(
             "/api/pipelines/main/uses", json={"child_pipeline_id": pid}
         ).json()["use_id"]
         graph = client.get("/api/pipeline").json()
         node = next(n for n in graph["nodes"] if n["id"] == use_id)
-        assert node["data"]["inputs"] == []
-        assert node["data"]["outputs"] == ["FilteredSignal"]
-
-        # Un-hiding restores it everywhere.
-        client.post(
-            f"/api/pipelines/{pid}/unhide-port",
-            json={"direction": "input", "var_type": "RawSignal"},
-        )
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-        assert iface == {"inputs": ["RawSignal"], "outputs": ["FilteredSignal"]}
-
-    def test_hidden_output_port_suppressed_from_interface(self, client):
-        pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
-            "pipeline_id"
-        ]
-        self._wire_loading_scope(client, pid)
-
-        client.post(
-            f"/api/pipelines/{pid}/hide-port",
-            json={"direction": "output", "var_type": "FilteredSignal"},
-        )
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-        assert iface == {"inputs": ["RawSignal"], "outputs": []}
-
-    def test_hidden_port_does_not_touch_the_internal_node(self, client):
-        """Hiding a port suppresses the exposed dot on the scope's
-        BOUNDARY only — the internal node that produces/consumes that
-        type must stay fully visible on its own canvas (see
-        pipeline_store.hide_port's module docstring)."""
-        pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
-            "pipeline_id"
-        ]
-        self._wire_loading_scope(client, pid)
-
-        client.post(
-            f"/api/pipelines/{pid}/hide-port",
-            json={"direction": "input", "var_type": "RawSignal"},
-        )
-
-        graph = client.get(f"/api/pipeline?pipeline_id={pid}").json()
-        labels = {
-            (n["type"], n["data"]["label"])
-            for n in graph["nodes"]
-            if n["type"] in ("variableNode", "functionNode")
-        }
-        assert ("variableNode", "RawSignal") in labels
-        assert ("functionNode", "bandpass_filter") in labels
-
-    def test_hide_is_scoped_to_its_own_pipeline(self, client):
-        """A hide toggled on one scope doesn't retroactively change what
-        another scope reports for the same type — hide_port is stored
-        per (pipeline_id, direction, var_type), not globally."""
-        pid = client.post("/api/pipelines", json={"name": "loading"}).json()[
-            "pipeline_id"
-        ]
-        self._wire_loading_scope(client, pid)
-
-        # Hide RawSignal on 'main' (unrelated wiring) first — must not
-        # affect the child scope's own report.
-        client.post(
-            "/api/pipelines/main/hide-port",
-            json={"direction": "input", "var_type": "RawSignal"},
-        )
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-        assert iface == {"inputs": ["RawSignal"], "outputs": ["FilteredSignal"]}
-
-        # Hiding it on the child itself filters the child's own report,
-        # while main's earlier (independent) hide stays recorded too.
-        client.post(
-            f"/api/pipelines/{pid}/hide-port",
-            json={"direction": "input", "var_type": "RawSignal"},
-        )
-        iface = client.get(f"/api/pipelines/{pid}/interface").json()
-        assert iface == {"inputs": [], "outputs": ["FilteredSignal"]}
-
-        db = get_db()
-        by_scope = ps.get_hidden_ports_by_scope(db)
-        assert by_scope["main"] == {"input": {"RawSignal"}, "output": set()}
-        assert by_scope[pid] == {"input": {"RawSignal"}, "output": set()}
-
-
-# ---------------------------------------------------------------------------
-# Checkpoint 3: execution rearchitecture (G2 — document -> backend pipelines)
-# ---------------------------------------------------------------------------
+        assert node["data"]["inputs"] == ["signal"]
+        assert node["data"]["outputs"] == ["filtered"]
 
 
 class TestExecutionCompiler:

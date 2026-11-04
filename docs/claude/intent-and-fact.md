@@ -121,7 +121,7 @@ really are:
 | | tables | governed here? |
 |---|---|---|
 | **execution intent** | `_node_config` (schemaSelection, schemaLevel, whereFilters, runOptions, columnSelections), `_pipeline_edges`, `_pipeline_hidden_combos`, `_pipeline_hidden_constant_values`, `_pipeline_hidden_nodes`, `_pipeline_hidden_edges`, `_pipeline_pending_constants` | **yes** |
-| **display intent** | layout positions, `_pipeline_parameter_value_groups`, `_pipeline_hidden_ports`, `_hypotheses` | no — stays as is |
+| **display intent** | layout positions, `_pipeline_parameter_value_groups`, `_hypotheses` | no — stays as is |
 | **attribution index** | `_pipeline_path_input_history` | no — it repairs fact, it does not state intent |
 | **fact** | scidb's provenance tables | never |
 

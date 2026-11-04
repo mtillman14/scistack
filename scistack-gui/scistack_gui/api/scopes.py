@@ -10,10 +10,9 @@ transports (``api/handlers.py``; plan-gui-nested-pipelines.md Part A).
     POST   /api/pipelines/{pipeline_id}/unhide unhide_pipeline
     GET    /api/pipelines/hidden               get_hidden_pipelines (restore panel)
     GET    /api/pipelines/{pipeline_id}/interface    get_pipeline_interface — the scope's ports
-    GET    /api/pipelines/{pipeline_id}/hidden-ports get_hidden_ports
-    POST   /api/pipelines/{pipeline_id}/hide-port    hide_port
-    POST   /api/pipelines/{pipeline_id}/unhide-port  unhide_port
     POST   /api/pipelines/{pipeline_id}/extract      extract_to_submodule — a move, not a copy
+    POST   /api/ports/rename                         rename_port
+    POST   /api/pipeline-uses/{use_id}/duplicate     duplicate_placement
     POST   /api/pipelines/{pipeline_id}/duplicate    duplicate_pipeline — fork its own nodes
     POST   /api/pipelines/{pipeline_id}/paste-nodes  paste_nodes
     GET    /api/pipelines/{pipeline_id}/export       export_pipeline
@@ -88,10 +87,14 @@ class ImportPipeline(BaseModel):
     document: dict
 
 
-class PortDirection(BaseModel):
-    pipeline_id: str
-    direction: str  # 'input' | 'output'
-    var_type: str
+class PortRename(BaseModel):
+    node_id: str
+    name: str
+
+
+class PlacementDuplicate(BaseModel):
+    use_id: str
+    name: str
 
 
 class PipelinePlanQuery(BaseModel):
@@ -103,7 +106,6 @@ class PipelineRunRequest(BaseModel):
     pipeline_id: str
     mode: str | None = "all"  # all | until | endpoints
     target: str | None = ""  # step/fn name (mode="until")
-    finalized: bool | None = None  # endpoint draft/record flag
     skip_computed: bool | None = True
     run_id: str | None = None
 
@@ -180,21 +182,12 @@ def _get_pipeline_interface(req: PipelineRef) -> dict:
     return scope_service.pipeline_interface(req.pipeline_id)
 
 
-def _get_hidden_ports(req: PipelineRef) -> dict:
-    """This scope's hidden ports — the right-click context menu's Show/
-    Hide label needs current state (to-do #9)."""
-    return scope_service.get_hidden_ports(req.pipeline_id)
+def _rename_port(req: PortRename) -> dict:
+    return scope_service.rename_port(req.node_id, req.name)
 
 
-def _hide_port(req: PortDirection) -> dict:
-    """Suppress ``var_type``'s exposed port on this scope's interface —
-    toggled by right-clicking a variable node inside the subpipeline's
-    own canvas (see domain.scope_filter.document_interface)."""
-    return scope_service.hide_port(req.pipeline_id, req.direction, req.var_type)
-
-
-def _unhide_port(req: PortDirection) -> dict:
-    return scope_service.unhide_port(req.pipeline_id, req.direction, req.var_type)
+def _duplicate_placement(req: PlacementDuplicate) -> dict:
+    return scope_service.duplicate_placement(req.use_id, req.name)
 
 
 def _extract_to_submodule(req: ExtractToSubmodule) -> dict:
@@ -260,7 +253,6 @@ def _start_pipeline_run(req: PipelineRunRequest, *, transport: str) -> dict:
         req.pipeline_id,
         req.mode or "all",
         req.target or "",
-        req.finalized,
         True if req.skip_computed is None else req.skip_computed,
         req.run_id,
         host_can_dispatch_matlab=(transport == "rpc"),
@@ -296,9 +288,8 @@ SCOPE_HANDLERS: tuple[Handler, ...] = (
     Handler("update_hypothesis", "/hypotheses/{pipeline_id}", HypothesisUpdate, _update_hypothesis, http_method="PUT", http_errors=_BAD_REQUEST, **_NO_DB, undoable=True, undo_label="edit hypothesis"),
     Handler("delete_hypothesis", "/hypotheses/{pipeline_id}", PipelineRef, _delete_hypothesis, http_method="DELETE", http_errors=_BAD_REQUEST, **_NO_DB, undoable=True, undo_label="remove hypothesis"),
     Handler("get_pipeline_interface", "/pipelines/{pipeline_id}/interface", PipelineRef, _get_pipeline_interface, http_method="GET", **_NO_DB),
-    Handler("get_hidden_ports", "/pipelines/{pipeline_id}/hidden-ports", PipelineRef, _get_hidden_ports, http_method="GET", **_NO_DB),
-    Handler("hide_port", "/pipelines/{pipeline_id}/hide-port", PortDirection, _hide_port, **_NO_DB, undoable=True, undo_label="hide port"),
-    Handler("unhide_port", "/pipelines/{pipeline_id}/unhide-port", PortDirection, _unhide_port, **_NO_DB, undoable=True, undo_label="show port"),
+    Handler("rename_port", "/ports/rename", PortRename, _rename_port, http_errors=_BAD_REQUEST, **_NO_DB, undoable=True, undo_label="rename port"),
+    Handler("duplicate_placement", "/pipeline-uses/{use_id}/duplicate", PlacementDuplicate, _duplicate_placement, http_errors=_BAD_REQUEST, **_NO_DB, undoable=True, undo_label="duplicate submodule"),
     Handler("extract_to_submodule", "/pipelines/{pipeline_id}/extract", ExtractToSubmodule, _extract_to_submodule, http_errors=_BAD_REQUEST, **_NO_DB, undoable=True, undo_label="extract to submodule"),
     Handler("duplicate_pipeline", "/pipelines/{pipeline_id}/duplicate", PipelineRename, _duplicate_pipeline, http_errors=_BAD_REQUEST, **_NO_DB, undoable=True, undo_label="duplicate pipeline"),
     Handler("duplicate_hypothesis", "/hypotheses/{pipeline_id}/duplicate", PipelineRename, _duplicate_hypothesis, http_errors=_BAD_REQUEST, **_NO_DB, undoable=True, undo_label="duplicate hypothesis"),

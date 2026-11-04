@@ -16,7 +16,10 @@ hypothesis tab disconnected the node in another.
 - ``hidden_edge_ids``: the history edges hidden in *scope*;
 - ``manual_nodes``;
 - ``stale_port``: edges left out of ``drawn`` because their target port is
-  no longer an argument of the node's function (:func:`missing_port`).
+  no longer an argument of the node's function (:func:`missing_port`);
+- ``wiring_list``: the same connections with submodule ports traced through
+  (``domain.ports``). ``drawn`` is what a canvas draws; ``wiring_list`` is what
+  a node is wired to. They are the same list when no canvas has a port.
 
 Only this module and the edge MUTATORS (layout_service, scope_service,
 layout.py, pipeline_store) may call ``pipeline_store.get_manual_edges`` or
@@ -32,6 +35,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+from scistack_gui.domain import ports
+from scistack_gui.domain.ports import Wiring
 from scistack_gui.ids import PARAM_ID_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -47,11 +52,29 @@ class EdgeView:
     #: longer an argument of the node's function (:func:`missing_port`).
     #: Refresh Code hides them (layout_service.disconnect_removed_arguments).
     stale_port: tuple = ()
+    #: Connections traced through submodule ports (``domain.ports.Wiring``),
+    #: or ``None`` when no canvas has an input/output node.
+    port_wiring: "Wiring | None" = None
 
     @property
     def drawn_list(self) -> list[dict]:
-        """``drawn`` as the list the domain functions take."""
+        """``drawn`` as the list the domain functions take. What a CANVAS
+        draws: a connection crossing a submodule is two edges here. A reader
+        asking what a node is wired to wants :attr:`wiring_list`."""
         return list(self.drawn)
+
+    @property
+    def wiring_list(self) -> list[dict]:
+        """Every connection, with submodule ports traced through: the edges a
+        canvas with no submodules would store. With no port on any canvas it
+        is exactly :attr:`drawn_list`."""
+        return self.port_wiring.edges if self.port_wiring else list(self.drawn)
+
+    def open_arguments(self, node_id: str) -> list[str]:
+        """Arguments of *node_id* fed by a port with nothing connected."""
+        if self.port_wiring is None:
+            return []
+        return self.port_wiring.open_arguments(node_id)
 
 
 def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
@@ -93,6 +116,9 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
             continue
         drawn_list.append(e)
     drawn = tuple(drawn_list)
+    port_wiring, severed = _trace_ports(db, stored, drawn_list, manual_nodes, hidden)
+    if severed:
+        hidden = hidden | severed
     logger.info(
         "[edge_view] %s: scope=%s, %d drawn of %d stored manual edge(s), "
         "%d hidden edge id(s), %d edge(s) on a hidden node, %d on a port that "
@@ -111,7 +137,108 @@ def effective_edges(db, scope: "str | None", *, caller: str) -> EdgeView:
         hidden_edge_ids=hidden,
         manual_nodes=manual_nodes,
         stale_port=tuple(stale_port),
+        port_wiring=port_wiring,
     )
+
+
+def _trace_ports(
+    db, stored: list, drawn: list, manual_nodes: dict, hidden: frozenset
+) -> "tuple[Wiring | None, frozenset]":
+    """``(domain.ports.Wiring, severed connection ids)``, or ``(None, empty)``
+    when no canvas has an input/output node.
+
+    A segment (an edge touching an input/output node or a placement) lives on
+    exactly one canvas, so a hide of it applies whichever canvas is asking: a
+    run of a node inside a submodule must see an outer edge removed on the
+    parent. Each hidden segment also hides the connection it carried
+    (*severed*), which is what disconnects a node that has recorded history:
+    removing the line ``[submodule] -> C`` removes ``B -> C``.
+    """
+    from scistack_gui.domain.graph_builder import (
+        edge_connection_id,
+        manual_edge_is_hidden,
+    )
+    from scistack_gui.stores import pipeline_store
+
+    if not ports.has_port_nodes(manual_nodes):
+        return None, frozenset()
+    uses = pipeline_store.get_pipeline_uses(db)
+    use_ids = {u["use_id"] for u in uses}
+    all_hidden = pipeline_store.get_hidden_edge_ids(db, None)
+    hidden_nodes = pipeline_store.get_hidden_node_ids(db, None)
+
+    def is_segment(edge: dict) -> bool:
+        return any(
+            end in use_ids or (manual_nodes.get(end) or {}).get("type") in ports.PORT_NODE_TYPES
+            for end in (edge.get("source") or "", edge.get("target") or "")
+        )
+
+    live = [
+        e
+        for e in drawn
+        if not (is_segment(e) and manual_edge_is_hidden(e, all_hidden, manual_nodes))
+    ]
+    wiring = ports.resolve_wiring(live, manual_nodes, uses, hidden_nodes)
+    drawn_ids = {e.get("id") for e in drawn}
+    unhidden = drawn + [
+        e for e in stored if e.get("id") not in drawn_ids and is_segment(e)
+    ]
+    possible = ports.resolve_wiring(unhidden, manual_nodes, uses)
+    traced = {
+        edge_connection_id(w.edge, manual_nodes): w for w in wiring.wires if w.traced
+    }
+    severed = frozenset(
+        edge_connection_id(w.edge, manual_nodes) for w in possible.wires if w.traced
+    ) - set(traced)
+    kept = tuple(
+        w
+        for w in wiring.wires
+        if not w.traced or edge_connection_id(w.edge, manual_nodes) not in hidden
+    )
+    if len(kept) != len(wiring.wires):
+        wiring.wires = kept
+    for source, target, reason, via in wiring.illegal:
+        _warn_once(
+            f"illegal:{source}:{target}",
+            "[edge_view] connection %s -> %s through ports binds nothing: %s "
+            "(edges %s)",
+            source,
+            target,
+            reason,
+            list(via),
+        )
+    for edge in wiring.dangling:
+        _warn_once(
+            f"dangling:{edge.get('id')}",
+            "[edge_view] edge %s (%s -> %s, port %s) names a port that does not "
+            "exist; binds nothing",
+            edge.get("id"),
+            edge.get("source"),
+            edge.get("target"),
+            edge.get("targetHandle"),
+        )
+    logger.info(
+        "[edge_view] ports: %d connection(s) (%d traced), %d severed, %d open "
+        "input(s), %d dangling, %d illegal",
+        len(wiring.wires),
+        sum(1 for w in wiring.wires if w.traced),
+        len(severed),
+        len(wiring.open_inputs),
+        len(wiring.dangling),
+        len(wiring.illegal),
+    )
+    return wiring, severed
+
+
+#: Messages already logged by :func:`_warn_once`.
+_REPORTED_PORT_PROBLEMS: set[str] = set()
+
+
+def _warn_once(key: str, message: str, *args) -> None:
+    """Once per process: the view is read many times per graph build."""
+    if key not in _REPORTED_PORT_PROBLEMS:
+        _REPORTED_PORT_PROBLEMS.add(key)
+        logger.warning(message, *args)
 
 
 #: The Parameter port, retired 2026-10-01 (step 2): every input port is in__X.

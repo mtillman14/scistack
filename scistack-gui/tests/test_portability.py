@@ -584,7 +584,7 @@ class TestCanvasSnapshotCarriesEverything:
         pid = self._pipeline(client)
         document = export_pipeline(get_db(), pid)
         assert document["format_version"] == FORMAT_VERSION == 2
-        assert {"nodes", "uses", "edges", "hides", "hidden_ports"} <= set(document["canvas"])
+        assert {"nodes", "uses", "edges", "hides"} <= set(document["canvas"])
         assert "nodes" not in document  # the v1 top-level shape is gone
 
     def test_a_version_1_document_is_refused(self, client):

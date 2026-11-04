@@ -178,24 +178,23 @@ classdef Pipeline < handle
         function run_until(obj, target, varargin)
             %RUN_UNTIL  Run target (+ ancestors) only — resolved over the
             %   composed graph. Target: step/fn name string or function
-            %   handle. Options: 'finalized' (applies to the target step(s)
-            %   only), 'skip_computed' (default true).
-            [fin, skip] = obj.opt_fin_skip(varargin{:});
-            obj.drive('until', obj.target_name(target), false, fin, skip);
+            %   handle. Options: 'skip_computed' (default true).
+            skip = obj.opt_skip(varargin{:});
+            obj.drive('until', obj.target_name(target), false, skip);
         end
 
         function run_endpoints(obj, varargin)
             %RUN_ENDPOINTS  Run every endpoint + ancestry ("make all my
             %   figures and stats"). Options: 'include_used' (default
-            %   false: own endpoints only), 'finalized', 'skip_computed'.
+            %   false: own endpoints only), 'skip_computed'.
             inc = false;
             for i = 1:2:numel(varargin)
                 if lower(string(varargin{i})) == "include_used"
                     inc = logical(varargin{i+1});
                 end
             end
-            [fin, skip] = obj.opt_fin_skip(varargin{:});
-            obj.drive('endpoints', '', inc, fin, skip);
+            skip = obj.opt_skip(varargin{:});
+            obj.drive('endpoints', '', inc, skip);
         end
     end
 
@@ -217,29 +216,13 @@ classdef Pipeline < handle
             end
         end
 
-        function [fin, skip] = opt_fin_skip(obj, varargin)
-            fin = [];
-            for i = 1:2:numel(varargin)
-                if lower(string(varargin{i})) == "finalized"
-                    fin = logical(varargin{i+1});
-                end
-            end
-            skip = obj.opt_skip(varargin{:});
-        end
-
-        function drive(obj, mode, target_nm, include_used, fin, skip)
+        function drive(obj, mode, target_nm, include_used, skip)
             %DRIVE  The MATLAB run loop over Python's execution order.
-            if isempty(fin)
-                py_fin = py.None;
-            else
-                py_fin = logical(fin);
-            end
             res = py.scimatlab.bridge.pipeline_execution_order( ...
                 obj.py_handle, pyargs( ...
                     'mode', mode, ...
                     'target_name', target_nm, ...
                     'include_used', logical(include_used), ...
-                    'finalized', py_fin, ...
                     'skip_computed', logical(skip)));
             run_handle = res{'run_handle'};
             steps_list = res{'steps'};
@@ -297,13 +280,6 @@ classdef Pipeline < handle
                 meta_pairs{2*k} = scidb.internal.from_python(mi{nm});
             end
 
-            % finalized: descriptor override for targets, else as registered.
-            fin_arg = stored.opts.finalized;
-            af = d{'apply_finalized'};
-            if ~isa(af, 'py.NoneType')
-                fin_arg = logical(af);
-            end
-
             scifor.Log.info('pipeline_step_run (MATLAB): %s (via %s)', ...
                 char(d{'step'}), obj.name);
             % schema_keys/schema_filter were stored separately at
@@ -321,7 +297,6 @@ classdef Pipeline < handle
             scidb.for_each(stored.fn, inputs, stored.outputs, ...
                 'pipeline', 'none', ...
                 'skip_computed', logical(d{'skip_computed'}), ...
-                'finalized', fin_arg, ...
                 'save', stored.opts.save, ...
                 'distribute', stored.opts.distribute, ...
                 'where', stored.opts.where, ...

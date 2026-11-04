@@ -2,7 +2,7 @@
 Endpoint presentation (plan-endpoint-presentation.md): the handler table
 for both transports (``api/handlers.py``), plus one HTTP-only route.
 
-    GET  /api/endpoints/{fn_name}/artifacts   get_endpoint_artifacts — finalized figures/stats manifest
+    GET  /api/endpoints/{fn_name}/artifacts   get_endpoint_artifacts — recorded figures/stats manifest
     POST /api/report                          write_report — write the endpoint report, return its index.html path
     GET  /api/artifacts/file?path=            (HTTP only) serve one artifact — project-dir guarded;
                                               403 outside, 404 missing. A file response has no

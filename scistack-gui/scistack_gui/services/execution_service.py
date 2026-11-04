@@ -30,6 +30,7 @@ from scidb.run.foreach_config import RunOptions
 from scidb.provenance.graph import constants_identity_key
 from scifor.failures import ActionableError
 
+from scistack_gui.domain.edge_view import effective_edges, run_scope
 from scistack_gui.ids import (
     FN_ID_PREFIX,
     ROOT_SCOPE,
@@ -759,7 +760,8 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
        then stated).
 
     A node with a hidden input and no visible edge on that port is
-    disconnected and runs nothing (:func:`document_disconnected_ports`).
+    disconnected and runs nothing (:func:`document_disconnected_ports`), and so
+    is one fed by a submodule port with nothing connected.
 
     What is gone: running a node's last RECORDED wiring (``_node_wiring``'s
     current shape) with the drawn edges spliced in. Under adoption every node
@@ -784,7 +786,6 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
     # The clicked node's canvas decides which hidden edges apply (decision a,
     # plan-unified-edge-model): an edge hidden in another hypothesis tab does
     # not disconnect this node.
-    from scistack_gui.domain.edge_view import effective_edges, run_scope
 
     def _view():
         return effective_edges(
@@ -817,7 +818,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         return []
     function_name = meta["label"]
     manual_nodes = view.manual_nodes
-    all_edges = view.drawn_list
+    all_edges = view.wiring_list
 
     resolved = resolve_function_edges(
         fn_node_ids={node_id},
@@ -835,6 +836,16 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
             node_id,
             function_name,
             disconnected,
+        )
+        return []
+    open_arguments = view.open_arguments(node_id)
+    if open_arguments:
+        logger.info(
+            "[execution] node %s ('%s'): no targets — argument(s) %s are fed by "
+            "a submodule port with nothing connected",
+            node_id,
+            function_name,
+            open_arguments,
         )
         return []
     if not resolved.output_types:
@@ -1071,7 +1082,6 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     )
     from scistack_gui.ids import parse_fn_node_id
 
-    from scistack_gui.domain.edge_view import effective_edges, run_scope
 
     # Same scope rule as the run it explains (derive_target_for_node).
     view = effective_edges(
@@ -1091,7 +1101,7 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
     for nid in [node_id] if node_id else _document_function_nodes(db, function_name):
         resolved = resolve_function_edges(
             fn_node_ids={nid},
-            manual_edges=view.drawn_list,
+            manual_edges=view.wiring_list,
             manual_nodes=view.manual_nodes,
             existing_node_labels={},
         )
@@ -1101,7 +1111,7 @@ def disconnected_reason(db, function_name: str, node_id: "str | None" = None) ->
                 f"input '{ports[0]}' is disconnected — reconnect it before running"
             )
 
-    manual_index = manual_edge_handle_index(view.drawn_list)
+    manual_index = manual_edge_handle_index(view.wiring_list)
 
     # Hidden edge ids and drawn edges are keyed by the NODE, which no longer
     # encodes its wiring (docs/claude/node-identity.md) — so every lookup below
@@ -1177,7 +1187,6 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
         wirings_downstream_of,
     )
 
-    from scistack_gui.domain.edge_view import effective_edges
 
     # A pipeline run reports on ITS canvas: hides from that scope only.
     view = effective_edges(
@@ -1198,7 +1207,7 @@ def disconnected_report_entries(db, pipeline_id: str) -> list[dict]:
     fn_constants = agg.fn_constants
     path_inputs = agg.path_inputs
 
-    manual_edges = view.drawn_list
+    manual_edges = view.wiring_list
     manual_nodes = view.manual_nodes
     # Hidden edge ids were stored against the NODE's id, so both sides of
     # every lookup below have to be keyed by the node's token rather than by
@@ -1541,7 +1550,6 @@ def port_variables(db, node_id: str, function_name: str, ports: "list[str]") -> 
     draws with (``domain.output_order.declared_python_ports``: the port's
     edge, a recorded name, a variable of the same name, then position).
     Ports it cannot map are absent; no error here."""
-    from scistack_gui.domain.edge_view import effective_edges, run_scope
     from scistack_gui.domain.output_order import (
         declared_python_ports,
         recorded_orders,
@@ -1554,7 +1562,7 @@ def port_variables(db, node_id: str, function_name: str, ports: "list[str]") -> 
         view.manual_nodes,
         set(),
         {function_name: {node_id}},
-        view.drawn_list,
+        view.wiring_list,
         {},
         recorded_orders(db, [function_name]),
         recorded_params(db, [function_name]),
@@ -2294,6 +2302,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
 
     if _built is None:
         _built = {}
+
     if pipeline_id in _built:
         return _built[pipeline_id]
 
@@ -2442,7 +2451,7 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
 
     for use in pipeline_store.get_pipeline_uses(db, pipeline_id):
         child = build_backend_pipeline(db, use["child_pipeline_id"], _built)
-        bound = _bound(child, use.get("binding") or {})
+        bound = _bound(db, use["child_pipeline_id"], child, use.get("binding") or {})
         pipe.use(bound if bound is not None else child)
 
     logger.info(
@@ -2455,12 +2464,50 @@ def build_backend_pipeline(db, pipeline_id: str, _built: dict | None = None):
     return pipe
 
 
-def _bound(child, binding: dict):
+class PortBindingError(ActionableError, ValueError):
+    """A placement's ``binding.params`` sets an argument a port also feeds."""
+
+
+def _refuse_params_on_ports(db, pipeline_id: str, binding: dict) -> None:
+    """One value, one owner: an argument a port feeds gets its value through
+    that port. Every run, preview and export compiles through here, so this is
+    the one check, whichever way the binding was written."""
+    from scistack_gui.domain import ports
+
+    params = binding.get("params")
+    if not params:
+        return
+    view = effective_edges(db, pipeline_id, caller=f"_refuse_params_on_ports({pipeline_id})")
+    if view.port_wiring is None:
+        return
+    from scistack_gui.stores import pipeline_store
+
+    fed = ports.port_fed_arguments(
+        pipeline_id,
+        view.drawn_list,
+        view.manual_nodes,
+        pipeline_store.get_pipeline_uses(db),
+    )
+    conflicts = ports.params_on_ports(params, fed)
+    if conflicts:
+        logger.warning(
+            "[execution] pipeline %s: binding params %s also fed by a port; refused",
+            pipeline_id,
+            conflicts,
+        )
+        raise PortBindingError(
+            f"This placement sets {conflicts}, but a port on the submodule also "
+            "feeds them. Remove the placement's value, or disconnect the port."
+        )
+
+
+def _bound(db, pipeline_id: str, child, binding: dict):
     """``child.bind(...)`` for a placement's *binding*, or ``None`` when it
     is the identity. Step values that follow a Parameter (E5) are resolved
     to the project's Parameter here (``library_service.resolved_binding_params``)."""
     from scistack_gui.services.library_service import resolved_binding_params
 
+    _refuse_params_on_ports(db, pipeline_id, binding or {})
     if not binding or not any(binding.get(k) for k in ("key_map", "params", "iterate")):
         return None
     return child.bind(
@@ -2478,6 +2525,7 @@ def _as_placed(db, pipeline_id: str, pipe, built: dict):
     step values runs as it is (unchanged behaviour)."""
     from scidb.run.pipeline import Pipeline
 
+
     from scistack_gui.stores import pipeline_store
 
     placements = [
@@ -2490,7 +2538,7 @@ def _as_placed(db, pipeline_id: str, pipe, built: dict):
     built[f"{pipeline_id}::placed"] = runner
     seen: set[str] = set()
     for u in placements:
-        bound = _bound(pipe, u.get("binding") or {})
+        bound = _bound(db, pipeline_id, pipe, u.get("binding") or {})
         key = bound.signature() if bound is not None else "identity"
         if key in seen:
             continue
@@ -2558,7 +2606,6 @@ def run_pipeline(
     pipeline_id: str,
     mode: str = "all",
     target: str = "",
-    finalized: bool | None = None,
     skip_computed: bool = True,
     report_sink: "list | None" = None,
 ) -> dict:
@@ -2569,7 +2616,7 @@ def run_pipeline(
     raises (on_error="stop"), when this function returns nothing.
 
     mode: "all" -> run_all; "until" -> run_until(target);
-    "endpoints" -> run_endpoints(finalized=...); "show" -> show(target)
+    "endpoints" -> run_endpoints(); "show" -> show(target)
     (draft-run one endpoint + ancestors, zero endpoint records — the
     returned "rendered" list of paths/payloads is the ONLY handle on the
     draft outputs).
@@ -2601,10 +2648,9 @@ def run_pipeline(
                 else:
                     pipe.run_all(skip_computed=skip_computed)
             elif mode == "until":
-                pipe.run_until(target, finalized=finalized, skip_computed=skip_computed)
+                pipe.run_until(target, skip_computed=skip_computed)
             elif mode == "endpoints":
                 pipe.run_endpoints(
-                    finalized=bool(finalized),
                     skip_computed=skip_computed,
                     include_used=True,
                 )

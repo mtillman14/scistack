@@ -100,6 +100,13 @@ class TestVariables:
         assert by_name["InspFiltered"].record_count == 4
         assert by_name["InspFiltered"].variant_count == 2  # low_hz = 20 | 30
 
+    def test_summary_last_saved_is_last_saved_by_variable(self, insp):
+        """One owner: the summary's last_saved IS the dedicated query's."""
+        by_name = {v.name: v for v in insp.variables()}
+        latest = insp.last_saved_by_variable()
+        assert by_name["InspRaw"].last_saved == latest["InspRaw"]
+        assert by_name["InspFiltered"].last_saved == latest["InspFiltered"]
+
     def test_detail(self, insp):
         d = insp.variable("InspFiltered")
         assert d.record_count == 4
@@ -187,5 +194,45 @@ class TestLiveDbProperty:
             insp = db.inspect
             assert insp is db.inspect  # lazy singleton
             assert insp.overview().n_records == 1
+        finally:
+            db.close()
+
+
+class LsFirst(BaseVariable):
+    schema_version = 1
+
+
+class LsSecond(BaseVariable):
+    schema_version = 1
+
+
+class LsNeverSaved(BaseVariable):
+    schema_version = 1
+
+
+class TestLastSavedByVariable:
+    """The sidebar's "Last saved" sort reads this; per-save recency, not
+    first-save ``created_at``."""
+
+    def test_order_resave_and_never_saved(self, tmp_path):
+        import time
+
+        path = tmp_path / "last_saved.duckdb"
+        db = configure_database(path, SCHEMA_KEYS)
+        try:
+            LsFirst.save(np.array([1.0]), subject="S01", session="1")
+            time.sleep(0.02)
+            LsSecond.save(np.array([2.0]), subject="S01", session="1")
+            before = db.inspect.last_saved_by_variable()
+            assert before["LsSecond"] > before["LsFirst"]
+            assert "LsNeverSaved" not in before
+
+            # Re-saving IDENTICAL content keeps the record (created_at
+            # frozen) but appends a save event, so the time must move.
+            time.sleep(0.02)
+            LsFirst.save(np.array([1.0]), subject="S01", session="1")
+            after = db.inspect.last_saved_by_variable()
+            assert after["LsFirst"] > before["LsFirst"]
+            assert after["LsFirst"] > after["LsSecond"]
         finally:
             db.close()

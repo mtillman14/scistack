@@ -162,6 +162,7 @@ export interface ApiParams {
   declare_library_requirements: DeclareRequirements
   deep_copy_path_input: NodeRef
   delete_edge: EdgeDelete
+  delete_entity: EntityRef
   delete_glue: GlueName
   delete_hypothesis: PipelineRef
   delete_layout: NodeRef
@@ -175,6 +176,7 @@ export interface ApiParams {
   design_update: DesignRequest
   duplicate_hypothesis: PipelineRename
   duplicate_pipeline: PipelineRename
+  duplicate_placement: PlacementDuplicate
   exclude_schema_combo: InventoryRowChange
   export_pipeline: PipelineRef
   export_pipeline_code: PipelineRef
@@ -193,7 +195,6 @@ export interface ApiParams {
   get_glue: GlueName
   get_glue_columns: GlueColumnsQuery
   get_hidden_edges: HiddenEdgesQuery
-  get_hidden_ports: PipelineRef
   get_layout: ScopeQuery
   get_pipeline: PipelineQuery
   get_pipeline_interface: PipelineRef
@@ -204,7 +205,6 @@ export interface ApiParams {
   get_variable_records: VariableName
   hide_combo: HideComboRequest
   hide_parameter_value: ParameterValueInScope
-  hide_port: PortDirection
   history_recent: RecentQuery
   history_redo: ChangeRef
   history_undo: ChangeRef
@@ -249,6 +249,7 @@ export interface ApiParams {
   plot_saved_save: SavedSaveRequest
   plot_variant_graph: VariantGraphRequest
   plot_variant_sets_save: VariantSetsRequest
+  preview_delete_entity: EntityRef
   promote_step_value: StepValuePromote
   put_edge: EdgeCreate
   put_layout: PositionUpdate
@@ -261,6 +262,7 @@ export interface ApiParams {
   remove_project_path: PathBody
   rename_path_input: PathInputRename
   rename_pipeline: PipelineRename
+  rename_port: PortRename
   report_canvas_refresh: CanvasRefreshRequest
   report_client_build: ClientBuildRequest
   report_client_error: ClientErrorRequest
@@ -310,7 +312,6 @@ export interface ApiParams {
   unhide_edge: EdgeInScope
   unhide_parameter_value: ParameterValueInScope
   unhide_pipeline: PipelineRef
-  unhide_port: PortDirection
   update_hypothesis: HypothesisUpdate
   update_parameter: ParameterUpdate
   update_path_input: PathInputUpdate
@@ -443,6 +444,14 @@ export interface EdgeDelete {
   source_handle?: string | null
   target?: string | null
   target_handle?: string | null
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "EntityRef".
+ */
+export interface EntityRef {
+  kind: 'parameter' | 'path_input' | 'variable'
+  name: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -882,6 +891,14 @@ export interface PipelineRename {
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "PlacementDuplicate".
+ */
+export interface PlacementDuplicate {
+  name: string
+  use_id: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
  * via the `definition` "InventoryRowChange".
  */
 export interface InventoryRowChange {
@@ -938,14 +955,6 @@ export interface MatlabCommandRequest {
  */
 export interface FunctionName {
   fn_name: string
-}
-/**
- * This interface was referenced by `ApiParams`'s JSON-Schema
- * via the `definition` "EntityRef".
- */
-export interface EntityRef {
-  kind: 'parameter' | 'path_input'
-  name: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1043,15 +1052,6 @@ export interface ParameterValueInScope {
   name: string
   pipeline_id?: string | null
   value: string
-}
-/**
- * This interface was referenced by `ApiParams`'s JSON-Schema
- * via the `definition` "PortDirection".
- */
-export interface PortDirection {
-  direction: string
-  pipeline_id: string
-  var_type: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1163,7 +1163,6 @@ export interface ColumnGroupsPlanRequest {
 export interface ExportRequest {
   csv_path?: string | null
   derived_bars?: DifferenceBar1[] | null
-  finalized?: boolean | null
   function_name?: string | null
   output_variable?: string | null
   path_template?: string | null
@@ -1532,6 +1531,14 @@ export interface PathInputRename {
   new_name: string
 }
 /**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "PortRename".
+ */
+export interface PortRename {
+  name: string
+  node_id: string
+}
+/**
  * One applied canvas refresh (frontend components/DAG/canvasRefreshLog.ts).
  *
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1739,7 +1746,6 @@ export interface SidecarRunRequest {
  * via the `definition` "PipelineRunRequest".
  */
 export interface PipelineRunRequest {
-  finalized?: boolean | null
   mode?: string | null
   pipeline_id: string
   run_id?: string | null
@@ -1776,7 +1782,6 @@ export interface WhereFilterSpec {
  * via the `definition` "AddRequest".
  */
 export interface AddRequest {
-  finalized?: boolean | null
   function_name?: string | null
   output_variable?: string | null
   spec: StatsSpec

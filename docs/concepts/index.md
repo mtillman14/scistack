@@ -10,7 +10,7 @@ reproducible, and how content hashing underpins versioning.
 - [Architecture & Layers](architecture.md)
 - [Variables & Storage](variables.md)
 - [Lineage & Provenance](lineage.md)
-- [Computation Caching](caching.md)
+- [Skipping Computed Work](caching.md)
 - [Node States](node-states.md)
 - [Versioning & Content Hashing](hashing.md)
 - [Glossary](glossary.md)

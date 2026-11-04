@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { callBackend } from '../../api'
 import { useScope, type BindingSpec } from '../../context/ScopeContext'
 import type { PipelineNodeData } from '../DAG/PipelineNode'
+import PanelHeader from './PanelHeader'
 
 interface Row {
   key: string
@@ -95,7 +96,7 @@ export default function PipelineSettingsPanel({ useId, data }: Props) {
 
   return (
     <div style={styles.root}>
-      <div style={styles.title}>⧉ {data.label}</div>
+      <PanelHeader kind="submodule" name={data.label} />
       <div style={styles.meta}>pipeline node · use {useId.slice(0, 8)}</div>
       <button style={styles.openBtn} onClick={handleOpen} type="button">
         Open pipeline

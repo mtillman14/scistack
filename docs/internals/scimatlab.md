@@ -35,7 +35,7 @@ Variables declared in the project's entities file need no class file. `scidb.ent
 | Python | MATLAB |
 |---|---|
 | `configure_database(path, keys, schema_key_types=)` | `scidb.configure_database(path, keys, schema_key_types=struct('trial','numeric'))` |
-| `scidb.for_each(fn, inputs, outputs, ...)` | `scidb.for_each(@fn, struct(...), {Out()}, subject=[], ...)` with the same options (`where`, `distribute`, `as_table`, `finalized`, `glue`, `locations`, `dry_run`, ...). |
+| `scidb.for_each(fn, inputs, outputs, ...)` | `scidb.for_each(@fn, struct(...), {Out()}, subject=[], ...)` with the same options (`where`, `distribute`, `as_table`, `glue`, `locations`, `dry_run`, ...). |
 | `scifor.for_each(fn, inputs, ...)` | `scifor.for_each(@fn, struct(...), subject=[...])`, the database-free loop on MATLAB tables. |
 | Wrappers | `scidb.Fixed`, `scidb.Merge`, `scidb.Variant`, `scidb.AcrossVariants`, `scidb.Parameter`, `scidb.ColName`, `scifor.EachOf`, `scifor.PathInput`, `scifor.PathOutput`, `scifor.ColumnSelection` |
 | Filters | `scifor.Col("side") == "R"`, `scidb.schema_key("session")`, `scidb.raw_sql(...)`, combined with `&`, `|`, `~` |

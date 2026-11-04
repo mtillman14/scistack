@@ -5,6 +5,9 @@
      scidb/src/scidb/run/foreach.py (delegation to scifor.for_each; provenance graph
      written on save); scifor/tests/test_foreach_standalone.py;
      scidb/tests/test_integration.py; scidb/tests/test_hist_*.py.
+     Roles diagram: third-party lists come from each pyproject plus the imports in
+     scifor/src, scidb/src and scistack-gui/scistack_gui; webview libraries from
+     scistack-gui/frontend/package.json.
      NOTE: two USER-FACING layers (scifor/scidb); everything else
      (sciduckdb, scicanonicalhash, scimatlab, scistacklog) is an internal
      package — see docs/internals/. -->
@@ -27,6 +30,40 @@ the same core ideas throughout.
 |---|---|---|
 | `scifor` | Pure batch-iteration engine over plain tables/DataFrames | — |
 | `scidb` | Typed versioned storage, DB-backed `for_each`, provenance and node state | `scifor` |
+
+## scifor, scidb, and the GUI
+
+The SciStack GUI is an application built on these two layers, not a third
+library layer. Each box below lists what that level is responsible for and the
+third-party software it needs. SciStack's own internal packages are left out.
+
+```mermaid
+flowchart TB
+    subgraph GUI["SciStack GUI: see and drive a pipeline"]
+        direction LR
+        GUI_C["<b>Concerns</b><br/>Pipeline canvas and its run status<br/>Starting and following Python and MATLAB runs<br/>Plot Studio: figures without plotting code<br/>Stat Studio: choosing and running a statistical test<br/>Views of variants and the data inventory"]
+        GUI_D["<b>Dependencies</b><br/>Backend: FastAPI, Uvicorn, Pydantic,<br/>Matplotlib, DuckDB, debugpy<br/>Webview: React, React Flow, Dagre, Plotly.js<br/>Host: VS Code 1.80+ or a web browser"]
+    end
+
+    subgraph DB["scidb: keep every result and how it was made"]
+        direction LR
+        DB_C["<b>Concerns</b><br/>Typed variables, saved and loaded by metadata<br/>Versioned storage of every result<br/>Provenance of each result<br/>Node state: skipping work that is up to date<br/>Exclusions and the data inventory<br/>Project export and import bundles"]
+        DB_D["<b>Dependencies</b><br/>NumPy, pandas, DuckDB<br/>Optional: PyArrow, Matplotlib"]
+    end
+
+    subgraph FOR["scifor: replace the nested loops"]
+        direction LR
+        FOR_C["<b>Concerns</b><br/>Iterating over every schema combination<br/>Slicing each table to the matching rows<br/>Inputs: Fixed, Merge, column selection, PathInput<br/>Row and location filters<br/>Dry runs, distributed outputs, per-combination errors<br/>Project config and function discovery<br/>No database"]
+        FOR_D["<b>Dependencies</b><br/>NumPy, pandas"]
+    end
+
+    GUI -->|"reads and runs pipelines through"| DB
+    DB -->|"delegates the looping to"| FOR
+    GUI -.->|"project discovery"| FOR
+```
+
+All three levels need Python 3.10 or newer (plus `tomli` on Python 3.10). To run
+MATLAB functions you also need MATLAB.
 
 ## What each layer owns
 
@@ -79,5 +116,5 @@ never import directly. They are documented separately in
 | `scimatlab` | The MATLAB bridge that exposes `scifor.*` / `scidb.*` to MATLAB | MATLAB usage |
 
 **Next:** [Variables & Storage](variables.md) ·
-[Lineage & Provenance](lineage.md) · [Computation Caching](caching.md) ·
+[Lineage & Provenance](lineage.md) · [Skipping Computed Work](caching.md) ·
 [Node States](node-states.md)

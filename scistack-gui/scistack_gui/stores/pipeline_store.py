@@ -77,6 +77,12 @@ def _duck(db):
     return db._duck
 
 
+def transaction(db, label: str):
+    """A transaction over the document tables: a failure inside leaves nothing
+    half-written. For a service changing several rows as one edit."""
+    return _duck(db).transaction(label)
+
+
 #: Every table `_ensure_tables` creates here, for undo (`scistack_gui.stores.history`).
 #: A new table must be added, or `test_every_gui_table_is_tracked` fails.
 UNDOABLE_TABLES: tuple[str, ...] = (
@@ -86,7 +92,6 @@ UNDOABLE_TABLES: tuple[str, ...] = (
     "_pipeline_parameter_value_groups",
     "_pipeline_path_input_history",
     "_pipeline_path_input_renames",
-    "_pipeline_hidden_ports",
     "_pipelines",
     "_pipeline_uses",
     "_hypotheses",
@@ -109,7 +114,6 @@ PORTABILITY: dict[str, str] = {
     "_pipeline_parameter_value_groups": "global",
     "_pipeline_path_input_history": "history",
     "_pipeline_path_input_renames": "history",
-    "_pipeline_hidden_ports": "canvas",
     "_pipelines": "canvas",
     "_pipeline_uses": "canvas",
     "_hypotheses": "canvas",
@@ -132,8 +136,6 @@ GUARDED_WRITES: tuple[str, ...] = (
     "remove_pipeline_use",
     "update_use_binding",
     "rename_pipeline",
-    "hide_port",
-    "unhide_port",
 )
 
 
@@ -224,22 +226,6 @@ tables.declare(
                 old_name   VARCHAR NOT NULL,
                 new_name   VARCHAR NOT NULL,
                 renamed_at TIMESTAMP NOT NULL DEFAULT current_timestamp
-            )
-            """,
-        ),
-        owner="scistack_gui",
-    )
-)
-tables.declare(
-    TableDecl(
-        "_pipeline_hidden_ports",
-        (
-            """
-            CREATE TABLE IF NOT EXISTS _pipeline_hidden_ports (
-                pipeline_id VARCHAR NOT NULL DEFAULT 'main',
-                direction   VARCHAR NOT NULL,
-                var_type    VARCHAR NOT NULL,
-                PRIMARY KEY (pipeline_id, direction, var_type)
             )
             """,
         ),
@@ -395,13 +381,6 @@ def _ensure_tables(db) -> None:
     # rename_path_input); read through path_input_rename_index and resolved
     # only by graph_builder.resolve_renamed_path_input. Append-only.
     tables.ensure(_duck(db), "_pipeline_path_input_renames")
-    # Hidden subpipeline ports (to-do #9) — a scope's exposed inputs/
-    # outputs are computed automatically from wiring (see
-    # domain.scope_filter.document_interface); this table is a per-scope
-    # manual override suppressing one type's port, toggled by right-
-    # clicking a variable node inside the subpipeline's own canvas.
-    tables.ensure(_duck(db), "_pipeline_hidden_ports")
-
     # --- Nested-pipeline scoping (GUI stage) ---
     tables.ensure(_duck(db), "_pipelines")
     tables.ensure(_duck(db), "_pipeline_uses")
@@ -1395,6 +1374,22 @@ def get_pipeline_uses(db, parent_pipeline_id: "str | None" = None) -> list[dict]
     return result
 
 
+def set_use_child(db, use_id: str, child_pipeline_id: str, child_name: str) -> None:
+    """Point a placement at another pipeline. Same use id, so its position,
+    binding and outer edges stay."""
+    _ensure_tables(db)
+    from scistack_gui.stores import library_lock
+
+    parent = _use_parent(db, use_id)
+    library_lock.check_scope(db, parent, "changing a submodule")
+    _duck(db).execute(
+        "UPDATE _pipeline_uses SET child_pipeline_id = ? WHERE use_id = ?",
+        [child_pipeline_id, use_id],
+    )
+    _upsert_node(db, use_id, "pipelineNode", child_name, parent)
+    logger.info("[pipeline_store] set_use_child: %s -> %s", use_id, child_pipeline_id)
+
+
 def update_use_binding(db, use_id: str, binding: dict) -> None:
     """Replace a use edge's binding ({key_map, params, iterate} subset)."""
     _ensure_tables(db)
@@ -1983,85 +1978,6 @@ def list_hidden_edges(db, pipeline_id: "str | None" = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Hidden subpipeline ports (to-do #9) — a manual override on top of
-# domain.scope_filter.document_interface's automatic type-level port
-# computation. Never deletes wiring, only suppresses one type's exposed
-# dot on a scope's interface; the internal node that produces/consumes
-# that type stays fully visible on its own canvas at all times, so
-# there's no separate restore list (unlike hidden edges/nodes) — un-hiding
-# is just toggling the same right-click item again.
-# ---------------------------------------------------------------------------
-
-
-def hide_port(db, pipeline_id: str, direction: str, var_type: str) -> None:
-    """Suppress ``var_type``'s exposed ``direction`` ('input'|'output')
-    port on ``pipeline_id``'s subpipeline interface."""
-    logger.info(
-        "[pipeline_store] hide_port called (pipeline_id=%r, direction=%r, var_type=%r)",
-        pipeline_id,
-        direction,
-        var_type,
-    )
-    _ensure_tables(db)
-    from scistack_gui.stores import library_lock
-
-    library_lock.check_scope(db, pipeline_id, "hiding a port")
-    _duck(db).execute(
-        "INSERT INTO _pipeline_hidden_ports (pipeline_id, direction, var_type) "
-        "VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
-        [pipeline_id, direction, var_type],
-    )
-
-
-def unhide_port(db, pipeline_id: str, direction: str, var_type: str) -> None:
-    """Restore a previously hidden port."""
-    logger.info(
-        "[pipeline_store] unhide_port called (pipeline_id=%r, direction=%r, var_type=%r)",
-        pipeline_id,
-        direction,
-        var_type,
-    )
-    from scistack_gui.stores import library_lock
-
-    library_lock.check_scope(db, pipeline_id, "showing a port")
-    _duck(db).execute(
-        "DELETE FROM _pipeline_hidden_ports "
-        "WHERE pipeline_id = ? AND direction = ? AND var_type = ?",
-        [pipeline_id, direction, var_type],
-    )
-
-
-def get_hidden_ports(db, pipeline_id: str) -> dict:
-    """One scope's hidden ports: ``{"input": {type, ...}, "output": {type, ...}}``
-    — what the right-click context menu needs to decide Show vs Hide."""
-    _ensure_tables(db)
-    rows = _duck(db).fetchall(
-        "SELECT direction, var_type FROM _pipeline_hidden_ports WHERE pipeline_id = ?",
-        [pipeline_id],
-    )
-    result: dict[str, set[str]] = {"input": set(), "output": set()}
-    for direction, var_type in rows:
-        result[direction].add(var_type)
-    return result
-
-
-def get_hidden_ports_by_scope(db) -> dict[str, dict[str, set[str]]]:
-    """Every scope's hidden ports, keyed by pipeline_id — the shape
-    domain.scope_filter.document_interface needs (it recurses across
-    scopes via nested ``uses``, so it needs every scope's own hides on
-    hand at once, not just the scope being asked about)."""
-    _ensure_tables(db)
-    rows = _duck(db).fetchall(
-        "SELECT pipeline_id, direction, var_type FROM _pipeline_hidden_ports"
-    )
-    result: dict[str, dict[str, set[str]]] = {}
-    for pid, direction, var_type in rows:
-        scope = result.setdefault(pid, {"input": set(), "output": set()})
-        scope[direction].add(var_type)
-    return result
-
-
-# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -2189,9 +2105,6 @@ def clear_pipeline_content(db, pipeline_id: str) -> dict:
     _duck(db).execute("DELETE FROM _pipeline_nodes WHERE pipeline_id = ?", [pipeline_id])
     _duck(db).execute(
         "DELETE FROM _pipeline_uses WHERE parent_pipeline_id = ?", [pipeline_id]
-    )
-    _duck(db).execute(
-        "DELETE FROM _pipeline_hidden_ports WHERE pipeline_id = ?", [pipeline_id]
     )
     out = {
         "nodes": len(node_ids),

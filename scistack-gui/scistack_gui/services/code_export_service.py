@@ -698,6 +698,13 @@ def _generate_matlab_script(db, pipeline_id: str, pipeline_ids: list) -> tuple[s
         lines.append("")
 
     skip_lines, warnings = _skip_comments(db, pipeline_id, "%")
+    from scistack_gui.services.matlab_command_service import unapplied_bindings
+
+    # An export can be read and edited, so this warns where a run refuses.
+    warnings = warnings + [
+        f"{line}: this script does not apply that placement setting"
+        for line in unapplied_bindings(db, pipeline_id)
+    ]
     lines.extend(skip_lines)
 
     return "\n".join(lines).rstrip() + "\n", warnings

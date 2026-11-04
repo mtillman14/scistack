@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import time
 
 from scidb.model.roles import endpoint_kind
 
@@ -252,17 +253,115 @@ def get_registry() -> dict:
     # what a role IS is scidb's).
     from scidb import function_role
 
+    variables = display_sorted(BaseVariable._all_subclasses.keys())
     return {
         "functions": all_fns,
-        "variables": display_sorted(BaseVariable._all_subclasses.keys()),
+        "variables": variables,
         "matlab_functions": matlab_fns,
         "sidebar_functions": sidebar_functions,
         "matlab_functions_mismatched": matlab_mismatched,
         "function_roles": {
             name: function_role(name) for name in [*all_fns, *matlab_fns]
         },
+        # The palette's "By file" grouping (plan-palette-order-and-delete).
+        "function_sources": _function_sources(sidebar_functions, set(library_fns)),
+        # Per-variable delete eligibility + "Last saved" sort, in `variables` order.
+        "variable_entries": _variable_entries(variables),
         "load_errors": load_errors,
     }
+
+
+def _function_sources(names: list[str], library_fns: set[str]) -> dict:
+    """``{name: {file, line, library}}`` for every palette function -- where
+    each is declared, so the palette can group a file's functions together.
+
+    The file/line come from :func:`get_function_source`, the one owner of
+    "where is this function's source" (it unwraps library wrappers and knows
+    MATLAB). A library reference (``numpy.mean``) or a MATLAB builtin has no
+    file of the user's: ``library=True``, ``file=None``, and the palette puts
+    it in one "Library" group. A function whose source cannot be located is
+    ``file=None, library=False`` (logged), never dropped.
+    """
+    t0 = time.perf_counter()
+    out: dict[str, dict] = {}
+    unlocated: list[str] = []
+    for name in names:
+        if name in library_fns:
+            out[name] = {"file": None, "line": None, "library": True}
+            continue
+        src = get_function_source(name)
+        if src.get("ok"):
+            out[name] = {"file": str(src["file"]), "line": src.get("line"), "library": False}
+        else:
+            # A MATLAB builtin reference is a library function, not a fault.
+            builtin = "built-in" in (src.get("error") or "")
+            out[name] = {"file": None, "line": None, "library": builtin}
+            if not builtin:
+                unlocated.append(name)
+    per_file: dict[str, int] = {}
+    for info in out.values():
+        key = info["file"] or ("<library>" if info["library"] else "<unknown>")
+        per_file[key] = per_file.get(key, 0) + 1
+    logger.info(
+        "get_registry: function sources: %d function(s) in %d group(s) (%.0f ms); "
+        "%d without a locatable source",
+        len(out),
+        len(per_file),
+        (time.perf_counter() - t0) * 1000.0,
+        len(unlocated),
+    )
+    if unlocated:
+        logger.warning("get_registry: no source located for: %s", unlocated)
+    logger.debug("get_registry: functions per source: %s", per_file)
+    return out
+
+
+def _variable_entries(names: list[str]) -> list[dict]:
+    """``[{name, source_file, declared_in_entities_file, last_saved}]`` in
+    *names* order.
+
+    * ``declared_in_entities_file`` is the palette's Delete eligibility --
+      the same comparison the Parameter rows use
+      (``graph_builder.is_declared_in_entities_file``); the write path
+      re-checks through ``entity_editability`` regardless.
+    * ``last_saved`` is ``Inspector.last_saved_by_variable`` (scidb, the one
+      owner), ``None`` for a type never saved or with no database open
+      (``get_registry`` is reachable before one exists).
+    """
+    from scistack_gui.domain.graph_builder import is_declared_in_entities_file
+    from scistack_gui.project import registry
+    from scistack_gui.runtime.db import get_db, is_loaded
+
+    entities_file = (
+        str(registry._config.entities_file)
+        if registry._config is not None and registry._config.entities_file is not None
+        else None
+    )
+    last_saved: dict[str, str] = {}
+    if is_loaded():
+        try:
+            last_saved = get_db().inspect.last_saved_by_variable()
+        except Exception:
+            logger.exception("get_registry: last_saved_by_variable failed; sorting without it")
+    entries = []
+    for name in names:
+        source = registry._variable_sources.get(name)
+        entries.append(
+            {
+                "name": name,
+                "source_file": source,
+                "declared_in_entities_file": is_declared_in_entities_file(source, entities_file),
+                "last_saved": last_saved.get(name),
+            }
+        )
+    logger.info(
+        "get_registry: %d variable(s), %d deletable (in %s), %d with a last save",
+        len(entries),
+        sum(e["declared_in_entities_file"] for e in entries),
+        entities_file,
+        sum(e["last_saved"] is not None for e in entries),
+    )
+    return entries
 
 
 def _python_library_function_names() -> list[str]:

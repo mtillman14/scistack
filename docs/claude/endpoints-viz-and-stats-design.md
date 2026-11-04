@@ -136,9 +136,9 @@ one thing a plotting library working on a single figure cannot do.
   Note: a draft leaves no record, so the first record-mode run always renders.
 - **Uniform for `plot_` and `stat_`:** a draft `stat_` prints its formatted
   result without saving — matching how scientists explore stats interactively.
-- Mode is the `for_each` parameter **`finalized`** (decided 2026-07-05):
-  `finalized=False` (default) = draft, `finalized=True` = record. Passed
-  through the MATLAB bridge as a plain flag.
+- **Superseded 2026-11-03:** the `finalized` flag this section describes was
+  removed. Endpoints now record by default; `save=False` makes a draft. See
+  [plotting-leaf-nodes.md](plotting-leaf-nodes.md).
 
 ### D4. Artifact-embedded provenance: figure record_id + redundancy — **IMPLEMENTED** (2026-07-06, pending user test run)
 

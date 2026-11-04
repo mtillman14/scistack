@@ -10,7 +10,7 @@ Covers:
 - pipeline_register_step: sentinel fn, surrogate-class inputs, step_index
 - Graph edges through surrogate classes, incl. MATLAB<->Python mixing
 - execution_order descriptors: topo order, is_matlab flag, post-binding
-  surface (iterables / constants / path templates), finalized targeting
+  surface (iterables / constants / path templates)
 - The Python-side run_* guard on MATLAB steps
 - Mixed pipeline: pipeline_run_python_step executes the Python step for
   real while MATLAB steps stay descriptors
@@ -207,7 +207,7 @@ class TestExecutionOrder:
         assert PyMean2.load(subject="1", trial="1") is not None
         pipeline_run_free(result["run_handle"])
 
-    def test_finalized_applies_to_target_only(self, db):
+    def test_endpoint_descriptor_carries_its_path_template(self, db):
         register_matlab_variable("MRaw")
         register_matlab_variable("MFilt")
         register_matlab_variable("MFig")
@@ -228,13 +228,9 @@ class TestExecutionOrder:
             metadata_iterables={"subject": SUBJECTS, "trial": TRIALS},
         )
 
-        result = pipeline_execution_order(
-            h, mode="until", target_name="plot_m", finalized=True
-        )
+        result = pipeline_execution_order(h, mode="until", target_name="plot_m")
         by_name = {d["step"]: d for d in result["steps"]}
 
-        assert by_name["plot_m"]["apply_finalized"] is True
-        assert by_name["m_load"]["apply_finalized"] is None
         assert by_name["plot_m"]["path_templates"] == {
             "filename": "figs/{subject}_{trial}.png"
         }

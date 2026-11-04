@@ -3007,11 +3007,10 @@ class TestGenerateMatlabPipelineCommand:
             db_path="/db.duckdb",
             schema_keys=["s"],
             mode="endpoints",
-            finalized=True,
         )
         assert "pipe.run_endpoints(" in cmd
         assert "'include_used', true" in cmd
-        assert "'finalized', true" in cmd
+        assert "finalized" not in cmd
 
     def test_show_mode_rejected(self):
         from scistack_gui.services.matlab_command_format import generate_matlab_pipeline_command

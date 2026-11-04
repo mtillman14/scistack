@@ -592,7 +592,7 @@ works identically against a lone CSV and a full project database.
 ## Relationship to SciDB endpoints
 
 Recording a figure is SciDB's job and is unchanged: name a function `plot_`,
-return a Figure, and `finalized=True` stores it as a queryable record with an
+return a Figure, and running it stores it as a queryable record with an
 embedded provenance stamp. `scistackplot` supplies the body of that function;
 `scistackplotdb` generates the `for_each` call around it.
 

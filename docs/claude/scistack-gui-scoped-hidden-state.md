@@ -97,7 +97,7 @@ canvas-vs-run-time disconnected-state mismatch across hypothesis pipelines.
   `hide_edge`/`unhide_edge`/`get_hidden_node_ids`/`get_hidden_edge_ids`.
 - `scistack_gui/stores/layout.py`: `delete_node`, `write_manual_node`.
 - `scistack_gui/services/layout_service.py`: `delete_edge`, `put_edge`
-  (reconnect-unhide), `unhide_edge`/`get_hidden_edges` (restore panel).
+  (reconnect-unhide), `unhide_edge`/`get_hidden_edges` (no canvas UI since 2026-11-03; redraw or undo restores).
 - `scistack_gui/api/pipeline.py::_build_graph`: where scope gets threaded
   into the hidden-id fetch for canvas rendering.
 - Tests: `tests/test_pipeline_store.py::TestScopedHiding`,

@@ -23,7 +23,7 @@ from a finished spec.
     )
     figure = render(table, spec)
 
-Everything about recording a figure — ``finalized``, artifact stamping,
+Everything about recording a figure — artifact stamping,
 ``scidb report`` — belongs to scidb's existing ``plot_`` endpoint machinery and
 is unchanged. See ``docs/claude/plotting-library-design.md``.
 """

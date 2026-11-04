@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { callBackend, isVSCodeMode } from '../../api'
+import { callBackend } from '../../api'
 import GlueCodeEditor from './GlueCodeEditor'
 
 interface FunctionSource {
@@ -78,16 +78,6 @@ export default function FunctionCodeSection({ label }: { label: string }) {
         <button style={styles.saveBtn} onClick={save} disabled={!dirty || saving} type="button">
           {saving ? 'Saving…' : 'Save'}
         </button>
-        {isVSCodeMode && info.path && (
-          <button
-            style={styles.linkBtn}
-            onClick={() => callBackend('reveal_in_editor', { file: info.path, line: 1 }).catch(console.error)}
-            type="button"
-            title="Open the real file — available, never required"
-          >
-            Open in editor
-          </button>
-        )}
         {status && <span style={styles.status}>{status}</span>}
       </div>
     </div>

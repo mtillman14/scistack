@@ -11,7 +11,7 @@ grouped once, at entry, into a :class:`ForEachCall`:
   metadata iterables);
 * :class:`RunContext` (``context``) — facts about the call that steer or are
   recorded but are never identity (``step``, ``parameter_names``,
-  ``finalized``, ``pipeline``, the private hooks);
+  ``pipeline``, the private hooks);
 
 and the rest stay plain fields. Which bundle an option belongs to is declared
 once, on its :class:`scifor.OptionSpec`; this module only reads the
@@ -63,7 +63,6 @@ class RunSelection:
 class RunContext:
     """Facts about a call that steer it or are recorded, never identity."""
 
-    finalized: bool = False
     parameter_names: "dict[str, str] | None" = None
     step: "str | None" = None
     #: A Pipeline to register into, None (run eagerly), or UNSET (use the

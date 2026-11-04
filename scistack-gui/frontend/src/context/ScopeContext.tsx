@@ -22,7 +22,9 @@
  * value. Cleared once the panel's save round-trip actually lands.
  */
 
-import { createContext, useContext, useState, useCallback, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
+import { callBackend, pageUndo } from '../api'
+import { survivingBreadcrumb } from './survivingBreadcrumb'
 
 export interface BindingSpec {
   key_map?: Record<string, string>
@@ -111,6 +113,32 @@ export function ScopeProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const bumpGraph = useCallback(() => setGraphVersion(v => v + 1), [])
+
+  // Undo or redo can remove the pipeline on screen (extract to a submodule,
+  // open it, undo). Leave it for the nearest parent still there.
+  useEffect(() => {
+    pageUndo.onServerApplied = (entry, direction) => {
+      callBackend('list_pipelines')
+        .then(res => {
+          const { pipelines } = res as { pipelines: { pipeline_id: string }[] }
+          const known = new Set(pipelines.map(p => p.pipeline_id))
+          setBreadcrumb(prev => {
+            const next = survivingBreadcrumb(prev, known, ROOT_CRUMB)
+            if (next !== prev) {
+              console.info('[scope] left a pipeline that no longer exists', {
+                direction,
+                label: entry.label,
+                from: prev.map(c => c.pipeline_id),
+                to: next.map(c => c.pipeline_id),
+              })
+            }
+            return next
+          })
+        })
+        .catch(err => console.warn('[scope] could not re-check the open pipeline', err))
+    }
+    return () => { pageUndo.onServerApplied = null }
+  }, [])
 
   // A ref, not state: patches land here on every keystroke and must not
   // trigger a re-render of the whole scope tree.

@@ -31,7 +31,7 @@ public API and work in a pipeline". Both are true of the same artifact:
 - A `PlotSpec` is exactly what the body of a `plot_` endpoint needs.
 
 So the workflow is: explore interactively → freeze the spec → the spec becomes a
-lineage-tracked `plot_` node in the DAG, with all the `finalized`, artifact
+lineage-tracked `plot_` node in the DAG, with all the artifact
 stamping, and `scidb report` behavior that already exists. Nothing about the
 recording path is new.
 

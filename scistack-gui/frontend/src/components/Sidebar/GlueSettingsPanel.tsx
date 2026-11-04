@@ -20,8 +20,9 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { callBackend, isVSCodeMode } from '../../api'
+import { callBackend } from '../../api'
 import GlueCodeEditor from './GlueCodeEditor'
+import PanelHeader from './PanelHeader'
 
 interface Props {
   label: string
@@ -97,7 +98,7 @@ export default function GlueSettingsPanel({ label, wiredType }: Props) {
   if (info && !info.ok) {
     return (
       <div style={styles.root}>
-        <div style={styles.title}>{label}</div>
+        <PanelHeader kind="glue" name={label} />
         <div style={styles.error}>{info.error}</div>
       </div>
     )
@@ -107,10 +108,11 @@ export default function GlueSettingsPanel({ label, wiredType }: Props) {
 
   return (
     <div style={styles.root}>
-      <div style={styles.title}>
-        {label}
-        <span style={styles.roleBadge}>glue</span>
-      </div>
+      <PanelHeader
+        kind="glue"
+        name={label}
+        source={info?.path ? { file: info.path, line: 1 } : null}
+      />
       <div style={styles.subtitle}>
         Reshapes its input in memory. The result is never saved — it is fused
         into the run of whichever function consumes it.
@@ -140,16 +142,6 @@ export default function GlueSettingsPanel({ label, wiredType }: Props) {
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
-        {isVSCodeMode && info?.path && (
-          <button
-            style={styles.linkBtn}
-            onClick={() => callBackend('reveal_in_editor', { file: info.path, line: 1 }).catch(console.error)}
-            type="button"
-            title="Open the real file — available, never required"
-          >
-            Open in editor
-          </button>
-        )}
         {status && <span style={styles.status}>{status}</span>}
       </div>
 

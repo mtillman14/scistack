@@ -1,140 +1,109 @@
-# Computation Caching
+# Skipping Computed Work
 
 <!-- Ground truth (tests win over prose). Verified against:
-     scihist/tests/test_cache_hit.py (reloaded lineage var -> cache hit, fn not re-called;
-       call_count stays 1 across reload; chained intermediates also hit);
-     scihist/tests/test_skip_computed.py (skip_computed default; unchanged->skip;
-       input change->recompute only affected combo; scalar/dict input change->recompute;
-       same content->skip; different __fn -> new variant runs (not skip/recompute);
-       constants factor=2/3 independent variants each skip; new variant computes;
-       output saved without lineage -> always recompute; pipeline propagation);
-     scihist/tests/test_state.py::test_function_hash_change_stale_via_lineage (a function's
-       OWN code change -> stale via check_node_state);
-     scihist/src/scihist/database.py:30 (scihist wires the scidb database as the
-       scilineage cache backend via configure_backend);
-     scidb/tests/test_call_id.py (call_id disambiguates same fn across call sites).
-     Do NOT restate the deferred content-staleness internals — see node-states.md and
-     the project's content-staleness decision; describe currency at the node-state level. -->
+     scidb/tests/test_hist_skip_computed.py (first run computes; unchanged skips; input,
+       scalar and dict-of-arrays changes recompute only that combination; identical
+       re-save skips; another function runs; plain .save() output runs; two-step and
+       three-step propagation; constants are independent variants);
+     scidb/src/scidb/run/foreach.py::_build_skip_hook (the comparison, in order; compares
+       direct inputs only) and is_endpoint_draft (a draft ignores skip_computed);
+     scidb/src/scidb/run/pipeline.py (run_all defaults to skip_computed=True);
+     scistack-gui/scistack_gui/api/scopes.py (run requests default to True);
+     scidb/src/scidb/run/foreach_config.py::CallSite (call_id).
+     SciStack has no result cache any more: lineage_fcn cache hits were removed. -->
 
-Caching in SciStack means **identity-based reuse**: a computation is identified by
-*what it is*, so if that identity already has a result, the work is reused instead
-of repeated. Nothing is recomputed unless something it depends on actually
+`skip_computed=True` makes `scidb.for_each` skip every combination whose result
+already exists and was produced from the same code, inputs, and settings. Your
+function isn't called for those combinations, so re-running a pipeline only costs what
 changed.
 
-## The identity of a computation
+This is the only reuse SciStack does. There's no cache of function calls: calling your
+function directly always runs it.
 
-A computation's identity is built from three things:
+## Turning it on
 
-- the **function**, identified by a hash of its compiled bytecode (reformatting
-  doesn't change it — see [Versioning & Content Hashing](hashing.md));
-- its **variable inputs**, identified by their content-addressed `record_id`s
-  (see [Variables & Storage](variables.md));
-- its **constants**, which act as *variant discriminators* (below).
-
-Combined, these form the **lineage hash** that [lineage](lineage.md) computes.
-Two calls with the same identity are the same computation; a difference in any
-part is a different computation with its own cache entry.
-
-## Two places caching happens
-
-### 1. Lineage cache hits — per function call
-
-Re-running a `@lineage_fcn` with the same inputs returns the stored result
-*without executing the function again*. Crucially, this holds **across save and
-reload**: a variable saved from a tracked result keeps its lineage hash, so
-feeding the reloaded variable back into the function is recognized as the same
-computation:
-
-```python
-@lineage_fcn
-def double(x):
-    ...  # call_count incremented inside
-
-ArrayValue.save(np.array([1, 2, 3]), subject=1)
-result1 = double(ArrayValue.load(subject=1))   # executes — call_count == 1
-save(ScalarValue, result1, subject=1, trial=1)
-
-reloaded = ArrayValue.load(subject=1)
-result2  = double(reloaded)                    # cache hit — call_count STILL 1
-```
-
-This works because `scihist` registers the `scidb` database as the lineage cache
-backend, so lineage hashes are looked up against everything already stored (see
-[Internals — scicanonicalhash](../internals/scicanonicalhash.md)).
-
-### 2. `skip_computed` — per combo in batch processing
-
-`scihist.for_each` runs `skip_computed=True` by default. Before iterating, it
-filters out every combination whose output already exists and is current, so your
-function is never called for already-done work. Each run reports `[skip]` and
-`[recompute]` lines so the decision is visible:
+`for_each` runs every combination by default. Ask for skipping per call:
 
 ```python
 for_each(double, inputs={"x": RawSignal}, outputs=[Filtered],
-         subject=[1], trial=[1])   # first run: computes
+         subject=[1], trial=[1], skip_computed=True)   # first run: computes
 for_each(double, inputs={"x": RawSignal}, outputs=[Filtered],
-         subject=[1], trial=[1])   # second run: skipped, function not called
+         subject=[1], trial=[1], skip_computed=True)   # second run: skipped
 ```
 
-Pass `skip_computed=False` to force every combo to run.
+`Pipeline.run_all` and GUI run requests already default to `skip_computed=True`.
 
-## What triggers recomputation
+Each decision is logged per combination as a `[skip]` or `[recompute]` line with the
+reason. These are DEBUG lines, so look in `scistack-debug.log`.
 
-The behavior below is exactly what the test suite pins down:
+## What makes a combination run again
 
-- **An input changed → that combo recomputes.** Re-saving an input with different
-  data gives it a new `record_id`; only the combos using the changed input
-  recompute, and unchanged combos still skip. This is true for array, scalar, and
-  dict-of-arrays inputs — sameness is judged by *content*, not by re-saving.
-- **Nothing changed → skip.** Re-running with identical inputs and the same
-  function object skips every combo.
-- **A change propagates downstream.** In a multi-step pipeline, a changed raw
-  input makes step 1 recompute, which produces a new intermediate `record_id`,
-  which makes step 2 recompute — the cascade follows the data.
-- **An output saved without lineage always recomputes.** If an output row was
-  written by a plain `.save()` (no lineage record), `for_each` cannot prove it is
-  current, so it recomputes.
+For each combination, SciStack finds the existing output and compares the invocation
+that produced it against the current call. See
+[Lineage & Provenance](lineage.md) for what an invocation contains.
 
-## Constants are variant discriminators, not invalidators
+| What's different | What happens |
+|---|---|
+| No output yet for this function and constants | Runs |
+| The output was written by a plain `.save()`, not by this function | Runs |
+| The function's hash changed | Runs |
+| An input's record changed, such as a re-save with different data | Runs for the combinations that use it; the others still skip |
+| An input's column selection changed | Runs |
+| The `PathInput` that feeds it changed | Runs |
+| `distribute` or `as_table` changed | Runs |
+| Nothing | Skips |
 
-Changing a constant does **not** invalidate the previous result — it defines a
-*new variant* that coexists with the old one:
+Sameness is judged by content. Re-saving an input with identical data produces the same
+record, so its consumers still skip.
+
+/// warning | Edits to a data file aren't detected
+A `PathInput` records which file was read, not what was inside it. If you replace a
+file but keep its name, nothing re-runs. Pass `skip_computed=False` for that loader.
+///
+
+An endpoint run with `save=False` is a draft and ignores `skip_computed`, so it always
+draws or prints its result.
+
+## Changes reach later steps as you run them
+
+Only a step's **direct** inputs are compared. A change moves down the pipeline when
+you run the steps in order: a changed raw input makes step 1 run, which saves a new
+record, which then makes step 2 run.
+
+If you run only step 2 after changing the raw input, step 2 skips, because step 1
+hasn't produced anything new yet.
+
+## Constants create variants
+
+Changing a constant doesn't invalidate the earlier result. It adds a new variant
+beside it:
 
 ```python
-for_each(scale, inputs={"signal": Raw, "factor": 2.0}, outputs=[Out], ...)
-for_each(scale, inputs={"signal": Raw, "factor": 3.0}, outputs=[Out], ...)
-# factor=2.0 and factor=3.0 are independent branches; re-running either one skips.
-# A brand-new factor=7.0 has no prior output, so it computes.
+for_each(scale, inputs={"signal": Raw, "factor": 2.0}, outputs=[Out], skip_computed=True, ...)
+for_each(scale, inputs={"signal": Raw, "factor": 3.0}, outputs=[Out], skip_computed=True, ...)
+# factor=2.0 and factor=3.0 are independent, and re-running either one skips.
+# A new factor=7.0 has no output yet, so it runs.
 ```
 
-Each constant value gets its own cache entry, so sweeping a parameter never
-overwrites earlier runs.
+Sweeping a parameter never overwrites earlier runs. If an input changes, every variant
+that reads it runs again.
 
-## Caching vs. currency (node states)
+## Skipping and node states
 
-There are two questions built on the same identity, and it helps to keep them
-apart:
+These are two different questions, answered from the same provenance:
 
-- **The run decision** — *"should I execute this combo now?"* — answered by
-  `skip_computed` when a pipeline runs.
-- **Currency** — *"is an existing output still up to date?"* — answered by
-  [Node States](node-states.md), which reads stored outputs and classifies each as
-  up-to-date, stale, or missing.
+- **Should this combination run now?** `skip_computed` answers this during a run.
+- **Is this step up to date?** [Node states](node-states.md) answer this without
+  running anything.
 
-They use the same ingredients. In particular, a function's **own code change** is
-detected at the node-state level: comparing the current bytecode hash against the
-hash stored with the output marks that function's outputs stale. See
-[Node States](node-states.md) for the full currency model, including how staleness
-propagates through a pipeline graph.
+## The same function in several places
 
-## The same function at multiple call sites
+One function can be used by several `for_each` calls with different inputs. Each
+call is identified by a **`call_id`**, built from what makes that call distinct: the
+function's name, its input types, its constants, its run options, and any glue. An edit
+to the function's body doesn't change it. The GUI tracks each call's state separately,
+and `check_node_state(..., call_id=...)` does the same, so one call's partial run doesn't
+affect another's.
 
-Reusing one function from two different `for_each` call sites would naively let
-the second run's expected-combo bookkeeping clobber the first's. SciStack avoids
-this with a **`call_id`** — a stable hash of the output's version keys excluding
-the function hash — so each call site's expected set is recorded independently and
-the two coexist.
-
-**Next:** [Node States](node-states.md) ·
-[Versioning & Content Hashing](hashing.md) · [Lineage & Provenance](lineage.md) ·
-[Guide: Caching Computations](../guide/caching.md)
+**Next:** [Node States](node-states.md) · [Lineage & Provenance](lineage.md) ·
+[Variables & Storage](variables.md)

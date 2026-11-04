@@ -7,7 +7,7 @@
  *  - Draft results: outputs of the last 👁 Show run for this function —
  *    drafts write NO records, so the show_rendered push message is the
  *    only handle on them.
- *  - Recorded artifacts: finalized records via GET /api/endpoints/{fn}/
+ *  - Recorded artifacts: endpoint records via GET /api/endpoints/{fn}/
  *    artifacts (figures with stamp-derived provenance captions, stats as
  *    tables).
  *
@@ -92,7 +92,7 @@ export default function EndpointPanel({ fnName, kind }: Props) {
     fetchArtifacts()
   }, [fetchArtifacts])
 
-  // Draft outputs from 👁 Show land here; finalized runs refresh the
+  // Draft outputs from 👁 Show land here; recorded runs refresh the
   // recorded section via the same dag_updated signal the canvas uses.
   useBackendMessage(useCallback((msg) => {
     const msgType = (msg.type ?? msg.method) as string
@@ -132,8 +132,7 @@ export default function EndpointPanel({ fnName, kind }: Props) {
           <Section title={`Recorded (${artifacts.figures.length + artifacts.stats.length})`}>
             {artifacts.figures.length === 0 && artifacts.stats.length === 0 && (
               <div style={styles.empty}>
-                No finalized records yet — run with the finalized toggle on,
-                or use 👁 Show for a draft preview.
+                Nothing recorded yet. Run this step, or use 👁 Show for a draft preview.
               </div>
             )}
             {artifacts.figures.map(fig => (

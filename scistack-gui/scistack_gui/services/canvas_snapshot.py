@@ -103,7 +103,6 @@ class CanvasSnapshot:
     edges: list[EdgeSnap] = field(default_factory=list)
     hides: list[HideSnap] = field(default_factory=list)
     #: ``(pipeline_id, direction, var_type)``
-    hidden_ports: list[tuple[str, str, str]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -111,7 +110,6 @@ class CanvasSnapshot:
             "uses": [asdict(u) for u in self.uses],
             "edges": [asdict(e) for e in self.edges],
             "hides": [asdict(h) for h in self.hides],
-            "hidden_ports": [list(hp) for hp in self.hidden_ports],
         }
 
     @classmethod
@@ -121,14 +119,12 @@ class CanvasSnapshot:
             uses=[UseSnap(**u) for u in data.get("uses", [])],
             edges=[EdgeSnap(**e) for e in data.get("edges", [])],
             hides=[HideSnap(**h) for h in data.get("hides", [])],
-            hidden_ports=[tuple(hp) for hp in data.get("hidden_ports", [])],
         )
 
     def describe(self) -> str:
         return (
             f"{len(self.nodes)} node(s), {len(self.uses)} use(s), "
             f"{len(self.edges)} edge(s), {len(self.hides)} hide(s), "
-            f"{len(self.hidden_ports)} hidden port(s), "
             f"{sum(len(n.statements) for n in self.nodes)} statement(s)"
         )
 
@@ -265,10 +261,6 @@ def capture(db, pipeline_ids: list[str], node_ids: "list[str] | None" = None) ->
                 )
             )
 
-        if wanted is None:
-            hp = ps.get_hidden_ports(db, pid)
-            snap.hidden_ports += [(pid, d, t) for d in ("input", "output") for t in hp.get(d, [])]
-
     unpositioned = [n.node_id for n in snap.nodes if not n.has_position]
     logger.info(
         "[canvas_snapshot] capture %s: %s; %d node(s) without a saved position%s",
@@ -386,23 +378,14 @@ def apply(
             )
             n_hides += 1
 
-    n_ports = 0
-    for pid, direction, var_type in snap.hidden_ports:
-        target_pid = pipeline_map.get(pid)
-        if target_pid is None:
-            continue
-        ps.hide_port(db, target_pid, direction, var_type)
-        n_ports += 1
-
     logger.info(
         "[canvas_snapshot] apply -> %s: %d node/use id(s), %d statement(s), "
-        "%d edge(s), %d hide(s), %d hidden port(s)",
+        "%d edge(s), %d hide(s)",
         sorted(set(pipeline_map.values())),
         len(old_to_new),
         n_statements,
         n_edges,
         n_hides,
-        n_ports,
     )
     return old_to_new
 
@@ -453,8 +436,7 @@ def signature(snap: CanvasSnapshot, pipeline_id: str, child_identity: "dict[str,
         for e in snap.edges
         if e.source in label_of and e.target in label_of
     )
-    hidden = frozenset((d, t) for pid, d, t in snap.hidden_ports if pid == pipeline_id)
-    return (frozenset(nodes), edges, hidden, frozenset(uses))
+    return (frozenset(nodes), edges, frozenset(uses))
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 """Tests for the endpoint report surface (`scidb report` / Inspector.report).
 
 Seeds a real pipeline: two branch_param variants of a processed signal ->
-finalized plot_ (one PNG per variant via the {low_hz} placeholder) +
-finalized stat_ (one JSON record per variant, one carrying a PDF report) +
+recorded plot_ (one PNG per variant via the {low_hz} placeholder) +
+recorded stat_ (one JSON record per variant, one carrying a PDF report) +
 a plain processing output (must NOT appear) + a draft endpoint run (must
 NOT appear). Discovery, stamp verification, missing-file handling, the
 written folder, and the CLI subcommand are all exercised against it.
@@ -86,7 +86,6 @@ def seeded(tmp_path):
             "filename": PathOutput(str(art / "{subject}_{low_hz}.png")),
         },
         [PlotOut],
-        finalized=True,
         subject=["S01", "S02"],
         session=["1"],
     )
@@ -110,14 +109,13 @@ def seeded(tmp_path):
         stat_mean,
         {"df": Filtered, "filename": PathOutput(str(report_pdf))},
         [StatOut],
-        finalized=True,
     )  # grand aggregation, per variant
 
     # A DRAFT endpoint run: must never appear in the report.
     def stat_draft_only(df):
         return {"n": len(df)}
 
-    for_each(stat_draft_only, {"df": Filtered}, [DraftOut])
+    for_each(stat_draft_only, {"df": Filtered}, [DraftOut], save=False)
 
     yield db, art
     _scifor.set_schema([])
@@ -278,7 +276,6 @@ class TestWriteReport:
             stat_mean,
             {"df": Filtered, "filename": PathOutput(str(art / "stat_{low_hz}.pdf"))},
             [StatOut],
-            finalized=True,
         )
 
         latest = db.inspect.report(fn="stat_mean")

@@ -1,4 +1,4 @@
-# Endpoint leaf nodes: `plot_` and `stat_` functions, and `finalized`
+# Endpoint leaf nodes: `plot_` and `stat_` functions, and drafts
 
 Plots and statistics are the **leaf nodes** of a processing pipeline: they
 consume saved variables and emit a figure or a statistical result rather than
@@ -10,25 +10,25 @@ and `skip_computed` machinery as any other step. Design decisions: D2–D5 in
 Detection is by name prefix (`foreach.py` Steps 1.55/1.56): `plot_*` is a
 plotting leaf, `stat_*` a statistics leaf.
 
-## `finalized` — draft vs. record (D3)
+## Record by default; `save=False` for a draft
 
-Both endpoint kinds honor `for_each(..., finalized: bool)`:
+Endpoints record like every other function: outputs are saved as queryable
+records with full provenance, and `skip_computed` works. There is no separate
+endpoint flag. `save=` is the one owner of whether a run writes to the database.
 
-- **`finalized=False` (DEFAULT — draft):** nothing is written to the database
-  (no records, no lineage, no graph; the save phase is suppressed wholesale).
-  The in-memory result table is still returned. A `plot_` figure IS still
-  rendered to its path — looking at it is the point of a draft — while a
-  `stat_` result is pretty-printed to the console and any `PathOutput`
-  resolves to `None` (so e.g. csv-stats' `filename=None` contract disables
-  its PDF report). Style-tweak and explore freely: zero DB clutter.
-- **`finalized=True` (record):** outputs saved as queryable records with full
-  provenance; `skip_computed` works. Switching a draft to a record **requires
-  a re-run** — drafts leave no record to promote, endpoints are cheap to
-  re-run by construction, and the re-run guarantees the record reflects
-  exactly the code+data that produced it.
+`for_each(..., save=False)`, and `Pipeline.show()` / **👁 Show** which use it, make a
+**draft**: nothing is written (no records, no lineage, no graph), and the in-memory
+result table is still returned. A `plot_` figure IS still rendered to its path, while
+a `stat_` result is pretty-printed to the console and any `PathOutput` resolves to
+`None` (so e.g. csv-stats' `filename=None` contract disables its PDF report).
+
 - Drafts never skip (`skip_computed` has no record to gate against).
-- Passing `finalized=True` with a non-endpoint function warns and is ignored
-  (processing functions always record).
+- Drafts leave no record to promote: recording means running again.
+
+A `finalized=` flag used to choose between these, with draft as the default. It was
+removed on 2026-11-03. Because `for_each` takes unknown keywords as iteration keys, a
+stale `finalized=` argument raises `TypeError` (`scifor.options.REMOVED_OPTIONS`)
+instead of silently becoming an iteration key.
 
 ## Plotting leaves (`plot_`)
 
@@ -47,7 +47,6 @@ for_each(
             "filename": PathOutput("plots/{subject}_{trial}.png")},
     outputs=[PlotFigure],
     share_limits={"signal": ["subject"]},
-    finalized=True,                       # record; omit while iterating on style
     subject=["1", "2"], trial=["1", "2", "3"],
 )
 
@@ -86,8 +85,7 @@ def stat_step_length(df, filename):
 for_each(stat_step_length,
          inputs={"df": StepLength,
                  "filename": PathOutput("reports/step_length_ttest.pdf")},
-         outputs=[StepLengthTTest],
-         finalized=True)      # no iteration kwargs: grand aggregation fans in
+         outputs=[StepLengthTTest])   # no iteration kwargs: grand aggregation fans in
 ```
 
 - **`as_table` defaults ON for `stat_`**: statistics need the long-format
@@ -172,12 +170,11 @@ one place. MATLAB specifics:
 scidb.for_each(@plot_timeseries, ...
     struct('signal', RawSignal(), ...
            'filename', scifor.PathOutput("plots/{subject}_{low_hz}.png")), ...
-    {PlotFigure()}, finalized=true, subject=["1" "2"], trial=["1" "2" "3"]);
+    {PlotFigure()}, subject=["1" "2"], trial=["1" "2" "3"]);
 ```
 
 - Endpoint detection needs a **NAMED** `plot_*`/`stat_*` function handle
-  (`func2str(@(x)...)` starts with `@`; a warning fires if `finalized` is
-  passed with an anonymous handle).
+  (`func2str(@(x)...)` starts with `@`).
 - A `plot_` fn returns a graphics handle → exported via `exportgraphics`
   (`print -dsvg` for `.svg`) to the combo's pre-resolved path and closed;
   or returns a path char (saved it itself). Figure handles never cross the
@@ -206,7 +203,7 @@ scidb.for_each(@plot_timeseries, ...
 ## Reporting
 
 `scidb report db <path> [-o dir]` (or `db.inspect.write_report(dir)`)
-collects every **finalized** endpoint record into a self-contained HTML
+collects every endpoint record into a self-contained HTML
 report folder — figures grouped by function with variant-labeled captions,
 per-test-family stats tables, `stats.csv`, `manifest.json`, and verified
 provenance stamps (an overwritten artifact is flagged STALE). Drafts never
@@ -215,9 +212,9 @@ appear (no records). See the report row in
 
 ## Tests
 
-`scidb/tests/test_plotting.py` — files written + path records queryable
-(finalized), draft renders-without-recording, `share_limits`, skip_computed.
+`scidb/tests/test_plotting.py` — files written + path records queryable,
+draft renders-without-recording, `share_limits`, skip_computed.
 `scidb/tests/test_stat_leaves.py` — JSON record + date-stripping + numpy
 normalization, draft print/no-write, PathOutput None/report_path, return
-contract, one-stat-per-variant-group, skip_computed, non-endpoint warning,
+contract, one-stat-per-variant-group, skip_computed, stale `finalized=` refused,
 csv-stats end-to-end (importorskip).

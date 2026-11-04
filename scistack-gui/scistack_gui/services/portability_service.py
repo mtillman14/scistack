@@ -30,10 +30,8 @@ exporting user already ran it locally. A freshly-imported pipeline has no
 execution history in the target database, so nothing auto-derives there
 yet regardless of whether a hide record is carried over — the exporting
 user's past "I cut this auto-derived edge" choice isn't portable data,
-it's tied to a run history that doesn't exist on the other end. Hidden
-PORTS (``_pipeline_hidden_ports``) DO export: that's a pure wiring-shape
-override, present the moment nodes/edges are placed, independent of any
-execution history.
+it's tied to a run history that doesn't exist on the other end. A submodule's
+ports DO export: they are ordinary input/output nodes on its canvas.
 
 Import is ``canvas_snapshot.apply`` (fresh ids), spanning a DATABASE
 boundary, plus what only a cross-project copy needs (globals, hypothesis

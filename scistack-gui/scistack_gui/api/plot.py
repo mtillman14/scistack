@@ -116,7 +116,6 @@ class ExportRequest(BaseModel):
     function_name: str | None = None
     output_variable: str | None = None
     path_template: str | None = None
-    finalized: bool | None = True
     derived_bars: list[DifferenceBarParam] | None = None
 
 
@@ -439,7 +438,6 @@ def _export(db, req: ExportRequest) -> dict:
         function_name=req.function_name,
         output_variable=req.output_variable,
         path_template=req.path_template,
-        finalized=req.finalized is not False,
         csv_path=req.csv_path,
     )
 
@@ -451,7 +449,6 @@ def _add_to_pipeline(db, req: ExportRequest) -> dict:
         function_name=req.function_name,
         output_variable=req.output_variable,
         path_template=req.path_template,
-        finalized=req.finalized is not False,
     )
 
 

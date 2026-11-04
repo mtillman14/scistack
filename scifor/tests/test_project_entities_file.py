@@ -254,6 +254,102 @@ class TestAddVariable:
         assert updated == 'variables = [\n    "X",\n]\n\n[parameters]\nA = 1\n'
 
 
+class TestRemoveEntry:
+    """The palette's Delete: only the named entry's bytes go."""
+
+    def test_removes_only_that_entry_keeping_neighbours_and_comments(self):
+        text = (
+            "[parameters]\n"
+            "# rates\n"
+            "A = 1\n"
+            "B = [10, 20]  # windows\n"
+            "C = 3\n"
+        )
+        updated = entities_file.remove_entry(text, "parameters", "B")
+
+        assert updated == "[parameters]\n# rates\nA = 1\nC = 3\n"
+
+    def test_multi_line_value_goes_whole(self):
+        text = (
+            "[path_inputs]\n"
+            "RAW = {\n"
+            '    template = "{s}/raw.csv",\n'
+            '    root_folder = "/data",\n'
+            "}\n"
+            'EMG = "{s}/emg.csv"\n'
+        )
+        updated = entities_file.remove_entry(text, "path_inputs", "RAW")
+
+        assert updated == '[path_inputs]\nEMG = "{s}/emg.csv"\n'
+
+    def test_last_entry_without_trailing_newline(self):
+        text = "[parameters]\nA = 1\nB = 2"
+        assert entities_file.remove_entry(text, "parameters", "B") == "[parameters]\nA = 1\n"
+
+    def test_only_entry_leaves_the_section_header(self):
+        text = "[parameters]\nA = 1\n\n[path_inputs]\nP = \"x\"\n"
+        updated = entities_file.remove_entry(text, "parameters", "A")
+
+        assert updated == "[parameters]\n\n[path_inputs]\nP = \"x\"\n"
+        entities_file.checked_text(updated)
+
+    def test_same_name_in_another_section_is_untouched(self):
+        text = "[parameters]\nX = 1\n\n[path_inputs]\nX = \"a\"\n"
+        updated = entities_file.remove_entry(text, "path_inputs", "X")
+
+        assert updated == "[parameters]\nX = 1\n\n[path_inputs]\n"
+
+    def test_missing_entry_raises(self):
+        with pytest.raises(ValueError, match="No entry 'Z'"):
+            entities_file.remove_entry("[parameters]\nA = 1\n", "parameters", "Z")
+
+
+class TestRemoveVariable:
+    def test_multi_line_drops_the_elements_line_and_its_comment(self):
+        text = 'variables = [\n    "A",  # first\n    "B",  # second\n    "C",\n]\n'
+        updated = entities_file.remove_variable(text, "B")
+
+        assert updated == 'variables = [\n    "A",  # first\n    "C",\n]\n'
+
+    def test_multi_line_last_element_without_trailing_comma(self):
+        text = 'variables = [\n    "A",\n    "B"\n]\n'
+        updated = entities_file.remove_variable(text, "B")
+
+        assert updated == 'variables = [\n    "A",\n]\n'
+        entities_file.checked_text(updated)
+
+    def test_single_line_first_middle_last(self):
+        text = 'variables = ["A", "B", "C"]\n'
+        assert entities_file.remove_variable(text, "A") == 'variables = ["B", "C"]\n'
+        assert entities_file.remove_variable(text, "B") == 'variables = ["A", "C"]\n'
+        assert entities_file.remove_variable(text, "C") == 'variables = ["A", "B"]\n'
+
+    def test_only_element_leaves_an_empty_array(self):
+        text = 'variables = ["A"]\n\n[parameters]\nX = 1\n'
+        updated = entities_file.remove_variable(text, "A")
+
+        assert updated == 'variables = []\n\n[parameters]\nX = 1\n'
+        entities_file.checked_text(updated)
+
+    def test_single_quoted_literal_matches(self):
+        assert entities_file.remove_variable("variables = ['A', 'B']\n", "A") == "variables = ['B']\n"
+
+    def test_name_inside_a_comment_is_not_an_element(self):
+        text = 'variables = [\n    # "B" was renamed\n    "A",\n]\n'
+        with pytest.raises(ValueError, match="No variable 'B'"):
+            entities_file.remove_variable(text, "B")
+
+    def test_missing_name_or_key_raises(self):
+        with pytest.raises(ValueError):
+            entities_file.remove_variable('variables = ["A"]\n', "Z")
+        with pytest.raises(ValueError):
+            entities_file.remove_variable("[parameters]\nX = 1\n", "Z")
+
+    def test_round_trip_with_add_variable(self):
+        text = 'variables = [\n    "A",\n]\n'
+        assert entities_file.remove_variable(entities_file.add_variable(text, "B"), "B") == text
+
+
 
 class TestCheckedText:
     """The gate every GUI write of the entities file passes before disk."""

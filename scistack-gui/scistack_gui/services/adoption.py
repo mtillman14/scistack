@@ -380,7 +380,7 @@ def retire_rewired_edges(
     *edges* is the build's edge list, whose history edges for the node are
     its NEW wiring's (the build draws a node's current wiring). Every stored
     edge into or out of the node whose connection is not among them is the
-    old wiring's and is hidden (never deleted: the restore panel lists it).
+    old wiring's and is hidden (never deleted: redrawing or undo brings it back).
     The new wiring's edges are then adopted like any other.
 
     Once per (node, wiring) (``_adopted`` subject ``rewire:...``); not inside

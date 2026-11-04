@@ -127,7 +127,7 @@ def ensure_node_identities(db):
     plan, _warnings = _resolve_node_identity(
         db,
         build_aggregate(db, db.get_aggregated_variants()),
-        view.drawn_list,
+        view.wiring_list,
         view.manual_nodes,
         set(view.hidden_edge_ids),
     )
@@ -757,7 +757,7 @@ def build_graph(
     # graph_builder.hidden_wirings' manual_edges param. manual_nodes moved up
     # beside it 2026-09-22: run-state propagation now follows manual edges, and
     # resolving one whose source is a hand-dragged node needs this map.
-    manual_edges_for_fn_lookup = edge_view.drawn_list
+    manual_edges_for_fn_lookup = edge_view.wiring_list
     manual_nodes = edge_view.manual_nodes
     logger.debug("[pipeline] loaded %d manual node(s)", len(manual_nodes))
 
@@ -784,7 +784,7 @@ def build_graph(
             db, pipeline_id, caller=f"build_graph({pipeline_id}) after re-key"
         )
         hidden_edge_ids = set(edge_view.hidden_edge_ids)
-        manual_edges_for_fn_lookup = edge_view.drawn_list
+        manual_edges_for_fn_lookup = edge_view.wiring_list
         manual_nodes = edge_view.manual_nodes
 
     disconnected_wirings = gb.hidden_wirings(
@@ -1141,7 +1141,9 @@ def build_graph(
 
     # --- Build edges (pure) ---
     logger.info("[pipeline] Building edges (delegating to graph_builder)")
-    manual_edges_list = manual_edges_for_fn_lookup
+    # What the canvas draws (a connection crossing a submodule is two edges);
+    # every "what is this node wired to" below uses manual_edges_for_fn_lookup.
+    manual_edges_list = edge_view.drawn_list
     edges = gb.build_edges(
         agg.fn_input_params,
         agg.fn_outputs,
@@ -1292,7 +1294,7 @@ def build_graph(
             }
             glue_resolved = resolve_function_edges(
                 fn_node_ids={node_id},
-                manual_edges=manual_edges_list,
+                manual_edges=manual_edges_for_fn_lookup,
                 manual_nodes=manual_nodes,
                 existing_node_labels=existing_node_labels,
             )
@@ -1306,7 +1308,7 @@ def build_graph(
             sig_params = fn_params_from_registry(fn_label)
             resolved = resolve_function_edges(
                 fn_node_ids={node_id},
-                manual_edges=manual_edges_list,
+                manual_edges=manual_edges_for_fn_lookup,
                 manual_nodes=manual_nodes,
                 existing_node_labels=existing_node_labels,
             )
@@ -1517,20 +1519,21 @@ def build_graph(
     # edges are hidden first, so adoption below adds the new wiring's edges
     # instead of drawing both wirings on one node.
     retired = _adoption.retire_rewired_edges(
-        db, identity.rewired_by_step, edges, manual_edges_list, manual_nodes
+        db, identity.rewired_by_step, edges, manual_edges_for_fn_lookup, manual_nodes
     )
     if retired:
         edge_view = effective_edges(
             db, pipeline_id, caller=f"build_graph({pipeline_id}) after a named rewire"
         )
         manual_edges_list = edge_view.drawn_list
+        manual_edges_for_fn_lookup = edge_view.wiring_list
         hidden_edge_ids = set(edge_view.hidden_edge_ids)
     adoption_plan, combo_hides = _adoption.plan_for_build(
         db,
         nodes=nodes,
         edges=edges,
         manual_nodes=manual_nodes,
-        drawn_edges=manual_edges_list,
+        drawn_edges=manual_edges_list + manual_edges_for_fn_lookup,
         positions_by_scope=positions_by_scope,
         agg=history_agg,
         scidb_agg=scidb_agg,
@@ -1552,6 +1555,7 @@ def build_graph(
                 db, pipeline_id, caller=f"build_graph({pipeline_id}) after adoption"
             )
             manual_edges_list = edge_view.drawn_list
+            manual_edges_for_fn_lookup = edge_view.wiring_list
 
     # --- The document view (Stage 3) ---
     # Only stored rows are drawn. History annotates the nodes kept (run
@@ -1568,7 +1572,7 @@ def build_graph(
     logger.info("[pipeline] document view scope=%s: %s", pipeline_id, document_counts)
     inputs_changed = gb.document_input_params(
         nodes,
-        manual_edges_list + (deferred_adoption.edges if deferred_adoption else []),
+        manual_edges_for_fn_lookup + (deferred_adoption.edges if deferred_adoption else []),
         manual_nodes,
         existing_node_labels,
     )

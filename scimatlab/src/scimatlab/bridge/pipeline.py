@@ -91,7 +91,6 @@ def pipeline_register_step(
     distribute: bool = False,
     as_table=None,
     save: bool = True,
-    finalized: bool = False,
     skip_computed: bool = False,
     schema_keys=None,
     schema_filter=None,
@@ -107,6 +106,9 @@ def pipeline_register_step(
     call's: glue names contribute to the call_id, so a step registered
     without them would be a different call site than the same step run
     directly."""
+    from scifor.options import reject_removed_options
+
+    reject_removed_options(dict(metadata_iterables))
     pipe = _pipeline_cache[int(handle)]
     inputs = {
         name: _reconstruct_input_for_keys(spec)
@@ -131,7 +133,6 @@ def pipeline_register_step(
             "distribute": bool(distribute),
             "as_table": as_table,
             "save": bool(save),
-            "finalized": bool(finalized),
             "skip_computed": bool(skip_computed),
             "schema_keys": schema_keys_arg,
             "schema_filter": schema_filter_arg,
@@ -204,7 +205,6 @@ def pipeline_execution_order(
     mode: str = "all",
     target_name: str = "",
     include_used: bool = False,
-    finalized=None,
     skip_computed: bool = True,
 ) -> dict:
     """Resolve the run: topo-ordered descriptors + a run handle.
@@ -219,29 +219,21 @@ def pipeline_execution_order(
     global _pipeline_run_id_counter
 
     pipe = _pipeline_cache[int(handle)]
-    fin = (
-        None
-        if finalized is None or isinstance(finalized, type(None))
-        else bool(finalized)
-    )
     descriptors = pipe.execution_order(
         mode=mode,
         target=target_name or None,
         include_used=bool(include_used),
-        finalized=fin,
         skip_computed=bool(skip_computed),
     )
     # Re-derive the selection for the run cache (execution_order returns
     # plain data only; _execute_step needs the live pairs/order).
-    pairs, order, targets = pipe._select(mode, target_name or None, bool(include_used))
+    pairs, order, _ = pipe._select(mode, target_name or None, bool(include_used))
     _pipeline_run_id_counter += 1
     _pipeline_run_cache[_pipeline_run_id_counter] = {
         "pipeline": pipe,
         "pairs": pairs,
         "order": order,
-        "targets": targets,
         "skip_computed": bool(skip_computed),
-        "finalized": fin,
     }
     # Constants must cross as plain values; drop non-primitive leftovers
     # (MATLAB re-substitutes into its own stored inputs struct).
@@ -262,16 +254,10 @@ def pipeline_run_python_step(run_handle: int, position: int):
     run = _pipeline_run_cache[int(run_handle)]
     i = run["order"][int(position)]
     pipe = run["pipeline"]
-    fin = (
-        run["finalized"]
-        if (run["finalized"] is not None and i in run["targets"])
-        else None
-    )
     pipe._execute_step(
         run["pairs"],
         i,
         skip_computed=run["skip_computed"],
-        finalized=fin,
     )
     return True
 

@@ -41,6 +41,9 @@ import {
   type ColumnGroup,
   type GroupPlan,
 } from './columnGroups'
+import PanelHeader, { SECTION_ATTR, SectionBadges } from './PanelHeader'
+import { badgesFor, functionBadges } from './sidebarBadges'
+import { useRunOptionDefaults } from '../../hooks/useRunOptionDefaults'
 
 /** `get_schema_level`: the level a Run of this node would iterate, and why. */
 interface ResolvedSchemaLevel {
@@ -168,7 +171,12 @@ interface Props {
   schemaSelection: SchemaSelection | null
   schemaLevel: string[] | null    // which schema keys to iterate over; null = all
   whereFilters: WhereFilter[]
-  runOptions: RunOptions
+  // What the node STORES; unset options are the backend's defaults
+  // (useRunOptionDefaults), never a literal here.
+  runOptions?: Partial<RunOptions>
+  // plot_ / stat_ endpoint: the header says so, and the preview sits under it.
+  endpointKind?: 'plot' | 'stat'
+  belowHeader?: React.ReactNode
   inputParams: Record<string, string>
   columnSelections: ColumnSelectionMap
   // The node's output types, in the order its handles (and a run) list them;
@@ -678,11 +686,29 @@ const unusedIntentBadgeStyle: React.CSSProperties = {
   marginRight: 4,
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions, inputParams, columnSelections, colNameInputs, unusedIntent, outputTypes = [], outputPorts, isMatlab = false, outputOrderNote }: Props) {
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions: storedRunOptions, endpointKind, belowHeader, inputParams, columnSelections, colNameInputs, unusedIntent, outputTypes = [], outputPorts, isMatlab = false, outputOrderNote }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
   const [variableNames, setVariableNames] = useState<string[]>([])
+  // Stored options over the served defaults. Only read once `defaults` has
+  // arrived: the Run Options section waits for it rather than guessing.
+  const defaults = useRunOptionDefaults()
+  const runOptions = { ...(defaults ?? {}), ...(storedRunOptions ?? {}) } as RunOptions
+  // Where the function is declared, for the header (get_function_source is
+  // the one owner: it unwraps library wrappers and knows MATLAB).
+  const [fnSource, setFnSource] = useState<{ file: string; line: number | null } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setFnSource(null)
+    callBackend('get_function_source', { name: label })
+      .then(d => {
+        const r = d as { ok: boolean; file?: string; line?: number }
+        if (!cancelled && r.ok && r.file) setFnSource({ file: r.file, line: r.line ?? null })
+      })
+      .catch(err => console.error('[FunctionSettings] get_function_source:', err))
+    return () => { cancelled = true }
+  }, [label])
   const [hiddenCombos, setHiddenCombos] = useState<HiddenCombo[]>([])
   const [showHidden, setShowHidden] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -929,13 +955,29 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
     : undefined
   const visibleVariants = showHidden ? variants : variants.filter(row => !matchingHidden(row))
 
+  // One list for both places a badge shows (header summary + section chips).
+  const badges = functionBadges({
+    runOptions: storedRunOptions,
+    defaults,
+    hiddenComboCount: hiddenCombos.length,
+    whereFilterCount: whereFilters.length,
+    schemaSelection,
+    columnSelections,
+  })
+
   return (
     <div style={styles.root}>
-      <div style={styles.fnName}>{label}</div>
+      <PanelHeader
+        kind={endpointKind ?? 'function'}
+        name={label}
+        source={fnSource}
+        badges={badges}
+      />
+      {belowHeader}
 
       {/* ---- Variants ---- */}
-      <section style={styles.section}>
-        <div style={styles.sectionTitle}>Variants</div>
+      <section style={styles.section} {...{ [SECTION_ATTR]: "variants" }}>
+        <div style={styles.sectionTitle}>Variants<SectionBadges badges={badgesFor(badges, "variants")} /></div>
 
         {variants.length === 0 && (
           <div style={styles.empty}>
@@ -1006,8 +1048,8 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       </section>
 
       {/* ---- Inputs (column selection) ---- */}
-      <section style={styles.section}>
-        <div style={styles.sectionTitle}>Inputs</div>
+      <section style={styles.section} {...{ [SECTION_ATTR]: "inputs" }}>
+        <div style={styles.sectionTitle}>Inputs<SectionBadges badges={badgesFor(badges, "inputs")} /></div>
 
         {Object.keys(inputParams).length === 0 ? (
           <div style={styles.empty}>
@@ -1052,8 +1094,8 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       )}
 
       {/* ---- Data Filters (where=) ---- */}
-      <section style={styles.section}>
-        <div style={styles.sectionTitle}>Filters</div>
+      <section style={styles.section} {...{ [SECTION_ATTR]: "filters" }}>
+        <div style={styles.sectionTitle}>Filters<SectionBadges badges={badgesFor(badges, "filters")} /></div>
 
         {whereFilters.length === 0 && (
           <div style={styles.empty}>No data filters. All records will be used.</div>
@@ -1094,8 +1136,8 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       </section>
 
       {/* ---- Schema Selection ---- */}
-      <section style={styles.section}>
-        <div style={styles.sectionTitle}>Schema keys</div>
+      <section style={styles.section} {...{ [SECTION_ATTR]: "schema" }}>
+        <div style={styles.sectionTitle}>Schema keys<SectionBadges badges={badgesFor(badges, "schema")} /></div>
         <div style={styles.hint}>
           Which schema locations this node runs at. Omit a level everywhere
           (by key), or pick locations one by one. Everything runs until you
@@ -1165,8 +1207,11 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
       </section>
 
       {/* ---- Run Options ---- */}
-      <section style={styles.section}>
-        <div style={styles.sectionTitle}>Run Options</div>
+      <section style={styles.section} {...{ [SECTION_ATTR]: "run_options" }}>
+        <div style={styles.sectionTitle}>Run Options<SectionBadges badges={badgesFor(badges, "run_options")} /></div>
+
+        {!defaults && <div style={styles.empty}>Loading run options…</div>}
+        {defaults && (<>
 
         <label style={styles.optionLabel}>
           <input
@@ -1263,6 +1308,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
             </span>
           </div>
         )}
+        </>)}
       </section>
 
       {/* The same picker the plotting tab opens. `nodeId` switches its tree to

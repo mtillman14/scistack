@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import { callBackend, isVSCodeMode } from '../../api'
 import VariablePlot from './VariablePlot'
+import PanelHeader from './PanelHeader'
 import PlotStudio from '../PlotStudio/PlotStudio'
 
 interface VariantSummary {
@@ -40,6 +41,20 @@ export default function VariableSettingsPanel({ label }: Props) {
   // one source version, so this doubles as "is the distinction worth showing".
   const hasVersions = (data?.variants ?? []).some(v => v.fn_version)
 
+  // Where the type is declared (entity_editability covers variables too).
+  const [source, setSource] = useState<{ file: string; line: number | null } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    setSource(null)
+    callBackend('get_entity_editability', { kind: 'variable', name: label })
+      .then(d => {
+        const e = d as { file: string | null; line: number | null }
+        if (!cancelled && e.file) setSource({ file: e.file, line: e.line })
+      })
+      .catch(err => console.error('[VariableSettings] get_entity_editability:', err))
+    return () => { cancelled = true }
+  }, [label])
+
   useEffect(() => {
     setData(null)
     setError(null)
@@ -50,7 +65,7 @@ export default function VariableSettingsPanel({ label }: Props) {
 
   return (
     <div style={styles.root}>
-      <div style={styles.varName}>{label}</div>
+      <PanelHeader kind="variable" name={label} source={source} />
 
       {error && <div style={styles.error}>{error}</div>}
       {!data && !error && <div style={styles.loading}>Loading…</div>}
