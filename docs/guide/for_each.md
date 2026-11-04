@@ -216,8 +216,11 @@ for_each(analyze, inputs={"x": StepLength}, outputs=[Result],
   database (handy for inspection).
 - **`as_table=True`** — keep schema-key columns in the input DataFrames so the
   function can see the current combo's metadata.
-- **`distribute=True`** — when a function returns a vector whose elements each
-  belong at a deeper schema level, expand them into separate records.
+- **`distribute=True`** — save each element or row of a return value as its own
+  record, numbered from 1 one level below the deepest key that is iterated or that
+  a returned table carries as a column. A table with a repeated `subject` under
+  `[subject, bout]` gets `bout` = 1, 2 within that subject, and every other subject
+  gets `bout=1`. Numbers follow row order.
 
 ## Standalone with `scifor`
 

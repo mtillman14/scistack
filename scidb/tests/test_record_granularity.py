@@ -143,3 +143,42 @@ class TestDistributeUnchanged:
                 subject=["SS01"],
                 session=["01"],
             )
+
+
+class TestDistributeBelowCarriedKeys:
+    """The CERNER CSV (scistack.log 2026-11-04): 34 rows for 33 subjects, schema
+    [subject, bout, date], `read_csv` with distribute=True."""
+
+    @pytest.fixture
+    def bout_db(self, tmp_path):
+        db = configure_database(tmp_path / "bouts.duckdb", ["subject", "bout", "date"])
+        yield db
+        db.close()
+
+    def test_every_row_gets_a_bout_within_its_subject(self, bout_db):
+        def load():
+            return pd.DataFrame(
+                {"subject": ["A", "B", "B"], "admit": ["d1", "d2", "d3"], "los": [1.0, 2.0, 3.0]}
+            )
+
+        for_each(load, {}, [Signal], distribute=True, db=bout_db)
+
+        def row(**keys):
+            rec = Signal.load(db=bout_db, **keys)
+            assert not isinstance(rec, list), f"{keys}: {len(rec)} records"
+            return rec.data
+
+        assert row(subject="A", bout=1)["admit"].iloc[0] == "d1"
+        assert row(subject="B", bout=1)["admit"].iloc[0] == "d2"
+        assert row(subject="B", bout=2)["admit"].iloc[0] == "d3"
+        # subject is an address, and no cell is a list.
+        assert list(row(subject="B", bout=2).columns) == ["admit", "los"]
+        assert len(Signal.load(db=bout_db, subject="B")) == 2
+
+    def test_a_rerun_files_the_same_addresses(self, bout_db):
+        def load():
+            return pd.DataFrame({"subject": ["A", "A"], "los": [1.0, 2.0]})
+
+        for_each(load, {}, [Signal], distribute=True, db=bout_db)
+        for_each(load, {}, [Signal], distribute=True, db=bout_db)
+        assert len(Signal.load(db=bout_db, subject="A")) == 2

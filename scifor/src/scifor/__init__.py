@@ -57,6 +57,7 @@ from .failures import (
     validate_on_error,
 )
 from .filters import Col, ColFilter, CompoundFilter, NotFilter
+from .distribute import DistributeError
 from .fixed import Fixed
 from .hooks import LoopHooks
 from .foreach import (
@@ -135,6 +136,7 @@ __all__ = [
     "classify_blame",
     "user_value_seam",
     "validate_on_error",
+    "DistributeError",
     "MissingSchemaKeyError",
     "spread_nested_results",
     "spread_output_frame",

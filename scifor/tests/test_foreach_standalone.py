@@ -1378,29 +1378,19 @@ def test_distribute_composes_with_whole_table_rule():
     assert sorted(result["session"]) == [1, 2, 3]
 
 
-def test_distribute_reads_target_key_column_when_present(caplog):
-    """A returned DataFrame that carries the distribute target as a column
-    already says where each row belongs: its values address the pieces and
-    the column is stripped from the data. Row ordinals are NOT used. This is
-    what the MATLAB loop has always done (+scifor/for_each.m), so a labelled
-    table now files identically in both languages."""
+def test_distribute_refuses_a_table_carrying_the_deepest_key(caplog):
+    """Below the deepest key there is nowhere to go. Rows that carry their
+    schema keys are filed by those columns with distribute off (the spread
+    rule); the message says so."""
     set_schema(["subject", "session"])
-    with caplog.at_level(logging.INFO):
-        result = for_each(
-            lambda: pd.DataFrame({"session": ["07", "03"], "val": [1.0, 2.0]}),
-            inputs={},
-            distribute=True,
-            subject=[1],
-        )
-    assert len(result) == 2
-    # Values, in the table's own order — not 1, 2.
+    frame = pd.DataFrame({"session": ["07", "03"], "val": [1.0, 2.0]})
+    with pytest.raises(ValueError, match="no lower level to distribute to.*Turn distribute off"):
+        for_each(lambda: frame, inputs={}, distribute=True, subject=[1])
+
+    result = for_each(lambda: frame, inputs={}, subject=[1])
     assert list(result["session"]) == ["07", "03"]
     assert list(result["val"]) == [1.0, 2.0]
-    # Exactly one 'session' column: the data column was removed, so it does
-    # not collide with the metadata column of the same name.
     assert list(result.columns).count("session") == 1
-    assert "column is removed from the data" in caplog.text
-    assert not any("collide" in r.message for r in caplog.records)
 
 
 def test_distribute_uses_ordinals_when_target_key_column_absent():
@@ -1416,11 +1406,11 @@ def test_distribute_uses_ordinals_when_target_key_column_absent():
     assert list(result["session"]) == [1, 2]
 
 
-def test_distribute_column_reading_top_of_schema_nothing_iterated():
-    """The 2026-09-15 loadFunctionalOutcomes shape with distribute ON: no
-    schema level iterated, so the target is the top of the schema. A
-    'subject' column addresses the pieces; a 'session' column is an unpinned
-    schema key, so the spread rule files each piece at (subject, session)."""
+def test_distribute_goes_below_the_keys_a_table_carries():
+    """The 2026-09-15 loadFunctionalOutcomes shape with distribute ON: nothing
+    iterated, 'subject' and 'session' carried, so rows are numbered at 'speed'
+    within each (subject, session). With distribute off they file at
+    (subject, session) by the spread rule."""
     set_schema(["subject", "session", "speed"])
     result = for_each(
         lambda: pd.DataFrame(
@@ -1429,11 +1419,10 @@ def test_distribute_column_reading_top_of_schema_nothing_iterated():
         inputs={},
         distribute=True,
     )
-    assert len(result) == 3
     assert list(result["subject"]) == ["A", "A", "B"]
     assert list(result["session"]) == [1, 2, 1]
+    assert list(result["speed"]) == [1, 1, 1]
     assert list(result.columns).count("subject") == 1
-    assert "speed" not in result.columns
 
 
 def test_distribute_at_deepest_key_still_raises():

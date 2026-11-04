@@ -65,6 +65,7 @@ from scistacklog import Log
 
 from .colname import ColName
 from .column_selection import SPLIT, ColumnGroupsError, ColumnSelection
+from .distribute import DistributeError, group_ordinals, multi_row_groups, resolve_target
 from .failures import ComboFailure, FailureGroup, groups_from_wire
 from .fixed import Fixed
 from .foreach import (
@@ -552,6 +553,8 @@ class _PlanState:
     summary: "dict | None" = None
     completed: int = 0
     skipped: int = 0
+    #: distribute: output name -> its target. One output has one level.
+    distribute_targets: "dict[str, str]" = field(default_factory=dict)
 
 
 _PLANS: "dict[int, _PlanState]" = {}
@@ -1273,9 +1276,9 @@ def assemble(token: int, outcome_json: str) -> str:
     n_from_column = int(outcome.get("distribute_from_column") or 0)
     if n_from_column and state.run.distribute_key:
         Log.info(
-            f"distribute: {n_from_column} output(s) carried a '{state.run.distribute_key}' "
-            f"column — its values address the pieces and the column is removed from the "
-            f"data (row ordinals are not used)",
+            f"distribute: {n_from_column} output(s) carried schema key column(s) at or "
+            f"below '{state.run.distribute_key}': rows are numbered within each group "
+            f"one level lower and those columns are removed from the data",
             layer=LAYER,
         )
     summary = _log_summary(state.run, tally, float(outcome.get("elapsed") or 0.0))
@@ -1371,3 +1374,42 @@ __all__ = [
     "plan",
     "refusal_id",
 ]
+
+
+def distribute_target(token: int, output_name: str, columns_json: str) -> str:
+    """The rule of ``scifor.distribute`` for one returned MATLAB table: JSON
+    ``{"target", "carried"}``. Raises as the Python loop does, including when an
+    output's target differs between combinations."""
+    state = _PLANS[int(token)]
+    run = state.run
+    target, carried = resolve_target(
+        run.schema_keys,
+        run.distribute_key,
+        _listify(json.loads(columns_json)),
+        output_name=output_name,
+    )
+    previous = state.distribute_targets.setdefault(output_name, target)
+    if previous != target:
+        raise DistributeError(
+            f"distribute=True but {output_name} would be filed at {previous!r} at one "
+            f"combination and at {target!r} at another: its returned tables do not "
+            f"carry the same schema key columns. One output has one level."
+        )
+    return json.dumps({"target": target, "carried": carried})
+
+
+def distribute_ordinals(
+    carried_json: str, columns_json: str, output_name: str, where: str
+) -> str:
+    """1-based row numbers within each group of carried key values, as a JSON
+    list. *columns_json* holds one list per carried key, with null for a blank."""
+    carried = [str(k) for k in _listify(json.loads(carried_json))]
+    columns = [_listify(column) for column in _listify(json.loads(columns_json))]
+    ordinals = group_ordinals(carried, columns, output_name=output_name, where=where)
+    for group, count in multi_row_groups(carried, columns):
+        Log.info(
+            f"distribute: {output_name} {group} has {count} rows, numbered 1..{count} "
+            f"in table order",
+            layer=LAYER,
+        )
+    return json.dumps(ordinals)

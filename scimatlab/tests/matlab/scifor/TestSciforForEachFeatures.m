@@ -198,18 +198,16 @@ classdef TestSciforForEachFeatures < matlab.unittest.TestCase
             tc.verifyEqual(result.trial, [1; 2; 3]);
         end
 
-        function test_distribute_table_with_key_column(tc)
-        %   Table output that already has the distribute key column uses it.
+        function test_distribute_refuses_a_table_carrying_the_deepest_key(tc)
+        %   Below the deepest key there is nowhere to go; with distribute off
+        %   the table's key column files its rows.
             scifor.set_schema(["subject", "trial"]);
+            tbl = table([10;20;30], [100;200;300], 'VariableNames', {'trial','val'});
 
-            result = scifor.for_each( ...
-                @() table([10;20;30], [100;200;300], 'VariableNames', {'trial','val'}), ...
-                struct(), distribute=true, subject=[1]);
+            tc.verifyError(@() scifor.for_each(@() tbl, struct(), ...
+                distribute=true, subject=[1]), 'MATLAB:Python:PyException');
 
-            tc.verifyEqual(height(result), 3);
-            tc.verifyTrue(ismember('trial', result.Properties.VariableNames));
-            tc.verifyTrue(ismember('val', result.Properties.VariableNames));
-            % trial column comes from the output table itself
+            result = scifor.for_each(@() tbl, struct(), subject=[1]);
             tc.verifyEqual(result.trial, [10; 20; 30]);
             tc.verifyEqual(result.val, [100; 200; 300]);
         end

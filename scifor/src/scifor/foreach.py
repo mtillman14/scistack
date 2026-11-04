@@ -25,6 +25,14 @@ from typing import TYPE_CHECKING, Any
 
 from scistacklog import Log
 
+from .distribute import (
+    DistributeError,
+    MissingSchemaKeyError,
+    group_ordinals,
+    multi_row_groups,
+    resolve_target,
+)
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -270,11 +278,11 @@ class RunTally:
     no_data_groups: "dict[str, list[str]]" = field(default_factory=dict)
     #: for_columns combine: group name -> output columns, first-seen order.
     group_columns: "dict[str, list[str]]" = field(default_factory=dict)
-    #: distribute: whether the "key column addresses the pieces" branch has
-    #: been reported yet. Once per run at INFO, then DEBUG per combo — the
-    #: ordinal-vs-column choice changes every saved address, so it must be
-    #: visible in scistack.log without flooding it.
-    distribute_column_reported: bool = False
+    #: distribute: outputs whose key columns have been reported, once per run:
+    #: they change every saved address, so they must be in scistack.log.
+    distribute_column_reported: "set[str]" = field(default_factory=set)
+    #: distribute: output label -> its target. One output has one level.
+    distribute_targets: "dict[str, str]" = field(default_factory=dict)
 
     @property
     def no_data(self) -> int:
@@ -1367,8 +1375,8 @@ def _announce(plan: RunPlan) -> None:
         if plan.distribute_key is not None:
             print(
                 f"[dry-run] distribute: '{plan.distribute_key}' (split outputs by "
-                f"element/row; a returned '{plan.distribute_key}' column addresses "
-                f"the pieces, otherwise 1-based row ordinals)"
+                f"element/row, numbered from 1; a returned table carrying "
+                f"'{plan.distribute_key}' files one level lower per group)"
             )
         print()
 
@@ -1446,7 +1454,7 @@ def run_combo(plan: RunPlan, metadata: dict, hooks: LoopHooks, tally: RunTally) 
             )
     if plan.distribute_key is None:
         return ComboResult(rows=[(metadata, result)])
-    return ComboResult(rows=_distribute_rows(plan.distribute_key, metadata, metadata_str, result, tally))
+    return ComboResult(rows=_distribute_rows(plan, metadata, metadata_str, result, tally))
 
 
 def _prepare_combo_inputs(
@@ -1587,34 +1595,77 @@ def _call_at_combo(
     return result
 
 
+#: A result row's slot before any output filled it. A list output may hold None.
+_NO_SLOT = object()
+
+
 def _distribute_rows(
-    distribute_key: str, metadata: dict, metadata_str: str, result: tuple, tally: RunTally
+    plan: RunPlan, metadata: dict, metadata_str: str, result: tuple, tally: RunTally
 ) -> "list[tuple[dict, tuple]]":
-    """Expand each output of one combo into one row per piece at
-    ``distribute_key``."""
-    rows: "list[tuple[dict, tuple]]" = []
-    for output_value in result:
+    """Expand one combo's outputs into one result row per address.
+
+    Each row holds one slot per output, because port i is return value i. An
+    output with no piece at an address saves nothing there (a ``NoOutput``
+    slot). Rows used to hold only the piece of the output being split, so every
+    output of a multi-output run was filed under the first output's name.
+    """
+    by_address: "dict[tuple, tuple[dict, list]]" = {}
+    n_outputs = len(result)
+    for index, output_value in enumerate(result):
         if is_no_output(output_value):
             # Nothing to split (e.g. an empty table); already tallied.
             continue
+        label = _output_label(plan.output_names, index)
         try:
-            key_values, pieces, from_column = _distribute_pieces(output_value, distribute_key)
+            target, carried, pieces = _distribute_pieces(
+                output_value,
+                plan.distribute_key,
+                plan.schema_keys,
+                output_name=label,
+                where=metadata_str,
+            )
         except TypeError as e:
             Log.warn(f"{metadata_str}: cannot distribute: {e}", layer="scifor")
             continue
-        if from_column:
-            msg = (
-                "distribute: output carries a '%s' column — its values "
-                "address the %d piece(s) and the column is removed from "
-                "the data (row ordinals are not used)"
+        previous = tally.distribute_targets.setdefault(label, target)
+        if previous != target:
+            raise DistributeError(
+                f"distribute=True but {label} would be filed at {previous!r} at one "
+                f"combination and at {target!r} at {metadata_str}: its returned tables "
+                f"do not carry the same schema key columns. One output has one level."
             )
-            if not tally.distribute_column_reported:
-                Log.info(msg, distribute_key, len(pieces), layer="scifor")
-                tally.distribute_column_reported = True
-            else:
-                Log.debug(msg, distribute_key, len(pieces), layer="scifor")
-        for key_value, piece in zip(key_values, pieces, strict=True):
-            rows.append(({**metadata, distribute_key: key_value}, (piece,)))
+        if carried and label not in tally.distribute_column_reported:
+            tally.distribute_column_reported.add(label)
+            Log.info(
+                "distribute: %s carries %s, so its rows are numbered within each "
+                "group at '%s' and those columns are removed from the data",
+                label,
+                carried,
+                target,
+                layer="scifor",
+            )
+        for address, piece in pieces:
+            key = tuple(sorted((k, str(v)) for k, v in address.items()))
+            _meta, slots = by_address.setdefault(
+                key, ({**metadata, **address}, [_NO_SLOT] * n_outputs)
+            )
+            slots[index] = piece
+
+    rows: "list[tuple[dict, tuple]]" = []
+    for row_metadata, slots in by_address.values():
+        for index, slot in enumerate(slots):
+            if slot is not _NO_SLOT:
+                continue
+            original = result[index]
+            if is_no_output(original):
+                slots[index] = original
+                continue
+            skipped = NoOutput("skipped", "no row of this output at this address")
+            slots[index] = skipped
+            tally.output_skips.setdefault(_output_label(plan.output_names, index), []).append(
+                (metadata_str, skipped)
+            )
+        rows.append((row_metadata, tuple(slots)))
     return rows
 
 
@@ -3469,11 +3520,6 @@ def _results_to_output_dataframe(
     return _restore_schema_column_dtypes(result, col_dtypes)
 
 
-class MissingSchemaKeyError(ValueError):
-    """Rows of a returned table have a blank value in a schema-key column, so
-    they have no address to be saved at."""
-
-
 def spread_output_frame(
     frame: "pd.DataFrame",
     metadata: dict,
@@ -3589,31 +3635,68 @@ def spread_nested_results(
 # ---------------------------------------------------------------------------
 
 
-def _distribute_pieces(data: Any, distribute_key: str) -> tuple[list, list, bool]:
-    """Split one output for ``distribute`` and decide what addresses each piece.
+def _distribute_pieces(
+    data: Any, distribute_key: str, schema_keys: "list[str]", *, output_name: str, where: str
+) -> "tuple[str, list[str], list[tuple[dict, Any]]]":
+    """Split one output for ``distribute``: ``(target, carried, [(address, piece)])``.
 
-    Returns ``(key_values, pieces, from_column)``.
-
-    A DataFrame that carries the target key as a column already says where
-    each row belongs: its values become the key values and the column is
-    stripped from the pieces so it does not collide with the metadata column
-    of the same name. Anything else (an unlabelled DataFrame, a numpy array,
-    a list) is addressed by 1-based position. This mirrors the MATLAB loop
-    (``+scifor/for_each.m``, ``ismember(dist_key_char, VariableNames)``) so
-    the two languages file a labelled table identically.
+    A DataFrame's key columns from ``distribute_key`` down are part of each
+    row's address, and move out of the data. The rule is
+    :mod:`scifor.distribute`. Anything else (a numpy array, a list) is numbered
+    from 1 at ``distribute_key``.
     """
     try:
         import pandas as pd
 
-        if isinstance(data, pd.DataFrame) and distribute_key in data.columns:
-            key_values = data[distribute_key].tolist()
-            stripped = data.drop(columns=[distribute_key])
-            pieces = [stripped.iloc[[i]] for i in range(len(stripped))]
-            return key_values, pieces, True
+        if isinstance(data, pd.DataFrame):
+            target, carried = resolve_target(
+                schema_keys, distribute_key, data.columns, output_name=output_name
+            )
+            # None is the owner's one spelling of "blank" (NaN, NaT, pd.NA).
+            columns = [
+                [
+                    None if blank else value
+                    for value, blank in zip(
+                        data[key].tolist(), data[key].isna().tolist(), strict=True
+                    )
+                ]
+                for key in carried
+            ]
+            ordinals = (
+                group_ordinals(carried, columns, output_name=output_name, where=where)
+                if carried
+                else list(range(1, len(data) + 1))
+            )
+            if carried:
+                for group, count in multi_row_groups(carried, columns):
+                    Log.info(
+                        "distribute: %s %s has %d rows, filed at %s = 1..%d in table order",
+                        output_name,
+                        group,
+                        count,
+                        target,
+                        count,
+                        layer="scifor",
+                    )
+            stripped = data.drop(columns=carried)
+            pieces = [
+                (
+                    {
+                        **{key: column[i] for key, column in zip(carried, columns, strict=True)},
+                        target: ordinals[i],
+                    },
+                    stripped.iloc[[i]],
+                )
+                for i in range(len(data))
+            ]
+            return target, carried, pieces
     except ImportError:
         pass
-    pieces = _split_for_distribute(data)
-    return list(range(1, len(pieces) + 1)), pieces, False
+    pieces = [
+        ({distribute_key: i}, piece)
+        for i, piece in enumerate(_split_for_distribute(data), start=1)
+    ]
+    return distribute_key, [], pieces
 
 
 def _split_for_distribute(data: Any) -> list[Any]:

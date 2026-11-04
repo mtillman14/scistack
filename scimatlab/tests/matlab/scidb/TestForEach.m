@@ -567,44 +567,19 @@ classdef TestForEach < matlab.unittest.TestCase
             end
         end
 
-        function test_distribute_session_column_in_output(testCase)
-            % When the output table contains a column named after the
-            % distribute_key ("session"), distribute= uses those column values
-            % to determine which session each row is stored at (instead of
-            % 1-based row indices). The session column must NOT appear in the
-            % saved data.
-            %
-            % table_with_session_col doubles A/B and adds session=[3;1;2],
-            % so: row 1 (A=2) → session=3, row 2 (A=4) → session=1,
-            %     row 3 (A=6) → session=2.
+        function test_distribute_refuses_a_table_carrying_the_deepest_key(testCase)
+            % A returned "session" column under [subject, session] leaves no
+            % level below it. TestSpreadParity files the same table with
+            % distribute off, by that column's values.
             tbl = table;
             tbl.A = [1; 2; 3];
             tbl.B = [4; 5; 6];
 
-            sessions = [1, 2, 3];
-            % for sess = sessions
-            %     ProcessedSignal().save(tbl(sess,:), 'subject', '1', 'session', sess);
-            % end
-
-            scidb.for_each(@table_with_session_col, ...
+            testCase.verifyError(@() scidb.for_each(@table_with_session_col, ...
                 struct('x', tbl), ...
                 {ProcessedSignal()}, ...
                 'subject', "1", ...
-                distribute=true ...
-            );
-
-            % session=1 ← row 2 of output (A=4), session=2 ← row 3 (A=6),
-            % session=3 ← row 1 (A=2)
-            expected_A = containers.Map({1, 2, 3}, {4.0, 6.0, 2.0});
-            expected_B = containers.Map({1, 2, 3}, {10.0, 12.0, 8.0});
-            for sess = sessions
-                result = ProcessedSignal().load('subject', '1', 'session', sess);
-                testCase.verifyTrue(istable(result.data));
-                testCase.verifyEqual(result.data.A, expected_A(sess), 'AbsTol', 1e-10);
-                testCase.verifyEqual(result.data.B, expected_B(sess), 'AbsTol', 1e-10);
-                % The session column must have been stripped from the saved data
-                testCase.verifyFalse(ismember('session', result.data.Properties.VariableNames));
-            end
+                distribute=true), 'MATLAB:Python:PyException');
         end
 
         function test_distribute_idempotent(testCase)

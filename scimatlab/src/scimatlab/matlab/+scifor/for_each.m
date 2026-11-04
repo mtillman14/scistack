@@ -1233,8 +1233,8 @@ end
 
 function state = collect_distributed(state, result, metadata, metadata_str, plan, opts, n_outputs)
 %COLLECT_DISTRIBUTED  Split each output into pieces (table rows, vector
-%   elements, matrix rows); a returned distribute-key column addresses the
-%   pieces, else 1-based ordinals.
+%   elements, matrix rows), numbered from 1 at the distribute key. A table's
+%   schema key columns move the target lower (collect_distributed_table).
     key = plan.distribute_key;
     for o = 1:min(n_outputs, numel(result))
         raw_value = result{o};
@@ -1243,25 +1243,6 @@ function state = collect_distributed(state, result, metadata, metadata_str, plan
                 if height(raw_value) == 1
                     raw_value = expand_single_row_for_distribute(raw_value);
                 end
-                data_tbl = raw_value;
-                if ismember(key, raw_value.Properties.VariableNames)
-                    dist_values = raw_value.(key);
-                    data_tbl.(key) = [];
-                    state.distribute_from_column = state.distribute_from_column + 1;
-                else
-                    dist_values = (1:height(raw_value))';
-                end
-                if ~opts.nest_table_outputs
-                    overlap = intersect(fieldnames(metadata), data_tbl.Properties.VariableNames, 'stable');
-                    if ~isempty(overlap)
-                        data_tbl = removevars(data_tbl, overlap);
-                    end
-                end
-                for r = 1:height(data_tbl)
-                    dist_meta = metadata;
-                    dist_meta.(key) = dist_values(r);
-                    state.collected{o}{end+1} = {dist_meta, data_tbl(r, :)};
-                end
             else
                 pieces = split_for_distribute(raw_value);
                 for k = 1:numel(pieces)
@@ -1269,10 +1250,62 @@ function state = collect_distributed(state, result, metadata, metadata_str, plan
                     dist_meta.(key) = k;
                     state.collected{o}{end+1} = {dist_meta, pieces{k}};
                 end
+                continue
             end
         catch err2
             scifor.Log.warn('%s: cannot distribute output %d: %s', metadata_str, o, err2.message);
+            continue
         end
+        % Outside the try: a refusal here is an error in the run, not a warning.
+        state = collect_distributed_table(state, raw_value, o, metadata, metadata_str, plan, opts);
+    end
+end
+
+
+function state = collect_distributed_table(state, raw_value, o, metadata, metadata_str, plan, opts)
+%COLLECT_DISTRIBUTED_TABLE  File one returned table's rows. Python owns the
+%   rule (scifor.distribute, through scifor.matlab_loop): this reads the table.
+    label = sprintf('%s (output %d)', char(plan.output_names{o}), o);
+    resolved = jsondecode(char(py.scifor.matlab_loop.distribute_target( ...
+        plan.token, label, jsonencode(raw_value.Properties.VariableNames))));
+    target = char(resolved.target);
+    carried = {};
+    if ~isempty(resolved.carried)
+        carried = cellstr(resolved.carried);
+    end
+    data_tbl = raw_value;
+    if isempty(carried)
+        ordinals = (1:height(raw_value))';
+    else
+        key_columns = cell(1, numel(carried));
+        for k = 1:numel(carried)
+            % string() spells a blank as missing, which jsonencode writes as null.
+            values = string(raw_value.(carried{k}));
+            key_columns{k} = num2cell(values(:)');
+        end
+        ordinals = jsondecode(char(py.scifor.matlab_loop.distribute_ordinals( ...
+            jsonencode(carried(:)'), jsonencode(key_columns), label, metadata_str)));
+        data_tbl = removevars(data_tbl, carried);
+        state.distribute_from_column = state.distribute_from_column + 1;
+    end
+    if ~opts.nest_table_outputs
+        overlap = intersect(fieldnames(metadata), data_tbl.Properties.VariableNames, 'stable');
+        if ~isempty(overlap)
+            data_tbl = removevars(data_tbl, overlap);
+        end
+    end
+    for r = 1:height(data_tbl)
+        dist_meta = metadata;
+        for k = 1:numel(carried)
+            column = raw_value.(carried{k});
+            if iscell(column)
+                dist_meta.(carried{k}) = column{r};
+            else
+                dist_meta.(carried{k}) = column(r);
+            end
+        end
+        dist_meta.(target) = ordinals(r);
+        state.collected{o}{end+1} = {dist_meta, data_tbl(r, :)};
     end
 end
 

@@ -1,0 +1,73 @@
+{
+  "description": "Where distribute=True files a returned table's rows. Owner: scifor.distribute. Read by scifor/tests/test_distribute_cases.py and scimatlab/tests/matlab/scifor/TestDistributeCases.m, both end to end through for_each.",
+  "cases": [
+    {
+      "name": "no key columns: numbered per combination, below the iterated key",
+      "schema": ["subject", "bout"],
+      "iterate": {"subject": "A"},
+      "frame": {"val": [1.0, 2.0]},
+      "addresses": [{"subject": "A", "bout": "1"}, {"subject": "A", "bout": "2"}]
+    },
+    {
+      "name": "a CSV with a repeated subject: every subject gets a bout, single rows too",
+      "schema": ["subject", "bout", "date"],
+      "iterate": {},
+      "frame": {"subject": ["A", "B", "B"], "val": [1.0, 2.0, 3.0]},
+      "addresses": [
+        {"subject": "A", "bout": "1"},
+        {"subject": "B", "bout": "1"},
+        {"subject": "B", "bout": "2"}
+      ]
+    },
+    {
+      "name": "no repeats still goes one level down: the level never depends on the data",
+      "schema": ["subject", "bout"],
+      "iterate": {},
+      "frame": {"subject": ["A", "B"], "val": [1.0, 2.0]},
+      "addresses": [{"subject": "A", "bout": "1"}, {"subject": "B", "bout": "1"}]
+    },
+    {
+      "name": "two carried keys",
+      "schema": ["subject", "session", "speed"],
+      "iterate": {},
+      "frame": {"subject": ["A", "A", "B"], "session": ["x", "y", "x"], "val": [1.0, 2.0, 3.0]},
+      "addresses": [
+        {"subject": "A", "session": "x", "speed": "1"},
+        {"subject": "A", "session": "y", "speed": "1"},
+        {"subject": "B", "session": "x", "speed": "1"}
+      ]
+    },
+    {
+      "name": "an iterated key plus a carried key, numbered within each group",
+      "schema": ["subject", "session", "speed"],
+      "iterate": {"subject": "A"},
+      "frame": {"session": ["x", "x", "y"], "val": [1.0, 2.0, 3.0]},
+      "addresses": [
+        {"subject": "A", "session": "x", "speed": "1"},
+        {"subject": "A", "session": "x", "speed": "2"},
+        {"subject": "A", "session": "y", "speed": "1"}
+      ]
+    },
+    {
+      "name": "carrying the deepest key leaves nothing below it",
+      "schema": ["subject", "session"],
+      "iterate": {"subject": "A"},
+      "frame": {"session": ["x", "y"], "val": [1.0, 2.0]},
+      "error": "no lower level to distribute to"
+    },
+    {
+      "name": "a carried key below the target",
+      "schema": ["subject", "bout", "date"],
+      "iterate": {},
+      "frame": {"subject": ["A", "B"], "date": ["d1", "d2"], "val": [1.0, 2.0]},
+      "error": "which is above them"
+    },
+    {
+      "name": "a blank carried key names the rows",
+      "schema": ["subject", "bout"],
+      "iterate": {},
+      "frame": {"subject": ["A", null], "val": [1.0, 2.0]},
+      "error": "subject: row(s) [1]"
+    }
+  ]
+}

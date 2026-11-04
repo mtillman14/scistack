@@ -9,29 +9,53 @@ Concerns `scifor` (owner), `scimatlab` (bridge), and how the GUI's
 
 > Deselect every schema key (run once), tick Distribute, return a table with
 > `subject` and `session` columns under schema
-> `[subject, session, speed, trial, cycle]`. Is it distributed to
-> `subject & session`, or just `subject`?
+> `[subject, session, speed, trial, cycle]`. Where do the rows land?
 
-Neither is quite right, because the question conflates two mechanisms.
+At `(subject, session, speed)`, with `speed` numbered within each
+`(subject, session)` (rule changed 2026-11-04). Leave Distribute off to file them
+at `(subject, session)`.
 
-## Mechanism 1: `distribute=True` — positional fan-out to ONE key
+## Mechanism 1: `distribute=True` — numbering rows one level down
 
-`scifor/foreach.py`, target resolution at "Step 3" (`resolve_distribute_target`):
+The owner is `scifor/distribute.py`; both languages call it. The shared cases
+are in `docs/claude/distribute-cases.json`.
 
-- The target is exactly one schema key: **the key one level below the
-  deepest iterated key**. Nothing iterated → the top of the schema.
-- Each output is split into pieces (`_distribute_pieces`): a DataFrame by
-  row, a 1-D array by element, a 2-D array by row, a list by item.
-- **Addressing the pieces** (since 2026-09-15, both languages agree):
-  - if the output is a DataFrame that **carries the target key as a
-    column**, that column's values address the pieces and the column is
-    stripped from the data (`INFO: distribute: output carries a 'cycle'
-    column — its values address the N piece(s)…`);
-  - otherwise the pieces get **1-based row ordinals**.
+- The target is one schema key: **the first key below the iterated keys that the
+  returned table does not carry as a column**. Nothing iterated and nothing
+  carried: the top of the schema.
+- Rows are numbered from 1 in table order, **restarting within each group of
+  carried key values**. A CSV with 34 rows for 33 subjects under
+  `[subject, bout, date]` gives 34 records at `(subject, bout)`: every subject has
+  `bout=1`, and the repeated subject also has `bout=2`.
+- Arrays and lists have no columns: numbered per combination at the key below the
+  iterated ones. A 2-D array splits by row.
+- Carried key columns move out of the data into the address.
 - `distribute` is identity-bearing (in `invocation_id` / `call_id`).
 
-`distribute` is for outputs that have *no address of their own* — "row 3 →
-cycle 3". It never targets two keys.
+**The level never depends on the data.** A table with no repeats still goes one
+level down. If only a repeat moved it, one new duplicate row in a CSV would move
+every record to another level on the next run.
+
+**Row order is the identity.** The numbers come from table order, so a re-export
+sorted differently gives `bout=1` to a different stay, saved as a new version at
+the same address. Sort first when order matters. Each group with more than one
+row is logged at INFO.
+
+**It can fill a key with the wrong kind of value.** With `[subject, date]` and no
+`date` column, `date` becomes 1, 2. SciStack cannot detect that; the log names the
+target.
+
+**Refusals**, all stopping the run before anything is saved:
+
+| Situation | Error |
+|---|---|
+| The table carries keys down to the deepest one | `DistributeError`: turn distribute off |
+| It carries a key below the target (`subject`, `date`, no `bout`) | `DistributeError` |
+| One output's target differs between combinations | `DistributeError` |
+| A carried key is blank | `MissingSchemaKeyError`, naming the rows |
+
+Each result row holds one slot per output, so a multi-output run keeps each output
+under its own name. An output with no row at an address saves nothing there.
 
 ## Mechanism 2: the spread rule — address-by-returned-columns, no flag
 
@@ -42,7 +66,7 @@ carries a schema key the combination did not already pin** (or has ≤1 row,
 which cannot multiply anything). Every unpinned schema-key column becomes
 part of the row's address; every pinned one is replicated from the combo.
 
-So the answer to the prompting question is: leave Distribute **off**. With
+For the prompting table, Distribute **off** is what files it. With
 nothing iterated, `subject` and `session` are both unpinned, the rule spreads
 the 73 rows, and each record lands at its own `(subject, session)`. Logged as
 `output X: … discriminated by unpinned schema key(s) ['session', 'subject']
@@ -50,16 +74,15 @@ the 73 rows, and each record lands at its own `(subject, session)`. Logged as
 is instead one record per combination (`saving each whole table as ONE
 record per combination`).
 
-With Distribute **on** in that shape, `subject` is the target: the table's
-`subject` column addresses the pieces (column-reading), the `session`
-column is unpinned so the spread rule still files each piece at
-`(subject, session)`. Same records, but via a path that exists for
-unlabelled outputs; prefer the flag off.
+With Distribute **on** in that shape, `subject` and `session` are carried, so
+the rows are numbered at `speed` within each `(subject, session)`. That is a
+different level from the flag off, on purpose: the flag means "one level below
+what is iterated or carried".
 
 | | `distribute=True` | spread rule |
 |---|---|---|
 | trigger | explicit flag | returned table carries an unpinned schema key |
-| keys addressed | exactly one (next below deepest iterated) | every unpinned key column |
+| level | one below the deepest key iterated or carried | exactly the keys the table carries |
 | unlabelled output | ordinals | one record per combo (no spread) |
 | identity | in `invocation_id` | none (it's just how rows are filed) |
 
@@ -88,16 +111,11 @@ files each output's rows by that output's own key columns
 `[subject, bout]` and `[subject, bout, date]`. A blank key raises
 `MissingSchemaKeyError` naming the rows, and nothing from the call is saved.
 
-**Distribute column-reading:** MATLAB (`+scifor/for_each.m`,
-`ismember(dist_key_char, VariableNames)`) had always read the target key
-from a returned column; Python stamped ordinals regardless. Python now
-matches MATLAB (`_distribute_pieces`).
-
 ## Reading a run in `scistack.log`
 
 1. `resolve_distribute_target: '<key>'` — only if `distribute` is on.
-2. `distribute: output carries a '<key>' column …` — column-reading took
-   effect (else ordinals; no line).
+2. `distribute: X carries [...]` and `distribute: X {...} has N rows` — the
+   table carried key columns; rows are numbered within each group.
 3. `output X: … discriminated by unpinned schema key(s) [...]` **or**
    `… saving each whole table as ONE record per combination` — the spread
    decision, in either language.
@@ -111,15 +129,14 @@ matches MATLAB (`_distribute_pieces`).
 ## Tests
 
 - `scifor/tests/test_foreach_standalone.py` —
-  `test_distribute_reads_target_key_column_when_present`,
   `test_distribute_uses_ordinals_when_target_key_column_absent`,
-  `test_distribute_column_reading_top_of_schema_nothing_iterated`,
   `test_spread_nested_results_*`.
 - `scimatlab/tests/test_bridge_spread_parity.py` — simulated MATLAB loop
   through `for_each_prepare`/`for_each_save`.
 - `scimatlab/tests/matlab/scidb/TestSpreadParity.m` — end to end in MATLAB.
-- `scimatlab/tests/matlab/scidb/TestForEach.m::test_distribute_session_column_in_output`
-  — the MATLAB column-reading behaviour Python now mirrors.
+- `scifor/tests/test_distribute_cases.py` and `scimatlab/tests/matlab/scifor/TestDistributeCases.m`
+  run the shared cases end to end; `scidb/tests/test_record_granularity.py::TestDistributeBelowCarriedKeys`
+  saves the repeated-subject CSV shape.
 
 ## Related
 
