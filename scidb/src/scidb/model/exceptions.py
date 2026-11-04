@@ -316,10 +316,24 @@ class DuplicateLocationError(SciStackError):
             f"or session column, that tells the rows apart; schema keys are set "
             f"when a database is created, so this means a new project database) "
             f"or change the data (remove the extra row in the "
-            f"source file, or combine the rows in your function), or save with "
-            f"on_duplicate=\"combine\" to make each location one record whose "
-            f"differing values are lists."
+            f"source file, or combine the rows in your function)"
+            + (
+                f", or run with distribute=True to number the rows at "
+                f"{self.distribute_target!r} within each location."
+                if self.distribute_target
+                else "."
+            )
         )
+
+    @property
+    def distribute_target(self) -> "str | None":
+        """The schema key below the colliding locations, where `distribute=True`
+        would number these rows. None at the deepest key."""
+        level = self._level()
+        if level not in self.schema_keys:
+            return self.schema_keys[0] if self.schema_keys else None
+        index = self.schema_keys.index(level)
+        return self.schema_keys[index + 1] if index + 1 < len(self.schema_keys) else None
 
     def _level(self) -> str:
         """The deepest schema key the colliding locations name."""
@@ -374,20 +388,27 @@ class DuplicateLocationError(SciStackError):
                     ),
                     "action": "reveal_function",
                 },
-                {
-                    "title": "Combine the rows",
-                    "text": (
-                        "If the rows belong to one location (for example two "
-                        "hospital stays of one subject), save them as one "
-                        "record: a column whose rows agree keeps that one "
-                        "value, and a column whose rows differ holds the list "
-                        "of every row's value, in row order. This turns on "
-                        "on_duplicate=\"combine\" for this function and runs "
-                        "it again."
-                    ),
-                    "action": "combine_rows",
-                },
-            ],
+            ]
+            + (
+                [
+                    {
+                        "title": f"Number the rows at {self.distribute_target}",
+                        "text": (
+                            f"If the rows are separate observations of one "
+                            f"location (for example two hospital stays of one "
+                            f"subject), save each one at its own "
+                            f"{self.distribute_target}, numbered 1, 2, ... in "
+                            f"row order within each location. Every row gets a "
+                            f"number, including rows with no duplicate. This "
+                            f"turns on Distribute for this function and runs it "
+                            f"again."
+                        ),
+                        "action": "distribute_rows",
+                    }
+                ]
+                if self.distribute_target
+                else []
+            ),
         }
 
 

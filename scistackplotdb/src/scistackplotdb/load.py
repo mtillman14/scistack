@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from sciduckdb import merge_tz_columns, stored_tz_companions, tz_column_name
 from scistacklog import Log
-from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX, element_values
+from scistackplot import CODE_FACTOR_PREFIX, RUN_FACTOR_PREFIX
 from scistackplot.text.framesize import format_extent, frame_extent
 from scistackplot.model.shape import Shape, classify_value
 from scistackplot.model.table import natural_sort_key
@@ -98,11 +98,6 @@ class VariableFrame:
     #: Name of the per-row "this is my location's newest code version" flag, or
     #: None when the variable holds only one version. See :data:`LATEST_COLUMN`.
     latest_column: str | None = None
-    #: Data columns stored as ``row_list`` ("combine rows": one element per
-    #: source row, sciduckdb.row_lists). Their cells arrive as arrays; the
-    #: source splits them into rows with a ``Row`` factor
-    #: (scistackplot.reduce.rows), never plots them as 1-D series.
-    row_list_columns: list[str] = field(default_factory=list)
 
     @property
     def value_column(self) -> str:
@@ -273,13 +268,7 @@ def sample_value(db, variable: str) -> Any:
     columns = data_columns_for(db, variable)
     if not columns:
         return None
-    value = db.record_store.sample_cell(variable, columns[0])
-    # A row list's cell is its source rows, not a series: classify by one
-    # ELEMENT, the shape the source turns it into (rows + a Row factor).
-    if value is not None and _row_list_columns(db, variable, columns[:1]):
-        elements = element_values(pd.Series([value], dtype=object)).dropna()
-        value = elements.iloc[0] if len(elements) else None
-    return value
+    return db.record_store.sample_cell(variable, columns[0])
 
 
 def sample_column_value(db, variable: str, column: str) -> Any:
@@ -308,18 +297,13 @@ def field_shapes(db, variable: str) -> dict[str, Shape]:
     a "(text)" entry that then says it has no text fields.
     """
     types = data_column_types_for(db, variable)
-    row_lists = set(_row_list_columns(db, variable, list(types)))
     shapes: dict[str, Shape] = {}
     with Log.timer(f"field_shapes({variable})", layer=LAYER, extra=f"{len(types)} column(s)"):
         for column, data_type in types.items():
-            if is_container_type(data_type) and column not in row_lists:
+            if is_container_type(data_type):
                 shapes[column] = Shape.SERIES_1D
                 continue
-            value = sample_column_value(db, variable, column)
-            if value is not None and column in row_lists:
-                elements = element_values(pd.Series([value], dtype=object)).dropna()
-                value = elements.iloc[0] if len(elements) else None
-            shapes[column] = classify_value(value)
+            shapes[column] = classify_value(sample_column_value(db, variable, column))
     return shapes
 
 
@@ -441,28 +425,6 @@ def _key_text(value: Any) -> "str | None":
     return str(value)
 
 
-def _row_list_columns(db, variable: str, columns) -> list[str]:
-    """Which columns are row lists (sciduckdb.row_lists: rows combined by
-    ``on_duplicate="combine"``). This reader selects the stored cells as they
-    are, so EVERY cell of such a column is an array (``[7]``, ``[5, 12]``).
-    The source splits them into rows with a ``Row`` factor
-    (scistackplot.reduce.rows) — they are observations, not a 1-D series. This
-    replaced the "read as 1-D" decision of
-    .claude/plan-combine-duplicate-locations.md §6 on 2026-10-30
-    (.claude/plan-row-list-plots.md)."""
-    from sciduckdb import is_row_list_meta
-
-    stored = (db.get_dtype_meta(variable) or {}).get("columns", {})
-    row_lists = [c for c in columns if is_row_list_meta(stored.get(c))]
-    if row_lists:
-        Log.debug(
-            "variable %r: row-list column(s) %s (combined rows) — split into "
-            "one row per element by the source",
-            variable, row_lists, layer=LAYER,
-        )
-    return row_lists
-
-
 def load_variable(
     db, variable: str, *, with_variants: bool = True, include_data: bool = True
 ) -> VariableFrame:
@@ -487,7 +449,6 @@ def load_variable(
             keys = schema_keys(db)
             column_types = data_column_types_for(db, variable)
             columns = list(column_types)
-            row_list_columns = _row_list_columns(db, variable, columns)
         if not columns:
             Log.warn("variable %r has no data columns", variable, layer=LAYER)
             return VariableFrame(name=variable, frame=pd.DataFrame())
@@ -581,7 +542,6 @@ def load_variable(
             variant_columns=variant_columns,
             variant_axes=variant_axes,
             latest_column=latest_column,
-            row_list_columns=[c for c in row_list_columns if c in columns],
         )
 
 

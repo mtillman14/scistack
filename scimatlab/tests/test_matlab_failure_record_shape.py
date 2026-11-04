@@ -169,7 +169,6 @@ def test_a_python_save_error_becomes_a_run_level_group_with_its_remedy():
     assert [s["action"] for s in back["remedy"]["steps"]] == [
         None,
         "reveal_function",
-        "combine_rows",
     ]
 
 

@@ -253,6 +253,17 @@
     "CanvasRefreshRequest": {
       "description": "One applied canvas refresh (frontend components/DAG/canvasRefreshLog.ts).",
       "properties": {
+        "discarded": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "dropped": {
           "anyOf": [
             {
@@ -1226,6 +1237,22 @@
         }
       },
       "title": "DifferenceBar",
+      "type": "object"
+    },
+    "DistributeOption": {
+      "properties": {
+        "node_id": {
+          "type": "string"
+        },
+        "value": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "node_id",
+        "value"
+      ],
+      "title": "DistributeOption",
       "type": "object"
     },
     "EdgeCreate": {
@@ -2656,22 +2683,6 @@
         "text"
       ],
       "title": "NoteUpdate",
-      "type": "object"
-    },
-    "OnDuplicate": {
-      "properties": {
-        "node_id": {
-          "type": "string"
-        },
-        "value": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "node_id",
-        "value"
-      ],
-      "title": "OnDuplicate",
       "type": "object"
     },
     "OpenRequest": {
@@ -4750,6 +4761,52 @@
       "title": "SchemaLevelRequest",
       "type": "object"
     },
+    "ScopeNavigationRequest": {
+      "description": "One step into a submodule (frontend context/descendInto.ts).",
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "before": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ScopeNavigationRequest",
+      "type": "object"
+    },
     "ScopeQuery": {
       "properties": {
         "pipeline_id": {
@@ -6450,6 +6507,9 @@
     "report_client_timing": {
       "$ref": "#/$defs/ClientTimingRequest"
     },
+    "report_scope_navigation": {
+      "$ref": "#/$defs/ScopeNavigationRequest"
+    },
     "report_studio_open": {
       "$ref": "#/$defs/StudioOpenRequest"
     },
@@ -6468,14 +6528,14 @@
     "schema_key_type_impact": {
       "$ref": "#/$defs/SchemaKeyTypeQuery"
     },
+    "set_distribute": {
+      "$ref": "#/$defs/DistributeOption"
+    },
     "set_entities_file": {
       "$ref": "#/$defs/PathBody"
     },
     "set_note": {
       "$ref": "#/$defs/NoteUpdate"
-    },
-    "set_on_duplicate": {
-      "$ref": "#/$defs/OnDuplicate"
     },
     "set_output_ports": {
       "$ref": "#/$defs/OutputPorts"
@@ -6729,15 +6789,16 @@
     "report_client_build",
     "report_client_error",
     "report_client_timing",
+    "report_scope_navigation",
     "report_studio_open",
     "run_pin_conflicts",
     "save_function_code",
     "save_glue",
     "schema_inventory",
     "schema_key_type_impact",
+    "set_distribute",
     "set_entities_file",
     "set_note",
-    "set_on_duplicate",
     "set_output_ports",
     "set_parameter_group_checked",
     "set_schema_key_type",

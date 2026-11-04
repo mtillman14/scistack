@@ -49,4 +49,4 @@ Reading it:
   template or folder, so moving the data changes no id.
 
 Not in the table (covered elsewhere): glue chains (`docs/claude/free-code-glue-nodes.md`
-§2), `where=` (never in `call_id`; see `ForEachConfig.to_config_keys`), `on_duplicate` / `on_error` (never identity).
+§2), `where=` (never in `call_id`; see `ForEachConfig.to_config_keys`), `on_error` (never identity).

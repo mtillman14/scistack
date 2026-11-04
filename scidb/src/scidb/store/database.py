@@ -26,10 +26,6 @@ from sciduckdb import (
     storage_to_python_column,
     unflatten_dict,
     value_to_storage_row,
-    convert_column_to_row_list,
-    is_row_list_meta,
-    row_list_change,
-    row_list_meta,
     count_null_list_elements,
     is_datetime_meta,
     merge_tz_columns,
@@ -1737,123 +1733,6 @@ class DatabaseManager:
         )[0]
         return {col for col, n in zip(col_types, counts) if n == 0}
 
-    def _reconcile_row_lists(
-        self,
-        table_name: str,
-        variable_class: type[BaseVariable],
-        data_col_types: dict,
-        dtype_meta: dict,
-        frames: list,
-    ) -> tuple[dict, dict]:
-        """The one owner of "this save meets a row_list column" (sciduckdb
-        ``row_lists``; ``on_duplicate="combine"``). Call it right before
-        ``_reconcile_column_types`` on every save path, in every mode.
-
-        Per column where this save or the stored column is a row list (rule:
-        sciduckdb ``row_list_change``):
-        - stored scalar column, this save needs lists -> the column is
-          converted IN PLACE to a row list (every stored value wrapped, so
-          every stored record loads unchanged): lazy conversion;
-        - stored row list, this save's values are scalars -> stored as
-          ``[v]`` (the kind is sticky);
-        - stored row list of ints, this save has fractions -> elements widen;
-        - a genuine array column on either side, or element types the
-          scalar rules refuse -> ColumnTypeChangedError, nothing changed.
-
-        The ALTERs and the ``_variables.dtype`` metadata change in ONE
-        transaction: a converted column is never described as a scalar one.
-        Returns the merged ``(data_col_types, dtype_meta)``.
-        """
-        if dtype_meta.get("custom"):
-            return data_col_types, dtype_meta
-        stored_types = self.stored_data_column_types(table_name)
-        if not stored_types:
-            return data_col_types, dtype_meta
-        type_name = variable_class.__name__
-        stored_dtype = self.get_dtype_meta(type_name) or {}
-        stored_metas = stored_dtype.get("columns", {})
-        in_metas = dtype_meta.get("columns", {})
-
-        new_types = dict(data_col_types)
-        new_metas = dict(in_metas)
-        conversions: list[tuple[str, str, bool]] = []  # (column, elem, from_row_list)
-        conflicts = []
-        for col, in_meta in in_metas.items():
-            s_type = stored_types.get(col)
-            in_type = data_col_types.get(col)
-            if s_type is None or in_type is None or in_meta.get("empty"):
-                continue
-            s_meta = stored_metas.get(col)
-            if s_meta is not None and s_meta.get("empty"):
-                continue  # still undecided: _reconcile_column_types types it
-            decision = row_list_change(s_meta, s_type, in_meta, in_type)
-            if decision is None:
-                continue
-            action, arg = decision
-            if action == "refuse":
-                Log.warn(
-                    f"[save] {type_name}: column {col} cannot be a row list "
-                    f"here: {arg}"
-                )
-                conflicts.append((col, s_type, in_type, _sample_values(frames, col)))
-                continue
-            new_types[col] = f"{arg}[]"
-            new_metas[col] = row_list_meta(arg)
-            if action in ("convert", "alter"):
-                conversions.append((col, arg, action == "alter"))
-            elif not is_row_list_meta(in_meta):
-                Log.debug(
-                    f"[save] {type_name}: column {col} is a row list; this "
-                    f"save's single values are stored as one-element lists"
-                )
-
-        if conflicts:
-            from scidb.model.exceptions import ColumnTypeChangedError
-
-            n_existing = self._duck.fetchall(
-                f'SELECT COUNT(DISTINCT record_id) FROM "{table_name}"'
-            )[0][0]
-            err = ColumnTypeChangedError(type_name, conflicts, n_existing)
-            Log.error(f"[save] {err}")
-            raise err
-
-        if conversions:
-            t0 = time.perf_counter()
-            self._duck.execute(
-                f'DROP VIEW IF EXISTS "{variable_class.view_name()}"'
-            )
-            try:
-                with self._duck.transaction("row-list conversion"):
-                    for col, elem, from_rl in conversions:
-                        convert_column_to_row_list(
-                            self._duck, table_name, col, elem, from_row_list=from_rl
-                        )
-                    if stored_dtype:
-                        updated = dict(stored_dtype)
-                        updated["columns"] = {
-                            **stored_metas,
-                            **{c: row_list_meta(e) for c, e, _ in conversions},
-                        }
-                        self._duck.execute(
-                            "UPDATE _variables SET dtype = ? WHERE variable_name = ?",
-                            [json.dumps(updated), type_name],
-                        )
-            finally:
-                self._create_variable_view(variable_class)
-            Log.info(
-                f"[save] {type_name}: column(s) "
-                + ", ".join(
-                    f"{c} -> {e}[]" + (" (elements widened)" if rl else "")
-                    for c, e, rl in conversions
-                )
-                + " converted to row lists in place (stored values load "
-                f"unchanged) in {time.perf_counter() - t0:.3f}s"
-            )
-
-        merged_meta = dict(dtype_meta)
-        merged_meta["columns"] = new_metas
-        return new_types, merged_meta
-
     def _reconcile_column_types(
         self,
         table_name: str,
@@ -2108,9 +1987,6 @@ class DatabaseManager:
         self._check_column_set(
             table_name, variable_class, list(data_col_types), dtype_meta=dtype_meta
         )
-        data_col_types, dtype_meta = self._reconcile_row_lists(
-            table_name, variable_class, data_col_types, dtype_meta, [data]
-        )
         data_col_types, dtype_meta = self._reconcile_column_types(
             table_name, variable_class, data_col_types, dtype_meta, [data]
         )
@@ -2184,7 +2060,6 @@ class DatabaseManager:
         variable_class: type[BaseVariable],
         data_items: list[tuple[Any, dict]],
         profile: bool = False,
-        row_list_columns: "list | tuple" = (),
     ) -> list[str]:
         """
         Bulk-save a list of (data_value, metadata_dict) pairs for a single variable type.
@@ -2196,7 +2071,7 @@ class DatabaseManager:
         Every call appends a (record_id, timestamp) save-event row to _record_save.
 
         Two phases: :meth:`_plan_batch_rows` (metadata canonicalization, type
-        reconciliation, row lists, record ids and storage rows, as a
+        reconciliation, record ids and storage rows, as a
         :class:`BatchRows`), then ``RecordStore.write_batch_rows`` (the inserts,
         in one re-entrant transaction).
 
@@ -2204,10 +2079,6 @@ class DatabaseManager:
             variable_class: The BaseVariable subclass to save as
             data_items: List of (data_value, flat_metadata_dict) tuples
             profile: If True, print phase-by-phase timing summary
-            row_list_columns: data columns a table save combined into row
-                lists (``on_duplicate="combine"``, scidb.run.combine): stored as
-                sciduckdb ``row_list`` columns, a scalar item as ``[v]``. In
-                single-column mode any name marks the one data column.
 
         Returns:
             List of record_ids for each saved item (in input order), None in
@@ -2215,7 +2086,7 @@ class DatabaseManager:
         """
         if not data_items:
             return []
-        rows = self._plan_batch_rows(variable_class, data_items, row_list_columns)
+        rows = self._plan_batch_rows(variable_class, data_items)
         if not rows.writable:
             return rows.aligned_record_ids()
         self.record_store.write_batch_rows(rows)
@@ -2226,18 +2097,16 @@ class DatabaseManager:
         self,
         variable_class: type[BaseVariable],
         data_items: list[tuple[Any, dict]],
-        row_list_columns: "list | tuple" = (),
     ) -> "BatchRows":
         """Everything a batch save decides before its inserts.
 
         Canonicalizes declared-numeric schema keys, converts custom-serialized
-        values, infers and reconciles the column types (row lists included),
+        values, infers and reconciles the column types,
         skips records that do not fit the batch schema, prepares the table,
         resolves schema ids, and computes each record's content hash, record
         id and storage row. Raises a duplicate-location error before anything
         is written for two different records of one variant at one location.
         """
-        row_list_columns = list(row_list_columns or ())
         n_original = len(data_items)
 
         # Declared-numeric schema keys canonicalize at every DB entry point —
@@ -2277,7 +2146,7 @@ class DatabaseManager:
                 f"{len(data_items)} item(s) in {timings['to_db']:.3f}s"
             )
 
-        first_data = self._batch_reference_schema(rows, data_items, row_list_columns)
+        first_data = self._batch_reference_schema(rows, data_items)
         # No usable schema anywhere (e.g. every record is an empty dict): there
         # is nothing to store. Skip the whole batch rather than create an
         # empty-column table or write contentless rows.
@@ -2296,7 +2165,7 @@ class DatabaseManager:
             f"DuckDB columns: [{col_types_str}]"
         )
 
-        data_items = self._validate_batch_items(rows, data_items, row_list_columns)
+        data_items = self._validate_batch_items(rows, data_items)
         if not data_items:
             return rows
 
@@ -2316,7 +2185,7 @@ class DatabaseManager:
         return rows
 
     def _batch_reference_schema(
-        self, rows: "BatchRows", data_items: list, row_list_columns: list
+        self, rows: "BatchRows", data_items: list
     ) -> Any:
         """Infer the batch's column types from its first usable item, into
         ``rows``; returns that reference item's value."""
@@ -2348,29 +2217,8 @@ class DatabaseManager:
                     [d for d, _ in data_items[1:]]
                     if isinstance(first_data, pd.DataFrame) else ()
                 ),
-                row_list_columns=row_list_columns,
-                more_values=(
-                    [d for d, _ in data_items[1:]]
-                    if row_list_columns and not isinstance(first_data, pd.DataFrame)
-                    else ()
-                ),
             )
         rows.is_dataframe = rows.dtype_meta.get("mode") == "dataframe"
-        # The row-list columns under their STORED names (single-column mode
-        # stores the one data column as "value" whatever the table called it).
-        rows.stored_row_lists = (
-            list(rows.dtype_meta.get("columns", {}))
-            if row_list_columns and rows.dtype_meta.get("mode") == "single_column"
-            else row_list_columns
-        )
-        if row_list_columns:
-            Log.debug(
-                f"save_batch({type_name}): on_duplicate=combine row_list "
-                f"column(s) {row_list_columns} -> stored as "
-                + ", ".join(
-                    f"{c}: {rows.data_col_types.get(c)}" for c in rows.stored_row_lists
-                )
-            )
 
         # Reference-schema selection: a leading degenerate record (e.g. an
         # empty dict -> no columns) must not define the table schema. Fall back
@@ -2387,7 +2235,7 @@ class DatabaseManager:
         return first_data
 
     def _validate_batch_items(
-        self, rows: "BatchRows", data_items: list, row_list_columns: list
+        self, rows: "BatchRows", data_items: list
     ) -> list:
         """The items that fit the batch's columns; the rest are skipped.
 
@@ -2439,11 +2287,8 @@ class DatabaseManager:
                     f"the batch's {list(rows.data_col_types)}"
                 )
             else:
-                _rec_col_types, _ = infer_data_columns(_dv, row_list_columns=row_list_columns)
-                _reason = record_schema_mismatch(
-                    rows.data_col_types, _rec_col_types,
-                    row_list_columns=rows.stored_row_lists,
-                )
+                _rec_col_types, _ = infer_data_columns(_dv)
+                _reason = record_schema_mismatch(rows.data_col_types, _rec_col_types)
             if _reason is None:
                 valid_items.append((_dv, _fm))
                 rows.valid_orig_idx.append(_idx)
@@ -2466,7 +2311,7 @@ class DatabaseManager:
 
     def _prepare_batch_table(self, rows: "BatchRows", data_items: list, first_data: Any) -> None:
         """Check the batch against the variable's stored columns (a variable
-        keeps the columns of its first save), reconcile row lists and column
+        keeps the columns of its first save), reconcile column
         types, and create the data table on a variable's first save."""
         variable_class = rows.variable_class
         table_name = rows.table_name
@@ -2477,9 +2322,6 @@ class DatabaseManager:
             table_name, variable_class, list(rows.data_col_types), dtype_meta=rows.dtype_meta
         )
         values = [d for d, _ in data_items]
-        rows.data_col_types, rows.dtype_meta = self._reconcile_row_lists(
-            table_name, variable_class, rows.data_col_types, rows.dtype_meta, values
-        )
         rows.data_col_types, rows.dtype_meta = self._reconcile_column_types(
             table_name, variable_class, rows.data_col_types, rows.dtype_meta, values
         )

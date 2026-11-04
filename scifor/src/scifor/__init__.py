@@ -23,7 +23,6 @@ Example:
 """
 
 from .colname import ColName
-from .combine import CombineMixedTypesError, CombineReport, combine_duplicate_rows
 from .column_selection import ColumnSelection, column_value
 from .project.discovery import (
     BENIGN_TOPLEVEL_CALLS,
@@ -116,9 +115,6 @@ __all__ = [
     # Batch execution
     "for_each",
     "LoopHooks",
-    "combine_duplicate_rows",
-    "CombineReport",
-    "CombineMixedTypesError",
     "ColumnFunctionError",
     "ForColumnsError",
     "NoDataError",

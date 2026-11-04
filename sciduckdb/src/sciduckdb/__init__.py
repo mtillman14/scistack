@@ -1,7 +1,7 @@
 """sciduckdb: the codec and the locked connection. It creates no tables.
 
 Modules: `codec` (values <-> DuckDB columns), `connection` (`DuckConnection`),
-`datetimes`, `row_lists`. The tables of a project database, `_schema`
+`datetimes`. The tables of a project database, `_schema`
 included, are scidb's (`scidb.store.tables`, `scidb.store.sciduck.SciDuck`). This file is the
 facade; import from `sciduckdb`, not from the modules.
 """
@@ -33,16 +33,6 @@ from .datetimes import (
     tz_companions,
     user_column_types,
 )
-from .row_lists import (
-    ROW_LIST_PTYPE,
-    RowListTypeError,
-    convert_column_to_row_list,
-    is_row_list_meta,
-    row_list_change,
-    row_list_column_type,
-    row_list_meta,
-    unwrap_row_list,
-)
 
 __all__ = [
     "DuckConnection",
@@ -69,12 +59,5 @@ __all__ = [
     "tz_column_name",
     "tz_companions",
     "user_column_types",
-    "ROW_LIST_PTYPE",
     "RowListTypeError",
-    "convert_column_to_row_list",
-    "is_row_list_meta",
-    "row_list_change",
-    "row_list_column_type",
-    "row_list_meta",
-    "unwrap_row_list",
 ]

@@ -312,7 +312,7 @@ class TestCallIdForwardEqualsBackward:
         _seed()
 
         def spread(value):
-            return pd.DataFrame({"cycle": ["1", "2"], "x": [1.0, 2.0]})
+            return pd.DataFrame({"x": [1.0, 2.0]})
 
         self._check(db, spread, {"value": Wide}, dict(subject=[], trial=[]), distribute=True)
 

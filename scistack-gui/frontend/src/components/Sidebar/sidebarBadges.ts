@@ -21,7 +21,6 @@ export interface RunOptionDefaults {
   distribute: boolean
   as_table: boolean
   on_error: string
-  on_duplicate: string
 }
 
 /** A node's stored run options; every field optional (unset = default). */
@@ -31,7 +30,6 @@ export interface RunOptionsLike {
   distribute?: boolean
   as_table?: boolean
   on_error?: string
-  on_duplicate?: string
 }
 
 export type BadgeSection = 'variants' | 'inputs' | 'filters' | 'schema' | 'run_options'
@@ -83,7 +81,7 @@ export function runOptionBadges(opts: RunOptionsLike | null | undefined, default
       value('save') ? 'Results are saved.' : 'Save results is off: outputs are not written to the database.')
   }
   if (value('distribute') !== defaults.distribute) {
-    add('Distribute', 'info', 'Outputs are saved at a lower schema level.')
+    add('Distribute', 'info', 'Rows are numbered one level below the schema keys iterated or carried.')
   }
   if (value('as_table') !== defaults.as_table) {
     add('As table', 'info', 'Inputs keep their schema columns in DataFrames.')
@@ -91,10 +89,6 @@ export function runOptionBadges(opts: RunOptionsLike | null | undefined, default
   if (value('on_error') !== defaults.on_error) {
     add(value('on_error') === 'stop' ? 'Stop on error' : `On error: ${value('on_error')}`, 'warn',
       'The first failing combo stops the run (combos already done are saved).')
-  }
-  if (value('on_duplicate') !== defaults.on_duplicate) {
-    add(value('on_duplicate') === 'combine' ? 'Combine duplicates' : `Duplicates: ${value('on_duplicate')}`, 'info',
-      'Rows at the same location become one record.')
   }
   return out
 }

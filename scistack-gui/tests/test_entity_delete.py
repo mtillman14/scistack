@@ -269,18 +269,15 @@ class TestRunOptionDefaults:
         assert d["distribute"] == params["distribute"].default
         assert d["as_table"] == bool(params["as_table"].default)
         assert d["on_error"] == params["on_error"].default
-        assert d["on_duplicate"] == params["on_duplicate"].default
 
     def test_empty_run_options_read_as_the_defaults(self):
         from scistack_gui.domain.run_options import run_option_defaults
         from scistack_gui.services.run_failures import (
-            on_duplicate_from_config,
             on_error_from_config,
         )
 
         d = run_option_defaults()
         assert on_error_from_config({}) == d["on_error"]
-        assert on_duplicate_from_config(None) == d["on_duplicate"]
 
     def test_served_over_the_api(self, client):
         from scistack_gui.domain.run_options import run_option_defaults

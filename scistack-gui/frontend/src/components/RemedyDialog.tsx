@@ -19,18 +19,18 @@ function StepCard({ step, fnName, nodeId, onDone }: {
   step: RemedyStep; fnName: string; nodeId: string; onDone: () => void
 }) {
   const [note, setNote] = useState<string | null>(null)
-  // 'combine_rows': save on_duplicate="combine" on the node (so later runs
-  // and pipeline runs combine too), then ask the node to run again with it.
-  const combineRows = async () => {
+  // 'distribute_rows': turn on distribute on the node (so later runs and
+  // pipeline runs distribute too), then ask the node to run again with it.
+  const distributeRows = async () => {
     // eslint-disable-next-line no-console
-    console.debug(`[remedy] action=combine_rows node=${nodeId} fn=${fnName}`)
+    console.debug(`[remedy] action=distribute_rows node=${nodeId} fn=${fnName}`)
     try {
-      await callBackend('set_on_duplicate', { node_id: nodeId, value: 'combine' })
-      const detail: RerunNodeDetail = { nodeId, runOptions: { on_duplicate: 'combine' } }
+      await callBackend('set_distribute', { node_id: nodeId, value: true })
+      const detail: RerunNodeDetail = { nodeId, runOptions: { distribute: true } }
       window.dispatchEvent(new CustomEvent(RERUN_NODE_EVENT, { detail }))
       onDone()
     } catch (err) {
-      setNote(`Could not turn on combining for ${fnName}: ${String(err)}`)
+      setNote(`Could not turn on Distribute for ${fnName}: ${String(err)}`)
     }
   }
   const openFunction = async () => {
@@ -63,9 +63,9 @@ function StepCard({ step, fnName, nodeId, onDone }: {
           Open {fnName}
         </button>
       )}
-      {step.action === 'combine_rows' && nodeId && (
-        <button type="button" style={styles.button} onClick={combineRows}>
-          Combine rows and run again
+      {step.action === 'distribute_rows' && nodeId && (
+        <button type="button" style={styles.button} onClick={distributeRows}>
+          Number the rows and run again
         </button>
       )}
       {note && <div style={styles.note}>{note}</div>}

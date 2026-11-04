@@ -97,8 +97,6 @@ FOR_EACH_OPTIONS: "tuple[OptionSpec, ...]" = (
     OptionSpec("schema_keys", None, "names", "selection"),
     OptionSpec("schema_key_types", None, "mapping"),
     OptionSpec("on_error", "continue", "str"),
-    # scidb.run.combine: two result rows at one location saved as one record.
-    OptionSpec("on_duplicate", "error", "str", db_only=True),
     OptionSpec("locations", None, "mapping", "selection"),
     OptionSpec("share_limits", None, "mapping"),
     OptionSpec("project_root", None, "path"),

@@ -2,7 +2,7 @@
 The default value of every GUI run option -- read from scidb, never restated.
 
 A function node's Run Options (dry run, save, distribute, as table, stop at
-first error, combine duplicate rows) are ``scidb.for_each`` keyword
+first error) are ``scidb.for_each`` keyword
 arguments, so ``for_each``'s signature is where their defaults are decided.
 Before this module the GUI restated them twice -- ``run_service`` had its own
 ``opts.get("save", True)`` literals and ``Sidebar.tsx`` had
@@ -29,7 +29,6 @@ RUN_OPTION_KWARGS = {
     "distribute": "distribute",
     "as_table": "as_table",
     "on_error": "on_error",
-    "on_duplicate": "on_duplicate",
 }
 
 #: Options the GUI shows as a checkbox: the default is coerced to bool.

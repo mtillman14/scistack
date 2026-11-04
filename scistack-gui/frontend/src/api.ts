@@ -303,7 +303,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     put_node_config:        { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/config`, method: 'PUT', body: true },
     set_shown_argument:     { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/arguments`, method: 'PUT', body: true },
     set_output_ports:       { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/outputs`, method: 'PUT', body: true },
-    set_on_duplicate:       { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/on-duplicate`, method: 'PUT', body: true },
+    set_distribute:         { path: (p) => `/api/layout/${encodeURIComponent(p.node_id as string)}/distribute`, method: 'PUT', body: true },
     start_run:              { path: '/api/run', method: 'POST', body: true },
     get_schema_level:       { path: '/api/schema-level', method: 'POST', body: true },
     cancel_run:             { path: (p) => `/api/run/${encodeURIComponent(p.run_id as string)}/cancel`, method: 'POST' },
@@ -456,6 +456,8 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     report_client_timing:   { path: '/api/client-timing', method: 'POST', body: true },
     // Which canvas refresh wiped a just-placed item — see DAG/canvasRefreshLog.ts.
     report_canvas_refresh:  { path: '/api/client-canvas-refresh', method: 'POST', body: true },
+    // A step into a submodule, as the breadcrumb took it — see context/descendInto.ts.
+    report_scope_navigation: { path: '/api/client-scope-navigation', method: 'POST', body: true },
     // Which studio opened, from which entry point (docs/claude/studio-unification.md).
     report_studio_open:     { path: '/api/client-studio-open', method: 'POST', body: true },
     // A linked figure + table's shared design (scistackplotdb.designs).

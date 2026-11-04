@@ -57,7 +57,7 @@ Every fetch holds the lock across execute *and* fetch. `execute` returns
 nothing so a result can never be fetched after the lock is released.
 
 Modules: `codec.py` (conversion functions), `connection.py`
-(`DuckConnection`), `datetimes.py`, `row_lists.py`. Import from `sciduckdb`, not from the modules.
+(`DuckConnection`), `datetimes.py`. Import from `sciduckdb`, not from the modules.
 
 ## Schema ids
 

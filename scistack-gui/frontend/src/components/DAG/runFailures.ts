@@ -46,9 +46,9 @@ export interface FailureGroup {
 export interface RemedyStep {
   title: string
   text: string
-  // 'combine_rows': set the node's on_duplicate run option to "combine"
-  // (backend set_on_duplicate) and run it again (RERUN_NODE_EVENT).
-  action?: 'reveal_function' | 'combine_rows' | null
+  // 'distribute_rows': turn on the node's distribute run option (backend
+  // set_distribute) and run it again (RERUN_NODE_EVENT).
+  action?: 'reveal_function' | 'distribute_rows' | null
 }
 
 /** Asks one FunctionNode to run again, optionally with run options patched

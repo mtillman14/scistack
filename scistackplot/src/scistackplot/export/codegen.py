@@ -50,7 +50,6 @@ from ..reduce.resolve import (
 )
 from ..reduce.resolved import DASH_CYCLE
 from ..reduce.reduction import LocationMask, ReductionPlan, ValueFilter, filter_steps
-from ..reduce.rows import row_factor
 from ..model.roles import (
     collapse_steps,
     complete_roles,
@@ -593,44 +592,6 @@ def _factor_level_lines(table, factor: str) -> list[str]:
     return [f"df[{factor!r}] = df[{factor!r}].fillna({MISSING_LEVEL!r}).astype(str)"]
 
 
-def _row_split_lines(spec, table) -> list[str]:
-    """The ``Row`` split of combined rows, mirrored for the endpoint.
-
-    The interactive path splits row-list cells in ``ScidbSource`` through
-    ``rows.explode_row_lists``; the endpoint receives them from scidb as a
-    Python list (several rows) or the plain value (one row,
-    ``sciduckdb.unwrap_row_list``), so a list is the only cell to split.
-    Which fields, and the factor's name, come from the Row factor's origin
-    (``rows.row_factor``) — the resolved result, not re-derived."""
-    factor = row_factor(table)
-    if factor is None:
-        return []
-    origin = factor.origin or {}
-    fields = list(origin.get("fields") or [])
-    field_factor = origin.get("field_factor")
-    y, row = spec.y_measure, factor.name
-    split = (
-        f"df[{field_factor!r}].isin(_row_lists)"
-        if field_factor
-        else "[True] * len(df)"
-    )
-    return [
-        f"# {row}: one row per source row of the combined (\"combine rows\") "
-        f"field(s), numbered 1, 2, … in source order",
-        f"_row_lists = {fields!r}",
-        f"_cells = [list(_v) if _s and isinstance(_v, (list, tuple)) else [_v] "
-        f"for _v, _s in zip(df[{y!r}], {split})]",
-        f"df[{y!r}] = _cells",
-        f"df[{row!r}] = [[str(_i) for _i in range(1, len(_c) + 1)] for _c in _cells]",
-        f"df = df.explode([{y!r}, {row!r}], ignore_index=True)",
-        "try:",
-        f"    df[{y!r}] = pd.to_numeric(df[{y!r}]).astype(\"float64\")",
-        "except (TypeError, ValueError):",
-        "    pass  # not all numbers: left as they are, as the preview leaves them",
-        "",
-    ]
-
-
 def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> list[str]:
     """Melt, filters, 1-D explosion, aggregation — the order resolve() uses.
 
@@ -731,8 +692,6 @@ def _preamble(spec, table, roles, shape, categorical_lines: list[str] = ()) -> l
                 "",
             ]
         )
-
-    lines.extend(_row_split_lines(spec, table))
 
     # A datetime measure becomes wall-clock ms in the plot's time zone mode,
     # after the melt (which makes the column) and before anything filters or

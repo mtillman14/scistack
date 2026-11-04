@@ -8,7 +8,7 @@ table for both transports (``api/handlers.py``).
     PUT    /api/layout/{node_id}/config         put_node_config
     PUT    /api/layout/{node_id}/arguments      set_shown_argument
     PUT    /api/layout/{node_id}/outputs        set_output_ports
-    PUT    /api/layout/{node_id}/on-duplicate   set_on_duplicate
+    PUT    /api/layout/{node_id}/distribute     set_distribute
     GET    /api/notes                           get_notes
     PUT    /api/notes/{key}                     set_note
     GET    /api/parameters                      get_parameters
@@ -86,10 +86,9 @@ class ShownArgument(BaseModel):
     shown: bool = True
 
 
-class OnDuplicate(BaseModel):
+class DistributeOption(BaseModel):
     node_id: str
-    #: "error" | "combine" (scidb.run.combine owns the values).
-    value: str
+    value: bool
 
 
 class OutputPorts(BaseModel):
@@ -209,8 +208,8 @@ def _set_shown_argument(db, req: ShownArgument) -> dict:
     return layout_service.set_shown_argument(db, req.node_id, req.argument, req.shown)
 
 
-def _set_on_duplicate(db, req: OnDuplicate) -> dict:
-    return layout_service.set_on_duplicate(db, req.node_id, req.value)
+def _set_distribute(db, req: DistributeOption) -> dict:
+    return layout_service.set_distribute(db, req.node_id, req.value)
 
 
 def _set_output_ports(db, req: OutputPorts) -> dict:
@@ -393,7 +392,7 @@ LAYOUT_HANDLERS: tuple[Handler, ...] = (
     Handler("put_node_config", "/layout/{node_id}/config", NodeConfigUpdate, _put_node_config, http_method="PUT", undoable=True, undo_label="node settings"),
     Handler("set_shown_argument", "/layout/{node_id}/arguments", ShownArgument, _set_shown_argument, http_method="PUT", undoable=True, undo_label="show argument"),
     Handler("set_output_ports", "/layout/{node_id}/outputs", OutputPorts, _set_output_ports, http_method="PUT", undoable=True, undo_label="output ports"),
-    Handler("set_on_duplicate", "/layout/{node_id}/on-duplicate", OnDuplicate, _set_on_duplicate, http_method="PUT", http_errors=_BAD_REQUEST, undoable=True, undo_label="combine duplicate rows"),
+    Handler("set_distribute", "/layout/{node_id}/distribute", DistributeOption, _set_distribute, http_method="PUT", http_errors=_BAD_REQUEST, undoable=True, undo_label="distribute rows"),
     Handler("get_notes", "/notes", None, _get_notes, needs_db=False, http_method="GET"),
     Handler("set_note", "/notes/{key:path}", NoteUpdate, _set_note, needs_db=False, http_method="PUT", undoable=True, undo_label="edit note"),
     Handler("get_parameters", "/parameters", None, _get_parameters, needs_db=False, http_method="GET"),

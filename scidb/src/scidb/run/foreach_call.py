@@ -99,7 +99,6 @@ class ForEachCall:
     skip_computed: bool = False
     schema_key_types: "dict[str, str] | None" = None
     on_error: str = "continue"
-    on_duplicate: str = "error"
     share_limits: "dict[str, list[str]] | None" = None
     project_root: Any = None
     glue: "dict[str, Any] | None" = None

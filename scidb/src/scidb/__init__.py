@@ -64,7 +64,6 @@ from scidb.project.discover import (
     scan_project,
 )
 from scidb.model.roles import FUNCTION_ROLES, function_role
-from scidb.run.combine import ON_DUPLICATE_VALUES, validate_on_duplicate
 from scidb.model.exceptions import (
     AmbiguousParamError,
     AmbiguousVersionError,
@@ -139,7 +138,6 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.run.bindings",
     "scidb.store.clear_data",
     "scidb.model.column_selection",
-    "scidb.run.combine",
     "scidb.store.database",
     "scidb.model.exceptions",
     "scidb.store.exclusions",
@@ -251,8 +249,6 @@ __all__ = [
     "exclude_schema",
     "include_schema",
     "list_exclusions",
-    "ON_DUPLICATE_VALUES",
-    "validate_on_duplicate",
     # Exceptions
     "SciStackError",
     "OutputSaveError",

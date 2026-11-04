@@ -48,8 +48,6 @@ def test_every_option_is_a_scidb_for_each_keyword(name):
 def _non_default(spec):
     if spec.name == "on_error":
         return "stop"
-    if spec.name == "on_duplicate":
-        return "combine"
     if spec.kind == "names":
         return ["x"]
     if spec.kind == "bool":

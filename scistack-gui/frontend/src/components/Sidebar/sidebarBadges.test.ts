@@ -14,7 +14,6 @@ const DEFAULTS: RunOptionDefaults = {
   distribute: false,
   as_table: false,
   on_error: 'continue',
-  on_duplicate: 'error',
 }
 
 const BLANK: FunctionBadgeInput = {
@@ -48,7 +47,6 @@ test('each flipped run option gives exactly one badge, with the right tone', () 
     [{ distribute: true }, 'Distribute', 'info'],
     [{ as_table: true }, 'As table', 'info'],
     [{ on_error: 'stop' }, 'Stop on error', 'warn'],
-    [{ on_duplicate: 'combine' }, 'Combine duplicates', 'info'],
   ]
   for (const [opts, label, tone] of cases) {
     const badges = runOptionBadges(opts, DEFAULTS)

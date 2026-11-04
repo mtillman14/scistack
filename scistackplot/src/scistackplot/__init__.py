@@ -120,7 +120,6 @@ from .export.custom import (
 )
 from .reduce.diffbars import DifferenceBar, bars_for_panel, slot_endpoints
 from .reduce.panels import PanelOverride, override_for
-from .reduce.rows import ROW_FACTOR, element_values, explode_row_lists, row_factor, row_origin
 from .model.shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
 from .model.spec import (
@@ -358,11 +357,6 @@ __all__ = [
     "FactorInfo",
     "MISSING_LEVEL",
     "MeasureInfo",
-    "ROW_FACTOR",
-    "element_values",
-    "explode_row_lists",
-    "row_factor",
-    "row_origin",
     "Shape",
     "classify_value",
     "classify_column",

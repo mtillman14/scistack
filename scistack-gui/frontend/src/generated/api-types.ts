@@ -267,15 +267,16 @@ export interface ApiParams {
   report_client_build: ClientBuildRequest
   report_client_error: ClientErrorRequest
   report_client_timing: ClientTimingRequest
+  report_scope_navigation: ScopeNavigationRequest
   report_studio_open: StudioOpenRequest
   run_pin_conflicts: RunConflictRequest
   save_function_code: SaveFunctionCodeRequest
   save_glue: SaveGlueRequest
   schema_inventory: InventoryRequest
   schema_key_type_impact: SchemaKeyTypeQuery
+  set_distribute: DistributeOption
   set_entities_file: PathBody
   set_note: NoteUpdate
-  set_on_duplicate: OnDuplicate
   set_output_ports: OutputPorts
   set_parameter_group_checked: ParameterGroupChecked
   set_schema_key_type: SchemaKeyTypeUpdate
@@ -1545,6 +1546,7 @@ export interface PortRename {
  * via the `definition` "CanvasRefreshRequest".
  */
 export interface CanvasRefreshRequest {
+  discarded?: string | null
   dropped?: object[] | null
   edges?: number | null
   folded?: number | null
@@ -1605,6 +1607,17 @@ export interface ClientTimingRequest {
   where?: string | null
 }
 /**
+ * One step into a submodule (frontend context/descendInto.ts).
+ *
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "ScopeNavigationRequest".
+ */
+export interface ScopeNavigationRequest {
+  after?: string[] | null
+  before?: string[] | null
+  pipeline_id?: string | null
+}
+/**
  * Which studio opened, and from which entry point (studio-unification
  * Stage 0): so scistack.log says which ways in people actually use.
  *
@@ -1662,19 +1675,19 @@ export interface SchemaKeyTypeQuery {
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "DistributeOption".
+ */
+export interface DistributeOption {
+  node_id: string
+  value: boolean
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
  * via the `definition` "NoteUpdate".
  */
 export interface NoteUpdate {
   key: string
   text: string
-}
-/**
- * This interface was referenced by `ApiParams`'s JSON-Schema
- * via the `definition` "OnDuplicate".
- */
-export interface OnDuplicate {
-  node_id: string
-  value: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

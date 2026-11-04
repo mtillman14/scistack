@@ -12,9 +12,7 @@ from pathlib import Path
 from scifor import FOR_EACH_OPTIONS, OptionSpec
 
 from scistack_gui.services.run_failures import (
-    ON_DUPLICATE_KEY,
     ON_ERROR_KEY,
-    on_duplicate_from_config,
     on_error_from_config,
 )
 
@@ -2314,7 +2312,6 @@ MATLAB_OPTION_EMISSION: dict[str, str] = {
     "as_table": RUN_OPTION,
     "distribute": RUN_OPTION,
     "on_error": RUN_OPTION,
-    "on_duplicate": RUN_OPTION,
     "glue": BINDING,  # _format_glue_struct
     "parameter_names": BINDING,  # _format_parameter_names_pair
     "locations": BINDING,  # _format_locations_pair
@@ -2335,7 +2332,6 @@ MATLAB_OPTION_EMISSION: dict[str, str] = {
 #: option is read with ``run_options.get(name)``.
 _RUN_OPTION_READERS = {
     ON_ERROR_KEY: on_error_from_config,
-    ON_DUPLICATE_KEY: on_duplicate_from_config,
 }
 
 

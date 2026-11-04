@@ -50,26 +50,23 @@ classdef TestSpreadParity < matlab.unittest.TestCase
                 {ProcessedSignal()}), ?MException);
         end
 
-        function test_duplicate_subject_combined_on_request(testCase)
-            % on_duplicate='combine' (Python scidb.run.combine): subject A's two
-            % rows become one record whose A holds both values in row order.
+        function test_duplicate_subject_distributed_on_request(testCase)
+            % distribute=true (Python scifor.distribute): the carried subject
+            % column groups the rows, numbered at session within each subject.
             tbl = table;
             tbl.A = [1; 2; 3];
             scidb.for_each(@table_with_duplicate_subject, ...
                 struct('x', tbl), {ProcessedSignal()}, ...
-                'on_duplicate', 'combine');
+                distribute=true);
 
             all_results = ProcessedSignal().load();
-            testCase.verifyEqual(numel(all_results), 2, ...
-                'one record per subject');
-            a = ProcessedSignal().load('subject', "A").data.A;
-            if iscell(a), a = a{1}; end
-            testCase.verifyEqual(double(a(:))', [2 4], 'AbsTol', 1e-10);
-            b = ProcessedSignal().load('subject', "B").data.A;
-            if iscell(b), b = b{1}; end
-            testCase.verifyEqual(double(b), 6.0, 'AbsTol', 1e-10);
+            testCase.verifyEqual(numel(all_results), 3, ...
+                'one record per row, none combined');
+            a2 = ProcessedSignal().load('subject', "A", 'session', 2).data.A;
+            testCase.verifyEqual(double(a2), 4.0, 'AbsTol', 1e-10);
+            b1 = ProcessedSignal().load('subject', "B", 'session', 1).data.A;
+            testCase.verifyEqual(double(b1), 6.0, 'AbsTol', 1e-10);
         end
-
         function test_labelled_table_spreads_with_nothing_iterated(testCase)
             % The loadFunctionalOutcomes shape: every schema level
             % deselected (no schema kwargs at all), distribute off, and the

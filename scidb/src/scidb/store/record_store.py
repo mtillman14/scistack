@@ -54,8 +54,6 @@ class BatchRows:
     is_dataframe: bool = False
     data_col_types: dict = field(default_factory=dict)
     dtype_meta: dict = field(default_factory=dict)
-    #: on_duplicate="combine" row-list columns under their STORED names.
-    stored_row_lists: list = field(default_factory=list)
     #: The caller's index of each item that passed validation.
     valid_orig_idx: "list[int]" = field(default_factory=list)
     skipped: bool = False

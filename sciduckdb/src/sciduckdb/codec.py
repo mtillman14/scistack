@@ -3,8 +3,8 @@
 Pure functions, no connection. ``infer_data_columns`` picks a DuckDB type per
 column and records restore metadata; ``value_to_storage_row`` /
 ``dataframe_to_storage_rows`` / ``bulk_df_to_storage_rows`` encode;
-``storage_to_python*`` / ``restore_types`` decode. Datetimes and row lists
-have their own owners (``sciduckdb.datetimes``, ``sciduckdb.row_lists``).
+``storage_to_python*`` / ``restore_types`` decode. Datetimes
+have their own owner (``sciduckdb.datetimes``).
 """
 
 import datetime
@@ -28,14 +28,6 @@ from .datetimes import (
     storage_column_names,
     storage_column_types,
     tz_column_name,
-)
-from .row_lists import (
-    ROW_LIST_PTYPE,
-    count_row_list_cells,
-    is_row_list_meta,
-    row_list_column_type,
-    row_list_to_storage,
-    unwrap_row_list,
 )
 
 logger = logging.getLogger("sciduck")
@@ -233,9 +225,6 @@ def _python_to_storage(value: Any, meta: dict) -> Any:
     """Convert a Python value to its DuckDB-storable form."""
     ptype = meta.get("python_type", "")
 
-    if ptype == ROW_LIST_PTYPE:
-        return row_list_to_storage(value, meta)
-
     # infer_data_columns unwraps length-1 arrays to scalars when it picks the
     # column type, e.g. {"x": np.array([1.0])} -> DOUBLE column with
     # python_type="float". Mirror that unwrap here so the stored value is a
@@ -366,9 +355,6 @@ def storage_to_python(value: Any, meta: dict) -> Any:
         return np.nan
     ptype = meta.get("python_type", "")
 
-    if ptype == ROW_LIST_PTYPE:
-        return unwrap_row_list(value, meta)
-
     if ptype == "ndarray":
         dtype = np.dtype(meta.get("numpy_dtype", "float64"))
         ndim = meta.get("ndim", 1)
@@ -463,17 +449,6 @@ def storage_to_python_column(series: "pd.Series", meta: dict) -> "pd.Series":
     # JSON blob types: decode string once per cell, but at column granularity.
     if ptype in ("dict", "json_fallback"):
         return series.apply(lambda v: json.loads(v) if isinstance(v, str) else v)
-
-    if ptype == ROW_LIST_PTYPE:
-        single, multi = count_row_list_cells(series)
-        logger.info(
-            "row_list column %r: %d cell(s) loaded as one value, %d as a list "
-            "of combined rows", series.name, single, multi,
-        )
-        out = np.empty(len(series), dtype=object)
-        for i, v in enumerate(series.tolist()):
-            out[i] = unwrap_row_list(v, meta)
-        return pd.Series(out, index=series.index, name=series.name, dtype=object)
 
     # All remaining types (ndarray, ndarray_json, list, …): delegate per-element.
     # NULL list elements are restored as NaN inside storage_to_python; the
@@ -693,8 +668,6 @@ def infer_data_columns(
     data_col_name: str | None = None,
     *,
     more_frames: list | tuple = (),
-    row_list_columns: "list | tuple | set" = (),
-    more_values: list | tuple = (),
 ) -> tuple[dict, dict]:
     """
     From a sample data value, return:
@@ -704,12 +677,6 @@ def infer_data_columns(
     ``more_frames``: the rest of a DataFrame batch. Each column's type is
     judged over the sample AND these (see ``_batch_column_type``).
 
-    ``row_list_columns``: columns the caller combined (``on_duplicate=
-    "combine"``) into row lists (sciduckdb.row_lists): typed as ``<elem>[]``
-    over every element of the batch, i.e. the sample plus ``more_frames``
-    (DataFrame mode) or ``more_values`` (the other values of a dict /
-    single-column batch). In single-column mode any name marks the one data
-    column, whatever the source table called it.
 
     ``data_col_types`` are the STORED columns: each datetime column is
     followed by its ``<col>__tz`` companion (sciduckdb.datetimes), which
@@ -730,10 +697,6 @@ def infer_data_columns(
             if len(batch) == 0:
                 ddb_type = "VARCHAR"
                 col_meta = {"python_type": "str"}
-            elif col_name in row_list_columns:
-                ddb_type, col_meta = row_list_column_type(
-                    batch[col_name].tolist(), col_name
-                )
             else:
                 ddb_type, col_meta = _batch_column_type(batch[col_name], col_name)
             col_types[col_name] = ddb_type
@@ -757,25 +720,14 @@ def infer_data_columns(
             # Unwrap length-1 arrays to scalars before type inference
             if isinstance(val, np.ndarray) and val.size == 1:
                 val = val.item()
-            if col_name in row_list_columns and not has_nested:
-                ddb_type, col_meta = row_list_column_type(
-                    [val] + [v.get(col_name) for v in more_values if isinstance(v, dict)],
-                    col_name,
-                )
-            else:
-                ddb_type, col_meta = _infer_duckdb_type(val)
+            ddb_type, col_meta = _infer_duckdb_type(val)
             col_types[col_name] = ddb_type
             meta["columns"][col_name] = col_meta
         return storage_column_types(col_types, meta), meta
 
     # Single-column mode — use provided name or default to "value"
     col_name = data_col_name or "value"
-    if row_list_columns:
-        ddb_type, col_meta = row_list_column_type(
-            [sample_value, *more_values], col_name
-        )
-    else:
-        ddb_type, col_meta = _infer_duckdb_type(sample_value)
+    ddb_type, col_meta = _infer_duckdb_type(sample_value)
     meta = {"mode": "single_column", "columns": {col_name: col_meta}}
     return storage_column_types({col_name: ddb_type}, meta), meta
 
@@ -877,7 +829,7 @@ def column_type_change(stored_type: str, incoming_type: str) -> str:
 
 
 def record_schema_mismatch(
-    ref_col_types: dict, rec_col_types: dict, *, row_list_columns=()
+    ref_col_types: dict, rec_col_types: dict
 ) -> str | None:
     """Return a human-readable reason a record can't join the batch, or None.
 
@@ -891,8 +843,6 @@ def record_schema_mismatch(
       * a scalar where the column stores a vector (or vice versa),
         or a string where the column is numeric -> signature mismatch
 
-    A ``row_list_columns`` column (sciduckdb.row_lists) takes a scalar or a
-    flat list alike: its element types were judged over the whole batch.
     """
     ref_keys = set(ref_col_types)
     rec_keys = set(rec_col_types)
@@ -908,13 +858,6 @@ def record_schema_mismatch(
             parts.append("key set differs from batch schema")
         return "; ".join(parts)
     for col in ref_col_types:
-        if col in row_list_columns:
-            if _storage_signature(rec_col_types[col])[1] > 1:
-                return (
-                    f"column '{col}' is a row list of single values but the "
-                    f"record value is {rec_col_types[col]}"
-                )
-            continue
         ref_sig = _storage_signature(ref_col_types[col])
         rec_sig = _storage_signature(rec_col_types[col])
         if ref_sig != rec_sig:
@@ -1007,8 +950,6 @@ def bulk_df_to_storage_rows(df_list: list, record_ids: list, dtype_meta: dict) -
                 else (v if isinstance(v, list) else [v])
                 for v in vals
             ]
-        elif ptype == ROW_LIST_PTYPE:
-            col_arrays[col] = [row_list_to_storage(v, col_meta) for v in raw.tolist()]
         elif ptype in ("dict", "json_fallback"):
             col_arrays[col] = [json.dumps(_convert_for_json(v)) for v in raw.to_numpy()]
         elif ptype == "list":

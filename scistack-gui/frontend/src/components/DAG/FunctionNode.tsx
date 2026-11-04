@@ -68,9 +68,7 @@ interface FunctionNodeData {
   schemaLevel?: string[] | null
   // on_error: 'stop' halts at the first failing combo (not identity —
   // scistack_gui/services/run_failures.on_error_from_config reads it).
-  // on_duplicate: 'combine' makes two result rows at one location one record
-  // (scidb.combine; run_failures.on_duplicate_from_config reads it).
-  runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean; on_error?: 'continue' | 'stop'; on_duplicate?: 'error' | 'combine' }
+  runOptions?: { dry_run: boolean; save: boolean; distribute: boolean; as_table: boolean; on_error?: 'continue' | 'stop' }
   // param_name → which columns of its wired variable the function receives.
   // Display only here: editing lives in FunctionSettingsPanel's Inputs
   // section, which is also the only writer of the stored node config.
@@ -222,7 +220,7 @@ function PipelineFunctionNode({ id, data }: Props) {
   }, [id, appendLine, finishRun, setRunMeta, updateProgress, comboFailed, runDone]))
 
   // `runOptionsPatch`: options for THIS run on top of the node's own (the
-  // remedy popup's "Combine the rows" re-run, before the canvas has the
+  // remedy popup's "Number the rows" re-run, before the canvas has the
   // newly saved option).
   const runWith = useCallback(async (runOptionsPatch?: Record<string, unknown>) => {
     // A run that writes to a pinned variable asks first (keep / move / cancel).

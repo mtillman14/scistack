@@ -35,7 +35,6 @@ from scifor import output_column_name as _output_column_name
 from scifor.outputs import is_no_output as _is_no_output
 
 from scidb.run import glue as _glue
-from scidb.run.combine import combine_for_save, validate_on_duplicate
 from scidb.model.across_variants import AcrossVariants
 from scidb.run.bindings import (
     COMBO_KEY,
@@ -248,10 +247,6 @@ class _ForEachState:
     # The folder rootless PathInputs resolve against, decided once in prepare
     # (bound into `inputs`) and handed to scifor's loop so it does not re-decide.
     project_root: "_Path | None" = None
-    # What the save does with two result rows at one location and variant
-    # (scidb.run.combine): "error" or "combine". Set by for_each / the MATLAB
-    # bridge's for_each_save; read only by _batch_save_outputs.
-    on_duplicate: str = "error"
     # The identity-bearing run options (as_table, distribute) the call ran
     # under; the execute phase hands them to scifor.
     options: RunOptions = field(default_factory=RunOptions)
@@ -279,7 +274,6 @@ def for_each(
     schema_keys: "list[str] | None" = None,
     schema_key_types: "dict[str, str] | None" = None,
     on_error: str = "continue",
-    on_duplicate: str = "error",
     locations: "Any" = None,
     share_limits: "dict[str, list[str]] | None" = None,
     project_root: "str | _Path | None" = None,
@@ -365,13 +359,6 @@ def for_each(
                     completed before the failure are SAVED, then the original
                     exception is re-raised (``scifor.stopped_run_of(exc)``
                     carries the record). See docs/claude/error-surfacing.md.
-        on_duplicate: ``"error"`` (default) or ``"combine"`` (scidb.run.combine).
-                    What the save does when the result table has two rows
-                    for one schema location and variant (a table loaded once
-                    and saved per row, with a subject twice). ``"error"``
-                    refuses the save (DuplicateLocationError); ``"combine"``
-                    makes them one record first, a differing value becoming
-                    the list of every row's value. Not identity-bearing.
         locations: Optional ``scifor.LocationFilter`` (or its mapping form)
                     naming which schema locations to run: ragged ``include``
                     prefixes plus a standing ``exclude_levels`` rule. Passed
@@ -449,7 +436,6 @@ def for_each(
         schema_keys=schema_keys,
         schema_key_types=schema_key_types,
         on_error=on_error,
-        on_duplicate=on_duplicate,
         locations=locations,
         share_limits=share_limits,
         project_root=project_root,
@@ -471,7 +457,6 @@ def _run_for_each(call: ForEachCall) -> "pd.DataFrame | Step | None":
     schema_keys, declared Parameter names), then EachOf expansion or one
     concrete run (:func:`_run_concrete`)."""
     validate_on_error(call.on_error)
-    validate_on_duplicate(call.on_duplicate)
 
     # --- Deferred pipeline registration. Must run before ANY other work —
     #     a registered call must have zero side effects, and the spec must
@@ -822,7 +807,6 @@ def _run_concrete(call: ForEachCall, active_db: Any) -> "pd.DataFrame | None":
         )
     if state is None:
         return None
-    state.on_duplicate = call.on_duplicate
 
     # --- Execute: wrap fn for per-combo needs, delegate the loop to scifor,
     #     log the authoritative run summary. ---
@@ -5780,8 +5764,6 @@ class SavePlan:
     generated: "list[tuple[Any, int, SaveItem]]" = field(default_factory=list)
     #: output slot -> the NoOutput reasons of the combinations it was skipped at
     no_output_reasons: "dict[int, list[str]]" = field(default_factory=dict)
-    #: on_duplicate="combine": the columns combined rows store as row lists.
-    row_list_columns: list = field(default_factory=list)
     #: output name -> ``{"keys", "records"}`` for each output of a multi-output
     #: call whose rows were filed by its own key columns.
     spread_outputs: "dict[str, dict]" = field(default_factory=dict)
@@ -5871,7 +5853,6 @@ def build_save_plan(
         if db is not None and hasattr(db, "dataset_schema_keys")
         else set(dataset_schema_keys_of(None))
     )
-    result_tbl, row_list_columns = _combine_rows_for_save(state, result_tbl, schema_keys_set)
     _log_pinned_outputs(db, outputs, fn_name)
     _log_input_provenance_sources(state, result_tbl, fn_name)
 
@@ -5880,7 +5861,6 @@ def build_save_plan(
         outputs=list(outputs),
         output_names=list(output_names),
         schema_keys=schema_keys_set,
-        row_list_columns=row_list_columns,
         n_rows=len(result_tbl),
     )
     prep_start = time.perf_counter()
@@ -5947,37 +5927,6 @@ def build_save_plan(
         f"{len(plan.batches)} batch group(s), {len(plan.generated)} generates_file item(s)"
     )
     return plan
-
-
-def _combine_rows_for_save(
-    state: "_ForEachState", result_tbl: "pd.DataFrame", schema_keys_set: set
-) -> "tuple[pd.DataFrame, list]":
-    """on_duplicate="combine": two result rows at one location AND variant (a
-    table loaded once and saved per row, a subject twice) become one row
-    BEFORE any item is built, so the combined row gets one record, one
-    invocation id and one graph record. Value columns are the outputs, or
-    the flatten path's data columns; every other column (schema keys,
-    __rid_*, __vsig_*, constants) keeps rows apart (scidb.run.combine).
-    Returns the table and its row-list columns."""
-    output_names = state.output_names
-    if state.on_duplicate != "combine" or len(result_tbl) <= 1:
-        return result_tbl, []
-    present = [o for o in output_names if o in result_tbl.columns]
-    value_cols = list(present)
-    if len(present) < len(output_names):
-        value_cols += [
-            c
-            for c in result_tbl.columns
-            if c not in output_names
-            and not str(c).startswith("__")
-            and c not in schema_keys_set
-        ]
-    return combine_for_save(
-        result_tbl,
-        value_cols,
-        type_name="/".join(str(o) for o in output_names),
-        on_duplicate="combine",
-    )
 
 
 def _log_pinned_outputs(db: Any, outputs: "list[Any]", fn_name: str) -> None:
@@ -6323,20 +6272,11 @@ def _save_one_batch(
     output_obj = plan.outputs[output_idx]
     label = _output_type_label(output_obj)
     pairs = [(i.data, i.metadata) for i in items]
-    # The combined columns this batch stores as row lists. Passed only when
-    # there are some, so a save that combined nothing makes exactly the call
-    # it always made (any save_batch stand-in keeps working).
-    row_lists = (
-        [c for c in plan.row_list_columns if c not in plan.output_names]
-        if save_path == "flatten"
-        else [c for c in plan.row_list_columns if c == plan.output_names[output_idx]]
-    )
-    row_list_kw = {"row_list_columns": row_lists} if row_lists else {}
     Log.info(f"[batch_save] Saving {len(items)} record(s) for {label} ({save_path} path)")
 
     save_t0 = time.perf_counter()
     out_cls = _output_class(output_obj)
-    record_ids = db.save_batch(out_cls, pairs, profile=False, **row_list_kw)
+    record_ids = db.save_batch(out_cls, pairs, profile=False)
     save_elapsed = time.perf_counter() - save_t0
     # save_batch returns None in the slot of any record it skipped
     # (schema-incompatible); count only the records actually persisted.

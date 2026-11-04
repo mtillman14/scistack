@@ -11,6 +11,60 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzz. Distribute numbers repeated rows; Combine is gone — added 2026-11-04
+
+**What changed:** a table with a repeated subject saves each row at its own address with Distribute on. `on_duplicate` no longer exists, and neither does Plot Studio's `Row` factor. The duplicate popup's third step is now **Number the rows at <key>**.
+
+**Backend:** clear the affected variables, since their columns and levels change. In `scistack.log`, expect `resolve_distribute_target`, then `distribute: <output> carries [...]`, then `distribute: <output> {...} has 2 rows` for each repeated subject.
+
+**Frontend:**
+1. Load a CSV with one subject on two rows, under a schema with a key below `subject`, with Distribute off. Run it.
+2. In the popup, click **Number the rows and run again**.
+3. Open the node's settings and the variable's location picker.
+
+**You should see:** the popup's third step names the lower key, the run saves one record per row, every subject has key value 1, the repeated subject also has 2, and the Distribute badge is on the node. With no lower key in the schema, the third step isn't offered.
+
+---
+
+## 0zzzzzzzzzzzzzzzzzz. Two-output function: one node, ports kept, each output at its own level — added 2026-11-04
+
+**What changed:** a Python node with two outputs no longer grows a duplicate node after a run, saving node settings no longer resets its output ports, and each output saves at the level its own key columns say.
+
+**Backend:** none beyond restarting the GUI. In `scistack.log`, expect `claims 1 wiring(s)` listing BOTH outputs, and `[batch_save] <Output>: N record(s) filed by its own schema key column(s) [...]`.
+
+**Frontend:**
+1. Drag a function with two return values onto the canvas. Connect its input, name two output ports, and connect each to a variable.
+2. Run the node.
+3. Change a run option on the node, such as On error, and re-open the node's Outputs section.
+4. Run the node again.
+
+**You should see:** one node after both runs, both output ports still named as you set them, and each variable's records at its own level in the location picker.
+
+---
+
+## 0zzzzzzzzzzzzzzzzz. Canvas: extract leaves nothing behind, and the breadcrumb can't repeat — added 2026-11-04
+
+**What changed:** extracting a submodule now moves a variable or PathInput that has history, along with every node's saved settings, so nothing stays behind on the parent canvas. A slow refresh of the old canvas can no longer draw over the one you just opened, the canvas clears while the new one loads, and entering a submodule already on the path goes back to its crumb. Plan: `.claude/plan-submodule-extract-and-breadcrumb.md`.
+
+**Backend**
+1. Run the tests, one package at a time: `pytest scistack-gui/tests/test_submodule_ports.py scistack-gui/tests/test_history.py scistack-gui/tests/test_client_canvas.py scistack-gui/tests/test_api_handlers.py`
+2. Restart the GUI.
+3. An extract logs `[layout] move_node_to_canvas: … row(s) moved […], N statement(s) moved (main -> pipe_…)`.
+4. Entering a submodule logs `[client] breadcrumb: into pipe_…, path […] -> […]`. A refresh that isn't drawn logs `[client] canvas refresh #N (…): DISCARDED, scope_changed`.
+
+**Frontend: extract**
+1. Use a project where a function, its PathInput and its output variable have already run. Give the function a schema level or run option.
+2. Select the PathInput, function and variable, and make a submodule.
+3. **Expect on the parent canvas:** the submodule and everything downstream, with the line from the submodule to the next function. The PathInput and variable aren't there.
+4. Double-click the submodule. **Expect:** the PathInput, function, variable and an output node, connected. Click the function: its schema level and run options are as you set them.
+5. Undo. **Expect:** the original canvas and settings, with the submodule gone.
+
+**Frontend: moving between canvases**
+1. Drag the submodule, then double-click it straight away, within about 2 seconds of the drag.
+2. **Expect:** the canvas goes blank for about a second, then shows the submodule's contents and stays there. The breadcrumb reads `main ▸ <name>`.
+3. Double-click several times quickly. **Expect:** still one crumb for the submodule.
+4. A real nested submodule still goes one level deeper. Clicking `main` in the breadcrumb returns to main.
+
 ## 0zzzzzzzzzzzzzzzz. Sidebar: palette search, sort, delete; shared panel header; badges — added 2026-11-03
 
 **What changed:** the palette gets a search box, a **Sort** choice (Functions: By file / A→Z; Variables: A→Z / Last saved), and a 🗑 Delete for Variables, Parameters and Path Inputs declared in the entities file. Every node panel now has the same header (kind, name, "declared in", **Open source**, **← Palette**), and the function panel shows chips for settings that aren't the default. Plan: `.claude/plan-palette-order-and-delete.md`.

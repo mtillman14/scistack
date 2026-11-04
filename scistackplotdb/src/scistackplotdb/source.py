@@ -21,11 +21,8 @@ from scistackplot import (
     Shape,
     classify_column,
     classify_value,
-    element_values,
-    explode_row_lists,
     is_plottable,
     natural_sort_key,
-    row_origin,
 )
 from scistackplot.reduce.categorical import MAX_CATEGORY_LEVELS
 from scistackplot.sources.dedup import SingleFlight
@@ -656,8 +653,6 @@ class ScidbSource(BaseSource):
         primary = self._variable_frame(base_variable(measures[0]))
         own = self._own_column_groups(primary, factor_variables)
         field_columns: list[str] = []
-        row_column: str | None = None
-        row_info: dict | None = None
 
         if x_measure is None:
             if len(primary.data_columns) > 1:
@@ -668,20 +663,9 @@ class ScidbSource(BaseSource):
                     text=text_only,
                 )
                 field_columns = [field_factor]
-                melted = set(frame[field_factor].unique())
-                row_fields = [c for c in primary.row_list_columns if c in melted]
             else:
                 frame = self._named_frame(primary, measures[0])
                 field_factor = None
-                row_fields = (
-                    [measures[0]]
-                    if primary.value_column in primary.row_list_columns
-                    else []
-                )
-            if row_fields:
-                frame, row_column, row_info = self._split_row_lists(
-                    primary.name, frame, measures[0], row_fields, field_factor
-                )
             levels = primary.levels
             variant_columns = list(primary.variant_columns)
             variant_axes = list(primary.variant_axes)
@@ -692,22 +676,6 @@ class ScidbSource(BaseSource):
         else:
             secondary = self._variable_frame(x_measure)
             pair = (measures[0], x_measure)
-            combined = [
-                name
-                for name, vf in zip(pair, (primary, secondary), strict=True)
-                if vf.row_list_columns
-            ]
-            if combined:
-                # Not split here: pairing one x per y row needs the two
-                # variables' rows to line up, and nothing says row i of one
-                # is row i of the other. Said, not silent.
-                Log.warn(
-                    "%s hold combined rows (row lists); an x-y plot reads "
-                    "them as 1-D arrays — plot each on its own to see one "
-                    "point per source row",
-                    combined,
-                    layer=LAYER,
-                )
             multi = [
                 name
                 for name, frame in zip(pair, (primary, secondary), strict=True)
@@ -766,13 +734,6 @@ class ScidbSource(BaseSource):
         factors.extend(c for c in field_columns if c in frame.columns)
         factor_origins = {axis["column"]: axis for axis in variant_axes}
         factor_depths = dict(group_depths)
-        if row_column is not None and row_info is not None:
-            factors.append(row_column)
-            factor_origins[row_column] = row_info
-            # Pinned by every schema key the record sits under plus itself:
-            # one level below the variable's own, so the scalar default
-            # groups it (one mark per source row) and iterates the rest.
-            factor_depths[row_column] = len(levels) + 1
 
         level_order = {
             name: self._level_order(name, frame, is_field=name in field_columns)
@@ -1227,17 +1188,6 @@ class ScidbSource(BaseSource):
         ``spec.measures`` stop naming a real variable.
         """
         frames = [self._variable_frame(name) for name in measures]
-        combined = [f.name for f in frames if f.row_list_columns]
-        if combined:
-            # Splitting is per variable, and stacked variables share one
-            # value column; not done here yet. Said, not silent.
-            Log.warn(
-                "%s hold combined rows (row lists); stacked with other "
-                "variables they are read as 1-D arrays — plot each on its own "
-                "to see one point per source row",
-                combined,
-                layer=LAYER,
-            )
 
         # Dict/struct variables stack too, provided they carry the SAME fields:
         # RawEMG and FilteredEMG, both keyed by muscle, are the archetypal
@@ -1538,17 +1488,10 @@ class ScidbSource(BaseSource):
         carried = [c for c in (carry or []) if c in frame.columns]
         usable, skipped = [], []
         texts: list[str] = []
-        row_lists = set(variable_frame.row_list_columns)
         for column in variable_frame.data_columns:
             if column in carried:
                 continue
-            # A row list is classified by its ELEMENTS (it is split into rows
-            # after the melt): a VARCHAR row list is text and joins the text
-            # fields, instead of melting in as a "1-D" column.
-            values = (
-                element_values(frame[column]) if column in row_lists else frame[column]
-            )
-            shape = classify_column(values)
+            shape = classify_column(frame[column])
             if shape is Shape.CATEGORICAL:
                 texts.append(column)
             elif is_plottable(shape):
@@ -1646,51 +1589,6 @@ class ScidbSource(BaseSource):
             layer=LAYER,
         )
         return melted, field_factor
-
-    def _split_row_lists(
-        self,
-        variable: str,
-        frame,
-        measure: str,
-        row_fields: list[str],
-        field_factor: str | None,
-    ):
-        """``(frame, row column or None, its origin or None)`` — every
-        row-list cell split into one row per element (scistackplot.reduce.rows,
-        the one owner of the reshape; codegen mirrors it from the origin).
-
-        The Row factor is kept only when some cell held two or more rows: a
-        one-level factor is a constant (synthetic-factors.md invariant 6).
-        The cells are unwrapped either way, so ``[v]`` reads as ``v``."""
-        with Log.timer(
-            f"split_row_lists({variable})",
-            layer=LAYER,
-            extra=f"{len(row_fields)} field(s)",
-        ):
-            split = explode_row_lists(
-                frame, measure, row_fields, field_factor=field_factor
-            )
-        Log.info(
-            "split row-list field(s) %s of %r: %d cell(s), %d -> %d row(s), "
-            "at most %d per cell; %s",
-            row_fields,
-            variable,
-            split.cells,
-            split.rows_in,
-            split.rows_out,
-            split.max_rows,
-            f"factor {split.row_factor!r}"
-            if split.row_factor
-            else "no cell held two rows, so no Row factor",
-            layer=LAYER,
-        )
-        if split.row_factor is None:
-            return split.frame, None, None
-        return (
-            split.frame,
-            split.row_factor,
-            row_origin(row_fields, field_factor),
-        )
 
     def _named_frame(self, variable_frame, measure: str):
         """The variable's frame with its data column renamed to the measure."""
