@@ -2,6 +2,6 @@
 ``DatabaseManager``, ``RecordStore`` and the record-level mutations
 (exclusions, pins, deletes, renames, clears).
 
-Imports only ``scidb.model`` (layers: ``scidb/tests/import_layers.toml``).
+Imports only ``scidb.model``.
 Nothing is re-exported here.
 """

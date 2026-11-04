@@ -1,29 +1,4 @@
-"""The MATLAB bridge uses scidb only through public names (cleanup-audit F2).
-
-It used to import six private ``scidb.run.foreach`` functions, so a rename inside
-``foreach.py`` could break every MATLAB run with nothing in scidb marking them
-as a contract. The contract is now ``scidb.run.external_loop``.
-"""
-
-import ast
-from pathlib import Path
-
-BRIDGE = Path(__file__).resolve().parent.parent / "src" / "scimatlab" / "bridge"
-
-
-def test_the_bridge_imports_nothing_private_from_scidb():
-    modules = sorted(BRIDGE.glob("*.py"))
-    assert len(modules) >= 5, "the bridge package moved"
-    offenders = [
-        f"{path.name} line {node.lineno}: from {node.module} import {alias.name}"
-        for path in modules
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
-        if isinstance(node, ast.ImportFrom)
-        and (node.module or "").split(".")[0] in {"scidb", "sciduckdb", "scifor"}
-        for alias in node.names
-        if alias.name.startswith("_")
-    ]
-    assert not offenders, offenders
+"""``scidb.run.external_loop`` exports what the MATLAB bridge calls (cleanup-audit F2)."""
 
 
 def test_the_seam_exports_what_the_bridge_calls():

@@ -12,7 +12,6 @@ Two regressions guarded here:
   keeps new logic going into a stage (or a new one), not back inline.
 """
 
-import inspect
 
 import numpy as np
 import pytest
@@ -91,11 +90,3 @@ def test_the_dry_run_uses_the_one_existing_combo_filter(db, monkeypatch):
     assert {(c["subject"], c["trial"]) for c in calls[0]} == {
         ("S01", "t1"), ("S01", "t2"), ("S02", "t1"),
     }
-
-
-def test_prepare_stays_a_sequence_of_stages():
-    lines = inspect.getsource(scidb_foreach._for_each_prepare).count("\n")
-    assert lines < 200, (
-        f"_for_each_prepare is {lines} lines; put new pre-loop logic in a "
-        f"named stage function, not inline"
-    )

@@ -24,7 +24,6 @@ ALLOWED = {
     "scidb/src/scidb/project/library.py": "an installed library's packaged files "
     "(entities defaults, pyproject metadata) read as raw data",
     "scistackplot/src/scistackplot/model/spec.py": "a PlotSpec saved as TOML",
-    "tools/import_layers.py": "the import-layer checker's own config",
 }
 
 _READ = re.compile(r"\btoml(?:lib|i)\.loads?\(")
