@@ -206,6 +206,83 @@ class TestAMultiOutputFunctionIsOneNode:
         assert _known(db, "load_two") == {node["id"]}
 
 
+def two_from_signal(signal):
+    arr = np.asarray(signal, dtype=float)
+    return arr * 2.0, arr * 3.0
+
+
+class TestACanvasRunOfTwoOutputsIsOneNode:
+    """scistack.log 2026-11-04 (parse_data): a node placed on the canvas with
+    two outputs, run from the GUI. `deduplicate_variants` keys on constants, so
+    the run kept one target, and dispatch claimed the first output alone. The
+    other output was then unclaimed and the build minted a second node. The test
+    above misses this: it calls `record_dispatch_wirings` past the de-duplication.
+    """
+
+    # A real manual id. `record_dispatch_wirings` claims only for ids with the
+    # function-node prefix, so a free-form id would claim nothing and fork a node
+    # whatever the fix does.
+    FRESH = "fn__two_from_signal__zz9two"
+
+    def _place_and_run(self, client):
+        from scistack_gui.services import run_service
+
+        _registry._functions["two_from_signal"] = two_from_signal
+        client.put(
+            f"/api/layout/{self.FRESH}",
+            json={"x": 10, "y": 0, "node_type": "functionNode", "label": "two_from_signal"},
+        )
+        client.put(
+            "/api/edges/mf_two_in",
+            json={"source": "var__RawSignal", "target": self.FRESH, "target_handle": "in__signal"},
+        )
+        client.put("/api/edges/mf_two_left", json={"source": self.FRESH, "target": "var__Left"})
+        client.put("/api/edges/mf_two_right", json={"source": self.FRESH, "target": "var__Right"})
+        return run_service
+
+    def _run(self, client, run_service, node_id):
+        import time
+
+        # What FunctionNode.tsx sends: the node's handles as the graph drew them.
+        # Without them the run writes one output, whatever the node claims.
+        (node,) = [n for n in _graph(client)["nodes"] if n["id"].split("::")[0] == node_id]
+        handles = node["data"]["output_types"]
+        assert set(handles) == {"Left", "Right"}
+
+        r = client.post(
+            "/api/run",
+            json={
+                "function_name": "two_from_signal",
+                "variants": [],
+                "node_id": node_id,
+                "output_types": handles,
+            },
+        )
+        assert r.status_code == 200, r.text
+        deadline = time.monotonic() + 30.0
+        while run_service.has_active_runs() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not run_service.has_active_runs(), "the run did not finish"
+
+    def test_first_run_and_rerun_keep_one_node_with_both_outputs(self, client):
+        run_service = self._place_and_run(client)
+        self._run(client, run_service, self.FRESH)
+
+        graph = _graph(client)
+        (node,) = _fn_nodes(graph, "two_from_signal")
+        outs = {e["target"] for e in graph["edges"] if e["source"].split("::")[0] == node["id"]}
+        assert {"var__Left", "var__Right"} <= outs
+
+        db = _gui_db.get_db()
+        assert _known(db, "two_from_signal") == {node["id"]}
+        assert len(node_wiring.wirings_for_node(db, node["id"])) == 1
+
+        self._run(client, run_service, node["id"])
+        (again,) = _fn_nodes(_graph(client), "two_from_signal")
+        assert again["id"] == node["id"]
+        assert _known(db, "two_from_signal") == {node["id"]}
+
+
 # ---------------------------------------------------------------------------
 # The pure split on the aggregate
 # ---------------------------------------------------------------------------

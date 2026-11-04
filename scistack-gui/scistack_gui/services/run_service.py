@@ -362,9 +362,8 @@ def _run_in_thread(
             list(pending_consts.keys()),
             run_id,
         )
-    unique_targets = deduplicate_variants(
-        apply_pending_overrides(targets, pending_consts)
-    )
+    overridden_targets = apply_pending_overrides(targets, pending_consts)
+    unique_targets = deduplicate_variants(overridden_targets)
     logger.debug(
         "[run_thread] After override + deduplication: %d unique targets (run_id=%s)",
         len(unique_targets),
@@ -376,9 +375,14 @@ def _run_in_thread(
     # to write appears in history unclaimed and the next graph build has to
     # infer an owner — which is what used to produce a second node beside the
     # one the user clicked (docs/claude/node-identity.md).
+    #
+    # From the targets BEFORE de-duplication: `deduplicate_variants` keys on
+    # constants alone, so it keeps ONE target of a two-output node. Claiming
+    # from that hashed the first output alone, the other output came out
+    # unclaimed, and the next build minted a second node for it (2026-11-04).
     from scistack_gui.services.execution_service import record_dispatch_wirings
 
-    record_dispatch_wirings(db, node_id, function_name, unique_targets, run_id)
+    record_dispatch_wirings(db, node_id, function_name, overridden_targets, run_id)
 
     # Whether this function's runs wrote its outputs together (one call) or
     # separately (execution_service.run_output_types), from the run log.
@@ -607,6 +611,26 @@ def _run_in_thread(
                     node_output_types,
                     run_id,
                 )
+                # The dispatch claim covers every output of the node's targets.
+                # A run that writes fewer leaves the rest unwritten, and the
+                # recorded wiring no longer matches the claim, so the next
+                # build mints a second node. The GUI sends its handles; say so
+                # when a request without them lands here.
+                unwritten = sorted(
+                    {t.get("output_type") for t in overridden_targets}
+                    - {c.__name__ for c in output_classes}
+                    - {None}
+                )
+                if unwritten:
+                    logger.warning(
+                        "[run_thread] target %d does not write output(s) %s of this "
+                        "node (node handles=%s, recorded orders=%s, run_id=%s)",
+                        idx,
+                        unwritten,
+                        node_output_types,
+                        recorded_output_order,
+                        run_id,
+                    )
             except (KeyError, UnconnectedOutputPortError) as e:
                 logger.error(
                     "[run_thread] Failed to resolve input/output types for target %d: %s (run_id=%s)",
