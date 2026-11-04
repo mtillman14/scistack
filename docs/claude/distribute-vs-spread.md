@@ -81,10 +81,12 @@ and the same log lines as the Python loop. `for_each_save` now logs
 `result_tbl shape` change is the diagnostic that was missing.
 
 **Scope:** single-output runs only. scifor's flatten lays every output's
-columns side by side and `_save_results` then files *all* data columns
-under *each* output — a pre-existing Python limitation for functions that
-return two tables. The bridge keeps multi-output runs nested (and says so at
-INFO) rather than importing that limitation into MATLAB.
+columns side by side, so a run with several outputs is never flattened: each
+output keeps its own frame in its own cell, in both languages. The save then
+files each output's rows by that output's own key columns
+(`scifor.spread_output_frame`, added 2026-11-04), so one call can save
+`[subject, bout]` and `[subject, bout, date]`. A blank key raises
+`MissingSchemaKeyError` naming the rows, and nothing from the call is saved.
 
 **Distribute column-reading:** MATLAB (`+scifor/for_each.m`,
 `ismember(dist_key_char, VariableNames)`) had always read the target key

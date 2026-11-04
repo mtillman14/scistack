@@ -141,7 +141,7 @@ def test_multi_output_one_row_frames_stay_per_output(caplog):
     row = result.set_index("subject").loc[1]
     assert list(row["A"].columns) == ["a"]
     assert list(row["B"].columns) == ["b"]
-    assert "each output's DataFrame is saved as its own record" in caplog.text
+    assert "each output keeps its own DataFrame" in caplog.text
 
 
 def test_single_output_one_row_frame_still_spreads():

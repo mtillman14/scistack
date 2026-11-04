@@ -29,7 +29,7 @@ from scifor import ColName, ColumnSelection, EachOf, Fixed, LoopHooks, Merge, re
 from scifor import for_each as _scifor_for_each
 from scifor import UNSET, stopped_run_of, validate_on_error
 from scifor.failures import journaled
-from scifor.foreach import bind_path_inputs
+from scifor.foreach import bind_path_inputs, spread_output_frame
 from scifor.project.root import project_root as current_project_root
 from scifor import output_column_name as _output_column_name
 from scifor.outputs import is_no_output as _is_no_output
@@ -1047,6 +1047,13 @@ def _for_each_execute(
                     if k not in resolved and k in _fn_params:
                         resolved[k] = v
             return _orig_fn(**resolved)
+
+        # scifor names the function from `__name__` in its logs and failure
+        # groups; without this every wrapped run reads "your function fn".
+        # Only the name: `functools.wraps` would also set `__wrapped__`, which
+        # makes `inspect.signature` see through this **kwargs wrapper.
+        fn.__name__ = getattr(_orig_fn, "__name__", repr(_orig_fn))
+        fn.__qualname__ = fn.__name__
     else:
         Log.debug("no function wrapping needed")
 
@@ -5775,6 +5782,9 @@ class SavePlan:
     no_output_reasons: "dict[int, list[str]]" = field(default_factory=dict)
     #: on_duplicate="combine": the columns combined rows store as row lists.
     row_list_columns: list = field(default_factory=list)
+    #: output name -> ``{"keys", "records"}`` for each output of a multi-output
+    #: call whose rows were filed by its own key columns.
+    spread_outputs: "dict[str, dict]" = field(default_factory=dict)
     n_rows: int = 0
 
     def add(self, output_idx: int, path: str, item: SaveItem) -> None:
@@ -5907,6 +5917,12 @@ def build_save_plan(
             fn_name, state.bindings, inv_id_cache,
         )
         _collect_row_items(plan, row, save_metadata, edges, meta_cols, state.generates_file)
+
+    for output_name, stats in plan.spread_outputs.items():
+        Log.info(
+            f"[batch_save] {output_name}: {stats['records']} record(s) filed by its "
+            f"own schema key column(s) {sorted(stats['keys'])}"
+        )
 
     # Did every selection the call asked for reach an edge? Once per run.
     input_selectors = state.bindings.selectors
@@ -6170,6 +6186,29 @@ def _collect_row_items(
                 (output_obj, output_idx, SaveItem(None, _item_metadata(save_metadata), edges))
             )
             continue
+        # Several outputs: each files its own rows by its own key columns, so
+        # one call can save at [subject, bout] and [subject, bout, date]. One
+        # output never gets here with such a frame: scifor spread it already.
+        if len(plan.output_names) > 1 and isinstance(output_value, pd.DataFrame):
+            pieces = spread_output_frame(
+                output_value,
+                save_metadata,
+                sorted(plan.schema_keys),
+                output_name=str(output_name),
+            )
+            if pieces is not None:
+                stats = plan.spread_outputs.setdefault(
+                    str(output_name), {"keys": set(), "records": 0}
+                )
+                stats["records"] += len(pieces)
+                for address, piece in pieces:
+                    stats["keys"].update(address)
+                    plan.add(
+                        output_idx,
+                        "normal",
+                        SaveItem(piece, {**_item_metadata(save_metadata), **address}, edges),
+                    )
+                continue
         plan.add(output_idx, "normal", SaveItem(output_value, _item_metadata(save_metadata), edges))
 
 

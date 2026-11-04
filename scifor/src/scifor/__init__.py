@@ -64,7 +64,9 @@ from .foreach import (
     ForColumnsError,
     NoDataError,
     for_each,
+    MissingSchemaKeyError,
     spread_nested_results,
+    spread_output_frame,
 )
 from .locations import LocationFilter, filter_combo_indices, filter_combos
 from .merge import Merge
@@ -133,7 +135,9 @@ __all__ = [
     "classify_blame",
     "user_value_seam",
     "validate_on_error",
+    "MissingSchemaKeyError",
     "spread_nested_results",
+    "spread_output_frame",
     "DB_ONLY_KWARGS",
     "FOR_EACH_OPTIONS",
     "OptionSpec",

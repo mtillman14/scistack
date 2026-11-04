@@ -2388,3 +2388,42 @@ class TestSelectRowsHook:
         )
         assert set(result.columns) >= {"a", "b"}
         assert list(result["a"]) == ["1a"] and list(result["b"]) == ["1a!"]
+
+
+# ---------------------------------------------------------------------------
+# spread_output_frame: one output's rows, filed by its own key columns
+# ---------------------------------------------------------------------------
+
+
+def test_spread_output_frame_files_rows_by_unpinned_keys():
+    from scifor import spread_output_frame
+
+    frame = pd.DataFrame({"subject": ["s"], "bout": [2], "val": [1.5]})
+    pieces = spread_output_frame(frame, {"subject": "s"}, ["subject", "bout", "date"])
+    ((address, piece),) = pieces
+    assert address == {"bout": 2}
+    # The pinned key stays in the frame unless the caller stripped it; only the
+    # keys that address the row move out of the data.
+    assert list(piece.columns) == ["subject", "val"]
+
+
+def test_spread_output_frame_leaves_a_frame_without_unpinned_keys_whole():
+    from scifor import spread_output_frame
+
+    frame = pd.DataFrame({"val": [1.0, 2.0]})
+    assert spread_output_frame(frame, {"subject": "s"}, ["subject", "bout"]) is None
+
+
+def test_spread_output_frame_names_blank_keys():
+    from scifor import MissingSchemaKeyError, spread_output_frame
+
+    frame = pd.DataFrame({"bout": [1, None, 3], "val": [1.0, 2.0, 3.0]})
+    with pytest.raises(MissingSchemaKeyError, match=r"Out at subject=s.*bout: row\(s\) \[1\]"):
+        spread_output_frame(frame, {"subject": "s"}, ["subject", "bout"], output_name="Out")
+
+
+def test_spread_output_frame_with_only_key_columns_stores_nothing():
+    from scifor import spread_output_frame
+
+    frame = pd.DataFrame({"bout": [1, 2]})
+    assert spread_output_frame(frame, {"subject": "s"}, ["subject", "bout"]) == []

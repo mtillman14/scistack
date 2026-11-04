@@ -3323,14 +3323,16 @@ def _results_to_output_dataframe(
             # scidb's flatten save then built EVERY output's record from ALL
             # the columns, and same-named columns collided (2026-10-28,
             # scidb/tests/test_multi_output_frames.py). Each output keeps its
-            # own frame in its own cell instead -- one record per output per
-            # combination, as a multi-row frame already was.
+            # own frame in its own cell instead. The save then files each
+            # output's rows by that output's own key columns
+            # (`spread_output_frame`), so two outputs can land at two levels.
             Log.info(
-                "outputs %s: %d outputs, so each output's DataFrame is saved "
-                "as its own record per combination (rows are not spread%s)",
+                "outputs %s: %d outputs, so each output keeps its own DataFrame "
+                "(rows are not merged across outputs%s)",
                 _out,
                 len(output_names),
-                f"; schema key(s) {disc_keys} in the frames stay data columns"
+                f"; schema key(s) {disc_keys} in the frames address that "
+                "output's rows on save"
                 if disc_keys
                 else "",
                 layer="scifor",
@@ -3465,6 +3467,71 @@ def _results_to_output_dataframe(
     # Round-trip metadata column dtypes: cast each metadata column back to
     # the exact dtype of the input column it was resolved from.
     return _restore_schema_column_dtypes(result, col_dtypes)
+
+
+class MissingSchemaKeyError(ValueError):
+    """Rows of a returned table have a blank value in a schema-key column, so
+    they have no address to be saved at."""
+
+
+def spread_output_frame(
+    frame: "pd.DataFrame",
+    metadata: dict,
+    schema_keys: "list | tuple | set",
+    *,
+    output_name: str = "output",
+) -> "list[tuple[dict, pd.DataFrame]] | None":
+    """File ONE output's rows by that output's own schema-key columns.
+
+    The spread rule (``_spread_decision``) for a call with several outputs,
+    where each output has its own level. Returns ``None`` when the frame
+    carries no schema key that *metadata* leaves unpinned: it stays one record
+    per combination. Otherwise returns ``(address, one-row piece)`` per row,
+    with the key columns moved from the data into the address. A frame holding
+    only key columns has nothing to store, so it returns ``[]``.
+
+    A blank key raises :class:`MissingSchemaKeyError` naming the rows: dropping
+    them would lose data, and filing them under a blank key would hide the bug.
+    """
+    pinned = {k for k, v in metadata.items() if v is not None}
+    columns = {str(c) for c in frame.columns}
+    keys = [k for k in schema_keys if k in columns and k not in pinned]
+    if not keys:
+        return None
+
+    blank = frame[keys].isna()
+    if blank.to_numpy().any():
+        where = ", ".join(f"{k}={metadata[k]}" for k in schema_keys if k in pinned)
+        details = "; ".join(
+            f"{key}: row(s) {[int(i) for i in (blank[key].to_numpy()).nonzero()[0]][:20]}"
+            for key in keys
+            if blank[key].any()
+        )
+        raise MissingSchemaKeyError(
+            f"{output_name}{f' at {where}' if where else ''}: blank schema key "
+            f"value(s), so these rows have no address ({details}; 0-based rows of "
+            f"the returned table, {len(frame)} row(s) in total). Nothing from this "
+            f"call was saved. Give every row a value, or leave these rows out in "
+            f"your function."
+        )
+
+    data = frame.drop(columns=keys)
+    if data.shape[1] == 0:
+        Log.warn(
+            "output %s: the returned table holds only schema key column(s) %s, "
+            "so there is nothing to store",
+            output_name,
+            keys,
+            layer="scifor",
+        )
+        return []
+    return [
+        (
+            {key: frame[key].iloc[i] for key in keys},
+            data.iloc[[i]].reset_index(drop=True),
+        )
+        for i in range(len(frame))
+    ]
 
 
 def spread_nested_results(
