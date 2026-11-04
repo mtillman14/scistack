@@ -937,8 +937,31 @@ def delete_pending_constant(db, name: str, value: str) -> dict:
 
 
 def put_node_config(db, node_id: str, config: dict) -> dict:
+    """Save the settings panel's config for a node.
 
-    pipeline_store.update_node_config(db, node_id, config)
+    ``update_node_config`` replaces the whole blob, and the panel sends only the
+    settings it owns, all of them graduated to the intent store. Keys only the
+    blob holds (``outputPorts``, ``shownArguments``) have their own writers, so
+    they are kept here. Without this, changing a run option erased the node's
+    declared output ports (scistack.log 2026-11-04, 13:47:52).
+    """
+    from scistack_gui.stores.intent_store import NODE_CONFIG_KEYS, SCHEMA_LOCATION_KEYS
+
+    graduated = {*NODE_CONFIG_KEYS.values(), *SCHEMA_LOCATION_KEYS}
+    stored = pipeline_store.get_node_config(db, node_id)
+    preserved = {
+        key: value
+        for key, value in stored.items()
+        if key not in graduated and key not in config
+    }
+    if preserved:
+        logger.info(
+            "[layout_service] put_node_config (node_id=%r): writing %s, keeping %s",
+            node_id,
+            sorted(config),
+            sorted(preserved),
+        )
+    pipeline_store.update_node_config(db, node_id, {**preserved, **config})
     return {"ok": True}
 
 

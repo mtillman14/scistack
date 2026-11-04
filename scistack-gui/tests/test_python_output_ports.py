@@ -228,6 +228,36 @@ def test_canvas_run_writes_ports_in_port_order_and_records_their_names(
     assert seen == [(["PortSix", "PortTen"], ["peak", "mean"])]
 
 
+def test_saving_node_settings_keeps_declared_ports_and_shown_arguments(client, populated_db):
+    """scistack.log 2026-11-04, 13:47:52: changing a run option sent four settings
+    keys, the whole blob was replaced, and the node lost its output ports."""
+    from scistack_gui.services.layout_service import set_shown_argument
+
+    _code_run([PortTen, PortSix])
+    nid = _fn_node(client)["id"]
+    _set_ports(client, nid, ["mean", "peak"])
+    set_shown_argument(populated_db, nid, "extra", True)
+
+    r = client.put(
+        f"/api/layout/{nid}/config",
+        json={
+            "config": {
+                "runOptions": {"on_error": "stop"},
+                "schemaLevel": None,
+                "schemaSelection": None,
+                "whereFilters": [],
+            }
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    data = _fn_node(client)["data"]
+    assert data["outputPorts"] == ["mean", "peak"]
+    assert data["output_types"] == ["mean", "peak"]
+    assert data["shownArguments"] == ["extra"]
+    assert data["runOptions"]["on_error"] == "stop"
+
+
 def test_an_unconnected_port_refuses_the_run(client, populated_db):
     from scistack_gui.services.execution_service import (
         UnconnectedOutputPortError,
