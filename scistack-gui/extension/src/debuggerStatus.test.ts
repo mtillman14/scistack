@@ -7,7 +7,13 @@
 
 import { test } from 'node:test';
 import * as assert from 'node:assert';
-import { decideAttach } from './debuggerStatus';
+import {
+  STOP_ON_ERROR_FILTERS,
+  attachConfiguration,
+  comboLabel,
+  decideAttach,
+  stoppedMessage,
+} from './debuggerStatus';
 
 test('debug off never attaches', () => {
   assert.deepStrictEqual(
@@ -45,4 +51,27 @@ test('a server started without debug asks for a restart', () => {
 test('a server older than the status field attaches as before', () => {
   assert.deepStrictEqual(decideAttach(true, undefined, 5678), { attach: true, port: 5678 });
   assert.deepStrictEqual(decideAttach(true, undefined, undefined), { attach: false });
+});
+
+test('the attach treats SciStack as library code', () => {
+  const config = attachConfiguration('SciStack', 5678);
+  assert.strictEqual(config.justMyCode, true);
+  assert.deepStrictEqual(config.connect, { host: '127.0.0.1', port: 5678 });
+  for (const module of ['scifor', 'scidb', 'scistack_gui']) {
+    assert.ok(config.rules.some(r => r.module === module && r.include === false), module);
+  }
+});
+
+test('stopping uses the user-uncaught filter', () => {
+  assert.deepStrictEqual(STOP_ON_ERROR_FILTERS, ['userUnhandled']);
+});
+
+test('the combination names schema keys, not the loop counter', () => {
+  assert.strictEqual(comboLabel({ subject: '2455369', bout: 1, __combo: '7' }), 'subject=2455369, bout=1');
+  assert.strictEqual(comboLabel(null), '');
+});
+
+test('the stop message says where', () => {
+  assert.match(stoppedMessage('parse_data', 'subject=2455369'), /parse_data stopped on an error at subject=2455369/);
+  assert.match(stoppedMessage(undefined, ''), /the function stopped on an error\. /);
 });

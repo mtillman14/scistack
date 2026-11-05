@@ -637,6 +637,37 @@ function decideAttach(debugEnabled, status, allocatedPort) {
     message: "SciStack: scistack.debug was turned on after this server started; restart the server to enable breakpoints."
   };
 }
+var LIBRARY_MODULES = [
+  "scifor",
+  "scidb",
+  "sciduckdb",
+  "scicanonicalhash",
+  "scistacklog",
+  "scistack_gui",
+  "scimatlab",
+  "scistackplot",
+  "scistackplotdb"
+];
+var STOP_ON_ERROR_FILTERS = ["userUnhandled"];
+function attachConfiguration(name, port) {
+  return {
+    name,
+    type: "debugpy",
+    request: "attach",
+    connect: { host: "127.0.0.1", port },
+    justMyCode: true,
+    rules: LIBRARY_MODULES.map((module2) => ({ module: module2, include: false }))
+  };
+}
+function comboLabel(metadata) {
+  if (!metadata || typeof metadata !== "object")
+    return "";
+  return Object.entries(metadata).filter(([key]) => !key.startsWith("__")).map(([key, value]) => `${key}=${String(value)}`).join(", ");
+}
+function stoppedMessage(functionName, combo) {
+  const where = combo ? ` at ${combo}` : "";
+  return `SciStack: ${functionName ?? "the function"} stopped on an error${where}. Continue to go on to the next combination.`;
+}
 
 // src/dagPanel.ts
 var DEBUG_SESSION_BASE = "Attach to scistack-gui server";
@@ -649,6 +680,8 @@ var DagPanel = class {
     this.disposeCallbacks = [];
     /** The "debugger unavailable" popup is shown once per panel, not per Run. */
     this.debugUnavailableWarned = false;
+    this.watchingStops = false;
+    this.runningCombo = "";
     /**
      * Which MATLAB runs currently own the DuckDB file lock. Shared with this
      * session's DB file-watcher, which must not refresh the DAG while MATLAB
@@ -801,6 +834,8 @@ var DagPanel = class {
           this.outputChannel.appendLine(
             `start_run: function=${functionName ?? "<?>"} language=${language ?? "python"} variants=${variants ? variants.length : 0}`
           );
+          this.runningFunction = functionName;
+          this.runningCombo = "";
           if (language !== "matlab") {
             await this.ensureDebugAttached();
           }
@@ -1290,11 +1325,14 @@ var DagPanel = class {
     const cfg = vscode2.workspace.getConfiguration("scistack");
     if (!cfg.get("debug", false))
       return;
-    if (this.debugSession)
+    if (this.debugSession) {
+      await this.applyStopOnError();
       return;
+    }
     const existing = this.findExistingDebugSession();
     if (existing) {
       this.debugSession = existing;
+      await this.applyStopOnError();
       return;
     }
     const decision = decideAttach(
@@ -1314,13 +1352,11 @@ var DagPanel = class {
     }
     const port = decision.port;
     const folder = this.session.projectRoot ? vscode2.workspace.getWorkspaceFolder(vscode2.Uri.file(this.session.projectRoot)) : vscode2.workspace.workspaceFolders?.[0];
-    const started = await vscode2.debug.startDebugging(folder, {
-      name: this.debugSessionName(),
-      type: "debugpy",
-      request: "attach",
-      connect: { host: "127.0.0.1", port },
-      justMyCode: false
-    });
+    this.watchForStops();
+    const started = await vscode2.debug.startDebugging(
+      folder,
+      attachConfiguration(this.debugSessionName(), port)
+    );
     if (!started) {
       this.outputChannel.appendLine(
         "Warning: failed to start debugpy attach session. Is the server running with scistack.debug enabled?"
@@ -1328,6 +1364,62 @@ var DagPanel = class {
       return;
     }
     this.debugSession = vscode2.debug.activeDebugSession ?? this.findExistingDebugSession();
+    await this.applyStopOnError();
+  }
+  /**
+   * Ask the session to stop on the line where the user's function raises
+   * (VS Code's "User Uncaught Exceptions"). VS Code sends its own checkboxes
+   * when a session starts and again when breakpoints change, so this is sent
+   * after each, and before each Run. Failing only loses the stop, so it is
+   * logged, not raised.
+   */
+  async applyStopOnError() {
+    const cfg = vscode2.workspace.getConfiguration("scistack");
+    const session = this.debugSession;
+    if (!session || !cfg.get("debugStopOnError", true))
+      return;
+    try {
+      await session.customRequest("setExceptionBreakpoints", {
+        filters: STOP_ON_ERROR_FILTERS
+      });
+      this.outputChannel.appendLine(
+        `[debugger] stop on error: ${STOP_ON_ERROR_FILTERS.join(", ")} set on ${session.name}`
+      );
+    } catch (err) {
+      this.outputChannel.appendLine(`[debugger] could not set stop on error: ${String(err)}`);
+    }
+  }
+  /**
+   * Once per panel: say which combination the debugger stopped on, and keep
+   * the stop setting after VS Code re-sends its breakpoints.
+   */
+  watchForStops() {
+    if (this.watchingStops)
+      return;
+    this.watchingStops = true;
+    const name = this.debugSessionName();
+    const tracker = vscode2.debug.registerDebugAdapterTrackerFactory("debugpy", {
+      createDebugAdapterTracker: (session) => session.name !== name ? void 0 : {
+        onDidSendMessage: (message) => {
+          if (message.type !== "event" || message.event !== "stopped" || message.body?.reason !== "exception") {
+            return;
+          }
+          const text2 = stoppedMessage(this.runningFunction, this.runningCombo);
+          this.outputChannel.appendLine(`[debugger] ${text2}`);
+          vscode2.window.showInformationMessage(text2);
+        }
+      }
+    });
+    const breakpoints = vscode2.debug.onDidChangeBreakpoints(() => {
+      void this.applyStopOnError();
+    });
+    this.disposables.push(tracker, breakpoints);
+  }
+  /** The combination a run is on, for the stop message (from `run_progress`). */
+  noteRunProgress(params) {
+    if (params.event !== "combo_start")
+      return;
+    this.runningCombo = comboLabel(params.metadata);
   }
   /**
    * Detach the debug session (called when run_done arrives).
@@ -2309,6 +2401,9 @@ var Session = class _Session {
     this.dagPanel.postMessage({ method, params });
     if (method === "run_start" && typeof params.run_id === "string") {
       this.dagPanel.matlabRuns.beginPythonRun(params.run_id);
+    }
+    if (method === "run_progress") {
+      this.dagPanel.noteRunProgress(params);
     }
     if (method === "run_done") {
       this.dagPanel.stopDebugSession();

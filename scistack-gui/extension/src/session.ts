@@ -154,6 +154,9 @@ export class Session {
       // refresh the canvas, so the file watcher must stay quiet until then.
       this.dagPanel.matlabRuns.beginPythonRun(params.run_id);
     }
+    if (method === 'run_progress') {
+      this.dagPanel.noteRunProgress(params);
+    }
     if (method === 'run_done') {
       this.dagPanel.stopDebugSession();
       this.failures().onRunDone(params);

@@ -55,3 +55,45 @@ export function decideAttach(
       'restart the server to enable breakpoints.',
   };
 }
+
+/**
+ * SciStack's own packages count as library code when debugging, so an error in
+ * the user's function leaves "user code" at the loop that catches it, even on
+ * an editable install. That is what lets VS Code stop on the failing line.
+ */
+export const LIBRARY_MODULES = [
+  'scifor', 'scidb', 'sciduckdb', 'scicanonicalhash', 'scistacklog',
+  'scistack_gui', 'scimatlab', 'scistackplot', 'scistackplotdb',
+];
+
+/** VS Code's "User Uncaught Exceptions" breakpoint, in debugpy's own words. */
+export const STOP_ON_ERROR_FILTERS = ['userUnhandled'];
+
+/** The attach configuration of a Run's debug session. */
+export function attachConfiguration(name: string, port: number) {
+  return {
+    name,
+    type: 'debugpy',
+    request: 'attach',
+    connect: { host: '127.0.0.1', port },
+    justMyCode: true,
+    rules: LIBRARY_MODULES.map(module => ({ module, include: false })),
+  };
+}
+
+/** The combination a run is on, from its `combo_start` progress event. The
+ *  loop's own `__combo` counter is left out. */
+export function comboLabel(metadata: unknown): string {
+  if (!metadata || typeof metadata !== 'object') return '';
+  return Object.entries(metadata as Record<string, unknown>)
+    .filter(([key]) => !key.startsWith('__'))
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(', ');
+}
+
+/** What to tell the user when the debugger stops on an error. */
+export function stoppedMessage(functionName: string | undefined, combo: string): string {
+  const where = combo ? ` at ${combo}` : '';
+  return `SciStack: ${functionName ?? 'the function'} stopped on an error${where}. `
+    + 'Continue to go on to the next combination.';
+}

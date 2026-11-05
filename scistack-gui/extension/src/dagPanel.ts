@@ -17,7 +17,13 @@ import { LogSink, sessionSlug } from './sessionCore';
 import { runInMatlabTerminal, isMatlabExtensionAvailable, isMatlabTerminalOpen } from './matlabTerminal';
 import { MatlabRunTracker } from './matlabRunTracker';
 import { matlabHolder, needsMatlabConnectionPrompt } from './matlabConnectionGate';
-import { decideAttach } from './debuggerStatus';
+import {
+  STOP_ON_ERROR_FILTERS,
+  attachConfiguration,
+  comboLabel,
+  decideAttach,
+  stoppedMessage,
+} from './debuggerStatus';
 
 // One debug session per database: `findExistingDebugSession` matches by
 // name, so a shared name would let one canvas adopt the other's debugger.
@@ -30,6 +36,9 @@ export class DagPanel {
   private debugSession: vscode.DebugSession | undefined;
   /** The "debugger unavailable" popup is shown once per panel, not per Run. */
   private debugUnavailableWarned = false;
+  private watchingStops = false;
+  private runningFunction: string | undefined;
+  private runningCombo = '';
   /**
    * Which MATLAB runs currently own the DuckDB file lock. Shared with this
    * session's DB file-watcher, which must not refresh the DAG while MATLAB
@@ -240,6 +249,8 @@ export class DagPanel {
           // The debugger has to be attached BEFORE Python spawns the run
           // thread, so this one decision still uses the webview's hint —
           // it only costs a pointless attach if the hint is wrong.
+          this.runningFunction = functionName;
+          this.runningCombo = '';
           if (language !== 'matlab') {
             await this.ensureDebugAttached();
           }
@@ -780,13 +791,17 @@ export class DagPanel {
   async ensureDebugAttached(): Promise<void> {
     const cfg = vscode.workspace.getConfiguration('scistack');
     if (!cfg.get<boolean>('debug', false)) return;
-    if (this.debugSession) return;
+    if (this.debugSession) {
+      await this.applyStopOnError();
+      return;
+    }
 
     // Also check VS Code's own list in case the user started the session
     // manually (e.g. via F5) — avoid creating a duplicate.
     const existing = this.findExistingDebugSession();
     if (existing) {
       this.debugSession = existing;
+      await this.applyStopOnError();
       return;
     }
 
@@ -811,13 +826,11 @@ export class DagPanel {
     const folder = this.session.projectRoot
       ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.session.projectRoot))
       : vscode.workspace.workspaceFolders?.[0];
-    const started = await vscode.debug.startDebugging(folder, {
-      name: this.debugSessionName(),
-      type: 'debugpy',
-      request: 'attach',
-      connect: { host: '127.0.0.1', port },
-      justMyCode: false,
-    });
+    this.watchForStops();
+    const started = await vscode.debug.startDebugging(
+      folder,
+      attachConfiguration(this.debugSessionName(), port),
+    );
     if (!started) {
       this.outputChannel.appendLine(
         'Warning: failed to start debugpy attach session. ' +
@@ -828,6 +841,73 @@ export class DagPanel {
     // startDebugging resolves true but doesn't return the session; capture it.
     this.debugSession =
       vscode.debug.activeDebugSession ?? this.findExistingDebugSession();
+    await this.applyStopOnError();
+  }
+
+  /**
+   * Ask the session to stop on the line where the user's function raises
+   * (VS Code's "User Uncaught Exceptions"). VS Code sends its own checkboxes
+   * when a session starts and again when breakpoints change, so this is sent
+   * after each, and before each Run. Failing only loses the stop, so it is
+   * logged, not raised.
+   */
+  private async applyStopOnError(): Promise<void> {
+    const cfg = vscode.workspace.getConfiguration('scistack');
+    const session = this.debugSession;
+    if (!session || !cfg.get<boolean>('debugStopOnError', true)) return;
+    try {
+      await session.customRequest('setExceptionBreakpoints', {
+        filters: STOP_ON_ERROR_FILTERS,
+      });
+      this.outputChannel.appendLine(
+        `[debugger] stop on error: ${STOP_ON_ERROR_FILTERS.join(', ')} set on ${session.name}`,
+      );
+    } catch (err) {
+      this.outputChannel.appendLine(`[debugger] could not set stop on error: ${String(err)}`);
+    }
+  }
+
+  /**
+   * Once per panel: say which combination the debugger stopped on, and keep
+   * the stop setting after VS Code re-sends its breakpoints.
+   */
+  private watchForStops(): void {
+    if (this.watchingStops) return;
+    this.watchingStops = true;
+    const name = this.debugSessionName();
+    const tracker = vscode.debug.registerDebugAdapterTrackerFactory('debugpy', {
+      createDebugAdapterTracker: session =>
+        session.name !== name
+          ? undefined
+          : {
+              onDidSendMessage: (message: {
+                type?: string;
+                event?: string;
+                body?: { reason?: string };
+              }) => {
+                if (
+                  message.type !== 'event' ||
+                  message.event !== 'stopped' ||
+                  message.body?.reason !== 'exception'
+                ) {
+                  return;
+                }
+                const text = stoppedMessage(this.runningFunction, this.runningCombo);
+                this.outputChannel.appendLine(`[debugger] ${text}`);
+                vscode.window.showInformationMessage(text);
+              },
+            },
+    });
+    const breakpoints = vscode.debug.onDidChangeBreakpoints(() => {
+      void this.applyStopOnError();
+    });
+    this.disposables.push(tracker, breakpoints);
+  }
+
+  /** The combination a run is on, for the stop message (from `run_progress`). */
+  noteRunProgress(params: Record<string, unknown>): void {
+    if (params.event !== 'combo_start') return;
+    this.runningCombo = comboLabel(params.metadata);
   }
 
   /**

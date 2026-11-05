@@ -16,8 +16,11 @@ per combination (a ``ComboResult``; failures are returned, not raised) ->
 """
 
 import copy
+import sys
+import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from itertools import product
 from pathlib import Path
@@ -1386,6 +1389,23 @@ def _announce(plan: RunPlan) -> None:
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def _combo_named_thread(fn_name: str, metadata_str: str):
+    """Name the thread after the combination while a debugger is loaded, so
+    VS Code's Call Stack panel says which schema key the function is on. Nothing
+    happens otherwise: a thread name is process state, and a loop needs none."""
+    if "debugpy" not in sys.modules:
+        yield
+        return
+    thread = threading.current_thread()
+    previous = thread.name
+    thread.name = f"{fn_name} {metadata_str}"
+    try:
+        yield
+    finally:
+        thread.name = previous
+
+
 def run_combo(plan: RunPlan, metadata: dict, hooks: LoopHooks, tally: RunTally) -> ComboResult:
     """Run the function at one combination and return its result rows.
 
@@ -1418,7 +1438,8 @@ def run_combo(plan: RunPlan, metadata: dict, hooks: LoopHooks, tally: RunTally) 
     _inject_shared_limits(plan, filtered_inputs, metadata)
 
     try:
-        result = _call_at_combo(plan, filtered_inputs, iterate_dfs, metadata, metadata_str, tally)
+        with _combo_named_thread(plan.fn_name, metadata_str):
+            result = _call_at_combo(plan, filtered_inputs, iterate_dfs, metadata, metadata_str, tally)
     except ForColumnsError:
         # Structural for_columns errors are deterministic across combos and
         # indicate a return-contract bug — surface immediately, don't skip.

@@ -83,6 +83,11 @@
           "default": false,
           "description": "Start a debugpy listener in the SciStack server process so VS Code can attach and hit breakpoints inside user functions executed by the DAG Run buttons. Use the 'Attach to scistack-gui server' launch config to connect."
         },
+        "scistack.debugStopOnError": {
+          "type": "boolean",
+          "default": true,
+          "description": "With scistack.debug on, stop on the line where your function raises an error, with the full stack and live variables. Continue goes on to the next combination."
+        },
         "scistack.debugPort": {
           "type": "number",
           "default": 5678,

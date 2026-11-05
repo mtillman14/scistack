@@ -2416,3 +2416,28 @@ def test_spread_output_frame_with_only_key_columns_stores_nothing():
 
     frame = pd.DataFrame({"bout": [1, 2]})
     assert spread_output_frame(frame, {"subject": "s"}, ["subject", "bout"]) == []
+
+
+def test_thread_names_the_combination_only_while_debugging(monkeypatch):
+    """VS Code's Call Stack panel shows thread names: that is where the schema
+    key a stopped function is on appears."""
+    import sys
+    import threading
+
+    set_schema(["subject"])
+    seen = []
+
+    def fn():
+        seen.append(threading.current_thread().name)
+        return 1.0
+
+    before = threading.current_thread().name
+    monkeypatch.delitem(sys.modules, "debugpy", raising=False)
+    for_each(fn, inputs={}, subject=["A"])
+    assert seen == [before]
+
+    monkeypatch.setitem(sys.modules, "debugpy", object())
+    seen.clear()
+    for_each(fn, inputs={}, subject=["A"])
+    assert "subject=A" in seen[0]
+    assert threading.current_thread().name == before
