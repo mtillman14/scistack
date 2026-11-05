@@ -542,7 +542,20 @@ def check_node_state(
         elif not combo_results:
             reason = " — nothing expected yet (never run, or no input data)"
         else:
-            reason = f" — {counts['missing']} expected invocation(s) not present"
+            # Name the locations on both sides: an id that matches at the wrong
+            # location looks exactly like "never ran" without them.
+            missing_at = [c["schema_combo"] for c in combo_results if c["state"] == "missing"]
+            reason = (
+                f" — {counts['missing']} expected invocation(s) not present, "
+                f"e.g. at {missing_at[:3]}"
+            )
+            elsewhere = {sid for _inv, sid in present - expected}
+            if elsewhere:
+                sample = list(_schema_ids_to_combos(db, list(elsewhere)[:3]).values())
+                reason += (
+                    f"; those invocations wrote {len(elsewhere)} location(s) outside "
+                    f"the expected set, e.g. {sample}"
+                )
         logger.info("node %s: red%s", fn_name, reason)
     else:
         logger.debug(

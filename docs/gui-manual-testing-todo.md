@@ -11,6 +11,41 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzz. Node turns green after a run whose rows spread into many records — added 2026-11-05
+
+A function that saves below the level it iterated (for example one call that returns
+one row per location) used to stay red after every clean run.
+
+**Backend:** restart the GUI so it picks up the `scidb` change. No re-run is needed,
+because the run already recorded in the database now counts.
+
+**Frontend:** open the C-Brace pipeline and look at `combine_groups`.
+
+**You should see:**
+- `combine_groups` is green, without running it again.
+- Save another `CosmedData` record, or re-run `load_cbrace` so its data changes:
+  `combine_groups` goes red, and goes green again after a re-run.
+
+---
+
+## 0zzzzzzzzzzzzzzzzzzzzz. A function with no arguments has no input port — added 2026-11-05
+
+**What changed:** a function node only shows input ports for its real arguments. A function with no arguments shows none, so you can't draw an edge into it until the argument exists. This is what caused "Not enough input arguments" on `combine_groups`.
+
+**Backend:**
+- Reload the VS Code window so the new backend and bundle load.
+- A refused connection logs `[layout_service] put_edge rejected: ... names no 'in__<argument>' port` in `scistack-debug.log`.
+
+**Frontend:**
+1. Create a `.m` function with no arguments and place it on the canvas. It should show no port on its left side, and dragging a variable onto it should connect nothing.
+2. Add an argument to the function, save, and check how long the port takes to appear (click **Refresh Code** if it doesn't). Note anything slow: with no generic handle, there's nothing to connect to until then.
+3. Drag a variable onto the new port and run. The function should receive the input.
+4. **Your `combine_groups` node:** select the old `CosmedData` edge and delete it, then draw a new one onto `tableIn` and run. The log should no longer show `ignoring edge manual__owci0m` or `inputs bound positionally as []`.
+
+**Expected:** a function's input edges always attach to a named port. Old edges saved with no port are not converted, so they still need redrawing.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzz. Data preview, and the debugger stops on the failing line — added 2026-11-04
 
 **What changed:** you can see a variable's column types and values from the canvas. With `scistack.debug` on, a run stops on the line where your function raises, showing which schema key it was on.

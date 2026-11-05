@@ -3642,6 +3642,37 @@ def _schema_locations(duck, schema_ids, schema_keys) -> dict:
     }
 
 
+def _output_locations_below_level(duck, invocation_ids, iterated, schema_keys) -> dict:
+    """``{(invocation_id, projected location): {schema_id, ...}}`` — where each
+    invocation wrote outputs strictly BELOW the level it iterated.
+
+    The location is projected onto the iterated keys, so an invocation shared
+    by several locations (a broadcast input binds the same edges at each) only
+    answers for the ones it actually ran at. Batched: one query for the
+    outputs, one for their locations.
+    """
+    ids = [i for i in dict.fromkeys(invocation_ids) if i]
+    if not ids:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT DISTINCT io.invocation_id, r.schema_id "
+        "FROM _invocation_output io "
+        "JOIN _record r ON r.record_id = io.output_record_id "
+        "WHERE io.invocation_id IN ({ph})",
+        ids,
+    )
+    locations = _schema_locations(duck, [sid for _inv, sid in rows], schema_keys)
+    iterated_set = set(iterated)
+    out: dict = {}
+    for inv_id, sid in rows:
+        loc = locations.get(sid, {})
+        if set(loc) > iterated_set:
+            projected = tuple(loc.get(k) for k in iterated)
+            out.setdefault((inv_id, projected), set()).add(sid)
+    return out
+
+
 def _schema_ids_at_level(duck, iterated, schema_keys) -> dict:
     """``{(value, ...) over the iterated keys: schema_id}`` for every schema
     row populated at EXACTLY that level — one query over `_schema`, which
@@ -3800,8 +3831,11 @@ def _predict_config_invocations(
             for raw_rid, virt in zip(raw[p].get(sid, []), rids):
                 bp_by_rid[virt] = bp_by_rid.get(raw_rid, {})
     param_names = list(input_types.keys())
+    # (invocation_id, schema_id, location) of the level-aware branch, whose
+    # output locations are settled after the loop in one batched read.
+    planned: list = []
 
-    def _emit(choices_by_param: dict, sid) -> None:
+    def _emit(choices_by_param: dict, sid, location: "tuple | None" = None) -> None:
         choices = [choices_by_param[p] for p in param_names]
         for combo in itertools.product(*choices):
             bindings = [
@@ -3821,7 +3855,10 @@ def _predict_config_invocations(
                 # The recorded name is identity too (compute_invocation_id).
                 function_name=fn_name,
             )
-            into.add((inv_id, sid))
+            if location is None:
+                into.add((inv_id, sid))
+            else:
+                planned.append((inv_id, sid, location))
 
     iterated = cfg.get("iterated_keys")
     schema_keys = list(cfg.get("schema_keys") or [])
@@ -3911,7 +3948,36 @@ def _predict_config_invocations(
                 break
         if not ok:
             continue
-        _emit(choices_by_param, sid_by_location.get(L, tuple(zip(iterated, L))))
+        _emit(choices_by_param, sid_by_location.get(L, tuple(zip(iterated, L))), L)
+
+    # A call may save BELOW the level it iterated: returned rows spread by a
+    # schema-key column, or `distribute`. Its outputs then never sit at the
+    # iterated location, so a pair naming that location could never be present
+    # and the node read red after every clean run (combine_groups, 2026-11-05:
+    # one call, 882 rows spread; `red — 1 expected invocation(s) not present`).
+    # The locations such a call writes depend on the rows it returned, so they
+    # can only be read back. The invocation id is still derived live, so a
+    # changed input or edited function still shifts it to one with no outputs,
+    # and that pair stays missing. A call's records and its graph commit in one
+    # transaction, so an invocation with outputs has all of them.
+    below = _output_locations_below_level(
+        duck, [inv_id for inv_id, _sid, _L in planned], iterated, schema_keys
+    )
+    for inv_id, sid, L in planned:
+        written = below.get((inv_id, L))
+        if written:
+            logger.debug(
+                "expected_invocations(%s): invocation %s wrote %d location(s) below "
+                "its level %s at %s — expecting those, not the level's own location",
+                fn_name,
+                inv_id,
+                len(written),
+                iterated,
+                L,
+            )
+            into.update((inv_id, s) for s in written)
+        else:
+            into.add((inv_id, sid))
 
 
 def config_from_inputs(inputs: dict, glue: dict | None = None) -> dict:
