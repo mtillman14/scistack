@@ -93,7 +93,7 @@ class TestMixedLanguageUnsupported:
             client.put("/api/layout/mv_y", json={
                 "x": 20, "y": 0, "node_type": "variableNode", "label": "MatlabOutput",
             })
-            client.put("/api/edges/e_x_in", json={"source": "mv_x", "target": "mf_x"})
+            client.put("/api/edges/e_x_in", json={"source": "mv_x", "target": "mf_x", "target_handle": "in__signal"})
             client.put("/api/edges/e_x_out", json={"source": "mf_x", "target": "mv_y"})
 
             with pytest.raises(ValueError, match="mixed-language"):
@@ -121,7 +121,7 @@ class TestMixedLanguageUnsupported:
             client.put("/api/layout/mv_y", json={
                 "x": 20, "y": 0, "node_type": "variableNode", "label": "MatlabOutput",
             })
-            client.put("/api/edges/e_x_in", json={"source": "mv_x", "target": "mf_x"})
+            client.put("/api/edges/e_x_in", json={"source": "mv_x", "target": "mf_x", "target_handle": "in__signal"})
             client.put("/api/edges/e_x_out", json={"source": "mf_x", "target": "mv_y"})
 
             r = client.get("/api/pipelines/main/export-code")

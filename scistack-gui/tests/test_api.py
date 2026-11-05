@@ -180,7 +180,7 @@ class TestPipeline:
                 "source": "var__RawSignal",
                 "target": "fn__bandpass_filter",
                 "source_handle": None,
-                "target_handle": None,
+                "target_handle": "in__signal",
             },
         )
         edges = client.get("/api/pipeline").json()["edges"]

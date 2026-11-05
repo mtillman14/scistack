@@ -47,7 +47,7 @@ def test_pending_values_go_to_the_passed_db(populated_db, other_db):
 
 
 def test_manual_edges_go_to_the_passed_db(populated_db, other_db):
-    layout_service.put_edge(other_db, "manual__route1", "var__A", "fn__b")
+    layout_service.put_edge(other_db, "manual__route1", "var__A", "fn__b", None, "in__x")
     assert [e["id"] for e in pipeline_store.get_manual_edges(other_db)] == [
         "manual__route1"
     ]

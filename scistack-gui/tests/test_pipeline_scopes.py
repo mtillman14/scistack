@@ -1294,7 +1294,7 @@ class TestDuplicatePipeline:
         client.put("/api/layout/mv_out", json={
             "x": 20, "y": 0, "node_type": "variableNode", "label": "FilteredSignal", "pipeline_id": pid,
         })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
         client.put("/api/layout/mf_proc/config", json={"config": {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}})
 
@@ -1474,7 +1474,7 @@ class TestPasteNodes:
         client.put("/api/layout/mv_out", json={
             "x": 300, "y": 100, "node_type": "variableNode", "label": "PasteFilteredSignal", "pipeline_id": pid,
         })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
 
     def test_paste_within_same_scope_copies_config_and_internal_edges(self, client):
@@ -1835,7 +1835,7 @@ class TestDocumentInterface:
             client.put(f"/api/layout/{node_id}", json={
                 "x": 0, "y": 0, "node_type": node_type, "label": label, "pipeline_id": pid,
             })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
         assert client.get(f"/api/pipelines/{pid}/interface").json() == {
             "inputs": [],
@@ -2040,7 +2040,7 @@ class TestDeriveTargetForNode:
             client.put("/api/layout/mv_o4_out", json={
                 "x": 20, "y": 0, "node_type": "variableNode", "label": "OtherFiltered4",
             })
-            client.put("/api/edges/e_o4_in", json={"source": "mv_o4_in", "target": "mf_bp_other4"})
+            client.put("/api/edges/e_o4_in", json={"source": "mv_o4_in", "target": "mf_bp_other4", "target_handle": "in__signal"})
             client.put("/api/edges/e_o4_out", json={"source": "mf_bp_other4", "target": "mv_o4_out"})
             client.put("/api/edges/e_o4_const", json={
                 "source": "param__brand_new_gain", "target": "mf_bp_other4",

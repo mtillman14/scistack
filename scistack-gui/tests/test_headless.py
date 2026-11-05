@@ -92,7 +92,7 @@ def test_a_canvas_imports_without_discovery_and_reports_what_it_deferred(
     client.put("/api/layout/mf_proc", json={
         "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": pid,
     })
-    client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+    client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
     client.post("/api/path-inputs", json={"name": "gait_data", "template": "{subject}.csv"})
     client.put("/api/layout/pi_a", json={
         "x": 0, "y": 0, "node_type": "pathInputNode", "label": "gait_data", "pipeline_id": pid,

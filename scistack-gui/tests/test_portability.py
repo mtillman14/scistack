@@ -40,7 +40,7 @@ class TestExportImportSameDatabase:
         client.put("/api/layout/mf_proc", json={
             "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": pid,
         })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
 
         db = get_db()
         document = export_pipeline(db, pid)
@@ -68,7 +68,7 @@ class TestExportImportSameDatabase:
         client.put("/api/layout/mv_out", json={
             "x": 20, "y": 0, "node_type": "variableNode", "label": "FilteredSignal", "pipeline_id": pid,
         })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
         client.put("/api/layout/mf_proc/config", json={"config": {"schemaSelection": {"exclude_levels": {"subject": ["S02"]}}}})
 
@@ -197,7 +197,7 @@ class TestExportImportCrossDatabase:
         client.put("/api/layout/cf_a", json={
             "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": child,
         })
-        client.put("/api/edges/ce_a", json={"source": "cv_in", "target": "cf_a"})
+        client.put("/api/edges/ce_a", json={"source": "cv_in", "target": "cf_a", "target_handle": "in__signal"})
 
         parent = client.post("/api/pipelines", json={"name": "analysis"}).json()["pipeline_id"]
         use_id = client.post(
@@ -358,7 +358,7 @@ class TestSubmoduleContentDedup:
         client.put("/api/layout/cf_a", json={
             "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": child,
         })
-        client.put("/api/edges/ce_a", json={"source": "cv_in", "target": "cf_a"})
+        client.put("/api/edges/ce_a", json={"source": "cv_in", "target": "cf_a", "target_handle": "in__signal"})
 
         parent = client.post("/api/pipelines", json={"name": "analysis"}).json()["pipeline_id"]
         client.post(f"/api/pipelines/{parent}/uses", json={"child_pipeline_id": child})
@@ -390,7 +390,7 @@ class TestSubmoduleContentDedup:
         client.put("/api/layout/cf_a", json={
             "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": child,
         })
-        client.put("/api/edges/ce_a", json={"source": "cv_in", "target": "cf_a"})
+        client.put("/api/edges/ce_a", json={"source": "cv_in", "target": "cf_a", "target_handle": "in__signal"})
 
         parent = client.post("/api/pipelines", json={"name": "analysis"}).json()["pipeline_id"]
         client.post(f"/api/pipelines/{parent}/uses", json={"child_pipeline_id": child})
@@ -576,7 +576,7 @@ class TestCanvasSnapshotCarriesEverything:
         client.put("/api/layout/mf_proc", json={
             "x": 10, "y": 0, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": pid,
         })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
         client.put("/api/layout/mf_proc/config", json={"config": EXCLUDE_S02})
         return pid
 

@@ -15,10 +15,13 @@ from scifor.failures import ActionableError
 from scistack_gui.domain.display_order import display_sorted
 from scistack_gui.domain import ports
 from scistack_gui.ids import (
+    FN_ID_PREFIX,
+    IN_HANDLE_PREFIX,
     PATH_INPUT_ID_PREFIX,
     ROOT_SCOPE,
     param_node_id,
     path_input_node_id,
+    strip_placement,
 )
 from scistack_gui.stores import pipeline_store
 
@@ -28,6 +31,12 @@ logger = logging.getLogger(__name__)
 class PortWiringError(ActionableError, ValueError):
     """A connection through submodule ports that could not exist as a direct
     edge (``domain.ports.illegal_reason``)."""
+
+
+class PortlessEdgeError(ActionableError, ValueError):
+    """An edge into a function that names no argument. It could never bind, so
+    the function would run without that input. A refusal whose message says
+    what to do, so the journal files it as a setup problem."""
 
 
 class EdgeCycleError(ActionableError, ValueError):
@@ -253,14 +262,15 @@ def put_edge(
     if not target_handle and candidate not in hidden_here:
         # A redraw with no port (an API caller; the canvas always sends one)
         # names the two NODES only. Restore the one hidden connection between
-        # them; with several, it is ambiguous, so a drawn edge is stored.
+        # them; with several, it is ambiguous, so nothing is restored and the
+        # checks below judge it as a new edge.
         between = sorted(h for h in hidden_here if h.startswith(candidate))
         if len(between) == 1:
             candidate = between[0]
         elif between:
             logger.info(
                 "[layout_service] put_edge: %d hidden connections between %s and %s "
-                "and no port given; storing a drawn edge instead of guessing: %s",
+                "and no port given; not guessing which to restore: %s",
                 len(between),
                 source,
                 target,
@@ -310,6 +320,7 @@ def put_edge(
             f"connecting '{source}' to '{target}' would create a dependency "
             f"cycle: {' -> '.join(cycle_path)}"
         )
+    _refuse_portless_function_input(manual_nodes, edge_id, source, target, target_handle)
     _refuse_illegal_port_wire(db, view, existing_edges, edge_id, source, target, source_handle, target_handle)
     pipeline_store.write_manual_edge(
         db,
@@ -363,6 +374,39 @@ def delete_edge(
     )
     _notify_dag_updated()
     return {"ok": True}
+
+
+def _refuse_portless_function_input(
+    manual_nodes: dict, edge_id: str, source: str, target: str, target_handle: "str | None"
+) -> None:
+    """Every edge into a function names the argument it feeds.
+
+    ``edge_resolver`` binds an input only through its ``in__{argument}`` port,
+    so an edge without one is stored and then ignored. On 2026-11-05 an edge
+    drawn while ``combine_groups`` had no arguments was saved with no port. It
+    stayed that way after ``tableIn`` was added, and the function ran with no
+    inputs: "Not enough input arguments"."""
+    if (target_handle or "").startswith(IN_HANDLE_PREFIX):
+        return
+    bare = strip_placement(target)
+    meta = manual_nodes.get(target) or manual_nodes.get(bare) or {}
+    if meta.get("type") != "functionNode" and not bare.startswith(FN_ID_PREFIX):
+        return
+    label = meta.get("label") or bare
+    logger.warning(
+        "[layout_service] put_edge rejected: %s (%s -> %s, target_handle=%r) names "
+        "no 'in__<argument>' port on function %r, so it could never bind",
+        edge_id,
+        source,
+        target,
+        target_handle,
+        label,
+    )
+    raise PortlessEdgeError(
+        f"This connection into '{label}' does not name an argument. Connect it to "
+        "one of the function's input ports. If the function has none, add the "
+        "argument to its code first."
+    )
 
 
 def _refuse_illegal_port_wire(

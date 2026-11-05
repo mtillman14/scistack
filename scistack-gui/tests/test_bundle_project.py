@@ -36,7 +36,7 @@ def _build_source(client):
     client.put("/api/layout/m_fn", json={
         "x": 30, "y": 2, "node_type": "functionNode", "label": "custom_proc", "pipeline_id": "main",
     })
-    client.put("/api/edges/m_e", json={"source": "m_in", "target": "m_fn"})
+    client.put("/api/edges/m_e", json={"source": "m_in", "target": "m_fn", "target_handle": "in__signal"})
     client.put("/api/layout/m_fn/config", json={"config": EXCLUDE_S02})
 
     # A hypothesis tab with its own canvas.

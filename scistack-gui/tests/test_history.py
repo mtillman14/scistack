@@ -551,7 +551,7 @@ class TestExtractUndo:
             client.put(f"/api/layout/{node_id}", json={
                 "x": 1, "y": 2, "node_type": node_type, "label": label,
             })
-        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc"})
+        client.put("/api/edges/e_in", json={"source": "mv_in", "target": "mf_proc", "target_handle": "in__signal"})
         client.put("/api/edges/e_out", json={"source": "mf_proc", "target": "mv_out"})
         return client
 

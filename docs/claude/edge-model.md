@@ -92,6 +92,12 @@ hidden ids directly. Mutators (`put_edge`, `delete_edge`,
 
 ### One port per argument: `in__X`
 
+Every edge into a function names its argument. A function with no arguments has
+no input handle on the canvas, and `layout_service.put_edge` refuses an edge into
+a function with no `in__` port (`PortlessEdgeError`). `edge_resolver` would ignore
+such an edge, so the function would run without that input. Rows stored before
+2026-11-05 are not converted: they stay ignored until redrawn.
+
 Whatever feeds an argument (variable, Parameter, PathInput, glue), its port is
 `in__X`. `param__X` was retired. A stored edge on it is dropped by `edge_view`
 (WARN once per edge id): redraw it.

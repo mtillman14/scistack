@@ -480,19 +480,18 @@ function PipelineFunctionNode({ id, data }: Props) {
       )}
       {pinGateDialog}
 
-      {leftHandles.length > 0
-        ? leftHandles.map((h, i) => (
-            <Handle
-              key={h.id}
-              id={h.id}
-              type="target"
-              position={Position.Left}
-              style={handleStyle(i, leftHandles.length, 'left')}
-              title={h.title}
-            />
-          ))
-        : <Handle type="target" position={Position.Left} />
-      }
+      {/* A function with no arguments has no input ports: an edge can only attach
+          to an argument (layout_service.put_edge refuses any other). */}
+      {leftHandles.map((h, i) => (
+        <Handle
+          key={h.id}
+          id={h.id}
+          type="target"
+          position={Position.Left}
+          style={handleStyle(i, leftHandles.length, 'left')}
+          title={h.title}
+        />
+      ))}
 
       {data.disconnected && (
         <div style={styles.disconnectedBadge} title="A required input's edge was deleted — reconnect it before running">
@@ -799,19 +798,18 @@ function VariantFunctionNode({
             : undefined
       }
     >
-      {leftHandles.length > 0
-        ? leftHandles.map((h, i) => (
-            <Handle
-              key={h.id}
-              id={h.id}
-              type="target"
-              position={Position.Left}
-              style={handleStyle(i, leftHandles.length, 'left')}
-              title={h.title}
-            />
-          ))
-        : <Handle type="target" position={Position.Left} />
-      }
+      {/* A function with no arguments has no input ports: an edge can only attach
+          to an argument (layout_service.put_edge refuses any other). */}
+      {leftHandles.map((h, i) => (
+        <Handle
+          key={h.id}
+          id={h.id}
+          type="target"
+          position={Position.Left}
+          style={handleStyle(i, leftHandles.length, 'left')}
+          title={h.title}
+        />
+      ))}
       <div style={{ ...styles.label, cursor: 'default', textDecoration: 'none' }}>
         {label}
       </div>
