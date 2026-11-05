@@ -43,6 +43,8 @@ import GlueNode from './GlueNode'
 import PlotStudio from '../PlotStudio/PlotStudio'
 import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
 import VariantsPopup from '../Variants/VariantsPopup'
+import DataPreviewPopup from '../DataPreview/DataPreviewPopup'
+import { OPEN_DATA_PREVIEW_EVENT, type DataPreviewTarget } from '../DataPreview/dataPreview'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { optionalPorts, OPTIONAL_ARGS_ATTR, type OptionalPort } from './inputPorts'
 import { SourceLocationDialog } from '../SourceLocationDialog'
@@ -165,6 +167,13 @@ export default function PipelineDAG() {
   // It replaced the separate Provenance and Variants panels; the question
   // arises AT a node, so this is where it opens.
   const [variantsTarget, setVariantsTarget] = useState<string | null>(null)
+  // The variable or input port the data preview is open on (scidb.inspect.preview).
+  const [previewTarget, setPreviewTarget] = useState<DataPreviewTarget | null>(null)
+  useEffect(() => {
+    const open = (e: Event) => setPreviewTarget((e as CustomEvent<DataPreviewTarget>).detail)
+    window.addEventListener(OPEN_DATA_PREVIEW_EVENT, open)
+    return () => window.removeEventListener(OPEN_DATA_PREVIEW_EVENT, open)
+  }, [])
   const [sourceLoc, setSourceLoc] = useState<SourceLocation | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [extractDraft, setExtractDraft] = useState<{ open: boolean; name: string; error: string }>(
@@ -1149,6 +1158,14 @@ export default function PipelineDAG() {
             >
               🧬 Variants…
             </button>
+            <button
+              style={styles.contextMenuItem}
+              onClick={() => { setPreviewTarget({ variable: varType }); setContextMenu(null) }}
+              type="button"
+              title="Each column's types and sample values, and the first rows, as a function receives them"
+            >
+              🔎 Preview data…
+            </button>
           </div>
         )
       })()}
@@ -1201,6 +1218,9 @@ export default function PipelineDAG() {
           variable={variantsTarget}
           onClose={() => setVariantsTarget(null)}
         />
+      )}
+      {previewTarget && (
+        <DataPreviewPopup target={previewTarget} onClose={() => setPreviewTarget(null)} />
       )}
       {sourceLoc && (
         <SourceLocationDialog location={sourceLoc} onClose={() => setSourceLoc(null)} />

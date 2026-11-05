@@ -25,6 +25,7 @@ import {
   describeSelection,
   isInert,
 } from '../PlotStudio/locationSelection'
+import { openDataPreview } from '../DataPreview/dataPreview'
 import { colNamesAfterSelectionChange, hasIterateInput, withColName } from './colNameInputs'
 import { currentPorts, movePort, newPortName, renamePort } from './outputPorts'
 import {
@@ -406,6 +407,16 @@ function ColumnSelectRow({ param, variableType, columns, selection, onChange, co
           {unbound ? 'n/a' : describeColumnSelection(selection)}
           {unbound ? '' : ` ${open ? '▴' : '▾'}`}
         </button>
+        )}
+        {!unbound && variableType && (
+          <button
+            type="button"
+            style={styles.columnPickBtn}
+            onClick={() => openDataPreview({ variable: variableType, columns: picked, param })}
+            title="Each column's types and sample values, and the first rows, as this input receives them"
+          >
+            Preview
+          </button>
         )}
       </div>
 

@@ -43,3 +43,23 @@ def test_the_popup_offers_numbering_only_when_a_lower_key_exists():
     assert deepest.distribute_target is None
     assert "distribute_rows" not in [s["action"] for s in deepest.remedy["steps"]]
     assert "distribute=True" not in str(deepest)
+
+
+def test_data_preview_is_served_as_json(client, populated_db):
+    """The GUI only displays scidb.inspect.preview, over both transports."""
+    r = client.post("/api/variables/preview", json={"variable": "RawSignal", "limit": 2})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    assert body["n_records"] == 4
+    assert len(body["rows"]) == 2 and body["truncated"] is True
+    assert {"subject", "session"} <= set(body["levels"])
+
+
+def test_data_preview_reports_a_refusal_instead_of_failing_the_call(client, populated_db):
+    r = client.post(
+        "/api/variables/preview", json={"variable": "RawSignal", "location": {"nope": "1"}}
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+    assert "not schema keys" in r.json()["error"]

@@ -44,6 +44,7 @@ database file on every invocation.
 | `scidb runs [--fn NAME] [-n 50]` | Who ran what, when, with what `where=`? |
 | `scidb state [fn] [--missing] [--pathinput [key=val …]]` | What needs (re-)running? |
 | `scidb show <Type> key=val … [--versions] [--values]` | The records (and versions) at a location |
+| `scidb show <Type> key=val … --types [--rows N]` | Each column's types, non-blank count and samples, then the first rows, as a function receives them |
 | `scidb sql "SELECT …"` | Anything else (read-only) |
 | `scidb pick <Type> [key=val …] [-i] [--table]` | Which record_id is this specific output? |
 | `scidb exclusions` | What's currently excluded, and why? |

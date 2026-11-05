@@ -1518,6 +1518,26 @@ class Inspector:
         return out
 
     @_timed
+    def preview(
+        self,
+        variable,
+        *,
+        columns: "list[str] | None" = None,
+        location: "dict | None" = None,
+        limit: int | None = None,
+    ):
+        """Each column's types and sample values, and the first rows: what a
+        function reading this variable receives (:mod:`scidb.inspect.preview`)."""
+        from scidb.inspect.preview import DEFAULT_ROW_LIMIT, data_preview
+
+        return data_preview(
+            self._db,
+            getattr(variable, "__name__", variable),
+            columns=columns,
+            location=location,
+            limit=DEFAULT_ROW_LIMIT if limit is None else limit,
+        )
+
     def schema_key_types(self, history: bool = False) -> list[dict]:
         """Each schema key's declared type, as stored in the database
         (``scidb.store.schema_types``), with how it loads and how many values it

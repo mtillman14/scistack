@@ -622,3 +622,20 @@ def input_columns(variable_type: str, db=None) -> dict:
         "data_columns": data_columns,
         "note": note,
     }
+
+
+def data_preview(db, variable: str, *, columns=None, location=None, limit=None) -> dict:
+    """``Inspector.preview`` as JSON: the owner is ``scidb.inspect.preview``.
+    This shares the open connection, so it never contends for the database."""
+    import dataclasses
+
+    from scidb.inspect import Inspector
+
+    try:
+        preview = Inspector(db).preview(
+            variable, columns=columns, location=location, limit=limit
+        )
+    except Exception as exc:
+        logger.warning("[variables] data preview of %s failed: %s", variable, exc)
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"ok": True, **dataclasses.asdict(preview)}

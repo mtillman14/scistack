@@ -186,6 +186,7 @@ export interface ApiParams {
   force_cancel_run: RunRef
   generate_matlab_command: MatlabCommandRequest
   generate_matlab_pipeline_command: MatlabCommandRequest
+  get_data_preview: DataPreviewQuery
   get_endpoint_artifacts: FunctionName
   get_entity_editability: EntityRef
   get_function_code: FunctionCodeRef
@@ -949,6 +950,18 @@ export interface MatlabCommandRequest {
   function_name?: string | null
   pipeline_id?: string | null
   [k: string]: unknown
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "DataPreviewQuery".
+ */
+export interface DataPreviewQuery {
+  columns?: string[] | null
+  limit?: number | null
+  location?: {
+    [k: string]: string
+  } | null
+  variable: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

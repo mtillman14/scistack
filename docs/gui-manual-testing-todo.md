@@ -11,6 +11,32 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzz. Data preview, and the debugger stops on the failing line — added 2026-11-04
+
+**What changed:** you can see a variable's column types and values from the canvas. With `scistack.debug` on, a run stops on the line where your function raises, showing which schema key it was on.
+
+**Backend:**
+- For the debugger: `scistack.debug` on, and `debugpy` installed. Restart the GUI. `scistack.debugStopOnError` is on by default.
+- In the SciStack output channel, expect `[debugger] stop on error: userUnhandled set on ...`. In `scistack.log`, expect `[preview] <Variable>: N record(s)`.
+- CLI: `scidb show <Variable> subject=X --types`.
+
+**Frontend, preview:**
+1. Right-click a Variable node and choose **🔎 Preview data…**.
+2. Pick a value in a schema key dropdown.
+3. Select a function node. In its Inputs section, click **Preview** beside an input that has a column selection.
+
+**You should see:** a table of Column, Stored, Loaded, Non-blank and Samples, then the rows. A column holding more than one Python type shows its Loaded cell in amber. The Preview button shows only the picked columns.
+
+**Frontend, debugger:**
+1. Add `raise ValueError("test")` to a function, or use one that fails for one subject. Run its node.
+2. Check the Call Stack panel, the Variables panel, and the notification.
+3. Press Continue.
+4. Set a normal breakpoint in the function and run again.
+
+**You should see:** VS Code stops on the raising line with the full stack and live variables. The thread in Call Stack is named after the function and combination, such as `parse_data subject=2455369, __combo=7`. The notification names the combination. Continue moves to the next combination. A breakpoint in your code still stops. Please report whether it stops inside library code (it shouldn't), and what happens for `pandas.read_csv`, which has no user code to stop in.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzz. Distribute numbers repeated rows; Combine is gone — added 2026-11-04
 
 **What changed:** a table with a repeated subject saves each row at its own address with Distribute on. `on_duplicate` no longer exists, and neither does Plot Studio's `Row` factor. The duplicate popup's third step is now **Number the rows at <key>**.

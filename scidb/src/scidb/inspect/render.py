@@ -1242,3 +1242,36 @@ def render_intent(report: IntentReport) -> str:
     if not report.statements:
         lines.append("  (no statements in the intent store for this function)")
     return "\n".join(lines)
+
+
+def render_data_preview(preview) -> str:
+    """A variable's columns and first rows, as text (``scidb show --types``)."""
+    where = " ".join(f"{k}={v}" for k, v in preview.location.items()) or "all locations"
+    head = (
+        f"{preview.variable} at {where}: {preview.n_records} record(s), "
+        f"{preview.n_rows} row(s)"
+    )
+    columns = format_table(
+        ["column", "stored", "loaded", "non-blank", "samples"],
+        [
+            [
+                c.name,
+                c.stored_type,
+                ", ".join(f"{t} x{n}" for t, n in c.loaded_types.items()),
+                f"{c.non_null}/{c.n_rows}",
+                " | ".join(c.samples),
+            ]
+            for c in preview.columns
+        ],
+    )
+    names = list(preview.rows[0]) if preview.rows else []
+    rows = format_table(names, [[row[n] for n in names] for row in preview.rows]) if names else ""
+    parts = [head]
+    if preview.note:
+        parts.append(preview.note)
+    if preview.missing_columns:
+        parts.append(f"Not columns of this variable: {preview.missing_columns}")
+    parts += [columns, rows]
+    if preview.truncated:
+        parts.append(f"(first {len(preview.rows)} of {preview.n_rows} rows)")
+    return "\n\n".join(p for p in parts if p)

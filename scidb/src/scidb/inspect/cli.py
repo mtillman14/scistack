@@ -851,6 +851,13 @@ def _cmd_show(insp: Inspector, args) -> None:
     metadata = _coerce_non_schema(
         _parse_kv(args.metadata), insp._db.dataset_schema_keys
     )
+    if args.types:
+        preview = insp.preview(args.type, location=metadata, limit=args.rows)
+        if args.json:
+            _emit_json(preview)
+        else:
+            print(render.render_data_preview(preview))
+        return
     records = insp.records(
         args.type,
         latest=not args.versions,
@@ -1224,6 +1231,18 @@ def _add_commands(
         "--values",
         action="store_true",
         help="Add a compact value preview per record (storage form).",
+    )
+    p.add_argument(
+        "--types",
+        action="store_true",
+        help="Show each column's stored and loaded types, non-blank count and "
+        "sample values, then the first rows, as a function receives them.",
+    )
+    p.add_argument(
+        "--rows",
+        type=int,
+        default=20,
+        help="With --types: how many rows to show (default 20).",
     )
     p.set_defaults(_handler=_cmd_show)
 

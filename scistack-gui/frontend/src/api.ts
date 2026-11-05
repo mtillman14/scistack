@@ -255,6 +255,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     set_note:               { path: (p) => `/api/notes/${encodeURIComponent(p.key as string)}`, method: 'PUT', body: true },
     get_variable_records:   { path: (p) => `/api/variables/${encodeURIComponent(p.name as string)}/records` },
     get_variable_plot_data: { path: (p) => `/api/variables/${encodeURIComponent(p.name as string)}/plot-data` },
+    get_data_preview:       { path: '/api/variables/preview', method: 'POST', body: true },
     get_variable_columns:   { path: (p) => `/api/variables/${encodeURIComponent((p.variable_type as string) ?? (p.name as string))}/columns` },
     plan_column_groups:     { path: '/api/variables/column-groups/plan', method: 'POST', body: true },
     get_variables_list:     { path: '/api/variables' },

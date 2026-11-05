@@ -24,6 +24,7 @@ router = APIRouter()
 #     GET  /api/variables/{name}/plot-data          get_variable_plot_data
 #     GET  /api/variables/{variable_type}/columns   get_variable_columns
 #     POST /api/variables/column-groups/plan        plan_column_groups
+#     POST /api/variables/preview                   get_data_preview
 #     POST /api/variables/create                    create_variable
 
 
@@ -35,6 +36,15 @@ class VariableColumnsQuery(BaseModel):
     variable_type: str | None = None
     #: The older spelling some callers still send.
     name: str | None = None
+
+
+class DataPreviewQuery(BaseModel):
+    variable: str
+    #: Restrict the data columns, as the input port's ColumnSelection does.
+    columns: list[str] | None = None
+    #: {schema key: value}; absent keys mean every value.
+    location: dict[str, str] | None = None
+    limit: int | None = None
 
 
 class ColumnGroupsPlanRequest(BaseModel):
@@ -82,6 +92,14 @@ def _get_variable_columns(db, req: VariableColumnsQuery) -> dict:
     return variable_service.input_columns(variable_type, db=db)
 
 
+def _get_data_preview(db, req: DataPreviewQuery) -> dict:
+    """Each column's types and samples, and the first rows, as a function
+    receives them (scidb.inspect.preview)."""
+    return variable_service.data_preview(
+        db, req.variable, columns=req.columns, location=req.location, limit=req.limit
+    )
+
+
 def _plan_column_groups(req: ColumnGroupsPlanRequest) -> dict:
     """Combine or split, the group pairing and any error for a for_columns
     selection on a node with these outputs (``column_selection.plan_groups``,
@@ -117,6 +135,7 @@ VARIABLE_HANDLERS: tuple[Handler, ...] = (
     Handler("get_variable_records", "/variables/{name}/records", VariableName, _get_variable_records, http_method="GET"),
     Handler("get_variable_plot_data", "/variables/{name}/plot-data", VariableName, _get_variable_plot_data, http_method="GET"),
     Handler("get_variable_columns", "/variables/{variable_type}/columns", VariableColumnsQuery, _get_variable_columns, http_method="GET"),
+    Handler("get_data_preview", "/variables/preview", DataPreviewQuery, _get_data_preview, undoable=False),
     Handler("plan_column_groups", "/variables/column-groups/plan", ColumnGroupsPlanRequest, _plan_column_groups, needs_db=False, undoable=False),
     Handler("create_variable", "/variables/create", CreateVariableRequest, _create_variable, needs_db=False, undoable=True, undo_label="new variable"),
 )

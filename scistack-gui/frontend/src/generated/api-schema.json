@@ -996,6 +996,57 @@
       "title": "DV",
       "type": "object"
     },
+    "DataPreviewQuery": {
+      "properties": {
+        "columns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "location": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "DataPreviewQuery",
+      "type": "object"
+    },
     "DeclareRequirements": {
       "properties": {
         "names": {
@@ -6264,6 +6315,9 @@
     "generate_matlab_pipeline_command": {
       "$ref": "#/$defs/MatlabCommandRequest"
     },
+    "get_data_preview": {
+      "$ref": "#/$defs/DataPreviewQuery"
+    },
     "get_endpoint_artifacts": {
       "$ref": "#/$defs/scistack_gui__api__artifacts__FunctionName"
     },
@@ -6708,6 +6762,7 @@
     "force_cancel_run",
     "generate_matlab_command",
     "generate_matlab_pipeline_command",
+    "get_data_preview",
     "get_endpoint_artifacts",
     "get_entity_editability",
     "get_function_code",
