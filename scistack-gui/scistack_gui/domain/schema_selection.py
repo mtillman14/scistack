@@ -107,9 +107,18 @@ def to_schema_filter(selection, db) -> tuple[dict[str, list] | None, list[str]]:
     return (per_key or None), warnings
 
 
-def report(selection, db, *, context: str) -> dict | None:
-    """:func:`to_schema_filter`, with the warnings logged against *context*."""
+def report(selection, db, *, context: str, iterated: "list[str] | None" = None) -> dict | None:
+    """:func:`to_schema_filter`, with the warnings logged against *context*.
+
+    With *iterated* (the keys the run iterates), the bound keeps only those. On
+    any other key it would filter rows while loading, before ``locations=`` sees
+    them, and a run could not tell what the selection narrowed: minute 6 would
+    read as nothing selected, and record no variant
+    (docs/claude/selection-variant-axis.md).
+    """
     schema_filter, warnings = to_schema_filter(selection, db)
+    if schema_filter and iterated is not None:
+        schema_filter = {k: v for k, v in schema_filter.items() if k in iterated} or None
     for warning in warnings:
         logger.warning("[schema_selection] %s: %s", context, warning)
     pair = as_selection(selection)

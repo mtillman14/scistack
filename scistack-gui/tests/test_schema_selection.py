@@ -16,6 +16,7 @@ Two things are worth testing here and nowhere else:
 from scistack_gui.domain.schema_selection import (
     as_selection,
     is_empty,
+    report,
     to_schema_filter,
 )
 
@@ -85,6 +86,19 @@ class TestProjectionToSchemaFilter:
         assert schema_filter == {"subject": ["1", "2"]}
         assert "session" not in schema_filter
         assert warnings == []
+
+    def test_report_bounds_only_the_keys_a_run_iterates(self, populated_db):
+        """A bound on any other key filters rows while loading, before
+        ``locations=`` sees them, so the run could not record what was narrowed."""
+        selection = {"include": [[["subject", "1"], ["session", "pre"]]]}
+        assert report(selection, populated_db, context="t", iterated=["subject"]) == {
+            "subject": ["1"]
+        }
+        assert report(selection, populated_db, context="t", iterated=[]) is None
+        assert report(selection, populated_db, context="t") == {
+            "subject": ["1"],
+            "session": ["pre"],
+        }
 
     def test_both_halves_intersect(self, populated_db):
         schema_filter, _ = to_schema_filter(

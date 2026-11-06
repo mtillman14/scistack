@@ -119,7 +119,7 @@ def test_ensure_of_an_undeclared_table_is_refused(tmp_path):
 #: is on purpose.
 _HISTORY = {
     "_schema", "_record", "_constant", "_invocation", "_function_source",
-    "_invocation_input", "_invocation_output", "_run", "_run_invocation",
+    "_invocation_input", "_invocation_output", "_invocation_pooled", "_run", "_run_invocation",
     "_run_step", "_run_outputs", "_function_rename", "_variant_pin",
     "_variant_tombstone", "__scidb_schema_overrides",
     "_schema_key_type",  # dataset intent since 2026-11-01 (was in no section)
@@ -128,7 +128,7 @@ _INTENT = {"__scidb_schema_overrides", "_schema_key_type"}
 _DATA = {"_registered_types", "_variables", "_variable_groups", "_record_save"}
 _CLEARED = {
     "_record", "_constant", "_invocation", "_function_source",
-    "_invocation_input", "_invocation_output", "_run_invocation",
+    "_invocation_input", "_invocation_output", "_invocation_pooled", "_run_invocation",
     "_function_rename", "_record_save",
 }
 

@@ -163,12 +163,9 @@ Three things stay as they are:
   serves every selected location (consequence of "a step whose key is absent").
 - **A `Fixed` input is not narrowed.** It reads the location it names, whichever
   locations the run is about. A `Fixed` constituent of a `Merge` likewise.
-- **A selection is not stated in a call's identity, but what it read is.** Below the
-  iteration level it changes the consumed input locations, and those are part of
-  `provenance_query.variant_keys_batch`, the same rule as `where=`. So minute 5 and
-  minute 6 at one `[group, subject]` location are both current. Neither Variant cards
-  nor a downstream aggregation's split reads that key: the cards show one card, and a
-  downstream call pools both records (`_sig_of` groups by constants only).
+- **What it narrowed below the level is a variant.** Minute 5 and minute 6 at one
+  `[group, subject]` location are both current, as two cards, and a downstream call
+  splits them. See `selection-variant-axis.md`.
 
 ## Reporting (NOTE 2)
 

@@ -336,6 +336,8 @@ class Selection:
 
     rids: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     groups: Mapping[str, str] = field(default_factory=dict)
+    #: What a schema selection narrowed for this call (``selection_axis``), or None.
+    axis: Any = None
 
     def all_rids(self) -> set[str]:
         return {rid for rids in self.rids.values() for rid in rids}
@@ -345,7 +347,7 @@ class Selection:
         column selection)."""
         rids = dict(self.rids)
         rids[param] = tuple(rids.get(param, ())) + (str(rid),)
-        return Selection(rids, dict(self.groups))
+        return Selection(rids, dict(self.groups), self.axis)
 
 
 @dataclass
@@ -412,6 +414,16 @@ class RunBindings:
     def split_params(self) -> list[str]:
         """Inputs that expand one call per variant group, in input order."""
         return [p for p, b in self.inputs.items() if b.splits]
+
+    @property
+    def pooled_params(self) -> list[str]:
+        """Inputs that, in an aggregating run, read whatever each location holds
+        (``_invocation_pooled``). Never a ``Fixed`` input, which names its record."""
+        return [
+            b.param
+            for b in self.inputs.values()
+            if b.kind in (InputKind.AGGREGATED, InputKind.LINEAGE_ONLY)
+        ]
 
     def add_selection(self, selection: Selection) -> int:
         """Register what one combination reads; returns the handle to put

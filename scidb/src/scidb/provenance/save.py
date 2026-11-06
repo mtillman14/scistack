@@ -37,6 +37,9 @@ from scidb.provenance.graph import (
     CONSTANT_TYPE,
     PATHINPUT_TYPE,
     PATHINPUT_VALUE_TYPE,
+    SELECTION_TYPE,
+    SELECTION_VALUE_TYPE,
+    compute_selection_record_id,
     compute_constant_record_id,
     compute_invocation_id,
     compute_pathinput_record_id,
@@ -251,6 +254,7 @@ class GraphRecord:
         "meta",
         "bindings",
         "invocation_id",
+        "pooled_params",
     )
 
     def __init__(
@@ -262,6 +266,7 @@ class GraphRecord:
         meta,
         bindings=(),
         invocation_id=None,
+        pooled_params=(),
     ):
         self.type_name = type_name
         self.schema_version = schema_version
@@ -270,6 +275,7 @@ class GraphRecord:
         self.meta = meta
         self.bindings = [Binding.coerce(b) for b in bindings]
         self.invocation_id = invocation_id
+        self.pooled_params = pooled_params
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +469,7 @@ def invocation_identity(meta: dict, bindings) -> str:
     edges: list[Binding] = list(var_b)
     edges.extend(constant_bindings(const_b, _constant_glue(meta)))
     edges.extend(_pathinput_bindings(meta))
+    edges.extend(_selection_bindings(meta))
     return compute_invocation_id(
         meta.get("__fn_hash") or "",
         as_table,
@@ -472,6 +479,18 @@ def invocation_identity(meta: dict, bindings) -> str:
         iteration_level=_iteration_level(meta),
         function_name=meta.get("__fn"),
     )
+
+
+def _selection_bindings(meta: dict) -> list[Binding]:
+    """The edge a call's narrowing contributes (``__selection``, the axis as
+    ``SelectionAxis.to_json``), or none. The ONE reader on the save side, so the
+    stamped identity and the written edges cannot disagree."""
+    from scidb.run.selection_axis import SELECTION_PARAM
+
+    raw = meta.get("__selection")
+    if not raw:
+        return []
+    return [Binding(SELECTION_PARAM, compute_selection_record_id(raw), None)]
 
 
 def _across_variants(meta: dict) -> list[str]:
@@ -624,6 +643,9 @@ def record_run(
     run_output_edges: dict[tuple[str, int], str] = {}
     seeded_invs: set[str] = set()  # inv_ids whose committed edges are loaded
     run_inv_ids: set[str] = set()
+    # (inv, param) inputs pooled with no where= (``_invocation_pooled``). Written
+    # even when the invocation already exists: a re-run of an older one gains it.
+    pooled_rows: set[tuple[str, str]] = set()
     # param -> invocations whose Parameter-fed glue hop this run wrote
     constant_glue_hops: dict[str, int] = {}
 
@@ -659,6 +681,7 @@ def record_run(
             bool(meta.get("__distribute", False)),
             tuple(_across_variants(meta)),
             tuple(_iteration_level(meta) or ()) if "__level" in meta else None,
+            meta.get("__selection"),
         )
         inv_id = inv_cache.get(cache_key)
         if inv_id is None:
@@ -711,6 +734,15 @@ def record_run(
                     f"[provenance] fn={fn_name}: {len(pathinput_b)} PathInput "
                     f"edge(s) folded into invocation "
                     f"{dict((b.param, b.rid) for b in pathinput_b)}"
+                )
+            selection_b = _selection_bindings(meta)
+            bindings.extend(selection_b)
+            for b in selection_b:
+                raw = meta["__selection"]
+                ch = canonical_hash(raw)
+                constant_rows[b.rid] = (b.rid, raw, SELECTION_VALUE_TYPE, ch)
+                entity_rows.setdefault(
+                    b.rid, (b.rid, created_at, SELECTION_TYPE, None, ch, None, False)
                 )
 
             # Identity — the same recipe as `invocation_identity`, spelled with
@@ -765,6 +797,7 @@ def record_run(
             )
             for b in bindings:
                 input_edges[(inv_id, b.param, b.rid)] = b.selector
+            pooled_rows.update((inv_id, str(p)) for p in g.pooled_params)
             for param in const_b:
                 declared = parameter_names.get(param)
                 if param in glued_hops:
@@ -921,7 +954,10 @@ def record_run(
     pathinput_row_count = sum(
         1 for row in constant_rows.values() if row[2] == PATHINPUT_VALUE_TYPE
     )
-    constant_row_count = len(constant_rows) - pathinput_row_count
+    selection_row_count = sum(
+        1 for row in constant_rows.values() if row[2] == SELECTION_VALUE_TYPE
+    )
+    constant_row_count = len(constant_rows) - pathinput_row_count - selection_row_count
     logger.debug(
         "record_run: run_id=%s fn=%s records=%d invocations=%d constants=%d "
         "pathinput_specs=%d edges_in=%d",
@@ -975,6 +1011,7 @@ def record_run(
         pathinput_spec_rows=pathinput_spec_rows,
         output_types=output_types,
         output_params=output_params,
+        pooled_rows=pooled_rows,
     )
     timings["3_commit"] = time.perf_counter() - _t_commit
     timings["total"] = time.perf_counter() - _t_start
@@ -1202,6 +1239,7 @@ def _commit_graph(
     pathinput_spec_rows: dict | None = None,
     output_types: "list[str] | None" = None,
     output_params: "list[str] | None" = None,
+    pooled_rows: "set[tuple[str, str]] | None" = None,
 ) -> None:
     """Transactionally insert the assembled graph rows + the append-only run.
 
@@ -1285,6 +1323,16 @@ def _commit_graph(
                 conflict_cols=["invocation_id"],
             ),
         )
+        if pooled_rows:
+            _timed(
+                "3c_invocation_pooled",
+                lambda: duck.bulk_insert(
+                    "_invocation_pooled",
+                    ("invocation_id", "param_name"),
+                    sorted(pooled_rows),
+                    conflict_cols=["invocation_id", "param_name"],
+                ),
+            )
         _timed(
             "3d_invocation_input",
             lambda: duck.bulk_insert(

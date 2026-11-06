@@ -417,6 +417,24 @@ _core(
     bundle=BUNDLE_HISTORY, cleared=True,
 )
 
+# Which inputs of an invocation pooled whatever its location held, with no
+# ``where=`` choosing among them. Their consumed locations then say nothing about
+# which computation this is (a selection's own axis does, when there is one), so
+# they stay out of the variant key and added data updates the result instead of
+# coexisting with it. NOT identity. Its own table so an existing database gains it
+# on open; an invocation with no row keeps the older rule.
+_core(
+    "_invocation_pooled",
+    """
+    CREATE TABLE IF NOT EXISTS _invocation_pooled (
+        invocation_id VARCHAR NOT NULL,
+        param_name    VARCHAR NOT NULL,
+        PRIMARY KEY (invocation_id, param_name)
+    )
+    """,
+    bundle=BUNDLE_HISTORY, cleared=True,
+)
+
 # The code behind a ``function_hash``. Purely additive: the hash is already
 # the key, so nothing about identity changes and an absent row means only
 # "not captured", never "different code".

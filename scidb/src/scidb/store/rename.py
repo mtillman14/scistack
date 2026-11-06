@@ -124,7 +124,9 @@ def _copy_data_rows(duck, type_name: str, old_rid: str, new_rid: str) -> int:
     return int(row[0]) if row else 0
 
 
-def _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, report) -> None:
+def _write(
+    db, records, invocation_rows, input_rows, output_rows, new_inv_of, report, pooled_rows=()
+) -> None:
     """Write a pass in ONE transaction. Each new record's save event is NOW,
     in the order its original was saved (a microsecond apart), so the new
     records are the newest at their locations and keep the originals'
@@ -163,6 +165,12 @@ def _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, re
             duck.execute(
                 "INSERT INTO _invocation_input (invocation_id, param_name, input_record_id, "
                 "selector, declared_name) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+                list(row),
+            )
+        for row in pooled_rows:
+            duck.execute(
+                "INSERT INTO _invocation_pooled (invocation_id, param_name) "
+                "VALUES (?, ?) ON CONFLICT DO NOTHING",
                 list(row),
             )
         for row in output_rows:
@@ -260,6 +268,7 @@ def rename_functions(db, mapping: "dict[str, str]", hashes: "dict[str, str | Non
     invocation_rows: list[tuple] = []
     input_rows: list[tuple] = []
     output_rows: list[tuple] = []
+    pooled_rows: list[tuple] = []
     new_inv_of: dict[str, str] = {}  # new invocation -> new name
     while pending:
         progressed = False
@@ -330,6 +339,13 @@ def rename_functions(db, mapping: "dict[str, str]", hashes: "dict[str, str | Non
                 (new_inv, p, edge.rid, sel, declared)
                 for (p, _rid, sel, declared, _t), edge in zip(ins, edges)
             ]
+            pooled_rows += [
+                (new_inv, param)
+                for (param,) in duck.fetchall(
+                    "SELECT param_name FROM _invocation_pooled WHERE invocation_id = ?",
+                    [inv_id],
+                )
+            ]
             report.invocations += 1
             logger.info(
                 "[rename_functions] %s: invocation %s -> %s, %d record(s) re-recorded, "
@@ -353,7 +369,7 @@ def rename_functions(db, mapping: "dict[str, str]", hashes: "dict[str, str | Non
             [old, new, renamed_at],
         )
     if invocation_rows:
-        _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, report)
+        _write(db, records, invocation_rows, input_rows, output_rows, new_inv_of, report, pooled_rows)
 
     for new in sorted(set(blocked.values())):
         if new not in counts:

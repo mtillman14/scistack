@@ -825,31 +825,34 @@ def generate_matlab_command(function_name: str, db, params: dict) -> dict:
         run_options,
     )
 
+    # Resolved by the one owner, exactly as a Python Run of this node
+    # would (cleanup-audit F22): never a raw null the generator used to
+    # read as "every key".
+    resolved_level = default_schema_level(
+        db,
+        function_name,
+        fn_variants,
+        stated=params.get("schema_level"),
+        node_id=_node_id,
+        route="matlab run",
+    )[0]
+
     cmd = _fmt(
         function_name=function_name,
         db_path=db_path,
         schema_keys=list(db.dataset_schema_keys),
         variants=fn_variants if fn_variants else params.get("variants"),
-        # One value list per schema key: the per-key projection of a ragged
+        # One value list per ITERATED key: the per-key projection of a ragged
         # selection, which bounds what MATLAB resolves. The EXACT selection
         # travels beside it as `locations` (below), which the bridge applies
-        # to the combos it hands MATLAB (cleanup-audit F6).
+        # to the rows and combos it hands MATLAB (cleanup-audit F6).
         schema_filter=_schema_selection.report(
             params.get("schema_selection"),
             db,
             context=f"matlab command for {function_name}",
+            iterated=resolved_level.iterate_keys(),
         ),
-        # Resolved by the one owner, exactly as a Python Run of this node
-        # would (cleanup-audit F22): never a raw null the generator used to
-        # read as "every key".
-        schema_level=default_schema_level(
-            db,
-            function_name,
-            fn_variants,
-            stated=params.get("schema_level"),
-            node_id=_node_id,
-            route="matlab run",
-        )[0],
+        schema_level=resolved_level,
         addpath_dirs=addpath_dirs if addpath_dirs else None,
         python_executable=sys.executable,
         path_inputs=path_input_params if path_input_params else None,

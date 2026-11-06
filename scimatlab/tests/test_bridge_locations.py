@@ -84,3 +84,32 @@ def test_a_selection_narrows_the_rows_below_the_iterated_level(db):
         assert [len(sel["emg"]) for sel in prep["row_selection"]] == [1, 1]
     finally:
         bridge._for_each_state_cache.pop(int(prep["handle"]), None)
+
+
+def test_a_matlab_run_records_the_same_axis_python_does(db):
+    """The label is a variant's name, so one selection in two languages must be
+    one variant."""
+    Raw = register_matlab_variable("RawEmg_LOC3")
+    register_matlab_variable("Filtered_LOC3")
+    for subject in (1, 2):
+        for trial in (1, 2):
+            db.save_variable(Raw, float(trial), subject=subject, trial=trial)
+
+    prep = for_each_prepare(
+        "analyze",
+        "hash1",
+        {"emg": {"kind": "var_type", "type_name": "RawEmg_LOC3"}},
+        ["Filtered_LOC3"],
+        {},
+        db=db,
+        schema_keys=["subject"],
+        locations=json.dumps({"exclude_levels": {"trial": ["1"]}}),
+    )
+    try:
+        state = bridge._for_each_state_cache[int(prep["handle"])]["state"]
+        labels = {
+            state.bindings.selection_of(combo).axis.label for combo in state.full_combos
+        }
+        assert labels == {"trial=2"}
+    finally:
+        bridge._for_each_state_cache.pop(int(prep["handle"]), None)

@@ -542,6 +542,9 @@ def delete_variant(
             deleted["_run_invocation"] = _delete_in(
                 duck, "_run_invocation", "invocation_id", plan.invocation_ids
             )
+            deleted["_invocation_pooled"] = _delete_in(
+                duck, "_invocation_pooled", "invocation_id", plan.invocation_ids
+            )
             deleted["_invocation"] = _delete_in(
                 duck, "_invocation", "invocation_id", plan.invocation_ids
             )

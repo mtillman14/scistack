@@ -58,6 +58,7 @@ from scidb.model.parameter import check_path_input_names, declared_input_names, 
 from scidb.model.roles import endpoint_kind as _roles_endpoint_kind
 from scifor import schema_types as _scifor_schema_types
 
+from scidb.run.selection_axis import SELECTION_PARAM, selection_axes_of
 from scidb.store.schema_values import schema_str, scidb_key_type_errors
 from scidb.model.variant import match_bare_name
 from scidb.model.filters import Filter
@@ -1401,6 +1402,7 @@ def _find_skip_gate_record(
     expected_input_rids=None,
     fixed_rids=frozenset(),
     target_glue_rids=None,
+    target_selection=None,
 ):
     """Latest output record of ``type_name`` at ``schema_combo`` produced by an
     invocation of ``fn_name`` whose constants match ``target_const_hashes``
@@ -1411,6 +1413,11 @@ def _find_skip_gate_record(
     consumer's edge (not a constant): a candidate matches only when it bound
     exactly that record — so distinct Parameter values, an edited glue body
     and a changed glued value each disambiguate here, as plain constants do.
+
+    ``target_selection`` is what this call narrowed (``SelectionAxis.to_json``, or
+    None). A candidate must agree: the same rows under another axis (a subject that
+    only has minute 6, once with no selection and once with one) are another
+    variant, and skipping would leave this one without that subject.
 
     Graph-precise variant lookup for the skip gate: filters by producing function
     (so a re-saved raw input at the same location is not mistaken for the output)
@@ -1473,6 +1480,12 @@ def _find_skip_gate_record(
                 f"{rid[:12]}: Parameter-fed glue mismatch (stored={stored_glue}, "
                 f"target={dict(target_glue_rids or {})}) — the value, glue body "
                 f"or glued value differs"
+            )
+            continue
+        if sig.get("selection") != target_selection:
+            _rejections.append(
+                f"{rid[:12]}: selection mismatch (stored={sig.get('selection')}, "
+                f"target={target_selection})"
             )
             continue
         stored_var = sig.get("var_inputs", {})
@@ -1717,6 +1730,9 @@ def _build_skip_hook(
                 expected_input_rids=expected_input_rids,
                 fixed_rids=_fixed_rids,
                 target_glue_rids=glue_rids,
+                target_selection=(
+                    _sel.axis.to_json() if _sel is not None and _sel.axis is not None else None
+                ),
             )
             if rid is None:
                 Log.debug(
@@ -2349,23 +2365,34 @@ def _build_call_identity(
 
 
 def _load_all_inputs(
-    fn_name: str, inputs: dict, db, where, deferred_glue_chains, glue_language, locations=None
+    fn_name: str,
+    inputs: dict,
+    db,
+    where,
+    deferred_glue_chains,
+    glue_language,
+    locations=None,
+    level=(),
+    schema_keys=(),
 ):
     """Prepare stage: bulk-load every input into a DataFrame (with
     ``__record_id`` / ``__branch_params``), narrow them to ``locations``, resolve
     mapping inputs, and fuse deferred glue onto the loaded tables.
 
-    Returns ``(loaded_inputs, mapping_inputs, glue_fusion)``.
+    Returns ``(loaded_inputs, mapping_inputs, glue_fusion, selection_axes)``.
     """
     # Step 10: Load all inputs into DataFrames (with __record_id and __branch_params)
     Log.debug(f"loading {len(inputs)} input(s) into DataFrames")
-    loaded_inputs = _convert_inputs(inputs, db, where)
+    unnarrowed = _convert_inputs(inputs, db, where)
     # Before anything reads the record ids: every call's Selection, its lineage
     # and the skip gate all derive from these rows, so the three cannot disagree
     # about what a selection left out. schema_str because a date key loads with
     # its original type while a selection names it by its stored text.
     loaded_inputs = _scifor.narrow_inputs(
-        loaded_inputs, locations, context=f"for_each({fn_name})", spell=schema_str
+        unnarrowed, locations, context=f"for_each({fn_name})", spell=schema_str
+    )
+    selection_axes = selection_axes_of(
+        unnarrowed, loaded_inputs, level, schema_keys, context=f"for_each({fn_name})"
     )
     df_count = sum(
         1
@@ -2402,7 +2429,7 @@ def _load_all_inputs(
                 schema_keys=dataset_schema_keys_of(db),
                 apply_bulk=(glue_language == "python"),
             )
-    return loaded_inputs, mapping_inputs, glue_fusion
+    return loaded_inputs, mapping_inputs, glue_fusion, selection_axes
 
 
 def _track_variants(loaded_inputs: dict):
@@ -2843,6 +2870,7 @@ def _expand_aggregation(
     colsel_params: list,
     _path_placeholder_names,
     _path_missing_placeholders: set,
+    selection_axes=None,
 ):
     """Combo expansion, aggregation mode: one call per iterated location per
     variant group (auto-split), pooled for AcrossVariants / ColumnSelection
@@ -3125,7 +3153,8 @@ def _expand_aggregation(
                 if rid:
                     rids[p] = (str(rid),)
             fc = dict(combo)
-            fc[COMBO_KEY] = run_bindings.add_selection(Selection(rids, groups))
+            axis = selection_axes.for_combo(combo) if selection_axes and rids else None
+            fc[COMBO_KEY] = run_bindings.add_selection(Selection(rids, groups, axis))
             if _path_placeholder_names:
                 # Group bp = the parsed split-input signatures + any Fixed
                 # inputs' bp; {variant} digests the merged coordinate.
@@ -3447,6 +3476,7 @@ def _expand_combos(
     tracked_params: list,
     fixed_rid_values: dict,
     colsel_params: list,
+    selection_axes=None,
 ):
     """Prepare stage: every call this run makes — base combos (existing,
     discovered, or the Cartesian product) expanded by record / variant group,
@@ -3534,9 +3564,11 @@ def _expand_combos(
         _path_missing_placeholders=_path_missing_placeholders,
     )
     if _aggregation_mode:
+        # Full iteration cannot narrow within a call: a call is one location.
         full_combos, run_bindings = _expand_aggregation(
             current_schema_keys=current_schema_keys,
             _iterated_schema_keys=_iterated_schema_keys,
+            selection_axes=selection_axes,
             **_expand,
         )
     else:
@@ -3691,8 +3723,16 @@ def _for_each_prepare(
     )
 
     # Bulk-load every input (+ glue fusion on the loaded tables).
-    loaded_inputs, mapping_inputs, glue_fusion = _load_all_inputs(
-        fn_name, inputs, db, where, deferred_glue_chains, glue_language, selection.locations
+    loaded_inputs, mapping_inputs, glue_fusion, selection_axes = _load_all_inputs(
+        fn_name,
+        inputs,
+        db,
+        where,
+        deferred_glue_chains,
+        glue_language,
+        selection.locations,
+        level=level,
+        schema_keys=dataset_schema_keys_of(resolved_db or db),
     )
     per_combo_glue = glue_fusion.per_combo
 
@@ -3719,6 +3759,7 @@ def _for_each_prepare(
         tracked_params=tracked_params,
         fixed_rid_values=fixed_rid_values,
         colsel_params=colsel_params,
+        selection_axes=selection_axes,
     )
 
     # skip_computed: drop the combos whose outputs are already current.
@@ -6038,6 +6079,12 @@ def _row_save_metadata(
     # Constants namespaced by function name (for branch_params tracking)
     for k, v in direct_constants.items():
         merged_bp[f"{fn_name}.{k}"] = v
+    # What a selection narrowed for this call: a coordinate like a constant, and
+    # identity through its edge (provenance_save._selection_bindings).
+    selection = run_bindings.selection_of(row)
+    axis = selection.axis if selection is not None else None
+    if axis is not None:
+        merged_bp[f"{fn_name}.{SELECTION_PARAM}"] = axis.label
     # Dynamic discriminators: non-schema, non-__ meta columns with scalar values
     scalar_types = (bool, int, float, str)
     for col in meta_cols:
@@ -6070,13 +6117,18 @@ def _row_save_metadata(
         if k not in save_metadata:
             save_metadata[k] = v
     save_metadata["__branch_params"] = merged_bp
+    if axis is not None:
+        save_metadata["__selection"] = axis.to_json()
 
     # The record's identity includes the exact invocation that produced it:
     # `__invocation_id` goes into the version keys (so identical content from
     # different inputs, code or options is a different record), and record_run
     # recomputes it from these same edges and refuses to write a graph that
     # disagrees.
-    edge_key = tuple(sorted(tuple(e) for e in edges))
+    edge_key = (
+        tuple(sorted(tuple(e) for e in edges)),
+        axis.to_json() if axis is not None else None,
+    )
     inv_id = inv_id_cache.get(edge_key)
     if inv_id is None:
         inv_id = invocation_identity(save_metadata, edges)
@@ -6268,6 +6320,15 @@ def _save_batches(
                 )
 
 
+def _pooled_params_of(state: "_ForEachState") -> "list[str] | tuple":
+    """The inputs recorded in ``_invocation_pooled``. A where= chose among these
+    rows, so its locations do say which computation this is; only an unfiltered
+    aggregating run pools whatever the location holds."""
+    if state.aggregation_mode and "__where" not in (state.config_keys or {}):
+        return state.bindings.pooled_params
+    return ()
+
+
 def _save_one_batch(
     plan: SavePlan,
     state: "_ForEachState",
@@ -6303,6 +6364,7 @@ def _save_one_batch(
     # Collect for the bipartite provenance graph. output_idx is the output
     # slot (output_num); items align with record_ids in order.
     schema_version = getattr(out_cls, "schema_version", 1)
+    pooled_params = _pooled_params_of(state)
     for item, rid in zip(items, record_ids, strict=False):
         if not isinstance(rid, str):
             continue
@@ -6315,6 +6377,7 @@ def _save_one_batch(
                 item.metadata,
                 bindings=item.edges,
                 invocation_id=item.metadata.get("__invocation_id"),
+                pooled_params=pooled_params,
             )
         )
         # Endpoint artifact stamping (D4, record mode): the one point where
@@ -6416,6 +6479,7 @@ def _save_generated(
                     item.metadata,
                     bindings=item.edges,
                     invocation_id=gen_inv_id,
+                    pooled_params=_pooled_params_of(state),
                 )
             )
             report.total_saved += 1

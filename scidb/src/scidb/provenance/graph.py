@@ -52,6 +52,9 @@ __all__ = [
     "NON_VARIABLE_INPUT_TYPES",
     "INTERNAL_RECORD_TYPES",
     "PATHINPUT_TYPE",
+    "SELECTION_TYPE",
+    "SELECTION_VALUE_TYPE",
+    "compute_selection_record_id",
     "PATHINPUT_VALUE_TYPE",
     "SAVE_FUNCTION_NAME",
     "compute_constant_record_id",
@@ -119,16 +122,31 @@ GLUE_TYPE = "__glue__"
 # has none), no save event, no data.
 CONSTANT_GLUE_TYPE = "__constant_glue__"
 
+# Sentinel ``type`` for what a schema selection narrowed below the iterated level
+# (``scidb.run.selection_axis``). Like a PathInput spec it is an input edge with
+# its value in ``_constant``: part of ``invocation_id`` through the edges, never a
+# variable and never one of the function's constants. A call that narrowed
+# nothing has no such edge, so its id is unchanged.
+SELECTION_TYPE = "__selection__"
+SELECTION_VALUE_TYPE = "Selection"
+
 # The type sets readers test against — THE owners; never spell the members
 # inline (in SQL or Python), or one reader drifts when a type is added.
 #: Every virtual glue record, either head.
 GLUE_RECORD_TYPES = (GLUE_TYPE, CONSTANT_GLUE_TYPE)
 #: Input records that are NOT a variable input: a constant, a PathInput spec,
-#: or a Parameter-fed glue record (a constant, reshaped). A variable-head glue
-#: record IS a variable input (it stands in for the reshaped variable).
-NON_VARIABLE_INPUT_TYPES = (CONSTANT_TYPE, PATHINPUT_TYPE, CONSTANT_GLUE_TYPE)
+#: a Parameter-fed glue record (a constant, reshaped), or a selection's axis. A
+#: variable-head glue record IS a variable input (it stands in for the reshaped
+#: variable).
+NON_VARIABLE_INPUT_TYPES = (CONSTANT_TYPE, PATHINPUT_TYPE, CONSTANT_GLUE_TYPE, SELECTION_TYPE)
 #: Record types that are provenance plumbing, never user data.
-INTERNAL_RECORD_TYPES = (CONSTANT_TYPE, PATHINPUT_TYPE, GLUE_TYPE, CONSTANT_GLUE_TYPE)
+INTERNAL_RECORD_TYPES = (
+    CONSTANT_TYPE,
+    PATHINPUT_TYPE,
+    GLUE_TYPE,
+    CONSTANT_GLUE_TYPE,
+    SELECTION_TYPE,
+)
 
 # ``param_name`` on a glue invocation's single input edge. Fixed rather than
 # taken from the glue's own signature: parameter names never bind anything
@@ -159,6 +177,11 @@ def constant_record_id_from_hash(content_hash: str) -> str:
     not always the raw value.
     """
     return _sha16(CONSTANT_TYPE, f"content:{content_hash}")
+
+
+def compute_selection_record_id(axis_json: str) -> str:
+    """Id of a selection's axis record, from ``SelectionAxis.to_json``."""
+    return _sha16(SELECTION_TYPE, f"content:{axis_json}")
 
 
 def compute_constant_record_id(value: Any) -> str:

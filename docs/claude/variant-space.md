@@ -101,7 +101,7 @@ questions, and the difference is load-bearing.
 |---|---|---|
 | `bindings.variant_signature(bp)` | *"Which GROUP does this record aggregate into?"* | canonical JSON of the full chain's branch params |
 | `provenance_query._producing_variant_key` / `variant_keys_batch` | *"Does this new record replace that old one, for 'current records'?"* | constants of the **directly producing** invocation only (one hop) |
-| `database._find_record`'s collapse key | *"Does this new record supersede that one, on a `latest` load?"* | `(fn_name, branch_params, consumed locations)` |
+| `database._find_record`'s collapse key | *"Does this new record supersede that one, on a `latest` load?"* | `(fn_name, branch_params, consumed locations)`; an input pooled with no `where=` counts by name and type, not location (`selection-variant-axis.md`) |
 | `provenance_query.variant_identity_batch` | *"These coexist on screen — what do I CALL each one?"* | branch_params + fn_name + fn_hash + fn_version + is_latest |
 
 The first three are supersession-ish; the fourth deliberately is not. A re-run

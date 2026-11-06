@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass
 
 from scidb.run.bindings import signature_conflicts_with, variant_signature
+from scidb.run.selection_axis import SELECTION_PARAM as _SELECTION_PARAM, SelectionAxis
 from scidb.store.schema_values import from_schema_str
 from scidb.provenance.graph import (
     CONSTANT_TYPE,
@@ -28,10 +29,17 @@ from scidb.provenance.graph import (
     NON_VARIABLE_INPUT_TYPES,
     PATHINPUT_TYPE,
     SAVE_FUNCTION_NAME,
+    SELECTION_TYPE,
+    compute_selection_record_id,
     constants_identity_key,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _selection_label(axis_json: str) -> str:
+    return SelectionAxis.from_json(axis_json).label
+
 
 # How a glue chain's node names are joined into ``_invocation.function_name``
 # (``glue_a > glue_b``). One separator, defined once, so the writer in
@@ -324,6 +332,8 @@ def invocation_call_ids_batch(duck, invocation_ids) -> dict:
     cfgs: dict = {}
     for inv_id, param, in_rid, rtype, value_repr in edge_rows:
         cfg = cfgs.setdefault(inv_id, _empty_cfg())
+        if rtype == SELECTION_TYPE:
+            continue  # a variant of this call site, never a different one
         if rtype == PATHINPUT_TYPE:
             cfg["path_inputs"][param] = value_repr
         elif rtype == CONSTANT_TYPE:
@@ -494,6 +504,13 @@ def _build_upstream_closure(duck, seed_record_ids, max_depth: int = 20):
         for inv_id, param_name, in_rid, rtype, value_repr in in_rows:
             if rtype == PATHINPUT_TYPE:
                 continue  # PathInput spec — neither variable nor sweep constant
+            if rtype == SELECTION_TYPE:
+                # A coordinate like a constant, so it accumulates downstream and
+                # every reader of branch params splits on it.
+                inv_constants[inv_id][f"{inv_fn_name.get(inv_id)}.{param_name}"] = (
+                    _selection_label(value_repr)
+                )
+                continue
             if rtype in (CONSTANT_TYPE, CONSTANT_GLUE_TYPE):
                 # Namespace by the producing function name (as derived_branch_params).
                 fn_name = inv_fn_name.get(inv_id)
@@ -1798,6 +1815,8 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
                 "selectors": {},
                 "declared_names": {},
                 "constant_glue": {},
+                # The axis JSON of a call that narrowed below its level, or None.
+                "selection": None,
             }
         if selector is not None:
             edges["selectors"][param_name] = selector
@@ -1809,6 +1828,8 @@ def invocation_edges_batch(duck, invocation_ids) -> dict:
             # (the per-invocation reader inner-joined _constant).
             if value_repr is not None:
                 edges["path_inputs"][param_name] = value_repr
+        elif rtype == SELECTION_TYPE:
+            edges["selection"] = value_repr
         elif rtype == CONSTANT_TYPE:
             edges["constants"][param_name] = _safe_literal(value_repr)
         elif rtype == CONSTANT_GLUE_TYPE:
@@ -1943,7 +1964,8 @@ def stored_invocation_signature(duck, record_id: str):
         [inv_id],
     )
     rows = duck.fetchall(
-        "SELECT ii.param_name, ii.input_record_id, ii.selector, r.type, c.content_hash "
+        "SELECT ii.param_name, ii.input_record_id, ii.selector, r.type, c.content_hash, "
+        "c.value_repr "
         "FROM _invocation_input ii "
         "LEFT JOIN _record r ON r.record_id = ii.input_record_id "
         "LEFT JOIN _constant c ON c.record_id = ii.input_record_id "
@@ -1954,7 +1976,11 @@ def stored_invocation_signature(duck, record_id: str):
     const_hashes: dict[str, str] = {}
     path_inputs: dict[str, str] = {}
     constant_glue: dict[str, str] = {}
-    for param, in_rid, selector, rtype, chash in rows:
+    selection = None
+    for param, in_rid, selector, rtype, chash, value_repr in rows:
+        if rtype == SELECTION_TYPE:
+            selection = value_repr
+            continue
         if rtype == CONSTANT_GLUE_TYPE:
             # A Parameter-fed glued constant: compared by its virtual record
             # (the value, glue body and glued value are all in that id).
@@ -1975,6 +2001,7 @@ def stored_invocation_signature(duck, record_id: str):
         "const_hashes": const_hashes,
         "path_inputs": path_inputs,
         "constant_glue": constant_glue,
+        "selection": selection,
         "run_options": run_options_label(*opts) if opts else run_options_label(False, None),
     }
 
@@ -2028,10 +2055,12 @@ def derived_branch_params(duck, record_id: str, max_depth: int = 20) -> dict:
         if inv is None:
             continue
         inv_id, fn_name, _ = inv
-        var_inputs, constants = invocation_inputs(duck, inv_id)
-        for param, value in constants.items():
+        edges = invocation_edges_batch(duck, [inv_id]).get(inv_id) or {}
+        for param, value in edges.get("constants", {}).items():
             bp[f"{fn_name}.{param}"] = value
-        for inp in var_inputs:
+        if edges.get("selection"):
+            bp[f"{fn_name}.{_SELECTION_PARAM}"] = _selection_label(edges["selection"])
+        for inp in edges.get("var_inputs", []):
             stack.append((inp["record_id"], depth + 1))
     return bp
 
@@ -2433,6 +2462,8 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
             # A different level is a different config: its invocations carry a
             # different identity, so the predictor must rebuild them with it.
             level,
+            # Likewise a different narrowing below that level.
+            edges.get("selection"),
         )
         if key not in configs:
             configs[key] = {
@@ -2452,6 +2483,8 @@ def function_variant_configs(duck, fn_name: str) -> list[dict]:
                 # The level the config ran at (docs/claude/
                 # iteration-level-identity.md), or None when unrecorded.
                 "iteration_level": None if level is None else list(level),
+                # The axis this config narrowed by (SelectionAxis.to_json), or None.
+                "selection": edges.get("selection"),
                 "invocation_ids": set(),
             }
         configs[key]["invocation_ids"].add(inv_id)
@@ -3155,13 +3188,49 @@ def _annotate_variants(duck, groups: dict, group_records: dict) -> list[dict]:
 RAW_VARIANT = ("__raw__",)
 
 
+def _variant_consumed_batch(duck, record_ids) -> dict:
+    """``{record_id: (*locations, *pooled inputs)}``: what a record consumed, as the
+    variant key counts it (see :func:`variant_keys_batch`). Each part sorted.
+
+    Not :func:`consumed_input_schema_ids`, which is what a ``where=`` load matches
+    against and must keep every location.
+    """
+    ids = list(dict.fromkeys(record_ids))
+    if not ids:
+        return {}
+    rows = _chunked_in(
+        duck,
+        "SELECT io.output_record_id, r.schema_id, ii.param_name, r.type, p.param_name "
+        "FROM _invocation_output io "
+        "JOIN _invocation_input ii ON ii.invocation_id = io.invocation_id "
+        "JOIN _record r ON r.record_id = ii.input_record_id "
+        "LEFT JOIN _invocation_pooled p ON p.invocation_id = ii.invocation_id "
+        "AND p.param_name = ii.param_name "
+        "WHERE io.output_record_id IN ({ph}) "
+        f"AND r.type NOT IN {_types_sql(NON_VARIABLE_INPUT_TYPES)} "
+        "AND r.schema_id IS NOT NULL",
+        ids,
+        tail_params=NON_VARIABLE_INPUT_TYPES,
+    )
+    locations: dict = {}
+    pooled: dict = {}
+    for rid, schema_id, param, rtype, pooled_param in rows:
+        if pooled_param is None:
+            locations.setdefault(rid, set()).add(schema_id)
+        else:
+            pooled.setdefault(rid, set()).add((param, rtype))
+    return {
+        rid: (*sorted(locations.get(rid, ())), *sorted(pooled.get(rid, ())))
+        for rid in {*locations, *pooled}
+    }
+
+
 def variant_keys_batch(
     duck,
     record_ids,
     *,
     inv_map: dict | None = None,
     bp_map: dict | None = None,
-    consumed_map: dict | None = None,
 ) -> dict:
     """THE variant of each record: ``{record_id: key}`` (P4, 2026-11-01).
 
@@ -3172,10 +3241,12 @@ def variant_keys_batch(
     * the accumulated upstream constants (:func:`branch_params_batch`, as one
       ``variant_signature``) — a different constant anywhere upstream is a
       different variant;
-    * the consumed input schema locations
-      (:func:`consumed_input_schema_ids`) — the same output location computed
-      from different input locations (``where=Side=='L'`` vs ``'R'``) is a
-      different variant; a re-saved input at the SAME location is not.
+    * the consumed input schema locations (:func:`_variant_consumed_batch`) — the
+      same output location computed from different input locations
+      (``where=Side=='L'`` vs ``'R'``) is a different variant; a re-saved input at
+      the SAME location is not. An input that pooled whatever its location held,
+      with no ``where=``, counts by name and type only: added data is the same
+      variant, just newer, and a selection's narrowing is in the branch params.
 
     Deliberately NOT in the key (decision 2026-11-01, "newer version"):
 
@@ -3199,8 +3270,7 @@ def variant_keys_batch(
         inv_map = producing_invocation_batch(duck, ids)
     if bp_map is None:
         bp_map = branch_params_batch(duck, ids)
-    if consumed_map is None:
-        consumed_map = consumed_input_schema_ids(duck, ids)
+    consumed_map = _variant_consumed_batch(duck, ids)
     out: dict = {}
     for rid in ids:
         inv = inv_map.get(rid)
@@ -3210,7 +3280,7 @@ def variant_keys_batch(
         out[rid] = (
             inv[1],
             variant_signature(bp_map.get(rid, {})),
-            tuple(sorted(consumed_map.get(rid, ()))),
+            consumed_map.get(rid, ()),
         )
     return out
 
@@ -3799,6 +3869,14 @@ def _predict_config_invocations(
         (p, compute_pathinput_record_id(spec))
         for p, spec in sorted((cfg.get("path_inputs") or {}).items())
     ]
+    # A narrowed call's edge, and the rule that decides which rows it read.
+    selection_json = cfg.get("selection")
+    selection_axis = None
+    if selection_json:
+        selection_axis = SelectionAxis.from_json(selection_json)
+        const_bindings.append(
+            (_SELECTION_PARAM, compute_selection_record_id(selection_json))
+        )
     # ``defaults`` is ``{vtype: {schema_id: [rid, ...]} | None}`` from
     # ``variant_pins.default_records_by_schema``: when a pin reaches an input
     # type, a run feeds the PINNED DEFAULT records to an unnamed input
@@ -3888,8 +3966,13 @@ def _predict_config_invocations(
     pooled: dict[str, dict] = {}  # param -> {L: [rid, ...]}  (one edge set)
     coarse: dict[str, list] = {}  # param -> [(loc, [rid, ...])]
     for p, by_sid in per_param.items():
+        # The keys this input's table has, as ``narrow_inputs`` saw them: one
+        # with no value anywhere is no column, and constrains nothing.
+        param_columns = {k for sid in by_sid for k in locations.get(sid, {})}
         for sid, rids in by_sid.items():
             loc = locations.get(sid, {})
+            if selection_axis is not None and not selection_axis.admits(loc, param_columns):
+                continue  # the run this config names never read it
             populated = set(loc)
             if populated == iterated_set:
                 at_level.setdefault(p, {}).setdefault(_project(loc), []).extend(rids)
