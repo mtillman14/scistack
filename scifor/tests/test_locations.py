@@ -17,7 +17,17 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from scifor import LocationFilter, filter_combo_indices, filter_combos, for_each, set_schema
+from scifor import (
+    Fixed,
+    LocationFilter,
+    Merge,
+    filter_combo_indices,
+    filter_combos,
+    for_each,
+    narrow_frame,
+    narrow_inputs,
+    set_schema,
+)
 from scifor.locations import value_spellings
 
 CASES_FILE = (
@@ -84,6 +94,14 @@ class TestParityCases:
     def test_case(self, case):
         location_filter = LocationFilter.of(case["filter"])
         assert location_filter.matches(case["location"]) is case["in"], case["why"]
+
+    @pytest.mark.parametrize("case", load_cases("row"), ids=case_id)
+    def test_row_case(self, case):
+        """Rows reach a call through ``narrow_inputs``, so scifor answers the
+        row cases too, and must agree with scistackplot's mask on each."""
+        location_filter = LocationFilter.of(case["filter"])
+        frame = pd.DataFrame([case["location"]])
+        assert bool(location_filter.row_mask(frame)[0]) is case["in"], case["why"]
 
 
 class TestSpellings:
@@ -176,11 +194,11 @@ class TestCoarserCombos:
         assert f.matches({"subject": "02"})
         assert not f.matches({"subject": "01"})
 
-    def test_a_filter_naming_only_uniterated_keys_warns_and_keeps_everything(
+    def test_a_filter_naming_only_uniterated_keys_keeps_every_combo_and_says_so(
         self, caplog
     ):
         combos = [{"subject": "01"}, {"subject": "02"}]
-        with caplog.at_level(logging.WARNING, logger="scifor"):
+        with caplog.at_level(logging.INFO, logger="scifor"):
             kept = filter_combos(combos, {"exclude_levels": {"trial": ["3"]}})
         assert kept == combos
         assert "does not iterate" in caplog.text
@@ -380,3 +398,116 @@ def test_json_text_is_a_locations_value():
     assert filter_combo_indices(combos, text) == [1]
     assert filter_combo_indices(combos, "") == [0, 1]
     assert LocationFilter.of(text) == LocationFilter.of(json.loads(text))
+
+
+# --- rows below the iteration level -------------------------------------------
+
+
+def _minutes_frame():
+    return pd.DataFrame(
+        {
+            "subject": ["01", "01", "01", "02", "02", "02"],
+            "minute": ["5", "6", "6", "5", "5", "6"],
+            "value": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    )
+
+
+class TestRowsBelowTheIterationLevel:
+    """A combo that stops above a selected key is kept as its ancestor, and the
+    rows it reads must still be the selected ones. Found on a run at
+    [group, subject] with only minute=6 selected: every minute arrived."""
+
+    def setup_method(self):
+        set_schema(["subject", "minute"])
+        self.seen = {}
+
+    def _record(self, table):
+        self.seen[table["subject"].iloc[0]] = table["minute"].tolist()
+        return float(len(table))
+
+    def _run(self, locations):
+        return for_each(
+            self._record,
+            inputs={"table": _minutes_frame()},
+            subject=["01", "02"],
+            as_table=True,
+            locations=locations,
+        )
+
+    def test_a_prefix_naming_a_finer_key_narrows_each_calls_rows(self):
+        self._run(
+            {"include": [[["subject", "01"], ["minute", "6"]], [["subject", "02"], ["minute", "6"]]]}
+        )
+        assert self.seen == {"01": ["6", "6"], "02": ["6"]}
+
+    def test_a_ragged_selection_narrows_each_call_differently(self):
+        self._run({"include": [[["subject", "01"]], [["subject", "02"], ["minute", "5"]]]})
+        assert self.seen == {"01": ["5", "6", "6"], "02": ["5", "5"]}
+
+    def test_a_level_rule_on_a_finer_key_narrows_each_calls_rows(self):
+        self._run({"exclude_levels": {"minute": ["5"]}})
+        assert self.seen == {"01": ["6", "6"], "02": ["6"]}
+
+    def test_the_result_is_built_from_the_narrowed_rows(self):
+        result = self._run({"exclude_levels": {"minute": ["5"]}})
+        assert sorted(result["output"].tolist()) == [1.0, 2.0]
+
+    def test_a_table_without_the_key_is_unconstrained(self):
+        """A coarser input has no such axis: it serves every selected minute."""
+        coarse = pd.DataFrame({"subject": ["01", "02"], "weight": [70.0, 80.0]})
+        narrowed = narrow_inputs({"coarse": coarse}, {"exclude_levels": {"minute": ["5"]}})
+        assert narrowed["coarse"] is coarse
+
+    def test_a_fixed_input_keeps_the_location_it_names(self):
+        """Fixed(minute="5") reads minute 5 on purpose, even in a run about
+        minute 6. Narrowing it would leave the function with nothing to read."""
+        pinned = Fixed(_minutes_frame(), minute="5")
+        narrowed = narrow_inputs({"pinned": pinned}, {"include": [[["minute", "6"]]]})
+        assert narrowed["pinned"] is pinned
+
+    def test_merge_constituents_are_narrowed_but_a_fixed_one_is_not(self):
+        pinned = Fixed(_minutes_frame(), minute="5")
+        merge = Merge(_minutes_frame(), pinned)
+        narrowed = narrow_inputs({"m": merge}, {"include": [[["minute", "6"]]]})["m"]
+        assert narrowed.tables[0]["minute"].unique().tolist() == ["6"]
+        assert narrowed.tables[1] is pinned
+        assert len(merge.tables[0]) == 6, "the caller's Merge must not be mutated"
+
+    def test_an_inert_filter_returns_the_same_tables(self):
+        frame = _minutes_frame()
+        assert narrow_inputs({"table": frame}, {})["table"] is frame
+        assert narrow_inputs({"table": frame}, None)["table"] is frame
+
+    def test_a_null_cell_is_not_a_level(self):
+        frame = pd.DataFrame({"subject": ["01", "01"], "minute": ["6", None]})
+        kept = narrow_frame(frame, {"exclude_levels": {"minute": ["6"]}})
+        assert kept["minute"].isna().tolist() == [True]
+
+    def test_spell_lets_a_typed_key_match_its_stored_text(self):
+        """scidb's date keys load with their original type while a selection
+        names them by stored text: str(Timestamp) would match nothing."""
+        when = pd.Timestamp("2026-07-09")
+        frame = pd.DataFrame({"day": [when, when + pd.Timedelta(days=1)]})
+        location = {"include": [[["day", "2026-07-09"]]]}
+        assert len(narrow_frame(frame, location)) == 0
+        kept = narrow_frame(frame, location, spell=lambda value: value.strftime("%Y-%m-%d"))
+        assert kept["day"].tolist() == [when]
+
+    def test_the_narrowing_says_which_levels_remain(self, caplog):
+        with caplog.at_level(logging.INFO, logger="scifor"):
+            narrow_inputs(
+                {"table": _minutes_frame()},
+                {"exclude_levels": {"minute": ["5"]}},
+                context="for_each(f)",
+            )
+        assert "for_each(f): input 'table': locations: 3 of 6 row(s) kept" in caplog.text
+        assert "minute=['6']" in caplog.text
+
+    def test_removing_every_row_warns_and_names_the_selection(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="scifor"):
+            kept = narrow_frame(
+                _minutes_frame(), {"include": [[["minute", "9"]]]}, context="input 'x'"
+            )
+        assert len(kept) == 0
+        assert "removed every one of the 6 row(s)" in caplog.text

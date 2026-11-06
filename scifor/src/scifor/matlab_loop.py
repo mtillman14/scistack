@@ -96,7 +96,7 @@ from .foreach import (
 from .hooks import LoopHooks
 from .keys import key_text as matlab_text
 from .keys import numeric_mask, text_mask
-from .locations import filter_combo_indices, locations_from_text
+from .locations import LocationFilter, filter_combo_indices, locations_from_text
 from .merge import Merge
 from .outputs import EMPTY_TABLE_DETAIL, NoOutput
 from .pathinput import PathInput, matlab_error_id
@@ -665,17 +665,33 @@ def _key_mask(column: _KeyColumn, value: Any) -> np.ndarray:
 
 
 class _Slicer:
-    """Row indices per (slice, combo): the schema filter, then scidb's
-    record-id selection. Python decides which rows a combination reads;
+    """Row indices per (slice, combo): ``locations=``, the schema filter, then
+    scidb's record-id selection. Python decides which rows a combination reads;
     MATLAB only indexes."""
 
-    def __init__(self, n_combos: int):
+    def __init__(self, n_combos: int, locations: Any = None):
         self.n_combos = n_combos
+        self.locations = LocationFilter.of(locations)
         self.rows: "list[list[np.ndarray]]" = []
 
+    def _located_rows(self, table: _Table) -> np.ndarray:
+        """The rows ``locations=`` keeps: the same rule as Python's
+        ``narrow_inputs``, over the key columns MATLAB described."""
+        mask = self.locations.columns_mask(
+            {name: column.values for name, column in table.keys.items()}, table.n_rows
+        )
+        if not mask.all():
+            Log.info(
+                f"[matlab-plan] locations: {int(mask.sum())} of {table.n_rows} row(s) kept",
+                layer=LAYER,
+            )
+        return mask
+
     def add(self, table: _Table, filter_keys: "list[str]", combos: "list[dict]",
-            fixed: dict, selections: "list[list[str] | None] | None") -> int:
-        """Add one slice; returns its 1-based number."""
+            fixed: dict, selections: "list[list[str] | None] | None",
+            *, located: bool = True) -> int:
+        """Add one slice; returns its 1-based number. ``located=False`` is a
+        ``Fixed`` input, which keeps the location it names."""
         rid_rows: "dict[str, list[int]]" = {}
         # A table without a record-id column (scidb strips it from Fixed,
         # ColumnSelection and Merge inputs) has nothing to select by: its
@@ -694,6 +710,7 @@ class _Slicer:
         per_combo: "list[np.ndarray]" = []
         cache: "dict[tuple, np.ndarray]" = {}
         all_rows = np.arange(table.n_rows, dtype="<i8")
+        allowed = self._located_rows(table) if located else np.ones(table.n_rows, dtype=bool)
         keys_here = [k for k in filter_keys if k in table.keys]
         for ci, combo in enumerate(combos):
             effective = {**combo, **fixed}
@@ -701,7 +718,7 @@ class _Slicer:
             signature = tuple(_pool_key(effective[k]) for k in used)
             rows = cache.get(signature)
             if rows is None:
-                mask = np.ones(table.n_rows, dtype=bool)
+                mask = allowed.copy()
                 for k in used:
                     mask &= _key_mask(table.keys[k], effective[k])
                 rows = all_rows[mask]
@@ -768,7 +785,8 @@ def _delivery(item: _Input, surrogate: Any, run: RunPlan, filter_keys: "list[str
             per_combo = _is_per_combo_df(_resolve_data_spec(part_surrogate, {})[0], filter_keys)
             constituents.append({
                 "per_combo": per_combo,
-                "slice": slicer.add(table, filter_keys, combos, part.fixed, None) if per_combo else 0,
+                "slice": slicer.add(table, filter_keys, combos, part.fixed, None,
+                                    located=part.kind != "fixed") if per_combo else 0,
                 "columns": _selected_columns(part, part_surrogate, filter_keys),
             })
         return {"name": item.name, "kind": "data", "shape": "merge", "constituents": constituents}
@@ -786,7 +804,8 @@ def _delivery(item: _Input, surrogate: Any, run: RunPlan, filter_keys: "list[str
         "kind": "data",
         "shape": "iterate" if iterate else "table",
         "per_combo": per_combo,
-        "slice": slicer.add(table, filter_keys, combos, fixed, selections) if per_combo else 0,
+        "slice": slicer.add(table, filter_keys, combos, fixed, selections,
+                            located=item.kind != "fixed") if per_combo else 0,
         "as_table": as_table,
         "columns": columns,
         "mapping": [str(c) for c in _listify(mapping)] if (mapping and not as_table and columns is None) else [],
@@ -1097,7 +1116,7 @@ def _plan_wire(desc: _Description, items: "tuple[_Input, ...]", run: RunPlan,
     # languages): which columns filter a table and which extraction drops.
     filter_keys = run.filter_keys
     keys, pools, index = _combo_wire(combos)
-    slicer = _Slicer(len(combos))
+    slicer = _Slicer(len(combos), locations_from_text(desc.options.get("locations") or None))
     deliveries = []
     for item in items:
         if item.name in run.data_inputs:

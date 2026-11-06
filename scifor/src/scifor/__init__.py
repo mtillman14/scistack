@@ -68,7 +68,13 @@ from .foreach import (
     spread_nested_results,
     spread_output_frame,
 )
-from .locations import LocationFilter, filter_combo_indices, filter_combos
+from .locations import (
+    LocationFilter,
+    filter_combo_indices,
+    filter_combos,
+    narrow_frame,
+    narrow_inputs,
+)
 from .merge import Merge
 from .options import DB_ONLY_KWARGS, FOR_EACH_OPTIONS, UNSET, OptionSpec
 from .outputs import COLUMN_NAME_ATTR, output_column_name
@@ -158,6 +164,8 @@ __all__ = [
     "LocationFilter",
     "filter_combos",
     "filter_combo_indices",
+    "narrow_frame",
+    "narrow_inputs",
     # Rootless-PathInput resolution base
     "set_project_root",
     "get_project_root",

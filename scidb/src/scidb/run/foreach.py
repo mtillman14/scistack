@@ -362,11 +362,12 @@ def for_each(
         locations: Optional ``scifor.LocationFilter`` (or its mapping form)
                     naming which schema locations to run: ragged ``include``
                     prefixes plus a standing ``exclude_levels`` rule. Passed
-                    straight through to ``scifor.for_each`` — the filter is a
-                    pure combo predicate and owns no database concepts, so it
-                    lives in scifor and is applied once, there, after this
-                    layer has built the full combo list (rid variants
-                    included). Distinct from ``schema_filter``, which is a
+                    to ``scifor.for_each`` for the combos, after this layer has
+                    built the full combo list (rid variants included). Its rows
+                    are narrowed here, right after loading, because which
+                    records a call reads is also what its lineage records, so
+                    a key the run does not iterate still decides what each call
+                    reads. Distinct from ``schema_filter``, which is a
                     per-key Cartesian narrowing applied while combos are
                     RESOLVED; ``locations`` can express what that cannot
                     (see docs/claude/location-filter-semantics.md).
@@ -794,9 +795,10 @@ def _run_concrete(call: ForEachCall, active_db: Any) -> "pd.DataFrame | None":
             dry_run=call.dry_run,
             db=call.db,
             options=run,
-            # `locations` only matters to the DRY-RUN shortcut inside prepare:
-            # it makes its own scifor call, and a preview that describes a
-            # different run than the one that follows is worse than no preview.
+            # Prepare narrows the loaded rows by `locations`, and its dry-run
+            # shortcut makes its own scifor call with it: a preview that
+            # describes a different run than the one that follows is worse
+            # than no preview.
             selection=call.selection,
             context=context,
             glue=call.glue,
@@ -1103,6 +1105,7 @@ def _for_each_execute(
                     path_input_resolver=_path_input_resolver,
                     mapping_inputs=state.mapping_inputs,
                     select_rows=_select_rows,
+                    locations_applied_to_rows=True,
                     keep_no_output=True,
                 ),
                 **state.extended_metadata_iterables,
@@ -2346,17 +2349,24 @@ def _build_call_identity(
 
 
 def _load_all_inputs(
-    fn_name: str, inputs: dict, db, where, deferred_glue_chains, glue_language
+    fn_name: str, inputs: dict, db, where, deferred_glue_chains, glue_language, locations=None
 ):
     """Prepare stage: bulk-load every input into a DataFrame (with
-    ``__record_id`` / ``__branch_params``), resolve mapping inputs, and fuse
-    deferred glue onto the loaded tables.
+    ``__record_id`` / ``__branch_params``), narrow them to ``locations``, resolve
+    mapping inputs, and fuse deferred glue onto the loaded tables.
 
     Returns ``(loaded_inputs, mapping_inputs, glue_fusion)``.
     """
     # Step 10: Load all inputs into DataFrames (with __record_id and __branch_params)
     Log.debug(f"loading {len(inputs)} input(s) into DataFrames")
     loaded_inputs = _convert_inputs(inputs, db, where)
+    # Before anything reads the record ids: every call's Selection, its lineage
+    # and the skip gate all derive from these rows, so the three cannot disagree
+    # about what a selection left out. schema_str because a date key loads with
+    # its original type while a selection names it by its stored text.
+    loaded_inputs = _scifor.narrow_inputs(
+        loaded_inputs, locations, context=f"for_each({fn_name})", spell=schema_str
+    )
     df_count = sum(
         1
         for v in loaded_inputs.values()
@@ -3682,7 +3692,7 @@ def _for_each_prepare(
 
     # Bulk-load every input (+ glue fusion on the loaded tables).
     loaded_inputs, mapping_inputs, glue_fusion = _load_all_inputs(
-        fn_name, inputs, db, where, deferred_glue_chains, glue_language
+        fn_name, inputs, db, where, deferred_glue_chains, glue_language, selection.locations
     )
     per_combo_glue = glue_fusion.per_combo
 

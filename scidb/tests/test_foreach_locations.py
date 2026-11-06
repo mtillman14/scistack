@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 import scifor as _scifor
-from scidb import BaseVariable, EachOf, configure_database, for_each
+from scidb import BaseVariable, EachOf, Fixed, configure_database, for_each
 
 SCHEMA = ["subject", "trial"]
 SUBJECTS = ["S01", "S02"]
@@ -176,3 +176,130 @@ class TestDryRun:
         out = capsys.readouterr().out
         assert "[dry-run] 2 iterations" in out
         assert _locations_written(db) == set()
+
+
+class LocRow(BaseVariable):
+    pass
+
+
+class LocRowOut(BaseVariable):
+    pass
+
+
+class TestRowsBelowTheIteratedLevel:
+    """A selection on a key the run does not iterate. Found on a [group, subject]
+    run with minute=6 selected: the function received every minute, because the
+    filter only narrowed combos, and a coarser combo is kept as an ancestor."""
+
+    @pytest.fixture
+    def rows(self, db):
+        for subject in SUBJECTS:
+            for index, trial in enumerate(["t1", "t2", "t3"], start=1):
+                LocRow.save(float(index), subject=subject, trial=trial)
+        return db
+
+    @staticmethod
+    def _trials(*names):
+        return {
+            "include": [
+                [["subject", subject], ["trial", name]]
+                for subject in SUBJECTS
+                for name in names
+            ]
+        }
+
+    def _run(self, locations, **kwargs):
+        seen = {}
+
+        def record(table):
+            seen[table["subject"].iloc[0]] = sorted(table["trial"].tolist())
+            return float(len(table))
+
+        for_each(
+            record,
+            {"table": LocRow},
+            [LocRowOut],
+            subject=SUBJECTS,
+            as_table=True,
+            locations=locations,
+            **kwargs,
+        )
+        return seen
+
+    def test_the_function_receives_only_the_selected_rows(self, rows):
+        seen = self._run(self._trials("t2", "t3"))
+        assert seen == {"S01": ["t2", "t3"], "S02": ["t2", "t3"]}
+
+    def test_a_level_rule_below_the_iterated_level_applies(self, rows):
+        seen = self._run({"exclude_levels": {"trial": ["t1"]}})
+        assert seen == {"S01": ["t2", "t3"], "S02": ["t2", "t3"]}
+
+    def test_a_ragged_selection_applies_per_call(self, rows):
+        seen = self._run(
+            {
+                "include": [
+                    [["subject", "S01"]],
+                    [["subject", "S02"], ["trial", "t3"]],
+                    [["subject", "S02"], ["trial", "t1"]],
+                ]
+            }
+        )
+        assert seen == {"S01": ["t1", "t2", "t3"], "S02": ["t1", "t3"]}
+
+    def test_lineage_records_only_the_rows_the_call_read(self, rows):
+        """The output must not claim to derive from rows it never saw."""
+        from scidb.provenance import query as provenance_query
+
+        self._run(self._trials("t2", "t3"))
+        out = LocRowOut.load(subject="S01")
+        consumed = provenance_query.consumed_input_schema_ids(rows._duck, [out.record_id])
+        assert len(consumed[out.record_id]) == 2
+
+    def test_skip_computed_reruns_when_the_selection_changes(self, rows):
+        self._run(self._trials("t2", "t3"), skip_computed=True)
+        seen = self._run(self._trials("t1"), skip_computed=True)
+        assert seen == {"S01": ["t1"], "S02": ["t1"]}
+
+    def test_skip_computed_skips_an_unchanged_selection(self, rows):
+        self._run(self._trials("t2", "t3"), skip_computed=True)
+        assert self._run(self._trials("t2", "t3"), skip_computed=True) == {}
+
+    def test_a_fixed_input_keeps_the_location_it_names(self, rows):
+        seen = []
+
+        def record(table, pinned):
+            seen.append((sorted(table["trial"].tolist()), float(pinned)))
+            return 0.0
+
+        for_each(
+            record,
+            {"table": LocRow, "pinned": Fixed(LocRow, trial="t1")},
+            [LocRowOut],
+            subject=["S01"],
+            as_table=["table"],
+            locations=self._trials("t2", "t3"),
+        )
+        assert seen == [(["t2", "t3"], 1.0)]
+
+    def test_two_selections_below_the_level_are_both_current(self, rows):
+        """Pins today's rule (docs/claude/location-filter-semantics.md): consumed
+        input locations are part of the variant key, so a second selection does
+        not replace the first at the same output location."""
+        self._run(self._trials("t2", "t3"))
+        self._run(self._trials("t1"))
+        assert len(rows.load_all_as_df(LocRowOut)) == 2 * len(SUBJECTS)
+
+    def test_a_reselected_full_iteration_location_stays_one_record(self, rows):
+        """At full iteration a location consumes only itself, so a selection
+        decides which calls run and cannot make a second variant."""
+        selection = {"exclude_levels": {"trial": ["t1"]}}
+        for _ in range(2):
+            for_each(
+                double,
+                {"signal": LocRow},
+                [LocRowOut],
+                subject=SUBJECTS,
+                trial=["t1", "t2", "t3"],
+                locations=selection,
+            )
+        assert len(rows.load_all_as_df(LocRowOut)) == 2 * len(SUBJECTS)

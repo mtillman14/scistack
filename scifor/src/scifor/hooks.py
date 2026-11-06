@@ -56,6 +56,10 @@ class LoopHooks:
             (scidb: its record-id column, matched against the combination's
             ``Selection``). A frame the caller has nothing to say about must
             be returned unchanged.
+        locations_applied_to_rows: The caller has already applied
+            ``locations=`` to the rows of its tables, so scifor only narrows the
+            combos. scidb does, before it records which rows each call read, and
+            spells its date keys in a way scifor cannot.
         keep_no_output: Leave ``NoOutput`` slots (an output with nothing to
             save at a combination whose other outputs were kept) in the
             returned table, for a caller that saves per output and skips
@@ -74,6 +78,7 @@ class LoopHooks:
     path_input_resolver: "Callable[[PathInput, dict], Any] | None" = None
     mapping_inputs: "dict[str, list[str]] | None" = None
     select_rows: "Callable[[str, pd.DataFrame, dict], pd.DataFrame] | None" = None
+    locations_applied_to_rows: bool = False
     keep_no_output: bool = False
     progress_fn: "Callable[[dict], None] | None" = None
     cancel_check: "Callable[[], bool] | None" = None

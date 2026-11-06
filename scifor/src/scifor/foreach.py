@@ -70,7 +70,7 @@ from .failures import (
 )
 from .fixed import Fixed
 from .hooks import LoopHooks
-from .locations import LocationFilter, filter_combos
+from .locations import LocationFilter, filter_combos, narrow_inputs
 from .keys import series_mask, warn_if_type_mismatch
 from .merge import Merge, drop_constant_keys, merge_frames
 from .outputs import (
@@ -482,9 +482,11 @@ def for_each(
                rows after combo filtering.
         locations: Optional scifor.LocationFilter (or its mapping form) naming
                which schema locations to run: ragged ``include`` prefixes plus
-               a standing ``exclude_levels`` rule. Filters COMBOS, where
-               ``where=`` filters ROWS within a combo — the two are unrelated
-               and compose. An empty/omitted filter is inert. See
+               a standing ``exclude_levels`` rule. Narrows the combos and the
+               rows of the data inputs, so a key the run does not iterate still
+               decides what each call reads. ``where=`` filters by data values
+               and composes with it. A ``Fixed`` input keeps the location it
+               names. An empty/omitted filter is inert. See
                docs/claude/location-filter-semantics.md.
         share_limits: Optional ``{input_name: [schema_keys_to_hold_fixed]}``.
                       For each named input, computes the global numeric
@@ -808,6 +810,12 @@ def plan_run(
 
     inputs = _resolve_static_colnames(inputs, full_schema_keys)
     data_inputs, constant_inputs = _classify_inputs(inputs)
+    fn_name = getattr(fn, "__name__", repr(fn))
+    # locations= also narrows the rows, so a key this run does not iterate still
+    # decides what each call reads (docs/claude/location-filter-semantics.md).
+    if not hooks.locations_applied_to_rows:
+        data_inputs = narrow_inputs(data_inputs, locations, context=f"for_each({fn_name})")
+        inputs = {**inputs, **data_inputs}
     if distribute_key is not None and distribute_key in constant_inputs:
         raise ValueError(
             f"distribute target '{distribute_key}' conflicts with a constant input named '{distribute_key}'."
@@ -822,7 +830,6 @@ def plan_run(
         distribute_key=distribute_key,
     )
 
-    fn_name = getattr(fn, "__name__", repr(fn))
     keys = list(metadata_iterables.keys())
     combos = _build_combos(keys, metadata_iterables, prebuilt)
     # locations= narrows the combo list to the selected schema locations.

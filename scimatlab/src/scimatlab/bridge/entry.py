@@ -411,7 +411,11 @@ def for_each_prepare(
         dry_run=False,
         db=db if db is not None and not isinstance(db, type(None)) else None,
         options=external_loop.RunOptions(distribute=bool(distribute), as_table=as_table_arg),
-        selection=external_loop.RunSelection(where=where_arg, metadata_iterables=meta),
+        # locations= here narrows the loaded rows (and so each call's Selection
+        # and lineage); the combos are narrowed just below.
+        selection=external_loop.RunSelection(
+            where=where_arg, locations=locations, metadata_iterables=meta
+        ),
         # {input: declared Parameter}. MATLAB expands its Parameters before
         # this call, so the names only arrive stated; the same owner as the
         # Python path merges them (scidb.model.parameter.declared_input_names).

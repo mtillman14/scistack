@@ -196,6 +196,25 @@ def test_scidb_row_selection_and_locations_keep_each_combo_place():
     _close(plan)
 
 
+def test_locations_narrow_rows_below_the_iterated_level():
+    """Standalone MATLAB: a selection on a key the run does not iterate decides
+    which rows each combo's slice holds, by the same rule as Python's loop."""
+    scifor.set_schema(["subject", "minute"])
+    d = Described()
+    tbl = d.table({"subject": [1, 1, 2, 2], "minute": [5, 6, 5, 6], "value": [10, 20, 30, 40]})
+    plan, _ = _plan(
+        *d.run(
+            [{"name": "x", "kind": "table", "table": tbl}],
+            {"subject": [1, 2]},
+            locations=json.dumps({"exclude_levels": {"minute": [5]}}),
+        ),
+    )
+    x = plan["inputs"][0]
+    assert _rows(plan, x["slice"], 0) == [2]
+    assert _rows(plan, x["slice"], 1) == [4]
+    _close(plan)
+
+
 def test_record_id_selection_narrows_within_the_schema_filter():
     scifor.set_schema(["subject"])
     d = Described()

@@ -34,17 +34,27 @@ silently run nothing. So a step whose key is absent from the combo is ignored,
 in both halves of the rule (the exclusion half matches
 ``schema-hierarchy-contiguity``'s cross-cutting records, which genuinely have
 no step for a key they were not saved at).
+
+Keeping an ancestor combo is only half of the answer: the rows it reads must
+still be the selected ones, or a run at ``[group, subject]`` against a selection
+of ``minute=6`` hands the function every minute. :func:`narrow_inputs` applies the
+same rule to the rows of the data inputs, so a key the run does not iterate still
+decides which rows arrive.
 """
 
 from __future__ import annotations
 
+import copy
 import json
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from scistacklog import Log
+
+from .column_selection import ColumnSelection
+from .merge import Merge
 
 LAYER = "scifor"
 
@@ -293,6 +303,148 @@ class LocationFilter:
         """
         return self.covered(combo) and self.excluded_level(combo) is None
 
+    def columns_mask(
+        self,
+        columns: Mapping[str, Sequence],
+        n_rows: int,
+        *,
+        spell: "Callable[[Any], Any] | None" = None,
+    ):
+        """Which rows of *columns* (``{key: cells}``) this filter keeps.
+
+        :meth:`matches` is the rule, so rows cannot disagree with combos. A key
+        with no column constrains nothing, which is what a coarser table means.
+        Each distinct location is asked once, because a table holds many rows
+        per location.
+
+        *spell* rewrites a non-null cell into the text a selection names it by,
+        for a caller whose table holds a key's original type (scidb's date keys).
+        """
+        import numpy as np
+
+        names = [key for key in columns if key in self.keys()]
+        if self.is_empty() or not names or not n_rows:
+            return np.ones(n_rows, dtype=bool)
+        mask = np.empty(n_rows, dtype=bool)
+        memo: dict = {}
+        for row, cells in enumerate(zip(*(columns[key] for key in names), strict=True)):
+            kept = memo.get(cells)
+            if kept is None:
+                spelled = (
+                    cells
+                    if spell is None
+                    else tuple(c if _is_null(c) else spell(c) for c in cells)
+                )
+                kept = self.matches(dict(zip(names, spelled, strict=True)))
+                memo[cells] = kept
+            mask[row] = kept
+        return mask
+
+    def row_mask(self, frame: Any, *, spell: "Callable[[Any], Any] | None" = None):
+        """:meth:`columns_mask` over a DataFrame's columns."""
+        columns = {key: frame[key].tolist() for key in frame.columns if key in self.keys()}
+        return self.columns_mask(columns, len(frame), spell=spell)
+
+
+def _levels_text(frame: Any, keys: Iterable[str]) -> str:
+    """``minute=['6'], session=3 value(s)``: what a narrowed table still holds."""
+    parts = []
+    for key in keys:
+        if key not in frame.columns:
+            continue
+        values = [str(v) for v in frame[key].dropna().unique().tolist()]
+        parts.append(
+            f"{key}={values}" if len(values) <= 8 else f"{key}={len(values)} value(s)"
+        )
+    return ", ".join(parts)
+
+
+def narrow_frame(
+    frame: Any,
+    locations: Any,
+    *,
+    context: str = "",
+    spell: "Callable[[Any], Any] | None" = None,
+) -> Any:
+    """*frame* without the rows *locations* leaves out (the same object when
+    none go), reporting what it dropped and which levels remain."""
+    location_filter = LocationFilter.of(locations)
+    where = f"{context}: " if context else ""
+    n_rows = len(frame)
+    mask = location_filter.row_mask(frame, spell=spell)
+    kept = int(mask.sum())
+    if kept == n_rows:
+        Log.debug(f"{where}locations: all {n_rows} row(s) kept", layer=LAYER)
+        return frame
+    narrowed = frame[mask].reset_index(drop=True)
+    keys = [key for key in frame.columns if key in location_filter.keys()]
+    Log.info(
+        f"{where}locations: {kept} of {n_rows} row(s) kept"
+        f"{f' ({_levels_text(narrowed, keys)})' if kept else ''}",
+        layer=LAYER,
+    )
+    if not kept:
+        Log.warn(
+            f"{where}locations= removed every one of the {n_rows} row(s): "
+            f"include={location_filter.to_dict()['include']}, "
+            f"exclude_levels={location_filter.to_dict()['exclude_levels']}. "
+            "Calls that read this input will have no data.",
+            layer=LAYER,
+        )
+    return narrowed
+
+
+def _narrow_input(
+    value: Any,
+    location_filter: LocationFilter,
+    context: str,
+    spell: "Callable[[Any], Any] | None",
+) -> Any:
+    import pandas as pd
+
+    if isinstance(value, pd.DataFrame):
+        return narrow_frame(value, location_filter, context=context, spell=spell)
+    if isinstance(value, ColumnSelection) and isinstance(value.data, pd.DataFrame):
+        narrowed = narrow_frame(value.data, location_filter, context=context, spell=spell)
+        if narrowed is value.data:
+            return value
+        out = copy.copy(value)
+        out.data = narrowed
+        return out
+    if isinstance(value, Merge):
+        out = copy.copy(value)
+        out.tables = tuple(
+            _narrow_input(table, location_filter, context, spell) for table in value.tables
+        )
+        return out
+    return value
+
+
+def narrow_inputs(
+    inputs: Mapping[str, Any],
+    locations: Any,
+    *,
+    context: str = "",
+    spell: "Callable[[Any], Any] | None" = None,
+) -> dict:
+    """*inputs* with each data table narrowed to the selected rows.
+
+    What makes a selection hold below the iteration level: a combo that stops
+    at ``subject`` is kept as an ancestor of ``minute=6``, and these rows are what
+    its call then reads.
+
+    A ``Fixed`` input is left alone: it reads the location it names, whichever
+    locations the run is about. Constants are not tables.
+    """
+    location_filter = LocationFilter.of(locations)
+    if location_filter.is_empty():
+        return dict(inputs)
+    where = f"{context}: " if context else ""
+    return {
+        name: _narrow_input(value, location_filter, f"{where}input '{name}'", spell)
+        for name, value in inputs.items()
+    }
+
 
 def filter_combos(
     combos: Sequence[Mapping[str, Any]],
@@ -329,15 +481,16 @@ def filter_combo_indices(
 
     where = f"{context}: " if context else ""
 
-    # A selection naming keys this run does not iterate constrains nothing it
-    # can see. Silently keeping every combo would read as "the filter did not
-    # work"; say so instead.
+    # A key this run does not iterate cannot choose between combos. It still
+    # chooses rows (narrow_inputs), so the two counts below are not the whole
+    # effect of the selection.
     iterated = {key for combo in combos for key in combo}
     unseen = sorted(location_filter.keys() - iterated)
     if unseen:
-        Log.warn(
+        Log.info(
             f"{where}locations= names {unseen}, which this run does not "
-            f"iterate — those steps constrain nothing here",
+            f"iterate — those steps choose the rows each call receives, not "
+            f"which calls run",
             layer=LAYER,
         )
 

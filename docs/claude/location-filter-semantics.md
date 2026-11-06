@@ -12,7 +12,7 @@ play** — and it is asked in four places that cannot share code:
 
 | Asker | Mechanics | Home |
 |---|---|---|
-| Which combos should `for_each` run? | a predicate over a `dict` combo | `scifor.locations` |
+| Which combos should `for_each` run, and which rows does each read? | a predicate over a `dict` combo or row | `scifor.locations` |
 | Which rows should the figure draw? | a vectorised pandas mask | `scistackplot.reduce.resolve` |
 | Which rows should the EXPORTED script draw? | that mask, emitted as source | `scistackplot.export.codegen` |
 | Which boxes are ticked, and in what state? | a coverage walk over a tree | `locationSelection.ts` |
@@ -140,6 +140,36 @@ The pandas half never meets this case (a row always carries every key it was
 saved at), which is exactly why it is written down here rather than left to be
 rediscovered when the processing tab runs something unexpected.
 
+### Rows below the iteration level
+
+Keeping an ancestor combo only says the call happens. What the call READS must
+still be the selection: a run at `[group, subject]` with only `minute=6` selected
+makes one call per subject, and each receives its minute-6 rows. Until 2026-11-05
+the filter stopped at the combos, so that call received every minute.
+
+`scifor.locations.narrow_inputs` applies the rule to the rows of every data input,
+through the same `LocationFilter.matches` the combos use:
+
+- **scidb** narrows right after loading, in `_load_all_inputs`, for Python and MATLAB
+  runs alike. Every call's `Selection`, its lineage and the skip gate derive from
+  those rows, so an output records only the records it read, and changing the
+  selection makes `skip_computed` recompute. It then tells scifor not to narrow again
+  (`LoopHooks.locations_applied_to_rows`).
+- **Standalone scifor** narrows in `plan_run`; standalone MATLAB in `matlab_loop._Slicer`.
+
+Three things stay as they are:
+
+- **A table without the key is unconstrained.** A coarser input has no such axis and
+  serves every selected location (consequence of "a step whose key is absent").
+- **A `Fixed` input is not narrowed.** It reads the location it names, whichever
+  locations the run is about. A `Fixed` constituent of a `Merge` likewise.
+- **A selection is not stated in a call's identity, but what it read is.** Below the
+  iteration level it changes the consumed input locations, and those are part of
+  `provenance_query.variant_keys_batch`, the same rule as `where=`. So minute 5 and
+  minute 6 at one `[group, subject]` location are both current. Neither Variant cards
+  nor a downstream aggregation's split reads that key: the cards show one card, and a
+  downstream call pools both records (`_sig_of` groups by constants only).
+
 ## Reporting (NOTE 2)
 
 A filter that quietly removes everything is the failure mode this feature
@@ -160,7 +190,7 @@ one file:
 
 | Suite | Reads | Runs the cases marked |
 |---|---|---|
-| `scifor/tests/test_locations.py` | the JSON | `combo` |
+| `scifor/tests/test_locations.py` | the JSON | `combo`, and `row` against `LocationFilter.row_mask` |
 | `scistackplot/tests/test_location_filter.py` | the JSON | `row`, twice — once against `reduce._location_mask`, once against the pandas `codegen` emits |
 | `locationSelection.test.ts` | the JSON | `tree` |
 
