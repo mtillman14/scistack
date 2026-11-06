@@ -1,22 +1,16 @@
-"""The picker's selection, and the lossy projection MATLAB still needs.
+"""The picker's selection, and the per-key bound a MATLAB command starts from.
 
 A schema selection is a PAIR — ragged ``include`` prefixes plus a standing
-``exclude_levels`` rule (docs/claude/location-filter-semantics.md). Python runs
-carry it whole: ``scidb.for_each(locations=...)`` takes exactly this shape and
-``scifor`` applies it to the combo list.
+``exclude_levels`` rule (docs/claude/location-filter-semantics.md). Python and
+MATLAB runs both carry it whole as ``locations=``, and scifor/scidb apply it
+exactly.
 
-MATLAB runs cannot. A MATLAB command is GENERATED source, and what it can spell
-is one value list per schema key — ``subject = ["01","02"]`` — which is a
-Cartesian product by construction. Projecting a ragged selection onto that
-shape is an OVER-APPROXIMATION: "all of subject 01, plus trial 3 of subject 02"
-becomes "subjects 01-02 × trials 1-3", which runs combinations the user
-excluded.
-
-So the projection exists, and it is never silent. :func:`to_schema_filter`
-returns what was lost alongside the filter, and every caller reports it.
-Closing the gap properly means teaching ``+scifor/for_each.m`` the same
-``locations=`` argument the Python side has — tracked as the MATLAB parity item
-in .claude/plan-schema-key-picker-and-level-order.md.
+A MATLAB command ALSO passes :func:`to_schema_filter`'s projection: one value
+list per schema key, which is a Cartesian product by construction, so "all of
+subject 01, plus trial 3 of subject 02" projects to "subjects 01-02 × trials
+1-3". That is wider than the selection on purpose. It only bounds what MATLAB
+resolves, and ``locations=`` then narrows to exactly what was selected, so a
+wide projection is not a wider run and is not worth a warning.
 """
 
 from __future__ import annotations
@@ -59,9 +53,10 @@ def to_schema_filter(selection, db) -> tuple[dict[str, list] | None, list[str]]:
       are then the union across prefixes. A key some prefix leaves unnamed is
       unconstrained, because that prefix selects all of it.
 
-    The second return value names what the projection cannot carry. It is a
-    list of plain sentences, meant to be logged and shown, not a bool — "this
-    will run more than you asked" needs to say which key and why.
+    The second return value is a list of plain sentences, meant to be logged and
+    shown, for what is wrong with the selection itself. A projection wider than
+    the selection is not on it: ``locations=`` travels beside this bound and
+    decides what actually runs.
     """
     normalized = as_selection(selection)
     include = normalized["include"]
@@ -109,22 +104,6 @@ def to_schema_filter(selection, db) -> tuple[dict[str, list] | None, list[str]]:
                 [v for v in values if v in set(existing)] if existing else values
             )
 
-        if len(include) > 1:
-            warnings.append(
-                f"{len(include)} separate locations were selected. A MATLAB "
-                f"command can only express one value list per schema key, so "
-                f"this run covers every COMBINATION of the values they name — "
-                f"more than was selected."
-            )
-        unnamed = {
-            str(step[0]) for prefix in include for step in prefix
-        } - named_everywhere
-        if unnamed:
-            warnings.append(
-                f"Some selected locations name {sorted(unnamed)} and others do "
-                f"not, so those keys are left unconstrained here."
-            )
-
     return (per_key or None), warnings
 
 
@@ -133,10 +112,21 @@ def report(selection, db, *, context: str) -> dict | None:
     schema_filter, warnings = to_schema_filter(selection, db)
     for warning in warnings:
         logger.warning("[schema_selection] %s: %s", context, warning)
-    if schema_filter:
+    pair = as_selection(selection)
+    if schema_filter or not is_empty(pair):
+        # The prefix depths are what to read when a run keeps rows you did not
+        # expect: a prefix that stops above a key selects every value of it.
+        depths: dict[str, int] = {}
+        for prefix in pair["include"]:
+            deepest = str(prefix[-1][0]) if prefix else "(everything)"
+            depths[deepest] = depths.get(deepest, 0) + 1
         logger.info(
-            "[schema_selection] %s: projected to %s",
+            "[schema_selection] %s: bound to %s; locations= applies the exact "
+            "selection (%d prefix(es) by deepest key %s, level rules %s)",
             context,
-            {key: f"{len(values)} value(s)" for key, values in schema_filter.items()},
+            {key: f"{len(values)} value(s)" for key, values in (schema_filter or {}).items()},
+            len(pair["include"]),
+            depths,
+            pair["exclude_levels"],
         )
     return schema_filter

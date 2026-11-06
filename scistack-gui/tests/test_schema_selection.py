@@ -54,10 +54,10 @@ class TestProjectionToSchemaFilter:
         assert schema_filter == {"subject": ["1"], "session": ["pre"]}
         assert warnings == []
 
-    def test_a_ragged_selection_warns_that_it_runs_more(self, populated_db):
-        """"All of subject 1, plus session post of subject 2" becomes
-        subjects {1,2} x sessions {pre,post} — four combos for a selection of
-        three. Silent over-running is the failure this warning exists for."""
+    def test_a_ragged_selection_projects_wide_without_warning(self, populated_db):
+        """The bound is subjects {1,2} x sessions {pre,post}, wider than the two
+        locations selected, but ``locations=`` travels beside it and applies the
+        exact selection. A warning that the run covers more would be false."""
         schema_filter, warnings = to_schema_filter(
             {
                 "include": [
@@ -68,7 +68,7 @@ class TestProjectionToSchemaFilter:
             populated_db,
         )
         assert schema_filter == {"subject": ["1", "2"], "session": ["pre", "post"]}
-        assert any("more than was selected" in w for w in warnings)
+        assert warnings == []
 
     def test_a_key_some_prefix_leaves_unnamed_is_unconstrained(self, populated_db):
         """"All of subject 1" names no session, so it selects every session —
@@ -84,7 +84,7 @@ class TestProjectionToSchemaFilter:
         )
         assert schema_filter == {"subject": ["1", "2"]}
         assert "session" not in schema_filter
-        assert any("session" in w for w in warnings)
+        assert warnings == []
 
     def test_both_halves_intersect(self, populated_db):
         schema_filter, _ = to_schema_filter(
