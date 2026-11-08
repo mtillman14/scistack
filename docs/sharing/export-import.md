@@ -9,7 +9,7 @@
 
 A whole project (its code, settings, pipelines and run history) can be exported as one `.scistack` file and imported on another computer. Use it to hand a project to a labmate, move to a new machine, or publish an analysis so others can reproduce it.
 
-For a step-by-step example with three typical hand-offs, see the [Export & Import Walkthrough](export-import-walkthrough.md).
+To share less than a whole project, see [Share Part of a Project](pipelines.md). For a step-by-step example with three typical hand-offs, see the [Export & Import Walkthrough](export-import-walkthrough.md).
 
 ## What travels, and what doesn't
 

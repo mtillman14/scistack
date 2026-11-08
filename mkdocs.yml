@@ -36,13 +36,12 @@ theme:
 # --strict fails without one), and tabs-item.html skips it so no tab renders.
 #
 # This is the code-only ("en") nav. The "GUI" variant has its own nav
-# under plugins > i18n below. No section is shared any more (share one with a
+# under plugins > i18n below. Only Sharing is shared (share a section with a
 # YAML anchor, &name / *name, so its page list keeps one owner). Getting
 # Started and Example Projects differ: the GUI variant adds GUI-only pages (*.ui.md with no plain
 # .md) to Getting Started, and shows one GUI-only page per example
 # ("Best Popcorn", "Best Player") in place of the code-only scifor/scidb pairs.
-# Sharing: the GUI variant replaces export-import.md with its .ui.md and adds
-# GUI-only pages for hypotheses/submodules and libraries.
+# Sharing is shared (&sharing_nav): every Sharing page has both variants.
 # API is Code-only: the GUI nav omits it entirely.
 nav:
   - Home: index.md
@@ -61,9 +60,13 @@ nav:
     - Best Popcorn - scidb: examples/best-popcorn-scidb.md
     - Best Player - scifor: examples/best-player-scifor.md
     - Best Player - scidb: examples/best-player-scidb.md
-  - Sharing:
+  # Shared with the GUI nav (*sharing_nav): each page has a Code .md and a
+  # GUI .ui.md, so one list serves both.
+  - Sharing: &sharing_nav
+    - What Can I Share?: sharing/overview.md
     - Export & Import Projects: sharing/export-import.md
     - Export & Import Walkthrough: sharing/export-import-walkthrough.md
+    - Share Part of a Project: sharing/pipelines.md
     - Libraries: sharing/libraries.md
   # Only the user-facing APIs. The other api/ and internals/ pages stay in the
   # repo, covered by not_in_nav below, but nothing in the nav links to them.
@@ -198,14 +201,9 @@ plugins:
             - Example Projects:
               - Best Popcorn: examples/best-popcorn.md
               - Best Player: examples/best-player.md
-            # Same position as the Code nav's Sharing tab: which way to share,
-            # then project > hypothesis/submodule > library.
-            - Sharing:
-              - What Can I Share?: sharing/overview.md
-              - Export & Import Projects: sharing/export-import.md
-              - Export & Import Walkthrough: sharing/export-import-walkthrough.md
-              - Share a Hypothesis or Submodule: sharing/pipelines.md
-              - Libraries: sharing/libraries.md
+            # The Code nav's Sharing list (&sharing_nav): which way to share,
+            # then project > part of a project > library.
+            - Sharing: *sharing_nav
             # The GUI counterpart of the Code nav's API tab, in the same tab
             # position: one page per studio, in the order an analysis uses them.
             - GUI Tutorial:
