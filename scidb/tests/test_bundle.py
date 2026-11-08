@@ -627,6 +627,208 @@ def test_no_dataset_rules_means_no_warning(project, tmp_path):
     report_db(report).close()
 
 
+# --- Expected locations: rules and run outcomes through export / import -----
+# One test per row of .claude/plan-bundle-expectation-rules.md's table, and
+# the value_rules=False import ("this project runs on other data").
+
+MARK_LABEL = "Expected / Not expected mark(s)"
+KEY_SETTING_LABEL = "schema key expectation setting(s)"
+
+
+def _with_expectation_rules(project):
+    """_with_history plus a key setting with declared values, two marks and a
+    recorded run outcome (a failed location of _double)."""
+    from scidb.provenance.expectation import mark_expectation, set_key_setting
+    from scidb.provenance.outcomes import record_outcomes
+
+    root, db = _with_history(project)
+    set_key_setting(db, "session", "shared", ["1", "2"])
+    mark_expectation(db, "BundleOut", False, "withdrew", subject="S02")
+    mark_expectation(db, "BundleRaw", True, "recorded on paper", subject="S03", session="1")
+    record_outcomes(db, "_double", ["BundleOut"], [{
+        "metadata": {"subject": "S04", "session": "1"},
+        "failure": {"reason": "ValueError: x", "no_data": False, "blame": "user_code", "probable": False},
+    }])
+    return root, db
+
+
+def _key_setting(db, key):
+    from scidb.provenance.expectation import read_key_settings
+
+    return read_key_settings(db._duck).get(key)
+
+
+def test_expectation_rules_and_outcomes_go_live_with_data(project, tmp_path):
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path, options=ExportOptions(include_data=True))
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    assert report.sections["history"]["live"] is True
+    target = report_db(report)
+    assert _count(target, "_expectation_mark") == 2
+    assert _count(target, "_run_outcome") == 1
+    setting = _key_setting(target, "session")
+    assert setting["sharing"] == "shared" and setting["values"] == ["1", "2"]
+    assert not any("NOT applied" in w for w in report.warnings), report.warnings
+    target.close()
+
+
+def test_expectation_rules_go_live_with_an_archived_history_but_outcomes_do_not(project, tmp_path):
+    """Rules govern a re-run, so they are live; why a location failed is
+    history, which without its data is only archived."""
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path)
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    hist = report.sections["history"]
+    assert hist["live"] is False
+    target = report_db(report)
+    assert _count(target, "_expectation_mark") == 2
+    assert _key_setting(target, "session")["values"] == ["1", "2"]
+    assert _count(target, "_run_outcome") == 0
+    assert (Path(hist["archived"]) / "_run_outcome.parquet").exists()
+    assert "value_rules_left_out" not in hist
+    target.close()
+
+
+def test_an_export_without_history_names_the_expectation_rules(project, tmp_path):
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path, options=ExportOptions(include_history=False))
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy")
+
+    msgs = [w for w in report.warnings if "dataset rules NOT applied" in w]
+    assert len(msgs) == 1, report.warnings
+    assert f"2 {MARK_LABEL}" in msgs[0] and f"1 {KEY_SETTING_LABEL}" in msgs[0]
+    assert "scidb mark" in msgs[0] and "scidb set-key" in msgs[0]  # how to put them back
+    target = report_db(report)
+    assert _count(target, "_expectation_mark") == 0
+    target.close()
+
+
+def test_declined_history_names_the_expectation_rules(project, tmp_path):
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path)
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy", import_history=False)
+
+    assert any("declined at import" in w and MARK_LABEL in w and KEY_SETTING_LABEL in w
+               for w in report.warnings), report.warnings
+    target = report_db(report)
+    assert _count(target, "_expectation_mark") == 0
+    target.close()
+
+
+def test_expectation_rules_are_not_applied_into_another_schema(project, tmp_path):
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path)
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy", schema_keys=["participant", "visit"],
+                            key_map={"subject": "participant", "session": "visit"})
+
+    hist = report.sections["history"]
+    assert hist["intent_loaded"] == []
+    assert any("another schema" in w and MARK_LABEL in w for w in report.warnings), report.warnings
+    target = report_db(report)
+    assert _count(target, "_expectation_mark") == 0
+    assert _count(target, "_run_outcome") == 0
+    assert (Path(hist["archived"]) / "_expectation_mark.parquet").exists()
+    target.close()
+
+
+def test_the_manifest_counts_the_rules_naming_values(project, tmp_path):
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path)
+    assert read_bundle(out).manifest["value_rule_rows"] == {
+        "_expectation_mark": 2,
+        "__scidb_schema_overrides": 1,
+        "_schema_key_expectation": 1,
+    }
+    assert bundle.preview(out)["value_rule_rows"] == read_bundle(out).manifest["value_rule_rows"]
+
+
+def test_other_data_keeps_the_key_rules_and_leaves_out_the_value_rules(project, tmp_path):
+    """value_rules=False: a mark or exclusion at S02 / S03 would be about
+    someone else's S02 / S03. Shared / per parent is about the key: kept."""
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path)
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy", value_rules=False)
+
+    hist = report.sections["history"]
+    assert hist["value_rules_left_out"] == {
+        "_expectation_mark": 2,
+        "__scidb_schema_overrides": 1,
+        "_schema_key_expectation": 1,
+    }
+    target = report_db(report)
+    assert _count(target, "_expectation_mark") == 0
+    assert _count(target, "__scidb_schema_overrides") == 0
+    setting = _key_setting(target, "session")
+    assert setting["sharing"] == "shared" and setting["values"] is None
+    # Left out, never lost: the archive holds them verbatim.
+    assert (Path(hist["archived"]) / "_expectation_mark.parquet").exists()
+    msgs = [w for w in report.warnings if "runs on other data" in w]
+    assert len(msgs) == 1, report.warnings
+    assert f"2 {MARK_LABEL}" in msgs[0] and "1 schema exclusion(s)" in msgs[0]
+    assert "shared / per parent kept" in msgs[0] and hist["archived"] in msgs[0]
+    target.close()
+
+
+def test_other_data_does_not_import_the_exporters_data(project, tmp_path):
+    _with_expectation_rules(project)
+    out = _export(project, tmp_path, options=ExportOptions(include_data=True))
+    project[1].close()
+
+    report = import_project(out, tmp_path / "copy", value_rules=False)
+
+    hist = report.sections["history"]
+    assert hist["live"] is False
+    assert "runs on other data" in hist["data"]
+    target = report_db(report)
+    assert _count(target, "_record") == 0
+    assert _count(target, "_expectation_mark") == 0
+    target.close()
+
+
+def test_every_intent_table_is_classified_for_other_data():
+    """A new dataset-intent table must decide what in it names the
+    exporter's values (bundle._value_free), or value_rules=False would
+    carry it over unexamined."""
+    assert set(bundle._value_free(SCHEMA)) == set(bundle.INTENT_TABLES)
+
+
+def test_table_copy_keeps_and_clears_while_loading(tmp_path):
+    from scidb import configure_database
+    from scidb.store.database import clear_current_database
+
+    a = configure_database(tmp_path / "a.duckdb", SCHEMA)
+    a._duck.execute("CREATE TABLE t_rules (k VARCHAR, v VARCHAR[], note VARCHAR)")
+    a._duck.execute("INSERT INTO t_rules VALUES ('x', ['1'], 'a'), (NULL, NULL, 'b'), (NULL, ['2'], 'c')")
+    files = table_copy.dump(a._duck, ["t_rules"])
+    a.close()
+
+    b = configure_database(tmp_path / "b.duckdb", SCHEMA)
+    try:
+        out = table_copy.load(b._duck, files, keep={"t_rules": '"k" IS NULL'}, clear={"t_rules": ["v"]})
+        assert out["left_out"] == {"t_rules": 1}
+        assert out["cleared"] == {"t_rules": 1}  # of the KEPT rows, one had a v
+        assert b._duck.fetchall("SELECT k, v, note FROM t_rules ORDER BY note") == [
+            (None, None, "b"), (None, None, "c"),
+        ]
+    finally:
+        b.close()
+        clear_current_database()
+
+
 def report_db(report):
     """The target database the default opener left current."""
     from scidb.store.database import get_database

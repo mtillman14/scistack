@@ -432,7 +432,7 @@ def _cmd_follow(insp: Inspector, args) -> None:
 
 
 def _cmd_nans(insp: Inspector, args) -> None:
-    from scidb.inspect.cells import PROBLEM_KINDS
+    from scicanonicalhash._cells import PROBLEM_KINDS
 
     kinds = _split_csv(args.kind)
     if kinds:

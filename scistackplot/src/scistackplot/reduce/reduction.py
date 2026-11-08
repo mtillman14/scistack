@@ -38,6 +38,8 @@ import pandas as pd
 from ..model.spec import CategoricalStat, Filter, LevelGroup, LocationFilter, PlotSpec, Statistic
 from ..model.table import category_text
 from .compare import ComparisonPlan
+from scicanonicalhash._cells import nan_count
+
 from .series_stats import cell_arrays, collapse_cells
 
 
@@ -150,6 +152,12 @@ class CombineLevels:
         return order
 
 
+#: The columns ``CollapseCells.apply`` adds to its partial-NaN rows: NaN
+#: elements, and all elements, of the record's cell (``LongTable.cell_nans``).
+CELL_NAN_COLUMN = "__nan"
+CELL_SIZE_COLUMN = "__size"
+
+
 @dataclass(frozen=True)
 class CollapseCells:
     """A 1-D measure reduced to one value per record by its ``statistic``,
@@ -168,24 +176,57 @@ class CollapseCells:
     exploded: bool = False
     index_column: str | None = None
 
-    def apply(self, frame: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
-        """The collapsed frame, its row count and the samples it read."""
+    def apply(
+        self, frame: pd.DataFrame
+    ) -> tuple[pd.DataFrame, int, int, "pd.DataFrame | None"]:
+        """The collapsed frame, its row count, the samples it read, and the
+        collapsed rows whose cell had SOME NaN elements (``CELL_NAN_COLUMN`` of
+        ``CELL_SIZE_COLUMN``; None when no cell did). An all-NaN or empty cell
+        is not among them: it collapses to NaN, which is a missing value of
+        its own. The counts are the same arrays' (one reader,
+        ``scicanonicalhash._cells``), so they say exactly what the average
+        skipped."""
         if self.exploded:
             return self._apply_exploded(frame)
         arrays = cell_arrays(frame[self.measure])
         out = frame.copy()
         out[self.measure] = collapse_cells(arrays, self.statistic)
-        return out, len(out), int(sum(a.size for a in arrays))
+        counts = [nan_count(a) for a in arrays]
+        partial = [i for i, (nan, size) in enumerate(counts) if 0 < nan < size]
+        nans = None
+        if partial:
+            nans = out.iloc[partial].copy()
+            nans[CELL_NAN_COLUMN] = [counts[i][0] for i in partial]
+            nans[CELL_SIZE_COLUMN] = [counts[i][1] for i in partial]
+        return out, len(out), int(sum(size for _, size in counts)), nans
 
-    def _apply_exploded(self, frame: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
+    def _apply_exploded(
+        self, frame: pd.DataFrame
+    ) -> tuple[pd.DataFrame, int, int, "pd.DataFrame | None"]:
         keys = [c for c in frame.columns if c not in (self.measure, self.index_column)]
         median = self.statistic is Statistic.MEDIAN
+        missing = frame[self.measure].isna()
         if not keys:
             value = frame[self.measure].median() if median else frame[self.measure].mean()
-            return pd.DataFrame({self.measure: [value]}), 1, len(frame)
+            out = pd.DataFrame({self.measure: [value]})
+            nan, size = int(missing.sum()), len(frame)
+            nans = None
+            if 0 < nan < size:
+                nans = out.assign(**{CELL_NAN_COLUMN: [nan], CELL_SIZE_COLUMN: [size]})
+            return out, 1, len(frame), nans
         grouped = frame.groupby(keys, dropna=False, sort=False)[self.measure]
         out = (grouped.median() if median else grouped.mean()).reset_index()
-        return out, len(out), len(frame)
+        # The same groups in the same order (sort=False, dropna=False).
+        stats = missing.groupby([frame[k] for k in keys], dropna=False, sort=False).agg(["sum", "size"])
+        nan = stats["sum"].to_numpy(dtype=int)
+        size = stats["size"].to_numpy(dtype=int)
+        partial = np.flatnonzero((nan > 0) & (nan < size))
+        nans = None
+        if partial.size:
+            nans = out.iloc[partial].copy()
+            nans[CELL_NAN_COLUMN] = nan[partial]
+            nans[CELL_SIZE_COLUMN] = size[partial]
+        return out, len(out), len(frame), nans
 
 
 #: The working column holding each record's category text during the one-hot.

@@ -99,6 +99,74 @@ _INTENT_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
+def _value_free(schema_keys: list[str]) -> "dict[str, tuple[str | None, list[str]]]":
+    """THE classification of every dataset-intent table by what names the
+    exporter's VALUES (subject "S03", session "2") rather than its keys:
+    ``{table: (keep condition, columns to clear)}``.
+
+    Importing with ``value_rules=False`` ("this project runs on other data")
+    keeps only the rows meeting the condition and loads the columns as NULL;
+    the rest still governs a re-run because it names keys only. A rule that
+    names no value (every key column NULL) would be about the whole variable
+    or dataset and is kept; today every mark and exclusion names at least one
+    key, so all of them are left out. ``test_every_intent_table_is_classified`` fails when
+    a new intent table is missing here.
+    """
+    names_no_value = " AND ".join(f'"{k}" IS NULL' for k in schema_keys) or "TRUE"
+    return {
+        "_schema_key_type": (None, []),
+        # Shared / per parent is about the key; the declared values are the data's.
+        "_schema_key_expectation": (None, ["declared_values"]),
+        "_expectation_mark": (names_no_value, []),
+        "__scidb_schema_overrides": (names_no_value, []),
+    }
+
+
+def _value_rule_rows(duck, schema_keys: list[str]) -> dict[str, int]:
+    """``{table: rows}`` of dataset-intent rows that name a value
+    (:func:`_value_free`), for the manifest: the import dialog asks "same
+    data or other data?" only when there is something to leave out."""
+    out: dict[str, int] = {}
+    for table, (condition, cleared) in _value_free(schema_keys).items():
+        if not duck.table_exists(table):
+            continue
+        tests = []
+        if condition:
+            tests.append(f"NOT coalesce(({condition}), FALSE)")
+        tests += [f'"{c}" IS NOT NULL' for c in cleared]
+        if not tests:
+            continue
+        n = int(duck.fetchone(f'SELECT count(*) FROM "{table}" WHERE {" OR ".join(tests)}')[0])
+        if n:
+            out[table] = n
+    return out
+
+
+def _value_rules_left_out(loaded: dict) -> dict[str, int]:
+    """``{table: rows}`` a ``value_rules=False`` load left out or cleared."""
+    out = dict(loaded.get("left_out") or {})
+    for table, n in (loaded.get("cleared") or {}).items():
+        out[table] = out.get(table, 0) + n
+    return out
+
+
+def _value_rules_warning(left_out: dict[str, int], archive: "Path | None") -> "str | None":
+    """The import warning for rules naming the exporter's values that were
+    left out on purpose (never silent: feedback, never drop data silently)."""
+    if not left_out:
+        return None
+    what = ", ".join(
+        f"{n} {_INTENT_LABELS.get(t, (t, ''))[0]}"
+        + (" (their declared values; shared / per parent kept)" if t == "_schema_key_expectation" else "")
+        for t, n in sorted(left_out.items())
+    )
+    where = f" They are kept, unapplied, in the archive at {archive}." if archive else ""
+    return (
+        f"rules naming the exporter's values NOT applied, because this project runs on "
+        f"other data: {what}.{where} To apply one here, {'; '.join(_INTENT_LABELS.get(t, (t, f'restore {t} by hand'))[1] for t in sorted(left_out))}"
+    )
+
+
 def _intent_rows(duck) -> dict[str, int]:
     """``{table: rows}`` of the dataset-intent tables that hold any. The
     manifest records it, so an import that cannot apply them says exactly
@@ -535,6 +603,9 @@ def export_project(
         "options": options.to_dict(),
         #: Dataset-intent rows the exporter held, for the import's warnings.
         "intent_rows": intent_rows,
+        #: Of those, the rows naming the exporter's values (_value_free): what
+        #: an import onto other data (value_rules=False) leaves out.
+        "value_rule_rows": _value_rule_rows(db._duck, list(db.dataset_schema_keys)),
         "sections": {
             name: {"files": {rel: _sha256(data) for rel, data in sorted(files.items())}}
             for name, files in sections.items()
@@ -768,7 +839,7 @@ def _rename_alias_keys(aliases: dict, kmap) -> dict:
 
 
 def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
-                             manifest: dict, report) -> bool:
+                             manifest: dict, report, value_rules: bool = True) -> bool:
     """Put the bundle's history (and data) where it belongs; return whether
     they went LIVE.
 
@@ -783,7 +854,11 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
       its dataset intent (``INTENT_TABLES``: exclusions, schema key types)
       still goes live when the schema was kept, because it governs a re-run;
     * data into another schema -> not imported (it describes a dataset with
-      a different shape), reported.
+      a different shape), reported;
+    * ``value_rules=False`` (this project runs on OTHER data) -> like the
+      archived case: data not imported (it is the exporter's dataset), and of
+      the dataset intent only what names keys goes live; the rules naming the
+      exporter's values (:func:`_value_free`) stay in the archive, warned.
 
     Dataset intent that does not go live (no history in the bundle, history
     declined, another schema) is a WARNING naming what was left behind
@@ -804,7 +879,7 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
         _warn_intent(report, manifest, "the run history was declined at import")
         return False
 
-    if data is not None and history is not None and kmap.is_identity:
+    if data is not None and history is not None and kmap.is_identity and value_rules:
         out["history"] = table_copy.load(db._duck, history)
         out["data"] = table_copy.load(db._duck, data)
         _refresh_intent(db)
@@ -817,6 +892,9 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
         out["data"] = (
             "not imported: the schema changed, and the data describes a dataset of "
             "the exporter's shape"
+            if not kmap.is_identity
+            else "not imported: this project runs on other data, and the data is the "
+            "exporter's dataset"
         )
         report.warnings.append(f"derived data {out['data']}")
     if history is not None:
@@ -828,9 +906,10 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
         (archive / "README.txt").write_text(
             "Run history exported with this project, kept read-only for audit and\n"
             "`scistack verify`. It is NOT in the live database: its derived data\n"
-            "was not in the bundle (or the schema changed), and the live database\n"
-            "only holds history together with its data. tables.json lists the\n"
-            "tables; each <table>.parquet holds its rows.\n",
+            "was not in the bundle (or the schema changed, or the project runs on\n"
+            "other data), and the live database only holds history together with\n"
+            "its data. tables.json lists the tables; each <table>.parquet holds\n"
+            "its rows.\n",
             encoding="utf-8",
         )
         out["archived"] = str(archive)
@@ -844,7 +923,22 @@ def _import_history_and_data(bundle, db, root: Path, kmap, import_history: bool,
                     ).encode("utf-8"),
                     **{f"{t}.parquet": history[f"{t}.parquet"] for t in intent},
                 }
-                table_copy.load(db._duck, subset)
+                if value_rules:
+                    table_copy.load(db._duck, subset)
+                else:
+                    rules = _value_free(list(db.dataset_schema_keys))
+                    loaded = table_copy.load(
+                        db._duck,
+                        subset,
+                        keep={t: c for t, (c, _) in rules.items() if c},
+                        clear={t: cols for t, (_, cols) in rules.items() if cols},
+                    )
+                    left_out = _value_rules_left_out(loaded)
+                    out["value_rules_left_out"] = left_out
+                    warning = _value_rules_warning(left_out, archive)
+                    if warning is not None:
+                        report.warnings.append(warning)
+                        Log.warn(f"[bundle] {warning}")
                 out["intent_loaded"] = intent
                 _refresh_intent(db)
         else:
@@ -895,11 +989,18 @@ def import_project(
     key_map: "dict[str, str | None] | None" = None,
     path_roots: "dict[str, str] | None" = None,
     import_history: bool = True,
+    value_rules: bool = True,
     open_db: "Callable[[Path, list[str]], Any] | None" = None,
 ) -> ImportReport:
     """Make a NEW project at *target_root* from the bundle.
 
     *schema_keys* overrides the exporter's (default: the manifest's).
+    *value_rules* False says the project will run on OTHER data than the
+    exporter's: the dataset rules naming the exporter's values (marks and
+    exclusions at a subject, declared key values; :func:`_value_free`) are
+    left out, warned and kept in the archive, and derived data is not
+    imported. Rules naming only keys (key types, shared / per parent) still
+    go live.
     *open_db(db_path, schema_keys)* creates and opens the database; the GUI
     passes ``headless.open_for_import`` (no code discovered). A section the
     bundle carries but no provider was given for is reported, not dropped
@@ -932,7 +1033,8 @@ def import_project(
             f"{root} already holds a SciStack project ({existing or 'a database'}); "
             f"import makes a NEW project. Choose an empty or new folder."
         )
-    Log.info(f"[bundle] import_project: {bundle_path} -> {root} (schema {keys})")
+    Log.info(f"[bundle] import_project: {bundle_path} -> {root} (schema {keys}, "
+             f"history={import_history}, value_rules={value_rules})")
 
     report = ImportReport(
         root=root, db_path=db_path, package=project.get("package") or "", schema_keys=keys
@@ -1011,7 +1113,7 @@ def import_project(
     report.created.append(db_path)
 
     history_live = _import_history_and_data(
-        bundle, db, root, kmap, import_history, manifest, report
+        bundle, db, root, kmap, import_history, manifest, report, value_rules
     )
     _run(PHASE_DATABASE, ImportContext(root=root, db=db, db_path=db_path, schema_keys=keys,
                                        manifest=manifest, key_map=kmap, map_report=map_report,
@@ -1074,6 +1176,9 @@ def preview(
         },
         "has_history": HISTORY_SECTION in bundle.sections,
         "has_data": DATA_SECTION in bundle.sections,
+        # Rules naming the exporter's values (None: a bundle from before
+        # 2026-11-08 did not count them); the dialog asks "same data?" on them.
+        "value_rule_rows": manifest.get("value_rule_rows"),
         "path_inputs": [],
         "environment": None,
     }

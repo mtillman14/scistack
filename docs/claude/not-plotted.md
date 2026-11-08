@@ -14,7 +14,7 @@ out and why.
 | `no_value` | the record exists but its sample value is empty (any of y / x) | yes | `omissions.no_value` on the sample rows |
 | `no_record` | the dataset has the location, but this variable has no record there | yes | `scidb.provenance.inventory.absent_locations`, then `LongTable.absent`, then `omissions.no_record` |
 | `outside_range` | a histogram value outside the typed From / To range | yes | `omissions.outside_range`, using `bins._scistack_regular` |
-| `nan_elements` | a 1-D record with NaN entries | no (thinned) | `omissions.nan_elements` on the records |
+| `nan_elements` | a 1-D record with NaN entries: a 1-D figure skips them; a scalar figure of a COLLAPSED 1-D measure averages the rest ("2 of 4 elements NaN; the mean of the other 2") | no (thinned) | `omissions.nan_elements` on the records; `omissions.cell_nans` on `LongTable.cell_nans` (collapsed) |
 | `partly_averaged` | a collapsed value averaged from fewer members than exist | no (thinned) | `omissions.partly_averaged`, raw rows vs sample |
 
 Some things are never listed, by design:
@@ -37,6 +37,25 @@ subject's mean: that is `no_value`, one per trial. Only when a key DEEPER
 than the sample is averaged away first (trials into subject means, subjects
 the sample) is the subject's value `partly_averaged`, and a subject whose
 trials are all empty is `no_value`.
+
+## Collapsed 1-D measures (2026-11-08)
+
+A scalar kind on a 1-D measure averages each cell first, at PLAN time
+(`cell.apply_cell_collapse`, `reduction.CollapseCells`). `CollapseCells.apply`
+returns, as its fourth value, the collapsed rows whose cell had SOME NaN
+elements, with `CELL_NAN_COLUMN` / `CELL_SIZE_COLUMN`; the table keeps them as
+`LongTable.cell_nans`, a side frame like `absent` (a working column would
+become a grouping key of the collapse chain). `_omissions` filters it with
+`apply_filters` (a measure range filter means the collapsed value) and keeps
+the figure's ITERATE values. An all-NaN or empty cell collapses to NaN and is
+`no_value` only. Items carry the record's full location.
+
+Cells are read by ONE reader, `scicanonicalhash._cells` (private), shared with
+`scidb nans` and the data preview: `series_stats.cell_array` delegates to it,
+and the export prints the same rule (`emit_collapse_cells`, tested over
+`_cells.EDGE_CASES`). Decided 2026-11-08: a 0-d array is a scalar; complex,
+datetime and text arrays (even `["1", "2"]`) are not numbers, so they are gaps
+counted by the non-numeric WARN. Plan: `.claude/plan-not-plotted-collapsed-nans.md`.
 
 ## Flow
 
@@ -64,9 +83,6 @@ trials are all empty is `no_value`.
 - The **exported code** does not draw the footnote. Its text depends on the
   data the endpoint is run on, and recomputing it in the export would need a
   second owner.
-- A 1-D measure **collapsed to one value per record** (cell statistic) reports
-  only its empty records as `no_value`. Partial NaNs inside its arrays are not
-  listed.
 - A **2-D (matrix) heatmap's** NaN cells are not listed. A grid heatmap's
   empty cells are `no_value` on the sample rows.
 - `no_record` is attached for single-variable tables only. Stacked variant

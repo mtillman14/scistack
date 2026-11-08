@@ -251,6 +251,13 @@ class LongTable:
     #: attached by a database source). The "No record" reason of a figure's
     #: "Not plotted" list (`omissions`); None when the source cannot tell.
     absent: "pd.DataFrame | None" = None
+    #: Records whose 1-D cell was averaged over FEWER elements than it holds
+    #: (some, not all, NaN), set by the cell collapse (`cell.apply_cell_collapse`):
+    #: the collapsed rows plus ``reduction.CELL_NAN_COLUMN`` / ``CELL_SIZE_COLUMN``.
+    #: A side frame, like ``absent``, so it never becomes a grouping column of
+    #: the collapse chain. The "NaN elements" reason of a scalar figure's
+    #: "Not plotted" list (`omissions.cell_nans`); None when no cell was partial.
+    cell_nans: "pd.DataFrame | None" = None
     #: How the per-sample reductions a plot needs should be performed — y
     #: extents, exploding a 1-D measure, striding for transport, averaging
     #: matrices. None means the pandas reference (``reducer.PandasReducer``).

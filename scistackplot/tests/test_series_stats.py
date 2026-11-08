@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from scicanonicalhash._cells import EDGE_CASES
 from scistackplot.reduce.series_stats import (
     PAD_BUDGET,
     blocks,
+    cell_array,
     cell_arrays,
     explode,
     pad,
@@ -152,3 +154,17 @@ class TestExplode:
     def test_cell_arrays_normalises_every_cell_kind(self):
         out = cell_arrays([np.array([1, 2]), [3.0, 4.0], None, 5.0, np.array(7.0)])
         assert [a.tolist() for a in out] == [[1.0, 2.0], [3.0, 4.0], [], [], []]
+
+    @pytest.mark.parametrize("name, value, want", EDGE_CASES, ids=[c[0] for c in EDGE_CASES])
+    def test_cells_are_read_by_the_reader_scidb_uses(self, name, value, want):
+        """One reader (scicanonicalhash._cells): a plot and ``scidb nans``
+        never disagree about what a cell holds. Not numbers is a gap here."""
+        got = cell_array(value)
+        expected = np.asarray([] if want is None else want, dtype=float)
+        np.testing.assert_array_equal(got, expected, err_msg=name)
+
+    def test_complex_and_numeric_text_are_gaps_not_silent_numbers(self):
+        """Before 2026-11-08 the plot cast these: complex lost its imaginary
+        part, "1" became 1.0. scidb never read them as numbers."""
+        complex_cell, text_cell = cell_array(np.array([1 + 2j, 3 + 0j])), cell_array(["1", "2"])
+        assert complex_cell.size == 0 and text_cell.size == 0

@@ -137,11 +137,12 @@ def import_project_bundle(
     key_map: "dict[str, str | None] | None" = None,
     path_roots: "dict[str, str] | None" = None,
     import_history: bool = True,
+    value_rules: bool = True,
 ):
     """Make a NEW project at *target_root* from a ``.scistack``, opening it
     WITHOUT discovery (the bundle's code never runs here). *schema_keys*,
     *key_map* (exporter key -> yours, or None), *path_roots* (PathInput
-    name -> your folder) and *import_history* as in
+    name -> your folder), *import_history* and *value_rules* as in
     ``scidb.project.bundle.import_project``."""
     from scidb.project.bundle import import_project
 
@@ -158,6 +159,7 @@ def import_project_bundle(
         key_map=key_map,
         path_roots=path_roots,
         import_history=import_history,
+        value_rules=value_rules,
         open_db=_open,
     )
 

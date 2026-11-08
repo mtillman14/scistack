@@ -168,6 +168,92 @@ def test_nan_elements_of_a_1d_measure():
     assert report.button_text() == "Partly plotted: 1"
 
 
+def _vectors() -> LongTable:
+    """A 1-D measure, one vector per subject: the user's per-minute values
+    packed into one array (plan-not-plotted-collapsed-nans)."""
+    frame = pd.DataFrame(
+        {
+            "session": ["pre", "pre", "post", "post"],
+            "subject": ["01", "02", "03", "04"],
+            "Signal": [
+                np.array([1.0, np.nan, np.nan, 4.0]),  # 2 of 4 NaN
+                np.array([np.nan, np.nan]),  # all NaN: no value, not listed twice
+                np.array([2.0, 3.0]),  # clean
+                [5.0, None, 7.0],  # 1 of 3 NaN (a NULL inside a list)
+            ],
+        }
+    )
+    return LongTable.from_frame(
+        frame, factors=["session", "subject"], measures=["Signal"], schema_levels=["session", "subject"]
+    )
+
+
+def collapsed_bar(**kwargs) -> PlotSpec:
+    """A bar of a 1-D measure: each vector is averaged to one value first."""
+    base = dict(
+        measures=["Signal"],
+        roles={"session": Role.GROUP, "subject": Role.COLLAPSE},
+        groups=["session"],
+        kind=PlotKind.BAR,
+    )
+    base.update(kwargs)
+    return PlotSpec(**base)
+
+
+def test_nan_elements_inside_collapsed_vectors_are_listed():
+    report = resolve(collapsed_bar(), _vectors())[0].omissions
+    assert reasons(report) == {NAN_ELEMENTS: 2, NO_VALUE: 1}
+    partial = {i.keys["subject"]: i for i in report.items if i.reason == NAN_ELEMENTS}
+    assert partial["01"].keys == {"session": "pre", "subject": "01"}
+    assert partial["01"].detail == "2 of 4 elements NaN; the mean of the other 2"
+    assert partial["04"].detail == "1 of 3 elements NaN; the mean of the other 2"
+    assert [i.keys["subject"] for i in report.items if i.reason == NO_VALUE] == ["02"]
+
+
+def test_collapsed_nans_say_median_when_the_median_is_drawn():
+    from scistackplot.model.spec import Statistic
+
+    report = resolve(collapsed_bar(cell_statistic=Statistic.MEDIAN), _vectors())[0].omissions
+    details = sorted(i.detail for i in report.items if i.reason == NAN_ELEMENTS)
+    assert details[0].endswith("the median of the other 2")
+
+
+def test_collapsed_nans_go_through_the_filters():
+    """Filtered away is never "not plotted": a factor filter, and a range
+    filter on the measure, which means the COLLAPSED value."""
+    from scistackplot.model.spec import Filter
+
+    no_01 = resolve(collapsed_bar(filters=[Filter("subject", exclude=["01"])]), _vectors())[0].omissions
+    assert [i.keys["subject"] for i in no_01.items if i.reason == NAN_ELEMENTS] == ["04"]
+    clear_plan_cache()
+    high = resolve(collapsed_bar(filters=[Filter("Signal", minimum=5.5)]), _vectors())[0].omissions
+    # 01's mean is 2.5 (filtered out); 04's is 6.0 (kept).
+    assert [i.keys["subject"] for i in high.items if i.reason == NAN_ELEMENTS] == ["04"]
+
+
+def test_collapsed_nans_go_to_their_own_figure_under_a_fan_out():
+    spec = collapsed_bar(roles={"session": Role.ITERATE, "subject": Role.COLLAPSE}, groups=[])
+    by_session = {f.figure_key["session"]: f.omissions for f in resolve(spec, _vectors())}
+    assert [i.keys["subject"] for i in by_session["pre"].items if i.reason == NAN_ELEMENTS] == ["01"]
+    assert [i.keys["subject"] for i in by_session["post"].items if i.reason == NAN_ELEMENTS] == ["04"]
+
+
+def test_clean_vectors_carry_no_side_frame():
+    from scistackplot.reduce.cell import apply_cell_collapse
+
+    clean = LongTable.from_frame(
+        pd.DataFrame({"subject": ["01", "02"], "Signal": [np.array([1.0, 2.0]), np.array([np.nan])]}),
+        factors=["subject"], measures=["Signal"], schema_levels=["subject"],
+    )
+    spec = PlotSpec(measures=["Signal"], roles={"subject": Role.COLLAPSE}, kind=PlotKind.BAR)
+    assert apply_cell_collapse(spec, clean).cell_nans is None  # an all-NaN cell is not partial
+
+
+def test_the_not_plotted_csv_lists_collapsed_nans():
+    data = plot_data(collapsed_bar(), _vectors(), depth=NOT_PLOTTED_DEPTH)
+    assert sorted(data["reason"]) == ["NaN elements", "NaN elements", "No value"]
+
+
 def test_a_text_measure_draws_its_missing_values():
     frame = pd.DataFrame({"subject": ["01", "02", "03"], "Side": ["L", None, "R"]})
     table = LongTable.from_frame(frame, factors=["subject"], measures=["Side"], schema_levels=["subject"])

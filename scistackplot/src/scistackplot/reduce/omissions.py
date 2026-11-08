@@ -11,7 +11,7 @@ footnote and the log line only display it.
 | ``no_value`` | the record exists but its value is empty (NaN / NULL) | yes |
 | ``no_record`` | the dataset has the location; this variable has no record there (``scidb.provenance.inventory.absent_locations``) | yes |
 | ``outside_range`` | a histogram value outside the typed From / To range | yes |
-| ``nan_elements`` | some entries inside a vector are NaN | no: thinned |
+| ``nan_elements`` | some entries inside a vector are NaN: a 1-D figure skips those positions; a collapsed (scalar) figure averages the rest (``cell_nans``) | no: thinned |
 | ``partly_averaged`` | a collapsed average used fewer members than exist | no: thinned |
 
 Removed on purpose (location filter, Filters, exclusions) is never here.
@@ -204,6 +204,43 @@ def nan_elements(records: pd.DataFrame, measure: str, keys: list[str]) -> list[O
                     f"{missing} of {array.size} elements NaN",
                 )
             )
+    return items
+
+
+def cell_nans(
+    frame: pd.DataFrame | None,
+    figure_key: dict[str, Any],
+    measure: str,
+    keys: list[str],
+    statistic: str = "mean",
+) -> list[Omission]:
+    """Records of a COLLAPSED 1-D measure whose cell was averaged over fewer
+    elements than it holds (``LongTable.cell_nans``, already through the
+    spec's filters), inside this figure (its ITERATE values).
+
+    The value is drawn, so this is thinned, not lost (``NAN_ELEMENTS``). The
+    counts are the cell collapse's, from the one cell reader
+    (``scicanonicalhash._cells``) ``scidb nans`` also uses."""
+    from .reduction import CELL_NAN_COLUMN, CELL_SIZE_COLUMN
+
+    if frame is None or frame.empty:
+        return []
+    rows = frame
+    for name, value in figure_key.items():
+        if name in rows.columns:
+            rows = rows[rows[name].astype(str) == str(value)]
+    present = [k for k in keys if k in rows.columns]
+    items = []
+    for row in rows.to_dict(orient="records"):
+        nan, size = int(row[CELL_NAN_COLUMN]), int(row[CELL_SIZE_COLUMN])
+        items.append(
+            Omission(
+                _keys_of(row, present),
+                measure,
+                NAN_ELEMENTS,
+                f"{nan} of {size} elements NaN; the {statistic} of the other {size - nan}",
+            )
+        )
     return items
 
 

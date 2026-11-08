@@ -26,6 +26,7 @@ import {
   buildInstallArgs,
   describeInstall,
   formatImportReport,
+  asksAboutValueRules,
   keysNeedingAChoice,
   parseCliJson,
 } from './bundleImportCore';
@@ -160,6 +161,21 @@ export async function importProjectBundle(
     importHistory = choice.yes;
   }
 
+  // Rules naming the exporter's values (a mark or exclusion at subject S03,
+  // declared session values) are wrong on someone else's data.
+  let valueRules: boolean | undefined;
+  if (asksAboutValueRules(info, importHistory, schema)) {
+    const choice = await vscode.window.showQuickPick(
+      [
+        { label: 'Same data', detail: 'Apply all its rules, including marks, exclusions and declared values at specific subjects or sessions', yes: true },
+        { label: 'Other data', detail: 'Apply only the rules about keys (key types, shared / per parent); the rest stay in the archive, unapplied', yes: false },
+      ],
+      { title: 'Will this project run on the same data as the exporter\'s?' },
+    );
+    if (choice === undefined) return;
+    valueRules = choice.yes;
+  }
+
   const sameSchema = schema.join('\u0000') === info.schema_keys.join('\u0000');
   const args = buildImportArgs({
     bundle,
@@ -168,6 +184,7 @@ export async function importProjectBundle(
     keyMap,
     pathRoots,
     importHistory,
+    valueRules,
   });
   const answer = await vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: `Importing ${path.basename(bundle)}…` },

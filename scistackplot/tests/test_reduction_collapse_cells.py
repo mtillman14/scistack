@@ -58,15 +58,33 @@ def _run(lines: list[str], frame: pd.DataFrame) -> pd.DataFrame:
 @pytest.mark.parametrize("statistic", [Statistic.MEAN, Statistic.MEDIAN])
 def test_emitted_collapse_matches_the_step(statistic):
     step = CollapseCells("Signal", statistic)
-    expected, _, _ = step.apply(_cells())
+    expected, _, _, _ = step.apply(_cells())
     got = _run(emit_collapse_cells(step), _cells())
     pd.testing.assert_series_equal(
         got["Signal"].astype("float64"), expected["Signal"].astype("float64")
     )
 
 
+@pytest.mark.parametrize("statistic", [Statistic.MEAN, Statistic.MEDIAN])
+def test_the_export_reads_cells_by_the_shared_rule(statistic):
+    """Every cell the readers once disagreed on (scicanonicalhash._cells
+    EDGE_CASES): the printed helper, which imports nothing of scistack, gives
+    what the preview gives."""
+    from scicanonicalhash._cells import EDGE_CASES
+
+    frame = pd.DataFrame({
+        "case": [c[0] for c in EDGE_CASES],
+        "Signal": pd.Series([c[1] for c in EDGE_CASES], dtype=object),
+    })
+    step = CollapseCells("Signal", statistic)
+    expected, _, _, _ = step.apply(frame)
+    got = _run(emit_collapse_cells(step), frame)
+    for case, want, have in zip(frame["case"], expected["Signal"], got["Signal"]):
+        assert (np.isnan(want) and np.isnan(have)) or want == have, case
+
+
 def test_cells_without_numbers_are_gaps_not_values():
-    collapsed, rows, _ = CollapseCells("Signal", Statistic.MEAN).apply(_cells())
+    collapsed, rows, _, _ = CollapseCells("Signal", Statistic.MEAN).apply(_cells())
     values = collapsed["Signal"].tolist()
     assert values[:2] == [3.0, 6.0] and rows == 8
     assert all(np.isnan(v) for v in values[2:])
@@ -85,17 +103,40 @@ def _exploded() -> pd.DataFrame:
 @pytest.mark.parametrize("statistic", [Statistic.MEAN, Statistic.MEDIAN])
 def test_emitted_exploded_collapse_matches_the_step(statistic):
     step = CollapseCells("Signal", statistic, exploded=True, index_column="t")
-    expected, rows, samples = step.apply(_exploded())
+    expected, rows, samples, _ = step.apply(_exploded())
     got = _run(emit_step(step), _exploded())
     pd.testing.assert_frame_equal(got, expected)
     assert (rows, samples) == (2, 8) and "t" not in got.columns
+
+
+def test_records_averaged_over_fewer_elements_are_returned():
+    """The fourth value: the collapsed rows whose cell had SOME NaN, with the
+    counts ("Not plotted" lists them). All-NaN and empty cells are not
+    partial; the counts are the same arrays the average read."""
+    from scistackplot.reduce.reduction import CELL_NAN_COLUMN, CELL_SIZE_COLUMN
+
+    _, _, _, nans = CollapseCells("Signal", Statistic.MEAN).apply(_cells())
+    assert nans is not None
+    assert nans["trial"].tolist() == ["2"]  # [4, NaN, 8]
+    assert nans[CELL_NAN_COLUMN].tolist() == [1] and nans[CELL_SIZE_COLUMN].tolist() == [3]
+    assert nans["Signal"].tolist() == [6.0]  # the collapsed value rides along
+
+
+def test_exploded_records_count_their_nan_rows():
+    from scistackplot.reduce.reduction import CELL_NAN_COLUMN, CELL_SIZE_COLUMN
+
+    step = CollapseCells("Signal", Statistic.MEAN, exploded=True, index_column="t")
+    _, _, _, nans = step.apply(_exploded())
+    assert nans is not None
+    assert nans["subject"].tolist() == ["02"]
+    assert nans[CELL_NAN_COLUMN].tolist() == [1] and nans[CELL_SIZE_COLUMN].tolist() == [4]
 
 
 def test_apply_cell_collapse_is_the_step(series_table):
     spec = PlotSpec(measures=["Signal"], kind=PlotKind.VIOLIN)
     step = collapse_step(spec, series_table)
     assert step == CollapseCells("Signal", Statistic.MEAN)
-    expected, _, _ = CollapseCells("Signal", Statistic.MEAN).apply(series_table.frame)
+    expected, _, _, _ = CollapseCells("Signal", Statistic.MEAN).apply(series_table.frame)
     got = apply_cell_collapse(spec, series_table).frame
     pd.testing.assert_series_equal(got["Signal"], expected["Signal"])
 

@@ -153,7 +153,9 @@ no `_run` row.
 
 ## What is inside cells (Stage 4)
 
-Owner `scidb/inspect/cells.py`. A vector of per-minute values with NaNs is
+Owners: `scicanonicalhash/_cells.py` (private; what a cell holds, its kind, the counts
+and their wording; shared with scistackplot's plots since 2026-11-08) and
+`scidb/inspect/cells.py` (per location and column, loading). A vector of per-minute values with NaNs is
 ONE present, non-blank cell to every location check, so this looks inside:
 per cell `blank` (scalar NaN/None), `empty`, `all_nan`, `partial_nan`,
 `constant` (two or more equal non-NaN values), with element and NaN counts.
@@ -162,9 +164,9 @@ per cell `blank` (scalar NaN/None), `empty`, `all_nan`, `partial_nan`,
 (`ColumnPreview.cells`, shown as `show --types`' and the GUI's **Inside cells**
 column).
 
-Still open (plot layer, `docs/claude/not-plotted.md` "Known limits"): a 1-D
-measure collapsed to one value per record (`nanmean`) does not list its
-partial NaNs under "Not plotted".
+Plots: a 1-D measure collapsed to one value per record lists its partial
+NaNs under "Not plotted" (2026-11-08; `docs/claude/not-plotted.md`), read by
+the same owner.
 
 ## GUI (Stage 5)
 
@@ -202,3 +204,28 @@ Function nodes (`intersect_location_states`) join their inputs' universes, so a
 location an input should have but lacks shows red there (the function cannot
 run), not hidden. Tests: `TestPickerParity` in `scidb/tests/test_expectation.py`,
 `TestIntersectedLocations` in `scidb/tests/test_locations.py`.
+
+## Export / import (`scidb.project.bundle`, 2026-11-08)
+
+Key settings and marks are dataset intent (`BUNDLE_INTENT`), like exclusions
+and key types; `_run_outcome` is history. Statuses are never stored: the
+recipient recomputes them from its own records.
+
+| Bundle / import choice | Key settings + marks | Run outcomes |
+|---|---|---|
+| history + data, same schema | live (verbatim) | live |
+| history only (the default), same schema | live | archived only |
+| no history, or history declined | not applied; warning names them and `scidb mark` / `scidb set-key` | none |
+| another schema (any key map, even a rename) | not applied; warned; kept in the archive | archived only |
+| same schema, `value_rules=False` ("other data") | sharing kept; declared values, marks and exclusions left out, warned, kept in the archive; derived data not imported | archived only |
+
+`value_rules` is `import_project(value_rules=)`, `scistack import
+--no-value-rules`, and the extension's "Same data / Other data" question
+(asked only when the history is imported, the schema is kept and the
+manifest's `value_rule_rows` is non-empty, or the bundle predates it).
+`bundle._value_free` is the one classification of what in each intent table
+names values; `test_every_intent_table_is_classified_for_other_data` pins it.
+Tests: the "Expected locations" block of `scidb/tests/test_bundle.py`.
+
+Not built: converting rules through a key map (a rule converts when every key
+it names maps; see `.claude/plan-bundle-expectation-rules.md`).

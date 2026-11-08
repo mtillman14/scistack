@@ -168,9 +168,13 @@ def emit_collapse_cells(step: CollapseCells) -> list[str]:
     Written as a named helper rather than ``df[y].map(np.nanmean)``: the
     export is meant to READ as what it does, and ``np.nanmean`` warns on an
     all-NaN cell (the preview silences it). A cell is read as
-    ``series_stats.cell_array`` reads it: an array or list of numbers is its
-    samples, anything else (a lone number, None, text) has none and becomes a
-    NaN gap. NaN samples are skipped, as in pandas' ``Series.mean()``.
+    ``series_stats.cell_array`` reads it, by ``scicanonicalhash._cells``' rule
+    printed out (an export imports nothing of scistack): an array or
+    (nested) list of numbers, bools and None (as NaN) is its samples;
+    anything else (a lone number, None, text, complex, datetimes, ragged
+    nesting) has none and becomes a NaN gap. NaN samples are skipped, as in
+    pandas' ``Series.mean()``. ``test_reduction_collapse_cells`` runs this
+    over ``_cells.EDGE_CASES`` against the preview.
     """
     y = step.measure
     centre = "median" if step.statistic is Statistic.MEDIAN else "mean"
@@ -192,14 +196,23 @@ def emit_collapse_cells(step: CollapseCells) -> list[str]:
     return [
         f"# {y}: one value per record, the {centre} of each vector",
         f"def {name}(_cell):",
-        "    if isinstance(_cell, np.ndarray) and _cell.ndim == 0:",
-        '        return float("nan")',
+        "    # numbers only: text, complex, datetimes and ragged lists are gaps",
         "    if not isinstance(_cell, (np.ndarray, list, tuple)):",
         '        return float("nan")',
         "    try:",
-        '        _samples = np.asarray(_cell, dtype="float64").ravel()',
+        "        _samples = np.asarray(_cell)",
         "    except (TypeError, ValueError):",
         '        return float("nan")',
+        "    if _samples.ndim == 0 or _samples.size == 0:",
+        '        return float("nan")',
+        '    if _samples.dtype.kind == "O":',
+        "        _ok = (bool, int, float, np.bool_, np.integer, np.floating, type(None))",
+        "        if not all(isinstance(_v, _ok) for _v in _samples.ravel()):",
+        '            return float("nan")',
+        '        _samples = np.array([np.nan if _v is None else _v for _v in _samples.ravel()], dtype="float64")',
+        '    elif _samples.dtype.kind not in "biuf":',
+        '        return float("nan")',
+        '    _samples = _samples.astype("float64").ravel()',
         "    _samples = _samples[~np.isnan(_samples)]",
         f'    return float({reduction}) if _samples.size else float("nan")',
         "",

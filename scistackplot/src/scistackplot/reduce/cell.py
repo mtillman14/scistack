@@ -50,7 +50,8 @@ from scistacklog import Log
 
 from .reduction import CollapseCells
 from .series_stats import cell_array
-from ..model.shape import Shape, classify_value
+from scicanonicalhash._cells import numeric_elements
+from ..model.shape import Shape
 from ..model.spec import SCALAR_KINDS, PlotSpec
 from ..model.table import LongTable
 
@@ -120,7 +121,8 @@ def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
     if not step.exploded:
         _warn_non_numeric_cells(frame[measure], measure)
     # The rule is the step's (reduction.CollapseCells); codegen prints it.
-    collapsed, rows, samples = step.apply(frame)
+    collapsed, rows, samples, cell_nans = step.apply(frame)
+    partial = 0 if cell_nans is None else len(cell_nans)
 
     empty = int(collapsed[measure].isna().sum()) if len(collapsed) else 0
 
@@ -130,12 +132,13 @@ def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
     # line per resolve; the phase timer beside it reports the same elapsed.
     Log.info(
         "collapsed 1-D measure %r to scalar by %s: %d row(s) from %d sample(s) "
-        "in %.3fs",
+        "in %.3fs; %d record(s) averaged over fewer elements (NaN inside)",
         measure,
         statistic,
         rows,
         samples,
         time.perf_counter() - started,
+        partial,
         layer=LAYER,
     )
     if empty:
@@ -165,6 +168,9 @@ def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
         table,
         frame=collapsed,
         measures=measures,
+        # "Not plotted" lists these (omissions.cell_nans): averaged over fewer
+        # elements than the cell holds. Filtered there like `absent`.
+        cell_nans=cell_nans,
         # The within-observation axis belongs to the samples that are now gone.
         # Left in place it would be an ordinary column of a scalar table, i.e. a
         # factor-shaped thing with one level per sample position.
@@ -172,26 +178,29 @@ def apply_cell_collapse(spec: PlotSpec, table: LongTable) -> LongTable:
     )
 
 
-def _warn_non_numeric_cells(values: pd.Series, measure: str) -> None:
-    """WARN when cells of the measure hold text arrays: they collapse to
-    NaN gaps (``cell_array``), never to a crash, and the log says how many
-    and shows a few.
+def _unreadable(value) -> bool:
+    """A non-empty array or list holding no readable numbers."""
+    if isinstance(value, np.ndarray):
+        if value.ndim == 0 or not value.size or value.dtype.kind in "biuf":
+            return False
+    elif not isinstance(value, (list, tuple)) or not value:
+        return False
+    return numeric_elements(value) is None
 
-    Uses ``shape.classify_value``, the one rule for "is this cell a series",
-    so this count and the melt's "not plottable" decision cannot disagree.
-    Only arrays with a non-numeric dtype are classified, so a numeric column
-    costs one dtype check per cell.
+
+def _warn_non_numeric_cells(values: pd.Series, measure: str) -> None:
+    """WARN when cells of the measure hold arrays or lists that are not
+    numbers (text, complex, datetimes, ragged nesting): they collapse to NaN
+    gaps (``cell_array``), never to a crash, and the log says how many and
+    shows a few.
+
+    "Not numbers" is ``scicanonicalhash._cells.numeric_elements``'s rule, the
+    one ``cell_array`` reads with, so this count and the gaps cannot
+    disagree. A numeric ndarray costs one dtype check per cell.
     """
-    bad = [
-        v
-        for v in values
-        if isinstance(v, np.ndarray)
-        and v.dtype.kind in "OUS"
-        and v.size
-        and classify_value(v) is not Shape.SERIES_1D
-    ]
+    bad = [v for v in values if _unreadable(v)]
     if bad:
-        examples = [str(v.ravel()[0])[:40] for v in bad[:3]]
+        examples = [str(np.asarray(v, dtype=object).ravel()[0])[:40] for v in bad[:3]]
         Log.warn(
             "%d cell(s) of %r hold non-numeric values and are drawn as gaps "
             "(e.g. %s)",

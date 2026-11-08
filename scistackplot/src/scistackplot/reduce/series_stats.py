@@ -36,31 +36,25 @@ import warnings
 from typing import Any
 
 import numpy as np
+from scicanonicalhash._cells import numeric_elements
 
 from ..model.spec import ErrorBand, Statistic
 from .spread import SD_DDOF, ci95_spread, sem_spread
 
 
 def cell_array(value: Any) -> np.ndarray:
-    """One cell as a 1-D float64 array; empty for None, NaN, or a non-sequence."""
-    if value is None:
-        return np.empty(0)
-    if isinstance(value, np.ndarray):
-        if value.ndim == 0:
-            return np.empty(0)
-        try:
-            return value.astype("float64", copy=False).ravel()
-        except (TypeError, ValueError):
-            # A text array (the list branch below has always done this). The
-            # caller counts and reports such cells; a raw numpy ValueError
-            # here failed the whole resolve (run 0c164454, 2026-10-30).
-            return np.empty(0)
-    if isinstance(value, (list, tuple)):
-        try:
-            return np.asarray(value, dtype="float64").ravel()
-        except (TypeError, ValueError):
-            return np.empty(0)
-    return np.empty(0)
+    """One cell as a 1-D float64 array; empty when the cell holds no numbers.
+
+    The reading rule is ``scicanonicalhash._cells.numeric_elements``'s, the
+    one reader shared with scidb (``scidb nans``, the data preview), so a
+    plot and the data inspection never disagree about what a cell holds:
+    numbers, bools and None (as NaN) in an array or (nested) list; text,
+    complex, datetimes, ragged nesting and scalars are not numbers. Those
+    become empty here: a gap, counted by the caller, never a crash (a raw
+    numpy ValueError once failed a whole resolve, run 0c164454).
+    """
+    elements = numeric_elements(value)
+    return np.empty(0) if elements is None else elements
 
 
 def cell_arrays(values) -> list[np.ndarray]:

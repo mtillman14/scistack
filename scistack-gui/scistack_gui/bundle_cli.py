@@ -57,10 +57,11 @@ class BundleCLIError(Exception):
     """A user-facing error: printed as one line, exit code 1."""
 
 
-def _import_history_default() -> bool:
+def _import_default(parameter: str) -> bool:
+    """An import flag's default IS import_project's (one owner)."""
     from scidb.project.bundle import import_project
 
-    return inspect.signature(import_project).parameters["import_history"].default
+    return inspect.signature(import_project).parameters[parameter].default
 
 
 def _on_off(value: bool) -> str:
@@ -135,13 +136,24 @@ def add_bundle_subparsers(sub: argparse._SubParsersAction) -> None:
         metavar="NAME=FOLDER",
         help="Your copy of a PathInput's raw files, repeatable (never copied).",
     )
-    history_default = _import_history_default()
+    history_default = _import_default("import_history")
     imp.add_argument(
         "--history",
         dest="import_history",
         action=argparse.BooleanOptionalAction,
         default=history_default,
         help=f"Import the bundle's history (default: {_on_off(history_default)}).",
+    )
+    value_rules_default = _import_default("value_rules")
+    imp.add_argument(
+        "--value-rules",
+        dest="value_rules",
+        action=argparse.BooleanOptionalAction,
+        default=value_rules_default,
+        help="Apply the exporter's rules that name specific values (exclusions and "
+        "Expected / Not expected marks at a subject, declared key values). Turn off "
+        "(--no-value-rules) when this project will run on other data; they are then "
+        f"kept in the archive, unapplied (default: {_on_off(value_rules_default)}).",
     )
     imp.add_argument(
         "--check-code",
@@ -295,6 +307,7 @@ def _cmd_import(args: argparse.Namespace) -> dict:
         key_map=key_map or None,
         path_roots=path_roots or None,
         import_history=args.import_history,
+        value_rules=args.value_rules,
     )
     installed = None
     if args.trust and not args.no_install:

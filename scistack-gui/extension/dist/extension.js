@@ -58,6 +58,8 @@ function buildImportArgs(c) {
     args.push("--path-root", `${name}=${folder}`);
   }
   args.push(c.importHistory ? "--history" : "--no-history");
+  if (c.valueRules !== void 0)
+    args.push(c.valueRules ? "--value-rules" : "--no-value-rules");
   return args;
 }
 function parseCliJson(stdout) {
@@ -73,6 +75,16 @@ function parseCliJson(stdout) {
   }
   return { ok: false, error: `no JSON answer from ${BUNDLE_CLI_MODULE}; output was:
 ${stdout.slice(-2e3)}` };
+}
+function asksAboutValueRules(info, importHistory, schema) {
+  if (!importHistory || !info.has_history)
+    return false;
+  if (schema.join("\0") !== info.schema_keys.join("\0"))
+    return false;
+  const rows = info.value_rule_rows;
+  if (rows === void 0 || rows === null)
+    return true;
+  return Object.values(rows).some((n) => n > 0);
 }
 function keysNeedingAChoice(exporter, recipient) {
   return exporter.filter((k) => !recipient.includes(k));
@@ -3126,6 +3138,19 @@ async function importProjectBundle(log, openProject) {
       return;
     importHistory = choice.yes;
   }
+  let valueRules;
+  if (asksAboutValueRules(info, importHistory, schema)) {
+    const choice = await vscode6.window.showQuickPick(
+      [
+        { label: "Same data", detail: "Apply all its rules, including marks, exclusions and declared values at specific subjects or sessions", yes: true },
+        { label: "Other data", detail: "Apply only the rules about keys (key types, shared / per parent); the rest stay in the archive, unapplied", yes: false }
+      ],
+      { title: "Will this project run on the same data as the exporter's?" }
+    );
+    if (choice === void 0)
+      return;
+    valueRules = choice.yes;
+  }
   const sameSchema = schema.join("\0") === info.schema_keys.join("\0");
   const args = buildImportArgs({
     bundle,
@@ -3133,7 +3158,8 @@ async function importProjectBundle(log, openProject) {
     schema: sameSchema ? void 0 : schema,
     keyMap,
     pathRoots,
-    importHistory
+    importHistory,
+    valueRules
   });
   const answer = await vscode6.window.withProgress(
     { location: vscode6.ProgressLocation.Notification, title: `Importing ${path6.basename(bundle)}\u2026` },

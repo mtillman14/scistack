@@ -2142,6 +2142,25 @@ def _omissions(
         if raw is not None and not custom:
             for measure in measures:
                 items.extend(om.partly_averaged(raw, sample, measure, keys))
+        cell_nans = table.cell_nans
+        if cell_nans is not None and not cell_nans.empty and not custom:
+            # A collapsed 1-D measure: records averaged over fewer elements
+            # than their cell holds. Their own location (every key the record
+            # has), not the sample's: the record is what holds the NaNs.
+            record_keys = [
+                name
+                for name in dict.fromkeys([*table.schema_levels, *table.factor_names])
+                if name in cell_nans.columns
+            ]
+            items.extend(
+                om.cell_nans(
+                    apply_filters(cell_nans, spec),
+                    figure_key,
+                    spec.y_measure,
+                    record_keys,
+                    str(spec.cell_statistic),
+                )
+            )
         drawn = max(len(sample) - lost_rows - len(outside), 0)
     elif records is not None:
         if not custom:

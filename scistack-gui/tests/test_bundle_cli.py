@@ -116,6 +116,14 @@ def test_import_history_defaults_to_import_projects_default():
     assert _parser().parse_args(["import", "b.scistack", "--no-history"]).import_history is False
 
 
+def test_value_rules_defaults_to_import_projects_default():
+    from scidb.project.bundle import import_project
+
+    default = inspect.signature(import_project).parameters["value_rules"].default
+    assert _parser().parse_args(["import", "b.scistack"]).value_rules is default
+    assert _parser().parse_args(["import", "b.scistack", "--no-value-rules"]).value_rules is False
+
+
 def test_the_gui_offers_exactly_the_cli_options(client):
     from scistack_gui.bundle_cli import EXPORT_FLAGS, export_choices
 

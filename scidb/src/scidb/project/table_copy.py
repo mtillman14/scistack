@@ -85,12 +85,28 @@ def dump(duck, tables: list[str], views: "list[str] | None" = None) -> "dict[str
     return files
 
 
-def load(duck, files: "dict[str, bytes]") -> dict:
+def load(
+    duck,
+    files: "dict[str, bytes]",
+    *,
+    keep: "dict[str, str] | None" = None,
+    clear: "dict[str, list[str]] | None" = None,
+) -> dict:
     """Recreate the dumped tables in *duck* (a NEW project's database).
+
+    *keep* ``{table: SQL condition}`` loads only the rows meeting it; *clear*
+    ``{table: [column, ...]}`` loads those columns as NULL. Both filter while
+    loading (nothing is loaded and then deleted); the bundle's own files are
+    untouched, so what was left out is still there.
+
     Returns ``{"tables": {name: rows}, "views": [...], "dropped_columns":
-    {table: [...]}}``."""
+    {table: [...]}, "left_out": {table: rows not kept}, "cleared": {table:
+    kept rows that had a value in a cleared column}}`` (the last two only
+    name tables where something was left out or cleared)."""
     spec = json.loads(files[TABLES_FILE].decode("utf-8"))
-    out = {"tables": {}, "views": [], "dropped_columns": {}}
+    keep = keep or {}
+    clear = clear or {}
+    out = {"tables": {}, "views": [], "dropped_columns": {}, "left_out": {}, "cleared": {}}
     with tempfile.TemporaryDirectory() as tmp:
         for name, info in spec.get("tables", {}).items():
             if _ddl(duck, name) is None:
@@ -111,8 +127,25 @@ def load(duck, files: "dict[str, bytes]") -> dict:
             if dropped:
                 out["dropped_columns"][name] = dropped
             cols = ", ".join(_q(c) for c in shared)
+            cleared = [c for c in clear.get(name, []) if c in shared]
+            select = ", ".join("NULL" if c in cleared else _q(c) for c in shared)
+            condition = keep.get(name)
+            where = f" WHERE coalesce(({condition}), FALSE)" if condition else ""
+            if condition:
+                left = duck.fetchone(
+                    f"SELECT count(*) FROM read_parquet('{src}') "
+                    f"WHERE NOT coalesce(({condition}), FALSE)"
+                )[0]
+                if left:
+                    out["left_out"][name] = int(left)
+            if cleared:
+                had = " OR ".join(f"{_q(c)} IS NOT NULL" for c in cleared)
+                n = duck.fetchone(f"SELECT count(*) FROM read_parquet('{src}'){where}"
+                                  f"{' AND' if where else ' WHERE'} ({had})")[0]
+                if n:
+                    out["cleared"][name] = int(n)
             duck.execute(
-                f"INSERT INTO {_q(name)} ({cols}) SELECT {cols} FROM read_parquet('{src}')"
+                f"INSERT INTO {_q(name)} ({cols}) SELECT {select} FROM read_parquet('{src}'){where}"
             )
             out["tables"][name] = duck.fetchone(f"SELECT count(*) FROM {_q(name)}")[0]
     for name, ddl in spec.get("views", {}).items():
@@ -121,6 +154,7 @@ def load(duck, files: "dict[str, bytes]") -> dict:
     Log.info(
         f"[table_copy] load: {len(out['tables'])} table(s), "
         f"{sum(out['tables'].values())} row(s), {len(out['views'])} view(s); "
-        f"dropped columns {out['dropped_columns'] or 'none'}"
+        f"dropped columns {out['dropped_columns'] or 'none'}; "
+        f"left out {out['left_out'] or 'none'}; cleared {out['cleared'] or 'none'}"
     )
     return out

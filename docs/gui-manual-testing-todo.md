@@ -11,6 +11,52 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzz. "Not plotted" lists NaNs inside averaged vectors — added 2026-11-08
+
+**What changed:** a bar, box, violin, strip or scatter of a variable that holds one vector per record
+averages each vector first. Records whose vector was partly NaN are now listed under "Partly plotted",
+with how many values the average skipped.
+
+**Backend steps:** none (Python only). Use a variable whose cells are vectors with some NaNs inside
+(`scidb nans <Variable>` lists them).
+
+**Frontend steps:**
+1. Open Plot Studio on that variable and pick **Bar** (or Violin).
+2. Click the **Not plotted / Partly plotted** button in the toolbar.
+3. Turn on "Show as a footnote on the figure", then **Save as CSV**.
+
+**You should see:**
+- One row per partly-NaN record, reason **NaN elements**, detail like "2 of 4 elements NaN; the mean of
+  the other 2", at the record's full location (e.g. subject, session, trial). An all-NaN vector is
+  listed as **No value**, once.
+- The same locations as `scidb nans <Variable>` lists as "partly NaN".
+- A Filter that removes a subject removes its rows from the list. The footnote and CSV include them.
+
+---
+
+## 0zzzzzzzzzzzzzzzzzzzzzzzz. Import asks "Same data / Other data" — added 2026-11-08
+
+**What changed:** importing a bundle onto other data can leave out the exporter's rules that name
+specific values (marks, exclusions, declared key values) instead of applying them to your subjects.
+
+**Backend steps:** in a project with at least one Expected / Not expected mark or exclusion, export a
+bundle with history (the default). Rebuild the extension (`npm run build:all` in
+`scistack-gui/extension`) if you run it from source.
+
+**Frontend steps:**
+1. Run "SciStack: Import Project Bundle…", keep the schema keys, and choose **Import history**.
+2. A question "Will this project run on the same data as the exporter's?" appears. Choose **Other data**.
+3. Repeat into another new folder, choosing **Same data**.
+4. Repeat once more, changing the schema keys: the question does not appear.
+
+**You should see:**
+- With **Other data**, the import report's Warnings say "rules naming the exporter's values NOT
+  applied … kept, unapplied, in the archive at …". In the opened project, right-click a variable >
+  Expected locations shows no marks, and the key strip keeps Shared / Per parent with no declared values.
+- With **Same data**, the marks and declared values are there and no such warning appears.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzz. Expected locations, Coverage, badges, and NaNs inside cells — added 2026-11-07
 
 **What changed:** for any variable you can see which locations it should have and whether each

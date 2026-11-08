@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import * as assert from 'node:assert';
 import {
   BUNDLE_CLI_MODULE,
+  asksAboutValueRules,
   buildImportArgs,
   buildInfoArgs,
   formatImportReport,
@@ -42,6 +43,28 @@ test('a kept schema passes no --schema and history defaults explicitly', () => {
   assert.ok(!args.includes('--schema'));
   assert.ok(!args.includes('--map'));
   assert.ok(args.includes('--history'));
+});
+
+test('value rules: a flag only when the dialog asked', () => {
+  const base = { bundle: 'b', into: 'i', importHistory: true };
+  assert.ok(!buildImportArgs(base).some((a) => a.includes('value-rules')), 'unasked = the CLI default');
+  assert.ok(buildImportArgs({ ...base, valueRules: false }).includes('--no-value-rules'));
+  assert.ok(buildImportArgs({ ...base, valueRules: true }).includes('--value-rules'));
+});
+
+test('same-or-other data is asked only when a value rule would apply', () => {
+  const info = {
+    path: 'b', package: 'p', schema_keys: ['subject', 'session'], database: null, options: {},
+    sections: {}, has_history: true, has_data: false, path_inputs: [], environment: null,
+    value_rule_rows: { _expectation_mark: 2 } as Record<string, number> | null,
+  };
+  const keys = ['subject', 'session'];
+  assert.strictEqual(asksAboutValueRules(info, true, keys), true);
+  assert.strictEqual(asksAboutValueRules(info, false, keys), false, 'history skipped: no rules travel');
+  assert.strictEqual(asksAboutValueRules(info, true, ['participant', 'visit']), false, 'another schema: none apply');
+  assert.strictEqual(asksAboutValueRules({ ...info, value_rule_rows: {} }, true, keys), false);
+  assert.strictEqual(asksAboutValueRules({ ...info, value_rule_rows: null }, true, keys), true, 'an older bundle is asked');
+  assert.strictEqual(asksAboutValueRules({ ...info, has_history: false }, true, keys), false);
 });
 
 test('info args', () => {

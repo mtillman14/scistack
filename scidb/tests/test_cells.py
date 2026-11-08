@@ -1,8 +1,10 @@
-"""What is inside cells (scidb.inspect.cells, plan Stage 4).
+"""What is inside cells, per location (scidb.inspect.cells, plan Stage 4).
 
 The user's missing data was NaN inside per-minute vectors: one present,
 non-blank cell to every row count. These tests pin that the cells are looked
-inside, by the one owner the preview and ``scidb nans`` share.
+inside, per location, by the preview and ``scidb nans``. What counts as
+which kind is the shared reader's (scicanonicalhash._cells); its own tests
+are scicanonicalhash/tests/test_cells.py.
 """
 
 import json
@@ -13,56 +15,8 @@ import pytest
 import scifor as _scifor
 from scidb import BaseVariable, configure_database
 from scifor.project import schema_order
-from scidb.inspect.cells import (
-    ALL_NAN,
-    BLANK,
-    CONSTANT,
-    EMPTY,
-    PARTIAL_NAN,
-    PROBLEM_KINDS,
-    PROBLEM_LABELS,
-    cell_profile,
-    cell_stats,
-    classify,
-    numeric_elements,
-)
-
-
-class TestClassify:
-    @pytest.mark.parametrize(
-        "value, kind",
-        [
-            (np.array([1.0, np.nan, 3.0]), PARTIAL_NAN),
-            (np.array([np.nan, np.nan]), ALL_NAN),
-            (np.array([2.0, 2.0, 2.0]), CONSTANT),
-            (np.array([], dtype=float), EMPTY),
-            ([1, 2, 3], None),
-            ([1.0, None, 3.0], PARTIAL_NAN),
-            (np.nan, BLANK),
-            (None, BLANK),
-            (5.0, None),
-            ("text", None),
-            (np.array([7.0]), None),  # one value is not "constant"
-            (np.array([[1.0, np.nan], [3.0, 4.0]]), PARTIAL_NAN),
-        ],
-    )
-    def test_kinds(self, value, kind):
-        assert classify(value)[0] == kind
-
-    def test_text_and_objects_are_not_arrays(self):
-        assert numeric_elements(["a", "b"]) is None
-        assert numeric_elements({"a": 1}) is None
-
-    def test_stats_and_wording(self):
-        stats = cell_stats([np.array([1.0, np.nan]), np.array([np.nan, np.nan]), 3.0, np.nan])
-        assert stats.cells == 4 and stats.array_cells == 2
-        assert stats.elements == 4 and stats.nan_elements == 3
-        assert stats.kinds[PARTIAL_NAN] == 1 and stats.kinds[ALL_NAN] == 1 and stats.kinds[BLANK] == 1
-        text = stats.describe()
-        assert "3 of 4 values are NaN (75.0%)" in text and "1 all NaN" in text
-
-    def test_every_kind_has_a_label(self):
-        assert set(PROBLEM_LABELS) == set(PROBLEM_KINDS)
+from scicanonicalhash._cells import ALL_NAN, CONSTANT, PARTIAL_NAN
+from scidb.inspect.cells import cell_profile
 
 
 class CellArr(BaseVariable):

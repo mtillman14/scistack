@@ -21,6 +21,12 @@ export interface ImportChoices {
   /** PathInput name -> the recipient's folder. */
   pathRoots?: Record<string, string>;
   importHistory: boolean;
+  /**
+   * Apply the exporter's rules naming specific values (marks, exclusions,
+   * declared key values). False: this project runs on other data.
+   * Undefined: the CLI's default.
+   */
+  valueRules?: boolean;
 }
 
 /** `bundle-info --json`'s `info` (scidb.project.bundle.preview). */
@@ -33,6 +39,8 @@ export interface BundleInfo {
   sections: Record<string, { files: number; bytes: number }>;
   has_history: boolean;
   has_data: boolean;
+  /** Rules naming the exporter's values, per table; null for an older bundle. */
+  value_rule_rows?: Record<string, number> | null;
   path_inputs: { name: string; templates: string[]; root_folders: string[] }[];
   environment: {
     python: { exported: string | null; here: string };
@@ -69,6 +77,7 @@ export function buildImportArgs(c: ImportChoices): string[] {
     args.push('--path-root', `${name}=${folder}`);
   }
   args.push(c.importHistory ? '--history' : '--no-history');
+  if (c.valueRules !== undefined) args.push(c.valueRules ? '--value-rules' : '--no-value-rules');
   return args;
 }
 
@@ -87,6 +96,20 @@ export function parseCliJson<T>(stdout: string): { ok: true } & T | { ok: false;
     }
   }
   return { ok: false, error: `no JSON answer from ${BUNDLE_CLI_MODULE}; output was:\n${stdout.slice(-2000)}` };
+}
+
+/**
+ * Whether to ask "same data or other data?": only when the history (which
+ * carries the rules) is imported, the schema is kept (into another schema no
+ * rule applies anyway) and the bundle has rules naming values. An older
+ * bundle did not count them (null), so it is asked.
+ */
+export function asksAboutValueRules(info: BundleInfo, importHistory: boolean, schema: string[]): boolean {
+  if (!importHistory || !info.has_history) return false;
+  if (schema.join('\u0000') !== info.schema_keys.join('\u0000')) return false;
+  const rows = info.value_rule_rows;
+  if (rows === undefined || rows === null) return true;
+  return Object.values(rows).some((n) => n > 0);
 }
 
 /** Exporter keys the recipient schema does not have: each needs a choice. */

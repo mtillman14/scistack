@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from scidb.model.log import Log
-from scidb.inspect.cells import cell_stats
+from scicanonicalhash._cells import cell_stats
 
 #: Rows returned by default; the column summaries still cover every row.
 DEFAULT_ROW_LIMIT = 50
@@ -37,7 +37,7 @@ class ColumnPreview:
     #: Up to five distinct values, as text.
     samples: list[str] = field(default_factory=list)
     #: What is inside the cells: NaN elements, all-NaN / constant arrays
-    #: (scidb.inspect.cells, the owner; CellStats.to_dict()).
+    #: (scicanonicalhash._cells, the owner; CellStats.to_dict()).
     cells: dict = field(default_factory=dict)
 
 

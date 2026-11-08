@@ -1484,8 +1484,8 @@ def render_cell_profile(
     profile, by: str | None = None, kinds=None, limit: int = 200
 ) -> str:
     """``scidb nans``: per column what is inside the cells, then the suspect
-    cells (or counts per value of *by*). Wording: ``scidb.inspect.cells``."""
-    from scidb.inspect.cells import PROBLEM_KINDS, PROBLEM_LABELS
+    cells (or counts per value of *by*). Wording: ``scicanonicalhash._cells``."""
+    from scicanonicalhash._cells import PROBLEM_KINDS, PROBLEM_LABELS
 
     where = " ".join(f"{k}={v}" for k, v in profile.location.items()) or "all locations"
     lines = [f"{profile.variable} at {where}: {profile.n_rows} row(s)"]
