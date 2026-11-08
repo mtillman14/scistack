@@ -9,6 +9,7 @@
 
 import { Handle, Position } from '@xyflow/react'
 import { variableNodeText, type NodeVariants } from './variableNodeText'
+import { useExpectationBadge } from '../../context/ExpectationBadgesContext'
 
 export interface Variant {
   constants: Record<string, unknown>
@@ -40,6 +41,7 @@ const STATE_STYLES: Record<string, { border: string; background: string }> = {
 export default function VariableNode({ data }: Props) {
   const stateStyle = data.run_state ? STATE_STYLES[data.run_state] : null
   const text = variableNodeText(data.total_records, data.variant)
+  const { badge, open } = useExpectationBadge(data.label)
 
   return (
     <div style={{
@@ -58,12 +60,51 @@ export default function VariableNode({ data }: Props) {
         {text.heading && <div style={styles.heading}>{text.heading}</div>}
       </div>
 
+      {badge && (badge.problems > 0 || badge.marks > 0) && (
+        <div style={styles.badges}>
+          {badge.problems > 0 && (
+            <button
+              type="button"
+              className="nodrag"
+              style={{ ...styles.badge, ...styles.badgeProblem }}
+              title={`${badge.problems} location(s) do not match what is expected (missing or present unexpectedly). Click to see them.`}
+              onClick={e => { e.stopPropagation(); open(data.label, 'problems') }}
+            >
+              ✕ {badge.problems}
+            </button>
+          )}
+          {badge.marks > 0 && (
+            <button
+              type="button"
+              className="nodrag"
+              style={styles.badge}
+              title={`${badge.marks} Expected / Not expected mark(s) on this variable. Click to see them.`}
+              onClick={e => { e.stopPropagation(); open(data.label, 'marks') }}
+            >
+              🏷 {badge.marks}
+            </button>
+          )}
+        </div>
+      )}
+
       <Handle type="source" position={Position.Right} />
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  badges: { display: 'flex', gap: 4, marginTop: 4 },
+  badge: {
+    border: '1px solid #9ca3af',
+    borderRadius: 8,
+    background: '#f3f4f6',
+    color: '#374151',
+    fontSize: 10,
+    padding: '0 6px',
+    cursor: 'pointer',
+    lineHeight: '16px',
+  },
+  badgeProblem: { border: '1px solid #dc2626', background: '#fef2f2', color: '#b91c1c' },
   container: {
     background: '#fff',
     border: '2px solid #4a90d9',

@@ -655,6 +655,70 @@ SCHEMA_KEY_TYPE = _core(
     bundle=BUNDLE_INTENT, kept="schema key types (declarations)",
 )
 
+# Why a location got no output in a run: one row per location that failed
+# or had no data (scidb.provenance.outcomes). Successes are already recorded
+# by the graph, so they are not repeated here. Not tied to ``_run``: a run
+# that saved nothing writes no ``_run`` row. Newest row per (function,
+# location) is current; a later save at the location supersedes it.
+RUN_OUTCOME = _core(
+    "_run_outcome",
+    lambda keys: f"""
+    CREATE TABLE IF NOT EXISTS _run_outcome (
+        function_name VARCHAR   NOT NULL,
+        output_types  VARCHAR[],
+        {_schema_columns(keys)},
+        outcome       VARCHAR   NOT NULL,
+        blame         VARCHAR,
+        probable      BOOLEAN,
+        reason        TEXT,
+        recorded_at   TIMESTAMP NOT NULL
+    )
+    """,
+    bundle=BUNDLE_HISTORY, cleared=True,
+)
+
+# Which schema-key values a variable is expected to have
+# (scidb.provenance.expectation; .claude/plan-variable-expected-locations.md).
+# Dataset INTENT like the key types: what the study should contain travels
+# with it. Both tables are append-only; the newest row per key / per
+# (variable, exact keyset) is current, so the history stays answerable.
+#
+# ``sharing``: 'shared' (every parent has the same values), 'per_parent'
+# (only the values found under each parent), or NULL (automatic).
+# ``declared_values``: the values a shared key must have, or NULL (every
+# value found in the database).
+SCHEMA_KEY_EXPECTATION = _core(
+    "_schema_key_expectation",
+    """
+    CREATE TABLE IF NOT EXISTS _schema_key_expectation (
+        key             VARCHAR NOT NULL,
+        sharing         VARCHAR,
+        declared_values VARCHAR[],
+        declared_at     VARCHAR NOT NULL,
+        source          VARCHAR NOT NULL
+    )
+    """,
+    bundle=BUNDLE_INTENT, kept="dataset intent: how each schema key's values are expected",
+)
+
+# An Expected / Not-expected mark on one variable at a schema-key
+# combination (NULL columns = every value, as in __scidb_schema_overrides).
+# ``active = FALSE`` is an unmark; nothing is ever deleted.
+EXPECTATION_MARK = _core(
+    "_expectation_mark",
+    lambda keys: f"""
+    CREATE TABLE IF NOT EXISTS _expectation_mark (
+        variable_name VARCHAR   NOT NULL,
+        {_schema_columns(keys)},
+        expected      BOOLEAN   NOT NULL,
+        active        BOOLEAN   NOT NULL,
+        reason        TEXT      NOT NULL,
+        changed_at    TIMESTAMP NOT NULL
+    )
+    """,
+    bundle=BUNDLE_INTENT, kept="dataset intent: which locations each variable is expected to have",
+)
+
 # Statements about runs (scidb.provenance.intent; docs/claude/intent-and-fact.md). The
 # GUI writes most of them, scidb reads them, so scidb declares the table
 # (design review 07, G4).

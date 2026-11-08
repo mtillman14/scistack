@@ -11,6 +11,9 @@ export interface ColumnPreview {
   non_null: number
   n_rows: number
   samples: string[]
+  /** What is inside the cells (scidb.inspect.cells): NaN elements, all-NaN /
+   *  constant arrays, and its one-line description. Absent from an older backend. */
+  cells?: { nan_elements: number; elements: number; problems: number; description: string }
 }
 
 export interface DataPreviewResult {

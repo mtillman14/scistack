@@ -30,7 +30,8 @@ preparation) is kept whole, because there the framework frames are the story.
 
 **Cost:** only the *first* combo of each reason extracts a traceback. Later
 combos only add their combo string to the group. `combo_skip` progress events
-carry the small form `{reason, no_data, user_frame}`. Tracebacks are sent once,
+carry the small form `{reason, no_data, user_frame, blame, probable}`; scidb
+stores one row per such location (`_run_outcome`, docs/claude/expected-locations.md). Tracebacks are sent once,
 in the summary.
 
 ### Wire shape (`FailureGroup.to_dict`)

@@ -88,6 +88,14 @@ _INTENT_LABELS: dict[str, tuple[str, str]] = {
         "schema key type declaration(s)",
         "re-declare them (db.set_schema_key_type, or the Numeric box on the PathInput)",
     ),
+    "_schema_key_expectation": (
+        "schema key expectation setting(s)",
+        "set them again (scidb set-key, or the Expected locations popup)",
+    ),
+    "_expectation_mark": (
+        "Expected / Not expected mark(s)",
+        "mark them again (scidb mark, or the Expected locations popup)",
+    ),
 }
 
 

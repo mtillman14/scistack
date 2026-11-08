@@ -37,6 +37,7 @@ import Breadcrumb from "./components/DAG/Breadcrumb";
 import HypothesisTabs from "./components/HypothesisTabs";
 import PathsPopup from "./components/PathsPopup";
 import InventoryPopup from "./components/InventoryPopup";
+import CoveragePopup from "./components/Expectation/CoveragePopup";
 import ClearDataButton from "./components/DAG/ClearDataButton";
 import Sidebar from "./components/Sidebar/Sidebar";
 import ResizeHandle, { useResizablePanel } from "./components/ResizeHandle";
@@ -217,6 +218,7 @@ export default function App() {
   const [startupErrors, setStartupErrors] = useState<StartupError[]>([]);
   const [pathsOpen, setPathsOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [coverageOpen, setCoverageOpen] = useState(false);
   // Drag the sidebar's left edge to resize it; until then it keeps its
   // quarter of the window (styles.sidebar). The canvas keeps >= 320 px.
   const sidebarResize = useResizablePanel({
@@ -394,6 +396,14 @@ export default function App() {
                       >
                         📋 Inventory
                       </button>
+                      <button
+                        style={styles.pathsBtn}
+                        onClick={() => setCoverageOpen(true)}
+                        disabled={schema.keys.length === 0}
+                        title="Which variables have which subjects (or any key), in pipeline order, with where data drops out"
+                      >
+                        ✅ Coverage
+                      </button>
                       <ClearDataButton />
                       {schema.keys.length > 0 && (
                         <span style={styles.schemaKeys}>
@@ -422,6 +432,9 @@ export default function App() {
               {pathsOpen && <PathsPopup onClose={() => setPathsOpen(false)} />}
               {inventoryOpen && (
                 <InventoryPopup schemaKeys={schema.keys} onClose={() => setInventoryOpen(false)} />
+              )}
+              {coverageOpen && (
+                <CoveragePopup schemaKeys={schema.keys} onClose={() => setCoverageOpen(false)} />
               )}
               {blockingErrors.length > 0 && (
                 <StartupErrorDialog errors={blockingErrors} />

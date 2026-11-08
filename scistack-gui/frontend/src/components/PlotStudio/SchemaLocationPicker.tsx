@@ -10,7 +10,8 @@
  *          from is still the newest at its own location
  *   amber  a record exists, but something upstream has been RE-SAVED since
  *   red    expected here, and no record for this variant
- *   grey   deliberately excluded, and so counted in neither the numerator nor
+ *   grey   deliberately excluded, or marked Not expected and absent
+ *          (scidb.provenance.expectation), and so counted in neither the numerator nor
  *          the denominator
  *
  * TWO PANES, ONE SELECTION. They are two lenses on the same stored pair, and
@@ -249,7 +250,7 @@ export default function SchemaLocationPicker({
             <span style={styles.counts}>{node.counts.green}/{countable}</span>
           )}
           {node.state === 'grey' && node.children.length === 0 && (
-            <span style={styles.excluded}>excluded</span>
+            <span style={styles.excluded} title="Excluded from analysis, or marked Not expected (Expected locations)">not counted</span>
           )}
           {node.code_version && (
             <span style={styles.version} title="the code version that produced this record">
@@ -293,7 +294,7 @@ export default function SchemaLocationPicker({
                 <span style={{ color: COLOR.red }}>{tree.counts.red} missing</span>
               )}
               {tree.counts.grey > 0 && (
-                <span style={{ color: COLOR.grey }}>{tree.counts.grey} excluded</span>
+                <span style={{ color: COLOR.grey }}>{tree.counts.grey} not counted</span>
               )}
             </div>
 

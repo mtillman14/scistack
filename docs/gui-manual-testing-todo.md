@@ -11,6 +11,34 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzz. Expected locations, Coverage, badges, and NaNs inside cells — added 2026-11-07
+
+**What changed:** for any variable you can see which locations it should have and whether each
+matches: present, missing unexpectedly, unexpectedly present, missing as expected, or excluded,
+each with a one-line reason (including why the last run left it empty). You can mark locations
+Expected or Not expected with a reason; variables downstream inherit the mark. Variable nodes get
+badges, the header gets a Coverage view, the data preview shows NaNs inside vectors, and the
+location picker uses the same expectation. Rules: `docs/claude/expected-locations.md`.
+
+**Backend:**
+- Restart the GUI (new handlers, new tables). Both bundles are rebuilt.
+- `scistack.log`: `[expectation] <Variable> ... row(s) sent`, `[expectation] badges for N variable(s): X computed, Y cached`, and `[outcomes] <fn> -> [...]: stored N location(s)` after a run with failures.
+- CLI to compare against: `scidb expected <Variable> --problems`, `scidb coverage --by subject`, `scidb follow subject=S07`, `scidb nans <Variable>`.
+
+**Frontend:**
+1. Right-click a Variable node and choose **✅ Expected locations…**. Check the counts line, the per-key strip (**Shared / Per parent / Auto**, declared values like `1..5`), and the table: icon, key columns, status, why. Hover a row: the tooltip repeats the status and why.
+2. Click the status chips to filter; **Marked** shows the rows a mark decides.
+3. On a row, **Mark…**: untick a key to widen the mark (e.g. the whole subject), choose **Expected** or **Not expected**, type a reason, **Save mark**. The row changes status. Open a downstream variable: it shows the same row as inherited ("marked … in <Variable>").
+4. **Follow** on a row: the location at every variable, and "First missing although an input has it: …".
+5. On the canvas, a variable with problems shows a red **✕ N** badge, and one with its own marks a **🏷 N** badge. Click each: the popup opens filtered. After **Unmark**, the badges update without a reload.
+6. Header **✅ Coverage**: tick a key (subject). Rows are values, columns are variables in pipeline order, and the last row "with data" is the funnel. Click a cell: that variable's Expected locations, filtered to the value.
+7. **🔎 Preview data…** on a variable whose cells are vectors with NaNs: the **Inside cells** column says e.g. "4 of 12 values are NaN (33.3%); cells: 1 all NaN, 1 partly NaN", highlighted.
+8. **🗂 View Schema Locations**: a location marked Not expected is grey "not counted"; a subject with nothing below it is one red node.
+
+**You should see:** the same statuses and sentences as the CLI. Note anything slow: badges and Coverage run one expectation per variable (cached until the database changes).
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzz. Node turns green after a run whose rows spread into many records — added 2026-11-05
 
 A function that saves below the level it iterated (for example one call that returns

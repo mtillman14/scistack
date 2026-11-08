@@ -9,6 +9,13 @@ Database metadata — the handler table for both transports (``api/handlers.py``
     POST /api/inventory/row-override  inventory_row_override — what decides one row
     POST /api/inventory/exclude       exclude_schema_combo   — exclude one row
     POST /api/inventory/include       include_schema_combo   — re-include one row
+    POST /api/expectation          variable_expectation   — expected locations of one variable
+    POST /api/expectation/badges   expectation_badges     — canvas badges (cached)
+    POST /api/expectation/coverage expectation_coverage   — variables x values of keys
+    POST /api/expectation/follow   follow_location        — one location through the pipeline
+    POST /api/expectation/key      set_key_expectation    — shared / per parent, declared values
+    POST /api/expectation/mark     mark_expectation       — Expected / Not expected
+    POST /api/expectation/unmark   unmark_expectation
     GET  /api/schema/key-types          get_schema_key_types   — declared numeric/string types
     POST /api/schema/key-types/impact   schema_key_type_impact — what a change would re-spell
     PUT  /api/schema/key-types/{key}    set_schema_key_type    — the Numeric checkbox
@@ -27,6 +34,7 @@ from pathlib import Path
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from scidb.model.exceptions import NotFoundError
 
 from scistack_gui.api.handlers import Handler, install_routes
 
@@ -204,7 +212,98 @@ def _set_schema_key_type(db, req: SchemaKeyTypeUpdate) -> dict:
     return set_schema_key_type(db, req.key, req.key_type, req.confirm_respelling)
 
 
+# --- Expected locations (scistack_gui.services.expectation_service; every rule
+# is scidb's: docs/claude/expected-locations.md) ------------------------------
+
+
+class ExpectationQuery(BaseModel):
+    variable: str
+    problems_only: bool = False
+    limit: int = 5000
+
+
+class KeyExpectationUpdate(BaseModel):
+    key: str
+    #: "shared" | "per_parent", or None for automatic.
+    sharing: str | None = None
+    #: Declared values as typed ("1..5, 7"); None/empty = every value found.
+    values_text: str | None = None
+
+
+class ExpectationMark(BaseModel):
+    variable: str
+    #: The schema keys the mark names (the rest are every value).
+    keys: dict[str, str]
+    expected: bool
+    reason: str
+
+
+class ExpectationUnmark(BaseModel):
+    variable: str
+    keys: dict[str, str]
+    reason: str = ""
+
+
+class BadgeQuery(BaseModel):
+    variables: list[str]
+
+
+class CoverageQuery(BaseModel):
+    by: list[str]
+    variables: list[str] | None = None
+
+
+class FollowQuery(BaseModel):
+    location: dict[str, str]
+    variables: list[str] | None = None
+
+
+def _variable_expectation(db, req: ExpectationQuery) -> dict:
+    from scistack_gui.services.expectation_service import variable_expectation
+
+    return variable_expectation(db, req.variable, req.problems_only, req.limit)
+
+
+def _set_key_expectation(db, req: KeyExpectationUpdate) -> dict:
+    from scistack_gui.services.expectation_service import set_key_expectation
+
+    return set_key_expectation(db, req.key, req.sharing, req.values_text)
+
+
+def _mark_expectation(db, req: ExpectationMark) -> dict:
+    from scistack_gui.services.expectation_service import mark
+
+    return mark(db, req.variable, req.keys, req.expected, req.reason)
+
+
+def _unmark_expectation(db, req: ExpectationUnmark) -> dict:
+    from scistack_gui.services.expectation_service import unmark
+
+    return unmark(db, req.variable, req.keys, req.reason)
+
+
+def _expectation_badges(db, req: BadgeQuery) -> dict:
+    from scistack_gui.services.expectation_service import badges
+
+    return badges(db, req.variables)
+
+
+def _expectation_coverage(db, req: CoverageQuery) -> dict:
+    from scistack_gui.services.expectation_service import coverage
+
+    return coverage(db, req.by, req.variables)
+
+
+def _follow_location(db, req: FollowQuery) -> dict:
+    from scistack_gui.services.expectation_service import follow
+
+    return follow(db, req.location, req.variables)
+
+
 _BAD_REQUEST = {ValueError: 400}
+
+#: An unknown variable is a 404, a bad request a 400.
+_EXPECTATION_ERRORS = {ValueError: 400, NotFoundError: 404}
 
 SCHEMA_HANDLERS: tuple[Handler, ...] = (
     Handler("get_schema_key_types", "/schema/key-types", None, _get_schema_key_types, http_method="GET"),
@@ -223,6 +322,16 @@ SCHEMA_HANDLERS: tuple[Handler, ...] = (
     # the canvas re-reads run state.
     Handler("exclude_schema_combo", "/inventory/exclude", InventoryRowChange, _exclude_schema_combo, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
     Handler("include_schema_combo", "/inventory/include", InventoryRowChange, _include_schema_combo, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
+    Handler("variable_expectation", "/expectation", ExpectationQuery, _variable_expectation, http_errors=_EXPECTATION_ERRORS, undoable=False),
+    Handler("expectation_badges", "/expectation/badges", BadgeQuery, _expectation_badges, http_errors=_BAD_REQUEST, undoable=False),
+    Handler("expectation_coverage", "/expectation/coverage", CoverageQuery, _expectation_coverage, http_errors=_BAD_REQUEST, undoable=False),
+    Handler("follow_location", "/expectation/follow", FollowQuery, _follow_location, http_errors=_BAD_REQUEST, undoable=False),
+    # Not undoable: database writes with their own history (append-only
+    # tables; unmark / set back is the way back). dag_updated so the canvas
+    # badges refetch.
+    Handler("set_key_expectation", "/expectation/key", KeyExpectationUpdate, _set_key_expectation, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
+    Handler("mark_expectation", "/expectation/mark", ExpectationMark, _mark_expectation, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
+    Handler("unmark_expectation", "/expectation/unmark", ExpectationUnmark, _unmark_expectation, http_errors=_BAD_REQUEST, undoable=False, notify_dag_updated=True),
 )
 
 install_routes(router, SCHEMA_HANDLERS)

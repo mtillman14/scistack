@@ -123,13 +123,18 @@ _HISTORY = {
     "_run_step", "_run_outputs", "_function_rename", "_variant_pin",
     "_variant_tombstone", "__scidb_schema_overrides",
     "_schema_key_type",  # dataset intent since 2026-11-01 (was in no section)
+    "_schema_key_expectation", "_expectation_mark",  # dataset intent since 2026-11-07
+    "_run_outcome",  # why a location got no output (2026-11-07)
 }
-_INTENT = {"__scidb_schema_overrides", "_schema_key_type"}
+_INTENT = {
+    "__scidb_schema_overrides", "_schema_key_type",
+    "_schema_key_expectation", "_expectation_mark",
+}
 _DATA = {"_registered_types", "_variables", "_variable_groups", "_record_save"}
 _CLEARED = {
     "_record", "_constant", "_invocation", "_function_source",
     "_invocation_input", "_invocation_output", "_invocation_pooled", "_run_invocation",
-    "_function_rename", "_record_save",
+    "_function_rename", "_record_save", "_run_outcome",
 }
 
 
@@ -147,7 +152,10 @@ def test_section_constants_do_not_shadow_table_decls():
     under that name was overwritten by it and emptied ``intent_tables()``."""
     assert tables.INTENT.name == "_intent"
     assert tables.BUNDLE_INTENT == "intent"
-    assert tables.intent_tables() == ("__scidb_schema_overrides", "_schema_key_type")
+    assert tables.intent_tables() == (
+        "__scidb_schema_overrides", "_schema_key_type",
+        "_schema_key_expectation", "_expectation_mark",
+    )
 
 
 def test_every_scidb_table_is_cleared_xor_kept_with_a_reason():

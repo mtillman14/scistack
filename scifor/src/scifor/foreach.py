@@ -168,6 +168,10 @@ def _skip_failure_payload(failure: ComboFailure) -> dict:
         "reason": failure.reason,
         "no_data": failure.no_data,
         "user_frame": failure.user_frame.to_dict() if failure.user_frame else None,
+        # Who can fix it (scifor.failures owns the category): scidb stores it
+        # per location (scidb.provenance.outcomes) without a traceback.
+        "blame": failure.blame,
+        "probable": failure.probable,
     }
 
 

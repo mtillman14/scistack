@@ -154,6 +154,13 @@ deliberately only that: there is no recorded grid to consult
 write down why. It is the same mechanism the picker subtracts from its
 denominator, so the badge and the pane agree by construction.
 
+**Expected locations (2026-11-07):** the picker now also reads
+`scidb.provenance.expectation` (docs/claude/expected-locations.md): locations
+that owner says should exist join the denominator, Not-expected ones are grey
+("not counted"), and a parent with nothing below it is one red node. Declared
+values and shared keys close much of the hole below for keys whose values are
+shared; data present although not expected is a note.
+
 **The hole this does not close**: expected sets are derived one function at a
 time, so a *downstream* variable inherits its loader's blind spot. If eight
 subjects were never loaded, `FilteredEMG`'s expected set — predicted from the

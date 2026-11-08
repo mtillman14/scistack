@@ -370,11 +370,162 @@ def _cmd_pick(insp: Inspector, args) -> None:
 
 
 def _cmd_exclusions(insp: Inspector, args) -> None:
-    exclusions = insp.exclusions()
+    exclusions = insp.exclusions(history=args.history)
     if args.json:
         _emit_json(exclusions)
     else:
-        print(render.render_exclusions(exclusions, insp._db.dataset_schema_keys))
+        print(
+            render.render_exclusions(
+                exclusions, insp._db.dataset_schema_keys, history=args.history
+            )
+        )
+
+
+def _cmd_expected(insp: Inspector, args) -> None:
+    import csv
+
+    from scidb.provenance.expectation import STATUSES
+
+    statuses = None
+    if args.status:
+        statuses = [s.strip() for s in args.status.split(",") if s.strip()]
+        unknown = [s for s in statuses if s not in STATUSES]
+        if unknown:
+            raise CLIError(f"Unknown status {unknown}; choose from {list(STATUSES)}")
+    result = insp.expectation(args.type)
+    if args.csv:
+        header, body = result.table(problems_only=args.problems, statuses=statuses)
+        with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(header)
+            writer.writerows(body)
+        print(f"wrote {len(body)} row(s) to {args.csv}", file=sys.stderr)
+    if args.json:
+        print(json.dumps(result.to_dict(problems_only=args.problems, statuses=statuses), indent=2, default=str))
+    else:
+        print(
+            render.render_expectation(
+                result, _resolve_style(args), problems_only=args.problems,
+                statuses=statuses, by=args.by,
+            )
+        )
+
+
+def _split_csv(text):
+    return None if not text else [k.strip() for k in text.split(",") if k.strip()]
+
+
+def _cmd_coverage(insp: Inspector, args) -> None:
+    cov = insp.coverage(_split_csv(args.by), _split_csv(args.vars))
+    if args.json:
+        print(json.dumps(cov.to_dict(), indent=2, default=str))
+    else:
+        print(render.render_coverage(cov, _resolve_style(args), funnel_only=args.funnel))
+
+
+def _cmd_follow(insp: Inspector, args) -> None:
+    fol = insp.follow(_split_csv(args.vars), **_parse_kv(args.schema))
+    if args.json:
+        print(json.dumps(fol.to_dict(), indent=2, default=str))
+    else:
+        print(render.render_follow(fol, _resolve_style(args)))
+
+
+def _cmd_nans(insp: Inspector, args) -> None:
+    from scidb.inspect.cells import PROBLEM_KINDS
+
+    kinds = _split_csv(args.kind)
+    if kinds:
+        unknown = [k for k in kinds if k not in PROBLEM_KINDS]
+        if unknown:
+            raise CLIError(f"Unknown kind {unknown}; choose from {list(PROBLEM_KINDS)}")
+    profile = insp.cell_profile(
+        args.type, columns=_split_csv(args.columns), location=_parse_kv(args.schema)
+    )
+    if args.json:
+        payload = profile.to_dict()
+        if kinds:
+            payload["problems"] = [p for p in payload["problems"] if p["kind"] in kinds]
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        print(render.render_cell_profile(profile, by=args.by, kinds=kinds))
+
+
+def _cmd_keys(insp: Inspector, args) -> None:
+    settings = insp.key_expectations(history=args.history)
+    if args.json:
+        # History rows are plain dicts; the current settings are KeySettings.
+        print(json.dumps(settings, indent=2, default=str)) if args.history else _emit_json(settings)
+        return
+    if args.history:
+        if not settings:
+            print("(no schema key expectations ever set)")
+            return
+        rows = [
+            [
+                h["key"],
+                h["sharing"] or "automatic",
+                ", ".join(h["values"]) if h["values"] else "",
+                h["declared_at"],
+                h["source"],
+            ]
+            for h in settings
+        ]
+        print(render.format_table(["key", "sharing", "values", "declared", "source"], rows))
+        return
+    print(render.render_key_expectations(settings))
+
+
+def _cmd_set_key(mut: Mutator, args) -> None:
+    from scidb.provenance.expectation import PER_PARENT, SHARED, parse_values_text
+
+    sharing = {"shared": SHARED, "per-parent": PER_PARENT, "auto": None}[args.sharing]
+    values = None
+    if args.values:
+        try:
+            values = parse_values_text(args.values)
+        except ValueError as e:
+            raise CLIError(str(e))
+    result = mut.set_key_expectation(args.key, sharing, values)
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_mark(mut: Mutator, args) -> None:
+    result = mut.mark_expectation(
+        args.type, args.expected, args.reason, **_parse_kv(args.schema)
+    )
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_unmark(mut: Mutator, args) -> None:
+    result = mut.unmark_expectation(args.type, args.reason or "", **_parse_kv(args.schema))
+    _emit_json(result) if args.json else print(render.render_mutation_result(result))
+
+
+def _cmd_marks(insp: Inspector, args) -> None:
+    marks = insp.expectation_marks(args.type, history=args.history)
+    if args.json:
+        print(json.dumps(marks, indent=2, default=str)) if args.history else _emit_json(marks)
+        return
+    if args.history:
+        if not marks:
+            print("(no expectation marks ever written)")
+            return
+        keys = insp._db.dataset_schema_keys
+        used = [k for k in keys if any(k in h["keys"] for h in marks)]
+        rows = [
+            [
+                h["variable"],
+                *[h["keys"].get(k, "*") for k in used],
+                ("expected" if h["expected"] else "not expected") if h["active"] else "unmarked",
+                h["reason"],
+                h["changed_at"],
+            ]
+            for h in marks
+        ]
+        print(render.format_table(["variable", *used, "mark", "reason", "when"], rows))
+        return
+    print(render.render_expectation_marks(marks, insp._db.dataset_schema_keys))
 
 
 def _cmd_inventory(insp: Inspector, args) -> None:
@@ -1288,7 +1439,145 @@ def _add_commands(
         parents=[parent],
         help="List currently-excluded schema combinations.",
     )
+    p.add_argument(
+        "--history",
+        action="store_true",
+        help="Every exclusion and re-inclusion ever written, oldest first.",
+    )
     p.set_defaults(_handler=_cmd_exclusions)
+
+    p = sub.add_parser(
+        "expected",
+        parents=[parent],
+        help="Which locations a variable should have, and whether each matches: "
+        "present / missing unexpectedly / unexpectedly present / missing as "
+        "expected / excluded, each with why.",
+    )
+    p.add_argument("type", help="Variable type.")
+    p.add_argument(
+        "--problems", action="store_true",
+        help="Only the rows that do not match the expectation.",
+    )
+    p.add_argument(
+        "--status", default=None,
+        help="Comma-separated statuses to show (present, missing_unexpected, "
+        "present_unexpected, missing_expected, excluded).",
+    )
+    p.add_argument(
+        "--by", default=None, metavar="KEY",
+        help="Counts per value of this schema key instead of one row per location.",
+    )
+    p.add_argument(
+        "--csv", default=None, metavar="PATH",
+        help="Also write the table (follows --problems and --status) as CSV.",
+    )
+    p.set_defaults(_handler=_cmd_expected)
+
+    p = sub.add_parser(
+        "coverage",
+        parents=[parent],
+        help="Which variables have which values of a schema key, in pipeline "
+        "order, with the drop-out funnel (each cell summarises `expected`).",
+    )
+    p.add_argument(
+        "--by", required=True, help="Comma-separated schema key(s), e.g. subject."
+    )
+    p.add_argument("--vars", default=None, help="Comma-separated variables (default: all).")
+    p.add_argument(
+        "--funnel", action="store_true",
+        help="Only the funnel: how many values each variable has data for.",
+    )
+    p.set_defaults(_handler=_cmd_coverage)
+
+    p = sub.add_parser(
+        "nans",
+        parents=[parent],
+        help="What is inside a variable's cells: NaN values in arrays, all-NaN, "
+        "blank, empty and constant cells, per column and location.",
+    )
+    p.add_argument("type", help="Variable type.")
+    p.add_argument("schema", nargs="*", help="key=value: only this location.")
+    p.add_argument("--columns", default=None, help="Comma-separated data columns.")
+    p.add_argument(
+        "--kind", default=None,
+        help="Comma-separated problem kinds to list (all_nan, partial_nan, "
+        "blank, empty, constant).",
+    )
+    p.add_argument(
+        "--by", default=None, metavar="KEY",
+        help="Counts per value of this schema key instead of one row per cell.",
+    )
+    p.set_defaults(_handler=_cmd_nans)
+
+    p = sub.add_parser(
+        "follow",
+        parents=[parent],
+        help="One location through every variable in pipeline order: its "
+        "status and why at each, and where it is first missing.",
+    )
+    p.add_argument("schema", nargs="+", help="key=value schema keys, e.g. subject=S07 trial=2.")
+    p.add_argument("--vars", default=None, help="Comma-separated variables (default: all).")
+    p.set_defaults(_handler=_cmd_follow)
+
+    p = sub.add_parser(
+        "keys",
+        parents=[parent],
+        help="How each schema key's values are expected (shared or per parent, "
+        "declared values), automatic rules applied.",
+    )
+    p.add_argument("--history", action="store_true", help="Every setting ever written.")
+    p.set_defaults(_handler=_cmd_keys)
+
+    p = sub.add_parser(
+        "set-key",
+        parents=[parent],
+        help="State how a schema key's values are expected (write).",
+    )
+    p.add_argument("key", help="Schema key, e.g. trial.")
+    p.add_argument(
+        "sharing", choices=["shared", "per-parent", "auto"],
+        help="shared: every parent has the same values; per-parent: only the "
+        "values found under each parent; auto: the automatic rule.",
+    )
+    p.add_argument(
+        "--values", default=None,
+        help="Declared values of a shared key: comma-separated, with ranges "
+        "like 1..5 or 01..12 (a leading zero keeps the width).",
+    )
+    p.set_defaults(_write_handler=_cmd_set_key)
+
+    p = sub.add_parser(
+        "mark",
+        parents=[parent],
+        help="Mark a variable Expected or Not expected at a combination "
+        "(write; omitted keys are wildcards; changes no run).",
+    )
+    p.add_argument("type", help="Variable type.")
+    p.add_argument("schema", nargs="+", help="key=value schema keys (values verbatim).")
+    which = p.add_mutually_exclusive_group(required=True)
+    which.add_argument("--expected", dest="expected", action="store_true")
+    which.add_argument("--not-expected", dest="expected", action="store_false")
+    p.add_argument("--reason", required=True, help="Why (stored with the mark).")
+    p.set_defaults(_write_handler=_cmd_mark)
+
+    p = sub.add_parser(
+        "unmark",
+        parents=[parent],
+        help="Take back the mark on exactly this combination (write; history kept).",
+    )
+    p.add_argument("type", help="Variable type.")
+    p.add_argument("schema", nargs="+", help="key=value schema keys of the exact mark.")
+    p.add_argument("--reason", default="", help="Why (optional).")
+    p.set_defaults(_write_handler=_cmd_unmark)
+
+    p = sub.add_parser(
+        "marks",
+        parents=[parent],
+        help="Current Expected / Not expected marks.",
+    )
+    p.add_argument("type", nargs="?", default=None, help="Only this variable's own marks.")
+    p.add_argument("--history", action="store_true", help="Every mark and unmark ever written.")
+    p.set_defaults(_handler=_cmd_marks)
 
     p = sub.add_parser(
         "inventory",

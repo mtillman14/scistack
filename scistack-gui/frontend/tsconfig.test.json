@@ -96,6 +96,8 @@
     "src/components/PlotStudio/figureStepTiming.test.ts",
     "src/components/Variants/variantCards.ts",
     "src/components/Variants/variantCards.test.ts",
+    "src/components/Expectation/expectationTypes.ts",
+    "src/components/Expectation/expectationTypes.test.ts",
     "src/components/DAG/variableNodeText.ts",
     "src/components/DAG/variableNodeText.test.ts",
     "src/components/DAG/inputPorts.ts",

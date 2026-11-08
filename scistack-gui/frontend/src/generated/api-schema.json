@@ -211,6 +211,21 @@
       "title": "Analysis",
       "type": "object"
     },
+    "BadgeQuery": {
+      "properties": {
+        "variables": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "variables"
+      ],
+      "title": "BadgeQuery",
+      "type": "object"
+    },
     "BarOptionsWire": {
       "additionalProperties": false,
       "description": "``scistackplot.BarOptions``.",
@@ -826,6 +841,35 @@
         "new_name"
       ],
       "title": "CopyRequest",
+      "type": "object"
+    },
+    "CoverageQuery": {
+      "properties": {
+        "by": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "variables": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "by"
+      ],
+      "title": "CoverageQuery",
       "type": "object"
     },
     "CreateBuiltinFunctionRequest": {
@@ -1459,6 +1503,76 @@
       "title": "ErrorBand",
       "type": "string"
     },
+    "ExpectationMark": {
+      "properties": {
+        "expected": {
+          "type": "boolean"
+        },
+        "keys": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "keys",
+        "expected",
+        "reason"
+      ],
+      "title": "ExpectationMark",
+      "type": "object"
+    },
+    "ExpectationQuery": {
+      "properties": {
+        "limit": {
+          "default": 5000,
+          "type": "integer"
+        },
+        "problems_only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable"
+      ],
+      "title": "ExpectationQuery",
+      "type": "object"
+    },
+    "ExpectationUnmark": {
+      "properties": {
+        "keys": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "reason": {
+          "default": "",
+          "type": "string"
+        },
+        "variable": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "variable",
+        "keys"
+      ],
+      "title": "ExpectationUnmark",
+      "type": "object"
+    },
     "ExportBundle": {
       "properties": {
         "options": {
@@ -1698,6 +1812,35 @@
       ],
       "title": "FitBy",
       "type": "string"
+    },
+    "FollowQuery": {
+      "properties": {
+        "location": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "variables": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "location"
+      ],
+      "title": "FollowQuery",
+      "type": "object"
     },
     "FormatSpecWire": {
       "additionalProperties": false,
@@ -2385,6 +2528,40 @@
         }
       },
       "title": "KdeOptions",
+      "type": "object"
+    },
+    "KeyExpectationUpdate": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "sharing": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "values_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "title": "KeyExpectationUpdate",
       "type": "object"
     },
     "LevelGroupWire": {
@@ -6291,6 +6468,12 @@
     "exclude_schema_combo": {
       "$ref": "#/$defs/InventoryRowChange"
     },
+    "expectation_badges": {
+      "$ref": "#/$defs/BadgeQuery"
+    },
+    "expectation_coverage": {
+      "$ref": "#/$defs/CoverageQuery"
+    },
     "export_pipeline": {
       "$ref": "#/$defs/PipelineRef"
     },
@@ -6305,6 +6488,9 @@
     },
     "extract_to_submodule": {
       "$ref": "#/$defs/ExtractToSubmodule"
+    },
+    "follow_location": {
+      "$ref": "#/$defs/FollowQuery"
     },
     "force_cancel_run": {
       "$ref": "#/$defs/RunRef"
@@ -6404,6 +6590,9 @@
     },
     "make_library_copy": {
       "$ref": "#/$defs/CopyRequest"
+    },
+    "mark_expectation": {
+      "$ref": "#/$defs/ExpectationMark"
     },
     "node_location_tree": {
       "$ref": "#/$defs/NodeLocationTreeRequest"
@@ -6588,6 +6777,9 @@
     "set_entities_file": {
       "$ref": "#/$defs/PathBody"
     },
+    "set_key_expectation": {
+      "$ref": "#/$defs/KeyExpectationUpdate"
+    },
     "set_note": {
       "$ref": "#/$defs/NoteUpdate"
     },
@@ -6699,6 +6891,9 @@
     "unhide_pipeline": {
       "$ref": "#/$defs/PipelineRef"
     },
+    "unmark_expectation": {
+      "$ref": "#/$defs/ExpectationUnmark"
+    },
     "update_hypothesis": {
       "$ref": "#/$defs/HypothesisUpdate"
     },
@@ -6710,6 +6905,9 @@
     },
     "update_use_binding": {
       "$ref": "#/$defs/BindingUpdate"
+    },
+    "variable_expectation": {
+      "$ref": "#/$defs/ExpectationQuery"
     },
     "variable_variants": {
       "$ref": "#/$defs/VariableRef"
@@ -6754,11 +6952,14 @@
     "duplicate_pipeline",
     "duplicate_placement",
     "exclude_schema_combo",
+    "expectation_badges",
+    "expectation_coverage",
     "export_pipeline",
     "export_pipeline_code",
     "export_project_bundle",
     "export_schema_inventory",
     "extract_to_submodule",
+    "follow_location",
     "force_cancel_run",
     "generate_matlab_command",
     "generate_matlab_pipeline_command",
@@ -6792,6 +6993,7 @@
     "list_hidden_combos",
     "list_hidden_parameter_values",
     "make_library_copy",
+    "mark_expectation",
     "node_location_tree",
     "paste_nodes",
     "pin_newest_variant",
@@ -6853,6 +7055,7 @@
     "schema_key_type_impact",
     "set_distribute",
     "set_entities_file",
+    "set_key_expectation",
     "set_note",
     "set_output_ports",
     "set_parameter_group_checked",
@@ -6890,10 +7093,12 @@
     "unhide_edge",
     "unhide_parameter_value",
     "unhide_pipeline",
+    "unmark_expectation",
     "update_hypothesis",
     "update_parameter",
     "update_path_input",
     "update_use_binding",
+    "variable_expectation",
     "variable_variants",
     "verify_reproduction",
     "watch_matlab_terminal_run"

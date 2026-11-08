@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from scidb.model.log import Log
+from scidb.inspect.cells import cell_stats
 
 #: Rows returned by default; the column summaries still cover every row.
 DEFAULT_ROW_LIMIT = 50
@@ -35,6 +36,9 @@ class ColumnPreview:
     n_rows: int
     #: Up to five distinct values, as text.
     samples: list[str] = field(default_factory=list)
+    #: What is inside the cells: NaN elements, all-NaN / constant arrays
+    #: (scidb.inspect.cells, the owner; CellStats.to_dict()).
+    cells: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -98,6 +102,7 @@ def _column_preview(name: str, series: pd.Series, stored_type: str) -> ColumnPre
         non_null=len(present),
         n_rows=len(cells),
         samples=samples,
+        cells=cell_stats(cells).to_dict(),
     )
 
 

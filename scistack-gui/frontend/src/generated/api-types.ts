@@ -178,11 +178,14 @@ export interface ApiParams {
   duplicate_pipeline: PipelineRename
   duplicate_placement: PlacementDuplicate
   exclude_schema_combo: InventoryRowChange
+  expectation_badges: BadgeQuery
+  expectation_coverage: CoverageQuery
   export_pipeline: PipelineRef
   export_pipeline_code: PipelineRef
   export_project_bundle: ExportBundle
   export_schema_inventory: ExportInventory
   extract_to_submodule: ExtractToSubmodule
+  follow_location: FollowQuery
   force_cancel_run: RunRef
   generate_matlab_command: MatlabCommandRequest
   generate_matlab_pipeline_command: MatlabCommandRequest
@@ -216,6 +219,7 @@ export interface ApiParams {
   list_hidden_combos: FunctionRef
   list_hidden_parameter_values: ScopeQuery
   make_library_copy: CopyRequest
+  mark_expectation: ExpectationMark
   node_location_tree: NodeLocationTreeRequest
   paste_nodes: PasteNodes
   pin_newest_variant: ReleaseRequest
@@ -277,6 +281,7 @@ export interface ApiParams {
   schema_key_type_impact: SchemaKeyTypeQuery
   set_distribute: DistributeOption
   set_entities_file: PathBody
+  set_key_expectation: KeyExpectationUpdate
   set_note: NoteUpdate
   set_output_ports: OutputPorts
   set_parameter_group_checked: ParameterGroupChecked
@@ -314,10 +319,12 @@ export interface ApiParams {
   unhide_edge: EdgeInScope
   unhide_parameter_value: ParameterValueInScope
   unhide_pipeline: PipelineRef
+  unmark_expectation: ExpectationUnmark
   update_hypothesis: HypothesisUpdate
   update_parameter: ParameterUpdate
   update_path_input: PathInputUpdate
   update_use_binding: BindingUpdate
+  variable_expectation: ExpectationQuery
   variable_variants: VariableRef
   verify_reproduction: VerifyRequest
   watch_matlab_terminal_run: MatlabTerminalRunRequest
@@ -910,6 +917,21 @@ export interface InventoryRowChange {
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "BadgeQuery".
+ */
+export interface BadgeQuery {
+  variables: string[]
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "CoverageQuery".
+ */
+export interface CoverageQuery {
+  by: string[]
+  variables?: string[] | null
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
  * via the `definition` "ExportBundle".
  */
 export interface ExportBundle {
@@ -937,6 +959,16 @@ export interface ExtractToSubmodule {
   name: string
   node_ids: string[]
   pipeline_id: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "FollowQuery".
+ */
+export interface FollowQuery {
+  location: {
+    [k: string]: string
+  }
+  variables?: string[] | null
 }
 /**
  * The command generators read the raw request dict (``params``) as the
@@ -1118,6 +1150,18 @@ export interface FunctionRef {
 export interface CopyRequest {
   name: string
   new_name: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "ExpectationMark".
+ */
+export interface ExpectationMark {
+  expected: boolean
+  keys: {
+    [k: string]: string
+  }
+  reason: string
+  variable: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1696,6 +1740,15 @@ export interface DistributeOption {
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "KeyExpectationUpdate".
+ */
+export interface KeyExpectationUpdate {
+  key: string
+  sharing?: string | null
+  values_text?: string | null
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
  * via the `definition` "NoteUpdate".
  */
 export interface NoteUpdate {
@@ -2060,6 +2113,17 @@ export interface EdgeInScope {
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "ExpectationUnmark".
+ */
+export interface ExpectationUnmark {
+  keys: {
+    [k: string]: string
+  }
+  reason?: string
+  variable: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
  * via the `definition` "HypothesisUpdate".
  */
 export interface HypothesisUpdate {
@@ -2104,6 +2168,15 @@ export interface PathInputUpdate {
 export interface BindingUpdate {
   binding: object
   use_id: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "ExpectationQuery".
+ */
+export interface ExpectationQuery {
+  limit?: number
+  problems_only?: boolean
+  variable: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

@@ -13,7 +13,7 @@
  *   - Background / Controls / Panel: built-in UI chrome from React Flow
  */
 
-import { useEffect, useLayoutEffect, useCallback, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useCallback, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
   addEdge,
@@ -44,6 +44,8 @@ import PlotStudio from '../PlotStudio/PlotStudio'
 import SchemaLocationPicker, { type PathStep } from '../PlotStudio/SchemaLocationPicker'
 import VariantsPopup from '../Variants/VariantsPopup'
 import DataPreviewPopup from '../DataPreview/DataPreviewPopup'
+import ExpectedLocationsPopup, { type ExpectedFilter } from '../Expectation/ExpectedLocationsPopup'
+import { ExpectationBadgesProvider, useExpectationBadgeFetch } from '../../context/ExpectationBadgesContext'
 import { OPEN_DATA_PREVIEW_EVENT, type DataPreviewTarget } from '../DataPreview/dataPreview'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { optionalPorts, OPTIONAL_ARGS_ATTR, type OptionalPort } from './inputPorts'
@@ -169,6 +171,18 @@ export default function PipelineDAG() {
   const [variantsTarget, setVariantsTarget] = useState<string | null>(null)
   // The variable or input port the data preview is open on (scidb.inspect.preview).
   const [previewTarget, setPreviewTarget] = useState<DataPreviewTarget | null>(null)
+  // The variable the Expected locations popup is open on, and the badge that
+  // opened it (scidb.provenance.expectation; docs/claude/expected-locations.md).
+  const [expectedTarget, setExpectedTarget] = useState<{ variable: string; filter: ExpectedFilter } | null>(null)
+  const variableLabels = useMemo(
+    () => nodes.filter(n => n.type === 'variableNode').map(n => String((n.data as { label?: unknown }).label ?? '')).filter(Boolean),
+    [nodes],
+  )
+  const expectationBadges = useExpectationBadgeFetch(variableLabels)
+  const badgeContext = useMemo(
+    () => ({ badges: expectationBadges, open: (variable: string, filter: ExpectedFilter) => setExpectedTarget({ variable, filter }) }),
+    [expectationBadges],
+  )
   useEffect(() => {
     const open = (e: Event) => setPreviewTarget((e as CustomEvent<DataPreviewTarget>).detail)
     window.addEventListener(OPEN_DATA_PREVIEW_EVENT, open)
@@ -947,6 +961,7 @@ export default function PipelineDAG() {
   }, [onEdgesChangeBase, edges, bumpGraph])
 
   return (
+    <ExpectationBadgesProvider value={badgeContext}>
     <div
       ref={wrapperRef}
       style={{ width: '100%', height: '100%', position: 'relative' }}
@@ -1152,6 +1167,14 @@ export default function PipelineDAG() {
             </button>
             <button
               style={styles.contextMenuItem}
+              onClick={() => { setExpectedTarget({ variable: varType, filter: null }); setContextMenu(null) }}
+              type="button"
+              title="Which locations this variable should have, and whether each is present, missing unexpectedly, present unexpectedly, missing as expected or excluded, with why (`scidb expected <name>`)"
+            >
+              ✅ Expected locations…
+            </button>
+            <button
+              style={styles.contextMenuItem}
               onClick={() => { setVariantsTarget(varType); setContextMenu(null) }}
               type="button"
               title="Every variant of this variable: what defines each (the whole upstream pipeline and its locations), which is current, and Make current / Delete (`scidb variants <name> --cards`)"
@@ -1222,10 +1245,18 @@ export default function PipelineDAG() {
       {previewTarget && (
         <DataPreviewPopup target={previewTarget} onClose={() => setPreviewTarget(null)} />
       )}
+      {expectedTarget && (
+        <ExpectedLocationsPopup
+          variable={expectedTarget.variable}
+          initialFilter={expectedTarget.filter}
+          onClose={() => setExpectedTarget(null)}
+        />
+      )}
       {sourceLoc && (
         <SourceLocationDialog location={sourceLoc} onClose={() => setSourceLoc(null)} />
       )}
     </div>
+    </ExpectationBadgesProvider>
   )
 }
 

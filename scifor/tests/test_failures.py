@@ -115,6 +115,8 @@ def test_combo_skip_event_carries_the_small_failure_form():
     assert skip["failure"]["no_data"] is False
     assert skip["failure"]["user_frame"]["file"] == THIS_FILE
     assert "frames" not in skip["failure"]  # tracebacks travel once, in the summary
+    assert skip["failure"]["blame"] == "user_code"
+    assert skip["failure"]["probable"] in (True, False)
 
 
 def test_prepare_inputs_failure_has_stage_and_no_crash():

@@ -14,9 +14,14 @@ The short version:
   for MATLAB functions, it is already what reddens the canvas node, and the
   record-level decision was made in ``defer-content-staleness``. The body
   actually used is reported per location as ``code_version`` instead;
-* **red** — expected here, and no record for this variant;
-* **grey** — deliberately excluded (``scidb.store.exclusions``), and therefore counted
-  in neither the numerator nor the denominator.
+* **red** — expected here, and no record for this variant. "Expected" is the
+  union of what the producing function should have run and what
+  ``scidb.provenance.expectation`` (the one owner of "should exist": declared
+  values, shared keys, Expected marks) says;
+* **grey** — deliberately excluded (``scidb.store.exclusions``), or marked Not
+  expected and absent, and therefore counted in neither the numerator nor the
+  denominator. Data present although not expected keeps its colour and is
+  counted in a note.
 
 Everything is computed in batch. A loop over ``check_combo_state`` would issue
 two DB round-trips per ancestor edge per location; this issues a fixed number of
@@ -202,10 +207,26 @@ def location_states(
     amber = _superseded_locations(duck, present)
     timings["superseded"] = time.perf_counter() - t0
 
-    universe = set(expected) | set(present)
+    # The one owner of "should exist" (scidb.provenance.expectation, plan
+    # Stage 6): what the function should have run is only half of it. Declared
+    # values, shared keys and Expected marks add locations; Not expected marks
+    # take them out of the denominator.
+    t0 = time.perf_counter()
+    should, not_expected, unexpected_present = _expectation_locations(db, name, schema_keys, notes)
+    timings["expectation"] = time.perf_counter() - t0
+
+    universe = set(expected) | set(present) | should | not_expected
     t0 = time.perf_counter()
     excluded = _excluded_locations(db, universe, schema_keys)
+    # Missing as expected counts in neither the numerator nor the denominator,
+    # exactly like an exclusion: grey.
+    excluded |= {c for c in not_expected if c in universe and c not in present}
     timings["excluded"] = time.perf_counter() - t0
+    if unexpected_present:
+        notes.append(
+            f"{len(unexpected_present)} location(s) hold data although they are not "
+            f"expected; see Expected locations (scidb expected {name})."
+        )
 
     t0 = time.perf_counter()
     versions = _code_versions(duck, present)
@@ -297,8 +318,11 @@ def intersect_location_states(
     What a function node needs, and what :func:`location_states` cannot answer.
     A node has no single variable — it has inputs — and the locations it will
     actually run are the ones every input has, which is the INNER JOIN of their
-    location sets. A location one input is missing is a location the function
-    cannot be called at, so it is absent here rather than present-and-red.
+    location sets. Each input's set is its whole universe, what it holds plus
+    what it *should* hold (``scidb.provenance.expectation``), so a location an
+    input should have but lacks survives as red: the function cannot be called
+    there, and the pane exists to say where and why. A location nothing says an
+    input should have is absent.
 
     Per surviving location the state is the **worst** across the variables,
     with one exception: an excluded location stays grey. Grey is a decision the
@@ -581,6 +605,47 @@ def _superseded_locations(duck, present: dict) -> set:
         return set()
     flags = provenance_query.superseded_batch(duck, list(present.values()))
     return {combo for combo, rid in present.items() if flags.get(rid)}
+
+
+def _expectation_locations(db, name: str, schema_keys: list[str], notes: list[str]):
+    """``(should exist, not expected, present although not expected)`` as
+    location combos, from ``scidb.provenance.expectation`` (every variant
+    together; the picker decides presence per variant itself).
+
+    A row with a wildcard (nothing below a parent anywhere) becomes the
+    shorter combo of its concrete keys, which the tree shows as one node.
+    Never fails the picker: an error becomes a note.
+    """
+    from scidb.provenance import expectation as ex
+
+    try:
+        result = ex.expectation(db, name)
+    except Exception as e:  # unregistered variable, cap exceeded, …
+        notes.append(f"Expected locations unavailable: {e}")
+        Log.debug(f"location_states({name}): expectation unavailable: {e}")
+        return set(), set(), set()
+    should, not_expected, unexpected_present = set(), set(), set()
+    for row in result.rows:
+        combo = _as_combo({k: v for k, v in row.values.items() if v is not None}, schema_keys)
+        if not combo:
+            continue
+        if row.status == ex.MISSING_UNEXPECTED:
+            should.add(combo)
+        elif row.status == ex.MISSING_EXPECTED:
+            not_expected.add(combo)
+        elif row.status == ex.PRESENT_UNEXPECTED:
+            unexpected_present.add(combo)
+        elif row.status == ex.EXCLUDED and not row.present:
+            # Excluded wins over the 2x2 but the location is still part of the
+            # variable's universe: the picker shows it grey (the caller's
+            # _excluded_locations colours it). Skipping it dropped it from a
+            # function node's intersection instead of showing it grey.
+            (should if row.expected else not_expected).add(combo)
+    Log.debug(
+        f"location_states({name}): expectation adds {len(should)} should-exist, "
+        f"{len(not_expected)} not-expected, {len(unexpected_present)} unexpectedly present"
+    )
+    return should, not_expected, unexpected_present
 
 
 def _excluded_locations(db, universe: set, schema_keys: list[str]) -> set:

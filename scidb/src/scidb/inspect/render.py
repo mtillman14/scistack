@@ -108,11 +108,21 @@ class RenderStyle:
     loc_mark_grey: str = "·"
     loc_counts_fmt: str = "  {green}/{total}"
     loc_version_fmt: str = "  [{version}]"
-    loc_excluded_label: str = "  (excluded)"
+    loc_excluded_label: str = "  (not counted)"  # excluded, or marked Not expected
     loc_header_fmt: str = "{variable}: {green}/{total} locations green"
     loc_variant_fmt: str = "  variant: {variant}"
     loc_basis_fmt: str = "  denominator: {basis}"
     loc_depth_more_fmt: str = "{prefix}… +{n} deeper"
+
+    # -- expected locations (`scidb expected`) --------------------------------
+    # One mark per status, so the two reds and the two greens differ without
+    # colour (D8). Status words come from scidb.provenance.expectation.
+    exp_mark_present: str = "●"
+    exp_mark_missing_expected: str = "◌"
+    exp_mark_missing_unexpected: str = "✕"
+    exp_mark_present_unexpected: str = "▲"
+    exp_mark_excluded: str = "·"
+    exp_row_limit: int = 200
 
     # -- terminal colors (empty = no color; see with_ansi_colors) -----------
     color_green: str = ""
@@ -156,6 +166,11 @@ ASCII_STYLE = RenderStyle(
     loc_mark_amber="~",
     loc_mark_red="-",
     loc_mark_grey=".",
+    exp_mark_present="+",
+    exp_mark_missing_expected="o",
+    exp_mark_missing_unexpected="x",
+    exp_mark_present_unexpected="!",
+    exp_mark_excluded=".",
     loc_depth_more_fmt="{prefix}... +{n} deeper",
 )
 
@@ -244,6 +259,16 @@ def render_variable_detail(v: VariableDetail) -> str:
         f"variants       {v.variant_count}",
         f"last saved     {v.last_saved or '-'}",
         f"data columns   {', '.join(v.data_columns) or '-'}",
+    ]
+    if v.producers:
+        produced = ", ".join(v.producers) + ("  (also saved directly)" if v.saved_directly else "")
+    else:
+        produced = "saved directly" if v.saved_directly else "-"
+    lines += [
+        f"produced by    {produced}",
+        f"used by        {', '.join(v.consumers) or '-'}",
+        f"fed by         {', '.join(v.fed_by) or '-'}",
+        f"feeds          {', '.join(v.feeds) or '-'}",
     ]
     if v.records_by_level:
         lines.append("records by schema level:")
@@ -1057,14 +1082,17 @@ def render_pick_table(candidates: list[PickCandidate], schema_keys: list[str]) -
     return format_table(headers, rows)
 
 
-def render_exclusions(exclusions: list[ExclusionRecord], schema_keys: list[str]) -> str:
+def render_exclusions(
+    exclusions: list[ExclusionRecord], schema_keys: list[str], history: bool = False
+) -> str:
     if not exclusions:
         return "(no schema exclusions)"
     used_keys = [k for k in schema_keys if any(k in e.schema for e in exclusions)]
     return format_table(
-        [*used_keys, "reason", "since"],
+        [*(["action"] if history else []), *used_keys, "reason", "since"],
         [
             [
+                *((["include" if e.included else "exclude"]) if history else []),
                 # Wildcard keys (omitted at exclude time) render as *.
                 *[e.schema.get(k, "*") for k in used_keys],
                 e.reason,
@@ -1252,13 +1280,14 @@ def render_data_preview(preview) -> str:
         f"{preview.n_rows} row(s)"
     )
     columns = format_table(
-        ["column", "stored", "loaded", "non-blank", "samples"],
+        ["column", "stored", "loaded", "non-blank", "inside cells", "samples"],
         [
             [
                 c.name,
                 c.stored_type,
                 ", ".join(f"{t} x{n}" for t, n in c.loaded_types.items()),
                 f"{c.non_null}/{c.n_rows}",
+                (c.cells or {}).get("description", ""),
                 " | ".join(c.samples),
             ]
             for c in preview.columns
@@ -1275,3 +1304,215 @@ def render_data_preview(preview) -> str:
     if preview.truncated:
         parts.append(f"(first {len(preview.rows)} of {preview.n_rows} rows)")
     return "\n\n".join(p for p in parts if p)
+
+
+# ---------------------------------------------------------------------------
+# Expected locations (`scidb expected`, `keys`, `marks`)
+# ---------------------------------------------------------------------------
+
+
+def _exp_mark(status: str, style: RenderStyle) -> str:
+    from scidb.provenance import expectation as ex
+
+    mark = {
+        ex.PRESENT: style.exp_mark_present,
+        ex.MISSING_EXPECTED: style.exp_mark_missing_expected,
+        ex.MISSING_UNEXPECTED: style.exp_mark_missing_unexpected,
+        ex.PRESENT_UNEXPECTED: style.exp_mark_present_unexpected,
+        ex.EXCLUDED: style.exp_mark_excluded,
+    }[status]
+    color = {
+        ex.OK: style.color_green,
+        ex.PROBLEM: style.color_red,
+        ex.EXCLUDED: style.color_unknown,
+    }[ex.TONE[status]]
+    return f"{color}{mark}{style.color_reset}" if color else mark
+
+
+def render_expectation(
+    result,
+    style: RenderStyle = DEFAULT_STYLE,
+    problems_only: bool = False,
+    statuses=None,
+    by: str | None = None,
+) -> str:
+    """``scidb expected``: a summary, the key settings, notes, then the table
+    (its layout owned by ``Expectation.table``) or counts per value of *by*."""
+    from scidb.provenance import expectation as ex
+
+    tones = result.tone_counts()
+    c = result.counts
+    lines = [
+        f"{result.variable}: {tones[ex.OK]} as expected, {tones[ex.PROBLEM]} not, "
+        f"{tones[ex.EXCLUDED]} excluded",
+        "  " + ", ".join(
+            f"{_exp_mark(s, style)} {ex.STATUS_LABELS[s].lower()} {c[s]}" for s in ex.STATUSES
+        ),
+        f"  keys: {'/'.join(result.keys) or '-'} ({result.keys_rule})",
+    ]
+    lines += [f"  {s.describe()}" for s in result.settings]
+    lines += [f"  note: {n}" for n in result.notes]
+    lines.append("")
+    if by:
+        rows = [[value, *[n[s] or "" for s in ex.STATUSES]] for value, n in result.by(by)]
+        lines.append(format_table([by, *[ex.STATUS_LABELS[s] for s in ex.STATUSES]], rows))
+        return "\n".join(lines)
+    rows = result.rows
+    if problems_only:
+        rows = [r for r in rows if r.tone == ex.PROBLEM]
+    if statuses:
+        rows = [r for r in rows if r.status in statuses]
+    if not rows:
+        lines.append("(no rows)" if not problems_only else "(nothing unexpected)")
+        return "\n".join(lines)
+    header, body = result.table(problems_only=problems_only, statuses=statuses)
+    shown = body[: style.exp_row_limit]
+    marked = [[_exp_mark(r.status, style), *cells] for r, cells in zip(rows, shown)]
+    lines.append(format_table(["", *header], marked))
+    if len(body) > len(shown):
+        lines.append(f"… +{len(body) - len(shown)} more (use --json or --csv for all)")
+    return "\n".join(lines)
+
+
+def render_key_expectations(settings: list) -> str:
+    """``scidb keys``: each schema key's effective expectation setting."""
+    rows = [
+        [
+            s.key,
+            s.sharing,
+            "every value in the database" if s.values is None else ", ".join(s.values),
+            "stated" if s.rule == "stated" else f"automatic ({s.rule.replace('_', ' ')})",
+        ]
+        for s in settings
+    ]
+    return format_table(["key", "sharing", "values", "set by"], rows)
+
+
+def render_expectation_marks(marks: list, schema_keys: list[str]) -> str:
+    """``scidb marks``: the current Expected / Not expected marks."""
+    if not marks:
+        return "(no expectation marks)"
+    used = [k for k in schema_keys if any(k in m.keys for m in marks)]
+    rows = [
+        [
+            m.variable,
+            *[m.keys.get(k, "*") for k in used],
+            "expected" if m.expected else "not expected",
+            m.reason,
+            m.changed_at,
+        ]
+        for m in marks
+    ]
+    return format_table(["variable", *used, "mark", "reason", "since"], rows)
+
+
+def _tone_mark(tone: str, style: RenderStyle, problems: int = 0) -> str:
+    """A coverage/follow cell: the status marks reused per tone."""
+    from scidb.provenance import expectation as ex
+    from scidb.provenance.coverage import EMPTY
+
+    if tone == EMPTY:
+        return ""
+    if tone == ex.PROBLEM:
+        text, color = style.exp_mark_missing_unexpected + (str(problems) if problems > 1 else ""), style.color_red
+    elif tone == ex.EXCLUDED:
+        text, color = style.exp_mark_excluded, style.color_unknown
+    else:
+        text, color = style.exp_mark_present, style.color_green
+    return f"{color}{text}{style.color_reset}" if color else text
+
+
+def render_coverage(cov, style: RenderStyle = DEFAULT_STYLE, funnel_only: bool = False) -> str:
+    """``scidb coverage``: one row per value of the by-keys, one column per
+    variable (pipeline order), then the funnel. A problem cell shows how many
+    of its locations are problems."""
+    from scidb.provenance import expectation as ex
+
+    funnel = cov.funnel()
+    lines = []
+    if not funnel_only:
+        rows = []
+        for value in cov.values:
+            row = list(value)
+            for v in cov.variables:
+                cell = cov.cell(v, value)
+                if cell.tone == ex.OK and cell.present == 0:
+                    row.append(style.exp_mark_missing_expected)  # only missing as expected
+                else:
+                    row.append(_tone_mark(cell.tone, style, cell.problems))
+            rows.append(row)
+        rows.append([*(["with data"] + [""] * (len(cov.by) - 1)),
+                     *[f"{n}/{total}" for _, n, total in funnel]])
+        lines.append(format_table([*cov.by, *cov.variables], rows))
+        lines.append(
+            f"{style.exp_mark_present} as expected   {style.exp_mark_missing_unexpected}N "
+            f": that many not as expected   {style.exp_mark_missing_expected} missing as expected   "
+            f"{style.exp_mark_excluded} excluded   (details: scidb expected VARIABLE --by "
+            f"{','.join(cov.by)})"
+        )
+    else:
+        lines.append(format_table(
+            ["variable", f"{'/'.join(cov.by)} with data", "expected"],
+            [[v, n, total] for v, n, total in funnel],
+        ))
+    for name, why in cov.skipped.items():
+        lines.append(f"skipped {name}: {why}")
+    return "\n".join(lines)
+
+
+def render_follow(fol, style: RenderStyle = DEFAULT_STYLE) -> str:
+    """``scidb follow``: the location at every variable, in pipeline order."""
+    where = ", ".join(f"{k}={v}" for k, v in fol.location.items())
+    lines = [where]
+    width = max((len(s.variable) for s in fol.steps), default=0)
+    for s in fol.steps:
+        note = f" (no {', '.join(s.ignored_keys)})" if s.ignored_keys else ""
+        mark = _tone_mark(s.tone, style) or " "
+        lines.append(f"  {mark} {s.variable.ljust(width)}{note}  {s.summary}")
+    if fol.lost_at:
+        lines.append(
+            "first missing although an input has it: " + ", ".join(fol.lost_at)
+        )
+    else:
+        lines.append("not lost between variables")
+    for name, why in fol.skipped.items():
+        lines.append(f"  skipped {name}: {why}")
+    return "\n".join(lines)
+
+
+def render_cell_profile(
+    profile, by: str | None = None, kinds=None, limit: int = 200
+) -> str:
+    """``scidb nans``: per column what is inside the cells, then the suspect
+    cells (or counts per value of *by*). Wording: ``scidb.inspect.cells``."""
+    from scidb.inspect.cells import PROBLEM_KINDS, PROBLEM_LABELS
+
+    where = " ".join(f"{k}={v}" for k, v in profile.location.items()) or "all locations"
+    lines = [f"{profile.variable} at {where}: {profile.n_rows} row(s)"]
+    for col, stats in profile.columns.items():
+        lines.append(f"  {col}: {stats.describe()}")
+    if profile.missing_columns:
+        lines.append(f"  not columns of this variable: {profile.missing_columns}")
+    problems = [p for p in profile.problems if not kinds or p.kind in kinds]
+    lines.append("")
+    if not problems:
+        lines.append("(no suspect cells)")
+        return "\n".join(lines)
+    if by:
+        counts: dict[str, dict[str, int]] = {}
+        for p in problems:
+            counts.setdefault(p.location.get(by, ""), {k: 0 for k in PROBLEM_KINDS})[p.kind] += 1
+        lines.append(format_table(
+            [by, *[PROBLEM_LABELS[k] for k in PROBLEM_KINDS]],
+            [[v, *[c[k] or "" for k in PROBLEM_KINDS]] for v, c in counts.items()],
+        ))
+        return "\n".join(lines)
+    keys = [k for k in profile.schema_keys if any(k in p.location for p in problems)]
+    shown = problems[:limit]
+    lines.append(format_table(
+        [*keys, "column", "problem", "detail"],
+        [[*[p.location.get(k, "") for k in keys], p.column, p.label, p.detail] for p in shown],
+    ))
+    if len(problems) > len(shown):
+        lines.append(f"… +{len(problems) - len(shown)} more (use --json for all)")
+    return "\n".join(lines)

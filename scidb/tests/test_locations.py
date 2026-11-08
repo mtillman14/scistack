@@ -526,7 +526,7 @@ class TestRenderer:
         lines = render.render_location_tree(
             location_states(LocFilt, db=states_db), style=style
         ).splitlines()
-        excluded = [line for line in lines if "(excluded)" in line]
+        excluded = [line for line in lines if "(not counted)" in line]
 
         assert len(excluded) == 1
         assert "trial=t1" in excluded[0]
@@ -886,16 +886,36 @@ class TestIntersectedLocations:
     missing is a location the function cannot be called at.
     """
 
-    def test_a_location_only_one_variable_has_is_dropped(self, states_db):
+    def test_a_location_one_input_should_have_but_lacks_is_red(self, states_db):
+        """The function cannot run where an input is missing, and the pane says
+        so. "Should have" is scidb.provenance.expectation's (plan Stage 6):
+        subject is shared, so LocLoaded should exist at every subject, and at
+        every trial that subject has anywhere in the dataset."""
         # LocLoaded exists at S01/t1 alone; LocRaw exists at five locations.
         LocLoaded.save(np.array([1.0]), subject="S01", trial="t1")
 
         tree = intersect_location_states([LocRaw, LocLoaded], db=states_db)
 
-        assert _state_of(tree, subject="S01", trial="t1") is not None
-        assert _node_at(tree, subject="S01", trial="t2") is None
-        assert _node_at(tree, subject="S02") is None
-        assert tree.total == 1
+        assert _state_of(tree, subject="S01", trial="t1") == "green"
+        assert _state_of(tree, subject="S01", trial="t2") == "red"
+        assert _state_of(tree, subject="S01", trial="t3") == "red"
+        assert _state_of(tree, subject="S02", trial="t2") == "red"
+        assert _state_of(tree, subject="S02", trial="t1") == "grey"  # excluded
+        assert tree.total == 4
+
+    def test_a_not_expected_mark_takes_the_location_out_of_the_count(self, states_db):
+        """Marking the input Not expected there is the user saying the gap is
+        fine: grey, not red, and out of the total."""
+        from scidb.provenance.expectation import mark_expectation
+
+        LocLoaded.save(np.array([1.0]), subject="S01", trial="t1")
+        mark_expectation(states_db, "LocLoaded", False, "S02 has no loaded file", subject="S02")
+
+        tree = intersect_location_states([LocRaw, LocLoaded], db=states_db)
+
+        assert _state_of(tree, subject="S02", trial="t2") == "grey"
+        assert _state_of(tree, subject="S01", trial="t2") == "red"
+        assert tree.total == 3
 
     def test_the_worst_state_across_variables_wins(self, states_db):
         """Green in one input and red in another reads red: the node cannot

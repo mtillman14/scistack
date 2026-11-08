@@ -95,7 +95,7 @@ export default function DataPreviewPopup({
             <table style={styles.table}>
               <thead>
                 <tr>
-                  {['Column', 'Stored', 'Loaded', 'Non-blank', 'Samples'].map(h => (
+                  {['Column', 'Stored', 'Loaded', 'Non-blank', 'Inside cells', 'Samples'].map(h => (
                     <th key={h} style={styles.th}>{h}</th>
                   ))}
                 </tr>
@@ -112,6 +112,12 @@ export default function DataPreviewPopup({
                       {describeLoadedTypes(c.loaded_types)}
                     </td>
                     <td style={styles.td}>{c.non_null}/{c.n_rows}</td>
+                    <td
+                      style={c.cells && c.cells.problems > 0 ? styles.mixed : styles.td}
+                      title={c.cells && c.cells.problems > 0 ? 'Some cells hold NaN values, or are blank, empty or constant. scidb nans <variable> lists them.' : undefined}
+                    >
+                      {c.cells?.description ?? ''}
+                    </td>
                     <td style={styles.td}>{c.samples.join(' | ')}</td>
                   </tr>
                 ))}

@@ -294,6 +294,57 @@ class Mutator:
         )
 
     @_mutation
+    def mark_expectation(
+        self, variable, expected: bool, reason: str, **schema_keys
+    ) -> MutationResult:
+        """Mark *variable* Expected / Not expected at a combination
+        (``scidb.provenance.expectation``). Changes no run: it only says what
+        the variable should have. Omitted keys are wildcards."""
+        from scidb.provenance.expectation import mark_expectation
+
+        mark = mark_expectation(self._db, variable, expected, reason, **schema_keys)
+        return MutationResult(
+            operation="mark_expectation",
+            target={"variable": mark.variable, **mark.keys},
+            reason=reason,
+            detail=f"marked {'expected' if expected else 'not expected'} "
+            "(variables downstream inherit it; runs are unchanged)",
+        )
+
+    @_mutation
+    def unmark_expectation(self, variable, reason: str, **schema_keys) -> MutationResult:
+        """Take back the mark on exactly this keyset (history kept)."""
+        from scidb.provenance.expectation import unmark_expectation
+
+        unmark_expectation(self._db, variable, reason, **schema_keys)
+        return MutationResult(
+            operation="unmark_expectation",
+            target={"variable": getattr(variable, "__name__", variable), **schema_keys},
+            reason=reason or "unmarked",
+            detail="unmarked (the mark's history rows are preserved)",
+        )
+
+    @_mutation
+    def set_key_expectation(
+        self, key: str, sharing: "str | None", values: "list | None" = None
+    ) -> MutationResult:
+        """State how schema key *key*'s values are expected
+        (``scidb.provenance.expectation.set_key_setting``)."""
+        from scidb.provenance.expectation import set_key_setting
+
+        stored = set_key_setting(self._db, key, sharing, values, source="cli")
+        return MutationResult(
+            operation="set_key_expectation",
+            target={"key": key},
+            reason="cli",
+            detail=(
+                f"{key}: {stored['sharing'] or 'automatic'}"
+                + (f", values {', '.join(stored['values'])}" if stored.get("values") else "")
+            ),
+            extra={"setting": stored},
+        )
+
+    @_mutation
     def include_schema(self, reason: str, **schema_keys) -> MutationResult:
         """Re-include a previously excluded schema-key combination."""
         from scidb.store.exclusions import include_schema

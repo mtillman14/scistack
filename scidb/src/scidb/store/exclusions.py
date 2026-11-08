@@ -281,27 +281,66 @@ def governing_overrides(
         )
         override_rows.append((len(key_values), override))
 
-    governing: list[Override | None] = []
-    for combo in combos:
-        combo_str = {k: str(v) for k, v in combo.items() if k in schema_keys_order}
+    overrides = [o for _, o in override_rows]
+    return [
+        most_specific_match(
+            overrides, {k: v for k, v in combo.items() if k in schema_keys_order}
+        )
+        for combo in combos
+    ]
 
-        best_specificity = -1
-        best: Override | None = None
 
-        for specificity, override in override_rows:
-            if not all(combo_str.get(k) == v for k, v in override.keys.items()):
-                continue
-            # This row matches the combo; check if it beats the current best
-            if specificity > best_specificity or (
-                specificity == best_specificity
-                and override.changed_at > best.changed_at  # type: ignore[union-attr]
-            ):
-                best_specificity = specificity
-                best = override
+def most_specific_match(rows, combo: dict):
+    """The row that governs *combo*, or None: THE wildcard matching rule.
 
-        governing.append(best)
+    Each row has ``keys`` (``{key: value}``, keys it leaves out are
+    wildcards) and ``changed_at``. A row matches when every one of its keys
+    equals the combo's value there; a row naming a key the combo lacks does
+    not match. Among matches the row naming the most keys wins, and a tie
+    goes to the newest ``changed_at``.
 
-    return governing
+    Shared by :func:`governing_overrides` (exclusions) and
+    ``scidb.provenance.expectation`` (Expected / Not expected marks), so the
+    two kinds of keyed statement can never resolve differently.
+    """
+    combo_str = {k: str(v) for k, v in combo.items() if v is not None}
+    best = None
+    best_specificity = -1
+    for row in rows:
+        if not all(combo_str.get(k) == v for k, v in row.keys.items()):
+            continue
+        specificity = len(row.keys)
+        if specificity > best_specificity or (
+            specificity == best_specificity and row.changed_at > best.changed_at
+        ):
+            best_specificity = specificity
+            best = row
+    return best
+
+
+def override_history(db: DatabaseManager | None = None) -> list[Override]:
+    """Every exclusion and re-inclusion ever written, oldest first. The
+    table is append-only, so this is when and why each combination changed."""
+    db = _get_db(db)
+    duck = _overrides_backend(db)
+    if duck is None or not duck.table_exists(_TABLE):
+        return []
+    schema_keys = list(db.dataset_schema_keys)
+    key_cols = ", ".join(f'"{k}"' for k in schema_keys)
+    rows = duck.fetchall(
+        f"SELECT {key_cols}, status, reason, changed_at FROM {_TABLE} "
+        f"ORDER BY changed_at, rowid"
+    )
+    n = len(schema_keys)
+    return [
+        Override(
+            keys={k: str(v) for k, v in zip(schema_keys, row[:n]) if v is not None},
+            included=bool(row[n]),
+            reason=row[n + 1],
+            changed_at=row[n + 2],
+        )
+        for row in rows
+    ]
 
 
 def exclusion_status(

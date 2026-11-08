@@ -2317,6 +2317,125 @@ def pipeline_structure(duck) -> list[dict]:
     return results
 
 
+def variable_type_edges(duck) -> list[tuple[str, str]]:
+    """Every ``(input_type, output_type)`` pair some recorded call connects.
+
+    One query over the edge tables (``pipeline_structure`` is one query per
+    invocation). Internal record types (constants, glue, PathInput, selection
+    markers) appear as ordinary nodes, so a walk passes THROUGH a glue hop;
+    :func:`related_variable_types` removes them from what it returns. Synthetic
+    ``__save__`` calls connect nothing a user ran, so they are left out.
+    """
+    rows = duck.fetchall(
+        "SELECT DISTINCT ri.type, ro.type "
+        "FROM _invocation_output io "
+        "JOIN _invocation i ON i.invocation_id = io.invocation_id "
+        "JOIN _record ro ON ro.record_id = io.output_record_id "
+        "JOIN _invocation_input ii ON ii.invocation_id = io.invocation_id "
+        "JOIN _record ri ON ri.record_id = ii.input_record_id "
+        "WHERE i.function_name != ? AND ri.type != ro.type",
+        [SAVE_FUNCTION_NAME],
+    )
+    return [(src, dst) for src, dst in rows]
+
+
+def related_variable_types(
+    duck, variable: str, direction: str = "upstream",
+    edges: "list[tuple[str, str]] | None" = None,
+) -> dict[str, int]:
+    """Variable types upstream (feeding) or downstream (fed by) *variable*,
+    each with its distance in calls (``1`` = a direct input/output; a glue
+    hop counts as a call). Internal record types are walked through but never
+    returned, and neither is *variable* itself.
+
+    *edges*: :func:`variable_type_edges` already fetched (a caller asking for
+    many variables fetches them once).
+    """
+    if direction not in ("upstream", "downstream"):
+        raise ValueError(f"direction must be 'upstream' or 'downstream', got {direction!r}")
+    if edges is None:
+        edges = variable_type_edges(duck)
+    step: dict[str, set[str]] = {}
+    for src, dst in edges:
+        a, b = (dst, src) if direction == "upstream" else (src, dst)
+        step.setdefault(a, set()).add(b)
+    found: dict[str, int] = {}
+    frontier, distance = {variable}, 0
+    seen = {variable}
+    while frontier:
+        distance += 1
+        nxt = set()
+        for t in frontier:
+            for u in step.get(t, ()):
+                if u in seen:
+                    continue
+                seen.add(u)
+                nxt.add(u)
+                if u not in INTERNAL_RECORD_TYPES:
+                    found[u] = distance
+        frontier = nxt
+    logger.debug(
+        "related_variable_types %s %s: %d type(s) from %d edge(s)",
+        direction, variable, len(found), len(edges),
+    )
+    return found
+
+
+def variable_types_in_pipeline_order(
+    duck, edges: "list[tuple[str, str]] | None" = None
+) -> list[str]:
+    """Every variable type with a record, sources first: a type comes after
+    every type that feeds it (through glue hops too). Ties, and types in a
+    cycle (a function reading and writing one type), go by name."""
+    if edges is None:
+        edges = variable_type_edges(duck)
+    types = sorted(
+        r[0]
+        for r in duck.fetchall(
+            f"SELECT DISTINCT type FROM _record WHERE type NOT IN {_types_sql(INTERNAL_RECORD_TYPES)}",
+            list(INTERNAL_RECORD_TYPES),
+        )
+    )
+    wanted = set(types)
+    # Collapse internal hops: a -> __glue__ -> b counts as a -> b.
+    nxt: dict[str, set[str]] = {}
+    for src, dst in edges:
+        nxt.setdefault(src, set()).add(dst)
+
+    def reach(t: str) -> set[str]:
+        out, stack, seen = set(), list(nxt.get(t, ())), set()
+        while stack:
+            u = stack.pop()
+            if u in seen:
+                continue
+            seen.add(u)
+            if u in wanted:
+                out.add(u)
+            else:
+                stack.extend(nxt.get(u, ()))
+        return out
+
+    feeds = {t: reach(t) - {t} for t in types}
+    indegree = {t: 0 for t in types}
+    for t in types:
+        for u in feeds[t]:
+            indegree[u] += 1
+    ready = sorted(t for t in types if indegree[t] == 0)
+    order: list[str] = []
+    while ready:
+        t = ready.pop(0)
+        order.append(t)
+        for u in sorted(feeds[t]):
+            indegree[u] -= 1
+            if indegree[u] == 0:
+                ready.append(u)
+        ready.sort()
+    rest = [t for t in types if t not in order]
+    if rest:
+        logger.debug("variable_types_in_pipeline_order: cycle among %s; ordered by name", rest)
+    return order + rest
+
+
 def has_producing_invocation(duck, record_id: str) -> bool:
     """True if ``record_id`` was produced by a recorded invocation."""
     rows = duck.fetchall(

@@ -251,6 +251,9 @@ class _ForEachState:
     # The identity-bearing run options (as_table, distribute) the call ran
     # under; the execute phase hands them to scifor.
     options: RunOptions = field(default_factory=RunOptions)
+    # The output VARIABLE TYPES (not result columns), in outputs= order: what
+    # a stored run outcome (scidb.provenance.outcomes) is filed under.
+    output_types: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -1057,7 +1060,14 @@ def _for_each_execute(
         "stopped": False,
     }
 
+    # Every location that failed or had no data, for _run_outcome
+    # (scidb.provenance.outcomes): written in the finally below.
+    from scidb.provenance.outcomes import OutcomeCollector, record_outcomes
+
+    _outcomes = OutcomeCollector()
+
     def _tracking_progress_fn(info: dict):
+        _outcomes.observe(info)
         _run_summary["total"] = info.get("total", _run_summary["total"])
         _run_summary["completed"] = info.get("completed", _run_summary["completed"])
         _run_summary["skipped"] = info.get("skipped", _run_summary["skipped"])
@@ -1133,6 +1143,16 @@ def _for_each_execute(
         if _run_summary["stopped"]:
             _summary_parts.append("stopped (on_error=stop)")
         Log.info(f"for_each({fn_name}) run summary: {', '.join(_summary_parts)}")
+        if _outcomes.events:
+            _outcome_db = _kt_db if _kt_db is not None else database_or_none()
+            try:
+                if _outcome_db is not None:
+                    record_outcomes(_outcome_db, fn_name, state.output_types, _outcomes.events)
+            except Exception as _e:  # never fail a run over its explanation
+                Log.warn(
+                    f"[outcomes] {fn_name}: could not store {len(_outcomes.events)} "
+                    f"location outcome(s): {type(_e).__name__}: {_e}"
+                )
 
     return result_tbl
 
@@ -3773,6 +3793,7 @@ def _for_each_prepare(
         config_keys=config_keys,
         call_id=call_id,
         output_names=output_names,
+        output_types=[_output_type_label(o) for o in outputs] if outputs else [],
         loaded_inputs=loaded_inputs,
         full_combos=full_combos,
         extended_metadata_iterables=dict(metadata_iterables),

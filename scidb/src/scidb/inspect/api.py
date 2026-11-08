@@ -73,6 +73,15 @@ class VariableSummary:
 class VariableDetail(VariableSummary):
     data_columns: list[str] = field(default_factory=list)
     records_by_level: dict[str, int] = field(default_factory=dict)
+    #: Functions whose calls saved this variable (synthetic __save__ left out).
+    producers: list[str] = field(default_factory=list)
+    #: Functions whose calls read it.
+    consumers: list[str] = field(default_factory=list)
+    #: Variables one call upstream / downstream (provenance.query.related_variable_types).
+    fed_by: list[str] = field(default_factory=list)
+    feeds: list[str] = field(default_factory=list)
+    #: Some of its records were saved directly (no producing function).
+    saved_directly: bool = False
 
 
 @dataclass
@@ -285,6 +294,8 @@ class ExclusionRecord:
     schema: dict[str, str]  # only the keys the exclusion names (rest = wildcard)
     reason: str
     changed_at: str
+    #: False = an exclusion; True = a re-inclusion (only in the history).
+    included: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -515,10 +526,48 @@ class Inspector:
             [name],
         )
 
+        from scidb.provenance.graph import SAVE_FUNCTION_NAME
+        from scidb.provenance.query import related_variable_types, variable_type_edges
+
+        producers = [
+            r[0]
+            for r in self._duck.fetchall(
+                "SELECT DISTINCT i.function_name FROM _invocation_output io "
+                "JOIN _record r ON r.record_id = io.output_record_id "
+                "JOIN _invocation i ON i.invocation_id = io.invocation_id "
+                "WHERE r.type = ? ORDER BY 1",
+                [name],
+            )
+        ]
+        consumers = [
+            r[0]
+            for r in self._duck.fetchall(
+                "SELECT DISTINCT i.function_name FROM _invocation_input ii "
+                "JOIN _record r ON r.record_id = ii.input_record_id "
+                "JOIN _invocation i ON i.invocation_id = ii.invocation_id "
+                "WHERE r.type = ? AND i.function_name != ? ORDER BY 1",
+                [name, SAVE_FUNCTION_NAME],
+            )
+        ]
+        unproduced = self._scalar(
+            "SELECT count(*) FROM _record r WHERE r.type = ? AND NOT EXISTS "
+            "(SELECT 1 FROM _invocation_output io WHERE io.output_record_id = r.record_id)",
+            [name],
+            default=0,
+        )
+        edges = variable_type_edges(self._duck)
+        up = related_variable_types(self._duck, name, "upstream", edges=edges)
+        down = related_variable_types(self._duck, name, "downstream", edges=edges)
+
         return VariableDetail(
             **summary.__dict__,
             data_columns=[r[0] for r in col_rows],
             records_by_level={level: int(n) for level, n in level_rows},
+            producers=[p for p in producers if p != SAVE_FUNCTION_NAME],
+            consumers=consumers,
+            fed_by=sorted(t for t, d in up.items() if d == 1),
+            feeds=sorted(t for t, d in down.items() if d == 1),
+            saved_directly=SAVE_FUNCTION_NAME in producers or bool(unproduced),
         )
 
     @_timed
@@ -1538,6 +1587,17 @@ class Inspector:
             limit=DEFAULT_ROW_LIMIT if limit is None else limit,
         )
 
+    @_timed
+    def cell_profile(
+        self, variable, *, columns: "list[str] | None" = None, location: "dict | None" = None
+    ):
+        """What is inside *variable*'s cells: NaN elements, all-NaN, blank,
+        empty and constant cells, per column and per location
+        (:mod:`scidb.inspect.cells`, the owner)."""
+        from scidb.inspect.cells import cell_profile
+
+        return cell_profile(self._db, variable, columns=columns, location=location)
+
     def schema_key_types(self, history: bool = False) -> list[dict]:
         """Each schema key's declared type, as stored in the database
         (``scidb.store.schema_types``), with how it loads and how many values it
@@ -1558,13 +1618,25 @@ class Inspector:
         ]
 
     @_timed
-    def exclusions(self) -> list[ExclusionRecord]:
+    def exclusions(self, history: bool = False) -> list[ExclusionRecord]:
         """Currently-excluded schema combinations (read side of the Phase 5
-        write commands; the write side lives on mutate.Mutator)."""
-        from scidb.store.exclusions import list_exclusions
+        write commands; the write side lives on mutate.Mutator).
+        ``history=True``: every exclusion and re-inclusion ever written,
+        oldest first (``scidb.store.exclusions.override_history``)."""
+        from scidb.store.exclusions import list_exclusions, override_history
 
         if not self._duck.table_exists("__scidb_schema_overrides"):
             return []
+        if history:
+            return [
+                ExclusionRecord(
+                    schema=dict(o.keys),
+                    reason=str(o.reason),
+                    changed_at=_iso(o.changed_at) or "",
+                    included=o.included,
+                )
+                for o in override_history(self._db)
+            ]
         df = list_exclusions(db=self._db)
         keys = self._db.dataset_schema_keys
         out = []
@@ -1593,6 +1665,61 @@ class Inspector:
         from scidb.provenance.inventory import schema_inventory
 
         return schema_inventory(self._db, keys, within)
+
+    @_timed
+    def expectation(self, variable):
+        """Every expected or present location of *variable*, each with its
+        status and why (an :class:`~scidb.provenance.expectation.Expectation`).
+        Owner: ``scidb.provenance.expectation``; see
+        docs/claude/expected-locations.md."""
+        from scidb.provenance.expectation import expectation
+
+        try:
+            return expectation(self._db, variable)
+        except ValueError as e:
+            if str(e).startswith("No variable named"):
+                raise NotFoundError(str(e)) from e
+            raise
+
+    @_timed
+    def coverage(self, by: list[str], variables=None):
+        """Variables (pipeline order) x values of the *by* keys, each cell
+        summarising that variable's expected locations there; with the
+        attrition funnel. Owner: ``scidb.provenance.coverage``."""
+        from scidb.provenance.coverage import coverage
+
+        return coverage(self._db, by, variables)
+
+    @_timed
+    def follow(self, variables=None, **location):
+        """One location through every variable in pipeline order: its status
+        and why at each, and where it is first lost. Owner:
+        ``scidb.provenance.coverage``."""
+        from scidb.provenance.coverage import follow
+
+        return follow(self._db, variables, **location)
+
+    @_timed
+    def key_expectations(self, history: bool = False) -> list:
+        """How each schema key's values are expected (``KeySetting`` per key,
+        automatic rules applied). ``history=True``: every setting ever
+        written, as dicts, oldest first."""
+        from scidb.provenance import expectation as ex
+
+        if history:
+            return ex.key_setting_history(self._duck)
+        return ex.key_settings(self._db)
+
+    @_timed
+    def expectation_marks(self, variable=None, history: bool = False) -> list:
+        """Current Expected / Not expected marks (``Mark``), optionally of one
+        variable. ``history=True``: every mark and unmark, as dicts."""
+        from scidb.provenance import expectation as ex
+
+        if history:
+            return ex.mark_history(self._db, variable)
+        names = None if variable is None else [getattr(variable, "__name__", variable)]
+        return ex.marks(self._db, names)
 
     @_timed
     def sql(self, query: str) -> SqlResult:
