@@ -40,7 +40,7 @@ The assistant coach wants to look through the results on their own laptop: the f
 `data/game_stats.csv` is **not** in the file: raw data never travels. The coach doesn't need it, because they won't re-run `read_csv`.
 
 /// info | 📷 Screenshot
-**Show:** the **Export project** popover with **History** and **Data** ticked and **Wheelhouse** unticked.
+**Show:** the **Export project** popover open under **⇩ export project**, with **History** and **Data** ticked and **Wheelhouse** unticked. Save as `docs/images/sharing__export-import-walkthrough/export_popover_history_data.png`.
 ///
 
 ### What the assistant coach does
@@ -56,7 +56,15 @@ They need VS Code, the SciStack extension and a virtual environment with SciStac
 7. The import report opens. Under **History** it says *Loaded live, with its data.*
 8. Click **Trust, Install and Open**. Nothing needs installing, so the project opens.
 
+/// info | 📷 Screenshot
+**Show:** the import report document, with *Loaded live, with its data.* under **History**, and the **Trust, Install and Open** / **Trust and Open** prompt over it. Save as `docs/images/sharing__export-import-walkthrough/import_report_trust_prompt.png`.
+///
+
 The canvas looks exactly like yours, every step green. Click `GameStats`, then **Open Plot Studio →**, and pick `Points per game` from **Saved plots**: the figure is drawn from your data, Morgan still left out. **StatStudio** opens `Scoring statistics` with your results. Nothing has run on their laptop.
+
+/// info | 📷 Screenshot
+**Show:** the imported canvas, `game_stats_csv` → `read_csv` → `GameStats` all green, beside Plot Studio showing the saved plot `Points per game`. Save as `docs/images/sharing__export-import-walkthrough/imported_canvas_green_saved_plot.png`.
+///
 
 ## Hand-off 2: the league statistician checks your results
 
@@ -76,12 +84,12 @@ The league wants an independent check before the awards are announced. The stati
 5. **History (without data).** Choose **Import history**. Without your data, it can't be loaded into their database (it would say results exist that aren't there), so it's archived, read-only, for checking. If SciStack asks about the same data, choose **Same data**.
 6. Click **Trust and Open**.
 
-The canvas looks like yours, but every step is red: nothing has run in this project yet. They click **Run all**, and every step turns green.
+The canvas looks like yours, but every step is red: nothing has run in this project yet. They click **▶ Run** on `read_csv`, and `read_csv` and `GameStats` turn green.
 
 Then they click **✓ verify** in the hypothesis tab strip. It runs nothing: it matches each of their results to yours by what produced it (the step, its inputs, its settings, the player and game) and compares them. It should report every step as **reproduced**.
 
 /// info | 📷 Screenshot
-**Show:** the **Verify reproduction** popover after the check, with every step reproduced.
+**Show:** the **Verify reproduction** popover after the run and the check, with every step counted as reproduced. Save as `docs/images/sharing__export-import-walkthrough/verify_all_reproduced.png`.
 ///
 
 When something differs, **✓ verify** names the first step where it does, and counts the steps after it as differing *downstream*, so they know where to look. Steps whose code was changed are listed separately.
@@ -96,9 +104,13 @@ A year later, you want the same pipeline, figure and statistics for the new seas
     - **Your schema keys:** keep `player, game`.
     - **PathInput "game_stats_csv":** **Choose my folder…** and pick `best-player-2027/`.
     - **History:** **Skip history**. The new database holds only the new season's results.
-4. Click **Trust and Open**, then **Run all**.
+4. Click **Trust and Open**, then **▶ Run** on `read_csv`.
 
 **Check the figure's settings.** Open `Points per game` in Plot Studio and look at **Data > Schema keys**: it still leaves out `Morgan`. That was a decision about last season's roster, and it travels with the figure's design, as does every other setting of a saved figure or table. Change it for this season's players, then step through `Scoring statistics` in Stat Studio once to confirm its answers (who's compared, nothing missing) still hold for the new data.
+
+/// info | 📷 Screenshot
+**Show:** Plot Studio on `Points per game` in the newly imported project, **Data > Schema keys** open with `Morgan` left out for `player`. Save as `docs/images/sharing__export-import-walkthrough/next_season_schema_keys_morgan.png`.
+///
 
 ### If the exporter's project had an exclusion
 
@@ -106,6 +118,10 @@ A year later, you want the same pipeline, figure and statistics for the new seas
 
 - **Same data** applies it, as in Hand-offs 1 and 2.
 - **Other data** leaves it out, keeps it in the archive, and the report lists it as a warning. Choose this for next season.
+
+/// info | 📷 Screenshot
+**Show:** the **Will this project run on the same data as the exporter's?** picker with **Same data** and **Other data**, imported from the Best Player - scidb bundle (it has an exclusion). Save as `docs/images/sharing__export-import-walkthrough/same_data_other_data_picker.png`.
+///
 
 **Skip history** leaves it out too, and the report says so. Nothing is dropped without a warning.
 
@@ -118,7 +134,7 @@ If the new CSV calls the players `athlete`, enter `athlete, game` as your schema
 | You want them to… | Tick | They answer |
 | --- | --- | --- |
 | Open your results without re-running | **History**, **Data** | your schema, **Import history**, **Same data** |
-| Re-run your analysis on your data and check it | **History**, and send the raw data | your schema, their folder, **Import history**, then **Run all** and **✓ verify** |
+| Re-run your analysis on your data and check it | **History**, and send the raw data | your schema, their folder, **Import history**, then **▶ Run** and **✓ verify** |
 | Run your analysis on **their** data | **History** (or nothing) | their folder, **Skip history** (or **Other data**), then check saved figures and tables for settings about your data |
 
 Whichever you choose, the imported project is a copy: nothing they change reaches your project, and nothing you change later reaches theirs. To share an update, export again.

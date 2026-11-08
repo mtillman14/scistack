@@ -11,6 +11,52 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzz. Export & Import Walkthrough: follow it, take its screenshots — added 2026-11-08
+
+**What changed:** a new docs page, `docs/sharing/export-import-walkthrough.ui.md`, takes the Best Player
+project through three hand-offs. No code changed. The page has six 📷 placeholders. Following the page
+checks its steps and labels against the GUI. Each screenshot goes in
+`docs/images/sharing__export-import-walkthrough/`, and once it exists the placeholder is replaced with
+`![…](../images/sharing__export-import-walkthrough/<file>.png)`.
+
+**Backend steps:**
+1. Build the Best Player project from `docs/examples/best-player.ui.md` (saved plot `Points per game`,
+   saved table `Scoring statistics`). It doesn't use an exclusion. For screenshot 6, also build
+   `docs/examples/best-player-scidb.md` (it records Morgan's exclusion) and run `scistack export` in
+   its folder.
+2. For each import, make a new virtual environment with SciStack installed. Rebuild the extension
+   (`npm run build:all` in `scistack-gui/extension`) if you run it from source.
+
+**Frontend steps and screenshots:**
+
+| # | Hand-off | Steps | Screenshot file |
+| --- | --- | --- | --- |
+| 1 | 1 | Click **⇩ export project**, tick **History** and **Data**, leave **Wheelhouse** off. Capture the popover before clicking **Export…**. | `export_popover_history_data.png` |
+| 2 | 1 | **SciStack: Import Project Bundle…** on that file: keep `player, game`, **Decide later** for `game_stats_csv`, **Import history**. Capture the report with the Trust prompt over it. | `import_report_trust_prompt.png` |
+| 3 | 1 | **Trust, Install and Open**. Open Plot Studio on `GameStats`, pick `Points per game` from **Saved plots**. Capture the canvas and Plot Studio side by side. | `imported_canvas_green_saved_plot.png` |
+| 4 | 2 | Export with **History** only. Import into a folder holding `data/game_stats.csv`: **Choose my folder…**, **Import history**, **Trust and Open**. Click **▶ Run** on `read_csv`, then **✓ verify**. Capture the popover. | `verify_all_reproduced.png` |
+| 5 | 3 | Import again with **Skip history**. Open `Points per game` in Plot Studio and open **Data > Schema keys**. | `next_season_schema_keys_morgan.png` |
+| 6 | 3 | Import the Best Player - scidb bundle, keep the schema, **Import history**. Capture the question. | `same_data_other_data_picker.png` |
+
+**You should see:**
+- Every label the page names matches the GUI: **⇩ export project**, **Export project**, **History** /
+  **Data** / **Wheelhouse**, the import questions (*Where should the new project go?*, the schema
+  keys box, *PathInput "game_stats_csv": data/game_stats.csv*, *History (with data)* /
+  *History (without data)*), **Trust, Install and Open** / **Trust and Open**, **Verify
+  reproduction**.
+- Hand-off 1: the report says *Loaded live, with its data.* under **History**, the canvas opens all
+  green with nothing run, and the saved plot leaves Morgan out.
+- Hand-off 2: the report says the history was *Archived to …*, the canvas opens red, and after the run
+  **✓ verify** counts every step as reproduced.
+- Hand-off 3: no "Same data / Other data" question for the GUI-built project (it has no exclusion),
+  but the question does appear for the scidb-built one. Importing the scidb-built one with **Skip
+  history** gives a report Warning: *dataset rules NOT applied: 1 schema exclusion(s), because the run
+  history was declined at import*. The GUI-built one has no dataset rules, so skipping its history
+  gives no such warning.
+- Anything that differs from the page: note it, and Claude fixes the page.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzz. "Not plotted" lists NaNs inside averaged vectors — added 2026-11-08
 
 **What changed:** a bar, box, violin, strip or scatter of a variable that holds one vector per record
