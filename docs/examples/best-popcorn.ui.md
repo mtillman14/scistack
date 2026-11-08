@@ -656,7 +656,7 @@ To check your analysis rather than extend it, your colleague needs your CSV too.
 - At **PathInput "data"**, they choose the folder that holds `data/popcorn_ratings.csv`. The template stays as it is.
 - At **History**, they choose **Import history**.
 
-After **Run all**, they click **✓ verify** in the hypothesis tab strip. It runs nothing: it compares their results with the history you exported, step by step, and should report every step as reproduced. Any difference is listed at the step where it first appears.
+After clicking **▶ Run** on `read_csv`, they click **✓ verify** in the hypothesis tab strip. It runs nothing: it compares their results with the history you exported, step by step, and should report every step as reproduced. Any difference is listed at the step where it first appears.
 
 See [Export & Import Projects](../sharing/export-import.md) for every option.
 
