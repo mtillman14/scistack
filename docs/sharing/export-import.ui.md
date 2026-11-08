@@ -10,7 +10,7 @@
 
 A whole project (its code, settings, every hypothesis, saved plots and run history) can be exported as one `.scistack` file and imported on another computer. Use it to hand a project to a labmate, move to a new machine, or publish an analysis so others can reproduce it.
 
-To share less than a whole project, see [Share a Hypothesis or Submodule](pipelines.md). For a worked example, including importing into a schema with a renamed key, see [Best Popcorn, Step 14](../examples/best-popcorn.md#step-14-optional-share-the-project-with-a-colleague).
+To share less than a whole project, see [Share a Hypothesis or Submodule](pipelines.md). For worked examples, see the [Export & Import Walkthrough](export-import-walkthrough.md) (three typical hand-offs of one project) and [Best Popcorn, Step 14](../examples/best-popcorn.md#step-14-optional-share-the-project-with-a-colleague) (importing into a schema with a renamed key).
 
 ## What travels, and what doesn't
 
@@ -88,6 +88,7 @@ An import always makes a **new** project folder. It runs none of the bundle's co
     - **Which of your keys each of the exporter's keys is**, for every exporter key that isn't in your schema: pick one of yours, or **drop it** if there's no counterpart. Path input templates, saved plots, saved tables and iteration settings that mention the key are renamed to yours; anything mentioning a dropped key loses that mention and is listed in the report.
     - **Where your copy of each raw data folder is**, one question per path input: **Choose my folder…**, **Keep the exporter's folder**, or **Decide later** (set it in the sidebar).
     - **History** (when the bundle has it): **Import history** or **Skip history**. It's loaded into your database only when the bundle carries the data too and you kept the schema; otherwise it's archived, read-only, for **✓ verify**.
+    - **Will this project run on the same data as the exporter's?** Asked only when you import the history with the exporter's schema, and the project has rules that name the exporter's own values (an exclusion, an Expected / Not expected mark at a particular subject, declared key values). **Same data** applies them all. **Other data** applies only the rules about keys (such as key types). The rest are kept in the archive, unapplied, and listed as a warning in the report.
 4. A report opens when it's done: what was imported, any keys renamed, anything that needs a look (a plot or table that mentioned a renamed or dropped key, a path input you left pointing at the exporter's folder).
 5. Click **Trust, Install and Open**: SciStack installs the packages the project lists that you don't have yet, at the exporter's versions, and opens the project. **Trust and Open** opens it without installing anything.
 

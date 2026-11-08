@@ -9,6 +9,8 @@
 
 A whole project (its code, settings, pipelines and run history) can be exported as one `.scistack` file and imported on another computer. Use it to hand a project to a labmate, move to a new machine, or publish an analysis so others can reproduce it.
 
+For a step-by-step example with three typical hand-offs, see the [Export & Import Walkthrough](export-import-walkthrough.md).
+
 ## What travels, and what doesn't
 
 | Part | In the export |
@@ -106,6 +108,7 @@ scistack import my_study.scistack --into ~/projects/my_study \
 - `--trust` installs what the project lists in `pyproject.toml` and your environment lacks, at the exporter's versions. Add `--no-install` to skip that and run `scistack install` later.
 - `--check-code` loads the project's code after importing and lists any pipeline step whose code wasn't found.
 - `--no-history` leaves the exporter's run history out.
+- `--no-value-rules` says the project will run on **other data** than the exporter's. The history still comes in (archived, for `scistack verify`), and so do the rules about keys, such as schema key types. The rules that name the exporter's own values (exclusions, Expected / Not expected marks at a particular subject, declared key values) are left out: they're kept in the archive, unapplied, and the import prints a warning listing them. The default, `--value-rules`, applies them all, which is right when you'll run on the exporter's data.
 
 ///
 

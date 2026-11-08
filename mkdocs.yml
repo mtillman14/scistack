@@ -63,6 +63,7 @@ nav:
     - Best Player - scidb: examples/best-player-scidb.md
   - Sharing:
     - Export & Import Projects: sharing/export-import.md
+    - Export & Import Walkthrough: sharing/export-import-walkthrough.md
     - Libraries: sharing/libraries.md
   # Only the user-facing APIs. The other api/ and internals/ pages stay in the
   # repo, covered by not_in_nav below, but nothing in the nav links to them.
@@ -202,6 +203,7 @@ plugins:
             - Sharing:
               - What Can I Share?: sharing/overview.md
               - Export & Import Projects: sharing/export-import.md
+              - Export & Import Walkthrough: sharing/export-import-walkthrough.md
               - Share a Hypothesis or Submodule: sharing/pipelines.md
               - Libraries: sharing/libraries.md
             # The GUI counterpart of the Code nav's API tab, in the same tab
