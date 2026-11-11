@@ -46,9 +46,10 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _replace_dataclass
 from typing import Any
 
+from scifor.hooks import LoopHooks
 from scifor.locations import LocationFilter
 
 from scidb.model.log import Log
@@ -1381,7 +1382,12 @@ class Pipeline:
                 "failures": [],
             }
             report.append(entry)
-            _caller_progress_fn = opts.get("_progress_fn")
+            # The caller's own hooks (scifor.LoopHooks) ride in the step's
+            # options; keep its cancel_check and chain its progress_fn.
+            _caller_hooks = opts.get("hooks")
+            _caller_progress_fn = (
+                _caller_hooks.progress_fn if _caller_hooks is not None else None
+            )
 
             def _collecting_progress_fn(
                 info: dict, _entry=entry, _next=_caller_progress_fn
@@ -1400,7 +1406,10 @@ class Pipeline:
                 if _next is not None:
                     _next(info)
 
-            opts["_progress_fn"] = _collecting_progress_fn
+            opts["hooks"] = _replace_dataclass(
+                _caller_hooks if _caller_hooks is not None else LoopHooks(),
+                progress_fn=_collecting_progress_fn,
+            )
         # Pull execution defaults to memoized runs; a step's explicitly
         # registered skip_computed=True always wins.
         opts["skip_computed"] = opts.get("skip_computed") or skip_computed

@@ -51,7 +51,7 @@ def _fake_for_each(groups, *, raise_exc=None, seen=None):
     def fake(*args, **kwargs):
         if seen is not None:
             seen.append(kwargs)
-        progress = kwargs["_progress_fn"]
+        progress = kwargs["hooks"].progress_fn
         failed = sum(g["count"] for g in groups if not g["no_data"])
         no_data = sum(g["count"] for g in groups if g["no_data"])
         progress({

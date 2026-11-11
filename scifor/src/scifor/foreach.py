@@ -70,6 +70,7 @@ from .failures import (
 )
 from .fixed import Fixed
 from .hooks import LoopHooks
+from .options import reject_private_options
 from .locations import LocationFilter, filter_combos, narrow_inputs
 from .keys import series_mask, warn_if_type_mismatch
 from .merge import Merge, drop_constant_keys, merge_frames
@@ -542,7 +543,7 @@ def for_each(
     :func:`assemble` turns the collected rows into the result table.
     """
     hooks = hooks if hooks is not None else LoopHooks()
-    _reject_private_kwargs(metadata_iterables)
+    reject_private_options(metadata_iterables)
     # scidb-only kwargs (save=, db=, ...) arrive in **metadata_iterables
     # here. Set them aside before anything reads metadata_iterables as
     # iteration axes, so a call written for scidb.for_each runs unchanged.
@@ -639,24 +640,6 @@ def for_each(
         tally.completed += 1
         progress.event("combo_done", combo_idx, metadata=metadata)
     return assemble(plan, tally, hooks, elapsed=progress.elapsed())
-
-
-def _reject_private_kwargs(metadata_iterables: dict) -> None:
-    """A ``_name=`` keyword is never an iteration axis.
-
-    Loop hooks travel in ``hooks=LoopHooks(...)``. A leftover ``_progress_fn=``
-    (or any other single-underscore name) would otherwise become a silent
-    bogus metadata axis — the failure mode ``schema_level=`` had in the GUI.
-    ``__`` keys are left alone: they are bookkeeping axes some callers use.
-    """
-    private = sorted(
-        k for k in metadata_iterables if k.startswith("_") and not k.startswith("__")
-    )
-    if private:
-        raise TypeError(
-            f"for_each() got unexpected keyword argument(s) {private}. Schema keys "
-            f"cannot start with '_'; loop hooks are passed as hooks=LoopHooks(...)."
-        )
 
 
 def _each_of_axes(inputs: dict, where: Any) -> "list[tuple[str, str | None, list]]":

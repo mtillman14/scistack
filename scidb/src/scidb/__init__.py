@@ -53,7 +53,7 @@ from scidb.model.across_variants import AcrossVariants
 from scidb.artifact_stamp import read_artifact_stamp, stamp_artifact
 from scidb.model.column_selection import ColumnSelection
 from scidb.model.parameter import Parameter
-from scidb.store.database import configure_database, get_database
+from scidb.store.database import configure_database, get_database, using_db
 from scidb.project.discover import (
     DiscoveryResult,
     ModuleError,
@@ -150,6 +150,10 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.inspect.mutate",
     "scidb.inspect.variant_cards",
     "scidb.provenance.intent",
+    # parse_values_text: the one owner of how a typed list of expected key
+    # values is read, shared by `scidb expect` (inspect.cli) and the GUI's
+    # expectation popup (expectation_service), so both accept the same text.
+    "scidb.provenance.expectation",
     "scidb.provenance.inventory",
     "scidb.provenance.locations",
     "scidb.model.log",
@@ -207,6 +211,7 @@ __all__ = [
     # Configuration
     "configure_database",
     "get_database",
+    "using_db",
     # Save
     "save",
     # Pipeline node staleness

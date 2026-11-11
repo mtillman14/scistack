@@ -4,6 +4,7 @@
      configure_database(dataset_db_path, dataset_schema_keys) -> DatabaseManager (2 args, both
        required; auto-registers known subclasses; sets scifor schema; enables caching);
      get_database() -> DatabaseManager (DatabaseNotConfiguredError if not configured);
+     using_db(db): context manager, the thread-entry owner (sets current db, restores previous);
      register(variable_class) (idempotent); list_versions(variable_class, include_excluded=False,
        **metadata) -> list[dict] keys record_id/schema/branch_params/timestamp (newest first);
      get_provenance(variable_class, version=None, **metadata) -> {function_name, function_hash,
@@ -62,6 +63,35 @@ get_database() -> DatabaseManager
 
 Returns the global handle, or raises `DatabaseNotConfiguredError` if
 `configure_database()` hasn't run.
+
+The handle is per thread. A thread you start yourself has none until it enters
+one with `using_db`.
+
+---
+
+## `using_db()`
+
+```python
+with using_db(db):
+    ...  # get_database() returns db here
+```
+
+Makes `db` the current database for the code inside the block, on this thread.
+When the block ends, whatever was current before is current again. Use it at
+the start of any thread you create that loads or saves data.
+
+```python
+import threading
+from scidb import configure_database, using_db
+
+db = configure_database("experiment.duckdb", ["subject", "session"])
+
+def work():
+    with using_db(db):
+        ...  # for_each, .load(), .save() all see db
+
+threading.Thread(target=work).start()
+```
 
 ---
 

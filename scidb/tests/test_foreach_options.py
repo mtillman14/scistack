@@ -7,7 +7,7 @@ Guards (P4 stage 2, design review 04b W3):
   same names, order and defaults — so the declaration cannot drift from the
   function users call;
 * ``scifor.for_each`` takes exactly the options that are not ``db_only``
-  (plus ``hooks``), with the same defaults;
+  (plus ``hooks``, which scidb declares as its one hook option), with the same defaults;
 * ``scifor.DB_ONLY_KWARGS`` is derived from the declaration;
 * every option lands on a field of its bundle, and ``ForEachCall`` turns
   back into the keywords it was built from (a deferred pipeline step replays
@@ -27,16 +27,17 @@ from scidb.run.foreach_call import (
     RunSelection,
 )
 from scidb.run.foreach_config import RunOptions
-from scifor import DB_ONLY_KWARGS, FOR_EACH_OPTIONS, UNSET
+from scifor import DB_ONLY_KWARGS, FOR_EACH_OPTIONS, UNSET, LoopHooks
 
-_NOT_OPTIONS = {"fn", "inputs", "outputs", "hooks"}
+_NOT_OPTIONS = {"fn", "inputs", "outputs"}
 
 
-def _keyword_params(fn) -> "list[inspect.Parameter]":
+def _keyword_params(fn, skip=frozenset()) -> "list[inspect.Parameter]":
     return [
         p
         for name, p in inspect.signature(fn).parameters.items()
-        if name not in _NOT_OPTIONS and p.kind is not inspect.Parameter.VAR_KEYWORD
+        if name not in _NOT_OPTIONS | skip
+        and p.kind is not inspect.Parameter.VAR_KEYWORD
     ]
 
 
@@ -48,7 +49,7 @@ def test_scidb_signature_is_the_declaration():
 
 
 def test_scifor_signature_is_the_non_db_only_options():
-    params = {p.name: p for p in _keyword_params(scifor.for_each)}
+    params = {p.name: p for p in _keyword_params(scifor.for_each, skip={"hooks"})}
     shared = {o.name: o for o in FOR_EACH_OPTIONS if not o.db_only}
     assert set(params) == set(shared)
     for name, spec in shared.items():
@@ -75,7 +76,7 @@ def test_every_option_has_a_field(spec):
 
 def _all_options():
     values = {o.name: o.default for o in SCIDB_FOR_EACH_OPTIONS}
-    values.update(dry_run=True, as_table=["x"], where="a > 1", step="s", _cancel_check=bool)
+    values.update(dry_run=True, as_table=["x"], where="a > 1", step="s", hooks=LoopHooks(cancel_check=bool))
     return values
 
 
@@ -95,3 +96,47 @@ def test_a_missing_option_fails_loudly():
     options.pop("glue")
     with pytest.raises(TypeError, match="glue"):
         ForEachCall.from_options(print, {}, [], {}, **options)
+
+
+# --- hooks= (grug stage for_each_api_layers) --------------------------------
+# The four private keywords (_progress_fn, _cancel_check, _pre_combo_hook,
+# _inject_combo_metadata) became ONE option, the same scifor.LoopHooks object
+# scifor.for_each takes.
+
+
+def test_no_private_keywords_remain_on_the_signature():
+    names = list(inspect.signature(scidb.for_each).parameters)
+    assert [n for n in names if n.startswith("_")] == []
+    assert "hooks" in names
+
+
+def test_hooks_reach_the_context():
+    def progress(info):
+        return None
+
+    options = _all_options()
+    options["hooks"] = LoopHooks(progress_fn=progress, cancel_check=bool)
+    call = ForEachCall.from_options(print, {}, [], {}, **options)
+    assert call.context.progress_fn is progress
+    assert call.context.cancel_check is bool
+    assert call.option_values()["hooks"] is options["hooks"]
+
+
+def test_hooks_scidb_decides_are_refused():
+    options = _all_options()
+    options["hooks"] = LoopHooks(all_combos=[{"subject": 1}])
+    with pytest.raises(ValueError, match="all_combos"):
+        ForEachCall.from_options(print, {}, [], {}, **options)
+
+
+def test_hooks_must_be_loop_hooks():
+    options = _all_options()
+    options["hooks"] = {"progress_fn": print}
+    with pytest.raises(TypeError, match="LoopHooks"):
+        ForEachCall.from_options(print, {}, [], {}, **options)
+
+
+def test_a_leftover_private_keyword_is_refused_not_iterated():
+    """The old spelling must not become a silent metadata axis."""
+    with pytest.raises(TypeError, match="hooks=LoopHooks"):
+        scidb.for_each(print, {}, [], _progress_fn=print)

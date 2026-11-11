@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import warnings
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -969,6 +970,34 @@ def clear_current_database() -> None:
     one only to scaffold a project leaves none behind)."""
     if hasattr(_local, "database"):
         delattr(_local, "database")
+
+
+@contextmanager
+def using_db(db: "DatabaseManager"):
+    """THE way a thread enters a database: *db* is this thread's current
+    database (what ``get_database`` returns) inside the block, and whatever was
+    current before is current again after it.
+
+    The current database is thread-local, so a new thread starts with none.
+    Calling ``set_current_db()`` by hand at each thread start was a convention
+    that every new thread had to remember (docs/claude/grugbrain-principles.md);
+    entering through this context manager makes it the only spelling.
+    """
+    previous = getattr(_local, "database", None)
+    thread = threading.current_thread().name
+    Log.debug(
+        f"using_db enter: thread={thread} db={getattr(db, 'dataset_db_path', db)!s} "
+        f"previous={'none' if previous is None else getattr(previous, 'dataset_db_path', previous)!s}"
+    )
+    db.set_current_db()
+    try:
+        yield db
+    finally:
+        if previous is None:
+            clear_current_database()
+        else:
+            set_current_database(previous)
+        Log.debug(f"using_db exit: thread={thread} restored={'none' if previous is None else 'previous'}")
 
 
 def database_or_none(db: "DatabaseManager | None" = None) -> "DatabaseManager | None":

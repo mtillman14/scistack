@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 import scifor as _scifor
 from scifor import ColName, ColumnSelection, EachOf, Fixed, LoopHooks, Merge, require_alternatives
+from scifor.options import reject_private_options, reject_removed_options
 from scifor import for_each as _scifor_for_each
 from scifor import UNSET, stopped_run_of, validate_on_error
 from scifor.failures import journaled
@@ -285,10 +286,7 @@ def for_each(
     parameter_names: "dict[str, str] | None" = None,
     step: "str | None" = None,
     pipeline: Any = UNSET,
-    _inject_combo_metadata: bool = False,
-    _pre_combo_hook: "Callable[[dict], bool] | None" = None,
-    _progress_fn: "Callable[[dict], None] | None" = None,
-    _cancel_check: "Callable[[], bool] | None" = None,
+    hooks: "LoopHooks | None" = None,
     **metadata_iterables: list[Any],
 ) -> "pd.DataFrame | Step | None":
     """
@@ -392,9 +390,6 @@ def for_each(
                     the constant's provenance edge, never part of identity.
                     A named ``Parameter`` input supplies its own; see
                     ``scidb.model.parameter.declared_input_names``.
-        _inject_combo_metadata: If True, inject current-combo metadata keys
-                    as extra kwargs to fn (set internally for generates_file
-                    functions).
         step: A name for this pipeline STEP, recorded on the run (`_run_step`).
                     Not identity: renaming it re-runs nothing. The GUI uses it
                     to attribute a script run to the canvas node of the same
@@ -411,19 +406,22 @@ def for_each(
                     or a Pipeline instance to register into a non-ambient
                     pipeline. Consequence: ``pipeline`` is a reserved name and
                     cannot be used as a schema key in **metadata_iterables.
-        _pre_combo_hook: Internal use only. Called with each fully-expanded
-                    combo dict before inputs are loaded. If it returns True
-                    the combo is skipped entirely (no load, no call, no save).
-                    ``skip_computed=True`` installs one.
+        hooks: Optional ``scifor.LoopHooks(progress_fn=..., cancel_check=...)``,
+                    the same object ``scifor.for_each`` takes. ``progress_fn``
+                    receives one dict per loop event (the GUI's progress bar
+                    and the run summary read them); ``cancel_check`` is asked
+                    before each combination and True stops the run. Any other
+                    LoopHooks field raises: scidb decides those itself.
         **metadata_iterables: Iterables of metadata values to combine.
 
     Returns:
         A pandas DataFrame of results, None when dry_run=True, or a Step
         handle when the call was registered into a Pipeline instead of run.
     """
-    from scifor.options import reject_removed_options
-
     reject_removed_options(metadata_iterables)
+    # A leftover `_progress_fn=` (the spelling before hooks=) would otherwise
+    # become a silent metadata axis.
+    reject_private_options(metadata_iterables)
     call = ForEachCall.from_options(
         fn,
         inputs,
@@ -448,10 +446,7 @@ def for_each(
         parameter_names=parameter_names,
         step=step,
         pipeline=pipeline,
-        _inject_combo_metadata=_inject_combo_metadata,
-        _pre_combo_hook=_pre_combo_hook,
-        _progress_fn=_progress_fn,
-        _cancel_check=_cancel_check,
+        hooks=hooks,
     )
     return _run_for_each(call)
 

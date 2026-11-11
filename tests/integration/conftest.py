@@ -156,7 +156,9 @@ def run_summary(for_each_fn, *args, **kwargs):
         if event.get("event") == "summary":
             summary.update(event)
 
-    result = for_each_fn(*args, _progress_fn=progress, **kwargs)
+    from scifor import LoopHooks
+
+    result = for_each_fn(*args, hooks=LoopHooks(progress_fn=progress), **kwargs)
     return result, summary
 
 

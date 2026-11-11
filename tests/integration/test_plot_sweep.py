@@ -283,7 +283,9 @@ def test_the_exported_endpoint_fans_out_like_the_preview(symmetry, pipeline, exa
             if event.get("event") == "summary":
                 failures.update(failure_reasons(event))
         kwargs.setdefault("save", False)  # the file is the test; keep the db clean
-        return for_each(*args, _progress_fn=progress, **kwargs)
+        from scifor import LoopHooks
+
+        return for_each(*args, hooks=LoopHooks(progress_fn=progress), **kwargs)
 
     namespace = {
         "for_each": capturing_for_each,

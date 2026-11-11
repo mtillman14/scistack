@@ -1321,7 +1321,7 @@ class TestRunEndpoint:
             entered.set()
             release.wait(timeout=2.0)
 
-        run_api._start_run_thread(run_id, worker)
+        run_api._start_run_thread(run_id, worker, db=None)
         with run_api._active_runs_lock:
             assert run_id in run_api._active_runs, "visible the moment dispatch returns"
             early_event = run_api._active_runs[run_id]["event"]

@@ -3851,6 +3851,14 @@ class TestUnresolvableVarTypePreflight:
         assert "RawEMG" in flagged and "FilteredEMG" in flagged
 
 
+class _StubDb:
+    """The least a run thread needs from a database: ``_start_run_thread``
+    enters it with ``scidb.using_db``, which calls ``set_current_db()``."""
+
+    def set_current_db(self) -> None:
+        pass
+
+
 class TestSingleNodeMatlabRunRouting:
     """A single-node Run on a MATLAB function must never reach the Python
     registry.
@@ -3927,7 +3935,7 @@ class TestSingleNodeMatlabRunRouting:
         monkeypatch.setattr(run_mod, "_run_matlab_function_in_thread", _record)
 
         result = run_mod.route_matlab_single_run(
-            "loadDelsysEMGOneFile", {"variants": []}, "r3", object()
+            "loadDelsysEMGOneFile", {"variants": []}, "r3", _StubDb()
         )
 
         assert result == {"run_id": "r3", "language": "matlab"}

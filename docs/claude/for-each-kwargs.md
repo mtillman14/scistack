@@ -4,6 +4,10 @@
 
 ## Signature
 
+Abridged. The owner of the full keyword list is
+`scifor.options.FOR_EACH_OPTIONS` + `scidb.run.foreach_call.SCIDB_HOOK_OPTIONS`;
+`scidb/tests/test_foreach_options.py` holds the signature to it.
+
 ```python
 def for_each(
     fn: Callable,
@@ -15,9 +19,8 @@ def for_each(
     db=None,
     distribute: bool = False,
     where=None,
-    _inject_combo_metadata: bool = False,
-    _pre_combo_hook: Callable[[dict], bool] | None = None,
-    _progress_fn: Callable[[dict], None] | None = None,
+    # ... every option scifor.options.FOR_EACH_OPTIONS declares ...
+    hooks: LoopHooks | None = None,
     **metadata_iterables: list[Any],
 ) -> pd.DataFrame | None
 ```
@@ -44,10 +47,10 @@ def for_each(
 - **where**: Optional filter expression passed to `.load()` calls on DB-backed inputs. Filters rows within the loaded data.
 - **db**: Optional explicit database instance. Usually resolved automatically from thread-local storage.
 
-### Internal (not for GUI)
-- **_inject_combo_metadata**: Used by scihist for `generates_file` — injects current combo metadata as extra kwargs to fn.
-- **_pre_combo_hook**: Used by scihist to implement `skip_computed` — called per combo, returns True to skip.
-- **_progress_fn**: Progress callback for GUI integration — already used by the GUI's run system.
+### Hooks (callers that drive the loop: the GUI, Pipeline)
+- **hooks**: `scifor.LoopHooks(progress_fn=..., cancel_check=...)`, the same object `scifor.for_each` takes. `progress_fn` gets one dict per loop event (the GUI's progress bar, the Pipeline step report); `cancel_check` is asked before each combo. Any other LoopHooks field raises (`foreach_call.check_caller_hooks`): scidb decides those from the database.
+- Until 2026-11-10 these were the private keywords `_progress_fn` and `_cancel_check`; a leftover `_name=` now raises `TypeError` (`scifor.options.reject_private_options`) instead of becoming a metadata axis.
+- `inject_combo_metadata` (generates_file / endpoint functions) and `pre_combo_hook` (`skip_computed`, the MATLAB bridge) are set inside scidb on `RunContext`; they are no longer keywords.
 
 ## How the GUI Currently Calls for_each
 
@@ -55,6 +58,6 @@ In `scistack-gui/scistack_gui/services/run_service.py`, the `_run_in_thread` fun
 
 1. Resolves inputs and outputs from the node graph (edges, registry)
 2. Builds `schema_kwargs` as ALL distinct values for every key (lines 307-311)
-3. Calls `for_each(fn, inputs=inputs, outputs=[OutputCls], _progress_fn=_progress_fn, **schema_kwargs)` (line 365)
+3. Calls `for_each(fn, inputs=..., outputs=..., hooks=LoopHooks(progress_fn=..., cancel_check=...), ...)` in `_run_target`
 
 The schema filter and run options (dry_run, save, distribute) are not yet exposed to the user.

@@ -1,7 +1,7 @@
 """One ``scidb.for_each`` call as a value: its options in three bundles.
 
-``scidb.for_each`` keeps its keyword signature for users (28 keywords, the
-ones :data:`SCIDB_FOR_EACH_OPTIONS` declares). Internally the keywords are
+``scidb.for_each`` keeps its keyword signature for users (the keywords
+:data:`SCIDB_FOR_EACH_OPTIONS` declares). Internally the keywords are
 grouped once, at entry, into a :class:`ForEachCall`:
 
 * :class:`~scidb.run.foreach_config.RunOptions` (``run``) — the identity-bearing
@@ -11,7 +11,7 @@ grouped once, at entry, into a :class:`ForEachCall`:
   metadata iterables);
 * :class:`RunContext` (``context``) — facts about the call that steer or are
   recorded but are never identity (``step``, ``parameter_names``,
-  ``pipeline``, the private hooks);
+  ``pipeline``, the caller's ``hooks``);
 
 and the rest stay plain fields. Which bundle an option belongs to is declared
 once, on its :class:`scifor.OptionSpec`; this module only reads the
@@ -22,21 +22,58 @@ that way once).
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
-from scifor import FOR_EACH_OPTIONS, UNSET, OptionSpec
+from scifor import FOR_EACH_OPTIONS, UNSET, LoopHooks, OptionSpec
+from scistacklog import Log
 
 from scidb.run.foreach_config import RunOptions
 
-#: scidb's private hooks, beyond the user options scifor declares. Not part
-#: of the drop-in contract (a leading underscore), all in the ``context``.
+#: scidb's one hook option beyond the user options scifor declares: the
+#: caller's loop hooks, the SAME ``scifor.LoopHooks`` object scifor.for_each
+#: takes (one owner of "loop hooks"; a call written for one layer runs on the
+#: other). Until 2026-11-10 these were four private keywords (``_progress_fn``,
+#: ``_cancel_check``, ``_pre_combo_hook``, ``_inject_combo_metadata``). The
+#: last two were only ever set inside scidb, so they are plain
+#: :class:`RunContext` fields now, not options.
 SCIDB_HOOK_OPTIONS: "tuple[OptionSpec, ...]" = (
-    OptionSpec("_inject_combo_metadata", False, "bool", "context", db_only=True),
-    OptionSpec("_pre_combo_hook", None, "object", "context", db_only=True),
-    OptionSpec("_progress_fn", None, "object", "context", db_only=True),
-    OptionSpec("_cancel_check", None, "object", "context", db_only=True),
+    OptionSpec("hooks", None, "object", "context"),
 )
+
+#: The LoopHooks fields a caller of scidb.for_each may set. scidb decides the
+#: rest (which combos exist, how rows are selected, ...) from the database.
+CALLER_HOOK_FIELDS: "frozenset[str]" = frozenset({"progress_fn", "cancel_check"})
+
+
+def check_caller_hooks(hooks: Any) -> "LoopHooks | None":
+    """*hooks* if it is a ``LoopHooks`` that sets only
+    :data:`CALLER_HOOK_FIELDS`. Raises otherwise, so a field scidb would
+    override never looks as if it took effect."""
+    if hooks is None:
+        return None
+    if not isinstance(hooks, LoopHooks):
+        raise TypeError(
+            f"for_each(hooks=...) takes a scifor.LoopHooks, got {type(hooks).__name__}"
+        )
+    defaults = LoopHooks()
+    overridden = sorted(
+        f.name
+        for f in fields(LoopHooks)
+        if f.name not in CALLER_HOOK_FIELDS
+        and getattr(hooks, f.name) is not getattr(defaults, f.name)
+    )
+    if overridden:
+        raise ValueError(
+            f"scidb.for_each(hooks=LoopHooks(...)) sets {overridden}; scidb decides "
+            f"those from the database. Pass only {sorted(CALLER_HOOK_FIELDS)}."
+        )
+    Log.debug(
+        "for_each hooks: "
+        f"progress_fn={hooks.progress_fn is not None}, "
+        f"cancel_check={hooks.cancel_check is not None}"
+    )
+    return hooks
 
 #: Every keyword ``scidb.for_each`` takes besides ``fn``/``inputs``/``outputs``
 #: and the metadata iterables, in signature order.
@@ -68,14 +105,25 @@ class RunContext:
     #: A Pipeline to register into, None (run eagerly), or UNSET (use the
     #: active pipeline, if any).
     pipeline: Any = UNSET
-    #: Pass the combination's schema-key values to the function as keyword
-    #: arguments it accepts (generates_file and endpoint functions).
+    #: The caller's ``hooks=`` (progress_fn / cancel_check only; see
+    #: :func:`check_caller_hooks`).
+    hooks: "LoopHooks | None" = None
+    #: Set inside scidb, never by a caller: pass the combination's schema-key
+    #: values to the function as keyword arguments it accepts (generates_file
+    #: and endpoint functions).
     inject_combo_metadata: bool = False
-    #: ``combo -> bool``; True skips the combination before anything loads
-    #: (``skip_computed`` installs one).
+    #: Set inside scidb, never by a caller: ``combo -> bool``; True skips the
+    #: combination before anything loads (``skip_computed`` and the MATLAB
+    #: bridge install one).
     pre_combo_hook: "Callable[[dict], bool] | None" = None
-    progress_fn: "Callable[[dict], None] | None" = None
-    cancel_check: "Callable[[], bool] | None" = None
+
+    @property
+    def progress_fn(self) -> "Callable[[dict], None] | None":
+        return self.hooks.progress_fn if self.hooks is not None else None
+
+    @property
+    def cancel_check(self) -> "Callable[[], bool] | None":
+        return self.hooks.cancel_check if self.hooks is not None else None
 
     def cancelled(self) -> bool:
         """Has the caller asked the run to stop?"""
@@ -121,6 +169,7 @@ class ForEachCall:
                 f"ForEachCall.from_options: missing {sorted(declared - set(options))}, "
                 f"unexpected {sorted(set(options) - declared)}"
             )
+        check_caller_hooks(options["hooks"])
         bundles: "dict[str, dict[str, Any]]" = {
             "run": {},
             "selection": {"metadata_iterables": dict(metadata_iterables)},

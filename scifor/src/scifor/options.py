@@ -125,7 +125,26 @@ def reject_removed_options(metadata_iterables: "dict[str, Any]") -> None:
             )
 
 
-DB_ONLY_KWARGS: "frozenset[str]" = frozenset(o.name for o in FOR_EACH_OPTIONS if o.db_only)
+def reject_private_options(metadata_iterables: "dict[str, Any]") -> None:
+    """A ``_name=`` keyword is never an iteration axis.
+
+    Loop hooks travel in ``hooks=LoopHooks(...)``, in scifor and in scidb. A
+    leftover ``_progress_fn=`` (or any other single-underscore name) would
+    otherwise become a silent bogus metadata axis — the failure mode
+    ``schema_level=`` had in the GUI. ``__`` keys are left alone: they are
+    bookkeeping axes some callers use.
+    """
+    private = sorted(
+        k for k in metadata_iterables if k.startswith("_") and not k.startswith("__")
+    )
+    if private:
+        raise TypeError(
+            f"for_each() got unexpected keyword argument(s) {private}. Schema keys "
+            f"cannot start with '_'; loop hooks are passed as hooks=LoopHooks(...)."
+        )
+
+
+DB_ONLY_KWARGS: "frozenset[str]" =frozenset(o.name for o in FOR_EACH_OPTIONS if o.db_only)
 
 
 def option(name: str) -> OptionSpec:

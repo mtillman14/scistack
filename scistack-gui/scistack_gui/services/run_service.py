@@ -23,18 +23,32 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
+from dataclasses import dataclass, field
 from io import StringIO
 
 from pydantic import BaseModel
 from scidb.store.database import DatabaseManager
 from scidb.run.foreach_config import RunOptions
 
-from scidb import for_each
-from scifor import enter_project_root
+from scidb import for_each, using_db
+from scifor import LoopHooks, enter_project_root
 from scistack_gui.project import registry
 from scistack_gui.runtime.db import external_db_access
+from scidb.provenance.intent import ORIGIN_GUI, run_origin, run_output_names
+from scistack_gui.domain.output_order import recorded_orders
+from scistack_gui.domain.run_options import run_option_defaults
 from scistack_gui.domain.schema_selection import is_empty
+from scistack_gui.domain.variant_resolver import (
+    deduplicate_variants,
+    filter_hidden_targets,
+    filter_variants,
+    hidden_call_ids_for_fn,
+)
+from scistack_gui.project.step_names import step_name_of
+from scistack_gui.services.run_failures import RunFailures, on_error_from_config
+from scistack_gui.stores import intent_store
+from scistack_gui.stores import pipeline_store as _ps
 from scistack_gui.runtime.ws_hub import push_message
 
 # This logger is configured in server.py (FastAPI) / __main__.py (JSON-RPC)
@@ -93,8 +107,15 @@ def _register_run(run_id: str, thread: threading.Thread, **extra) -> threading.E
         return entry["event"]
 
 
-def _start_run_thread(run_id: str, target, args: tuple = (), **extra) -> None:
+def _start_run_thread(
+    run_id: str, target, args: tuple = (), *, db: "DatabaseManager | None", **extra
+) -> None:
     """Register *run_id*, then start *target(*args)* on a daemon thread.
+
+    *db* is the database the thread enters (``scidb.using_db``) for its whole
+    life. This is THE thread entry for every run, so no run target calls
+    ``set_current_db()`` itself. ``None`` only for a run that never opens the
+    database in this process (a MATLAB command run: MATLAB owns the file).
 
     The thread's exit is the last word: a run still registered when its
     target returns never popped itself (so never sent ``run_done``); it is
@@ -103,7 +124,27 @@ def _start_run_thread(run_id: str, target, args: tuple = (), **extra) -> None:
 
     def _body():
         try:
-            target(*args)
+            if db is None:
+                target(*args)
+                return
+            try:
+                entered = using_db(db)
+                entered.__enter__()
+            except BaseException as exc:
+                # The target never ran, so nothing else will send run_done:
+                # without this the run spins in the GUI until cancelled.
+                logger.error(
+                    "[run_service] run thread could not enter its database "
+                    "(run_id=%s, db=%s)",
+                    run_id,
+                    type(db).__name__,
+                )
+                _report_crashed_run(run_id, getattr(target, "__name__", "run"), exc)
+                return
+            try:
+                target(*args)
+            finally:
+                entered.__exit__(None, None, None)
         finally:
             with _active_runs_lock:
                 leaked = _active_runs.pop(run_id, None)
@@ -117,7 +158,66 @@ def _start_run_thread(run_id: str, target, args: tuple = (), **extra) -> None:
     thread = threading.Thread(target=_body, daemon=True)
     _register_run(run_id, thread, **extra)
     thread.start()
-    logger.info("[run_service] run thread started (run_id=%s)", run_id)
+    logger.info(
+        "[run_service] run thread started (run_id=%s, db=%s)",
+        run_id,
+        "none" if db is None else "entered",
+    )
+
+
+class _RunLogRelay(logging.Handler):
+    """Relays scifor/scidb INFO+ log records to a run's frontend console.
+
+    The pipeline narrative (banner, progress, run summary, failures) is
+    log records since the logging redesign — stdout only carries dry-run
+    output — so the frontend gets it from a scoped handler instead.
+    Attached to the "scifor"/"scidb" loggers only (never "scistack_gui",
+    whose records include the emitter's own debug line — a feedback loop).
+
+    One owner for single-node and pipeline runs (they each had a copy).
+    """
+
+    _RELAY_LOGGERS = ("scifor", "scidb")
+
+    def __init__(self, emit: Callable[[str], None]):
+        super().__init__(level=logging.INFO)
+        self.setFormatter(logging.Formatter("%(message)s"))
+        self._emit_text = emit
+
+    def emit(self, record):
+        try:
+            self._emit_text(self.format(record) + "\n")
+        except Exception:
+            pass
+
+    def __enter__(self):
+        for name in self._RELAY_LOGGERS:
+            logging.getLogger(name).addHandler(self)
+        return self
+
+    def __exit__(self, *exc):
+        for name in self._RELAY_LOGGERS:
+            logging.getLogger(name).removeHandler(self)
+        return False
+
+
+@contextmanager
+def _run_phase(run_id: str, phase: str):
+    """Log how long one named phase of a run took, so a "slow" or "hangs"
+    report names its phase (grug stage split_run_in_thread)."""
+    started = time.time()
+    outcome = "raised"
+    try:
+        yield
+        outcome = "done"
+    finally:
+        logger.info(
+            "[run_thread] phase %s %s in %d ms (run_id=%s)",
+            phase,
+            outcome,
+            int((time.time() - started) * 1000),
+            run_id,
+        )
 
 
 class WhereFilterSpec(BaseModel):
@@ -154,6 +254,95 @@ class RunRequest(BaseModel):
     output_types: list[str] | None = None
 
 
+@dataclass
+class _SingleRun:
+    """What the phases of one single-function run share: its fixed context
+    and its running tally.
+
+    ``combo_totals`` is accumulated across targets from scifor's
+    authoritative "summary" progress events: for_each never raises on
+    iteration failures (continue-and-report), so success must be decided
+    from these counts — NOT from "the for_each call returned". skip_computed
+    skips are removed before the loop and never inflate 'failed'.
+    ``run_failures`` (scifor.failures via services.run_failures) is the one
+    collector the console text, run_done.failures, the node badge, failures
+    panel and Problems panel all read.
+    """
+
+    run_id: str
+    function_name: str
+    db: DatabaseManager
+    node_id: str | None
+    node_output_types: list[str] | None
+    schema_selection: dict | None
+    emit: Callable[[str], None]
+    cancel_event: threading.Event
+    run_failures: "RunFailures"
+    combo_totals: dict = field(
+        default_factory=lambda: {"completed": 0, "failed": 0, "no_data": 0}
+    )
+    success: bool = True
+    cancelled: bool = False
+
+    def is_cancelled(self) -> bool:
+        return self.cancel_event.is_set()
+
+
+@dataclass
+class _PreparedRun:
+    """The targets of a run and the options every target runs with."""
+
+    targets: list[dict]  # unique, hidden filtered: what executes
+    overridden_targets: list[dict]  # before de-duplication: what the node claims
+    recorded_output_order: object
+    dry_run: bool
+    save: bool
+    distribute: bool
+    as_table: object
+    on_error: str
+    level: object
+    for_each_schema_keys: object
+    where_arg: object
+
+
+@dataclass
+class _TargetCall:
+    """One target's for_each arguments, resolved from its bindings."""
+
+    inputs: dict
+    glue: dict | None
+    parameter_names: dict | None
+    step: str | None
+    output_classes: list
+    declared_ports: list | None
+
+
+def _run_emitter(run_id: str) -> Callable[[str], None]:
+    def emit(text: str):
+        logger.debug(
+            "[run_thread] Emitting output for run_id=%s: %s", run_id, text.rstrip()
+        )
+        push_message({"type": "run_output", "run_id": run_id, "text": text})
+
+    return emit
+
+
+def _end_run_early(run_id: str, error: str, why: str, **fields) -> None:
+    """A run that stops before its first target: run_done, then unregister."""
+    push_message(
+        {
+            "type": "run_done",
+            "run_id": run_id,
+            "success": False,
+            "error": error,
+            **fields,
+        }
+    )
+    with _active_runs_lock:
+        _active_runs.pop(run_id, None)
+    logger.info("[run_thread] Thread exiting due to %s (run_id=%s)", why, run_id)
+
+
 def _run_in_thread(
     run_id: str,
     function_name: str,
@@ -170,8 +359,16 @@ def _run_in_thread(
     ``node_output_types``: the node's outputs in handle order (the request's
     ``output_types``), which a splitting for_columns selection pairs with.
 
-    Executed in a background thread. Runs for_each for each variant,
-    captures stdout line-by-line, and pushes it to the WebSocket queue.
+    Executed in a background thread that ``_start_run_thread`` already
+    entered *db* on. Runs for_each for each variant, captures stdout
+    line-by-line, and pushes it to the WebSocket queue. Its phases, each
+    timed in the log (``phase <name> done in N ms``):
+
+    - ``resolve_function``: the registry lookup (``_resolve_function``).
+    - ``prepare``: targets, pending overrides, hides, options and the level
+      (``_prepare_run``).
+    - ``execute``: one for_each per target (``_execute_targets``), which ends
+      with ``_report_run_done`` whatever happens.
     """
     logger.info(
         "[run_thread] Thread started for run_id=%s, function=%s, variants=%d, "
@@ -184,45 +381,6 @@ def _run_in_thread(
         len(where_filters) if where_filters else 0,
         run_options,
     )
-
-    def emit(text: str):
-        logger.debug(
-            "[run_thread] Emitting output for run_id=%s: %s", run_id, text.rstrip()
-        )
-        push_message({"type": "run_output", "run_id": run_id, "text": text})
-
-    class _RunLogRelay(logging.Handler):
-        """Relays scifor/scidb INFO+ log records to the frontend run console.
-
-        The pipeline narrative (banner, progress, run summary, failures) is
-        log records since the logging redesign — stdout only carries dry-run
-        output — so the frontend gets it from a scoped handler instead.
-        Attached to the "scifor"/"scidb" loggers only (never "scistack_gui",
-        whose records include emit()'s own debug line — a feedback loop).
-        """
-
-        _RELAY_LOGGERS = ("scifor", "scidb")
-
-        def __init__(self):
-            super().__init__(level=logging.INFO)
-            self.setFormatter(logging.Formatter("%(message)s"))
-
-        def emit(self, record):
-            try:
-                emit(self.format(record) + "\n")
-            except Exception:
-                pass
-
-        def __enter__(self):
-            for name in self._RELAY_LOGGERS:
-                logging.getLogger(name).addHandler(self)
-            return self
-
-        def __exit__(self, *exc):
-            for name in self._RELAY_LOGGERS:
-                logging.getLogger(name).removeHandler(self)
-            return False
-
     # Register this run so cancel_run/force_cancel_run can find it.
     logger.info(
         "[run_thread] Registering run in active runs registry (run_id=%s)", run_id
@@ -230,44 +388,68 @@ def _run_in_thread(
     cancel_event = _register_run(run_id, threading.current_thread())
     logger.debug("[run_thread] Run registered successfully (run_id=%s)", run_id)
 
-    def _is_cancelled() -> bool:
-        return cancel_event.is_set()
-
-    # The DatabaseManager is stored in thread-local storage by configure_database().
-    # Background threads don't inherit that local, so we re-register it here.
-    logger.info("[run_thread] Setting current database for thread (run_id=%s)", run_id)
-    db.set_current_db()
     # Every execution starts from the project root (a previous run's user
     # code may have chdir'd). MATLAB scripts do the same via
     # matlab_command._working_directory_lines.
     enter_project_root()
 
+    run = _SingleRun(
+        run_id=run_id,
+        function_name=function_name,
+        db=db,
+        node_id=node_id,
+        node_output_types=node_output_types,
+        schema_selection=schema_selection,
+        emit=_run_emitter(run_id),
+        cancel_event=cancel_event,
+        run_failures=RunFailures(run_id),
+    )
+    with _run_phase(run_id, "resolve_function"):
+        fn = _resolve_function(run)
+    if fn is None:
+        return
+    with _run_phase(run_id, "prepare"):
+        prep = _prepare_run(run, variants, schema_level, run_options, where_filters)
+    if prep is None:
+        return
+    with _run_phase(run_id, "execute"):
+        _execute_targets(run, fn, prep)
+
+
+def _resolve_function(run: _SingleRun):
+    """The registered Python function, or None after ending the run."""
     logger.info(
         "[run_thread] Looking up function '%s' in registry (run_id=%s)",
-        function_name,
-        run_id,
+        run.function_name,
+        run.run_id,
     )
     try:
-        fn = registry.get_function(function_name)
-        logger.debug("[run_thread] Function found: %s (run_id=%s)", fn, run_id)
+        fn = registry.get_function(run.function_name)
     except KeyError as e:
-        logger.warning("[run_thread] Function not found: %s (run_id=%s)", e, run_id)
-        push_message(
-            {
-                "type": "run_done",
-                "run_id": run_id,
-                "success": False,
-                "error": str(e),
-                "cancelled": False,
-            }
+        logger.warning(
+            "[run_thread] Function not found: %s (run_id=%s)", e, run.run_id
         )
-        with _active_runs_lock:
-            _active_runs.pop(run_id, None)
-        logger.info(
-            "[run_thread] Thread exiting due to function not found (run_id=%s)", run_id
-        )
-        return
+        _end_run_early(run.run_id, str(e), "function not found", cancelled=False)
+        return None
+    logger.debug("[run_thread] Function found: %s (run_id=%s)", fn, run.run_id)
+    return fn
 
+
+def _prepare_run(
+    run: _SingleRun,
+    variants: list[dict],
+    schema_level: list[str] | None,
+    run_options: dict | None,
+    where_filters: list[WhereFilterSpec] | None,
+) -> "_PreparedRun | None":
+    """What this run executes and how, or None after ending the run (nothing
+    to run)."""
+    db, run_id, function_name, node_id = (
+        run.db,
+        run.run_id,
+        run.function_name,
+        run.node_id,
+    )
     # Derive the for_each targets for this function node — DB history with
     # manual-wiring overrides, or the manual-edge fallback. Shared with the
     # pipeline compiler (execution_service) so per-node and pipeline runs
@@ -311,26 +493,11 @@ def _run_in_thread(
             run_id,
             error,
         )
-        push_message(
-            {
-                "type": "run_done",
-                "run_id": run_id,
-                "success": False,
-                "error": error,
-            }
-        )
-        with _active_runs_lock:
-            _active_runs.pop(run_id, None)
-        logger.info("[run_thread] Thread exiting due to no targets (run_id=%s)", run_id)
-        return
+        _end_run_early(run_id, error, "no targets")
+        return None
 
     # --- Variant resolution via domain layer ---
     logger.info("[run_thread] Resolving variants to execute (run_id=%s)", run_id)
-    from scistack_gui.domain.variant_resolver import (
-        deduplicate_variants,
-        filter_variants,
-    )
-
     # Determine which variants to run.
     if variants:
         logger.debug(
@@ -352,7 +519,6 @@ def _run_in_thread(
     # shared helper with the pipeline compiler so eager and pull runs
     # materialize staged values identically. Deduplicate AFTER overriding:
     # targets differing only in the overridden constant collapse together.
-    from scistack_gui.stores import pipeline_store as _ps
     from scistack_gui.services.execution_service import apply_pending_overrides
 
     pending_consts = _ps.get_pending_constants(db)
@@ -386,27 +552,17 @@ def _run_in_thread(
 
     # Whether this function's runs wrote its outputs together (one call) or
     # separately (execution_service.run_output_types), from the run log.
-    from scistack_gui.domain.output_order import recorded_orders
-    from scistack_gui.services.execution_service import UnconnectedOutputPortError
-
     recorded_output_order = recorded_orders(db, [function_name]).get(function_name)
 
     # Extract run options (dry_run, save, distribute, as_table).
     logger.info("[run_thread] Extracting run options (run_id=%s)", run_id)
     # Defaults come from scidb.for_each's signature (domain.run_options),
     # the same answer the sidebar's non-default badges compare against.
-    from scistack_gui.domain.run_options import run_option_defaults
-
     defaults = run_option_defaults()
     opts = run_options or {}
     opt_dry_run = opts.get("dry_run", defaults["dry_run"])
     opt_save = opts.get("save", defaults["save"])
     opt_distribute = opts.get("distribute", defaults["distribute"])
-    from scistack_gui.services.run_failures import (
-        RunFailures,
-        on_error_from_config,
-    )
-
     opt_as_table = opts.get("as_table", defaults["as_table"])
     opt_on_error = on_error_from_config(opts)
     logger.debug(
@@ -424,15 +580,8 @@ def _run_in_thread(
     # running, using THIS chokepoint's own distribute/as_table so a hidden
     # pending combo's stored call_id stays consistent with what would
     # actually execute here.
-    from scistack_gui.domain.variant_resolver import (
-        filter_hidden_targets,
-        hidden_call_ids_for_fn,
-    )
-
     # The hides of the canvas the click came from; a run with no node id
     # (the name-scoped fallback) still sees every scope's.
-    from scistack_gui.stores import intent_store
-
     hidden_ids = _ps.get_hidden_node_ids(
         db, intent_store.scope_of_node(db, node_id) if node_id else None
     )
@@ -468,31 +617,16 @@ def _run_in_thread(
         node_id=node_id,
         route=f"python run {run_id}",
     )
-    # for_each's own spelling: None = one call, [keys] = iterate them. Never
-    # the node's raw list — `schema_keys=[]` would iterate EVERY key (F26).
-    for_each_schema_keys = level.for_each_schema_keys()
-    if not is_empty(schema_selection):
+    if not is_empty(run.schema_selection):
         # INFO, not DEBUG: this changes which combos run, and a run that does
         # less than expected is read as a broken pipeline unless the log says
         # a selection was in force. scifor logs the resulting counts.
         logger.info(
             "[run_thread] Schema selection: %s (run_id=%s)",
-            _summarize_selection(schema_selection),
+            _summarize_selection(run.schema_selection),
             run_id,
         )
 
-    success = True
-    run_started_at = time.time()
-    # Accumulated across targets from scifor's authoritative "summary"
-    # progress events: for_each never raises on iteration failures
-    # (continue-and-report), so success must be decided from these counts —
-    # NOT from "the for_each call returned". skip_computed skips are
-    # removed before the loop and never inflate 'failed'.
-    combo_totals = {"completed": 0, "failed": 0, "no_data": 0}
-    # Failure records of this run (scifor.failures via services.run_failures):
-    # the console text, run_done.failures, and from there the node badge,
-    # failures panel and Problems panel all read this one collector.
-    run_failures = RunFailures(run_id)
     # Build where= argument from where_filters.
     logger.info("[run_thread] Building where filters (run_id=%s)", run_id)
     where_arg = _build_where(where_filters)
@@ -511,123 +645,54 @@ def _run_in_thread(
         opt_distribute,
         opt_as_table,
         level.describe(),
-        _summarize_selection(schema_selection),
+        _summarize_selection(run.schema_selection),
         run_id,
     )
+    return _PreparedRun(
+        targets=unique_targets,
+        overridden_targets=overridden_targets,
+        recorded_output_order=recorded_output_order,
+        dry_run=opt_dry_run,
+        save=opt_save,
+        distribute=opt_distribute,
+        as_table=opt_as_table,
+        on_error=opt_on_error,
+        level=level,
+        # for_each's own spelling: None = one call, [keys] = iterate them.
+        # Never the node's raw list — `schema_keys=[]` would iterate EVERY
+        # key (F26).
+        for_each_schema_keys=level.for_each_schema_keys(),
+        where_arg=where_arg,
+    )
 
-    cancelled = False
+
+def _execute_targets(run: _SingleRun, fn, prep: _PreparedRun) -> None:
+    """One for_each per target, then ``_report_run_done`` whatever happened."""
+    from scistack_gui.services.execution_service import UnconnectedOutputPortError
+
+    run_id, n_targets = run.run_id, len(prep.targets)
+    run_started_at = time.time()
     try:
-        for idx, v in enumerate(unique_targets, 1):
+        for idx, v in enumerate(prep.targets, 1):
             # Cooperative cancel: stop before launching the next variant.
-            if _is_cancelled():
+            if run.is_cancelled():
                 logger.info(
                     "[run_thread] Cancel detected between variants — stopping (run_id=%s, target=%d/%d)",
                     run_id,
                     idx,
-                    len(unique_targets),
+                    n_targets,
                 )
-                cancelled = True
-                emit("⛔ Cancelled\n")
+                run.cancelled = True
+                run.emit("⛔ Cancelled\n")
                 break
-            # Build inputs dict: variable class inputs + scalar constants
             logger.info(
                 "[run_thread] Processing target %d/%d (run_id=%s)",
                 idx,
-                len(unique_targets),
+                n_targets,
                 run_id,
             )
             try:
-                logger.debug(
-                    "[run_thread] Building inputs for target %d (run_id=%s)",
-                    idx,
-                    run_id,
-                )
-                # Variable-class inputs + scalar constants (pending overrides
-                # already applied above the loop) + any PathInput-backed
-                # params — shared with the pipeline-compiler path so this
-                # logic (including PathInput construction) lives in one
-                # place. See execution_service.build_run_inputs.
-                from scistack_gui.services.execution_service import (
-                    build_run_glue,
-                    build_run_inputs,
-                    build_run_declared_names,
-                )
-
-                inputs = build_run_inputs(v, function_name)
-                # Glue is a property of this step's input binding, resolved
-                # right beside the inputs it reshapes — never a step, never a
-                # run of its own.
-                glue_arg = build_run_glue(v, function_name) or None
-                parameter_names_arg = build_run_declared_names(v) or None
-                # The node's step name (Q6): its runs are named however they
-                # are started, so a later script run of the same step name is
-                # attributed to this node.
-                from scistack_gui.project.step_names import step_name_of
-
-                step_arg = step_name_of(db, node_id) if node_id else None
-                logger.debug(
-                    "[run_thread] Built inputs for %d param(s): %s (run_id=%s)",
-                    len(inputs),
-                    list(inputs),
-                    run_id,
-                )
-
-                OutputCls = registry.get_variable_class(v["output_type"])
-                # One output per call, except a for_columns selection that
-                # splits its groups across the node's outputs: then every
-                # output, in handle order (execution_service.run_output_types).
-                from scistack_gui.services.execution_service import (
-                    declared_output_classes,
-                    run_output_types,
-                )
-
-                # Python ports declared on the node: one call, every port, in
-                # port order (port i = return value i).
-                declared = declared_output_classes(db, node_id, function_name)
-                if declared is not None:
-                    declared_ports, declared_classes = declared
-                    output_classes = [
-                        registry.get_variable_class(c) for c in declared_classes
-                    ]
-                else:
-                    declared_ports = None
-                    output_classes = [
-                        registry.get_variable_class(t)
-                        for t in run_output_types(
-                            inputs, node_output_types, v["output_type"], recorded_output_order
-                        )
-                    ]
-                # INFO: which outputs this call writes, and in which order, is
-                # what output order is about (plan-output-order-owner Stage 0).
-                logger.info(
-                    "[run_thread] target %d writes output(s) %s (target output_type=%s, "
-                    "node handles=%s, run_id=%s)",
-                    idx,
-                    [c.__name__ for c in output_classes],
-                    v["output_type"],
-                    node_output_types,
-                    run_id,
-                )
-                # The dispatch claim covers every output of the node's targets.
-                # A run that writes fewer leaves the rest unwritten, and the
-                # recorded wiring no longer matches the claim, so the next
-                # build mints a second node. The GUI sends its handles; say so
-                # when a request without them lands here.
-                unwritten = sorted(
-                    {t.get("output_type") for t in overridden_targets}
-                    - {c.__name__ for c in output_classes}
-                    - {None}
-                )
-                if unwritten:
-                    logger.warning(
-                        "[run_thread] target %d does not write output(s) %s of this "
-                        "node (node handles=%s, recorded orders=%s, run_id=%s)",
-                        idx,
-                        unwritten,
-                        node_output_types,
-                        recorded_output_order,
-                        run_id,
-                    )
+                call = _build_target_call(run, prep, v, idx)
             except (KeyError, UnconnectedOutputPortError) as e:
                 logger.error(
                     "[run_thread] Failed to resolve input/output types for target %d: %s (run_id=%s)",
@@ -635,245 +700,11 @@ def _run_in_thread(
                     e,
                     run_id,
                 )
-                emit(f"Error: {e}\n")
-                success = False
+                run.emit(f"Error: {e}\n")
+                run.success = False
                 continue
-
-            # Target constants are final (pending overrides already applied).
-            label = (
-                f"{function_name}({', '.join(f'{k}={val}' for k, val in v['constants'].items())})"
-                if v["constants"]
-                else function_name
-            )
-            # Every binding kind, tagged by origin. This used to print
-            # ``input_types`` alone — variables only — so a healthy
-            # PathInput-fed run logged ``inputs={}``, which is the exact
-            # signature the zero-combo warning below tells you to look for.
-            _binding_summary = {
-                param: (
-                    b["ref"]
-                    if b["kind"] == "variable"
-                    else "ColName()"
-                    if b["kind"] == "colname"
-                    else f"{b['kind']}:{b['ref']}"
-                )
-                for param, b in (v.get("bindings") or {}).items()
-            }
-            logger.info(
-                "[run_thread] Target %d/%d -> %s, inputs=%s, constants=%s, "
-                "output=%s (run_id=%s)",
-                idx,
-                len(unique_targets),
-                label,
-                _binding_summary or "{} (nothing wired)",
-                v.get("constants") or {},
-                v["output_type"],
-                run_id,
-            )
-            emit(f"▶ Running {label}\n")
-
-            # Emit structured run_start message for the frontend.
-            logger.debug(
-                "[run_thread] Emitting run_start message for target %d (run_id=%s)",
-                idx,
-                run_id,
-            )
-            started_at = time.time()
-            push_message(
-                {
-                    "type": "run_start",
-                    "run_id": run_id,
-                    "function_name": function_name,
-                    "constants": v["constants"],
-                    "input_types": {k: str(vt) for k, vt in v["input_types"].items()},
-                    "output_type": v["output_type"],
-                    "started_at": started_at,
-                }
-            )
-
-            # Progress callback: relay structured progress to the frontend.
-            def _progress_fn(info: dict):
-                # The end-of-run summary carries this target's final counts.
-                if info.get("event") == "summary":
-                    target_summary["failures"] = info.get("failures") or []
-                    combo_totals["completed"] += info.get("completed", 0)
-                    no_data = info.get("no_data", 0)
-                    combo_totals["failed"] += info.get(
-                        "failed", info.get("skipped", 0) - no_data
-                    )
-                    combo_totals["no_data"] += no_data
-                # Convert metadata values to strings for JSON serialization.
-                meta = {str(k): str(val) for k, val in info.get("metadata", {}).items()}
-                logger.debug(
-                    "[run_thread] Progress update: event=%s, current=%d, total=%d (run_id=%s)",
-                    info["event"],
-                    info["current"],
-                    info["total"],
-                    run_id,
-                )
-                push_message(
-                    {
-                        "type": "run_progress",
-                        "run_id": run_id,
-                        "event": info["event"],
-                        "current": info["current"],
-                        "total": info["total"],
-                        "completed": info["completed"],
-                        "skipped": info["skipped"],
-                        "no_data": info.get("no_data"),
-                        "metadata": meta,
-                        # combo_skip: the small failure form (reason, no_data,
-                        # user_frame); tracebacks travel once, in run_done.
-                        "failure": info.get("failure"),
-                    }
-                )
-
-            # Relay the run narrative (log records) plus any stdout (dry-run
-            # output) to the frontend console.
-            logger.info(
-                "[run_thread] Executing for_each for target %d (run_id=%s)", idx, run_id
-            )
-            buf = StringIO()
-            target_snapshot = dict(combo_totals)
-            target_summary: dict = {"failures": []}
-            try:
-                # This run reads the intent store (rule 3): label it so the
-                # `_run` row says so, and a later script run of the same
-                # function can be told apart from it on the canvas.
-                from scidb.provenance.intent import ORIGIN_GUI, run_origin, run_output_names
-
-                with _RunLogRelay(), redirect_stdout(buf), run_origin(ORIGIN_GUI), run_output_names(declared_ports):
-                    for_each(
-                        fn,
-                        inputs=inputs,
-                        outputs=output_classes,
-                        dry_run=opt_dry_run,
-                        save=opt_save,
-                        distribute=opt_distribute,
-                        as_table=opt_as_table,
-                        where=where_arg,
-                        skip_computed=False,
-                        on_error=opt_on_error,
-                        glue=glue_arg,
-                        parameter_names=parameter_names_arg,
-                        step=step_arg,
-                        _progress_fn=_progress_fn,
-                        _cancel_check=_is_cancelled,
-                        # The picker's pair, applied to the COMBO list by
-                        # scifor. Distinct from schema_keys below, which says
-                        # which keys to iterate at all.
-                        locations=schema_selection,
-                        # NOTE: scidb.for_each's real parameter is
-                        # `schema_keys`, not `schema_level` — `schema_level`
-                        # is this module's own GUI-facing name for "which
-                        # schema keys to iterate" (RunRequest.schema_level,
-                        # etc.). Passing `schema_level=` here used to land
-                        # in for_each's **metadata_iterables catch-all
-                        # instead of actually requesting iteration: it
-                        # silently created a bogus metadata axis literally
-                        # named "schema_level", leaving the REAL schema key
-                        # (e.g. "subject") un-iterated. for_each then
-                        # entered aggregation mode and pooled every row
-                        # for a given key into one call — functions written
-                        # per-combo (e.g. gui_test_data.compute_max_vo2)
-                        # then crash on the multi-row table. See
-                        # execution_service.build_backend_pipeline's
-                        # schema_iterables comment for the same failure
-                        # mode, found earlier via a different call path.
-                        schema_keys=for_each_schema_keys,
-                    )
-                output = buf.getvalue()
-                if output:
-                    logger.debug(
-                        "[run_thread] Captured %d bytes of stdout (run_id=%s)",
-                        len(output),
-                        run_id,
-                    )
-                    emit(output)
-                target_ms = int((time.time() - started_at) * 1000)
-                target_failed = combo_totals["failed"] - target_snapshot["failed"]
-                target_no_data = combo_totals["no_data"] - target_snapshot["no_data"]
-                target_completed = (
-                    combo_totals["completed"] - target_snapshot["completed"]
-                )
-                if target_failed:
-                    logger.warning(
-                        "[run_thread] Target %d/%d (%s) finished in %d ms with "
-                        "%d failed combo(s) (completed=%d, no_data=%d) (run_id=%s)",
-                        idx,
-                        len(unique_targets),
-                        label,
-                        target_ms,
-                        target_failed,
-                        target_completed,
-                        target_no_data,
-                        run_id,
-                    )
-                    emit(
-                        run_failures.add_summary(
-                            target_summary["failures"],
-                            node_id=node_id,
-                            fn_name=function_name,
-                            target=label,
-                            completed=target_completed,
-                        )
-                        # The summary groups are the detail; never silent.
-                        or f"⚠ {label}: {target_failed} combo(s) failed\n"
-                    )
-                else:
-                    logger.info(
-                        "[run_thread] Target %d/%d (%s) completed successfully in %d ms (run_id=%s)",
-                        idx,
-                        len(unique_targets),
-                        label,
-                        target_ms,
-                        run_id,
-                    )
-            except KeyboardInterrupt:
-                # Force-cancel injected an interrupt into this thread (or the
-                # user pressed Ctrl-C in CLI mode).  Treat as cancel and stop.
-                logger.warning(
-                    "[run_thread] Target %d/%d (%s) interrupted by KeyboardInterrupt (force-cancel) (run_id=%s)",
-                    idx,
-                    len(unique_targets),
-                    label,
-                    run_id,
-                )
-                output = buf.getvalue()
-                if output:
-                    logger.debug(
-                        "[run_thread] Emitting %d bytes of partial stdout (run_id=%s)",
-                        len(output),
-                        run_id,
-                    )
-                    emit(output)
-                cancelled = True
-                emit("⛔ Force-cancelled\n")
+            if not _run_target(run, fn, prep, call, v, idx):
                 break
-            except Exception as exc:
-                logger.exception(
-                    "[run_thread] Target %d/%d (%s) failed with exception (run_id=%s)",
-                    idx,
-                    len(unique_targets),
-                    label,
-                    run_id,
-                )
-                # A stopped run's summary was emitted before the raise.
-                summary_text = run_failures.add_summary(
-                    target_summary["failures"],
-                    node_id=node_id,
-                    fn_name=function_name,
-                    target=label,
-                    completed=combo_totals["completed"] - target_snapshot["completed"],
-                )
-                if summary_text:
-                    emit(summary_text)
-                emit(
-                    run_failures.add_exception(
-                        exc, node_id=node_id, fn_name=function_name, target=label
-                    )
-                )
-                success = False
     except KeyboardInterrupt:
         # Defence in depth: if KeyboardInterrupt slips past the per-target
         # handler (e.g. fired between targets), still cancel cleanly.
@@ -881,75 +712,423 @@ def _run_in_thread(
             "[run_thread] Interrupted by KeyboardInterrupt at top level (run_id=%s)",
             run_id,
         )
-        cancelled = True
-        emit("⛔ Force-cancelled\n")
+        run.cancelled = True
+        run.emit("⛔ Force-cancelled\n")
     finally:
-        logger.info("[run_thread] Cleanup and completion (run_id=%s)", run_id)
-        duration_ms = int((time.time() - run_started_at) * 1000)
-        # Honest verdict: iteration failures never raise out of for_each,
-        # so a run with any failed combos is NOT a success.
-        if combo_totals["failed"] > 0:
-            success = False
-        # Read the final cancel flags from the registry before popping it.
-        logger.debug(
-            "[run_thread] Removing run from active registry (run_id=%s)", run_id
-        )
-        with _active_runs_lock:
-            entry = _active_runs.pop(run_id, None)
-        was_force = bool(entry and entry.get("force_cancelled"))
-        if cancel_event.is_set():
-            cancelled = True
-        logger.info(
-            "[run_thread] Thread finished (success=%s, cancelled=%s, force=%s, "
-            "completed_combos=%d, failed_combos=%d, no_data_combos=%d) in %d ms "
-            "(run_id=%s)",
-            success,
-            cancelled,
-            was_force,
-            combo_totals["completed"],
-            combo_totals["failed"],
-            combo_totals["no_data"],
-            duration_ms,
+        _report_run_done(run, run_started_at)
+
+
+def _build_target_call(
+    run: _SingleRun, prep: _PreparedRun, v: dict, idx: int
+) -> _TargetCall:
+    """Resolve one target's inputs and outputs. Raises KeyError or
+    UnconnectedOutputPortError when its types can't be resolved."""
+    run_id, function_name, node_id = run.run_id, run.function_name, run.node_id
+    logger.debug(
+        "[run_thread] Building inputs for target %d (run_id=%s)",
+        idx,
+        run_id,
+    )
+    # Variable-class inputs + scalar constants (pending overrides already
+    # applied in _prepare_run) + any PathInput-backed params — shared with
+    # the pipeline-compiler path so this logic (including PathInput
+    # construction) lives in one place. See execution_service.build_run_inputs.
+    from scistack_gui.services.execution_service import (
+        build_run_glue,
+        build_run_inputs,
+        build_run_declared_names,
+        declared_output_classes,
+        run_output_types,
+    )
+
+    inputs = build_run_inputs(v, function_name)
+    # Glue is a property of this step's input binding, resolved right beside
+    # the inputs it reshapes — never a step, never a run of its own.
+    glue_arg = build_run_glue(v, function_name) or None
+    parameter_names_arg = build_run_declared_names(v) or None
+    # The node's step name (Q6): its runs are named however they are started,
+    # so a later script run of the same step name is attributed to this node.
+    step_arg = step_name_of(run.db, node_id) if node_id else None
+    logger.debug(
+        "[run_thread] Built inputs for %d param(s): %s (run_id=%s)",
+        len(inputs),
+        list(inputs),
+        run_id,
+    )
+
+    # Kept for its KeyError: an unregistered output type fails here, before
+    # the outputs below are resolved.
+    registry.get_variable_class(v["output_type"])
+    # One output per call, except a for_columns selection that splits its
+    # groups across the node's outputs: then every output, in handle order
+    # (execution_service.run_output_types).
+    #
+    # Python ports declared on the node: one call, every port, in port order
+    # (port i = return value i).
+    declared = declared_output_classes(run.db, node_id, function_name)
+    if declared is not None:
+        declared_ports, declared_classes = declared
+        output_classes = [registry.get_variable_class(c) for c in declared_classes]
+    else:
+        declared_ports = None
+        output_classes = [
+            registry.get_variable_class(t)
+            for t in run_output_types(
+                inputs,
+                run.node_output_types,
+                v["output_type"],
+                prep.recorded_output_order,
+            )
+        ]
+    # INFO: which outputs this call writes, and in which order, is what
+    # output order is about (plan-output-order-owner Stage 0).
+    logger.info(
+        "[run_thread] target %d writes output(s) %s (target output_type=%s, "
+        "node handles=%s, run_id=%s)",
+        idx,
+        [c.__name__ for c in output_classes],
+        v["output_type"],
+        run.node_output_types,
+        run_id,
+    )
+    # The dispatch claim covers every output of the node's targets. A run
+    # that writes fewer leaves the rest unwritten, and the recorded wiring no
+    # longer matches the claim, so the next build mints a second node. The
+    # GUI sends its handles; say so when a request without them lands here.
+    unwritten = sorted(
+        {t.get("output_type") for t in prep.overridden_targets}
+        - {c.__name__ for c in output_classes}
+        - {None}
+    )
+    if unwritten:
+        logger.warning(
+            "[run_thread] target %d does not write output(s) %s of this "
+            "node (node handles=%s, recorded orders=%s, run_id=%s)",
+            idx,
+            unwritten,
+            run.node_output_types,
+            prep.recorded_output_order,
             run_id,
         )
-        if (
-            success
-            and not cancelled
-            and sum(combo_totals[k] for k in ("completed", "failed", "no_data")) == 0
-        ):
-            # A run that iterated zero times wrote nothing, so every node it
-            # touches stays red while the run itself reports success. Said
-            # out loud because the alternative is inferring it from the
-            # target's binding line several hundred entries earlier.
-            logger.warning(
-                "[run_thread] '%s' completed without running a single "
-                "combination — nothing was computed and no records were "
-                "written, so its nodes will stay red. Check that the "
-                "function's inputs are wired to the right handles and that "
-                "any PathInput resolves to real files (run_id=%s)",
-                function_name,
-                run_id,
+    return _TargetCall(
+        inputs=inputs,
+        glue=glue_arg,
+        parameter_names=parameter_names_arg,
+        step=step_arg,
+        output_classes=output_classes,
+        declared_ports=declared_ports,
+    )
+
+
+def _target_label(function_name: str, v: dict) -> str:
+    """``fn(k=v, ...)`` for a target's console lines (constants are final:
+    pending overrides already applied)."""
+    if not v["constants"]:
+        return function_name
+    consts = ", ".join(f"{k}={val}" for k, val in v["constants"].items())
+    return f"{function_name}({consts})"
+
+
+def _binding_summary(v: dict) -> dict:
+    """Every binding kind, tagged by origin. This used to print
+    ``input_types`` alone — variables only — so a healthy PathInput-fed run
+    logged ``inputs={}``, which is the exact signature the zero-combo
+    warning in ``_report_run_done`` tells you to look for."""
+    summary = {}
+    for param, b in (v.get("bindings") or {}).items():
+        if b["kind"] == "variable":
+            summary[param] = b["ref"]
+        elif b["kind"] == "colname":
+            summary[param] = "ColName()"
+        else:
+            summary[param] = f"{b['kind']}:{b['ref']}"
+    return summary
+
+
+def _run_target(
+    run: _SingleRun,
+    fn,
+    prep: _PreparedRun,
+    call: _TargetCall,
+    v: dict,
+    idx: int,
+) -> bool:
+    """Run for_each for one target. False = stop the loop (force-cancelled)."""
+    run_id, function_name = run.run_id, run.function_name
+    n_targets = len(prep.targets)
+    label = _target_label(function_name, v)
+    bindings = _binding_summary(v)
+    logger.info(
+        "[run_thread] Target %d/%d -> %s, inputs=%s, constants=%s, "
+        "output=%s (run_id=%s)",
+        idx,
+        n_targets,
+        label,
+        bindings or "{} (nothing wired)",
+        v.get("constants") or {},
+        v["output_type"],
+        run_id,
+    )
+    run.emit(f"▶ Running {label}\n")
+
+    # Emit structured run_start message for the frontend.
+    logger.debug(
+        "[run_thread] Emitting run_start message for target %d (run_id=%s)",
+        idx,
+        run_id,
+    )
+    started_at = time.time()
+    push_message(
+        {
+            "type": "run_start",
+            "run_id": run_id,
+            "function_name": function_name,
+            "constants": v["constants"],
+            "input_types": {k: str(vt) for k, vt in v["input_types"].items()},
+            "output_type": v["output_type"],
+            "started_at": started_at,
+        }
+    )
+
+    combo_totals = run.combo_totals
+    target_snapshot = dict(combo_totals)
+    target_summary: dict = {"failures": []}
+
+    # Progress callback: relay structured progress to the frontend.
+    def _progress_fn(info: dict):
+        # The end-of-run summary carries this target's final counts.
+        if info.get("event") == "summary":
+            target_summary["failures"] = info.get("failures") or []
+            combo_totals["completed"] += info.get("completed", 0)
+            no_data = info.get("no_data", 0)
+            combo_totals["failed"] += info.get(
+                "failed", info.get("skipped", 0) - no_data
             )
-        logger.debug("[run_thread] Emitting run_done message (run_id=%s)", run_id)
+            combo_totals["no_data"] += no_data
+        # Convert metadata values to strings for JSON serialization.
+        meta = {str(k): str(val) for k, val in info.get("metadata", {}).items()}
+        logger.debug(
+            "[run_thread] Progress update: event=%s, current=%d, total=%d (run_id=%s)",
+            info["event"],
+            info["current"],
+            info["total"],
+            run_id,
+        )
         push_message(
             {
-                "type": "run_done",
+                "type": "run_progress",
                 "run_id": run_id,
-                "success": success,
-                "duration_ms": duration_ms,
-                "cancelled": cancelled,
-                "force_cancelled": was_force,
-                "completed_combos": combo_totals["completed"],
-                "failed_combos": combo_totals["failed"],
-                "no_data_combos": combo_totals["no_data"],
-                "stopped": run_failures.stopped,
-                # Every node this run covered, mapped to its failed groups
-                # (empty = ran clean: its badge and Problems entries clear).
-                "failures": run_failures.to_wire([node_id] if node_id else []),
+                "event": info["event"],
+                "current": info["current"],
+                "total": info["total"],
+                "completed": info["completed"],
+                "skipped": info["skipped"],
+                "no_data": info.get("no_data"),
+                "metadata": meta,
+                # combo_skip: the small failure form (reason, no_data,
+                # user_frame); tracebacks travel once, in run_done.
+                "failure": info.get("failure"),
             }
         )
-        logger.debug("[run_thread] Emitting dag_updated message (run_id=%s)", run_id)
-        notify_records_changed()
+
+    # Relay the run narrative (log records) plus any stdout (dry-run output)
+    # to the frontend console.
+    logger.info(
+        "[run_thread] Executing for_each for target %d (run_id=%s)", idx, run_id
+    )
+    buf = StringIO()
+    try:
+        # This run reads the intent store (rule 3): label it so the `_run`
+        # row says so, and a later script run of the same function can be
+        # told apart from it on the canvas.
+        relay = _RunLogRelay(run.emit)
+        names = run_output_names(call.declared_ports)
+        with relay, redirect_stdout(buf), run_origin(ORIGIN_GUI), names:
+            for_each(
+                fn,
+                inputs=call.inputs,
+                outputs=call.output_classes,
+                dry_run=prep.dry_run,
+                save=prep.save,
+                distribute=prep.distribute,
+                as_table=prep.as_table,
+                where=prep.where_arg,
+                skip_computed=False,
+                on_error=prep.on_error,
+                glue=call.glue,
+                parameter_names=call.parameter_names,
+                step=call.step,
+                hooks=LoopHooks(progress_fn=_progress_fn, cancel_check=run.is_cancelled),
+                # The picker's pair, applied to the COMBO list by scifor.
+                # Distinct from schema_keys below, which says which keys to
+                # iterate at all.
+                locations=run.schema_selection,
+                # scidb.for_each's parameter is `schema_keys`. `schema_level`
+                # is this module's GUI-facing name for it; passing
+                # `schema_level=` once landed in for_each's
+                # **metadata_iterables catch-all and silently made a bogus
+                # metadata axis (see execution_service.build_backend_pipeline).
+                schema_keys=prep.for_each_schema_keys,
+            )
+        output = buf.getvalue()
+        if output:
+            logger.debug(
+                "[run_thread] Captured %d bytes of stdout (run_id=%s)",
+                len(output),
+                run_id,
+            )
+            run.emit(output)
+        target_ms = int((time.time() - started_at) * 1000)
+        target_failed = combo_totals["failed"] - target_snapshot["failed"]
+        target_no_data = combo_totals["no_data"] - target_snapshot["no_data"]
+        target_completed = combo_totals["completed"] - target_snapshot["completed"]
+        if target_failed:
+            logger.warning(
+                "[run_thread] Target %d/%d (%s) finished in %d ms with "
+                "%d failed combo(s) (completed=%d, no_data=%d) (run_id=%s)",
+                idx,
+                n_targets,
+                label,
+                target_ms,
+                target_failed,
+                target_completed,
+                target_no_data,
+                run_id,
+            )
+            run.emit(
+                run.run_failures.add_summary(
+                    target_summary["failures"],
+                    node_id=run.node_id,
+                    fn_name=function_name,
+                    target=label,
+                    completed=target_completed,
+                )
+                # The summary groups are the detail; never silent.
+                or f"⚠ {label}: {target_failed} combo(s) failed\n"
+            )
+        else:
+            logger.info(
+                "[run_thread] Target %d/%d (%s) completed successfully in %d ms (run_id=%s)",
+                idx,
+                n_targets,
+                label,
+                target_ms,
+                run_id,
+            )
+    except KeyboardInterrupt:
+        # Force-cancel injected an interrupt into this thread (or the user
+        # pressed Ctrl-C in CLI mode).  Treat as cancel and stop.
+        logger.warning(
+            "[run_thread] Target %d/%d (%s) interrupted by KeyboardInterrupt (force-cancel) (run_id=%s)",
+            idx,
+            n_targets,
+            label,
+            run_id,
+        )
+        output = buf.getvalue()
+        if output:
+            logger.debug(
+                "[run_thread] Emitting %d bytes of partial stdout (run_id=%s)",
+                len(output),
+                run_id,
+            )
+            run.emit(output)
+        run.cancelled = True
+        run.emit("⛔ Force-cancelled\n")
+        return False
+    except Exception as exc:
+        logger.exception(
+            "[run_thread] Target %d/%d (%s) failed with exception (run_id=%s)",
+            idx,
+            n_targets,
+            label,
+            run_id,
+        )
+        # A stopped run's summary was emitted before the raise.
+        summary_text = run.run_failures.add_summary(
+            target_summary["failures"],
+            node_id=run.node_id,
+            fn_name=function_name,
+            target=label,
+            completed=combo_totals["completed"] - target_snapshot["completed"],
+        )
+        if summary_text:
+            run.emit(summary_text)
+        run.emit(
+            run.run_failures.add_exception(
+                exc, node_id=run.node_id, fn_name=function_name, target=label
+            )
+        )
+        run.success = False
+    return True
+
+
+def _report_run_done(run: _SingleRun, run_started_at: float) -> None:
+    """The run's verdict: unregister it, then push run_done and dag_updated."""
+    run_id, combo_totals = run.run_id, run.combo_totals
+    logger.info("[run_thread] Cleanup and completion (run_id=%s)", run_id)
+    duration_ms = int((time.time() - run_started_at) * 1000)
+    # Honest verdict: iteration failures never raise out of for_each, so a
+    # run with any failed combos is NOT a success.
+    if combo_totals["failed"] > 0:
+        run.success = False
+    # Read the final cancel flags from the registry before popping it.
+    logger.debug("[run_thread] Removing run from active registry (run_id=%s)", run_id)
+    with _active_runs_lock:
+        entry = _active_runs.pop(run_id, None)
+    was_force = bool(entry and entry.get("force_cancelled"))
+    if run.cancel_event.is_set():
+        run.cancelled = True
+    logger.info(
+        "[run_thread] Thread finished (success=%s, cancelled=%s, force=%s, "
+        "completed_combos=%d, failed_combos=%d, no_data_combos=%d) in %d ms "
+        "(run_id=%s)",
+        run.success,
+        run.cancelled,
+        was_force,
+        combo_totals["completed"],
+        combo_totals["failed"],
+        combo_totals["no_data"],
+        duration_ms,
+        run_id,
+    )
+    ran_nothing = (
+        sum(combo_totals[k] for k in ("completed", "failed", "no_data")) == 0
+    )
+    if run.success and not run.cancelled and ran_nothing:
+        # A run that iterated zero times wrote nothing, so every node it
+        # touches stays red while the run itself reports success. Said out
+        # loud because the alternative is inferring it from the target's
+        # binding line several hundred entries earlier.
+        logger.warning(
+            "[run_thread] '%s' completed without running a single "
+            "combination — nothing was computed and no records were "
+            "written, so its nodes will stay red. Check that the "
+            "function's inputs are wired to the right handles and that "
+            "any PathInput resolves to real files (run_id=%s)",
+            run.function_name,
+            run_id,
+        )
+    logger.debug("[run_thread] Emitting run_done message (run_id=%s)", run_id)
+    push_message(
+        {
+            "type": "run_done",
+            "run_id": run_id,
+            "success": run.success,
+            "duration_ms": duration_ms,
+            "cancelled": run.cancelled,
+            "force_cancelled": was_force,
+            "completed_combos": combo_totals["completed"],
+            "failed_combos": combo_totals["failed"],
+            "no_data_combos": combo_totals["no_data"],
+            "stopped": run.run_failures.stopped,
+            # Every node this run covered, mapped to its failed groups
+            # (empty = ran clean: its badge and Problems entries clear).
+            "failures": run.run_failures.to_wire([run.node_id] if run.node_id else []),
+        }
+    )
+    logger.debug("[run_thread] Emitting dag_updated message (run_id=%s)", run_id)
+    notify_records_changed()
 
 
 def _report_crashed_run(run_id: str, function_name: str, exc: BaseException) -> None:
@@ -1178,6 +1357,7 @@ def route_matlab_single_run(
         run_id,
         _run_matlab_function_in_thread,
         (run_id, function_name, params, db),
+        db=db,
         matlab_sidecar=True,
     )
     return {"run_id": run_id, "language": "matlab"}
@@ -1308,7 +1488,7 @@ def start_run(db: DatabaseManager, req: "RunRequest", *, transport: str) -> dict
                 release_db_connection()
 
     logger.info("[run_service] Spawning background thread for run_id=%s", run_id)
-    _start_run_thread(run_id, _run_wrapper)
+    _start_run_thread(run_id, _run_wrapper, db=db)
     return {"run_id": run_id}
 
 
@@ -1330,33 +1510,8 @@ def _run_pipeline_in_thread(
 
     def emit(text: str):
         push_message({"type": "run_output", "run_id": run_id, "text": text})
-
-    class _RunLogRelay(logging.Handler):
-        _RELAY_LOGGERS = ("scifor", "scidb")
-
-        def __init__(self):
-            super().__init__(level=logging.INFO)
-            self.setFormatter(logging.Formatter("%(message)s"))
-
-        def emit(self, record):
-            try:
-                emit(self.format(record) + "\n")
-            except Exception:
-                pass
-
-        def __enter__(self):
-            for name in self._RELAY_LOGGERS:
-                logging.getLogger(name).addHandler(self)
-            return self
-
-        def __exit__(self, *exc):
-            for name in self._RELAY_LOGGERS:
-                logging.getLogger(name).removeHandler(self)
-            return False
-
     cancel_event = _register_run(run_id, threading.current_thread())
-    db.set_current_db()
-    enter_project_root()  # see _run_in_thread
+    enter_project_root()  # see _run_in_thread; db entered by _start_run_thread
     logger.info(
         "[pipeline_run] run_id=%s scope=%s mode=%s target=%r",
         run_id,
@@ -1377,11 +1532,9 @@ def _run_pipeline_in_thread(
     # Filled by run_pipeline even when a step raises (on_error="stop").
     report_sink: list = []
     pending_exc_text = ""
-    from scistack_gui.services.run_failures import RunFailures
-
     run_failures = RunFailures(run_id)
     try:
-        with _RunLogRelay(), redirect_stdout(buf):
+        with _RunLogRelay(emit), redirect_stdout(buf):
             result = run_pipeline(
                 db,
                 pipeline_id,
@@ -1526,7 +1679,6 @@ def _run_matlab_pipeline_in_thread(
     cancel_event = _register_run(
         run_id, threading.current_thread(), matlab_sidecar=True
     )
-    db.set_current_db()
     run_started_at = time.time()
     logger.info(
         "[pipeline_run][matlab] run_id=%s scope=%s mode=%s target=%r",
@@ -1654,7 +1806,6 @@ def _run_matlab_function_in_thread(
             (result.get("warnings") or []) + (result.get("diagnostics") or [])
         )
 
-    db.set_current_db()
     logger.info(
         "[run_thread][matlab] single-node run via sidecar (run_id=%s fn=%s)",
         run_id,
@@ -1785,6 +1936,7 @@ def start_matlab_sidecar_run(
         run_id,
         _run_matlab_command_in_thread,
         (run_id, command, warnings or []),
+        db=None,  # MATLAB opens the file itself
         matlab_sidecar=True,
     )
     return {"run_id": run_id, "sidecar_available": True}
@@ -1863,6 +2015,7 @@ def start_pipeline_run(
             rid,
             _run_matlab_pipeline_in_thread,
             (rid, pipeline_id, mode, target, skip_computed, db),
+            db=db,
             matlab_sidecar=True,
         )
         return {"run_id": rid}
@@ -1871,6 +2024,7 @@ def start_pipeline_run(
         rid,
         _run_pipeline_in_thread,
         (rid, pipeline_id, mode, target, skip_computed, db),
+        db=db,
     )
     return {"run_id": rid}
 

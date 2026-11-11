@@ -489,7 +489,7 @@ class TestLastRunReport:
         )
 
         def fake_for_each(fn, inputs, outputs, **kwargs):
-            progress_fn = kwargs.get("_progress_fn")
+            progress_fn = kwargs["hooks"].progress_fn if kwargs.get("hooks") else None
             if progress_fn is not None:
                 progress_fn(
                     {

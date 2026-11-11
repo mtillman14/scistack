@@ -15,6 +15,7 @@ happily while the semantics drifted).
 from __future__ import annotations
 
 import pytest
+from scifor import LoopHooks
 from scistackplot import PlotKind, PlotSpec, Role, resolve
 
 from scistackplotdb import ScidbSource, generate_endpoint
@@ -47,7 +48,7 @@ def _run_generated(code, tmp_path, extra: dict | None = None):
             if event.get("event") == "summary":
                 failures.update(event.get("failure_reasons") or {})
 
-        return for_each(*args, _progress_fn=_progress, **kwargs)
+        return for_each(*args, hooks=LoopHooks(progress_fn=_progress), **kwargs)
 
     namespace = {
         "for_each": _capturing_for_each,
