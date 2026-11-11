@@ -589,17 +589,32 @@ def test_save_figure_writes_a_png(populated_db, tmp_path):
     assert target.exists() and target.stat().st_size > 0
 
 
-def test_save_figure_uses_full_resolution(populated_db, tmp_path):
+def test_save_figure_uses_full_resolution(populated_db, tmp_path, monkeypatch):
     """
     The interactive view is downsampled for transport; a saved figure must not
     be. Nothing in save_figure may pass max_points.
-    """
-    import inspect
 
-    # Drop the docstring, which mentions max_points precisely to explain why the
-    # body must not use it.
-    body = inspect.getsource(plot_service.save_figure).split('"""', 2)[-1]
-    assert "max_points" not in body
+    Behaviour, not wording (grug stage source_text_test_review): this used to
+    grep save_figure's source for the word ``max_points``. Now it watches the
+    resolve calls a save actually makes.
+    """
+    import scistackplot
+
+    seen: list = []
+    for name in ("resolve", "resolve_one"):
+        real = getattr(scistackplot, name)
+
+        def spy(*args, _real=real, **kwargs):
+            seen.append(kwargs.get("max_points"))
+            return _real(*args, **kwargs)
+
+        monkeypatch.setattr(scistackplot, name, spy)
+
+    spec = _pooled_spec(populated_db)
+    result = plot_service.save_figure(populated_db, spec, str(tmp_path / "full.png"))
+    assert result["files"], result
+    assert seen, "save_figure resolved nothing"
+    assert all(m is None for m in seen), seen
 
 
 def test_save_figure_honours_the_suffix(populated_db, tmp_path):
@@ -1604,16 +1619,17 @@ def test_notify_still_updates_the_dag_if_invalidation_fails(
 
 
 def _plot_studio_style(name: str) -> str:
-    """The body of one entry in PlotStudio.tsx's ``styles`` map."""
+    """The body of one entry in PlotStudio's ``styles`` map (plotStudioStyles.ts,
+    its one owner since the grug plotstudio_split)."""
     import re
     from pathlib import Path
 
     source = (
         Path(__file__).parent.parent
-        / "frontend/src/components/PlotStudio/PlotStudio.tsx"
+        / "frontend/src/components/PlotStudio/plotStudioStyles.ts"
     ).read_text()
     match = re.search(rf"\n  {name}: \{{(.*?)\n?  \}},", source, re.DOTALL)
-    assert match, f"PlotStudio.tsx has no {name!r} style"
+    assert match, f"plotStudioStyles.ts has no {name!r} style"
     return match.group(1)
 
 
@@ -1636,12 +1652,12 @@ def test_collapsed_controls_keep_the_scroll_property():
 
     for name, style in (("controls", open_style), ("controlsHidden", hidden_style)):
         assert "overflow:" not in style, (
-            f"PlotStudio.tsx styles.{name} uses the `overflow` shorthand; the "
+            f"plotStudioStyles.ts styles.{name} uses the `overflow` shorthand; the "
             "two states are merged, so clearing it on reopen also clears the "
             "other state's overflowY. Use overflowX/overflowY."
         )
         assert "overflowY" in style, (
-            f"PlotStudio.tsx styles.{name} must state overflowY explicitly — a "
+            f"plotStudioStyles.ts styles.{name} must state overflowY explicitly — a "
             "property present in only one of the two merged states is the "
             "property React silently drops."
         )
