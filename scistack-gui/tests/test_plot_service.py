@@ -2197,7 +2197,8 @@ def test_schema_keys_no_longer_write_row_filters():
     renders one button, and `setLevelFilter` must be reachable only from the
     Filters section below it.
     """
-    source = _frontend_source("frontend/src/components/PlotStudio/PlotStudio.tsx")
+    # The rail groups live in PlotStudioRail.tsx since the grug plotstudio_split.
+    source = _frontend_source("frontend/src/components/PlotStudio/PlotStudioRail.tsx")
 
     # The opening tag as a PATTERN, not a literal: 4036eaf1 wrapped it across
     # lines and added a `hint`, and the literal split then reported the
@@ -2221,7 +2222,14 @@ def test_schema_keys_no_longer_write_row_filters():
 
     # `setLevelFilter` itself survives — the Filters section (non-schema
     # factors: a struct's fields, a joined group variable) still needs it.
-    assert "const setLevelFilter" in source
+    # The rail uses it; its definition lives in whichever PlotStudio state
+    # hook owns its section (use*.tsx since the grug plotstudio_split).
+    assert "setLevelFilter" in source.split(body, 1)[1], "the Filters section lost setLevelFilter"
+    from pathlib import Path
+
+    studio = Path(__file__).parent.parent / "frontend/src/components/PlotStudio"
+    defined = [p.name for p in studio.glob("*.tsx") if "const setLevelFilter" in p.read_text()]
+    assert defined, "setLevelFilter is no longer defined anywhere in PlotStudio"
 
 
 def test_the_picker_only_ever_reads():

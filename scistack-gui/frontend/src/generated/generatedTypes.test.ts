@@ -11,7 +11,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -52,7 +52,13 @@ test(
 test('the spec types are not hand-written again', () => {
   const twins: [string, RegExp][] = [
     [join(root, 'src', 'components', 'StatStudio', 'statsSpec.ts'), /\binterface (StatsSpec|Analysis|DV|CovariateBinding|Formatting|Overlay|GuideState)\b/m],
-    [join(root, 'src', 'components', 'PlotStudio', 'PlotStudio.tsx'), /\binterface (CustomPlotSpec|Spec|FactorVariable|Filter|VariantSet)\b|^type Role = '/m],
+    // PlotStudio.tsx was split (grug plotstudio_split): its types, state and
+    // rail live in these files now, and none may re-declare a spec type.
+    ...readdirSync(join(root, 'src', 'components', 'PlotStudio'))
+      .filter((name) => /^(PlotStudio|plotStudio|use)[A-Za-z]*\.tsx?$/.test(name) && !name.includes('.test.'))
+      .map(
+      (name): [string, RegExp] => [join(root, 'src', 'components', 'PlotStudio', name), /\binterface (CustomPlotSpec|Spec|FactorVariable|Filter|VariantSet)\b|^(export )?type Role = '/m],
+    ),
     [join(root, 'src', 'components', 'PlotStudio', 'plotSpecReducer.ts'), /\binterface (PlotSpecFields|FacetOptions|YAxis|Matcher|StylePatch)\b|^export type MatchOp = '/m],
     [join(root, 'src', 'components', 'PlotStudio', 'continuousKinds.ts'), /\binterface (HistogramOptions|RegressionOptions|KdeOptions)\b|^export type (BinMode|HistStat|HistMultiple|FitBy|StatsCorner) = '/m],
     [join(root, 'src', 'components', 'PlotStudio', 'compare.ts'), /\binterface Comparison\b|^export type CompareMode = '/m],

@@ -34,6 +34,19 @@ See `docs/claude/grugbrain-principles.md`.
 - [ ] Open Plot Studio on a variable. Every rail group opens. Change the figure size, units and a text
   size. Add a Combine bucket and a range filter. Save a figure; the dpi readout says 200 dpi.
 - [ ] Plot Studio looks the same in light and dark mode (the styles moved files unchanged).
+- [ ] **Plot Studio part 2 (rail groups + state hooks).** Each rail group renders and its controls take
+  effect. Each line below exercises one of the new hooks:
+  - **Data:** pick a variant row, open the location picker, add a filter.
+  - **Chart:** switch plot type (bar → histogram → scatter); change a statistic.
+  - **Structure:** move a factor between roles; add and rename a Combine bucket (`useCombines`).
+  - **Statistics:** Show sample, difference bars (when offered).
+  - **Appearance:** text sizes, X tick labels, colours.
+  - **Step by step** view and back to **Advanced** (`useStepByStep`).
+  - **Figure size** toolbar: width/height, unit, aspect lock (`useFigureSize`).
+  - **Export:** save image, save data, copy image (`useExport`).
+  - **Saved plots:** save one, reopen it (`useSavedPlots`). **Presets:** save and apply one (`usePresets`).
+  - Opened from a canvas plot node, the pin notice still shows (`usePinReport`).
+  - StatStudio's design rail (which mounts the Data and Structure groups) still works.
 
 ---
 
