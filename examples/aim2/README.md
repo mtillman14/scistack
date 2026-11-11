@@ -66,7 +66,7 @@ only its own keys — then the processing steps, one `for_each` feature each:
 | `load_cycle_symmetry` / `load_trial_info` / `load_session_info` / `load_demographics` | `PathInput` at the cycle, trial, session and subject levels |
 | `ankle_over_threshold` | `CycleSymmetry["ankle"]` (one column) + a two-value `Parameter` (two variants) |
 | `trial_mean_symmetry` | `as_table` — a trial's ten cycles arrive as one DataFrame |
-| `cycle_deviation` | `as_table` + `distribute=True` — one row back out per cycle, addressed by the returned `cycle` column |
+| `cycle_deviation` | `as_table` + a returned `cycle` column — one row back out per cycle, addressed by that column (no `distribute`: the table already carries every key) |
 | `scale_joint` | `for_columns()` — runs once per joint column, reassembled into one table |
 | `load_cycle_waveform` / `knee_excursion` | a 1-D variable (dict of lists, one curve per joint) and a 1-D input reduced to a scalar |
 | `load_joint_coupling` | a 2-D variable (a matrix per trial) — the heatmap path |

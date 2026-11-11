@@ -99,8 +99,10 @@ def test_trial_means_are_the_mean_of_that_trials_cycles(pipeline, example_db):
         assert float(cell(one["data"], joint)) == pytest.approx(sum(values) / len(values))
 
 
-def test_distribute_files_each_row_at_its_own_cycle(pipeline, example_db):
-    """The returned ``cycle`` column addresses the pieces — row "07" lands at
+def test_returned_cycle_column_files_each_row_at_its_own_cycle(pipeline, example_db):
+    """The returned ``cycle`` column addresses the pieces (the spread rule;
+    the example dropped distribute=True when scifor.distribute began refusing
+    a table that carries every key) — row "07" lands at
     cycle="07", the zero-padded STRING, not at ordinal 7."""
     deviation = _frame(pipeline.CycleDeviation)
     assert len(deviation) == N_CYCLES

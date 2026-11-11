@@ -216,14 +216,15 @@ def main(db_path=None, subjects=(), sessions=()) -> None:
     )
 
     # 7. Same coarse iteration, but the function returns one row per cycle.
-    #    distribute=True files those rows back at the cycle level, addressed
-    #    by the returned `cycle` column.
+    #    The returned `cycle` column files each row back at its own cycle (the
+    #    spread rule). No distribute=True: the table already carries every key
+    #    down to the deepest, so there is no lower level to distribute to
+    #    (scifor.distribute, DistributeError since 2026-11-04).
     scidb.for_each(
         cycle_deviation,
         inputs={"cycles": CycleSymmetry},
         outputs=[CycleDeviation],
         as_table=["cycles"],
-        distribute=True,
         subject=subject,
         session=session,
         speed=[],

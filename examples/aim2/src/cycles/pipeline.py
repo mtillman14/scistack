@@ -18,7 +18,7 @@ doubles as a pipeline smoke test:
 | ``load_trial_info`` / ``load_session_info`` / ``load_demographics`` | the same, at the trial, session and subject levels |
 | ``ankle_over_threshold``  | ``ColumnSelection`` (``CycleSymmetry["ankle"]``) + ``Parameter`` (two values = two variants) |
 | ``trial_mean_symmetry``   | ``as_table`` — every cycle of a trial arrives as one DataFrame |
-| ``cycle_deviation``       | ``as_table`` + ``distribute=True`` — one row back out per cycle |
+| ``cycle_deviation``       | ``as_table`` + a returned ``cycle`` column — one row back out per cycle |
 | ``scale_joint``           | ``for_columns`` — the function runs once per joint column |
 | ``normalized_knee``       | **three levels in one call** — a cycle value, its trial's speed, its subject's height |
 | ``trial_cadence``         | a cycle-level table plus a trial-level column |
@@ -224,7 +224,7 @@ def trial_mean_symmetry(cycles):
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — a table in, one record per cycle back out (as_table + distribute)
+# Step 4 — a table in, one record per cycle back out (as_table + returned keys)
 # ---------------------------------------------------------------------------
 
 
@@ -232,8 +232,9 @@ def cycle_deviation(cycles):
     """Each cycle's distance from its own trial's mean, per joint.
 
     Takes the trial's cycles as one frame and returns one row per cycle,
-    keeping the ``cycle`` column. With ``distribute=True`` that column
-    addresses the pieces, so row "07" is saved at ``cycle="07"`` rather than
+    keeping the ``cycle`` column. That column addresses the pieces (the
+    spread rule; ``distribute=True`` is refused for a table that carries
+    every key), so row "07" is saved at ``cycle="07"`` rather than
     at a positional ordinal — which matters here because the cycles are
     zero-padded strings.
     """
