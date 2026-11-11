@@ -6,6 +6,8 @@ NOTE 3: As much as possible and as appropriate, solutions to problems should liv
 
 NOTE 4: It is extremely important that one concept should have one owner, and one or more consumers. Divergence betweeen multiple owners for identical concepts has been one of the most frequent sources of bugs in this project. To fix that, please make sure that every concept has only one owner, so no readers can diverge.
 
+NOTE 5: Follow the design advice at https://grugbrain.dev: complexity is the enemy. Say no to features (or build an 80/20 version), factor code only at natural cut points, keep APIs simple for the common case, prefer integration tests, and understand code before removing it (Chesterton's fence). How these principles map onto this project's rules, and where they don't apply, is in docs/claude/grugbrain-principles.md. Read it before adding to a hot spot (scidb/run/foreach.py, DatabaseManager, PlotStudio.tsx, run_service.py).
+
 This is a software package to facilitate scientific data processing. You should learn more about it by reading the README.md
 
 There are several submodules in this package. Here are the folders that they are in, and their general purpose within the package:

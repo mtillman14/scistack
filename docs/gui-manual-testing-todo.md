@@ -11,6 +11,32 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzz. Runs and Plot Studio after the grug refactors — added 2026-11-10
+
+**What changed:** no feature changed; code moved. `run_service._run_in_thread` was split into named
+phases, and run threads now enter the database through `scidb.using_db`. `scidb.for_each`'s private
+`_progress_fn=` / `_cancel_check=` became `hooks=LoopHooks(...)`. `PlotStudio.tsx` was split into
+`plotStudioTypes.ts`, `PlotStudioControls.tsx` and `plotStudioStyles.ts`, and both bundles were rebuilt.
+See `docs/claude/grugbrain-principles.md`.
+
+**Backend steps:**
+1. Rebuild the extension if you run it from source (`npm run build:all` in `scistack-gui/extension`).
+2. Optional: `pip install playwright && playwright install chromium`, then
+   `pytest scistack-gui/tests/e2e -v` runs the three automated smoke paths (canvas, ▶ Run, Plot Studio).
+   Quit any running GUI first, because the tests need port 8765.
+
+**Frontend steps:**
+- [ ] ▶ Run on a Python function node: the progress bar moves, the run log fills, and the node turns
+  green. `scistack.log` has `[run_thread] phase resolve_function done`, `phase prepare done` and
+  `phase execute done`, each with a time in ms.
+- [ ] Cancel a long run part-way: it stops between combinations, and the log shows `phase execute done`.
+- [ ] Run a whole pipeline (▶ on the pipeline tab): every step's counts appear, as before.
+- [ ] Open Plot Studio on a variable. Every rail group opens. Change the figure size, units and a text
+  size. Add a Combine bucket and a range filter. Save a figure; the dpi readout says 200 dpi.
+- [ ] Plot Studio looks the same in light and dark mode (the styles moved files unchanged).
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzz. Export & Import Walkthrough: follow it, take its screenshots — added 2026-11-08
 
 **What changed:** a new docs page, `docs/sharing/export-import-walkthrough.ui.md`, takes the Best Player

@@ -113,3 +113,26 @@ those areas go to a backlog first.
 - No microservice-style splitting and no new packages: there are already 12, and
   `scistackstatsdb` is 404 lines.
 - No line-count or complexity pin tests (user rule).
+
+---
+
+## Status (2026-11-10, all stages written, uncommitted, tests to be run by the user)
+
+Restore point: `e4ebbf93`.
+
+| Stage | Status | Notes |
+|---|---|---|
+| explicit_db_at_thread_entry | done | `scidb.using_db` (store/database.py), exported from `scidb`, documented in docs/api/database.md. `_start_run_thread(..., db=)` takes `db` as a required keyword and is the only thread entry. Tests: `scidb/tests/test_using_db.py`, `scistack-gui/tests/test_run_thread_entry.py`. |
+| split_run_in_thread | done | `_run_in_thread` is now under 80 lines, plus `_resolve_function`, `_prepare_run`, `_execute_targets`, `_build_target_call`, `_run_target`, `_report_run_done`, and `_SingleRun` / `_PreparedRun` / `_TargetCall`. Phase timing: `[run_thread] phase <name> done in N ms`. `_RunLogRelay` is one module-level owner (the pipeline run had a second copy). |
+| for_each_api_layers | done, **narrowed** | Only the 4 private hooks moved, into `hooks=scifor.LoopHooks(...)`, reusing scifor's object rather than a new `RunHooks`. **Correction:** `glue`, `step`, `share_limits`, `pipeline` are NOT GUI-only: code export writes `glue=`/`step=`, users set `share_limits`, `pipeline` is the Pipeline API. No `GuiRunContext`. Leftover `_x=` keywords raise (`scifor.options.reject_private_options`). |
+| plotstudio_split | **partly done** | Mechanical split: PlotStudio.tsx 6970 → 4486 lines, plus `plotStudioTypes.ts` (574), `PlotStudioControls.tsx` (1412), `plotStudioStyles.ts` (537). tsc clean, 743 frontend tests pass, both bundles rebuilt. **Not done:** one component per rail group with one `usePlotStudioState` reducer. 63 `useState` across 3,600 lines can't be moved safely without checking the GUI by eye after each group. That is the next step, one rail group per commit. |
+| lazy_import_triage | done | run_service.py 44 → 33 function-level imports (the leaf ones dodged no cycle), plus scidb foreach.py's `scifor.options` import. `execution_service` and the MATLAB modules stay lazy: nothing imports them at module level, a fence not yet understood. |
+| source_text_test_review | done | 2 wording tests became behaviour tests (`test_save_figure_uses_full_resolution`, `test_exported_header_imports_what_repr_emits`). Kept as owner/parity guards: cross-language spelling checks (TSX handle ids, node types), the AST thread guard, lock-check guard, MATLAB source checks (MATLAB cannot run in CI). |
+| gui_smoke_e2e | done (opt-in) | `scistack-gui/tests/e2e/test_gui_smoke.py`: canvas renders, ▶ Run reaches `run_done` success (read off the WebSocket), Plot Studio reaches `/api/plot/describe`. Skips without Playwright. Needs port 8765 because `useWebSocket.ts` hard-codes it, which is itself a finding. |
+| knowledge_consolidation | done | 142 plans with last commit before 2026-08-01, plus plan-topologies-panel, moved to `.claude/archive/` (moved, with a README). `docs/claude/README.md` index by layer. Memory: topologies note merged into project_variants_popup. |
+| repo_hygiene | done | `tmp.py` and `test-failures.txt` untracked and ignored; the files stay on disk. `*.log` was already ignored. |
+| saying_no | recorded | Memory `project_grugbrain_review`: no new features in foreach.py / DatabaseManager / PlotStudio.tsx until the reducer step and the test run land. |
+
+### Backlog (found during the stages)
+- `useWebSocket.ts` hard-codes port 8765 while `--port` is configurable. Two owners of one fact.
+- The remaining long phase: `_prepare_run` is about 250 lines of sequential steps. Split it if it changes again.
