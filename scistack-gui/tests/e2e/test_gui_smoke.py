@@ -12,8 +12,9 @@ test suite:
 * Open Plot Studio on a variable reaches ``/api/plot/describe``.
 
 Opt-in: needs Playwright (``pip install playwright && playwright install
-chromium``) and a free port 8765. The frontend's WebSocket URL hard-codes
-that port (``frontend/src/hooks/useWebSocket.ts``). Run from the workspace root:
+chromium``). The server runs on a free, non-default port, so the Run test
+also proves the WebSocket follows the page's port (``frontend/src/hooks/wsUrl.ts``;
+it was hard-coded to 8765 until 2026-11-10). Run from the workspace root:
 
     pytest scistack-gui/tests/e2e -v
 
@@ -38,8 +39,6 @@ sync_api = pytest.importorskip("playwright.sync_api")
 
 logger = logging.getLogger("gui_smoke")
 
-PORT = 8765  # useWebSocket.ts hard-codes it
-URL = f"http://127.0.0.1:{PORT}/"
 STEP_TIMEOUT_MS = 60_000
 
 MODULE = textwrap.dedent(
@@ -82,9 +81,14 @@ SEED = textwrap.dedent(
 )
 
 
-def _port_free(port: int) -> bool:
-    with socket.socket() as s:
-        return s.connect_ex(("127.0.0.1", port)) != 0
+def _free_port() -> int:
+    """A port nothing is listening on, never the default 8765."""
+    while True:
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        if port != 8765:
+            return port
 
 
 def _wait_http(url: str, timeout: float) -> None:
@@ -103,8 +107,8 @@ def _wait_http(url: str, timeout: float) -> None:
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
-    if not _port_free(PORT):
-        pytest.skip(f"port {PORT} is in use (another GUI running?)")
+    port = _free_port()
+    url = f"http://127.0.0.1:{port}/"
     project = tmp_path_factory.mktemp("smoke")
     (project / "smoke_steps.py").write_text(MODULE)
     db = project / "smoke.duckdb"
@@ -125,7 +129,7 @@ def server(tmp_path_factory):
         [
             sys.executable, "-m", "scistack_gui", str(db),
             "--module", str(project / "smoke_steps.py"),
-            "--port", str(PORT), "--no-browser",
+            "--port", str(port), "--no-browser",
         ],
         cwd=project,
         stdout=log,
@@ -133,9 +137,9 @@ def server(tmp_path_factory):
     )
     try:
         t0 = time.monotonic()
-        _wait_http(URL, timeout=120)
-        logger.info("server up in %.1fs (log: %s)", time.monotonic() - t0, log.name)
-        yield {"project": project, "log": Path(log.name)}
+        _wait_http(url, timeout=120)
+        logger.info("server up on %s in %.1fs (log: %s)", url, time.monotonic() - t0, log.name)
+        yield {"project": project, "log": Path(log.name), "url": url}
     finally:
         proc.terminate()
         try:
@@ -175,14 +179,14 @@ def page(server):
             browser.close()
 
 
-def _open_canvas(page) -> None:
-    logger.info("step open_canvas: waiting for >=3 canvas nodes")
-    page.goto(URL)
+def _open_canvas(page, server) -> None:
+    logger.info("step open_canvas: %s, waiting for >=3 canvas nodes", server["url"])
+    page.goto(server["url"])
     page.wait_for_function("document.querySelectorAll('.react-flow__node').length >= 3")
 
 
 def test_canvas_renders_without_page_errors(page, server):
-    _open_canvas(page)
+    _open_canvas(page, server)
     labels = page.locator(".react-flow__node").all_inner_texts()
     text = " ".join(labels)
     for name in ("SmokeRaw", "SmokeOut", "smoke_double"):
@@ -191,7 +195,7 @@ def test_canvas_renders_without_page_errors(page, server):
 
 
 def test_run_one_function_finishes(page, server):
-    _open_canvas(page)
+    _open_canvas(page, server)
     node = page.locator(".react-flow__node", has_text="smoke_double").first
     logger.info("step run: clicking ▶ Run on smoke_double")
     node.get_by_role("button", name="▶ Run").first.click()
@@ -207,7 +211,7 @@ def test_run_one_function_finishes(page, server):
 
 
 def test_plot_studio_opens_on_a_variable(page, server):
-    _open_canvas(page)
+    _open_canvas(page, server)
     logger.info("step plot_studio: selecting SmokeOut, then Open Plot Studio")
     page.locator(".react-flow__node", has_text="SmokeOut").first.click()
     with page.expect_response(lambda r: "/api/plot/describe" in r.url) as described:

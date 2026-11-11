@@ -134,5 +134,5 @@ Restore point: `e4ebbf93`.
 | saying_no | recorded | Memory `project_grugbrain_review`: no new features in foreach.py / DatabaseManager / PlotStudio.tsx until the reducer step and the test run land. |
 
 ### Backlog (found during the stages)
-- `useWebSocket.ts` hard-codes port 8765 while `--port` is configurable. Two owners of one fact.
+- ~~`useWebSocket.ts` hard-codes port 8765 while `--port` is configurable.~~ Fixed 2026-11-10: `src/hooks/wsUrl.ts` derives the socket from the page's own origin (like every relative `/api` fetch); vite dev proxies `/ws`; the e2e smoke test runs on a random port.
 - The remaining long phase: `_prepare_run` is about 250 lines of sequential steps. Split it if it changes again.

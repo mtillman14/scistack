@@ -18,10 +18,12 @@
  */
 
 import { useEffect, useRef, useCallback } from 'react'
+import { wsUrl } from './wsUrl'
 
 type MessageHandler = (msg: Record<string, unknown>) => void
 
-const WS_URL = `ws://${window.location.hostname}:8765/ws`
+// The page's own origin owns the port (wsUrl.ts).
+const WS_URL = wsUrl(window.location)
 
 // Must stay comfortably under api/ws.py's CLIENT_SILENT_TIMEOUT_S so a
 // single dropped ping never costs the connection.

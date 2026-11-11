@@ -23,7 +23,6 @@ See `docs/claude/grugbrain-principles.md`.
 1. Rebuild the extension if you run it from source (`npm run build:all` in `scistack-gui/extension`).
 2. Optional: `pip install playwright && playwright install chromium`, then
    `pytest scistack-gui/tests/e2e -v` runs the three automated smoke paths (canvas, ▶ Run, Plot Studio).
-   Quit any running GUI first, because the tests need port 8765.
 
 **Frontend steps:**
 - [ ] ▶ Run on a Python function node: the progress bar moves, the run log fills, and the node turns
@@ -31,6 +30,10 @@ See `docs/claude/grugbrain-principles.md`.
   `phase execute done`, each with a time in ms.
 - [ ] Cancel a long run part-way: it stops between combinations, and the log shows `phase execute done`.
 - [ ] Run a whole pipeline (▶ on the pipeline tab): every step's counts appear, as before.
+- [ ] Browser GUI on a non-default port: `scistack-gui my.duckdb --port 9000`, open
+  `http://localhost:9000`, ▶ Run a node. The run log fills and the run finishes; before 2026-11-10 the
+  socket always went to 8765, so the run looked hung. The browser console shows
+  `[ws] connected to ws://localhost:9000/ws`.
 - [ ] Open Plot Studio on a variable. Every rail group opens. Change the figure size, units and a text
   size. Add a Combine bucket and a range filter. Save a figure; the dpi readout says 200 dpi.
 - [ ] Plot Studio looks the same in light and dark mode (the styles moved files unchanged).

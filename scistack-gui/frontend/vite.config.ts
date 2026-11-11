@@ -63,7 +63,7 @@ const buildConfigs = {
 
 // During development, the Vite dev server runs on port 5173 and the FastAPI
 // backend runs on port 8765. The proxy below forwards any request starting
-// with /api to the backend, so the frontend code can just call "/api/pipeline"
+// with /api (and the /ws socket) to the backend, so the frontend code can just call "/api/pipeline"
 // without worrying about the different port.
 export default defineConfig({
   plugins: [react()],
@@ -79,6 +79,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': 'http://localhost:8765',
+      // The page's WebSocket is same-origin (src/hooks/wsUrl.ts); forward it
+      // like /api, or a dev page never receives run messages.
+      '/ws': { target: 'ws://localhost:8765', ws: true },
     },
   },
   build: buildConfigs[target as keyof typeof buildConfigs],
