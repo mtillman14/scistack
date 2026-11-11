@@ -263,18 +263,19 @@ class TestExportRoundTrip:
         rendered = _py_literal(Parameter(1, 2))
         assert rendered.startswith("Parameter(")
 
-        import inspect
-
         from scistack_gui.services import code_export_service
 
         # The header is a multi-line import; every name a literal can emit
         # must be in it (AcrossVariants joined 2026-09-20). Read from the
-        # SOURCE, not from `co_consts` — CPython folds an all-constant list
-        # literal into a single tuple constant, so the individual strings
-        # are not there to find.
-        src = inspect.getsource(code_export_service._py_header)
+        # header the export actually WRITES (it used to grep _py_header's
+        # source; grug stage source_text_test_review).
+        from types import SimpleNamespace
+
+        db = SimpleNamespace(dataset_db_path="x.duckdb", dataset_schema_keys=["subject"])
+        header = code_export_service._py_header(db)
+        imported = header.split("from scidb import (", 1)[1].split(")", 1)[0]
         for name in ("AcrossVariants", "EachOf", "Parameter", "PathInput"):
-            assert f"{name}," in src, f"{name} is not imported by the exported header"
+            assert f"    {name}," in imported, f"{name} is not imported by the exported header"
 
 
 class TestMatlabEntitiesRoundTrip:
