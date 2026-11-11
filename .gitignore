@@ -35,3 +35,8 @@ scimatlab/tests/matlab/test-failures.txt
 
 # csv-stats is its own repo (github.com/mtillman14/csv-stats), cloned here for editable dev
 /csv-stats/
+# Scratch files at the repo root (CLAUDE.md NOTE 1: tmp.py is where pasted
+# Python goes; test-failures.txt is a local test summary). Untracked
+# 2026-11-10 (grug stage repo_hygiene); the files stay on disk.
+/tmp.py
+/test-failures.txt
