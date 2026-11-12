@@ -260,8 +260,8 @@ See `docs/claude/column-selection.md` §From the GUI.
 ## Related
 
 - `docs/claude/column-selection.md` — the second consumer of node config.
-- `docs/claude/for-each-kwargs.md` — the option semantics themselves.
+- `docs/claude/archive/for-each-kwargs.md` — the option semantics themselves.
 - `docs/claude/archive/graph-database-state.md` §Identity — why `distribute`/`as_table`
   are part of `invocation_id` and `call_id`.
-- `docs/claude/gui-vscode-extension.md` — the host/webview split that
+- `docs/claude/archive/gui-vscode-extension.md` — the host/webview split that
   `generate_matlab_command` is dispatched across.

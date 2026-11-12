@@ -75,7 +75,7 @@ Pull execution needs three things. Two are done:
    calls execute as they are read. The missing piece is a way to declare
    those same calls without executing them.
 
-Note: [gui-readiness.md](gui-readiness.md) item 4 concluded a
+Note: [gui-readiness.md](archive/gui-readiness.md) item 4 concluded a
 function/pipeline registry was "not needed." That conclusion was correct for
 a *visualization* GUI over an existing project. It flips once the goal is
 goal-directed execution or a GUI pipeline **builder** — both need the graph
@@ -170,7 +170,7 @@ change. Costs: a step must have run once to be known (GUI-created steps
 need another entry path); specs go stale when the script is edited without
 re-running (function-hash detectable, but a real semantic); replay requires
 serializing/resolving function refs and iteration values — the "replay
-registry" [gui-readiness.md](gui-readiness.md) item 4 warned about.
+registry" [gui-readiness.md](archive/gui-readiness.md) item 4 warned about.
 
 ### Option D — one kwarg: `pipeline=` on `for_each`
 
@@ -465,7 +465,7 @@ correct layer split (CLAUDE.md NOTE 3).
 
 - [endpoints-viz-and-stats-design.md](endpoints-viz-and-stats-design.md) —
   plot_/stat_ leaf semantics this layer targets
-- [gui-readiness.md](gui-readiness.md) — the registry-not-needed conclusion
+- [gui-readiness.md](archive/gui-readiness.md) — the registry-not-needed conclusion
   this supersedes for the pipeline-builder case
 - [variant-branch-param-pinning.md](variant-branch-param-pinning.md) —
   variant identity that target specs must carry (R1)

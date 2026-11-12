@@ -432,6 +432,6 @@ The redesign is a behavior-preserving rewrite for the most part, but it also FIX
 
 ## Out of scope
 
-- The Python-side friction points still flagged as DEFERRED in `docs/claude/layer-friction-analysis.md` (triple constant storage, input classification quirk, global schema state in Python). Those are Python-only concerns; this plan does not address them.
+- The Python-side friction points still flagged as DEFERRED in `docs/claude/archive/layer-friction-analysis.md` (triple constant storage, input classification quirk, global schema state in Python). Those are Python-only concerns; this plan does not address them.
 - GUI integration changes. The GUI's pipeline-status checks rely on `_for_each_expected` and `check_node_state`, both of which are already populated by Python and continue to be populated correctly in this redesign.
 - Performance optimizations beyond preserving today's behavior. Once the redesign settles, separate work can profile and optimize the most expensive crossings if needed.

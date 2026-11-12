@@ -1,5 +1,8 @@
 # GUI → plain .py export (future feature): notes on the disconnected-wiring mechanism
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> the built export, scistack_gui/services/code_export_service.py, and canvas-as-document-explained.md. Kept for history; do not treat as current.
+
 Status: **not yet built.** This doc exists to capture how the "disconnected
 wiring" mechanism (delete/hide an edge → function turns red and refuses to
 run — see `pipeline_store.hide_edge`, `graph_builder.hidden_wirings`,

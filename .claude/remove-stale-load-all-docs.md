@@ -32,7 +32,7 @@ Already-correct docs that *document the removal* (leave untouched):
 - `README.md:267,368,384`
 - `docs/claude/multi-database-workflow.md:41,137,138`
 - `docs/claude/where-filter-system.md:11-30,272` (code examples)
-- `docs/claude/gui-readiness.md:20,21,119`
+- `docs/claude/archive/gui-readiness.md:20,21,119`
 - `docs/claude/scidb-identity-and-data-flow.md:818` (API summary table)
 
 ### Tier B — Python `as_table=` correction — ALWAYS DO
@@ -46,7 +46,7 @@ Already-correct docs that *document the removal* (leave untouched):
 - `docs/claude/scihist-for-each-internals.md:624`
 - `docs/claude/duckdb-column-types.md:117`
 - `docs/claude/archive/matlab-for-each-current-state.md:54,90,119,398`
-- `docs/claude/layer-friction-analysis.md:284`
+- `docs/claude/archive/layer-friction-analysis.md:284`
 
 ### Tier D — scidb-net optional network layer
 - `scidb-net/README.md:158,219` — verify whether `/load_all` endpoint still exists before editing.

@@ -470,7 +470,7 @@ function PipelineFunctionNode({ id, data }: Props) {
   })
 
   return (
-    <div style={{
+    <div data-testid="node-function" data-label={data.label} style={{
       ...styles.container,
       ...(stateStyle ? { border: `2px solid ${stateStyle.border}`, background: stateStyle.background } : {}),
       ...(data.disconnected ? { borderStyle: 'dashed' } : {}),
@@ -627,7 +627,7 @@ function PipelineFunctionNode({ id, data }: Props) {
           if (data.endpoint_kind && !isMatlab) {
             return (
               <div style={styles.splitButton}>
-                <button style={styles.runHalf} onClick={handleRun} type="button">
+                <button style={styles.runHalf} onClick={handleRun} type="button" data-testid="run-button">
                   ▶ Run
                 </button>
                 <button
@@ -645,6 +645,7 @@ function PipelineFunctionNode({ id, data }: Props) {
             <button
               style={styles.button}
               onClick={handleRun}
+              data-testid="run-button"
               disabled={running}
             >
               ▶ Run

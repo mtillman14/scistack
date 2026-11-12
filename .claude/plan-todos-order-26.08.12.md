@@ -86,7 +86,7 @@ changing these later means rewiring graphs you already built)**
    buttons in `HypothesisTabs.tsx` + `PipelineNode.tsx`. Tests written
    (`tests/test_portability.py`); not yet run by the user.
 10. #6 translate pipelines to Python/MATLAB/bash — biggest lift. A design
-    doc already exists (`docs/claude/gui-export-to-plain-python.md`)
+    doc already exists (`docs/claude/archive/gui-export-to-plain-python.md`)
     covering how disconnected wirings should be handled at export time
     (skip vs. warn-comment vs. refuse — doc recommends warn-comment). Do
     last; not needed to start real data processing today.

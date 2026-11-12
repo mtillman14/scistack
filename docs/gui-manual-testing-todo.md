@@ -147,6 +147,9 @@ bundle with history (the default). Rebuild the extension (`npm run build:all` in
 
 ## 0zzzzzzzzzzzzzzzzzzzzzzz. Expected locations, Coverage, badges, and NaNs inside cells — added 2026-11-07
 
+**Automated (2026-11-10):** steps 1 and 6 run in `scistack-gui/tests/e2e/test_gui_backlog.py`
+(`test_expected_locations_lists_every_location`, `test_coverage_has_a_row_per_subject`). The rest stays manual.
+
 **What changed:** for any variable you can see which locations it should have and whether each
 matches: present, missing unexpectedly, unexpectedly present, missing as expected, or excluded,
 each with a one-line reason (including why the last run left it empty). You can mark locations
@@ -289,6 +292,10 @@ because the run already recorded in the database now counts.
 4. A real nested submodule still goes one level deeper. Clicking `main` in the breadcrumb returns to main.
 
 ## 0zzzzzzzzzzzzzzzz. Sidebar: palette search, sort, delete; shared panel header; badges — added 2026-11-03
+
+**Automated (2026-11-10):** palette search, delete + undo (steps 3–5) and node-panel steps 1–2 run in
+`scistack-gui/tests/e2e/test_gui_backlog.py`. Sort, the canvas-placed delete refusal and **Open source**
+(VS Code only) stay manual.
 
 **What changed:** the palette gets a search box, a **Sort** choice (Functions: By file / A→Z; Variables: A→Z / Last saved), and a 🗑 Delete for Variables, Parameters and Path Inputs declared in the entities file. Every node panel now has the same header (kind, name, "declared in", **Open source**, **← Palette**), and the function panel shows chips for settings that aren't the default. Plan: `.claude/plan-palette-order-and-delete.md`.
 
@@ -6291,7 +6298,7 @@ scidb trace <Variable> --variant <label> --runs
 - A fresh node's config carries over into the history node when it graduates
   (fresh wins).
 
-Doc: `docs/claude/manual-edges-on-history-nodes.md`.
+Doc: `docs/claude/archive/manual-edges-on-history-nodes.md`.
 
 **Backend:** have a function that has already run (for example `grSides`). Add
 a new parameter (for example `side`) to its signature, then click

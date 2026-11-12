@@ -148,7 +148,7 @@ export default function ExpectedLocationsPopup({ variable, initialFilter = null,
 
   return (
     <div style={modalStyles.overlay} onClick={onClose}>
-      <div style={styles.dialog} onClick={e => e.stopPropagation()}>
+      <div style={styles.dialog} data-testid="expected-locations-popup" onClick={e => e.stopPropagation()}>
         <div style={styles.header}>
           <span style={modalStyles.dialogTitle}>Expected locations: {variable}</span>
           <button style={styles.closeBtn} onClick={onClose} title="Close" type="button">×</button>
@@ -231,7 +231,7 @@ export default function ExpectedLocationsPopup({ variable, initialFilter = null,
                   {rows.map((r, i) => {
                     const own = r.mark && r.inherited_from == null ? r.mark : null
                     return (
-                      <tr key={i} title={`${r.label}: ${r.why}`} style={draft?.row === r ? { background: '#2a2a48' } : undefined}>
+                      <tr key={i} data-testid="expected-row" data-status={r.status} title={`${r.label}: ${r.why}`} style={draft?.row === r ? { background: '#2a2a48' } : undefined}>
                         <td style={{ ...styles.td, color: TONE_COLOR[r.tone] }}>{STATUS_ICON[r.status]}</td>
                         {result.columns.map(c => (
                           <td key={c} style={styles.td}>

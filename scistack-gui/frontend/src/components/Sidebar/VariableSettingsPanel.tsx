@@ -80,6 +80,7 @@ export default function VariableSettingsPanel({ label }: Props) {
             <button
               type="button"
               style={styles.openStudio}
+              data-testid="open-plot-studio"
               onClick={() => {
                 // Own tab in VS Code (the canvas stays visible), modal in a browser.
                 if (isVSCodeMode) {

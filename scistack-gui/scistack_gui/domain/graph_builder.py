@@ -2738,7 +2738,7 @@ def input_params_with_manual_edges(
     propagation only**.
 
     The third consumer of "the edges visible on the DAG are the ground truth"
-    (docs/claude/manual-edges-on-history-nodes.md). Display got it
+    (docs/claude/archive/manual-edges-on-history-nodes.md). Display got it
     (``overlay_manual_inputs``) and execution got it
     (``variant_resolver.reconcile_manual_inputs``); COLOUR did not, and colour
     is computed from the recorded wiring ~200 lines before the overlay is
@@ -2818,7 +2818,7 @@ def outputs_with_manual_edges(
     its outputs were empty and the cascade never reached the variable its
     drawn edge feeds: ``load_cbrace`` red, ``CosmedData`` green. The edges
     visible on the DAG are the ground truth
-    (docs/claude/manual-edges-on-history-nodes.md).
+    (docs/claude/archive/manual-edges-on-history-nodes.md).
 
     Never use this for identity: ``wiring_id`` hashes outputs.
     """
@@ -2866,7 +2866,7 @@ def unproduced_output_fkeys(
     stayed green with its only visible output ``Rating`` holding 0 records,
     because the hidden ``RatingsData`` it had written was complete. The edges
     visible on the DAG are the ground truth
-    (docs/claude/manual-edges-on-history-nodes.md), so an output the node is
+    (docs/claude/archive/manual-edges-on-history-nodes.md), so an output the node is
     drawn to write but has never written means it has not done its work.
 
     Per NODE, not per call site: a node grouping several call sites (variants,

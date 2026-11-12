@@ -300,7 +300,7 @@ render of an existing structure, not new logic:
    - one `child.use(parent_ref.bind(key_map=..., params=..., iterate=...))`
      line per `PipelineBinding` in `pipe.uses`.
 2. Reuse the disconnected-wiring decision already written up in
-   `docs/claude/gui-export-to-plain-python.md` for how to handle hidden/
+   `docs/claude/archive/gui-export-to-plain-python.md` for how to handle hidden/
    disconnected edges at export time (option 2 in that doc: emit a warning
    comment, don't silently skip) — this plan doesn't need to re-decide that.
 3. **Round-trip fidelity for a submodule that originated from a source

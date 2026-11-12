@@ -394,7 +394,7 @@ at that call site in `services/project_service.py`.
 ### GUI → source export (`scistack_gui/services/code_export_service.py`)
 
 Already existed before this migration (contradicts
-`docs/claude/gui-export-to-plain-python.md`'s "Status: not yet built" —
+`docs/claude/archive/gui-export-to-plain-python.md`'s "Status: not yet built" —
 that doc is stale). Reuses `build_backend_pipeline`'s compiled
 `scidb.Pipeline` directly (`Pipeline._composed_steps()`/`_topo_order()`) for
 Python; a parallel manual closure walk + type-level topological sort for
@@ -549,12 +549,12 @@ and WARNs "Slow import" above `registry.SLOW_IMPORT_WARN_S` (5 s).
 - `docs/claude/each-of-variant-expansion.md` — `EachOf`'s own design; `Sweep`
   is documented there as sugar, not a separate mechanism.
 - `docs/claude/matlab-gui-implementation.md`,
-  `docs/claude/matlab-gui-support-analysis.md` — broader MATLAB-GUI design.
+  `docs/claude/archive/matlab-gui-support-analysis.md` — broader MATLAB-GUI design.
 - `docs/claude/pipeline-import-identity.md` — pipeline/submodule identity
   (`pipeline_id`) across export/import (unaffected by this migration —
   works identically whether a submodule originated from hand-drawn GUI
   wiring or a source-code import).
-- `docs/claude/gui-export-to-plain-python.md` — **stale**, says "not yet
+- `docs/claude/archive/gui-export-to-plain-python.md` — **stale**, says "not yet
   built"; see §6 above for what's actually there.
 - `.claude/plan-pathinput-sweep-submodule-source-of-truth.md` — the plan
   this whole migration executed.

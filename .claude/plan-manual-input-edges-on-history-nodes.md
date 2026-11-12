@@ -121,7 +121,7 @@ endpoint dedup drops it — the row stays (hide, never delete).
 
 ### 6. Docs, memory, tests
 
-- `docs/claude/manual-edges-on-history-nodes.md` — fresh vs history nodes,
+- `docs/claude/archive/manual-edges-on-history-nodes.md` — fresh vs history nodes,
   where `input_params` come from, graduation, the rule, the supersession
   lifecycle, the log lines to look for.
 - Cross-refs in `docs/claude/column-selection.md` (§From the GUI) and

@@ -1,5 +1,8 @@
 # Migrating scistack-gui to a VS Code Extension
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> gui-extension-startup-path.md (how the shipped extension starts). Kept for history; do not treat as current.
+
 > **Status:** this is the pre-implementation migration plan, kept for its
 > architecture rationale. For how the shipped extension actually starts the
 > Python server (interpreter resolution, the readiness handshake, and

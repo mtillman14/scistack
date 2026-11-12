@@ -48,7 +48,7 @@ export default function CoveragePopup({ schemaKeys, onClose }: { schemaKeys: str
 
   return (
     <div style={modalStyles.overlay} onClick={onClose}>
-      <div style={styles.dialog} onClick={e => e.stopPropagation()}>
+      <div style={styles.dialog} data-testid="coverage-popup" onClick={e => e.stopPropagation()}>
         <div style={styles.header}>
           <span style={modalStyles.dialogTitle}>Coverage</span>
           <button style={styles.closeBtn} onClick={onClose} title="Close" type="button">×</button>
@@ -93,7 +93,7 @@ export default function CoveragePopup({ schemaKeys, onClose }: { schemaKeys: str
                   {result.values.map(value => {
                     const key = value.join('|')
                     return (
-                      <tr key={key}>
+                      <tr key={key} data-testid="coverage-row">
                         {value.map((v, i) => <td key={i} style={styles.td}>{v}</td>)}
                         {result.variables.map(variable => {
                           const c = cellText(result.cells[variable]?.[key])

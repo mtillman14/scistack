@@ -1,5 +1,8 @@
 # Layer Interaction Analysis: scifor ↔ scidb ↔ scihist
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> architecture-review-2026-09-20.md and database-model.md (scihist was folded into scidb). Kept for history; do not treat as current.
+
 ## Executive Summary
 
 This document analyzes the three-layer for_each architecture (scifor → scidb → scihist) to identify friction points, redundancies, and architectural mismatches. Based on reading the three internals documents, we identified **10 friction points** ranging from minor redundancy to significant architectural inconsistencies.

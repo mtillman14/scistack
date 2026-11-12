@@ -435,6 +435,17 @@ def _resolve_function(run: _SingleRun):
     return fn
 
 
+@dataclass
+class _RunOpts:
+    """The node's run options with for_each's defaults filled in."""
+
+    dry_run: bool
+    save: bool
+    distribute: bool
+    as_table: object
+    on_error: str
+
+
 def _prepare_run(
     run: _SingleRun,
     variants: list[dict],
@@ -443,20 +454,77 @@ def _prepare_run(
     where_filters: list[WhereFilterSpec] | None,
 ) -> "_PreparedRun | None":
     """What this run executes and how, or None after ending the run (nothing
-    to run)."""
-    db, run_id, function_name, node_id = (
-        run.db,
-        run.run_id,
-        run.function_name,
-        run.node_id,
+    to run). Each step is its own function, timed as ``prepare.<step>``."""
+    run_id = run.run_id
+    with _run_phase(run_id, "prepare.derive_targets"):
+        fn_variants = _derive_targets(run)
+    if fn_variants is None:
+        return None
+    with _run_phase(run_id, "prepare.resolve_variants"):
+        overridden_targets, unique_targets, pending_consts = _resolve_variants(
+            run, fn_variants, variants
+        )
+    # Whether this function's runs wrote its outputs together (one call) or
+    # separately (execution_service.run_output_types), from the run log.
+    recorded_output_order = recorded_orders(run.db, [run.function_name]).get(
+        run.function_name
     )
-    # Derive the for_each targets for this function node — DB history with
-    # manual-wiring overrides, or the manual-edge fallback. Shared with the
-    # pipeline compiler (execution_service) so per-node and pipeline runs
-    # derive identically. When node_id is given, scope derivation to that
-    # EXACT node's own wiring (derive_target_for_node) rather than every
-    # node/call site sharing function_name — required once more than one
-    # wiring of the same function name can coexist on a canvas.
+    opts = _resolve_run_options(run_id, run_options)
+    with _run_phase(run_id, "prepare.drop_hidden"):
+        unique_targets = _drop_hidden_targets(run, unique_targets, pending_consts, opts)
+    with _run_phase(run_id, "prepare.level"):
+        level = _resolve_level(run, unique_targets, schema_level)
+
+    # Build where= argument from where_filters.
+    logger.info("[run_thread] Building where filters (run_id=%s)", run_id)
+    where_arg = _build_where(where_filters)
+    if where_arg:
+        logger.debug(
+            "[run_thread] Where filters built: %s (run_id=%s)", where_arg, run_id
+        )
+
+    logger.info(
+        "[run_thread] Starting execution of %d target(s) for '%s' "
+        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, iterating=%s, schema_selection=%s) (run_id=%s)",
+        len(unique_targets),
+        run.function_name,
+        opts.dry_run,
+        opts.save,
+        opts.distribute,
+        opts.as_table,
+        level.describe(),
+        _summarize_selection(run.schema_selection),
+        run_id,
+    )
+    return _PreparedRun(
+        targets=unique_targets,
+        overridden_targets=overridden_targets,
+        recorded_output_order=recorded_output_order,
+        dry_run=opts.dry_run,
+        save=opts.save,
+        distribute=opts.distribute,
+        as_table=opts.as_table,
+        on_error=opts.on_error,
+        level=level,
+        # for_each's own spelling: None = one call, [keys] = iterate them.
+        # Never the node's raw list — `schema_keys=[]` would iterate EVERY
+        # key (F26).
+        for_each_schema_keys=level.for_each_schema_keys(),
+        where_arg=where_arg,
+    )
+
+
+def _derive_targets(run: _SingleRun) -> "list[dict] | None":
+    """The node's for_each targets, or None after ending the run (none).
+
+    DB history with manual-wiring overrides, or the manual-edge fallback.
+    Shared with the pipeline compiler (execution_service) so per-node and
+    pipeline runs derive identically. When node_id is given, scope derivation
+    to that EXACT node's own wiring (derive_target_for_node) rather than every
+    node/call site sharing function_name — required once more than one wiring
+    of the same function name can coexist on a canvas.
+    """
+    db, run_id, function_name, node_id = run.db, run.run_id, run.function_name, run.node_id
     logger.info(
         "[run_thread] Deriving targets for '%s' (node_id=%s, run_id=%s)",
         function_name,
@@ -477,28 +545,35 @@ def _prepare_run(
         function_name,
         run_id,
     )
-    if not fn_variants:
-        from scistack_gui.services.execution_service import disconnected_reason
+    if fn_variants:
+        return fn_variants
+    from scistack_gui.services.execution_service import disconnected_reason
 
-        reason = disconnected_reason(db, function_name, node_id)
-        error = (
-            f"'{function_name}' can't run: {reason}."
-            if reason
-            else f"No pipeline history or output connections found for '{function_name}'. "
-            "Connect it to an output variable node first."
-        )
-        logger.info(
-            "[run_thread] no targets for '%s' (run_id=%s): %s",
-            function_name,
-            run_id,
-            error,
-        )
-        _end_run_early(run_id, error, "no targets")
-        return None
+    reason = disconnected_reason(db, function_name, node_id)
+    error = (
+        f"'{function_name}' can't run: {reason}."
+        if reason
+        else f"No pipeline history or output connections found for '{function_name}'. "
+        "Connect it to an output variable node first."
+    )
+    logger.info(
+        "[run_thread] no targets for '%s' (run_id=%s): %s",
+        function_name,
+        run_id,
+        error,
+    )
+    _end_run_early(run_id, error, "no targets")
+    return None
 
-    # --- Variant resolution via domain layer ---
+
+def _resolve_variants(
+    run: _SingleRun, fn_variants: list[dict], variants: list[dict]
+) -> "tuple[list[dict], list[dict], dict]":
+    """``(overridden_targets, unique_targets, pending_consts)``: the requested
+    variants, with staged pending constants applied, then de-duplicated.
+    Also claims this run's wiring for its node (D-2026-09-22-2)."""
+    db, run_id = run.db, run.run_id
     logger.info("[run_thread] Resolving variants to execute (run_id=%s)", run_id)
-    # Determine which variants to run.
     if variants:
         logger.debug(
             "[run_thread] Filtering %d DB variants to requested %d variants (run_id=%s)",
@@ -548,74 +623,83 @@ def _prepare_run(
     # unclaimed, and the next build minted a second node for it (2026-11-04).
     from scistack_gui.services.execution_service import record_dispatch_wirings
 
-    record_dispatch_wirings(db, node_id, function_name, overridden_targets, run_id)
+    record_dispatch_wirings(db, run.node_id, run.function_name, overridden_targets, run_id)
+    return overridden_targets, unique_targets, pending_consts
 
-    # Whether this function's runs wrote its outputs together (one call) or
-    # separately (execution_service.run_output_types), from the run log.
-    recorded_output_order = recorded_orders(db, [function_name]).get(function_name)
 
-    # Extract run options (dry_run, save, distribute, as_table).
+def _resolve_run_options(run_id: str, run_options: dict | None) -> _RunOpts:
+    """The node's run options over for_each's own defaults."""
     logger.info("[run_thread] Extracting run options (run_id=%s)", run_id)
     # Defaults come from scidb.for_each's signature (domain.run_options),
     # the same answer the sidebar's non-default badges compare against.
     defaults = run_option_defaults()
-    opts = run_options or {}
-    opt_dry_run = opts.get("dry_run", defaults["dry_run"])
-    opt_save = opts.get("save", defaults["save"])
-    opt_distribute = opts.get("distribute", defaults["distribute"])
-    opt_as_table = opts.get("as_table", defaults["as_table"])
-    opt_on_error = on_error_from_config(opts)
+    raw = run_options or {}
+    opts = _RunOpts(
+        dry_run=raw.get("dry_run", defaults["dry_run"]),
+        save=raw.get("save", defaults["save"]),
+        distribute=raw.get("distribute", defaults["distribute"]),
+        as_table=raw.get("as_table", defaults["as_table"]),
+        on_error=on_error_from_config(raw),
+    )
     logger.debug(
         "[run_thread] Run options: dry_run=%s, save=%s, distribute=%s, as_table=%s, on_error=%s (run_id=%s)",
-        opt_dry_run,
-        opt_save,
-        opt_distribute,
-        opt_as_table,
-        opt_on_error,
+        opts.dry_run,
+        opts.save,
+        opts.distribute,
+        opts.as_table,
+        opts.on_error,
         run_id,
     )
+    return opts
 
-    # Hidden combos (see plan-combo-hiding.md) — never delete data, just
-    # exclude a specific already-hidden Cartesian-product row from actually
-    # running, using THIS chokepoint's own distribute/as_table so a hidden
-    # pending combo's stored call_id stays consistent with what would
-    # actually execute here.
-    # The hides of the canvas the click came from; a run with no node id
-    # (the name-scoped fallback) still sees every scope's.
+
+def _drop_hidden_targets(
+    run: _SingleRun, unique_targets: list[dict], pending_consts: dict, opts: _RunOpts
+) -> "list[dict]":
+    """Hidden combos (see plan-combo-hiding.md): never delete data, just
+    exclude a specific already-hidden Cartesian-product row from actually
+    running, using THIS chokepoint's own distribute/as_table so a hidden
+    pending combo's stored call_id stays consistent with what would actually
+    execute here. The hides of the canvas the click came from; a run with no
+    node id (the name-scoped fallback) still sees every scope's."""
+    db, node_id = run.db, run.node_id
     hidden_ids = _ps.get_hidden_node_ids(
         db, intent_store.scope_of_node(db, node_id) if node_id else None
     )
-    before_hidden_filter = len(unique_targets)
-    unique_targets = filter_hidden_targets(
+    before = len(unique_targets)
+    kept = filter_hidden_targets(
         unique_targets,
-        function_name,
-        hidden_call_ids_for_fn(hidden_ids, function_name),
+        run.function_name,
+        hidden_call_ids_for_fn(hidden_ids, run.function_name),
         pending_consts,
-        RunOptions(distribute=opt_distribute, as_table=opt_as_table),
+        RunOptions(distribute=opts.distribute, as_table=opts.as_table),
     )
-    if len(unique_targets) != before_hidden_filter:
+    if len(kept) != before:
         logger.info(
             "[run_thread] %d target(s) excluded as hidden (run_id=%s)",
-            before_hidden_filter - len(unique_targets),
-            run_id,
+            before - len(kept),
+            run.run_id,
         )
+    return kept
 
-    # Which schema keys this run iterates. ONE owner decides, for every route
-    # (execution_service.default_schema_level -> scidb.run.schema_level): the
-    # node's stated level (`[]` = one call), else where THIS node last ran
-    # under its current wiring, else its inputs' level, else every key.
-    #
-    # `schema_selection` does NOT change this: a location selection says WHICH
-    # combos to run, never whether to iterate.
+
+def _resolve_level(run: _SingleRun, unique_targets: list[dict], schema_level):
+    """Which schema keys this run iterates. ONE owner decides, for every
+    route (execution_service.default_schema_level -> scidb.run.schema_level):
+    the node's stated level (`[]` = one call), else where THIS node last ran
+    under its current wiring, else its inputs' level, else every key.
+
+    `schema_selection` does NOT change this: a location selection says WHICH
+    combos to run, never whether to iterate."""
     from scistack_gui.services.execution_service import default_schema_level
 
     level, _why = default_schema_level(
-        db,
-        function_name,
+        run.db,
+        run.function_name,
         unique_targets,
         stated=schema_level,
-        node_id=node_id,
-        route=f"python run {run_id}",
+        node_id=run.node_id,
+        route=f"python run {run.run_id}",
     )
     if not is_empty(run.schema_selection):
         # INFO, not DEBUG: this changes which combos run, and a run that does
@@ -624,47 +708,9 @@ def _prepare_run(
         logger.info(
             "[run_thread] Schema selection: %s (run_id=%s)",
             _summarize_selection(run.schema_selection),
-            run_id,
+            run.run_id,
         )
-
-    # Build where= argument from where_filters.
-    logger.info("[run_thread] Building where filters (run_id=%s)", run_id)
-    where_arg = _build_where(where_filters)
-    if where_arg:
-        logger.debug(
-            "[run_thread] Where filters built: %s (run_id=%s)", where_arg, run_id
-        )
-
-    logger.info(
-        "[run_thread] Starting execution of %d target(s) for '%s' "
-        "(dry_run=%s, save=%s, distribute=%s, as_table=%s, iterating=%s, schema_selection=%s) (run_id=%s)",
-        len(unique_targets),
-        function_name,
-        opt_dry_run,
-        opt_save,
-        opt_distribute,
-        opt_as_table,
-        level.describe(),
-        _summarize_selection(run.schema_selection),
-        run_id,
-    )
-    return _PreparedRun(
-        targets=unique_targets,
-        overridden_targets=overridden_targets,
-        recorded_output_order=recorded_output_order,
-        dry_run=opt_dry_run,
-        save=opt_save,
-        distribute=opt_distribute,
-        as_table=opt_as_table,
-        on_error=opt_on_error,
-        level=level,
-        # for_each's own spelling: None = one call, [keys] = iterate them.
-        # Never the node's raw list — `schema_keys=[]` would iterate EVERY
-        # key (F26).
-        for_each_schema_keys=level.for_each_schema_keys(),
-        where_arg=where_arg,
-    )
-
+    return level
 
 def _execute_targets(run: _SingleRun, fn, prep: _PreparedRun) -> None:
     """One for_each per target, then ``_report_run_done`` whatever happened."""

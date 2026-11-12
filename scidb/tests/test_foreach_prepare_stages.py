@@ -18,7 +18,7 @@ import pytest
 
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
-from scidb.run import foreach as scidb_foreach
+from scidb.run import foreach_prepare as scidb_foreach  # the module that calls _existing_combos (patch where called)
 from scidb.store.exclusions import exclude_schema
 
 SCHEMA = ["subject", "trial"]

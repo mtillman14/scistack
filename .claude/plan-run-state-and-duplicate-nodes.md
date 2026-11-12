@@ -37,7 +37,7 @@ sites merge into one node and the count becomes 2 red — which is exactly what
 the log says.
 
 This is the bigger version of a limitation already written down in
-`docs/claude/manual-edges-on-history-nodes.md`:
+`docs/claude/archive/manual-edges-on-history-nodes.md`:
 
 > The run state of a node with an overlay still reflects its history (green)
 > although the effective wiring never ran; a "needs run" badge is a follow-up.

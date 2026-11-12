@@ -95,10 +95,10 @@ export default function PanelHeader({ kind, name, nameSlot, source, readOnly, ba
   return (
     <div style={styles.root}>
       <div style={styles.topRow}>
-        <button type="button" style={styles.backBtn} onClick={backToPalette} title="Back to the palette (deselect)">
+        <button type="button" style={styles.backBtn} onClick={backToPalette} data-testid="panel-back-to-palette" title="Back to the palette (deselect)">
           ← Palette
         </button>
-        <span style={{ ...styles.kind, borderColor: display.color, color: display.color }} title={display.label}>
+        <span style={{ ...styles.kind, borderColor: display.color, color: display.color }} data-testid="panel-kind" title={display.label}>
           <span style={styles.kindIcon}>{display.icon}</span>
           {display.label}
         </span>

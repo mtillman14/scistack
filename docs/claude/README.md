@@ -21,7 +21,6 @@ Rules:
 - [Design review (pointer)](design-review.md) — `design-review.md`
 - [Grugbrain principles, applied to SciStack](grugbrain-principles.md) — `grugbrain-principles.md`
 - [Intent and fact](intent-and-fact.md) — `intent-and-fact.md`
-- [Layer Interaction Analysis: scifor ↔ scidb ↔ scihist](layer-friction-analysis.md) — `layer-friction-analysis.md`
 - [Preview/export paper parity (and the Plot Studio's light mode)](preview-paper-parity.md) — `preview-paper-parity.md`
 
 ## Plotting (scistackplot, Plot Studio)
@@ -76,7 +75,6 @@ Rules:
 - [MATLAB Output Names vs Variable Types](matlab-output-name-vs-variable-type.md) — `matlab-output-name-vs-variable-type.md`
 - [MATLAB Path Resolution — `matlab.functions` vs `matlab.variables`](matlab-path-resolution.md) — `matlab-path-resolution.md`
 - [MATLAB Support in the SciStack VS Code Extension — Implementation Reference](matlab-gui-implementation.md) — `matlab-gui-implementation.md`
-- [MATLAB Support in the SciStack VS Code Extension](matlab-gui-support-analysis.md) — `matlab-gui-support-analysis.md`
 - [MATLAB ↔ Python Type Round-Trip (to_python / from_python)](matlab-type-roundtrip.md) — `matlab-type-roundtrip.md`
 - [The MATLAB Output-Handle Contract](matlab-output-handle-contract.md) — `matlab-output-handle-contract.md`
 - [Who owns the DuckDB file during a MATLAB run](matlab-run-database-ownership.md) — `matlab-run-database-ownership.md`
@@ -87,12 +85,8 @@ Rules:
 - [Data inventory (missing schema-key combinations)](data-inventory.md) — `data-inventory.md`
 - [Debugging a run from the GUI](gui-debugging.md) — `gui-debugging.md`
 - [Free-Code "Glue" Nodes](free-code-glue-nodes.md) — `free-code-glue-nodes.md`
-- [GUI Readiness Assessment](gui-readiness.md) — `gui-readiness.md`
 - [GUI notification routing: which channel reaches which webview](gui-notification-routing.md) — `gui-notification-routing.md`
-- [GUI → plain .py export (future feature): notes on the disconnected-wiring mechanism](gui-export-to-plain-python.md) — `gui-export-to-plain-python.md`
 - [How run options reach a run (GUI -> Python, GUI -> MATLAB)](gui-run-options-flow.md) — `gui-run-options-flow.md`
-- [Manual edges onto history nodes (RETIRED 2026-10-22)](manual-edges-on-history-nodes.md) — `manual-edges-on-history-nodes.md`
-- [Migrating scistack-gui to a VS Code Extension](gui-vscode-extension.md) — `gui-vscode-extension.md`
 - [Multi-session GUI: one tab per database](gui-multi-session.md) — `gui-multi-session.md`
 - [Node identity: which ids are computed and which are allocated](node-identity.md) — `node-identity.md`
 - [Pending Constants in scistack-gui](scistack-gui-pending-constants.md) — `scistack-gui-pending-constants.md`
@@ -134,7 +128,6 @@ Rules:
 - [for_each Caching / skip_computed](for-each-caching.md) — `for-each-caching.md`
 - [for_each Input Unwrapping and as_table Behavior](for-each-input-unwrapping.md) — `for-each-input-unwrapping.md`
 - [for_each kwarg parity: scifor <-> scidb, Python + MATLAB](for-each-kwarg-parity.md) — `for-each-kwarg-parity.md`
-- [for_each() Kwargs Reference](for-each-kwargs.md) — `for-each-kwargs.md`
 - [scifor/scidb Modifier-Class Unification](scifor-scidb-modifier-unification.md) — `scifor-scidb-modifier-unification.md`
 
 ## Storage, identity, provenance (scidb / sciduckdb)
@@ -152,9 +145,7 @@ Rules:
 - [Function-Version Variants](function-version-variants.md) — `function-version-variants.md`
 - [Identity table: which facts of a call reach which id](identity-table.md) — `identity-table.md`
 - [Library Function Name Identity (`pandas.read_csv` vs `read_csv`)](library-function-name-identity.md) — `library-function-name-identity.md`
-- [Lineage / Provenance Design](lineage-design.md) — `lineage-design.md`
 - [Lineage Simplification — Bipartite Provenance Model](lineage-simplification.md) — `lineage-simplification.md`
-- [Lineage Wrapper Types and Cross-Layer Data Flow](lineage-wrapper-types.md) — `lineage-wrapper-types.md`
 - [Logging architecture (scistacklog)](logging-architecture.md) — `logging-architecture.md`
 - [Multi-Database Workflow](multi-database-workflow.md) — `multi-database-workflow.md`
 - [Multi-Source Pipeline Discovery](multi-source-discovery.md) — `multi-source-discovery.md`

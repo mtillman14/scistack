@@ -44,7 +44,7 @@ export default function VariableNode({ data }: Props) {
   const { badge, open } = useExpectationBadge(data.label)
 
   return (
-    <div style={{
+    <div data-testid="node-variable" data-label={data.label} style={{
       ...styles.container,
       ...(stateStyle ? { border: `2px solid ${stateStyle.border}`, background: stateStyle.background } : {}),
     }}>

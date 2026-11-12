@@ -1,5 +1,8 @@
 # for_each() Kwargs Reference
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> for-each-kwarg-parity.md (its live parts were merged there). Kept for history; do not treat as current.
+
 `scidb.for_each()` is the main entry point for running pipeline functions. It lives in `scidb/src/scidb/run/foreach.py`.
 
 ## Signature

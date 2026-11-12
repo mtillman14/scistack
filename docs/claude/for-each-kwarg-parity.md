@@ -89,3 +89,21 @@ EachOf alternatives inherit it; MATLAB's `scidb.for_each(..., 'step', "x")`
 sets it through `set_ambient_step` and clears it on exit. The GUI uses it to
 attribute a script run to the canvas node of that step name
 (`scistack_gui/project/step_names.py`); code export writes it.
+
+## Hooks: `hooks=LoopHooks(...)` (merged from for-each-kwargs.md, 2026-11-10)
+
+The keyword list's owner is `scifor.options.FOR_EACH_OPTIONS` plus
+`scidb.run.foreach_call.SCIDB_HOOK_OPTIONS`; `scidb/tests/test_foreach_options.py`
+holds both signatures to it.
+
+- **hooks**: `scifor.LoopHooks(progress_fn=..., cancel_check=...)`, the same object
+  `scifor.for_each` takes, so a call is a drop-in on either layer. `progress_fn` gets
+  one dict per loop event (the GUI's progress bar, the Pipeline step report);
+  `cancel_check` is asked before each combo. scidb refuses any other LoopHooks field
+  (`foreach_call.check_caller_hooks`), because it decides those from the database.
+- Until 2026-11-10 these were the private keywords `_progress_fn` and `_cancel_check`.
+  A leftover `_name=` now raises `TypeError` (`scifor.options.reject_private_options`,
+  one owner for both layers) instead of becoming a metadata axis.
+- `inject_combo_metadata` (generates_file / endpoint functions) and `pre_combo_hook`
+  (`skip_computed`, the MATLAB bridge) are set inside scidb on `RunContext`; they are
+  not keywords.

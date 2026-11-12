@@ -1,5 +1,8 @@
 # Manual edges onto history nodes (RETIRED 2026-10-22)
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> canvas-as-document-explained.md and edge-model.md (it was retired 2026-10-22). Kept for history; do not treat as current.
+
 > **Retired.** Since plan-canvas-as-document Stages 2-5 (D-2026-10-22-1) there
 > is no "history node" with drawn edges laid over it: a build stores every node
 > and edge history would draw (adoption), only stored rows are drawn, and a

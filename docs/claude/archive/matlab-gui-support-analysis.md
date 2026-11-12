@@ -1,5 +1,8 @@
 # MATLAB Support in the SciStack VS Code Extension
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> matlab-gui-implementation.md (what was built). Kept for history; do not treat as current.
+
 Analysis of what's involved in supporting MATLAB code in the SciStack GUI VS Code extension, which currently supports Python only.
 
 ---

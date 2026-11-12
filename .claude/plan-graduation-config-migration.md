@@ -124,7 +124,7 @@ single-candidate rule graduation uses can be applied once, behind a
 
 - `docs/claude/gui-run-options-flow.md`: add "graduation moves the row"
   to the config-storage section and the log line to look for.
-- `docs/claude/manual-edges-on-history-nodes.md`: strike the "not migrated
+- `docs/claude/archive/manual-edges-on-history-nodes.md`: strike the "not migrated
   on graduation" limitation.
 - Memory: update `project_manual_edges_on_history_nodes` open items.
 

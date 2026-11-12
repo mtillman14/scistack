@@ -1,5 +1,8 @@
 # Lineage / Provenance Design
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> database-model.md (the as-built provenance model) and lineage-simplification.md (its rationale). Kept for history; do not treat as current.
+
 ## Overview
 
 Lineage tracks how each saved variable was computed: which function was

@@ -32,7 +32,9 @@ SCANNED = [
 ALLOWED = {
     "scidb/src/scidb/store/tables.py": "the registry: every scidb table",
     "scidb/src/scidb/store/versioned_store.py": "declares each store's table via TableDecl",
-    "scidb/src/scidb/store/database.py": "the per-variable <Type>_data tables (dynamic)",
+    # DatabaseManager's storage code (split across mixins by the grug follow-up):
+    "scidb/src/scidb/store/db_save.py": "the per-variable <Type>_data tables (dynamic)",
+    "scidb/src/scidb/store/db_save_batch.py": "the per-variable <Type>_data tables (dynamic)",
     "scidb/src/scidb/project/verify.py": "an in-memory copy of a bundle, not a project database",
     "scistack-gui/scistack_gui/stores/pipeline_store.py": "TableDecls, owner scistack_gui",
     "scistack-gui/scistack_gui/stores/layout.py": "TableDecls, owner scistack_gui",
@@ -66,8 +68,14 @@ def test_gui_and_store_ddl_goes_through_table_decl() -> None:
             assert "TableDecl(" in files.get(name, ""), name
 
 
+#: DatabaseManager and its mixins (scidb/store/database.py + db_*.py).
+DATABASE_FILES = sorted((REPO / "scidb/src/scidb/store").glob("db_*.py")) + [
+    REPO / "scidb/src/scidb/store/database.py"
+]
+
+
 def test_database_creates_only_data_tables() -> None:
-    text = (REPO / "scidb/src/scidb/store/database.py").read_text(encoding="utf-8")
+    text = "\n".join(p.read_text(encoding="utf-8") for p in DATABASE_FILES)
     fixed = [m for m in re.finditer(r"CREATE TABLE IF NOT EXISTS", text)]
     assert fixed == [], "a fixed table belongs in scidb.store.tables"
     assert _DYNAMIC.search(text)

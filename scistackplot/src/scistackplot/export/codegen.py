@@ -6,7 +6,7 @@ alternative — ``return scistackplot.render(df, spec_path)`` — is more compac
 and stays re-editable in the GUI, but it makes every exported pipeline depend
 on this package at runtime and hides the figure's definition behind an opaque
 call. Literal code matches the project's "minimize lock-in" goal and the
-precedent in ``docs/claude/gui-export-to-plain-python.md``.
+precedent in ``docs/claude/archive/gui-export-to-plain-python.md``.
 
 The spec is emitted as a docstring block so the GUI can round-trip it back out
 of a file the user has since hand-edited.

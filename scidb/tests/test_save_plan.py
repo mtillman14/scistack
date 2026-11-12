@@ -12,7 +12,7 @@ yields the same record ids.
 import numpy as np
 import pytest
 
-import scidb.run.foreach as scidb_foreach
+import scidb.run.foreach_save as scidb_foreach  # the module that calls build_save_plan / apply_save_plan (patch where called)
 import scifor as _scifor
 from scidb import BaseVariable, configure_database, for_each
 

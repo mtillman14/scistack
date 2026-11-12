@@ -93,7 +93,9 @@ def no_graph_for_doubles(monkeypatch):
     graph in one transaction (P0), a graph write that fails fails the save;
     a double has no graph store, so its two graph writes are skipped here.
     A real database still records its graph."""
-    import scidb.run.foreach as foreach_mod
+    # The caller (_record_provenance) lives in foreach_save since the grug
+    # follow-up split; a patch reaches it only through that module.
+    import scidb.run.foreach_save as foreach_mod
     import scidb.provenance.save as provenance_save
 
     record_run = provenance_save.record_run

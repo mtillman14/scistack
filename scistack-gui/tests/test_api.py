@@ -1880,7 +1880,7 @@ class TestPendingConstantRecovery:
 @pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 class TestManualInputEdgesOnHistoryNodes:
     """A manual variable edge drawn onto a HISTORY node's parameter that
-    history never bound (docs/claude/manual-edges-on-history-nodes.md).
+    history never bound (docs/claude/archive/manual-edges-on-history-nodes.md).
 
     Real session, 2026-09-15: ``grSides`` had run; ``side`` was added to its
     signature afterwards; the user wired ``Demographics → in__side`` and the

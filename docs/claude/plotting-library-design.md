@@ -217,7 +217,7 @@ The alternative — `return scistackplot.render(df, spec_path)` — is more comp
 and stays re-editable in the GUI, but it makes every exported pipeline depend on
 this package at runtime and hides the figure's definition behind an opaque call.
 Literal code matches the project's "minimize lock-in" goal and the precedent in
-[gui-export-to-plain-python.md](gui-export-to-plain-python.md). The spec is
+[gui-export-to-plain-python.md](archive/gui-export-to-plain-python.md). The spec is
 emitted as a comment so the GUI can round-trip it back.
 
 The same obligation applies to any reshaping `ScidbSource` does before the

@@ -141,7 +141,7 @@ files each output's rows by that output's own key columns
 ## Related
 
 - `docs/claude/gui-run-options-flow.md` — how `distribute` reaches a run.
-- `docs/claude/for-each-kwargs.md` — option semantics.
+- `docs/claude/archive/for-each-kwargs.md` — option semantics.
 - `scidb/tests/test_record_granularity.py` — the vo2max explosion that
   motivated the spread rule.
 

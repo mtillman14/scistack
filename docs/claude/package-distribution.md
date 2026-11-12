@@ -269,6 +269,6 @@ on collection.
 - `dev-install.sh` — layer order, and the `--no-deps` decision
 - `.github/workflows/publish.yml` — lockstep release, the non-clean-version guard
 - `.github/workflows/ci.yml` — the hand-maintained third-party install list
-- `docs/claude/layer-friction-analysis.md` — which layer owns which concern
+- `docs/claude/archive/layer-friction-analysis.md` — which layer owns which concern
 - `.claude/dependency-metadata-audit-plan.md` — the outstanding repair plan for
   the drift described above

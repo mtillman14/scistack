@@ -92,17 +92,55 @@ jobs:
           bash .github/scripts/test-shards.sh run
           "${{ matrix.shard.pkgs }}" "${{ matrix.shard.shard }}" "${{ matrix.shard.of }}"
 
+  # The browser tests (scistack-gui/tests/e2e): the BUILT frontend bundle
+  # against a real server, in Chromium. In the test shards above they skip
+  # (no Playwright there); here SCISTACK_E2E_REQUIRED turns a missing
+  # Playwright into a failure, so this job can never pass as "all skipped".
+  # Because publish.yml runs this workflow as its gate, a broken bundle cannot
+  # reach a release. The bundles are committed, so no frontend build here.
+  gui-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install packages, test tools and Playwright
+        run: |
+          pip install --upgrade pip
+          bash dev-install.sh
+          # Same third-party set as the test job (see its comments).
+          pip install pandas numpy duckdb "csv-stats[full]>=0.4.2"
+          pip install pytest matplotlib plotly fastapi "uvicorn[standard]" httpx
+          pip install playwright
+          playwright install --with-deps chromium
+      - name: Browser tests
+        env:
+          SCISTACK_E2E_REQUIRED: '1'
+        run: pytest scistack-gui/tests/e2e -v -rs
+      - name: Keep the server logs of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-e2e-server-logs
+          path: /tmp/pytest-of-*/**/server.log
+          if-no-files-found: ignore
+
   # One stable check name for branch protection; the matrix job names change
   # whenever the shard layout does.
   tests-passed:
     if: always()
-    needs: [test-plan, test]
+    needs: [test-plan, test, gui-e2e]
     runs-on: ubuntu-latest
     steps:
-      - name: All test shards passed
+      - name: All test shards and the browser tests passed
         run: |
-          echo "test-plan: ${{ needs.test-plan.result }}, test: ${{ needs.test.result }}"
-          [[ "${{ needs.test-plan.result }}" == success && "${{ needs.test.result }}" == success ]]
+          echo "test-plan: ${{ needs.test-plan.result }}, test: ${{ needs.test.result }}, gui-e2e: ${{ needs.gui-e2e.result }}"
+          [[ "${{ needs.test-plan.result }}" == success && "${{ needs.test.result }}" == success && "${{ needs.gui-e2e.result }}" == success ]]
 
   build:
     runs-on: ubuntu-latest

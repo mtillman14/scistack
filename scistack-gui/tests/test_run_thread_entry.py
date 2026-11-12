@@ -110,3 +110,26 @@ def test_a_database_that_cannot_be_entered_still_ends_the_run(monkeypatch):
     (done,) = [m for m in emitted if m.get("type") == "run_done"]
     assert done["success"] is False
     assert "set_current_db" in done["error"]
+
+
+def test_prepare_steps_are_logged_and_no_targets_ends_the_run(db, monkeypatch, caplog):
+    """_prepare_run is a sequence of timed steps (grug follow-up 9); a node
+    with no targets ends at the first one with an explicit run_done."""
+    from scistack_gui.services import execution_service
+
+    emitted: list[dict] = []
+    monkeypatch.setattr(run_service, "push_message", emitted.append)
+    monkeypatch.setattr(run_service, "enter_project_root", lambda: None)
+    monkeypatch.setattr(run_service.registry, "get_function", lambda name: (lambda: None))
+    monkeypatch.setattr(execution_service, "derive_fn_targets", lambda db, name: [])
+    monkeypatch.setattr(execution_service, "disconnected_reason", lambda db, name, node: None)
+
+    with caplog.at_level(logging.INFO, logger=run_service.logger.name):
+        run_service._run_in_thread("entry-no-targets", "lonely_fn", [], db)
+
+    lines = [r.getMessage() for r in caplog.records]
+    assert any("phase prepare.derive_targets done in" in m for m in lines), lines
+    assert not any("phase prepare.resolve_variants" in m for m in lines)
+    (done,) = [m for m in emitted if m.get("type") == "run_done"]
+    assert done["success"] is False
+    assert "lonely_fn" in done["error"]

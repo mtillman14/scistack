@@ -399,6 +399,7 @@ export default function App() {
                       <button
                         style={styles.pathsBtn}
                         onClick={() => setCoverageOpen(true)}
+                        data-testid="coverage-button"
                         disabled={schema.keys.length === 0}
                         title="Which variables have which subjects (or any key), in pipeline order, with where data drops out"
                       >

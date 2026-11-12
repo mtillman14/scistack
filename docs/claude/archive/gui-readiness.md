@@ -1,5 +1,8 @@
 # GUI Readiness Assessment
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> scistack-gui-frontend-architecture.md and canvas-as-document-explained.md. Kept for history; do not treat as current.
+
 This document captures what abstractions are already in place and what is missing for building a GUI on top of SciStack. The GUI concept is a git-style branching map of the pipeline, usable at any layer from scifor through scihist.
 
 ## The GUI Vision

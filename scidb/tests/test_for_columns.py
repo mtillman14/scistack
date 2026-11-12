@@ -730,7 +730,9 @@ class TestEveryColumnFromMetadata:
     def test_resolving_every_column_loads_nothing(self, db, monkeypatch):
         """It used to load the whole variable just to read its column names,
         and prepare then loaded it again."""
-        import scidb.run.foreach as fe
+        # _resolve_all_columns and _load_var_type_as_spread live together in
+        # foreach_stamping since the grug follow-up split; patch them there.
+        import scidb.run.foreach_stamping as fe
 
         _seed_wide(db)
         loads = []

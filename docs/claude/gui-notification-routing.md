@@ -238,7 +238,7 @@ refresh, so a refetch cannot race the run's own result.
 
 ## See also
 
-- `docs/claude/gui-vscode-extension.md` — panel/process lifecycle
+- `docs/claude/archive/gui-vscode-extension.md` — panel/process lifecycle
 - `docs/claude/archive/scistack-gui-backend-internals.md` — the JSON-RPC server loop
 - `docs/claude/logging-architecture.md` — where `scistack.log` comes from
 - `docs/claude/matlab-run-database-ownership.md` — the one-response-per-RPC rule

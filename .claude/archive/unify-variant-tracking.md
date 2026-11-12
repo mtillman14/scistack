@@ -154,7 +154,7 @@ None - users should see no difference in behavior, only:
 3. ✅ Fixed inputs tracked correctly in lineage
 4. ✅ All existing tests pass
 5. ✅ No performance regression
-6. ✅ Documentation updated (docs/claude/layer-friction-analysis.md)
+6. ✅ Documentation updated (docs/claude/archive/layer-friction-analysis.md)
 
 ## Future Work
 

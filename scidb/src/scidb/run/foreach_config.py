@@ -12,6 +12,20 @@ from scicanonicalhash import compute_function_hash, compute_function_hash_with_s
 from scifor.project.names import function_name
 
 
+# Hoisted from function bodies (grug follow-up): no cycle, and already
+# loaded by `import scidb`, so this changes neither import order risk nor cost.
+from scidb.model.across_variants import AcrossVariants
+from scidb.model.filters import RawFilter
+from scidb.model.input_spec import is_loadable
+from scidb.model.input_spec import type_name
+from scidb.model.parameter import single_value
+from scidb.provenance.graph import normalize_as_table
+from scidb.provenance.graph import path_input_key_of
+from scidb.run.glue import chain_hashes
+from scidb.run.glue import chain_names
+from scifor import ColName
+from scifor import PathInput
+from scifor import PathOutput
 def _compute_fn_hash(fn: Callable) -> str:
     """Compute a stable hash of the function's source.
 
@@ -196,7 +210,6 @@ class RunOptions:
     def resolved_as_table(self, loadable_params: "Iterable[str]") -> list[str]:
         """``as_table`` as sorted parameter names — ``True`` means all of
         *loadable_params* (``provenance.normalize_as_table``, the one rule)."""
-        from scidb.provenance.graph import normalize_as_table
 
         return normalize_as_table(self.as_table, list(loadable_params))
 
@@ -244,7 +257,6 @@ class CallSite:
 
     def call_site_keys(self) -> dict:
         """The call-site keys, spelled the one way ``call_id`` hashes them."""
-        from scidb.provenance.graph import path_input_key_of
 
         keys: dict = {"__fn": self.fn_name}
         if self.inputs:
@@ -327,7 +339,6 @@ class ForEachConfig:
         """This call as a :class:`CallSite` — the ONE assembly of what is
         unique to a call site. ``inputs`` is the call-site view
         (:meth:`call_site_inputs`)."""
-        from scidb.run.glue import chain_names
 
         return CallSite(
             fn_name=function_name(self.fn),
@@ -363,7 +374,6 @@ class ForEachConfig:
         if self.where is not None:
             # where can be a string or a Filter object
             # For RawFilter created from string, preserve original string format
-            from scidb.model.filters import RawFilter
 
             if isinstance(self.where, str):
                 keys["__where"] = self.where
@@ -377,8 +387,6 @@ class ForEachConfig:
             else:
                 keys["__where"] = str(self.where)
         if self.glue:
-            from scidb.run.glue import chain_hashes
-
             keys["__glue_hashes"] = {
                 p: chain_hashes(c) for p, c in sorted(self.glue.items())
             }
@@ -417,7 +425,6 @@ class ForEachConfig:
     @property
     def across_variants(self) -> list[str]:
         """The parameters wrapped in ``AcrossVariants``, sorted."""
-        from scidb.model.across_variants import AcrossVariants
 
         return sorted(p for p, s in self.inputs.items() if isinstance(s, AcrossVariants))
 
@@ -445,9 +452,7 @@ class ForEachConfig:
         step never planned green) and a ``Variant`` pin vanished from the
         predicted config entirely.
         """
-        from scifor import PathInput
 
-        from scidb.model.input_spec import is_loadable, type_name
 
         result = {}
         for name in sorted(self.inputs):
@@ -499,10 +504,7 @@ class ForEachConfig:
         ``ForEachConfig`` built directly, and as the thing that makes the
         one-value case provably identical either way.
         """
-        from scifor import ColName, PathInput, PathOutput
 
-        from scidb.model.input_spec import is_loadable
-        from scidb.model.parameter import single_value
 
         return {
             k: single_value(v)
@@ -525,9 +527,7 @@ class ForEachConfig:
         Returns a dict (not JSON string) so it can be carried in the in-memory
         config keys that build save_metadata.
         """
-        from scifor import PathInput
 
-        from scidb.model.input_spec import is_loadable
 
         result = {}
         for name in sorted(self.inputs):

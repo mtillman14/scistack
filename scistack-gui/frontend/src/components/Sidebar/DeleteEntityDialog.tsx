@@ -154,7 +154,7 @@ export default function DeleteEntityDialog({
             {preview?.ok ? 'Cancel' : 'Close'}
           </button>
           {preview?.ok && (
-            <button type="button" style={styles.deleteBtn} onClick={confirm} disabled={busy}>
+            <button type="button" style={styles.deleteBtn} onClick={confirm} disabled={busy} data-testid="delete-declaration-confirm">
               {busy ? 'Deleting…' : 'Delete declaration'}
             </button>
           )}

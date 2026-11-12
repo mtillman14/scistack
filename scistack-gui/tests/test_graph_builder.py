@@ -3160,7 +3160,7 @@ class TestPlacementQualifiedConfigRehydration:
 class TestManualInputOverrides:
     """graph_builder.manual_input_overrides — the one owner of "the edges
     visible on the DAG are the ground truth" for a history node's inputs
-    (docs/claude/manual-edges-on-history-nodes.md)."""
+    (docs/claude/archive/manual-edges-on-history-nodes.md)."""
 
     FN = "grSides"
 
@@ -3335,7 +3335,7 @@ class TestDocumentInputParams:
 class TestRunStatePropagationFollowsManualEdges:
     """Red must cross an edge the user drew.
 
-    `docs/claude/manual-edges-on-history-nodes.md`: **the edges visible on the
+    `docs/claude/archive/manual-edges-on-history-nodes.md`: **the edges visible on the
     DAG are the ground truth, for display and for execution.** Colour is the
     third consumer and never got the rule — it is computed from the recorded
     wiring ~200 lines before the overlay reaches the built nodes. So a step fed

@@ -1168,6 +1168,7 @@ export default function PipelineDAG() {
             <button
               style={styles.contextMenuItem}
               onClick={() => { setExpectedTarget({ variable: varType, filter: null }); setContextMenu(null) }}
+              data-testid="menu-expected-locations"
               type="button"
               title="Which locations this variable should have, and whether each is present, missing unexpectedly, present unexpectedly, missing as expected or excluded, with why (`scidb expected <name>`)"
             >

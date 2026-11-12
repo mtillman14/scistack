@@ -52,7 +52,7 @@ export function Group({
   children: React.ReactNode
 }) {
   return (
-    <div style={styles.group}>
+    <div style={styles.group} data-testid={`rail-group-${title}`}>
       <button
         type="button"
         style={styles.groupHeader}

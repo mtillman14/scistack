@@ -3,7 +3,7 @@
 Goal: generate a standalone script (never data/records — a script that
 RECOMPUTES them by running the same wiring against the same database)
 reproducing a GUI-authored pipeline's wiring outside the GUI. Builds on
-`docs/claude/gui-export-to-plain-python.md`'s disconnected-wiring decision
+`docs/claude/archive/gui-export-to-plain-python.md`'s disconnected-wiring decision
 (warn-comment, reusing `execution_service.disconnected_reason`) and reuses
 #7's recursive closure walk (`portability_service._closure_pipeline_ids`)
 for nested submodules.

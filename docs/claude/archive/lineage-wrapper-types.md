@@ -1,5 +1,8 @@
 # Lineage Wrapper Types and Cross-Layer Data Flow
 
+> **Archived 2026-11-10** (grug follow-up, one live doc per concept). Superseded by
+> database-model.md (LineageFcnResult no longer exists). Kept for history; do not treat as current.
+
 ## The Big Picture
 
 Every layer of the stack wraps your raw data (a numpy array, scalar, etc.)

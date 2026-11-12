@@ -110,4 +110,4 @@ lineage_hash, and pipeline_lineage_hash. Version keys include `__fn` and
 
 - `docs/claude/for-each-input-unwrapping.md` — how inputs are delivered to functions
 - `docs/claude/for-each-caching.md` — skip_computed staleness detection design
-- `docs/claude/for-each-kwargs.md` — keyword argument handling
+- `docs/claude/archive/for-each-kwargs.md` — keyword argument handling

@@ -718,6 +718,7 @@ export default function EditTab() {
           value={search}
           placeholder="Search…  (/)"
           aria-label="Search the palette"
+          data-testid="palette-search"
           onChange={e => setSearch(e.target.value)}
           onKeyDown={e => {
             if (e.key === 'Escape') { setSearch(''); e.currentTarget.blur() }
@@ -733,6 +734,7 @@ export default function EditTab() {
             key={tab.id}
             type="button"
             onClick={() => selectTab(tab.id)}
+            data-testid={`palette-tab-${tab.id}`}
             style={{
               ...styles.tabBtn,
               ...(activeTab === tab.id ? styles.tabBtnActive : {}),
@@ -1413,6 +1415,8 @@ function DragItem({
   return (
     <div
       draggable
+      data-testid="palette-item"
+      data-label={label}
       onDragStart={onDragStart}
       onClick={onClick}
       onContextMenu={onContextMenu}
@@ -1435,6 +1439,7 @@ function DragItem({
           style={{ ...styles.rowBtn, visibility: hover || selected ? 'visible' : 'hidden' }}
           title="Delete the declaration (saved data is kept)"
           aria-label={`Delete ${label}`}
+          data-testid="palette-delete"
           onClick={e => { e.stopPropagation(); onDelete() }}
         >
           🗑
