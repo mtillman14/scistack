@@ -15,6 +15,13 @@ Three things a histogram decides, each once:
     fixed duration (``"1h"``, ``"7D"``, ``"30min"``; no months, which have no
     fixed length — user, 2026-10-22). 7-day bins therefore start on
     Thursdays (1970-01-01 was one).
+  * Values on a step (every mode, numbers only; user, 2026-11-15): when every
+    gap between distinct values is a whole multiple of a step x (ratings 1-10:
+    1; 10, 20, .. 100: 10; half points: 0.5), the edges sit half a step off the
+    values, so no edge sits on a value. Auto draws one bar per possible value
+    (past 200 of them, numpy's width rounded UP to a multiple of x); a width
+    anchors at a multiple of the width minus x/2; a count spans the range
+    widened by x/2 each side. Continuous data (no step) keeps numpy's bins.
 
   The range is the values' own extent unless ``range_min`` / ``range_max``
   pin an end. Edges are decided once per FIGURE, over every panel's values,
@@ -76,7 +83,33 @@ class BinError(ValueError):
 
 # The edges. ONE source: bin_edges executes it, codegen emits it verbatim.
 EDGES_SOURCE = '''
-def _scistack_bin_edges(values, mode, count, width, lo, hi, max_bins):
+def _scistack_grid(values):
+    """The step x the finite values sit on: 1 for ratings 1-10, 10 for
+    10, 20, .. 100, 0.5 for half-point ratings. 0.0 when the data is
+    continuous. Every gap between distinct values is a whole multiple of x;
+    try x = (smallest gap) / m for m = 1 .. 10 and take the first that fits,
+    within a 1e-6 relative tolerance (Euclid's gcd that tolerates float
+    noise). One distinct value: 1."""
+    import numpy as np
+
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    distinct = np.unique(values)
+    if not distinct.size:
+        return 0.0
+    if distinct.size == 1:
+        return 1.0
+    gaps = np.diff(distinct)
+    d_min = float(gaps.min())
+    for m in range(1, 11):
+        x = d_min / m
+        ratios = gaps / x
+        if np.all(np.abs(ratios - np.round(ratios)) <= 1e-6 * ratios):
+            return float(f"{x:.12g}")
+    return 0.0
+
+
+def _scistack_bin_edges(values, mode, count, width, lo, hi, max_bins, use_grid=True, max_slots=200):
     """Histogram bin edges: the scistackplot.reduce.bins rule."""
     import math
 
@@ -92,19 +125,41 @@ def _scistack_bin_edges(values, mode, count, width, lo, hi, max_bins):
         return np.array([], dtype=float)
     if hi < lo:
         lo, hi = hi, lo
+    inside = values[(values >= lo) & (values <= hi)]
+    # Values on a step x (ratings 1-10: x = 1; 10, 20, .. 100: x = 10): every
+    # mode puts its edges HALF a step off the values, so no edge sits on a
+    # value. Off the values, a bin can hold none (auto's 0.82 width on 1-10
+    # ratings left [5.09, 5.91) empty) or two (width 1 from 1 put 9 and 10
+    # in [9, 10]).
+    grid = _scistack_grid(values) if use_grid else 0.0
+    half = grid / 2
+    # Where the values sit within a step (signed, near 0 for a clean scale).
+    offset = float(values.min()) - round(float(values.min()) / grid) * grid if grid else 0.0
     if mode == "width":
-        start = math.floor(lo / width) * width
-        n = max(1, int(math.ceil((hi - start) / width - 1e-9)))
+        start = offset - half + math.floor((lo - offset + half) / width + 1e-9) * width
+        n = max(1, int(math.ceil((hi + half - start) / width - 1e-9)))
         if n > max_bins:
             raise ValueError(
                 f"a bin width of {width:g} makes {n} bins; at most {max_bins} fit"
             )
         edges = start + width * np.arange(n + 1, dtype=float)
-        edges[-1] = max(edges[-1], hi)
+        edges[-1] = max(edges[-1], hi + half)
         return edges
-    inside = values[(values >= lo) & (values <= hi)]
-    bins = int(count) if mode == "count" else "auto"
-    edges = np.histogram_bin_edges(inside, bins=bins, range=(lo, hi))
+    if mode == "count":
+        return np.histogram_bin_edges(inside, bins=int(count), range=(lo - half, hi + half))
+    edges = np.histogram_bin_edges(inside, bins="auto", range=(lo, hi))
+    if grid and len(edges) > 1:
+        # One bar per possible value; past max_slots values, numpy's width
+        # rounded UP to a multiple of x, so each bar holds the same number
+        # of values.
+        slots = int(round((hi - lo) / grid)) + 1
+        step = grid
+        if slots > max_slots:
+            step = grid * max(1.0, float(math.ceil(float(np.diff(edges).max()) / grid - 1e-9)))
+        start = offset - half + math.floor((lo - offset + half) / grid + 1e-9) * grid
+        n = max(1, int(math.ceil((hi + half - start) / step - 1e-9)))
+        if n <= max_bins:
+            return start + step * np.arange(n + 1, dtype=float)
     if len(edges) - 1 > max_bins:
         edges = np.histogram_bin_edges(inside, bins=max_bins, range=(lo, hi))
     return edges
@@ -479,11 +534,14 @@ def histogram_problem(options: HistogramOptions, *, temporal: bool) -> str | Non
 
 
 def edge_arguments(options: HistogramOptions, *, temporal: bool) -> tuple:
-    """``(mode, count, width, lo, hi, max_bins)`` exactly as
+    """``(mode, count, width, lo, hi, max_bins, use_grid)`` exactly as
     ``_scistack_bin_edges`` takes them — what the generated code passes,
-    so it bins over its own figure's values by the preview's settings."""
+    so it bins over its own figure's values by the preview's settings.
+    ``use_grid``: values on a step get edges halfway between the steps in
+    every mode — never on a date axis, whose millisecond values are not a
+    scale."""
     mode, count, width, lo, hi, _notes = _arguments(options, temporal=temporal)
-    return (str(mode), count, width, lo, hi, MAX_BINS)
+    return (str(mode), count, width, lo, hi, MAX_BINS, not temporal)
 
 
 def _arguments(options: HistogramOptions, *, temporal: bool) -> tuple:
@@ -506,6 +564,13 @@ def _arguments(options: HistogramOptions, *, temporal: bool) -> tuple:
     return mode, int(count), width, lo, hi, notes
 
 
+#: Values on a step (`_scistack_grid`): edges half a step off the values.
+GRID_NOTE = "The values sit on steps of {x:g}, so the bin edges sit halfway between them."
+#: A bin width that is not a multiple of the step.
+OFF_GRID_NOTE = (
+    "Bins {w:g} wide on values {x:g} apart don't all hold the same number of "
+    "values. A width that's a multiple of {x:g} does."
+)
 #: Why a special slot is not drawn — the notes `bin_edges` adds.
 EXACT_TEMPORAL_NOTE = "Single-value bins apply to numbers, not dates; they are ignored here."
 NAN_TEMPORAL_NOTE = "Missing times are not drawn as a bar on a date axis."
@@ -547,12 +612,25 @@ def bin_edges(values: Any, options: HistogramOptions, *, temporal: bool = False)
     if options.stat is HistStat.DENSITY and (exact or (show_nan and n_nan)):
         notes.append(DENSITY_SPECIAL_NOTE)
     try:
-        edges = _edges_function()(regular, str(mode), count, width, lo, hi, MAX_BINS)
+        edges = _edges_function()(regular, str(mode), count, width, lo, hi, MAX_BINS, not temporal)
     except ValueError as exc:
         raise BinError(f"{exc}. Use a wider bin, or fewer bins.") from exc
     if mode is BinMode.AUTO and len(edges) - 1 == MAX_BINS:
         notes.append(f"Automatic bins capped at {MAX_BINS}.")
     widths = np.diff(edges)
+    step = 0.0 if temporal else _source_function("_scistack_grid")(regular)
+    if step:
+        notes.append(GRID_NOTE.format(x=step))
+        if widths.size and abs(widths[0] / step - round(widths[0] / step)) > 1e-6:
+            notes.append(OFF_GRID_NOTE.format(w=float(widths[0]), x=step))
+        distinct = np.unique(regular[np.isfinite(regular)])
+        gap = float(np.diff(distinct).min()) if distinct.size > 1 else step
+        Log.info(
+            "histogram bins: grid x=%g, m=%d, %d distinct value(s)",
+            step, round(gap / step), distinct.size, layer=LAYER,
+        )
+    elif not temporal:
+        Log.info("histogram bins: no grid (continuous)", layer=LAYER)
     same = widths.size and np.allclose(widths, widths[0], rtol=1e-9, atol=0.0)
     result = BinEdges(
         edges=tuple(float(e) for e in edges),
@@ -560,7 +638,7 @@ def bin_edges(values: Any, options: HistogramOptions, *, temporal: bool = False)
         width=float(widths[0]) if same else None,
         n_values=int(regular.size),
         notes=tuple(notes),
-        call=(str(mode), count, width, lo, hi, MAX_BINS),
+        call=(str(mode), count, width, lo, hi, MAX_BINS, not temporal),
         exact=exact,
         nan=bool(show_nan and n_nan),
         n_nan=n_nan,

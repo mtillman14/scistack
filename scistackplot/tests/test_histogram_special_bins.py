@@ -91,8 +91,9 @@ def test_an_exact_value_is_counted_once_in_its_own_slot(zeros_table):
         assert exact[COUNT].tolist() == [4]
         assert exact[BIN_LABEL].tolist() == ["= 0"]
         assert int(regular[COUNT].sum()) == 6  # the zeros are in no regular bin
-    # The regular edges span the remaining values only.
-    assert figure.bins.edges[0] == pytest.approx(1.0)
+    # The regular edges span the remaining values only (whole numbers 1-6:
+    # the auto bins are centred on them, so the first edge is 1 - 0.5).
+    assert figure.bins.edges[0] == pytest.approx(0.5)
     assert figure.bins.n_values == 12
 
 

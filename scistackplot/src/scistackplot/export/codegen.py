@@ -954,7 +954,7 @@ def _histogram_edge_lines(spec, table: LongTable, roles, shape) -> list[str]:
     from ..reduce.bins import BARS_SOURCE, EDGES_SOURCE, edge_arguments, special_arguments
 
     temporal = table.measure(spec.y_measure).temporal
-    mode, count, width, lo, hi, max_bins = edge_arguments(spec.histogram, temporal=temporal)
+    mode, count, width, lo, hi, max_bins, use_grid = edge_arguments(spec.histogram, temporal=temporal)
     exact, show_nan, _notes = special_arguments(spec.histogram, temporal=temporal)
     y = spec.y_measure
     lines = [
@@ -968,7 +968,7 @@ def _histogram_edge_lines(spec, table: LongTable, roles, shape) -> list[str]:
         "_hist_regular = _scistack_regular(_hist_values, _exact)",
         f"_nan_slot = {bool(show_nan)!r} and bool((~np.isfinite(_hist_values)).any())",
         f"_edges = _scistack_bin_edges(_hist_values[_hist_regular], "
-        f"{mode!r}, {count!r}, {width!r}, {lo!r}, {hi!r}, {max_bins!r})",
+        f"{mode!r}, {count!r}, {width!r}, {lo!r}, {hi!r}, {max_bins!r}, {use_grid!r})",
     ]
     if spec.histogram.stat is HistStat.PERCENT:
         keys = [*_hist_panel_keys(spec, table, roles, shape)]

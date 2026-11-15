@@ -8,6 +8,23 @@ frontend `continuousKinds.test.ts`.*
 ## User decisions (2026-10-22)
 
 - Bins: ONE mode at a time — auto (numpy's estimator), a count, or a width.
+- Bins on the values' step (user, 2026-11-15), in EVERY mode. Best Popcorn's
+  1-10 ratings drew no bar between 5 and 6: numpy's auto width (0.82) left
+  the bin [5.09, 5.91) holding no rating. Width 1 from 1 had the mirror bug,
+  with [9, 10] holding the 9s and the 10s. Rule: `_scistack_grid` finds the
+  step x every gap between distinct values is a whole multiple of (try
+  smallest gap / m for m = 1..10, 1e-6 relative tolerance; none fits = 0 =
+  continuous = numpy's bins as before; one distinct value = 1). Edges then
+  sit x/2 off the values. Auto: one bar per possible value (empty slots are
+  bars), or past 200 slots (`max_slots`) numpy's width rounded UP to a
+  multiple of x. A width anchors at a multiple of the width minus x/2 (5 on
+  ratings gives 0-4, 5-9, ...); a count spans [lo - x/2, hi + x/2]. Lives in
+  `EDGES_SOURCE` (exported verbatim); `use_grid` is off on a date axis. Notes:
+  `GRID_NOTE`, and `OFF_GRID_NOTE` when the width is not a multiple of x.
+  Known limit: sparse data shows only its own spacing (2,4,8 -> x = 2).
+  Log line: `histogram bins: grid x=…, m=…`. Tests: `test_histogram.py`
+  (`test_the_grid_step` A-H, `test_auto_edges_*`, `test_popcorn_*`,
+  `test_one_bar_per_value_up_to_the_slot_cap_*`).
 - Percent / density are normalised per colour level within a panel
   (seaborn `common_norm=False`).
 - Several colour levels default to overlaid (`multiple="layer"`); stacked and

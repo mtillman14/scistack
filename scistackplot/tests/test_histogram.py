@@ -32,6 +32,8 @@ from scistackplot.reduce.bins import (
     EDGES_SOURCE,
     MAX_BINS,
     BinError,
+    GRID_NOTE,
+    OFF_GRID_NOTE,
     bin_edges,
     edge_arguments,
     histogram_limits,
@@ -71,7 +73,7 @@ def bars(figure, panel=0) -> pd.DataFrame:
 
 
 def test_width_bins_start_at_a_multiple_of_the_width():
-    edges = bin_edges([1.3, 2.2, 3.9], HistogramOptions(bins=BinMode.WIDTH, bin_width=0.5))
+    edges = bin_edges([1.3, 2.2171, 3.9], HistogramOptions(bins=BinMode.WIDTH, bin_width=0.5))
     assert edges.edges[0] == pytest.approx(1.0)
     assert edges.edges[-1] >= 3.9
     assert np.allclose(np.diff(edges.edges), 0.5)
@@ -79,7 +81,7 @@ def test_width_bins_start_at_a_multiple_of_the_width():
 
 
 def test_count_bins_span_the_range_evenly():
-    edges = bin_edges([0.0, 10.0, 4.0], HistogramOptions(bins=BinMode.COUNT, bin_count=5))
+    edges = bin_edges([0.0, 10.0, 4.537], HistogramOptions(bins=BinMode.COUNT, bin_count=5))
     assert edges.edges == pytest.approx((0.0, 2.0, 4.0, 6.0, 8.0, 10.0))
 
 
@@ -89,8 +91,137 @@ def test_auto_bins_are_numpys():
     assert edges.edges == pytest.approx(tuple(np.histogram_bin_edges(values, bins="auto")))
 
 
+# Values on a step (user, 2026-11-15): Best Popcorn ratings 1-10 drew no bar
+# between 5 and 6. numpy's auto width (0.82) left the bin [5.09, 5.91)
+# holding no rating. Every mode puts its edges halfway between the values.
+POPCORN_COUNTS = {1: 1, 2: 5, 3: 14, 4: 23, 5: 55, 6: 68, 7: 46, 8: 44, 9: 29, 10: 15}
+POPCORN = np.repeat(list(POPCORN_COUNTS), list(POPCORN_COUNTS.values())).astype(float)
+
+
+def _grid(values):
+    namespace: dict = {}
+    exec(EDGES_SOURCE, namespace)  # noqa: S102
+    return namespace["_scistack_grid"](values)
+
+
+def _auto(values):
+    return bin_edges(np.asarray(values, dtype=float), HistogramOptions())
+
+
+# (name, values, step x). Plan table A-H.
+GRID_CASES = [
+    ("A", [1, 2, 2, 3, 4, 4, 4, 5], 1.0),
+    ("B", [1, 2, 2, 3, 7, 8, 10], 1.0),
+    ("C", [2, 4, 4, 8], 2.0),
+    ("D", [10, 30, 30, 60, 100], 10.0),
+    ("E", [1.0, 2.5, 2.5, 4.0, 5.0], 0.5),
+    ("F", [0.1, 0.3, 0.6], 0.1),
+    ("G", [1.37, 2.91, 3.02, 4.58], 0.0),
+    ("H", [-3, -1, 1, 3], 2.0),
+]
+
+
+@pytest.mark.parametrize("name,values,step", GRID_CASES, ids=[c[0] for c in GRID_CASES])
+def test_the_grid_step(name, values, step):
+    assert _grid(values) == step
+
+
+def test_the_grid_of_one_distinct_value_is_one_and_of_nothing_is_zero():
+    assert _grid([7.0, 7.0]) == 1.0
+    assert _grid([np.nan]) == 0.0
+
+
+# Auto bars (plan table): edges halfway between the possible values; empty
+# slots are bars too.
+AUTO_EDGES = {
+    "A": [0.5, 1.5, 2.5, 3.5, 4.5, 5.5],
+    "B": [x + 0.5 for x in range(0, 10 + 1)],
+    "C": [1, 3, 5, 7, 9],
+    "D": [5 + 10 * i for i in range(11)],
+    "E": [0.75 + 0.5 * i for i in range(10)],
+    "F": [0.05 + 0.1 * i for i in range(7)],
+    "H": [-4, -2, 0, 2, 4],
+}
+
+
+@pytest.mark.parametrize("name", list(AUTO_EDGES))
+def test_auto_edges_are_halfway_between_the_possible_values(name):
+    values = dict((c[0], c[1]) for c in GRID_CASES)[name]
+    assert _auto(values).edges == pytest.approx(tuple(AUTO_EDGES[name]))
+
+
+def test_auto_edges_on_continuous_data_are_numpys():
+    values = dict((c[0], c[1]) for c in GRID_CASES)["G"]
+    assert _auto(values).edges == pytest.approx(tuple(np.histogram_bin_edges(values, bins="auto")))
+
+
+def test_popcorn_gets_one_bar_per_rating_in_every_mode():
+    want = tuple(np.arange(0.5, 11.0, 1.0))
+    auto = bin_edges(POPCORN, HistogramOptions())
+    assert auto.edges == pytest.approx(want)
+    assert np.histogram(POPCORN, bins=auto.edges)[0].tolist() == list(POPCORN_COUNTS.values())
+    assert GRID_NOTE.format(x=1.0) in auto.notes
+    one = bin_edges(POPCORN, HistogramOptions(bins=BinMode.WIDTH, bin_width=1))
+    assert one.edges == pytest.approx(want)
+    assert OFF_GRID_NOTE.format(w=1.0, x=1.0) not in one.notes
+    ten = bin_edges(POPCORN, HistogramOptions(bins=BinMode.COUNT, bin_count=10))
+    assert ten.edges == pytest.approx(want)
+    # A width of 5 still anchors on multiples of 5: 0-4, 5-9, 10-14.
+    five = bin_edges(POPCORN, HistogramOptions(bins=BinMode.WIDTH, bin_width=5))
+    assert five.edges == pytest.approx((-0.5, 4.5, 9.5, 14.5))
+    nine = bin_edges(POPCORN, HistogramOptions(bins=BinMode.COUNT, bin_count=9))
+    assert nine.edges[0] == pytest.approx(0.5) and nine.edges[-1] == pytest.approx(10.5)
+
+
+def test_tens_get_ten_bars_ten_wide():
+    edges = _auto(np.arange(10, 101, 10))
+    assert edges.edges == pytest.approx(tuple(range(5, 106, 10)))
+    assert edges.width == pytest.approx(10.0)
+
+
+def test_a_width_that_is_not_a_multiple_of_the_step_says_so():
+    narrow = bin_edges(POPCORN, HistogramOptions(bins=BinMode.WIDTH, bin_width=0.75))
+    assert OFF_GRID_NOTE.format(w=0.75, x=1.0) in narrow.notes
+
+
+def test_one_bar_per_value_up_to_the_slot_cap_then_wider_bars():
+    hundred = _auto(np.arange(0, 101))
+    assert len(hundred.edges) - 1 == 101 and hundred.width == pytest.approx(1.0)
+    over = _auto(np.arange(0, 201))  # 201 slots: falls back
+    assert over.width is not None and over.width > 1.0
+    assert over.width == pytest.approx(round(over.width))
+    assert over.edges[0] == pytest.approx(-0.5)
+
+
+def test_a_wide_range_falls_back_to_whole_multiples_of_the_step():
+    values = np.arange(0, 5001, dtype=float)
+    edges = _auto(values)
+    widths = np.diff(edges.edges)
+    assert widths[0] >= 1 and widths[0] == round(widths[0])
+    assert np.allclose(widths, widths[0])
+    assert edges.edges[0] == pytest.approx(-0.5)
+    assert edges.edges[-1] >= 5000.5
+    # No bin falls between values: every edge is at .5
+    assert np.allclose(np.asarray(edges.edges) % 1, 0.5)
+
+
+def test_decimals_off_the_grid_keep_numpys_bins():
+    values = np.append(POPCORN, 5.123)
+    assert bin_edges(values, HistogramOptions()).edges == pytest.approx(
+        tuple(np.histogram_bin_edges(values, bins="auto"))
+    )
+
+
+def test_the_grid_is_numbers_only():
+    # A date axis: milliseconds are not a scale.
+    ms = 1.7e12 + POPCORN * 86_400_000.0
+    dated = bin_edges(ms, HistogramOptions(), temporal=True)
+    assert dated.edges == pytest.approx(tuple(np.histogram_bin_edges(ms, bins="auto")))
+    assert not any("steps of" in note for note in dated.notes)
+
+
 def test_range_pins_an_end():
-    edges = bin_edges([1.0, 2.0, 3.0], HistogramOptions(bins=BinMode.COUNT, bin_count=2, range_min=0.0))
+    edges = bin_edges([1.0, 2.537, 3.0], HistogramOptions(bins=BinMode.COUNT, bin_count=2, range_min=0.0))
     assert edges.edges == pytest.approx((0.0, 1.5, 3.0))
 
 
@@ -116,11 +247,14 @@ def test_datetime_width_is_a_duration():
 
 def test_generated_edges_match_the_library_rule():
     """The export restates nothing: it runs EDGES_SOURCE, the same text."""
-    values = np.random.default_rng(3).normal(5, 2, size=80)
-    for options in (
-        HistogramOptions(),
-        HistogramOptions(bins=BinMode.COUNT, bin_count=7),
-        HistogramOptions(bins=BinMode.WIDTH, bin_width=0.75, range_max=12.0),
+    normal = np.random.default_rng(3).normal(5, 2, size=80)
+    for values, options in (
+        (normal, HistogramOptions()),
+        (normal, HistogramOptions(bins=BinMode.COUNT, bin_count=7)),
+        (normal, HistogramOptions(bins=BinMode.WIDTH, bin_width=0.75, range_max=12.0)),
+        (POPCORN, HistogramOptions()),  # whole numbers: centred bins
+        (POPCORN, HistogramOptions(bins=BinMode.WIDTH, bin_width=1)),
+        (POPCORN, HistogramOptions(bins=BinMode.COUNT, bin_count=9)),
     ):
         namespace: dict = {}
         exec(EDGES_SOURCE, namespace)  # noqa: S102
