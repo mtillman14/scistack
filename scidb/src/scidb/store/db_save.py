@@ -43,6 +43,8 @@ from scidb.model.exceptions import ColumnTypeChangedError
 from scidb.model.exceptions import DuplicateLocationError
 from scidb.provenance.graph import insert_record_entity
 from scidb.provenance.save import record_direct_save
+from scidb.store.db_helpers import _ordered_data_columns
+from scidb.store.emptiness import is_empty
 class SaveMixin:
     """DatabaseManager: saving one record — registration, duplicate-location and column-set checks, columnar and native storage, stored column types."""
 
@@ -70,7 +72,18 @@ class SaveMixin:
                 for c in collisions
             )
         )
-        raise DuplicateLocationError(type_name, collisions, schema_keys)
+        data_columns: list[str] = []
+        for data, _meta in data_items:
+            for column in _ordered_data_columns(data):
+                if column not in data_columns:
+                    data_columns.append(column)
+        raise DuplicateLocationError(
+            type_name,
+            collisions,
+            schema_keys,
+            data_columns=data_columns,
+            dataset_empty=is_empty(self),
+        )
 
     def _check_column_set(
         self: "DatabaseManager",
@@ -151,17 +164,9 @@ class SaveMixin:
         """
         table_name = variable_class.table_name()
         view_name = variable_class.view_name()
-        schema_cols = ", ".join(f's."{col}"' for col in self.dataset_schema_keys)
-        self._duck.execute(f"""
-            CREATE OR REPLACE VIEW "{view_name}" AS
-            SELECT
-                t.*,
-                s.schema_level, {schema_cols},
-                r.excluded
-            FROM "{table_name}" t
-            LEFT JOIN _record r ON t.record_id = r.record_id
-            LEFT JOIN _schema s ON r.schema_id = s.schema_id
-        """)
+        self._duck.execute(
+            variable_view_sql(view_name, table_name, self.dataset_schema_keys)
+        )
 
     def _save_record_event(
         self: "DatabaseManager",
@@ -916,3 +921,20 @@ class SaveMixin:
         Log.debug(f"save({type_name}): transaction committed")
 
         return record_id
+
+
+def variable_view_sql(view_name: str, table_name: str, schema_keys) -> str:
+    """THE statement that creates a variable's view (its data table joined
+    with ``_record`` and ``_schema``). Owned here; ``change_schema_keys``
+    re-creates every view with it after the schema key columns change."""
+    schema_cols = ", ".join(f's."{col}"' for col in schema_keys)
+    return f"""
+            CREATE OR REPLACE VIEW "{view_name}" AS
+            SELECT
+                t.*,
+                s.schema_level, {schema_cols},
+                r.excluded
+            FROM "{table_name}" t
+            LEFT JOIN _record r ON t.record_id = r.record_id
+            LEFT JOIN _schema s ON r.schema_id = s.schema_id
+        """

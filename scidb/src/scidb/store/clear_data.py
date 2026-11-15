@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING
 
 from scidb.store import tables as table_registry
 from scidb.model.log import Log
+from scidb.store.emptiness import variable_record_counts
 
 if TYPE_CHECKING:
     from scidb.store.database import DatabaseManager
@@ -113,7 +114,6 @@ def _count(duck, table: str) -> int:
 
 def clear_plan(db: "DatabaseManager") -> ClearPlan:
     """What :func:`clear_data` would delete. Writes nothing."""
-    from scidb.provenance.graph import INTERNAL_RECORD_TYPES
     from scidb.store.variant_pins import active_pins
 
     duck = db._duck
@@ -123,13 +123,7 @@ def clear_plan(db: "DatabaseManager") -> ClearPlan:
         if duck.table_exists(table):
             table_rows[table] = _count(duck, table)
 
-    by_variable: dict[str, int] = {}
-    if duck.table_exists("_record"):
-        for rtype, n in duck.fetchall(
-            "SELECT type, COUNT(*) FROM _record GROUP BY type ORDER BY type"
-        ):
-            if rtype not in INTERNAL_RECORD_TYPES:
-                by_variable[rtype] = int(n)
+    by_variable = variable_record_counts(db)
     runs_kept = _count(duck, "_run") if duck.table_exists("_run") else 0
     pins = sorted(active_pins(db))
     has_canvas = any(duck.table_exists(t) for t in CANVAS_TABLES)

@@ -739,3 +739,11 @@ INTENT = _core(
     """,
     kept="statements about runs (what the canvas asks for): intent, not results",
 )
+
+
+def schema_keyed_tables() -> tuple[TableDecl, ...]:
+    """scidb tables built from the schema keys (their DDL is a function of
+    them), in declaration order. THE list ``change_schema_keys`` rebuilds:
+    :data:`BUNDLE_INTENT` ones carry rows that must survive a change, the
+    rest are history that is emptied."""
+    return tuple(d for d in _core_decls() if any(callable(s) for s in d.statements))

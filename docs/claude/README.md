@@ -167,6 +167,7 @@ Rules:
 
 - [DataFrame Conversion: Factoring Out as a Standalone Library](dataframe-conversion-factoring.md) — `dataframe-conversion-factoring.md`
 - [Docs Ground-Truth: Package → Test Map](docs-ground-truth-test-map.md) — `docs-ground-truth-test-map.md`
+- [Changing the schema keys of an empty dataset](changing-schema-keys.md) — `changing-schema-keys.md`
 - [Duplicate location in one batch vs. a stale value across runs](duplicate-location-vs-stale.md) — `duplicate-location-vs-stale.md`
 - [Endpoint-First Pipelines — Concept](endpoint-first-pipelines.md) — `endpoint-first-pipelines.md`
 - [How a Function Node's Inputs Get Built](function-input-resolution.md) — `function-input-resolution.md`

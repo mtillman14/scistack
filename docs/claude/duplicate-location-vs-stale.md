@@ -69,7 +69,7 @@ before any write, as `ColumnSetChangedError` does).
 
 - The rows are genuinely different observations (two visits) -> add a finer
   schema key (e.g. `visit`/`session` column) so each row has its own location
-  (a new project database: schema keys are fixed at creation).
+  (change the keys while the dataset is empty, else a new project database).
 - The rows should be combined -> aggregate in the function before returning.
 - One row is a mistake -> remove it upstream (the CSV).
 - The rows are separate observations and a lower schema key exists ->
@@ -88,10 +88,12 @@ the usual red badge, FailuresPanel entry and toast. Plumbing:
 `error-surfacing.md` §8.
 
 The two steps:
-- **Change the dataset schema** — explanation only. A database's schema keys
-  are the columns of `_schema`, fixed when it is created (no add-key API;
-  user decision 2026-10-27), so this means a new project database with the
-  extra key (e.g. `visit`) and running again.
+- **Change the dataset schema** — actionable only while the dataset holds no
+  data (`scidb.is_empty`; 2026-11-15, `changing-schema-keys.md`): a **Change
+  the schema keys…** button opens a dialog that proposes the PathInput's keys
+  plus the loaded data's columns. Once any variable holds a record the step
+  only explains: schema keys are the columns of `_schema`, fixed from then on,
+  so the way out is a new project database with the extra key (e.g. `visit`).
 - **Change the data** — **Open <fn>** button: remove the extra row in the
   source file, or combine the rows in the function.
 

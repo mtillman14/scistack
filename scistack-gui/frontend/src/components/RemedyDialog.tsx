@@ -14,11 +14,13 @@ import { useNodeFailures } from '../context/NodeFailuresContext'
 import { RERUN_NODE_EVENT } from './DAG/runFailures'
 import type { RemedyStep, RerunNodeDetail } from './DAG/runFailures'
 import { dialog, dialogTitle, overlay } from './modalStyles'
+import SchemaKeysDialog from './SchemaKeysDialog'
 
-function StepCard({ step, fnName, nodeId, onDone }: {
-  step: RemedyStep; fnName: string; nodeId: string; onDone: () => void
+function StepCard({ step, fnName, nodeId, dataColumns, onDone }: {
+  step: RemedyStep; fnName: string; nodeId: string; dataColumns: string[]; onDone: () => void
 }) {
   const [note, setNote] = useState<string | null>(null)
+  const [editingKeys, setEditingKeys] = useState(false)
   // 'distribute_rows': turn on distribute on the node (so later runs and
   // pipeline runs distribute too), then ask the node to run again with it.
   const distributeRows = async () => {
@@ -68,6 +70,24 @@ function StepCard({ step, fnName, nodeId, onDone }: {
           Number the rows and run again
         </button>
       )}
+      {step.action === 'change_schema_keys' && nodeId && (
+        <button type="button" style={styles.button} onClick={() => {
+          // eslint-disable-next-line no-console
+          console.debug(`[remedy] action=change_schema_keys node=${nodeId} fn=${fnName}`)
+          setEditingKeys(true)
+        }}>
+          Change the schema keys…
+        </button>
+      )}
+      {editingKeys && (
+        <SchemaKeysDialog
+          nodeId={nodeId}
+          fnName={fnName}
+          dataColumns={dataColumns}
+          onClose={() => setEditingKeys(false)}
+          onApplied={() => { setEditingKeys(false); onDone() }}
+        />
+      )}
       {note && <div style={styles.note}>{note}</div>}
     </div>
   )
@@ -115,6 +135,7 @@ export default function RemedyDialog() {
             step={step}
             fnName={target.group.fn_name}
             nodeId={target.nodeId}
+            dataColumns={remedy.data_columns ?? []}
             onDone={closeRemedy}
           />
         ))}

@@ -66,7 +66,7 @@ class TestInit:
         )
         db1.close()
 
-        with pytest.raises(ValueError, match="schema mismatch"):
+        with pytest.raises(ValueError, match="Schema key mismatch"):
             SciDuck(db_path, dataset_schema=["subject", "trial"])
 
     def test_repr(self, duck):

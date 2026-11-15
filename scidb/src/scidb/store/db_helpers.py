@@ -467,14 +467,19 @@ def _differing_columns(values: list) -> list[str]:
     ]
 
 
-def _data_column_names(value) -> set[str]:
-    """The column names a saved value carries (DataFrame columns, dict keys);
-    empty for any other kind."""
+def _ordered_data_columns(value) -> list[str]:
+    """The column names a saved value carries (DataFrame columns, dict keys),
+    in order; empty for any other kind."""
     if isinstance(value, pd.DataFrame):
-        return {str(c) for c in value.columns}
+        return [str(c) for c in value.columns]
     if isinstance(value, dict):
-        return {str(k) for k in value}
-    return set()
+        return [str(k) for k in value]
+    return []
+
+
+def _data_column_names(value) -> set[str]:
+    """:func:`_ordered_data_columns` as a set."""
+    return set(_ordered_data_columns(value))
 
 
 def _colliding_locations(

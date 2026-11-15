@@ -77,21 +77,25 @@ def test_two_differing_rows_for_one_subject_refuse_the_save(db):
 
 
 def test_the_remedy_names_the_location_and_the_two_ways_out(db):
-    df = pd.DataFrame({"subject": ["2455369", "2455369"], "score": [1.0, 2.0]})
+    df = pd.DataFrame(
+        {"subject": ["2455369", "2455369"], "score": [1.0, 2.0], "age": [3, 4]}
+    )
     with pytest.raises(DuplicateLocationError) as info:
         Demo.save(df, db=db)
     remedy = info.value.remedy
     assert remedy["kind"] == "duplicate_location"
     assert "subject" in remedy["title"] and "Demo" in remedy["title"]
-    assert remedy["items"] == [
-        {"location": "subject=2455369", "count": 2, "differing_columns": []}
-    ]
+    assert [(i["location"], i["count"]) for i in remedy["items"]] == [("subject=2455369", 2)]
     assert remedy["n_more"] == 0
-    # Schema keys are fixed at database creation: that step only explains.
+    # An empty dataset can still change its keys (the first load just failed).
+    assert remedy["dataset_empty"] is True
     assert [s["action"] for s in remedy["steps"]] == [
-        None, "reveal_function", "distribute_rows"
+        "change_schema_keys", "reveal_function", "distribute_rows"
     ]
-    assert "new project database" in remedy["steps"][0]["text"]
+    # Schema-key columns are split out of the data before the check.
+    assert remedy["data_columns"] == ["score", "age"]
+    assert remedy["schema_keys"] == ["subject", "session"]
+    assert "still be changed" in str(info.value)
 
 
 def test_identical_rows_for_one_subject_merge_into_one_record(db):
@@ -207,3 +211,29 @@ def test_rule_ignores_branch_params_that_copy_the_data_columns():
         ["subject"],
     )
     assert collisions == []
+
+
+def test_a_dataset_that_holds_data_cannot_change_its_keys(db):
+    Demo.save(pd.DataFrame({"subject": ["S0"], "score": [0.0]}), db=db)
+    df = pd.DataFrame({"subject": ["S1", "S1"], "score": [1.0, 2.0]})
+    with pytest.raises(DuplicateLocationError) as info:
+        Demo.save(df, db=db)
+    remedy = info.value.remedy
+    assert remedy["dataset_empty"] is False
+    step = remedy["steps"][0]
+    assert step["action"] is None
+    assert "already holds data" in step["text"]
+    assert "new project database" in step["text"]
+    assert "can't be changed" in str(info.value)
+
+
+def test_data_columns_keep_the_order_across_the_batch(db):
+    with pytest.raises(DuplicateLocationError) as info:
+        db.save_batch(
+            Demo,
+            [
+                (pd.DataFrame({"subject": ["S1"], "b": [1], "a": [1]}), {"subject": "S1"}),
+                (pd.DataFrame({"subject": ["S1"], "c": [1], "a": [2]}), {"subject": "S1"}),
+            ],
+        )
+    assert info.value.data_columns == ["subject", "b", "a", "c"]

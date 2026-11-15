@@ -48,7 +48,9 @@ export interface RemedyStep {
   text: string
   // 'distribute_rows': turn on the node's distribute run option (backend
   // set_distribute) and run it again (RERUN_NODE_EVENT).
-  action?: 'reveal_function' | 'distribute_rows' | null
+  // 'change_schema_keys': open the SchemaKeysDialog (the dataset is empty, so
+  // its keys can still change; backend schema_key_proposal, change_schema_keys).
+  action?: 'reveal_function' | 'distribute_rows' | 'change_schema_keys' | null
 }
 
 /** Asks one FunctionNode to run again, optionally with run options patched
@@ -68,6 +70,11 @@ export interface Remedy {
   items: { location: string; count: number; differing_columns: string[] }[]
   n_more: number
   steps: RemedyStep[]
+  // Duplicate-location remedies: the loaded data's columns (in order), the
+  // dataset's current keys, and whether the dataset still holds no data.
+  data_columns?: string[]
+  schema_keys?: string[]
+  dataset_empty?: boolean
 }
 
 /** The popup a run asks for: its node ('' = node-less) and failure group. */

@@ -82,6 +82,20 @@ classdef TestConfigureDatabase < matlab.unittest.TestCase
             testCase.verifyEqual(result.data, [1; 2; 3]);
         end
 
+        function test_mismatched_schema_keys_error_names_both_lists(testCase)
+            % A reopened database with other keys must say which keys it has.
+            db_path = fullfile(testCase.test_dir, 'mismatch.duckdb');
+            scidb.configure_database(db_path, ["subject", "visit"]);
+            scidb.get_database().close();
+            try
+                scidb.configure_database(db_path, ["subject"]);
+                testCase.verifyFail('expected a schema key mismatch error');
+            catch err
+                testCase.verifySubstring(err.message, 'Schema key mismatch');
+                testCase.verifySubstring(err.message, "['subject', 'visit']");
+            end
+        end
+
         function test_reconfigure_database(testCase)
             % Configuring twice should work (replaces global singleton)
             db_path1 = fullfile(testCase.test_dir, 'test1.duckdb');            

@@ -259,3 +259,8 @@ All errors derive from `SciStackError`. The ones you are most likely to see:
 | `ColumnSetChangedError` | A table variable was saved with different columns. |
 | `OutputSaveError` | A `for_each` output could not be saved. |
 | `PipelineCycleError` | A pipeline's steps depend on each other in a loop. |
+## Schema keys of an empty dataset
+
+`scidb.is_empty(db=None)` is true when no variable holds a saved record (run history and declarations are not data). While it is true, the schema keys can still change: `scidb.store.schema_keys_change.change_schema_keys(db, new_keys, renames={old: new})` rebuilds the key-shaped tables in one transaction, keeps exclusions, expectation marks and key types (a new key reads NULL = every value), then **closes** the database; reopen it with `configure_database(path, new_keys)`. It raises `SchemaKeysChangeRefused` for a dataset that holds data, for invalid keys, or when an exclusion names a key that would be deleted. The GUI offers it in the duplicate-location popup (details: `docs/claude/changing-schema-keys.md`).
+
+| `SchemaKeysMismatchError` | `configure_database` got different schema keys than the database has (a `ValueError`; the message shows both lists). |

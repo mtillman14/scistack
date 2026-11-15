@@ -24,6 +24,7 @@ import pytest
 import scifor
 from scifor import ColumnSelection, LoopHooks, for_each, set_schema, stopped_run_of
 from scifor.failures import (
+    groups_from_wire,
     FRAMES_MAX,
     MESSAGE_MAX_CHARS,
     WIRE_COMBOS_MAX,
@@ -451,3 +452,22 @@ def test_frame_origin_never_raises(monkeypatch, caplog, _fresh_frame_caches):
     text = "\n".join(r.getMessage() for r in caplog.records)
     assert "[frame_origin] could not classify" in text
     assert "__file__" in text
+
+
+def test_remedy_name_lists_survive_matlab_one_element_encoding():
+    """MATLAB jsonencode writes a one-element list as a bare string."""
+    raw = {
+        "reason": "r",
+        "remedy": {
+            "kind": "duplicate_location",
+            "items": [],
+            "steps": [],
+            "data_columns": "score",
+            "schema_keys": ["subject", "visit"],
+            "dataset_empty": True,
+        },
+    }
+    (g,) = groups_from_wire([raw])
+    assert g["remedy"]["data_columns"] == ["score"]
+    assert g["remedy"]["schema_keys"] == ["subject", "visit"]
+    assert g["remedy"]["dataset_empty"] is True

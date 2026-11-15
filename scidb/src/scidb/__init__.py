@@ -53,7 +53,7 @@ from scidb.model.across_variants import AcrossVariants
 from scidb.artifact_stamp import read_artifact_stamp, stamp_artifact
 from scidb.model.column_selection import ColumnSelection
 from scidb.model.parameter import Parameter
-from scidb.store.database import configure_database, get_database, using_db
+from scidb.store.database import configure_database, get_database, is_empty, using_db
 from scidb.project.discover import (
     DiscoveryResult,
     ModuleError,
@@ -81,6 +81,7 @@ from scidb.model.exceptions import (
     SchemaKeyTypeConflictError,
     SchemaKeyTypeError,
     SciStackError,
+    SchemaKeysMismatchError,
 )
 from scidb.store.exclusions import exclude_schema, include_schema, list_exclusions
 from scidb.model.filters import raw_sql, schema_key
@@ -138,6 +139,8 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.run.bindings",
     "scidb.store.clear_data",
     "scidb.model.column_selection",
+    "scidb.store.emptiness",
+    "scidb.store.schema_keys_change",
     "scidb.store.database",
     "scidb.model.exceptions",
     "scidb.store.exclusions",
@@ -212,6 +215,7 @@ __all__ = [
     "configure_database",
     "get_database",
     "using_db",
+    "is_empty",
     # Save
     "save",
     # Pipeline node staleness
@@ -271,6 +275,7 @@ __all__ = [
     "SchemaKeyTypeError",
     "SchemaKeyTypeConflictError",
     "SchemaKeyTypeChangeError",
+    "SchemaKeysMismatchError",
     "GlueError",
     "GlueRowsChangedError",
     "GlueSchemaKeysAlteredError",

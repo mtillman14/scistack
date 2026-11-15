@@ -150,6 +150,7 @@ export interface ApiParams {
   add_pipeline_use: UseCreate
   add_project_path: PathBody
   cancel_run: RunRef
+  change_schema_keys: ChangeSchemaKeysRequest
   clear_data: ClearDataRequest
   create_builtin_function: CreateBuiltinFunctionRequest
   create_function: CreateFunctionRequest
@@ -278,6 +279,7 @@ export interface ApiParams {
   save_function_code: SaveFunctionCodeRequest
   save_glue: SaveGlueRequest
   schema_inventory: InventoryRequest
+  schema_key_proposal: SchemaKeyProposalRequest
   schema_key_type_impact: SchemaKeyTypeQuery
   set_distribute: DistributeOption
   set_entities_file: PathBody
@@ -360,6 +362,16 @@ export interface PathBody {
  */
 export interface RunRef {
   run_id: string
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "ChangeSchemaKeysRequest".
+ */
+export interface ChangeSchemaKeysRequest {
+  keys: string[]
+  renames?: {
+    [k: string]: string
+  }
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema
@@ -1721,6 +1733,14 @@ export interface InventoryRequest {
   limit?: number
   missing_only?: boolean
   within?: string[] | null
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "SchemaKeyProposalRequest".
+ */
+export interface SchemaKeyProposalRequest {
+  data_columns?: string[]
+  node_id: string
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

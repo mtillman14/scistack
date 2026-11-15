@@ -463,6 +463,28 @@
       "title": "ChangeRef",
       "type": "object"
     },
+    "ChangeSchemaKeysRequest": {
+      "properties": {
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "renames": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "type": "object"
+        }
+      },
+      "required": [
+        "keys"
+      ],
+      "title": "ChangeSchemaKeysRequest",
+      "type": "object"
+    },
     "ClearDataRequest": {
       "properties": {
         "backup": {
@@ -4901,6 +4923,25 @@
       "title": "SavedRenameRequest",
       "type": "object"
     },
+    "SchemaKeyProposalRequest": {
+      "properties": {
+        "data_columns": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "node_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id"
+      ],
+      "title": "SchemaKeyProposalRequest",
+      "type": "object"
+    },
     "SchemaKeyTypeQuery": {
       "properties": {
         "key": {
@@ -6384,6 +6425,9 @@
     "cancel_run": {
       "$ref": "#/$defs/RunRef"
     },
+    "change_schema_keys": {
+      "$ref": "#/$defs/ChangeSchemaKeysRequest"
+    },
     "clear_data": {
       "$ref": "#/$defs/ClearDataRequest"
     },
@@ -6768,6 +6812,9 @@
     "schema_inventory": {
       "$ref": "#/$defs/InventoryRequest"
     },
+    "schema_key_proposal": {
+      "$ref": "#/$defs/SchemaKeyProposalRequest"
+    },
     "schema_key_type_impact": {
       "$ref": "#/$defs/SchemaKeyTypeQuery"
     },
@@ -6924,6 +6971,7 @@
     "add_pipeline_use",
     "add_project_path",
     "cancel_run",
+    "change_schema_keys",
     "clear_data",
     "create_builtin_function",
     "create_function",
@@ -7052,6 +7100,7 @@
     "save_function_code",
     "save_glue",
     "schema_inventory",
+    "schema_key_proposal",
     "schema_key_type_impact",
     "set_distribute",
     "set_entities_file",

@@ -298,6 +298,15 @@ def database_or_none(db: "DatabaseManager | None" = None) -> "DatabaseManager | 
         return None
 
 
+def is_empty(db: "DatabaseManager | None" = None) -> bool:
+    """True when no variable of the dataset holds a saved record
+    (`scidb.store.emptiness.is_empty`, the one owner). Uses the configured
+    database when *db* is None."""
+    from scidb.store.emptiness import is_empty as _is_empty
+
+    return _is_empty(db if db is not None else get_database())
+
+
 def dataset_schema_keys_of(db: "DatabaseManager | None" = None) -> list[str]:
     """The dataset's schema keys, from the database (the one holder).
 

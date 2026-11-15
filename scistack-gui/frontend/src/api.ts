@@ -328,6 +328,8 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     refresh_project:        { path: '/api/project/refresh', method: 'POST' },
     clear_data_plan:        { path: '/api/project/clear-data/plan' },
     clear_data:             { path: '/api/project/clear-data', method: 'POST', body: true },
+    schema_key_proposal:    { path: '/api/project/schema-keys/proposal', method: 'POST', body: true },
+    change_schema_keys:     { path: '/api/project/schema-keys', method: 'POST', body: true },
     get_project_paths:      { path: '/api/project/paths' },
     add_project_path:       { path: '/api/project/paths', method: 'POST', body: true },
     remove_project_path:    { path: (p) => `/api/project/paths?path=${encodeURIComponent(p.path as string)}`, method: 'DELETE' },

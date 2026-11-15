@@ -900,8 +900,7 @@ Frontend steps and what you should see:
 2. A popup opens: **More than one row for the same subject in <Var>**, an
    explanation, a table (Location `subject=S1`, Rows `2`, Columns that differ
    `age`), and **How to fix it** with two cards:
-   **Change the dataset schema** (text only: schema keys are set when the
-   database is created) and **Change the data** with an **Open <fn>** button.
+   **Change the dataset schema** (an empty dataset: a **Change the schema keys…** button; a dataset with data: text only) and **Change the data** with an **Open <fn>** button.
 3. **Open <fn>** opens the function's source (for a library function like
    `pandas.read_csv` it may say it could not locate the source — that is
    expected; check it with a project function too).
@@ -6521,6 +6520,19 @@ Export and run each of these; the figure should match the preview.
   collapsed under another factor: the export keeps the "nan" group, as the
   preview does (before, those rows vanished from the export).
 - **Show sample** with the subject averaged over trials, nested and pooled.
+
+---
+
+## Change the schema keys of an empty dataset (issue #10) — added 2026-11-15
+
+Setup: a NEW project database with schema keys `subject` only, a PathInput `{subject}/{visit}/data.csv`-style loader (or a CSV with two rows for one subject) wired to a function node.
+
+1. Run the node. The duplicate-location popup opens; the first card is **Change the dataset schema** with a **Change the schema keys…** button.
+2. Click it. Left: current keys (`subject`). Right: proposed keys (PathInput keys tagged "from the PathInput", then data columns tagged "data column"). Delete the measure columns, add `visit` if missing, reorder with the arrows, rename a row inline.
+3. **Change keys and run again**: the dialog closes and the node runs again; the canvas refreshes and the run now saves.
+4. Run once more with data saved, then trigger a duplicate again (a new CSV): the first card says the dataset already holds data and has NO button.
+5. Open the same project from a script with the OLD keys: the error shows both key lists.
+6. Exclude a subject, then change keys while deleting nothing: the exclusion survives.
 
 ---
 

@@ -14,6 +14,8 @@ import pandas as pd
 
 from sciduckdb import DuckConnection
 
+from scidb.model.exceptions import SchemaKeysMismatchError
+from scidb.model.log import Log
 from scidb.store import tables
 from scidb.store.schema_values import schema_str
 
@@ -80,10 +82,10 @@ class SciDuck(DuckConnection):
             self._validate_schema_columns()
             return
         tables.ensure_core(self, self.dataset_schema)
-        # An existing _schema with rows was written for some schema; an empty
-        # one (just created) has nothing to disagree with yet.
-        if self.fetchall("SELECT COUNT(*) FROM _schema")[0][0] > 0:
-            self._validate_schema_columns()
+        # Always checked, empty or not: an empty _schema still has the columns
+        # it was created with (a database whose keys were changed while empty
+        # must not reopen silently under the old ones).
+        self._validate_schema_columns()
 
     # ------------------------------------------------------------------
     # Schema validation
@@ -112,9 +114,12 @@ class SciDuck(DuckConnection):
             )
         ]
         if existing_cols != self.dataset_schema:
-            raise ValueError(
-                f"Database schema mismatch. "
-                f"Existing: {existing_cols}, Provided: {self.dataset_schema}"
+            Log.warn(
+                f"[sciduck] schema key mismatch on {self.db_path}: "
+                f"passed {self.dataset_schema}, database {existing_cols}"
+            )
+            raise SchemaKeysMismatchError(
+                self.dataset_schema, existing_cols, self.db_path
             )
 
     # ------------------------------------------------------------------

@@ -265,6 +265,35 @@ class ColumnTypeChangedError(SciStackError):
         )
 
 
+class SchemaKeysMismatchError(SciStackError, ValueError):
+    """The schema keys passed in differ from the ones the database was created
+    with. Subclasses ``ValueError`` so older `except ValueError` callers still
+    work. ``passed`` and ``existing`` are the two key lists."""
+
+    def __init__(
+        self, passed: "list[str]", existing: "list[str]", path: "object | None" = None
+    ) -> None:
+        self.passed = list(passed)
+        self.existing = list(existing)
+        where = f" for {path}" if path else ""
+        lines = [
+            f"Schema key mismatch{where}.",
+            f"  Keys passed in:          {self.passed}",
+            f"  Keys in the database:    {self.existing}",
+        ]
+        if sorted(self.passed) == sorted(self.existing):
+            lines.append(
+                "The names match but the order differs (the order is the "
+                "hierarchy, coarse to fine)."
+            )
+        lines += [
+            "The database's schema keys are set when it is created (or changed in the",
+            "GUI while it is empty). Pass the database's keys instead:",
+            f"  configure_database({str(path) if path else '<path>'}, {self.existing})",
+        ]
+        super().__init__("\n".join(lines))
+
+
 class DuplicateLocationError(SciStackError):
     """Raised by save_batch when one save would put two DIFFERENT records of
     the same variant at one schema location (docs/claude/duplicate-location-vs-stale.md).
@@ -289,10 +318,17 @@ class DuplicateLocationError(SciStackError):
         variable: str,
         collisions: "list[dict]",
         schema_keys: "list[str]",
+        *,
+        data_columns: "list[str] | None" = None,
+        dataset_empty: bool = False,
     ) -> None:
         self.variable = variable
         self.collisions = list(collisions)
         self.schema_keys = list(schema_keys)
+        #: The saved value's columns, in order (the popup proposes them as keys).
+        self.data_columns = list(data_columns or [])
+        #: No variable holds a record (``scidb.store.emptiness``): the keys can still change.
+        self.dataset_empty = bool(dataset_empty)
         level = self._level()
         shown = [
             f"  {_location_text(c['location'])} x{c['count']}"
@@ -313,8 +349,15 @@ class DuplicateLocationError(SciStackError):
             f"The schema keys ({', '.join(self.schema_keys)}) give these rows "
             f"the same location, so SciStack can't tell which one is the value. "
             f"To fix it, change the dataset schema (a schema key, such as a visit "
-            f"or session column, that tells the rows apart; schema keys are set "
-            f"when a database is created, so this means a new project database) "
+            f"or session column, that tells the rows apart; "
+            + (
+                "this dataset has no saved data yet, so its schema keys can "
+                "still be changed"
+                if self.dataset_empty
+                else "this dataset already holds data, so its schema keys "
+                "can't be changed: that means a new project database"
+            )
+            + ") "
             f"or change the data (remove the extra row in the "
             f"source file, or combine the rows in your function)"
             + (
@@ -341,6 +384,35 @@ class DuplicateLocationError(SciStackError):
         deepest = [k for k in self.schema_keys if k in named]
         return deepest[-1] if deepest else "schema"
 
+    def _schema_step(self) -> dict:
+        keys = ", ".join(self.schema_keys)
+        if self.dataset_empty:
+            return {
+                "title": "Change the dataset schema",
+                "text": (
+                    f"This dataset has no saved data yet, so its schema keys "
+                    f"({keys}) can still be changed. If the rows are separate "
+                    f"observations (for example two visits or sessions), give "
+                    f"the dataset a schema key that tells them apart, then run "
+                    f"again. The window proposes the keys found at the "
+                    f"PathInput's location and in the loaded data."
+                ),
+                "action": "change_schema_keys",
+            }
+        return {
+            "title": "Change the dataset schema",
+            "text": (
+                f"This dataset already holds data, so its schema keys "
+                f"({keys}) can't be changed here. If the rows are separate "
+                f"observations (for example two visits or sessions), the "
+                f"dataset needs a schema key that tells them apart, and the "
+                f"data needs that column. Schema keys are set when a "
+                f"database is created, so this means creating a new project "
+                f"database with the extra key and running again."
+            ),
+            "action": None,
+        }
+
     @property
     def remedy(self) -> dict:  # type: ignore[override]
         level = self._level()
@@ -365,20 +437,11 @@ class DuplicateLocationError(SciStackError):
             ),
             "items": items,
             "n_more": max(0, len(self.collisions) - len(items)),
+            "data_columns": list(self.data_columns),
+            "schema_keys": list(self.schema_keys),
+            "dataset_empty": self.dataset_empty,
             "steps": [
-                {
-                    "title": "Change the dataset schema",
-                    "text": (
-                        f"If the rows are separate observations (for example "
-                        f"two visits or sessions), the dataset needs a schema "
-                        f"key that tells them apart, and the data needs that "
-                        f"column. A database's schema keys "
-                        f"({', '.join(self.schema_keys)}) are set when it is "
-                        f"created, so this means creating a new project "
-                        f"database with the extra key and running again."
-                    ),
-                    "action": None,
-                },
+                self._schema_step(),
                 {
                     "title": "Change the data",
                     "text": (

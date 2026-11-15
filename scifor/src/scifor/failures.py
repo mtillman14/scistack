@@ -979,6 +979,11 @@ def _remedy_from_wire(raw) -> "dict | None":
         if isinstance(s, dict)
     ]
     remedy["n_more"] = int(raw.get("n_more") or 0)
+    # Lists of names: a one-element list arrives as a bare string.
+    for name in ("data_columns", "schema_keys"):
+        if name in raw:
+            value = raw[name]
+            remedy[name] = [value] if isinstance(value, str) else [str(c) for c in _as_list(value)]
     return remedy
 
 
