@@ -141,6 +141,10 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.store.clear_data",
     "scidb.store.emptiness",
     "scidb.store.schema_keys_change",
+    # tree_from_db: the one owner of reading a database's schema keys AND their
+    # parents out of the file, so the GUI reopens a branched dataset with its tree
+    # (a plain key list would be refused as a different tree on reopen).
+    "scidb.store.schema_tree_store",
     "scidb.model.column_selection",
     "scidb.store.database",
     "scidb.model.exceptions",

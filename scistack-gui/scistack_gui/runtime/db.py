@@ -515,12 +515,12 @@ def close_initial_connection() -> None:
 def read_schema_keys(db_path: Path) -> list[str]:
     """The flat schema key list of an existing database.
 
-    Delegates to scidb (``schema_keys_from_db``), the one owner of reading
-    the keys out of a file; :func:`init_db` reads the whole TREE instead.
+    Delegates to scidb (``tree_from_db``), the one owner of reading the keys
+    and their parents out of a file; :func:`init_db` keeps the whole tree.
     """
-    from scidb.store.sciduck import schema_keys_from_db
+    from scidb.store.schema_tree_store import tree_from_db
 
-    return schema_keys_from_db(db_path)
+    return list(tree_from_db(db_path).keys)
 
 
 def init_db(db_path: Path) -> DatabaseManager:

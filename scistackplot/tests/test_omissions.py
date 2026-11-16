@@ -152,7 +152,16 @@ def test_histogram_nan_bar_draws_its_nans_and_a_typed_range_reports_the_rest():
     assert reasons(off).get(NO_VALUE) == 1
     clear_plan_cache()
     pinned = replace(hist, histogram=HistogramOptions(range_max=3.0))
-    outside = [i for i in resolve(pinned, _table(VALUES))[0].omissions.items if i.reason == OUTSIDE_RANGE]
+    # The bins sit on the values' step (docs/claude/histogram-and-regression.md):
+    # two distinct means 1.67 apart would be ONE coarse step, and the last bin's
+    # edge would be rounded up past 3 to hold the 4. A third mean (04: 3.0) makes
+    # the step 1/3, so the typed To = 3 still leaves 03's mean 4 outside.
+    with_fine_step = {**VALUES, ("04", "1"): 3.0}
+    outside = [
+        i
+        for i in resolve(pinned, _table(with_fine_step))[0].omissions.items
+        if i.reason == OUTSIDE_RANGE
+    ]
     assert [i.keys for i in outside] == [{"subject": "03"}]  # its mean 4 > 3
 
 

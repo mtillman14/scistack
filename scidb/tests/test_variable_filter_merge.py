@@ -380,8 +380,8 @@ class TestValidateFilterCoverageOverride:
                     GaitData,
                     Side.table_name(),
                     GaitData.table_name(),
-                    filter_level_idx=1,
-                    target_level_idx=1,
+                    filter_keys=frozenset({"subject", "trial"}),
+                    target_keys=frozenset({"subject", "trial"}),
                 )
 
             # With override equal to filter_ids (sub=1 only) → no missing locations
@@ -391,8 +391,8 @@ class TestValidateFilterCoverageOverride:
                 GaitData,
                 Side.table_name(),
                 GaitData.table_name(),
-                filter_level_idx=1,
-                target_level_idx=1,
+                filter_keys=frozenset({"subject", "trial"}),
+                target_keys=frozenset({"subject", "trial"}),
                 target_schema_ids_override=filter_ids,
             )
         finally:

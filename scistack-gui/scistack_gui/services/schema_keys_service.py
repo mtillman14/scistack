@@ -22,11 +22,14 @@ logger = logging.getLogger(__name__)
 
 def _path_input_names_wired_into(db, node_id: str) -> list[str]:
     """Names of the PathInputs with an edge into *node_id* (any scope)."""
-    from scistack_gui.stores import pipeline_store
+    from scistack_gui.domain.edge_view import effective_edges
 
     target = str(strip_placement(node_id))
     names: list[str] = []
-    for edge in pipeline_store.get_manual_edges(db):
+    # The edge view, not the stored rows: a hidden edge or an edge on a hidden
+    # node binds nothing, so it must not offer its PathInput's keys.
+    view = effective_edges(db, None, caller="schema_keys_proposal")
+    for edge in view.wiring_list:
         source = str(strip_placement(edge.get("source") or ""))
         if str(strip_placement(edge.get("target") or "")) == target and source.startswith(
             PATH_INPUT_ID_PREFIX
