@@ -162,13 +162,17 @@ def test_a_python_save_error_becomes_a_run_level_group_with_its_remedy():
     remedy = dict(group["remedy"])
     remedy["items"] = {**remedy["items"][0], "differing_columns": "age"}
     remedy["steps"] = [{**s, "action": [] if s["action"] is None else s["action"]} for s in remedy["steps"]]
+    # A step that only explains has no action: jsonencode writes null as [].
+    remedy["steps"].append({"title": "Read this", "text": "Explains only.", "action": []})
     (back,) = groups_from_wire([{**group, "remedy": remedy, "user_frame": []}])
     assert back["remedy"]["items"] == [
         {"location": "subject=S1", "count": 2, "differing_columns": ["age"]}
     ]
+    # The schema step opens the Change schema keys window (since 77eca806).
     assert [s["action"] for s in back["remedy"]["steps"]] == [
-        None,
+        "change_schema_keys",
         "reveal_function",
+        None,
     ]
 
 

@@ -276,6 +276,7 @@ export interface ApiParams {
   report_scope_navigation: ScopeNavigationRequest
   report_studio_open: StudioOpenRequest
   run_pin_conflicts: RunConflictRequest
+  run_report: RunReportQuery
   save_function_code: SaveFunctionCodeRequest
   save_glue: SaveGlueRequest
   schema_inventory: InventoryRequest
@@ -1706,6 +1707,18 @@ export interface StudioOpenRequest {
 export interface RunConflictRequest {
   function_names?: string[]
   node_ids?: string[]
+}
+/**
+ * This interface was referenced by `ApiParams`'s JSON-Schema
+ * via the `definition` "RunReportQuery".
+ */
+export interface RunReportQuery {
+  function_name?: string | null
+  limit?: number
+  outputs?: string[] | null
+  part: string
+  run_id?: string | null
+  status?: string | null
 }
 /**
  * This interface was referenced by `ApiParams`'s JSON-Schema

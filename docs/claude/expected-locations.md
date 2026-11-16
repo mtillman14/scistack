@@ -133,10 +133,10 @@ blame category, reason, time. Successes are not repeated (the graph has them),
 and the rows are not tied to `_run`, because a run that saved nothing writes
 no `_run` row.
 
-* **Writer:** `scidb.run.foreach._for_each_execute` collects scifor's
-  `combo_skip` events (`OutcomeCollector`) and calls `record_outcomes` in the
-  same `finally` as the run-summary line, so a stopped or cancelled run still
-  records what it saw. A write failure is a WARN, never a failed run.
+* **Writer:** the run's `RunRecorder` (`scidb.provenance.run_summary`,
+  `run-report.md`) collects scifor's `combo_skip` events (`OutcomeCollector`)
+  and calls `record_outcomes` in a `finally` after the save, so a stopped or
+  cancelled run still records what it saw. A write failure is a WARN, never a failed run.
   scifor's small per-location failure now carries `blame` and `probable`.
 * **Reader:** `expectation()` reads `latest_outcomes(variable)` once (runs
   that listed the variable among their outputs, newest per function and
@@ -147,9 +147,10 @@ no `_run` row.
   trials; a trial-level outcome never explains a whole-subject row.
 * A present row is never explained, so a later successful run supersedes an
   old failure without deleting it.
-* **Not yet:** MATLAB runs (their loop runs in MATLAB; failures reach the GUI
-  through the `.done` marker only), locations excluded at run time, and
-  "never run since the input arrived".
+* MATLAB runs are covered since 2026-11-15: the bridge's run recorder writes
+  them (`run-report.md`). Each row now names its run (`run_id`).
+* **Not yet:** locations excluded at run time, and "never run since the input
+  arrived".
 
 ## What is inside cells (Stage 4)
 

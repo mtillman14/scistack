@@ -46,6 +46,8 @@ import { RunLogProvider } from "./context/RunLogContext";
 import { NodeFailuresProvider } from "./context/NodeFailuresContext";
 import FailuresPanel from "./components/FailuresPanel";
 import RemedyDialog from "./components/RemedyDialog";
+import { RunReportProvider } from "./context/RunReportContext";
+import RunReportPopup from "./components/RunReport/RunReportPopup";
 import { SelectedNodeProvider } from "./context/SelectedNodeContext";
 import { SidebarSelectionProvider } from "./context/SidebarSelectionContext";
 import { ScopeProvider } from "./context/ScopeContext";
@@ -344,6 +346,7 @@ export default function App() {
   return (
     <RunLogProvider>
       <NodeFailuresProvider>
+      <RunReportProvider>
       <SelectedNodeProvider>
         <SidebarSelectionProvider>
         <ScopeProvider>
@@ -430,6 +433,7 @@ export default function App() {
               <PipelineRunController />
               <FailuresPanel />
               <RemedyDialog />
+              <RunReportPopup />
               {pathsOpen && <PathsPopup onClose={() => setPathsOpen(false)} />}
               {inventoryOpen && (
                 <InventoryPopup schemaKeys={schema.keys} onClose={() => setInventoryOpen(false)} />
@@ -446,6 +450,7 @@ export default function App() {
         </ScopeProvider>
         </SidebarSelectionProvider>
       </SelectedNodeProvider>
+      </RunReportProvider>
       </NodeFailuresProvider>
     </RunLogProvider>
   );

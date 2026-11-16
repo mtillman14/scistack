@@ -47,6 +47,7 @@ from scistack_gui.domain.variant_resolver import (
 )
 from scistack_gui.project.step_names import step_name_of
 from scistack_gui.services.run_failures import RunFailures, on_error_from_config
+from scistack_gui.services.run_report_service import matlab_reports_since, reports_wire
 from scistack_gui.stores import intent_store
 from scistack_gui.stores import pipeline_store as _ps
 from scistack_gui.runtime.ws_hub import push_message
@@ -283,6 +284,10 @@ class _SingleRun:
     )
     success: bool = True
     cancelled: bool = False
+    #: The stored runs this click left (`_run_summary.run_id`, one per
+    #: for_each; from scidb's `run_recorded` progress event), for
+    #: run_done.reports.
+    report_run_ids: list = field(default_factory=list)
 
     def is_cancelled(self) -> bool:
         return self.cancel_event.is_set()
@@ -951,6 +956,14 @@ def _run_target(
                 "failed", info.get("skipped", 0) - no_data
             )
             combo_totals["no_data"] += no_data
+        # scidb's notice that the run was stored: which report to open.
+        # Not a loop event, so it is not relayed as run_progress.
+        if info.get("event") == "run_recorded":
+            run.report_run_ids.append(info.get("run_id"))
+            logger.info(
+                "[run_thread] run recorded as %s (run_id=%s)", info.get("run_id"), run_id
+            )
+            return
         # Convert metadata values to strings for JSON serialization.
         meta = {str(k): str(val) for k, val in info.get("metadata", {}).items()}
         logger.debug(
@@ -1171,6 +1184,12 @@ def _report_run_done(run: _SingleRun, run_started_at: float) -> None:
             # Every node this run covered, mapped to its failed groups
             # (empty = ran clean: its badge and Problems entries clear).
             "failures": run.run_failures.to_wire([run.node_id] if run.node_id else []),
+            # The stored runs to open a run report on (services.run_report_service).
+            "reports": reports_wire([{
+                "node_id": run.node_id,
+                "function_name": run.function_name,
+                "run_ids": run.report_run_ids,
+            }]),
         }
     )
     logger.debug("[run_thread] Emitting dag_updated message (run_id=%s)", run_id)
@@ -1687,6 +1706,15 @@ def _run_pipeline_in_thread(
                 "failures": run_failures.to_wire(
                     sorted({e["tag"] for e in report if e.get("tag")})
                 ),
+                # One entry per step that left a stored run, in run order.
+                "reports": reports_wire([
+                    {
+                        "node_id": e.get("tag"),
+                        "function_name": e.get("step", ""),
+                        "run_ids": e.get("run_ids"),
+                    }
+                    for e in report
+                ]),
             }
         )
         notify_records_changed()
@@ -1802,6 +1830,8 @@ def _run_matlab_pipeline_in_thread(
                 "duration_ms": duration_ms,
                 "cancelled": cancelled,
                 "force_cancelled": was_force,
+                # The runs MATLAB stored meanwhile (no node known here).
+                "reports": matlab_reports_since(run_started_at, None),
             }
         )
         notify_records_changed()
@@ -1923,6 +1953,8 @@ def _drive_matlab_in_thread(
                 "duration_ms": duration_ms,
                 "cancelled": cancelled,
                 "force_cancelled": was_force,
+                # The runs MATLAB stored meanwhile (no node known here).
+                "reports": matlab_reports_since(run_started_at, None),
             }
         )
         notify_records_changed()

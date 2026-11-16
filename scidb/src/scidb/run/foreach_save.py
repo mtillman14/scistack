@@ -137,6 +137,8 @@ def _save_results(
     batch_start_time = time.perf_counter()
     plan = build_save_plan(state, result_tbl, outputs, db)
     report = apply_save_plan(plan, state, db)
+    if state.run_recorder is not None:
+        state.run_recorder.saved(report.run_id, report.total_saved)
 
     batch_total_elapsed = time.perf_counter() - batch_start_time
     _journal = Log.current_run()

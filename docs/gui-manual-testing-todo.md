@@ -11,6 +11,48 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Run report popup (issue #17) — added 2026-11-15
+
+**What changed:** every run of a function is now recorded (`_run_summary`), and a **Run report**
+window shows what it did: counts, what needs attention, settings used, exclusions in force, each
+input and output (shapes, sizes, NaN / blank / constant cells) and one row per schema-key
+combination. It opens by itself after a run and from a function node's right-click. Python and
+MATLAB runs. Never checked by eye. Rules: `docs/claude/run-report.md`.
+
+**Backend steps:**
+1. Regenerate the committed API types once (new `run_report` request): `python scistack-gui/tools/gen_ts_types.py`.
+   If it changes `api-schema.json`, rebuild the bundles (`npm run build:all` in `scistack-gui/extension`).
+2. After a run, `scistack-debug.log` should show `[run_summary] run=<id> ... fn=<function> total=...`
+   and, once the window is open, `[run_report] part=summary ...` then `[run_report] part=data ...`.
+3. In a terminal: `scidb run-report <function>` and `scidb run-report <function> --locations`
+   should print the same counts and findings as the window.
+
+**Frontend steps:**
+1. Run a Python function node that succeeds. The **Run report** window should open at the top right
+   without dimming the canvas. Check the status line ("N combinations: N computed."), **Needs
+   attention**, **Settings used** (constants, run options, "Show the code as it ran"), **Inputs**,
+   **Outputs** and **Combinations**. Clicking a variable name should open its Data preview.
+2. Run it again with Skip computed on. The window should open and say "N already up to date".
+3. Run a node whose input has NaNs. **Needs attention** should name the output and its NaN counts,
+   and the row should show ⚠ in the `out:` column. Tick **⚠ With findings** to filter to it.
+4. Run a node where every combination fails. The window should NOT open by itself (the failure
+   notification does); right-click the node → **📋 Run report…** should still show the run, with
+   failed rows and their reason.
+5. Right-click a node that has run several times → **📋 Run report…**. The run picker should list
+   the runs, newest first ("Latest: ..."), and picking an older one should show that run's own records.
+6. Right-click a node that has never run → the window should say "No runs of <name> are recorded yet".
+7. Use **▶ Run until here** on a node with upstream steps. One window, one tab per function, in
+   run order; a tab shows ⚠ when it has a problem and ✓ when it has none.
+8. Untick **Open after every run**, run a node: no window. Right-click still opens it. Tick it again.
+9. Run a MATLAB function node. When MATLAB finishes the window should open with the same sections
+   (`on_error` shows `?`: it is not known for MATLAB runs).
+10. Restart VS Code, right-click a node → **📋 Run report…**: earlier runs are still listed.
+
+**Expected:** the window never blocks the canvas, Esc closes it, and every number matches
+`scidb run-report`.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzz. Branched schema keys — added 2026-11-15
 
 **What changed:** a dataset's schema keys can branch (`brand > category > item` beside

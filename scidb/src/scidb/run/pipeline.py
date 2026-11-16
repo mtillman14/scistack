@@ -1380,6 +1380,9 @@ class Pipeline:
                 "stopped": False,
                 # Grouped failure records (scifor.failures wire shape).
                 "failures": [],
+                # The step's stored runs (`_run_summary.run_id`; several for
+                # an EachOf), from scidb's `run_recorded` event.
+                "run_ids": [],
             }
             report.append(entry)
             # The caller's own hooks (scifor.LoopHooks) ride in the step's
@@ -1403,6 +1406,8 @@ class Pipeline:
                     _entry["cancelled"] = bool(info.get("cancelled"))
                     _entry["stopped"] = bool(info.get("stopped"))
                     _entry["failures"] = list(info.get("failures", []))
+                elif info.get("event") == "run_recorded" and info.get("run_id"):
+                    _entry["run_ids"].append(info["run_id"])
                 if _next is not None:
                     _next(info)
 

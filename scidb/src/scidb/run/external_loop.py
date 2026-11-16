@@ -38,9 +38,14 @@ from scidb.run.foreach import _resolve_for_columns as resolve_for_columns
 from scidb.project.entities import declared_spelling
 from scidb.model.parameter import declared_input_names
 
+# The run's record (counts, timing, failed locations): an external loop makes
+# one at prepare and finishes it after its save, as scidb.for_each does.
+from scidb.provenance.run_summary import RunRecorder
+
 __all__ = [
     "RunContext",
     "RunOptions",
+    "RunRecorder",
     "RunSelection",
     "apply_introspect",
     "build_skip_hook",

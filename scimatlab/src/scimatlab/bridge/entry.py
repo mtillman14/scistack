@@ -579,6 +579,11 @@ def for_each_prepare(
         "rid_rename_map": rid_rename_map,
         "where": where,
         "endpoint_kind": endpoint_kind,
+        # The run's record (scidb.provenance.run_summary): for_each_save feeds
+        # it the MATLAB loop's events and writes it. `loop_mark` is the newest
+        # scifor plan token before this run's loop is planned.
+        "run_recorder": _new_run_recorder(state.fn_name, locations, where_arg, skip_computed, save),
+        "loop_mark": _loop_mark(),
     }
 
     from scidb.model.log import Log as _BridgeLog
@@ -752,6 +757,39 @@ def for_each_describe_loaded_input(val):
     return {"kind": "raw", "value": val}
 
 
+def _new_run_recorder(fn_name, locations, where, skip_computed, save):
+    from scidb.run import external_loop
+
+    return external_loop.RunRecorder(
+        str(fn_name),
+        locations=locations,
+        where=where,
+        # on_error is MATLAB's own option; it never reaches prepare.
+        on_error=None,
+        skip_computed=bool(skip_computed),
+        save=bool(save),
+        language="matlab",
+    )
+
+
+def _loop_mark() -> int:
+    from scifor import matlab_loop
+
+    return matlab_loop.last_token()
+
+
+def _observe_matlab_loop(recorder, loop_mark: int) -> bool:
+    """Feed *recorder* the events of the MATLAB loop that ran since
+    *loop_mark*. False when no loop reached its summary (nothing ran, or the
+    loop raised): there is then no run to record."""
+    from scifor import matlab_loop
+
+    events = matlab_loop.take_run_events_after(int(loop_mark))
+    for info in events:
+        recorder.observe(info)
+    return bool(events)
+
+
 @matlab_entry
 def for_each_save(
     handle,
@@ -887,17 +925,37 @@ def for_each_save(
         f"columns={list(result_tbl.columns)}"
     )
 
-    result_tbl = external_loop.save_resolved(
-        state=state,
-        result_tbl=result_tbl,
-        # state.inputs, not the cached spec: prepare folded any constant-fed
-        # glue chain into the values (the version keys keep the RAW value and
-        # the glue's identity). Same rule as scidb.for_each's own save call.
-        inputs=state.inputs if state.inputs is not None else inputs,
-        outputs=outputs,
-        save=bool(save),
-        db=db if db is not None and not isinstance(db, type(None)) else None,
-    )
+    # The run's record: only when the MATLAB loop reached its summary (a
+    # cleanup call after nothing ran, or after the loop raised, records
+    # nothing). Written in a finally, after the save, like the Python path.
+    recorder = cached.get("run_recorder")
+    loop_ran = recorder is not None and _observe_matlab_loop(recorder, cached.get("loop_mark", 0))
+    if loop_ran:
+        state.run_recorder = recorder
+    save_db = db if db is not None and not isinstance(db, type(None)) else None
+    try:
+        result_tbl = external_loop.save_resolved(
+            state=state,
+            result_tbl=result_tbl,
+            # state.inputs, not the cached spec: prepare folded any constant-fed
+            # glue chain into the values (the version keys keep the RAW value and
+            # the glue's identity). Same rule as scidb.for_each's own save call.
+            inputs=state.inputs if state.inputs is not None else inputs,
+            outputs=outputs,
+            save=bool(save),
+            db=save_db,
+        )
+    finally:
+        if loop_ran:
+            from scidb.store.database import database_or_none as _database_or_none
+
+            recorder.finish(
+                save_db if save_db is not None else _database_or_none(),
+                output_types=state.output_types,
+                up_to_date=state.skip_computed_count,
+            )
+        else:
+            _Log.debug(f"[bridge] for_each_save: handle={handle}: no finished loop, run not recorded")
 
     if introspect and result_tbl is not None and not result_tbl.empty:
         import json as _json

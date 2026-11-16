@@ -729,6 +729,29 @@ def _run_concrete(call: ForEachCall, active_db: Any) -> "pd.DataFrame | None":
         except Exception as exc:  # diagnostics must never fail a run
             Log.debug(f"[selector-check] skipped for {fn_name}: {exc}")
 
+    # What only the run knows (counts, timing, non-identity options), for the
+    # run report: scidb.provenance.run_summary owns it. It listens to the
+    # loop's progress events and is written in the `finally` below.
+    from scidb.provenance.run_summary import RunRecorder
+
+    caller_progress_fn = context.progress_fn
+    recorder = RunRecorder(
+        fn_name,
+        locations=call.selection.locations,
+        where=call.selection.where,
+        on_error=call.on_error,
+        skip_computed=call.skip_computed,
+        save=bool(save),
+    )
+    if not call.dry_run:
+        context = replace(
+            context,
+            hooks=replace(
+                context.hooks if context.hooks is not None else LoopHooks(),
+                progress_fn=recorder.wrap(caller_progress_fn),
+            ),
+        )
+
     # --- Pre-loop preparation. Returns None on dry_run shortcut. ---
     with Log.step(f"for_each_prepare({fn_name})"):
         state = _for_each_prepare(
@@ -753,6 +776,7 @@ def _run_concrete(call: ForEachCall, active_db: Any) -> "pd.DataFrame | None":
         )
     if state is None:
         return None
+    state.run_recorder = recorder
 
     # --- Execute: wrap fn for per-combo needs, delegate the loop to scifor,
     #     log the authoritative run summary. ---
@@ -761,39 +785,50 @@ def _run_concrete(call: ForEachCall, active_db: Any) -> "pd.DataFrame | None":
     # re-raise below so the caller's traceback still ends in the user's code.
     stop_exc: "BaseException | None" = None
     try:
-        result_tbl = _for_each_execute(
-            state,
-            fn=fn,
-            inputs=inputs,
-            db=call.db,
-            share_limits=call.share_limits,
-            locations=call.selection.locations,
-            context=context,
-            on_error=call.on_error,
-        )
-    except Exception as e:
-        stopped = stopped_run_of(e)
-        if stopped is None:
-            raise
-        stop_exc = e
-        result_tbl = stopped.partial_result
-        Log.info(
-            f"for_each({fn_name}): on_error=stop — saving {stopped.completed} "
-            f"completed combo(s) before re-raising {type(e).__name__}"
-        )
+        try:
+            result_tbl = _for_each_execute(
+                state,
+                fn=fn,
+                inputs=inputs,
+                db=call.db,
+                share_limits=call.share_limits,
+                locations=call.selection.locations,
+                context=context,
+                on_error=call.on_error,
+            )
+        except Exception as e:
+            stopped = stopped_run_of(e)
+            if stopped is None:
+                raise
+            stop_exc = e
+            result_tbl = stopped.partial_result
+            Log.info(
+                f"for_each({fn_name}): on_error=stop — saving {stopped.completed} "
+                f"completed combo(s) before re-raising {type(e).__name__}"
+            )
 
-    # --- Save (+ endpoint artifact stamping) ---
-    with Log.step(f"for_each_save({fn_name})"):
-        result_tbl = _for_each_save_resolved(
-            state=state,
-            result_tbl=result_tbl,
-            # state.inputs, not the local `inputs`: prepare folded any
-            # Parameter-fed glue into the values, and that folded dict is what
-            # ForEachConfig hashed.
-            inputs=state.inputs if state.inputs is not None else inputs,
-            outputs=outputs,
-            save=save,
-            db=call.db,
+        # --- Save (+ endpoint artifact stamping) ---
+        with Log.step(f"for_each_save({fn_name})"):
+            result_tbl = _for_each_save_resolved(
+                state=state,
+                result_tbl=result_tbl,
+                # state.inputs, not the local `inputs`: prepare folded any
+                # Parameter-fed glue into the values, and that folded dict is what
+                # ForEachConfig hashed.
+                inputs=state.inputs if state.inputs is not None else inputs,
+                outputs=outputs,
+                save=save,
+                db=call.db,
+            )
+    finally:
+        # After the save, so the row carries the `_run` id when one was
+        # written; in a finally, so a stopped, cancelled or failed run is
+        # recorded too. Never raises.
+        recorder.finish(
+            call.db if call.db is not None else database_or_none(),
+            output_types=state.output_types,
+            up_to_date=state.skip_computed_count,
+            progress_fn=caller_progress_fn,
         )
 
     if stop_exc is not None:
@@ -1000,14 +1035,11 @@ def _for_each_execute(
         "stopped": False,
     }
 
-    # Every location that failed or had no data, for _run_outcome
-    # (scidb.provenance.outcomes): written in the finally below.
-    from scidb.provenance.outcomes import OutcomeCollector, record_outcomes
-
-    _outcomes = OutcomeCollector()
+    # The locations that failed or had no data (_run_outcome) are collected
+    # by the run's recorder (scidb.provenance.run_summary.RunRecorder), which
+    # `_run_concrete` chained into `_progress_fn` and writes after the save.
 
     def _tracking_progress_fn(info: dict):
-        _outcomes.observe(info)
         _run_summary["total"] = info.get("total", _run_summary["total"])
         _run_summary["completed"] = info.get("completed", _run_summary["completed"])
         _run_summary["skipped"] = info.get("skipped", _run_summary["skipped"])
@@ -1083,16 +1115,6 @@ def _for_each_execute(
         if _run_summary["stopped"]:
             _summary_parts.append("stopped (on_error=stop)")
         Log.info(f"for_each({fn_name}) run summary: {', '.join(_summary_parts)}")
-        if _outcomes.events:
-            _outcome_db = _kt_db if _kt_db is not None else database_or_none()
-            try:
-                if _outcome_db is not None:
-                    record_outcomes(_outcome_db, fn_name, state.output_types, _outcomes.events)
-            except Exception as _e:  # never fail a run over its explanation
-                Log.warn(
-                    f"[outcomes] {fn_name}: could not store {len(_outcomes.events)} "
-                    f"location outcome(s): {type(_e).__name__}: {_e}"
-                )
 
     return result_tbl
 

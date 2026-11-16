@@ -164,3 +164,204 @@ def cell_profile(
         + f" in {(time.perf_counter() - t0) * 1000:.1f} ms"
     )
     return profile
+
+
+# ---------------------------------------------------------------------------
+# One value's shape, and the records of a run (scidb.provenance.run_report)
+# ---------------------------------------------------------------------------
+
+#: Characters of a scalar or text value shown inline.
+_VALUE_TEXT_MAX = 60
+
+
+@dataclass(frozen=True)
+class ValueShape:
+    """What one cell holds, without its values: the size and shape a
+    researcher checks first. ``shape`` is ``()`` for a scalar. ``text`` is the
+    value itself for a scalar or short text, else ``""``."""
+
+    kind: str  # blank / scalar / text / array / dict / other
+    shape: tuple[int, ...]
+    dtype: str
+    nbytes: int | None
+    text: str = ""
+
+    @property
+    def shape_text(self) -> str:
+        """``scalar``, ``1200``, ``3×1200``; THE spelling of a shape."""
+        if self.kind == "blank":
+            return "blank"
+        if self.kind == "text":
+            return f"text ({self.shape[0]} chars)"
+        if self.kind == "dict":
+            return f"dict ({self.shape[0]} keys)"
+        if not self.shape:
+            return "scalar" if self.kind == "scalar" else self.kind
+        return "×".join(str(n) for n in self.shape)
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "shape": list(self.shape),
+            "shape_text": self.shape_text,
+            "dtype": self.dtype,
+            "nbytes": self.nbytes,
+            "text": self.text,
+        }
+
+
+def describe_value(value) -> ValueShape:
+    """The :class:`ValueShape` of one cell. Blank is ``is_blank``'s answer
+    (``scicanonicalhash._cells``), so this and the problem kinds agree."""
+    import numpy as np
+
+    from scicanonicalhash._cells import is_blank
+
+    if is_blank(value):
+        return ValueShape("blank", (), type(value).__name__, None)
+    if isinstance(value, np.ndarray):
+        if value.ndim == 0:
+            return ValueShape(
+                "scalar", (), str(value.dtype), int(value.nbytes), str(value.item())[:_VALUE_TEXT_MAX]
+            )
+        return ValueShape("array", tuple(int(n) for n in value.shape), str(value.dtype), int(value.nbytes))
+    if isinstance(value, (bool, int, float, np.generic)):
+        nbytes = int(value.nbytes) if isinstance(value, np.generic) else 8
+        return ValueShape("scalar", (), type(value).__name__, nbytes, str(value)[:_VALUE_TEXT_MAX])
+    if isinstance(value, str):
+        return ValueShape(
+            "text", (len(value),), "str", len(value.encode("utf-8", "replace")), value[:_VALUE_TEXT_MAX]
+        )
+    if isinstance(value, (list, tuple)):
+        try:
+            arr = np.asarray(value)
+        except (TypeError, ValueError):  # ragged nesting
+            return ValueShape("array", (len(value),), "ragged list", None)
+        if arr.dtype.kind == "O":
+            return ValueShape("array", (len(value),), "list", None)
+        return ValueShape("array", tuple(int(n) for n in arr.shape), str(arr.dtype), int(arr.nbytes))
+    if isinstance(value, dict):
+        return ValueShape("dict", (len(value),), "dict", None)
+    return ValueShape("other", (), type(value).__name__, None, str(value)[:_VALUE_TEXT_MAX])
+
+
+@dataclass
+class RecordCells:
+    """One record's cells: per data column its shape (one row) or its
+    row count (a table stored one row per inner row), and the cell counts."""
+
+    record_id: str
+    location: dict[str, str]
+    n_rows: int
+    #: column -> ValueShape (only when the record is one row).
+    shapes: dict[str, ValueShape] = field(default_factory=dict)
+    #: column -> CellStats over the record's rows.
+    cells: dict[str, CellStats] = field(default_factory=dict)
+
+    @property
+    def nan_elements(self) -> int:
+        return sum(s.nan_elements for s in self.cells.values())
+
+    @property
+    def problems(self) -> int:
+        return sum(s.problems for s in self.cells.values())
+
+    @property
+    def nbytes(self) -> int:
+        return sum(s.nbytes or 0 for s in self.shapes.values())
+
+    def shape_text(self) -> str:
+        """One spelling for the whole record: the column's shape when there
+        is one data column, else ``R rows × C columns``."""
+        if self.n_rows == 1 and len(self.shapes) == 1:
+            return next(iter(self.shapes.values())).shape_text
+        n_cols = len(self.cells)
+        return (
+            f"{self.n_rows} row{'' if self.n_rows == 1 else 's'} × "
+            f"{n_cols} column{'' if n_cols == 1 else 's'}"
+        )
+
+    def findings(self) -> str:
+        """The suspect cells, in ``PROBLEM_LABELS``' words; ``""`` for none."""
+        parts = []
+        for kind in PROBLEM_KINDS:
+            n = sum(s.kinds[kind] for s in self.cells.values())
+            if n:
+                parts.append(f"{n} {PROBLEM_LABELS[kind]}" if n > 1 or self.n_rows > 1 else PROBLEM_LABELS[kind])
+        if self.nan_elements and self.n_rows == 1:
+            total = sum(s.elements for s in self.cells.values())
+            parts.append(f"{self.nan_elements} of {total} values NaN")
+        return ", ".join(parts)
+
+    def to_dict(self) -> dict:
+        one = next(iter(self.shapes.values())) if len(self.shapes) == 1 else None
+        return {
+            "record_id": self.record_id,
+            "n_rows": self.n_rows,
+            "shape_text": self.shape_text(),
+            "nbytes": self.nbytes or None,
+            "value": one.text if one is not None else "",
+            "dtype": one.dtype if one is not None else "",
+            "nan_elements": self.nan_elements,
+            "problems": self.problems,
+            "findings": self.findings(),
+            "columns": {
+                c: {**(self.shapes[c].to_dict() if c in self.shapes else {}), "cells": s.to_dict()}
+                for c, s in self.cells.items()
+            } if len(self.cells) > 1 else {},
+        }
+
+
+def record_cells(db, variable, record_ids) -> dict[str, RecordCells]:
+    """``{record_id: RecordCells}`` for some records of *variable*, whatever
+    their version: the records a run read or wrote, not the variable's latest.
+
+    One load of the variable (every version, ``layout="spread"``, the loader
+    ``for_each`` uses), filtered to *record_ids*; never one load per record.
+    A record id with no data row (a lineage-only record) is absent.
+    """
+    from scidb.inspect.preview import _variable_class
+    from scidb.run.bindings import RECORD_ID_COLUMN
+
+    t0 = time.perf_counter()
+    name = getattr(variable, "__name__", variable)
+    wanted = {str(r) for r in record_ids}
+    if not wanted:
+        return {}
+    keys = list(db.dataset_schema_keys)
+    frame = db.load_all_as_df(
+        _variable_class(name),
+        layout="spread",
+        include_rid=True,
+        stringify_schema=True,
+        version_id="all",
+    )
+    if frame.empty or RECORD_ID_COLUMN not in frame.columns:
+        Log.info(f"[cells] record_cells({name}): no stored rows for {len(wanted)} record(s)")
+        return {}
+    n_loaded = len(frame)
+    frame = frame[frame[RECORD_ID_COLUMN].astype(str).isin(wanted)]
+    data_columns = [c for c in frame.columns if c not in keys and not str(c).startswith("__")]
+    key_columns = [k for k in keys if k in frame.columns]
+    out: dict[str, RecordCells] = {}
+    for rid, group in frame.groupby(frame[RECORD_ID_COLUMN].astype(str), sort=False):
+        first = group.iloc[0]
+        location = {
+            k: str(first[k]) for k in key_columns if first[k] is not None and first[k] == first[k]
+        }
+        rec = RecordCells(record_id=str(rid), location=location, n_rows=len(group))
+        for col in data_columns:
+            values = group[col].tolist()
+            stats = CellStats()
+            for v in values:
+                stats.add(v)
+            rec.cells[col] = stats
+            if len(values) == 1:
+                rec.shapes[col] = describe_value(values[0])
+        out[str(rid)] = rec
+    Log.info(
+        f"[cells] record_cells({name}): {len(out)} of {len(wanted)} record(s) "
+        f"from {n_loaded} loaded row(s), {len(data_columns)} column(s) in "
+        f"{(time.perf_counter() - t0) * 1000:.1f} ms"
+    )
+    return out

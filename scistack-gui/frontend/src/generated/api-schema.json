@@ -4484,6 +4484,69 @@
       "title": "RunRef",
       "type": "object"
     },
+    "RunReportQuery": {
+      "properties": {
+        "function_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "default": 2000,
+          "type": "integer"
+        },
+        "outputs": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "part": {
+          "type": "string"
+        },
+        "run_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "part"
+      ],
+      "title": "RunReportQuery",
+      "type": "object"
+    },
     "RunRequest": {
       "properties": {
         "function_name": {
@@ -6816,6 +6879,9 @@
     "run_pin_conflicts": {
       "$ref": "#/$defs/RunConflictRequest"
     },
+    "run_report": {
+      "$ref": "#/$defs/RunReportQuery"
+    },
     "save_function_code": {
       "$ref": "#/$defs/SaveFunctionCodeRequest"
     },
@@ -7110,6 +7176,7 @@
     "report_scope_navigation",
     "report_studio_open",
     "run_pin_conflicts",
+    "run_report",
     "save_function_code",
     "save_glue",
     "schema_inventory",

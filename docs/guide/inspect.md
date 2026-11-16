@@ -42,6 +42,7 @@ database file on every invocation.
 | `scidb variants <Type\|fn>` | Which variants coexist, and how do they differ? |
 | `scidb trace <Type> [key=val …] [--record-id RID] [--audit]` | What produced this exact record, all the way down? |
 | `scidb runs [--fn NAME] [-n 50]` | Who ran what, when, with what `where=`? |
+| `scidb run-report <fn> [--run ID] [--list] [--locations] [--status S] [--csv PATH]` | What did this run do? Counts, settings, exclusions, each input and output, NaNs |
 | `scidb state [fn] [--missing] [--pathinput [key=val …]]` | What needs (re-)running? |
 | `scidb show <Type> key=val … [--versions] [--values]` | The records (and versions) at a location |
 | `scidb show <Type> key=val … --types [--rows N]` | Each column's types, non-blank count and samples, then the first rows, as a function receives them |
@@ -109,6 +110,28 @@ $ scidb state import_emg --pathinput subject=S01 subject=S02   # restricted grid
 should-run = `PathInput.discover()` ∩ grid − schema exclusions, compared
 against the locations actually imported. A new file on disk that was never
 imported turns the node red; excluding its schema location flips it back.
+
+### `run-report` — check what a run did
+
+Every `for_each` run is recorded, including one that saved nothing.
+`scidb run-report my_function` describes the newest run of `my_function`:
+
+- one line of counts: `120 combinations: 96 computed, 20 already up to date, 2 failed, 2 no data.`
+- **Needs attention**: what to look at before trusting the result (failures,
+  outputs that were skipped, locations the output should have and still lacks);
+- the settings used (function version, constants, run options, `where=`,
+  `locations=`), and the exclusions that were in force when it ran;
+- each input and output with its record counts.
+
+`--locations` also reads the run's records. It adds each variable's shapes and
+its NaN, blank, empty and constant cells, and one row per schema-key
+combination with every input's and output's shape and findings. `--csv PATH`
+writes that table. `--list` shows the function's recorded runs; `--run ID`
+picks one. `--status failed` (or `computed`, `no_data`) narrows the rows.
+
+Combinations that were already up to date are counted but not listed: the run
+did not touch them. In the GUI the same report opens after every run and from
+a function node's right-click (**Run report…**).
 
 ### `show` and `sql`
 

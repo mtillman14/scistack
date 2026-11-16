@@ -688,9 +688,48 @@ RUN_OUTCOME = _core(
         blame         VARCHAR,
         probable      BOOLEAN,
         reason        TEXT,
-        recorded_at   TIMESTAMP NOT NULL
+        recorded_at   TIMESTAMP NOT NULL,
+        run_id        VARCHAR
     )
     """,
+    # The run that saw it (`_run_summary.run_id`): added 2026-11-15, NULL on
+    # rows written before it.
+    "ALTER TABLE _run_outcome ADD COLUMN IF NOT EXISTS run_id VARCHAR",
+    bundle=BUNDLE_HISTORY, cleared=True,
+)
+
+# What only the run itself knows (scidb.provenance.run_summary, the one
+# owner; .claude/plan-run-report-popup.md): its counts, timing, and the
+# options that are not identity. One row per for_each execution, INCLUDING a
+# run that saved nothing, which writes no `_run` row; `run_id` is the `_run`
+# row's when there is one. `group_id` is the journal run (one user-visible
+# call; the alternatives of an EachOf share it, and the debug log carries it
+# as `run=<id>`). `settings` and `notes` are JSON. Everything else a run
+# report shows is read from the graph.
+RUN_SUMMARY = _core(
+    "_run_summary",
+    """
+    CREATE TABLE IF NOT EXISTS _run_summary (
+        run_id        VARCHAR PRIMARY KEY,
+        group_id      VARCHAR,
+        function_name VARCHAR   NOT NULL,
+        output_types  VARCHAR[],
+        started_at    TIMESTAMP NOT NULL,
+        duration_ms   BIGINT,
+        total         INTEGER,
+        computed      INTEGER,
+        up_to_date    INTEGER,
+        failed        INTEGER,
+        no_data       INTEGER,
+        saved_records INTEGER,
+        cancelled     BOOLEAN,
+        stopped       BOOLEAN,
+        language      VARCHAR,
+        settings      TEXT,
+        notes         TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_run_summary_fn ON _run_summary (function_name)",
     bundle=BUNDLE_HISTORY, cleared=True,
 )
 

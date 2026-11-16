@@ -451,6 +451,42 @@ def _cmd_nans(insp: Inspector, args) -> None:
         print(render.render_cell_profile(profile, by=args.by, kinds=kinds))
 
 
+def _cmd_run_report(insp: Inspector, args) -> None:
+    import csv
+
+    runs = insp.run_reports(args.function, limit=args.limit if args.list else 1)
+    if args.list:
+        if args.json:
+            print(json.dumps([r.to_dict() for r in runs], indent=2, default=str))
+        else:
+            print(render.render_run_reports(runs))
+        return
+    run_id = args.run or (runs[0].run_id if runs else None)
+    if run_id is None:
+        raise CLIError(
+            f"No run of {args.function!r} is recorded. Runs are recorded from "
+            f"2026-11-15 on; `scidb runs --fn {args.function}` lists older ones."
+        )
+    report = insp.run_report(run_id)
+    data = None
+    if args.locations or args.csv:
+        data = insp.run_report_data(run_id, status=args.status, limit=args.limit)
+    if args.csv:
+        header, body = render.run_report_table(data)
+        with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(header)
+            writer.writerows(body)
+        print(f"wrote {len(body)} row(s) to {args.csv}", file=sys.stderr)
+    if args.json:
+        payload = report.to_dict()
+        if data is not None:
+            payload["data"] = data.to_dict()
+        print(json.dumps(payload, indent=2, default=str))
+    else:
+        print(render.render_run_report(report, data))
+
+
 def _cmd_keys(insp: Inspector, args) -> None:
     settings = insp.key_expectations(history=args.history)
     if args.json:
@@ -1488,6 +1524,32 @@ def _add_commands(
         help="Only the funnel: how many values each variable has data for.",
     )
     p.set_defaults(_handler=_cmd_coverage)
+
+    p = sub.add_parser(
+        "run-report",
+        parents=[parent],
+        help="Everything about one run of a function, for verifying it: counts, "
+        "settings, exclusions in force, each input and output with shapes, "
+        "sizes and NaN / blank / constant cells, per combination.",
+    )
+    p.add_argument("function", help="Function name.")
+    p.add_argument("--run", default=None, metavar="ID", help="A run id (default: the newest).")
+    p.add_argument("--list", action="store_true", help="List the function's recorded runs.")
+    p.add_argument(
+        "--locations", action="store_true",
+        help="Read the run's records: shapes, sizes and suspect cells per "
+        "variable and per combination (loads data).",
+    )
+    p.add_argument(
+        "--status", default=None,
+        help="With --locations / --csv: only these combinations (computed, failed, no_data).",
+    )
+    p.add_argument("--limit", type=int, default=2000, help="Rows (or, with --list, runs) to return.")
+    p.add_argument(
+        "--csv", default=None, metavar="PATH",
+        help="Write the per-combination table as CSV (implies reading the records).",
+    )
+    p.set_defaults(_handler=_cmd_run_report)
 
     p = sub.add_parser(
         "nans",

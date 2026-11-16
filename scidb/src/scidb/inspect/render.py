@@ -1516,3 +1516,182 @@ def render_cell_profile(
     if len(problems) > len(shown):
         lines.append(f"… +{len(problems) - len(shown)} more (use --json for all)")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Run report (scidb.provenance.run_report owns every word shown here)
+# ---------------------------------------------------------------------------
+
+
+def _duration_text(ms) -> str:
+    if ms is None:
+        return "?"
+    return f"{ms} ms" if ms < 1000 else f"{ms / 1000:.1f} s"
+
+
+def render_run_reports(runs: list) -> str:
+    """``scidb run-report FN --list``: the recorded runs, newest first."""
+    if not runs:
+        return "(no runs recorded; runs are recorded from 2026-11-15 on)"
+    return format_table(
+        ["run", "started (UTC)", "duration", "function", "outputs", "result"],
+        [
+            [
+                r.run_id,
+                str(r.started_at)[:19],
+                _duration_text(r.duration_ms),
+                r.function_name,
+                ", ".join(r.output_types),
+                r.status_line(),
+            ]
+            for r in runs
+        ],
+    )
+
+
+def _location_filter_text(locations) -> str:
+    if not locations:
+        return "every location"
+    parts = []
+    for prefix in locations.get("include") or []:
+        parts.append("/".join(f"{k}={v}" for k, v in prefix))
+    text = "; ".join(parts) if parts else "every location"
+    for key, values in (locations.get("exclude_levels") or {}).items():
+        text += f"; without {key} in [{', '.join(str(v) for v in values)}]"
+    return locations.get("text") or text
+
+
+def render_run_report(report, data=None, limit: int = 200) -> str:
+    """One run: header, attention, settings, exclusions, inputs, outputs
+    and, when *data* (a ``RunReportData``) is given, what the records hold."""
+    s = report.summary
+    lines = [
+        f"{s.function_name}  run {s.run_id}"
+        + (f"  (log: run={s.group_id})" if s.group_id else ""),
+        f"  started {str(s.started_at)[:19]} UTC, took {_duration_text(s.duration_ms)}"
+        + (f", origin {report.run['origin']}" if report.run.get("origin") else "")
+        + (f", step {report.run['step']}" if report.run.get("step") else ""),
+        f"  {s.status_line()}",
+    ]
+    for note in report.notes + (data.notes if data is not None else []):
+        lines.append(f"  note: {note}")
+
+    attention = list(report.attention) + (list(data.attention) if data is not None else [])
+    lines += ["", "Needs attention"]
+    if not attention:
+        lines.append(
+            "  Nothing flagged." if data is not None
+            else "  Nothing flagged without reading the data (add --locations)."
+        )
+    for a in attention:
+        lines.append(f"  {'!' if a.severity == 'problem' else '-'} {a.text}")
+
+    st = report.settings
+    lines += ["", "Settings used"]
+    for v in st["function_versions"]:
+        captured = "code stored" if v["source"]["units"] else "code not stored"
+        lines.append(f"  function version {v['hash'][:12]} ({v['invocations']} call(s), {captured})")
+    for label in st["run_options"]:
+        lines.append(f"  run options: {label}")
+    for param, values in st["constants"].items():
+        name = st["declared_names"].get(param)
+        shown = ", ".join(values[:6]) + (f", … (+{len(values) - 6})" if len(values) > 6 else "")
+        lines.append(f"  {param}{f' ({name})' if name else ''} = {shown}")
+    for param, specs in st["path_inputs"].items():
+        lines.append(f"  {param} = PathInput {'; '.join(specs)}")
+    for param, sels in st["selectors"].items():
+        lines.append(f"  {param} selection: {'; '.join(sels)}")
+    lines.append(f"  where: {st['where'] or '-'}")
+    lines.append(f"  locations: {_location_filter_text(st['locations'])}")
+    lines.append(
+        f"  on_error={st['on_error'] or '?'}, skip_computed={st['skip_computed']}, save={st['save']}"
+    )
+
+    lines += ["", "Exclusions in force when it ran"]
+    if not report.exclusions:
+        lines.append("  (none)")
+    for e in report.exclusions:
+        where = " ".join(f"{k}={v}" for k, v in e["keys"].items()) or "(everything)"
+        lines.append(f"  {where}: {e['reason']} ({str(e['changed_at'])[:10]})")
+    if report.marks:
+        lines += ["", "Expected / Not expected marks on the outputs"]
+        for m in report.marks:
+            where = " ".join(f"{k}={v}" for k, v in m["keys"].items())
+            word = "expected" if m["expected"] else "not expected"
+            lines.append(f"  {m['variable']} {where}: {word} ({m['reason']})")
+
+    profiles = data.variables if data is not None else {}
+    lines += ["", "Inputs"]
+    if not report.inputs:
+        lines.append("  (no variable inputs recorded)")
+    for card in report.inputs:
+        glue = ", through glue" if card["through_glue"] else ""
+        lines.append(
+            f"  {card['param']} <- {card['variable']}: {card['records']} record(s) at "
+            f"{card['locations']} location(s){glue}"
+        )
+        for v in card["variants"] or []:
+            if "more" in v:
+                lines.append(f"      … +{v['more']} more variant(s)")
+            elif v["params"]:
+                params = ", ".join(f"{k}={val}" for k, val in v["params"].items())
+                lines.append(f"      variant ({v['records']} record(s)): {params}")
+        lines += _profile_lines(profiles.get(card["variable"]))
+    lines += ["", "Outputs"]
+    if not report.outputs:
+        lines.append("  (none)")
+    for card in report.outputs:
+        lines.append(
+            f"  {card['variable']}: {card['records']} record(s) at {card['locations']} "
+            f"location(s); {card['new_records']} new, {card['resaved_records']} saved again unchanged"
+        )
+        lines += _profile_lines(profiles.get(card["variable"]))
+
+    if data is not None:
+        lines += ["", f"Combinations ({data.total_rows})"]
+        header, body = run_report_table(data)
+        lines.append(format_table(header, body[:limit]))
+        if data.total_rows > min(limit, len(body)):
+            lines.append(f"… +{data.total_rows - min(limit, len(body))} more (use --csv or --json for all)")
+    return "\n".join(lines)
+
+
+def _profile_lines(profile) -> list[str]:
+    if not profile:
+        return []
+    out = []
+    for col, info in profile["columns"].items():
+        shapes = ", ".join(f"{s['shape']} ×{s['count']}" for s in info["shapes"])
+        dtypes = "/".join(info["dtypes"]) or "?"
+        out.append(f"      {col} [{dtypes}] shapes: {shapes}; {info['cells']['description']}")
+    return out
+
+
+def run_report_table(data) -> tuple[list[str], list[list]]:
+    """The per-combination table as ``(header, rows)``: THE flat form, for
+    the terminal and the CSV. One shape and one findings column per input
+    argument and per output variable."""
+    params = sorted({p for row in data.rows for p in row["inputs"]})
+    outs = sorted({v for row in data.rows for v in row["outputs"]})
+    header = [*data.schema_keys, "status"]
+    for name in params:
+        header += [f"in {name}", f"in {name} findings"]
+    for name in outs:
+        header += [f"out {name}", f"out {name} findings"]
+    header.append("why")
+    body = []
+    for row in data.rows:
+        line = [*[row["location"].get(k, "") for k in data.schema_keys], row["status_label"]]
+        for group, names in ((row["inputs"], params), (row["outputs"], outs)):
+            for name in names:
+                side = group.get(name)
+                if side is None:
+                    line += ["", ""]
+                else:
+                    shape = side["shape_text"]
+                    if side.get("value"):
+                        shape = f"{side['value']} ({shape})"
+                    line += [shape, side["findings"]]
+        line.append(row["reason"])
+        body.append(line)
+    return header, body

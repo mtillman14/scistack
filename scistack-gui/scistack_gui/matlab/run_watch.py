@@ -296,6 +296,7 @@ def _finish(
     """
     from scistack_gui.runtime.notify import push_message
     from scistack_gui.services.run_failures import RunFailures
+    from scistack_gui.services.run_report_service import matlab_reports_since
 
     run_failures = RunFailures(run.run_id)
     failures_text = run_failures.add_summary(
@@ -336,6 +337,8 @@ def _finish(
             "unknown": unknown,
             "duration_ms": int((time.time() - run.dispatched_at) * 1000),
             "failures": run_failures.to_wire([run.node_id] if run.node_id else []),
+            # The runs MATLAB stored since dispatch (the run report's tabs).
+            "reports": matlab_reports_since(run.dispatched_at, run.node_id),
         }
     )
 

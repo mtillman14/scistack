@@ -46,6 +46,7 @@ import VariantsPopup from '../Variants/VariantsPopup'
 import DataPreviewPopup from '../DataPreview/DataPreviewPopup'
 import ExpectedLocationsPopup, { type ExpectedFilter } from '../Expectation/ExpectedLocationsPopup'
 import { ExpectationBadgesProvider, useExpectationBadgeFetch } from '../../context/ExpectationBadgesContext'
+import { useRunReport } from '../../context/RunReportContext'
 import { OPEN_DATA_PREVIEW_EVENT, type DataPreviewTarget } from '../DataPreview/dataPreview'
 import { OptionalArgumentPicker } from './OptionalArgumentPicker'
 import { optionalPorts, OPTIONAL_ARGS_ATTR, type OptionalPort } from './inputPorts'
@@ -90,6 +91,8 @@ interface ContextMenuState {
   fnLabel?: string
   /** The function node's own id, for "Open in Plot Studio" on a plot_ node. */
   fnNodeId?: string
+  /** The function node's output variable types, for its run report. */
+  fnOutputs?: string[]
   varType?: string
   paramLabel?: string
   paramSourceFile?: string | null
@@ -128,6 +131,7 @@ export default function PipelineDAG() {
   const { setSelectedItem: setSidebarSelectedItem } = useSidebarSelection()
   const { currentScope, breadcrumb, descend, graphVersion, bumpGraph, getDirtyPatch } = useScope()
   const { requestPlan } = usePlanRun()
+  const { openForNode: openRunReport } = useRunReport()
   const { clipboard, setClipboard } = useClipboard()
   const isFirstLoad = useRef(true)
   // Last mouse position over the canvas (screen coords) — Cmd/Ctrl+V has
@@ -544,6 +548,7 @@ export default function PipelineDAG() {
         nodeType: 'functionNode',
         fnLabel: (node.data as { label: string }).label,
         fnNodeId: node.id,
+        fnOutputs: (node.data as { output_types?: string[] }).output_types,
       })
     } else if (node.type === 'parameterNode') {
       const d = node.data as unknown as ParameterNodeData
@@ -1108,6 +1113,17 @@ export default function PipelineDAG() {
         <div style={{ ...styles.contextMenu, left: contextMenu.x, top: contextMenu.y }}>
           <button style={styles.contextMenuItem} onClick={handleRunUntilHere} type="button">
             ▶ Run until here
+          </button>
+          <button
+            style={styles.contextMenuItem}
+            title="What this node's last run did: counts, settings, each input and output, NaNs"
+            onClick={() => {
+              openRunReport(contextMenu.fnLabel!, contextMenu.fnNodeId ?? null, contextMenu.fnOutputs)
+              setContextMenu(null)
+            }}
+            type="button"
+          >
+            📋 Run report…
           </button>
           {contextMenu.fnLabel?.startsWith('plot_') && contextMenu.fnNodeId && (
             <button

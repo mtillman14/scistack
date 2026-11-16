@@ -133,6 +133,7 @@ _HISTORY = {
     "_schema_key_type",  # dataset intent since 2026-11-01 (was in no section)
     "_schema_key_expectation", "_expectation_mark",  # dataset intent since 2026-11-07
     "_run_outcome",  # why a location got no output (2026-11-07)
+    "_run_summary",  # what only the run knows: counts, timing, options (2026-11-15)
 }
 _INTENT = {
     "__scidb_schema_overrides", "_schema_key_type",
@@ -142,7 +143,7 @@ _DATA = {"_registered_types", "_variables", "_variable_groups", "_record_save"}
 _CLEARED = {
     "_record", "_constant", "_invocation", "_function_source",
     "_invocation_input", "_invocation_output", "_invocation_pooled", "_run_invocation",
-    "_function_rename", "_record_save", "_run_outcome",
+    "_function_rename", "_record_save", "_run_outcome", "_run_summary",
 }
 
 

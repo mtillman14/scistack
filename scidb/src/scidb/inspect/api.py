@@ -1599,6 +1599,32 @@ class Inspector:
 
         return cell_profile(self._db, variable, columns=columns, location=location)
 
+    # ---- run report (scidb.provenance.run_report, the owner) -------------
+
+    def run_reports(self, fn=None, *, outputs: "list[str] | None" = None, limit: int = 50):
+        """The recorded runs of a function, newest first (``RunSummary``
+        each): the runs a run report can be opened on. *outputs* keeps the
+        runs that wrote to any of those variable types."""
+        from scidb.provenance.run_report import run_reports
+
+        return run_reports(self._db, fn, outputs=outputs, limit=limit)
+
+    def run_report(self, run_id: str):
+        """Everything about one run that needs no data loaded: counts,
+        settings, exclusions in force, its input and output variables, and
+        what to look at (:class:`~scidb.provenance.run_report.RunReport`)."""
+        from scidb.provenance.run_report import run_report
+
+        return run_report(self._db, run_id)
+
+    def run_report_data(self, run_id: str, *, status: "str | None" = None, limit: int = 2000):
+        """What the run's records hold, per variable and per combination:
+        shapes, sizes, NaN and other suspect cells
+        (:class:`~scidb.provenance.run_report.RunReportData`). Loads data."""
+        from scidb.provenance.run_report import run_report_data
+
+        return run_report_data(self._db, run_id, status=status, limit=limit)
+
     def schema_key_types(self, history: bool = False) -> list[dict]:
         """Each schema key's declared type, as stored in the database
         (``scidb.store.schema_types``), with how it loads and how many values it

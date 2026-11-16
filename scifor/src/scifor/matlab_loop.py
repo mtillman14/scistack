@@ -81,6 +81,7 @@ from .foreach import (
     _inject_shared_limits,
     _is_per_combo_df,
     _log_summary,
+    _skip_failure_payload,
     _option_parts,
     _print_dry_run_iteration,
     _resolve_data_spec,
@@ -559,6 +560,18 @@ class _PlanState:
 
 _PLANS: "dict[int, _PlanState]" = {}
 _TOKENS = itertools.count(1)
+
+#: token -> a finished loop's progress events, in the PYTHON loop's shapes
+#: (one ``combo_skip`` per failed or no-data combination, then ``summary``),
+#: kept by :func:`assemble` for :func:`take_run_events_after`. A caller that
+#: drives the loop from MATLAB and records the run in Python (scidb's bridge)
+#: notes :func:`last_token` before the loop and takes the events of the loop
+#: planned after it; ``close`` does not free them, because scidb saves after
+#: the loop closed. Capped: a standalone scifor run never takes its events.
+_RUN_EVENTS: "dict[int, list[dict]]" = {}
+_RUN_EVENTS_MAX = 8
+#: The newest plan token issued (0 before the first).
+_LAST_TOKEN = 0
 
 
 def matlab_output_names(outputs: dict, fn_nargout: int, call_nargout: int) -> "list[str]":
@@ -1040,7 +1053,9 @@ def _run_plan(desc: _Description, items: "tuple[_Input, ...]", prebuilt: "list |
 def _register(run: RunPlan, labels: "list[str]") -> "tuple[int, dict]":
     """Keep the plan for assemble/close; returns its token and the progress
     schedule MATLAB follows (marks are 0-based combo indices)."""
+    global _LAST_TOKEN
     token = next(_TOKENS)
+    _LAST_TOKEN = token
     key, progress_total, marks = _progress_marks(run)
     _PLANS[token] = _PlanState(
         run=run, labels=labels, progress_key=key, marks=marks,
@@ -1210,7 +1225,12 @@ class MatlabError(Exception):
     """An MException as the Python summary sees it (its identifier)."""
 
 
-def _failure_groups(raw: list, labels: "list[str]") -> "dict[str, FailureGroup]":
+def _failure_groups(
+    raw: list, labels: "list[str]", members: "list[tuple[ComboFailure, list[int]]] | None" = None
+) -> "dict[str, FailureGroup]":
+    """MATLAB's ``[{record, combos}]`` as failure groups. *members*, when
+    given, is filled with ``(failure, 1-based combo indices)`` per entry: the
+    per-combination view :func:`_keep_run_events` needs."""
     groups: "dict[str, FailureGroup]" = {}
     for entry in raw:
         if not isinstance(entry, dict) or not isinstance(entry.get("record"), dict):
@@ -1218,7 +1238,10 @@ def _failure_groups(raw: list, labels: "list[str]") -> "dict[str, FailureGroup]"
         record = entry["record"]
         (normalized,) = groups_from_wire([{**record, "reason": record.get("reason", ""), "example": record}])
         failure = ComboFailure.from_dict(normalized["example"])
-        combos = [labels[int(i) - 1] for i in _listify(entry.get("combos")) if 0 < int(i) <= len(labels)]
+        indices = [int(i) for i in _listify(entry.get("combos")) if 0 < int(i) <= len(labels)]
+        combos = [labels[i - 1] for i in indices]
+        if members is not None:
+            members.append((failure, indices))
         group = groups.get(failure.reason)
         if group is None:
             groups[failure.reason] = FailureGroup(example=failure, combos=combos)
@@ -1270,7 +1293,8 @@ def assemble(token: int, outcome_json: str) -> str:
         raise MatlabWireError(f"assemble: unknown plan token {token}")
     outcome = json.loads(str(outcome_json))
     labels = state.labels
-    groups = _failure_groups(_listify(outcome.get("failures")), labels)
+    members: "list[tuple[ComboFailure, list[int]]]" = []
+    groups = _failure_groups(_listify(outcome.get("failures")), labels, members)
     tally = RunTally(completed=int(outcome.get("completed") or 0),
                      skipped=int(outcome.get("skipped") or 0))
     tally.failure_groups = groups
@@ -1306,6 +1330,7 @@ def assemble(token: int, outcome_json: str) -> str:
     first_reason = next((g.reason for g in groups.values() if not g.no_data), "")
     state.summary = summary
     state.completed, state.skipped = tally.completed, tally.skipped
+    _keep_run_events(int(token), state, members, summary)
     fc = state.run.for_columns
     combine_columns = None
     if fc is not None and fc.mode != SPLIT and tally.completed:
@@ -1330,6 +1355,54 @@ def assemble(token: int, outcome_json: str) -> str:
         layer=LAYER,
     )
     return json.dumps(wire)
+
+
+def _keep_run_events(
+    token: int, state: _PlanState, members: "list[tuple[ComboFailure, list[int]]]", summary: dict
+) -> None:
+    """Store the loop's events for :func:`take_run_events_after`."""
+    combos = state.run.combos
+    events: "list[dict]" = []
+    for failure, indices in members:
+        payload = _skip_failure_payload(failure)
+        for i in indices:
+            if 0 < i <= len(combos):
+                events.append({
+                    "event": "combo_skip",
+                    "metadata": dict(combos[i - 1]),
+                    "failure": payload,
+                })
+    events.append(dict(summary))
+    _RUN_EVENTS[token] = events
+    while len(_RUN_EVENTS) > _RUN_EVENTS_MAX:
+        dropped = next(iter(_RUN_EVENTS))
+        del _RUN_EVENTS[dropped]
+        Log.debug(f"[matlab-events] token {dropped}: events never taken, dropped", layer=LAYER)
+    Log.debug(
+        f"[matlab-events] token {token}: kept {len(events) - 1} skip event(s) + summary",
+        layer=LAYER,
+    )
+
+
+def last_token() -> int:
+    """The newest plan token issued so far (0 before the first): the mark a
+    caller notes BEFORE its loop, for :func:`take_run_events_after`."""
+    return _LAST_TOKEN
+
+
+def take_run_events_after(token: int) -> "list[dict]":
+    """The progress events of the newest finished loop planned AFTER *token*
+    (see ``_RUN_EVENTS``), removed on read. ``[]`` when no such loop reached
+    its summary, so events left by an earlier, unrelated loop are never
+    mistaken for this caller's. A nested run (a function that itself runs a
+    loop) takes its own events before the outer loop assembles."""
+    newer = [t for t in _RUN_EVENTS if t > int(token)]
+    if not newer:
+        Log.debug(f"[matlab-events] no finished loop after token {token}", layer=LAYER)
+        return []
+    taken = max(newer)
+    Log.debug(f"[matlab-events] token {taken}: events taken (mark {token})", layer=LAYER)
+    return _RUN_EVENTS.pop(taken)
 
 
 def close(token: int, error_json: str = "") -> str:

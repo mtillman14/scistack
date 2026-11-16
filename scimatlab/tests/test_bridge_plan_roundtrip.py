@@ -458,3 +458,51 @@ def test_for_columns_missing_column_refuses_the_call():
     refused = json.loads(out["json"])
     assert refused["error_id"] == "scifor:for_each"
     assert "DoesNotExist" in refused["error_message"]
+
+
+# --- The loop's events, for a caller that records the run (scidb's bridge) ---
+
+
+def _assembled(metadata, outcome):
+    plan, _ = _plan(*Described().run([], metadata))
+    matlab_loop.assemble(plan["token"], json.dumps(outcome))
+    return plan
+
+
+def test_a_finished_loop_keeps_python_shaped_events():
+    scifor.set_schema(["subject"])
+    mark = matlab_loop.last_token()
+    plan = _assembled({"subject": [1, 2, 3]}, {
+        "completed": 1, "skipped": 2, "elapsed": 0.5,
+        "failures": [{"record": _matlab_record("bad"), "combos": 2},
+                     {"record": _matlab_record("none", no_data=True), "combos": [3]}],
+        "stop": [], "output_skips": [], "group_columns": [], "no_data_groups": [],
+        "distribute_from_column": 0,
+    })
+    assert matlab_loop.last_token() == plan["token"]
+    matlab_loop.close(plan["token"], "")  # closing does not free the events
+    events = matlab_loop.take_run_events_after(mark)
+    skips, summary = events[:-1], events[-1]
+    assert [(e["event"], e["metadata"]) for e in skips] == [
+        ("combo_skip", {"subject": 2}), ("combo_skip", {"subject": 3}),
+    ]
+    assert skips[0]["failure"]["reason"] == "test:bad: bad"
+    assert skips[0]["failure"]["blame"] == "user_code"
+    assert skips[1]["failure"]["no_data"] is True
+    assert summary["event"] == "summary"
+    assert (summary["completed"], summary["failed"], summary["no_data"]) == (1, 1, 1)
+    assert matlab_loop.take_run_events_after(mark) == []  # removed on read
+
+
+def test_events_of_an_earlier_loop_are_never_taken_for_a_later_mark():
+    scifor.set_schema(["subject"])
+    done = {
+        "completed": 1, "skipped": 0, "elapsed": 0.1, "failures": [], "stop": [],
+        "output_skips": [], "group_columns": [], "no_data_groups": [],
+        "distribute_from_column": 0,
+    }
+    before = matlab_loop.last_token()
+    plan = _assembled({"subject": [1]}, done)  # e.g. a standalone scifor run
+    _close(plan)
+    assert matlab_loop.take_run_events_after(matlab_loop.last_token()) == []
+    assert matlab_loop.take_run_events_after(before)[-1]["completed"] == 1

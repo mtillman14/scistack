@@ -159,6 +159,10 @@ class _ForEachState:
     # Combos removed by the pre-combo hook (skip_computed): already up to
     # date, so they never reach scifor. Folded into the run-summary log line.
     skip_computed_count: int = 0
+    # The run's recorder (scidb.provenance.run_summary.RunRecorder), set by
+    # `_run_concrete` after prepare; the save tells it the `_run` id it
+    # wrote. None on a path that records no summary (the MATLAB bridge).
+    run_recorder: Any = None
     # {param_name: [data column names]} for inputs whose records are dicts
     # stored one column per key. scifor rebuilds the mapping per combo; see
     # _resolve_mapping_inputs.

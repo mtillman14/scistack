@@ -8,10 +8,11 @@ outcomes, one row per location, so "missing" can later say why:
     FilteredEMG failed here when run on 2026-11-03 14:02: Error in your
     function filter_emg: IndexError: index 3 is out of bounds
 
-**Writer:** ``scidb.run.foreach`` collects scifor's per-location
-``combo_skip`` events (metadata + the small failure form, which carries the
-blame category) and calls :func:`record_outcomes` once per run, after the
-loop, even when the run stopped or was cancelled. A failure to write is
+**Writer:** the run's ``scidb.provenance.run_summary.RunRecorder`` collects
+scifor's per-location ``combo_skip`` events (metadata + the small failure
+form, which carries the blame category) and calls :func:`record_outcomes`
+once per run, after the save, with the run's id, even when the run stopped
+or was cancelled. A failure to write is
 logged and never fails the run.
 
 **Readers:** ``scidb.provenance.expectation`` appends :meth:`Outcome.describe`
@@ -24,9 +25,9 @@ rows). An outcome explains a row when every key it names equals the row's
 subject that failed at S02 explains every S02 trial it should have written.
 Blame wording is ``scistacklog.journal.blame_headline``'s.
 
-Not covered yet: MATLAB runs (their loop runs in MATLAB; the failures reach
-the GUI through the ``.done`` marker, not through this writer), and
-locations excluded at run time.
+MATLAB runs are covered since 2026-11-15 (the bridge's recorder; see
+``scidb.provenance.run_summary``). Not covered yet: locations excluded at
+run time.
 """
 
 from __future__ import annotations
@@ -115,7 +116,11 @@ class OutcomeCollector:
 
 
 def record_outcomes(
-    db: DatabaseManager, function_name: str, output_types: list[str], events: list[dict]
+    db: DatabaseManager,
+    function_name: str,
+    output_types: list[str],
+    events: list[dict],
+    run_id: str | None = None,
 ) -> int:
     """Store one run's failed / no-data locations. Returns the rows written.
 
@@ -123,6 +128,7 @@ def record_outcomes(
     them. Metadata keys that are not schema keys are dropped (an EachOf or a
     ColName coordinate is not a location); an event with no schema key left is
     skipped. Nothing is written on a read-only database.
+    *run_id*: the run that saw them (``_run_summary.run_id``).
     """
     if not events:
         return 0
@@ -148,11 +154,12 @@ def record_outcomes(
             None if no_data else bool(failure.get("probable")),
             None if no_data else str(failure.get("reason") or "")[:2000],
             at,
+            run_id,
         ])
     if not rows:
         Log.debug(f"[outcomes] {function_name}: {len(events)} event(s), none at a schema location")
         return 0
-    cols = ["function_name", "output_types", *schema_keys, "outcome", "blame", "probable", "reason", "recorded_at"]
+    cols = ["function_name", "output_types", *schema_keys, "outcome", "blame", "probable", "reason", "recorded_at", "run_id"]
     col_sql = ", ".join('"' + c.replace('"', '""') + '"' for c in cols)
     one = "(" + ", ".join("?" for _ in cols) + ")"
     for i in range(0, len(rows), _CHUNK):

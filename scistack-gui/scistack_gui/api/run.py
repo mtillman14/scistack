@@ -9,6 +9,8 @@ import logging
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from scidb.model.exceptions import NotFoundError
+
 from scistack_gui.api.handlers import Handler, install_routes
 from scistack_gui.services.run_service import (
     RunRequest,
@@ -54,6 +56,18 @@ class SchemaLevelRequest(BaseModel):
     function_name: str
     node_id: str | None = None
     stated: list[str] | None = None
+
+
+class RunReportQuery(BaseModel):
+    # "list" (needs function_name), "summary" or "data" (need run_id).
+    part: str
+    function_name: str | None = None
+    # With "list": only runs that wrote to one of these variable types.
+    outputs: list[str] | None = None
+    run_id: str | None = None
+    # With "data": only "computed", "failed" or "no_data" combinations.
+    status: str | None = None
+    limit: int = 2000
 
 
 class MatlabCommandRequest(BaseModel):
@@ -152,6 +166,20 @@ def _get_schema_level(db, req: SchemaLevelRequest) -> dict:
     return node_schema_level(db, req.node_id, req.function_name, req.stated)
 
 
+def _run_report(db, req: RunReportQuery) -> dict:
+    from scistack_gui.services.run_report_service import run_report
+
+    return run_report(
+        db,
+        req.part,
+        function_name=req.function_name,
+        outputs=req.outputs,
+        run_id=req.run_id,
+        status=req.status,
+        limit=req.limit,
+    )
+
+
 def _generate_matlab_command(db, req: MatlabCommandRequest) -> dict:
     from scistack_gui.services.matlab_command_service import generate_matlab_command
 
@@ -176,6 +204,9 @@ def _start_matlab_sidecar_run(req: SidecarRunRequest) -> dict:
 
 _NO_DB = {"needs_db": False}
 
+#: An unknown run is a 404, a bad request a 400.
+_RUN_REPORT_ERRORS = {ValueError: 400, NotFoundError: 404}
+
 RUN_HANDLERS: tuple[Handler, ...] = (
     Handler("start_run", "/run", RunRequest, _start_run, http_errors={ValueError: 400}, wants_transport=True, undoable=False),
     Handler("cancel_run", "/run/{run_id}/cancel", RunRef, _cancel_run, body=False, **_NO_DB, undoable=False),
@@ -183,6 +214,8 @@ RUN_HANDLERS: tuple[Handler, ...] = (
     Handler("get_matlab_engine_status", "/matlab-engine", None, _get_matlab_engine_status, http_method="GET", **_NO_DB),
     Handler("restart_matlab_engine", "/matlab-engine/restart", None, _restart_matlab_engine, **_NO_DB, undoable=False),
     Handler("get_schema_level", "/schema-level", SchemaLevelRequest, _get_schema_level, undoable=False),
+    # One endpoint for the run report's three parts (list / summary / data).
+    Handler("run_report", "/run-report", RunReportQuery, _run_report, http_errors=_RUN_REPORT_ERRORS, undoable=False),
     Handler("generate_matlab_command", None, MatlabCommandRequest, _generate_matlab_command, undoable=False),
     Handler("generate_matlab_pipeline_command", None, MatlabCommandRequest, _generate_matlab_pipeline_command, undoable=False),
     Handler("start_matlab_sidecar_run", None, SidecarRunRequest, _start_matlab_sidecar_run, **_NO_DB, undoable=False),
