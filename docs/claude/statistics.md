@@ -183,3 +183,13 @@ PlotSpec ──seed_from_plot──► StatsSpec(design=PlotSpec, dvs, descripti
 - csv-stats status and gaps: [csv-stats-v1-requirements.md](csv-stats-v1-requirements.md).
 - GUI controls: [stat-studio-controls.md](stat-studio-controls.md).
 - Brackets: [difference-bars.md](difference-bars.md) ("Derived bars").
+
+## Statistics on the figure (marks)
+
+Owners: request = `PlotSpec.stat_marks`; facts = `scistackstats.marks.marks_for`
+(replaces `overlays.bars_for` and `StatsSpec.overlay`); words =
+`scistackstats.format` (`bracket_label`, `omnibus_line`, `figure_caption`).
+Flow: tab spec -> `stats_marks` RPC (run, marks_for) -> `Derived` ->
+`api/plot._with_derived` -> resolve / export / save. Refusals are returned as
+`reason`, never silence (compare-to-reference, design mismatch, a pending
+decision, no significant comparison). See `studio-unification.md`.

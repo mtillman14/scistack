@@ -9,8 +9,6 @@
   multi-column Variable, each column its own DV.
 - ``descriptives``: which statistics the Descriptives tab shows.
 - ``comparisons``: the analyses on the Comparisons tab.
-- ``linked_plot``: the saved plot this spec syncs with. The link lives here
-  only (S11).
 
 ``to_dict`` / ``from_dict`` are the wire format. ``from_dict`` is strict: an
 unknown key or a bad value raises :class:`StatsSpecError`, naming it. Salvage
@@ -304,55 +302,14 @@ class GuideState:
         return cls(mode=raw.get("mode", "advanced"), step=raw.get("step"), done=tuple(raw.get("done", ())))
 
 
-BAR_PAIRS = ("significant", "all", "adjacent")
-BAR_LABELS = ("stars", "p")
-
-
-@dataclass(frozen=True)
-class OverlaySpec:
-    """Brackets drawn back on the linked figure (S20, P6).
-
-    The rule is stored, not the bars: bars are derived from the latest
-    results at resolve time (``overlays.bars_for``). A bar the user hides is
-    a hidden comparison id, never deleted.
-    """
-
-    show: bool = False
-    #: Which analysis feeds the bars; None = the first.
-    analysis: str | None = None
-    #: ``significant`` (adjusted p < alpha), ``all``, or ``adjacent`` (levels
-    #: next to each other in level order).
-    pairs: str = "significant"
-    #: ``stars`` (* / ** / ***) or ``p`` (the adjusted p, APA).
-    label: str = "stars"
-    hidden: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        _check(self.pairs, BAR_PAIRS, "overlay.pairs")
-        _check(self.label, BAR_LABELS, "overlay.label")
-        object.__setattr__(self, "hidden", tuple(str(h) for h in self.hidden))
-
-    def to_dict(self) -> dict[str, Any]:
-        out = {f.name: getattr(self, f.name) for f in fields(self)}
-        out["hidden"] = list(self.hidden)
-        return {k: v for k, v in out.items() if v is not None}
-
-    @classmethod
-    def from_dict(cls, raw: dict) -> "OverlaySpec":
-        _only(raw, {f.name for f in fields(cls)}, "overlay")
-        return cls(**{k: (tuple(v) if k == "hidden" else v) for k, v in raw.items()})
-
-
 @dataclass(frozen=True)
 class StatsSpec:
     design: PlotSpec
     dvs: tuple[DV, ...] = ()
-    linked_plot: str | None = None
     descriptives: DescriptiveSpec = field(default_factory=DescriptiveSpec)
     comparisons: tuple[Analysis, ...] = ()
     variant_mode: str = "pinned"
     formatting: FormatSpec = field(default_factory=FormatSpec)
-    overlay: OverlaySpec = field(default_factory=OverlaySpec)
     guide: GuideState = field(default_factory=GuideState)
 
     def __post_init__(self) -> None:
@@ -383,18 +340,15 @@ class StatsSpec:
             "comparisons": [a.to_dict() for a in self.comparisons],
             "variant_mode": self.variant_mode,
             "formatting": self.formatting.to_dict(),
-            "overlay": self.overlay.to_dict(),
             "guide": self.guide.to_dict(),
         }
-        if self.linked_plot is not None:
-            out["linked_plot"] = self.linked_plot
         return out
 
     @classmethod
     def from_dict(cls, raw: dict) -> "StatsSpec":
         if not isinstance(raw, dict):
             raise StatsSpecError(f"a stats spec must be a table, got {type(raw).__name__}")
-        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting", "overlay", "guide"}, "stats spec")
+        _only(raw, {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "formatting", "guide"}, "stats spec")
         if raw.get("format") != FORMAT:
             raise StatsSpecError(f"stats spec format {raw.get('format')!r} is not {FORMAT}")
         if "design" not in raw:
@@ -402,12 +356,10 @@ class StatsSpec:
         return cls(
             design=PlotSpec.from_dict(raw["design"]),
             dvs=tuple(DV.from_dict(d) for d in raw.get("dvs", [])),
-            linked_plot=raw.get("linked_plot"),
             descriptives=DescriptiveSpec.from_dict(raw.get("descriptives", {})),
             comparisons=tuple(Analysis.from_dict(a) for a in raw.get("comparisons", [])),
             variant_mode=raw.get("variant_mode", "pinned"),
             formatting=FormatSpec.from_dict(raw.get("formatting", {})),
-            overlay=OverlaySpec.from_dict(raw.get("overlay", {})),
             guide=GuideState.from_dict(raw.get("guide", {})),
         )
 

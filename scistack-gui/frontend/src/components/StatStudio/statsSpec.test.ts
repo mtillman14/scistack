@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   addAnalysis, addDV, analyses, gridToTsv, gridWidth, moveGroup, nextAnalysisId, removeAnalysis, removeDV,
-  setCell, setFormatting, setOverride, setRole, targets, toggleHiddenBracket, toggleStatistic,
+  setCell, setFormatting, setOverride, setRole, targets, toggleStatistic,
   updateAnalysis, type Grid, type StatsSpec,
 } from './statsSpec.js'
 
@@ -64,13 +64,6 @@ test('formatting: undefined decimals means automatic', () => {
   let spec = setFormatting(base(), { decimals: 2 })
   spec = setFormatting(spec, { decimals: undefined })
   assert.equal('decimals' in (spec.formatting ?? {}), false)
-})
-
-test('hidden brackets toggle', () => {
-  let spec = toggleHiddenBracket(base(), 'c1')
-  assert.deepEqual(spec.overlay?.hidden, ['c1'])
-  spec = toggleHiddenBracket(spec, 'c1')
-  assert.deepEqual(spec.overlay?.hidden, [])
 })
 
 test('grid width and tsv', () => {

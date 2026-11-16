@@ -375,3 +375,14 @@ def test_a_saved_plot_moves_into_another_schema(db, tmp_path):
         assert any("Fig 3" in where for where, _ in report.flagged)
     finally:
         other.close()
+
+
+def test_a_saved_plot_carries_the_table_settings_with_it(db):
+    """One record per tab (plan-stats-on-figure.md): opaque to this layer."""
+    stats = {"format": 1, "comparisons": [{"id": "a1", "family": "parametric"}]}
+    info = save_plot(db, "StepLength", "With stats", _spec(), VIEW, stats=stats)
+    assert load_saved_plot(db, info.plot_id).stats == stats
+    plain = save_plot(db, "StepLength", "Plain", _spec(), VIEW)
+    assert load_saved_plot(db, plain.plot_id).stats is None
+    with pytest.raises(SavedPlotError):
+        save_plot(db, "StepLength", "Bad", _spec(), VIEW, stats="not a table")

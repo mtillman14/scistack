@@ -1104,3 +1104,13 @@ scope on every row, resolution walks `scope -> global`, duplication copies
   > all keys) — `execution_service.default_schema_level`.
 * Variant space is three dimensions in one dict; run options are not a
   coordinate — `docs/claude/variant-space.md`.
+
+## D-2026-11-15: statistics on the figure, one Studio tab
+
+The figure owns what it draws of a test (`PlotSpec.stat_marks`); the tab's
+`StatsSpec` owns test settings; `marks_for` computes facts, never stored.
+`StatsSpec.overlay` removed (beta: no migration; old rows report "overlay is
+no longer a setting"). Figure and Statistics are two views of one tab over one
+in-memory design (Python's `design_fields` is the one list). The
+saved record is one per tab: the figure plus the table's settings; the
+shared-design store (`_plot_design`) and `linked_plot` are retired (rows kept).

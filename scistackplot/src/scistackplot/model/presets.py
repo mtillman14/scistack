@@ -153,6 +153,9 @@ FIELD_CLASSES: dict[str, FieldClass] = {
     "panel_overrides[].y_label": _V,
     "panel_overrides[].y_label_hidden": _T,
     "difference_bars": _T,
+    "stat_marks": _T,
+    # Handed in per resolve, never stored: no preset carries it.
+    "derived": _D,
     "comparison": _T,
     "filters": _T,
     "location_filter": _T,

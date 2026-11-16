@@ -15,7 +15,7 @@ import type { FigureSizeState } from './useFigureSize'
 export function useExport(s: StudioCoreState & StepByStepState & CombinesState & PinReportState & FigureSizeState) {
   const {
     sourceParams,
-    derivedBars,
+    derived,
     resolveParams,
     describe,
     undo,
@@ -326,14 +326,14 @@ export function useExport(s: StudioCoreState & StepByStepState & CombinesState &
   const handleAddToPipeline = useCallback(() => {
     if (!spec || !outputSpec) return
     setNotice('Writing endpoint…')
-    callBackend('plot_add_to_pipeline', { spec: outputSpec, ...(derivedBars.length ? { derived_bars: derivedBars } : {}) }, { stack: undo })
+    callBackend('plot_add_to_pipeline', { spec: outputSpec, ...(derived ? { derived } : {}) }, { stack: undo })
       .then(raw => {
         const result = raw as { ok?: boolean; error?: string; function_name?: string; file?: string }
         if (result.error) setNotice(`Could not add: ${result.error}`)
         else setNotice(`Added ${result.function_name} to ${result.file}. Wire it up on the canvas.`)
       })
       .catch(err => setNotice(`Could not add: ${(err as Error).message}`))
-  }, [spec, outputSpec, undo, derivedBars])
+  }, [spec, outputSpec, undo, derived])
 
   return {
     handleExport,

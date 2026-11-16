@@ -182,6 +182,8 @@ _PLAN_IRRELEVANT_FIELDS = (
     "colors",
     "panel_overrides",
     "difference_bars",
+    "stat_marks",
+    "derived",
     "comparison",
     # Binned and fitted per figure, over rows the plan already holds.
     "histogram",
@@ -1922,6 +1924,12 @@ def _build_figure(
         # Which difference bars land on which panel, once per figure, so a bar
         # that draws nowhere is explained in scistack.log (diffbars D3).
         log_difference_bars(resolved)
+        if resolved.spec.stat_marks.wanted and resolved.spec.derived is None and not resolved.spec.difference_bars:
+            Log.info(
+                "stat_marks ask for test results but none were supplied; "
+                "scistackstats.marks.marks_for supplies them (via diffbars.with_derived)",
+                layer=LAYER,
+            )
         return resolved
 
 

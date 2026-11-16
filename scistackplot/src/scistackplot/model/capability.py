@@ -761,10 +761,16 @@ def regression_summary(spec: PlotSpec, table: LongTable) -> dict:
 
 
 def _difference_bars_summary(spec: PlotSpec, shape: Shape, temporal: bool = False) -> dict:
-    from ..reduce.diffbars import unavailable
+    from ..reduce.diffbars import STAT_LABELS, STAT_PAIRS, unavailable
 
     reason = unavailable(spec, shape, temporal=temporal)
-    return {"available": reason is None, "reason": reason}
+    # The stat_marks vocabulary rides here, so Plot Studio holds none of its own.
+    return {
+        "available": reason is None,
+        "reason": reason,
+        "stat_pairs": list(STAT_PAIRS),
+        "stat_labels": list(STAT_LABELS),
+    }
 
 
 def sample_overlay_summary(

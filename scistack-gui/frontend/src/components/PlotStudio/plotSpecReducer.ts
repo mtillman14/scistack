@@ -18,6 +18,7 @@
 import { kindForXMeasure, type HistogramOptions, type KdeOptions, type RegressionOptions } from './continuousKinds.js'
 import type { Comparison } from './compare.js'
 import type { DifferenceBar } from './differenceBars.js'
+import { setStatMarks, toggleHiddenBracket, type StatMarks } from './statMarks.js'
 import type { PanelOverride, YTitles } from './panelOverrides.js'
 import { joinSetting, sampleColorSetting, toggleShowSample, type JoinChoice } from './showSample.js'
 import type { SpecAliases } from './aliasEdit.js'
@@ -75,6 +76,8 @@ export type PlotSpecAction =
   | { type: 'setSampleColor'; choice: string }
   | { type: 'setSampleInLegend'; on: boolean }
   | { type: 'setDifferenceBars'; bars: DifferenceBar[] }
+  | { type: 'setStatMarks'; patch: Partial<StatMarks> }
+  | { type: 'toggleHiddenBracket'; id: string }
   // Appearance
   | { type: 'setShowMissingLevels'; on: boolean }
   | { type: 'setNotPlottedNote'; on: boolean }
@@ -127,6 +130,10 @@ export function plotSpecReducer<S extends PlotSpecFields>(spec: S | null, action
       return { ...spec, sample_in_legend: action.on }
     case 'setDifferenceBars':
       return { ...spec, difference_bars: action.bars }
+    case 'setStatMarks':
+      return { ...spec, stat_marks: setStatMarks(spec, action.patch).stat_marks }
+    case 'toggleHiddenBracket':
+      return { ...spec, stat_marks: toggleHiddenBracket(spec, action.id).stat_marks }
     case 'setShowMissingLevels':
       return { ...spec, show_missing_levels: action.on }
     case 'setNotPlottedNote': {

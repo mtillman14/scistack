@@ -16,6 +16,7 @@ import CompareSection from './CompareSection'
 import { barCount } from './differenceBars'
 import { isLocked, isTicked, rugScaleNote, joinTooltip, joinChoice, type JoinChoice, sampleColorChoice, MARK_COLOR } from './showSample'
 import DifferenceBarsSection from './DifferenceBarsSection'
+import TestResultsSection from './TestResultsSection'
 import { textTarget, fixedTickNote, basePlaceholder, baseTitle, textTargets, hasFixedSizes, textSizeRows, textSizeOf, rowTitle, placeholderFor, autoSummary, hasTextTables, proportionRows, formatPt, drawnLabel } from './textSizes'
 import { formatLimit } from './timeZone'
 import { offersPanels, type YTitles } from './panelOverrides'
@@ -668,6 +669,9 @@ export function StatisticsGroup({ s }: { s: PlotStudioState }) {
     setSampleColor,
     setSampleInLegend,
     setDifferenceBars,
+    setStatMarksPatch,
+    toggleHiddenTestBracket,
+    marksState,
     picking,
     setPicking,
     diffPanel,
@@ -848,6 +852,20 @@ export function StatisticsGroup({ s }: { s: PlotStudioState }) {
                 )}
               </>
             )}
+          </Section>
+        )}
+        {capabilities?.difference_bars && (
+          <Section
+            title="Test results"
+            hint="Draw the recommended statistical test on the figure: brackets between groups, an omnibus line per panel, a caption. The test is chosen from the data; what ran is shown below."
+          >
+            <TestResultsSection
+              marks={spec?.stat_marks}
+              capability={capabilities.difference_bars}
+              state={marksState}
+              onChange={setStatMarksPatch}
+              onToggleHidden={toggleHiddenTestBracket}
+            />
           </Section>
         )}
         {/* Bars joining two marks of a panel, labelled ("*"): a test's

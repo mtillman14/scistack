@@ -20,7 +20,7 @@ from enum import Enum
 from typing import Any
 
 from ..reduce.compare import Comparison
-from ..reduce.diffbars import DifferenceBar
+from ..reduce.diffbars import DifferenceBar, Derived, StatMarks
 from ..reduce.panels import Y_TITLES_EVERY_PANEL, PanelOverride
 
 
@@ -1568,6 +1568,14 @@ class PlotSpec:
     #: panel. One that resolves nowhere is kept and does nothing.
     #: ``diffbars`` is the one owner (.claude/plan-difference-bars.md).
     difference_bars: list[DifferenceBar] = field(default_factory=list)
+    #: Which statistical results the figure draws (brackets, per-panel omnibus
+    #: lines, a caption). Display only: the REQUEST, never the numbers. The
+    #: facts come from a layer above through `diffbars.with_derived`.
+    stat_marks: StatMarks = field(default_factory=StatMarks)
+    #: Facts handed in for ONE resolve (`diffbars.with_derived`): panel notes
+    #: and the caption. Never stored: callers save the spec they started from.
+    #: `to_dict` writes it only when set, so a request payload can carry it.
+    derived: Derived | None = None
     #: Compare to reference: the measure re-expressed relative to one level of
     #: a grouping layer, as a difference or a % change. None = raw values.
     #: Inert (drawn raw, reason reported) when it cannot apply; `compare` is
@@ -1742,6 +1750,13 @@ class PlotSpec:
         raw["aliases"] = {thing: alias.to_dict() for thing, alias in self.aliases.items()}
         raw["panel_overrides"] = [o.to_dict() for o in self.panel_overrides]
         raw["difference_bars"] = [b.to_dict() for b in self.difference_bars]
+        raw["stat_marks"] = self.stat_marks.to_dict()
+        # Only a spec handed facts for one resolve (`diffbars.with_derived`)
+        # carries them: the request payload is how they reach the resolve.
+        # Callers save the spec they started from, which has none.
+        raw["derived"] = self.derived.to_dict() if self.derived is not None else None
+        if raw["derived"] is None:
+            del raw["derived"]
         raw["comparison"] = self.comparison.to_dict() if self.comparison else None
         raw["custom"] = self.custom.to_dict() if self.custom else None
         # Unset text tables are absent, as unset sizes are (null-dropped), so a
@@ -1800,6 +1815,8 @@ class PlotSpec:
             difference_bars=[
                 DifferenceBar.from_dict(b) for b in (raw.get("difference_bars") or [])
             ],
+            stat_marks=StatMarks.from_dict(raw.get("stat_marks")),
+            derived=Derived.from_dict(raw["derived"]) if raw.get("derived") else None,
             comparison=(
                 Comparison.from_dict(raw["comparison"]) if raw.get("comparison") else None
             ),

@@ -98,6 +98,11 @@ class SavedPlot:
     #: index), stored verbatim. The frontend owns their meaning and reads them
     #: as leniently as the spec is read here.
     view: dict = field(default_factory=dict)
+    #: The table's test settings saved WITH the figure (one record per tab,
+    #: plan-stats-on-figure.md): a ``StatsSpec.to_dict()`` without its design
+    #: copy, stored verbatim and read by ``scistackstats.restore_stats_spec``
+    #: (this layer never imports statistics). None = saved without any.
+    stats: dict | None = None
     #: ``scistackplot.RestoreNote`` s from restoring the spec and, when a table
     #: was given, from reconciling it with today's data.
     notes: list = field(default_factory=list)
@@ -114,6 +119,7 @@ class SavedPlot:
             **self.info.to_dict(),
             "spec": self.spec.to_dict(),
             "view": dict(self.view),
+            "stats": dict(self.stats) if self.stats is not None else None,
             "notes": [note.to_dict() for note in self.notes],
             "stored_format": self.stored_format,
             "newer": [dict(entry) for entry in self.newer],
@@ -164,6 +170,7 @@ def save_plot(
     current_plot_id: str | None = None,
     table=None,
     table_for: Callable[[Any], Any] | None = None,
+    stats: dict | None = None,
 ) -> SavedPlotInfo:
     """Save *spec* under *name* for *variable*, returning the new version.
 
@@ -184,6 +191,9 @@ def save_plot(
     Saving onto any OTHER plot's name raises :class:`SavedPlotExists` so the
     caller can ask first.
 
+    *stats* is the table's test settings, stored opaquely beside the figure
+    (:attr:`SavedPlot.stats`); absent is fine.
+
     *spec* is a ``PlotSpec`` or its dict. A dict is read **strictly**: the
     panel always sends the current format, and a spec that does not parse is
     a bug to surface, not something to store.
@@ -201,6 +211,8 @@ def save_plot(
         view = {}
     if not isinstance(view, dict):
         raise SavedPlotError(f"view must be a table of settings, got {type(view).__name__}")
+    if stats is not None and not isinstance(stats, dict):
+        raise SavedPlotError(f"stats must be a table of settings, got {type(stats).__name__}")
 
     if table is None and table_for is not None:
         try:
@@ -230,6 +242,7 @@ def save_plot(
         "format": ENVELOPE_FORMAT,
         "spec": _strip_frozen(spec).to_dict(),
         "view": view,
+        "stats": stats,
         "saved_with": {"scistackplot": plot_version},
         FROZEN_KEY: frozen_code,
     }
@@ -361,6 +374,12 @@ def load_saved_plot(
         )
         view = {}
 
+    stats = envelope.get("stats")
+    if stats is not None and not isinstance(stats, dict):
+        Log.warn("[saved_plot] %s / %r: stored stats settings are not a table (%r); ignored",
+                 info.variable, info.name, stats, layer=LAYER)
+        stats = None
+
     stored_format = envelope.get("format")
     Log.info(
         "[saved_plot] opened %s / %r version %d (envelope format %r, saved with %s): "
@@ -377,6 +396,7 @@ def load_saved_plot(
         info=info,
         spec=spec,
         view=view,
+        stats=stats,
         notes=notes,
         stored_format=stored_format,
         newer=newer,
@@ -675,6 +695,7 @@ def follow_latest_saved_plot(db, plot_id: str, *, table=None) -> SavedPlotInfo:
         overwrite=True,
         current_plot_id=plot_id,
         table=table,
+        stats=envelope.get("stats") if isinstance(envelope.get("stats"), dict) else None,
     )
     Log.info(
         "[saved_plot] %s / %r now follows latest code (version %d -> %d)",

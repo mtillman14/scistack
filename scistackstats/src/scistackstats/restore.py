@@ -31,7 +31,6 @@ from .spec import (
     DescriptiveSpec,
     FormatSpec,
     GuideState,
-    OverlaySpec,
     StatsSpec,
     StatsSpecError,
 )
@@ -50,13 +49,13 @@ def stats_settings(spec: StatsSpec) -> dict[str, Any]:
 
 
 def with_stats_settings(spec: StatsSpec, settings: dict[str, Any]) -> tuple[StatsSpec, list[RestoreNote]]:
-    """``spec`` with the preset's stats settings; design, DVs and link kept."""
+    """``spec`` with the preset's stats settings; design and DVs kept."""
     notes: list[RestoreNote] = []
     raw = spec.to_dict()
     raw.update({k: v for k, v in settings.items() if k in STATS_SETTINGS})
     restored = restore_stats_spec(raw, fallback_measure=spec.design.y_measure)
     notes.extend(restored.notes)
-    result = replace(restored.spec, design=spec.design, dvs=spec.dvs, linked_plot=spec.linked_plot)
+    result = replace(restored.spec, design=spec.design, dvs=spec.dvs)
     return result, notes
 
 
@@ -100,7 +99,7 @@ def restore_stats_spec(raw: Any, *, fallback_measure: str | None = None) -> Rest
     if not isinstance(raw, dict):
         _note(notes, "", NoteKind.INVALID_VALUE, "the stored stats settings are not a table", raw)
         raw = {}
-    known = {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "linked_plot", "formatting", "overlay",
+    known = {"format", "design", "dvs", "descriptives", "comparisons", "variant_mode", "formatting",
              "guide"}
     for key in sorted(set(raw) - known):
         _note(notes, key, NoteKind.UNKNOWN_SETTING, f"{key} is no longer a setting", raw[key])
@@ -140,10 +139,6 @@ def restore_stats_spec(raw: Any, *, fallback_measure: str | None = None) -> Rest
             analysis = replace(analysis, id=new_id)
         analyses.append(analysis)
 
-    linked = raw.get("linked_plot")
-    if linked is not None and not isinstance(linked, str):
-        _note(notes, "linked_plot", NoteKind.INVALID_VALUE, "linked_plot is not a saved-plot id; unlinked", linked)
-        linked = None
     descriptives = _salvage_block(DescriptiveSpec, raw.get("descriptives"), "descriptives", notes)
     unknown = [s for s in descriptives.statistics if s not in STATISTICS]
     if unknown:
@@ -157,12 +152,10 @@ def restore_stats_spec(raw: Any, *, fallback_measure: str | None = None) -> Rest
     spec = StatsSpec(
         design=design,
         dvs=tuple(dvs),
-        linked_plot=linked,
         variant_mode=variant_mode,
         descriptives=descriptives,
         comparisons=tuple(analyses),
         formatting=_salvage_block(FormatSpec, raw.get("formatting"), "formatting", notes),
-        overlay=_salvage_block(OverlaySpec, raw.get("overlay"), "overlay", notes),
         # Absent (every table saved before the wizard) = "advanced", the view
         # it was saved in.
         guide=_salvage_block(GuideState, raw.get("guide"), "guide", notes),

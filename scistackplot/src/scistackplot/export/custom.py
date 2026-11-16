@@ -51,6 +51,7 @@ import pandas as pd
 
 from scistacklog import Log
 
+from ..reduce.diffbars import StatMarks
 from ..reduce.groups import apply_level_groups
 from ..model.roles import (
     CollapseSteps,
@@ -250,6 +251,8 @@ def _input_spec(spec: PlotSpec, variable: str, primary_variable: str, kind: Plot
         sample_color=None,
         comparison=None,
         difference_bars=[],
+    stat_marks=StatMarks(),
+    derived=None,
     )
 
 

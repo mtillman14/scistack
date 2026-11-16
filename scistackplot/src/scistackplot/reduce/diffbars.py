@@ -153,6 +153,147 @@ def _end_text(end: dict[str, str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Statistical marks: what a figure is asked to show of a test's results
+# (plan: .claude/plan-stats-on-figure.md). The plot layer stores the REQUEST
+# (:class:`StatMarks`) and draws the FACTS it is handed (:class:`Derived`); it
+# computes nothing and never imports statistics (``scistackstats.marks``).
+
+#: ``StatMarks.pairs``: which comparisons get a bracket.
+STAT_PAIRS = ("significant", "all", "adjacent")
+#: ``StatMarks.label``: what a bracket says.
+STAT_LABELS = ("stars", "p", "effect", "difference")
+#: ``origin`` of a note or bar derived from a statistics result.
+TEST = "test"
+
+
+@dataclass(frozen=True)
+class StatMarks:
+    """Which statistical results the figure draws (display only).
+
+    - ``brackets``: a bracket per comparison chosen by ``pairs``, labelled
+      per ``label``.
+    - ``hidden``: comparison ids whose bracket is not drawn; hidden, never
+      deleted.
+    - ``omnibus``: one line per panel (:class:`PanelNote`).
+    - ``caption``: one line under the figure.
+    """
+
+    brackets: bool = False
+    pairs: str = "significant"
+    label: str = "stars"
+    hidden: tuple[str, ...] = ()
+    omnibus: bool = False
+    caption: bool = False
+
+    def __post_init__(self) -> None:
+        if self.pairs not in STAT_PAIRS:
+            raise ValueError(f"stat_marks.pairs must be one of {STAT_PAIRS}, got {self.pairs!r}")
+        if self.label not in STAT_LABELS:
+            raise ValueError(f"stat_marks.label must be one of {STAT_LABELS}, got {self.label!r}")
+        object.__setattr__(self, "hidden", tuple(str(h) for h in self.hidden))
+
+    @property
+    def wanted(self) -> bool:
+        """Whether the figure asks for anything at all."""
+        return self.brackets or self.omnibus or self.caption
+
+    def to_dict(self) -> dict:
+        return {
+            "brackets": self.brackets,
+            "pairs": self.pairs,
+            "label": self.label,
+            "hidden": list(self.hidden),
+            "omnibus": self.omnibus,
+            "caption": self.caption,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> "StatMarks":
+        raw = raw or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"stat_marks must be a table, got {type(raw).__name__}")
+        known = {"brackets", "pairs", "label", "hidden", "omnibus", "caption"}
+        unknown = sorted(set(raw) - known)
+        if unknown:
+            raise ValueError(f"stat_marks: unknown setting(s) {unknown}")
+        return cls(**{k: (tuple(v) if k == "hidden" else v) for k, v in raw.items()})
+
+
+@dataclass(frozen=True)
+class PanelNote:
+    """A line of text under one panel's title: a test's omnibus result.
+
+    ``match`` names the panel exactly as :class:`DifferenceBar` does (the
+    panel's ITERATE + FACET values as text).
+    """
+
+    match: dict[str, str] = field(default_factory=dict)
+    text: str = ""
+    origin: str = TEST
+
+    def matches_panel(self, values: dict[str, Any]) -> bool:
+        if set(self.match) != set(values):
+            return False
+        return all(self.match[name] == panel_key_text(values[name]) for name in values)
+
+    def to_dict(self) -> dict:
+        return {"match": dict(self.match), "text": self.text, "origin": self.origin}
+
+    @classmethod
+    def from_dict(cls, raw: dict) -> "PanelNote":
+        return cls(
+            match=_text_dict(raw.get("match")),
+            text=str(raw.get("text") or ""),
+            origin=str(raw.get("origin") or TEST),
+        )
+
+
+@dataclass(frozen=True)
+class Derived:
+    """Facts a layer above computed for ONE resolve; never stored.
+
+    ``bars`` join the figure's difference bars (:func:`with_derived`);
+    ``panel_notes`` and ``caption`` are drawn by the renderers.
+    """
+
+    # Annotated `list` so `restore_spec`'s dataclass walk reads each entry as a
+    # DifferenceBar / PanelNote; stored as tuples (frozen, comparable).
+    bars: list[DifferenceBar] = ()  # type: ignore[assignment]
+    panel_notes: list[PanelNote] = ()  # type: ignore[assignment]
+    caption: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "bars", tuple(self.bars))
+        object.__setattr__(self, "panel_notes", tuple(self.panel_notes))
+
+    def to_dict(self) -> dict:
+        return {
+            "bars": [b.to_dict() for b in self.bars],
+            "panel_notes": [n.to_dict() for n in self.panel_notes],
+            "caption": self.caption,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict | None) -> "Derived":
+        raw = raw or {}
+        return cls(
+            bars=tuple(DifferenceBar.from_dict(b) for b in (raw.get("bars") or [])),
+            panel_notes=tuple(PanelNote.from_dict(n) for n in (raw.get("panel_notes") or [])),
+            caption=(str(raw["caption"]) if raw.get("caption") else None),
+        )
+
+
+def panel_note_for(resolved: "ResolvedPlot", panel: "Panel") -> str | None:
+    """The derived note for *panel*, or None. The one matcher the renderers ask."""
+    derived = resolved.spec.derived
+    if derived is None or not derived.panel_notes:
+        return None
+    values = {**resolved.figure_key, **panel.key}
+    found = [n.text for n in derived.panel_notes if n.text and n.matches_panel(values)]
+    return "\n".join(found) if found else None
+
+
+# ---------------------------------------------------------------------------
 # Where a figure can carry bars
 
 
@@ -1422,8 +1563,11 @@ def difference_meta(
 # ---------------------------------------------------------------------------
 
 
-def with_derived_bars(spec: "PlotSpec", derived: list[DifferenceBar]) -> "PlotSpec":
-    """``spec`` drawing ``derived`` bars as well as its own, for one resolve.
+def with_derived(spec: "PlotSpec", facts: Derived) -> "PlotSpec":
+    """``spec`` drawing the derived ``facts`` as well as its own, for one resolve.
+
+    Panel notes and the caption ride on ``spec.derived`` (bars cleared: they
+    are merged into ``difference_bars`` below, one owner).
 
     The one place derived bars join a figure. A derived bar is intent
     computed from something else (a statistics result), so it is never
@@ -1435,6 +1579,7 @@ def with_derived_bars(spec: "PlotSpec", derived: list[DifferenceBar]) -> "PlotSp
     """
     from dataclasses import replace
 
+    derived = list(facts.bars)
     manual = list(spec.difference_bars)
     kept = [bar for bar in derived if not any(bar.same_pair(m) for m in manual)]
     dropped = len(derived) - len(kept)
@@ -1446,4 +1591,9 @@ def with_derived_bars(spec: "PlotSpec", derived: list[DifferenceBar]) -> "PlotSp
         f"; {dropped} derived bar(s) dropped (a manual bar has that pair)" if dropped else "",
         layer=LAYER,
     )
-    return replace(spec, difference_bars=[*kept, *manual])
+    text = Derived(panel_notes=facts.panel_notes, caption=facts.caption)
+    return replace(
+        spec,
+        difference_bars=[*kept, *manual],
+        derived=text if (text.panel_notes or text.caption) else None,
+    )

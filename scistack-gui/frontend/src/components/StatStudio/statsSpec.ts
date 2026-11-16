@@ -20,7 +20,6 @@ import type {
   FactorVariable,
   FormatSpec,
   GuideState,
-  OverlaySpec,
   Role,
   StatsSpec,
 } from '../../generated/api-types.js'
@@ -31,7 +30,6 @@ export type { Analysis, DV, DescriptiveSpec, FormatSpec, GuideState, Role, Stats
  *  `offers.covariates`); the webview never derives it. */
 export type CovariateBinding = FactorVariable
 export type Formatting = FormatSpec
-export type Overlay = OverlaySpec
 /** A Descriptives cell layout (scistackstats CELLS). */
 export type DescriptiveCell = NonNullable<DescriptiveSpec['cell']>
 /** How an analysis treats a factor: within or between (scistackstats FACTOR_KINDS). */
@@ -201,24 +199,12 @@ export function setOverride(spec: StatsSpec, id: Analysis['id'], factor: string,
   return updateAnalysis(spec, id, { overrides })
 }
 
-// --- formatting and brackets ---------------------------------------------------
+// --- formatting ---------------------------------------------------
 
 export function setFormatting(spec: StatsSpec, patch: Partial<Formatting>): StatsSpec {
   const next: Record<string, unknown> = { ...(spec.formatting ?? {}), ...patch }
   for (const [k, v] of Object.entries(patch)) if (v === undefined) delete next[k]
   return { ...spec, formatting: next as Formatting }
-}
-
-export function setOverlay(spec: StatsSpec, patch: Partial<Overlay>): StatsSpec {
-  return { ...spec, overlay: { ...(spec.overlay ?? {}), ...patch } }
-}
-
-/** Hide (or show again) one comparison's bracket by its comparison id. */
-export function toggleHiddenBracket(spec: StatsSpec, comparisonId: string): StatsSpec {
-  const hidden = new Set(spec.overlay?.hidden ?? [])
-  if (hidden.has(comparisonId)) hidden.delete(comparisonId)
-  else hidden.add(comparisonId)
-  return setOverlay(spec, { hidden: [...hidden] })
 }
 
 // --- grids -----------------------------------------------------------------------

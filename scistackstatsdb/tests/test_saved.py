@@ -13,7 +13,6 @@ from scistackstatsdb import (
     SavedStatsExists,
     apply_stats_preset,
     hide_saved_stats,
-    linked_stats_for,
     list_saved_stats,
     list_stats_presets,
     load_saved_stats,
@@ -25,16 +24,16 @@ from scistackstatsdb import (
 from scistackstatsdb.saved import STORE
 
 
-def _spec(linked: str | None = "plot-1", cell: str = "mean_sd") -> StatsSpec:
+def _spec(cell: str = "mean_sd") -> StatsSpec:
     plot = PlotSpec(measures=["StatStepLength"], roles={"session": Role.GROUP, "subject": Role.COLLAPSE,
                                                         "trial": Role.COLLAPSE}, groups=["session"], kind=PlotKind.BAR)
-    return StatsSpec(design=plot, dvs=(DV("StatStepLength"),), linked_plot=linked,
+    return StatsSpec(design=plot, dvs=(DV("StatStepLength"),),
                      descriptives=DescriptiveSpec(cell=cell), comparisons=(Analysis(),))
 
 
 def test_save_open_round_trip(db):
     info = save_stats(db, "Table 2", _spec())
-    assert info.version == 1 and info.linked_plot == "plot-1" and info.dvs == ("StatStepLength",)
+    assert info.version == 1 and info.dvs == ("StatStepLength",)
     opened = load_saved_stats(db, info.stats_id)
     assert opened.spec == _spec()
     assert opened.notes == []
@@ -80,18 +79,11 @@ def test_opening_salvages_and_never_rewrites(db):
     assert json.loads(after)["spec"]["comparisons"][0]["family"] == "bayesian"
 
 
-def test_linked_stats_for_a_plot(db):
-    save_stats(db, "Linked", _spec(linked="plot-1"))
-    save_stats(db, "Other", _spec(linked="plot-2"))
-    save_stats(db, "Loose", _spec(linked=None))
-    assert [i.name for i in linked_stats_for(db, "plot-1")] == ["Linked"]
-
-
 def test_stats_presets_apply_settings_only(db):
     preset = save_stats_preset(db, "Median tables", _spec(cell="median_iqr"))
     assert [p.name for p in list_stats_presets(db)] == ["Median tables"]
-    target = _spec(linked="plot-9", cell="mean_sd")
+    target = _spec(cell="mean_sd")
     applied, notes = apply_stats_preset(db, preset.preset_id, target)
     assert notes == []
     assert applied.descriptives.cell == "median_iqr"
-    assert applied.linked_plot == "plot-9" and applied.design == target.design
+    assert applied.design == target.design

@@ -10,14 +10,13 @@ a saved plot:
 - save is strict (``StatsSpec.from_dict``), open salvages
   (``scistackstats.restore``), and opening never rewrites the stored copy.
 
-A saved stats table may name the saved plot it syncs with
-(``StatsSpec.linked_plot``, S11). The link is stored only here.
-:func:`linked_stats_for` finds a plot's stats tables by query, so the plot
-store never holds a back-reference.
+A table's settings are also saved WITH a figure (``scistackplotdb`` saved plot,
+``stats``): one record per tab. ``StatsSpec.linked_plot`` is retired; an old
+row that has it opens with a "no longer a setting" note.
 
 A **stats preset** stores only the stats settings
 (``scistackstats.restore.STATS_SETTINGS``): what to compute and how it reads.
-Applying one to a stats table keeps that table's design, DVs and link.
+Applying one to a stats table keeps that table's design, DVs.
 """
 
 from __future__ import annotations
@@ -66,12 +65,11 @@ class SavedStatsInfo:
     version: int
     saved_at: str
     hidden: bool = False
-    linked_plot: str | None = None
     dvs: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {"stats_id": self.stats_id, "name": self.name, "version": self.version, "saved_at": self.saved_at,
-                "hidden": self.hidden, "linked_plot": self.linked_plot, "dvs": list(self.dvs)}
+                "hidden": self.hidden, "dvs": list(self.dvs)}
 
 
 @dataclass
@@ -107,11 +105,9 @@ def _strict(spec: Any) -> StatsSpec:
 def _info(row, envelope: dict | None = None) -> SavedStatsInfo:
     stats_id, _scope, name, version, saved_at, hidden = row
     envelope = envelope or {}
-    linked = envelope.get("linked_plot")
     dvs = envelope.get("dvs")
     return SavedStatsInfo(
         stats_id=str(stats_id), name=str(name), version=int(version), saved_at=str(saved_at), hidden=bool(hidden),
-        linked_plot=linked if isinstance(linked, str) else None,
         dvs=tuple(str(d) for d in dvs) if isinstance(dvs, list) else (),
     )
 
@@ -128,7 +124,6 @@ def save_stats(db, name: str, spec: Any, *, overwrite: bool = True, current_stat
     envelope = {
         "format": ENVELOPE_FORMAT,
         "spec": spec.to_dict(),
-        "linked_plot": spec.linked_plot,
         "dvs": [d.key for d in spec.targets],
         "saved_with": _versions(),
     }
@@ -167,13 +162,6 @@ def rename_saved_stats(db, stats_id: str, new_name: str) -> SavedStatsInfo:
 def hide_saved_stats(db, stats_id: str, hidden: bool = True) -> SavedStatsInfo:
     STORE.set_hidden(db, stats_id, hidden)
     return _newest(db, stats_id)
-
-
-def linked_stats_for(db, saved_plot_id: str) -> list[SavedStatsInfo]:
-    """The visible saved stats tables linked to one saved plot (S11)."""
-    found = [info for info in list_saved_stats(db) if info.linked_plot == saved_plot_id]
-    Log.debug("[saved-stats] plot %s: %d linked stats table(s)", saved_plot_id, len(found), layer=LAYER)
-    return found
 
 
 def find_saved_stats(db, name: str) -> SavedStatsInfo | None:
@@ -229,7 +217,7 @@ def rename_stats_preset(db, preset_id: str, new_name: str) -> StatsPresetInfo:
 
 
 def apply_stats_preset(db, preset_id: str, target: StatsSpec, *, version: int | None = None) -> tuple[StatsSpec, list[dict]]:
-    """``target`` with the preset's stats settings; its design, DVs and link kept."""
+    """``target`` with the preset's stats settings; its design and DVs kept."""
     row, text = PRESET_STORE.load(db, preset_id, version)
     envelope = PRESET_STORE.parse_envelope(text, f"{row[2]!r} version {row[3]}")
     spec, notes = with_stats_settings(target, envelope.get("settings") or {})

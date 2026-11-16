@@ -12,6 +12,7 @@ import { type HistogramOptions, type KdeOptions, type RegressionOptions } from '
 import { type FacetOptions, type YAxis, type StylePatch, type Matcher } from './plotSpecReducer'
 import { type PanelOverride } from './panelOverrides'
 import { type Comparison } from './compare'
+import type { StatMarks } from './statMarks'
 import { type DifferenceBar, type Picking, IDLE, type TickRef, type DifferenceMeta, panelForAxis, targetAt, pickStep, addBar } from './differenceBars'
 import { type WeightKey, withWeight } from './markWeights'
 import { withTextSize, resetTextSizes, type TextTable, withTextTable, resetTextTables, withTextTarget } from './textSizes'
@@ -246,6 +247,16 @@ export function useStepByStep(s: StudioCoreState) {
   const setDifferenceBars = useCallback((next: DifferenceBar[]) => {
     console.info('[Plot Studio] difference_bars_set', { count: next.length, bars: next })
     dispatchSpec({ type: 'setDifferenceBars', bars: next })
+  }, [])
+
+  /** Edit the request for test results on the figure (`spec.stat_marks`). */
+  const setStatMarksPatch = useCallback((patch: Partial<StatMarks>) => {
+    console.info('[Plot Studio] stat_marks_set', patch)
+    dispatchSpec({ type: 'setStatMarks', patch })
+  }, [])
+  const toggleHiddenTestBracket = useCallback((id: string) => {
+    console.info('[Plot Studio] stat_marks_toggle_hidden', { id })
+    dispatchSpec({ type: 'toggleHiddenBracket', id })
   }, [])
 
   // "+ Add difference bar": two clicks on the preview. `picking` is the step,
@@ -602,6 +613,8 @@ export function useStepByStep(s: StudioCoreState) {
     setPanelOverrides,
     setComparison,
     setDifferenceBars,
+    setStatMarksPatch,
+    toggleHiddenTestBracket,
     picking,
     setPicking,
     hoverTick,

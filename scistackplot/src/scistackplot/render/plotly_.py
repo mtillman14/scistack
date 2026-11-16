@@ -68,7 +68,7 @@ from .base import (
     univariate_x_range,
     histogram_ticks,
     is_special_bin,
-    not_plotted_note,
+    footnote_text,
     rug_rows,
     SPECIAL_BIN_PATTERN,
     is_categorical_x,
@@ -361,6 +361,7 @@ def render(
             )
             panel_axes[index] = (x_axis, y_axis)
             _add_difference_bars(layout, resolved, difference, index, x_axis, y_axis)
+            _add_panel_note(layout, resolved, panel, x_axis, y_axis)
 
         # What Plot Studio's Difference bars section shows and picks from
         # (diffbars.difference_meta); None where the figure cannot carry bars.
@@ -381,13 +382,15 @@ def render(
         layout["font"]["family"] = PREVIEW_FONT_FAMILY
         if decisions is not None:
             _apply_decisions(layout, resolved, decisions)
-        note = not_plotted_note(resolved)
+        width_px = layout.get("width")
+        note = footnote_text(resolved, float(width_px) * 0.75 if width_px else 700.0)
         if note:
-            # The "Not plotted" footnote (base.not_plotted_note): bottom left,
-            # below everything, in a margin grown by its own line.
+            # The footnote (base.footnote_text: statistics caption, then the
+            # "Not plotted" note): bottom left, below everything, in a margin
+            # grown by its own lines.
             size = sizes.legend
             margin = layout.setdefault("margin", {})
-            margin["b"] = float(margin.get("b", 0) or 0) + size * 2
+            margin["b"] = float(margin.get("b", 0) or 0) + size * (1.7 * (note.count("\n") + 1) + 0.3)
             layout["annotations"].append(
                 {
                     "text": _html(note),
@@ -1955,6 +1958,38 @@ def _estimated_panel_frames(
             height_pt=height * plot_h, width_pt=width * plot_w, x_range=x_range
         )
     return frames
+
+
+def _add_panel_note(layout: dict, resolved: ResolvedPlot, panel, x_axis: str, y_axis: str) -> None:
+    """The derived per-panel line (``diffbars.panel_note_for``) above the
+    panel's plot area, left aligned, in the panel's own domain. The top margin
+    grows by one line the first time (a one-row figure has nothing above it)."""
+    from ..reduce.diffbars import panel_note_for
+
+    if resolved.spec.derived is None or not resolved.spec.stat_marks.omnibus:
+        return
+    note = panel_note_for(resolved, panel)
+    if not note:
+        return
+    size = sizes_for(resolved).legend
+    if not any(a.get("name") == "panel_note" for a in layout["annotations"]):
+        margin = layout.setdefault("margin", {})
+        margin["t"] = float(margin.get("t", 0) or 0) + size * 1.7
+    layout["annotations"].append(
+        {
+            "text": _plain(note).replace("\n", "<br>"),
+            "xref": f"{x_axis} domain",
+            "yref": f"{y_axis} domain",
+            "x": 0.0,
+            "y": 1.0,
+            "xanchor": "left",
+            "yanchor": "bottom",
+            "yshift": 2,
+            "showarrow": False,
+            "font": {"size": size, "color": PAPER.text},
+            "name": "panel_note",
+        }
+    )
 
 
 def _add_difference_bars(

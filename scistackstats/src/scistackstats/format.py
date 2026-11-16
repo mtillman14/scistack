@@ -696,3 +696,67 @@ def sweep_grid(report: StatsReport, analysis: AnalysisReport, stats_spec: StatsS
                + analysis.family_statement + " " + _variants_sentence(stats_spec))
     return Grid(title=f"Variant sweep ({analysis.analysis.get('id')})", header_rows=[[HeaderCell(h) for h in header]],
                 rows=rows, caption=caption, label_columns=4)
+
+
+# ---------------------------------------------------------------------------
+# On the figure (``marks``): the words a bracket, a panel and a caption carry
+# ---------------------------------------------------------------------------
+
+#: The star key a caption states when brackets are starred.
+STAR_KEY = "* p < .05, ** p < .01, *** p < .001"
+
+
+def bracket_label(c: Comparison, kind: str, analysis: AnalysisReport, formatting: FormatSpec) -> str:
+    """What one bracket says: ``stars`` (``ns`` when none), ``p``, ``effect``
+    (the effect size's value) or ``difference`` (the estimate, in the
+    analysis' decimals). The comparison's adjusted p when it has a family."""
+    p = c.p_adjusted if c.family else c.p
+    if kind == "p":
+        return p_phrase(p, formatting.p_decimals)
+    if kind == "effect":
+        return number((c.effect_size or {}).get("value"), formatting.effect_decimals)
+    if kind == "difference":
+        return number(c.estimate, _comparison_decimals(analysis, c.dv, formatting))
+    return stars(p) or "ns"
+
+
+def omnibus_line(s: Any, formatting: FormatSpec, labels: Labels | None = None) -> str | None:
+    """One panel's omnibus result: every omnibus term containing the stratum's
+    primary factor (the ones the comparisons grid shows), as
+    ``Brand: F(2, 10) = 4.12, p = .031``. None when the stratum has no
+    omnibus, it was refused, or no term involves the primary factor."""
+    omnibus = s.omnibus
+    if omnibus is None or omnibus.refused:
+        return None
+    factors = s.design.get("factors") or []
+    if not factors:
+        return None
+    primary = factors[0].get("name")
+    labels = labels or Labels()
+    parts = []
+    for e in omnibus.effects:
+        terms = str(e["term"]).split(":")
+        if primary not in terms:
+            continue
+        name = " × ".join(labels.factor(s.dv, t) for t in terms)
+        parts.append(f"{name}: {statistic(e.get('statistic_name'), e.get('statistic'), e.get('df'))}, "
+                     f"{p_phrase(e.get('p'), formatting.p_decimals)}")
+    return "; ".join(parts) if parts else None
+
+
+def figure_caption(analysis: AnalysisReport, stats_spec: StatsSpec, *, starred: bool) -> str:
+    """The one line under the figure: which test, how corrected, the star key
+    (when brackets are starred) and the missing-data policy."""
+    strata = analysis.strata
+    pair_tests = _unique(s.selection.get("pairwise") for s in strata if s.selection.get("pairwise"))
+    omni_tests = _unique(s.omnibus.test for s in strata if s.omnibus and s.omnibus.test)
+    sentences = []
+    if pair_tests:
+        sentences.append(f"Test: {_join_words([TESTS[t].label for t in pair_tests if t in TESTS])}.")
+    if omni_tests:
+        sentences.append(f"Omnibus: {_join_words([TESTS[t].label for t in omni_tests if t in TESTS])}.")
+    sentences.append(analysis.family_statement)
+    if starred:
+        sentences.append(STAR_KEY + ".")
+    sentences.append(missing_sentence(analysis))
+    return " ".join(sentences)

@@ -97,6 +97,10 @@ DESIGN_FIELDS: dict[str, SyncClass] = {
     "colors": _P,
     "panel_overrides": _P,
     "difference_bars": _P,
+    # Which results the figure draws: display. The facts are handed in per
+    # resolve and never stored (`derived`).
+    "stat_marks": _P,
+    "derived": _P,
     # Compare-to-reference changes the values themselves.
     "comparison": _D,
     # A datetime's wall clock depends on the zone it is read in, so a

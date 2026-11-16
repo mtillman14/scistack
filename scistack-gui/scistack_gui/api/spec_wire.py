@@ -50,10 +50,9 @@ from scistackplot import (
     Statistic,
     StatsCorner,
 )
+from scistackplot.reduce.diffbars import STAT_LABELS, STAT_PAIRS
 from scistackplot.reduce.panels import Y_TITLES
 from scistackstats.spec import (
-    BAR_LABELS,
-    BAR_PAIRS,
     CELLS,
     DIFFERENCE_SPREADS,
     FACTOR_KINDS,
@@ -342,6 +341,37 @@ class DifferenceBarWire(_Wire):
     origin: str | None = _absent()
 
 
+class PanelNoteWire(_Wire):
+    """``scistackplot.PanelNote``: a line of text under one panel's title."""
+
+    model_config = ConfigDict(title="PanelNote")
+    match: dict[str, str] = _absent()
+    text: str = _absent()
+    origin: str | None = _absent()
+
+
+class DerivedWire(_Wire):
+    """``scistackplot.Derived.to_dict()``: facts a layer above computed for
+    one resolve (test brackets, panel notes, a caption); never stored."""
+
+    model_config = ConfigDict(title="Derived")
+    bars: list[DifferenceBarWire] = _absent()
+    panel_notes: list[PanelNoteWire] = _absent()
+    caption: str | None = _absent()
+
+
+class StatMarksWire(_Wire):
+    """``scistackplot.StatMarks``: which statistical results the figure draws."""
+
+    model_config = ConfigDict(title="StatMarks")
+    brackets: bool = _absent()
+    pairs: str = _one_of(STAT_PAIRS)
+    label: str = _one_of(STAT_LABELS)
+    hidden: list[str] = _absent()
+    omnibus: bool = _absent()
+    caption: bool = _absent()
+
+
 class ComparisonWire(_Wire):
     """``scistackplot.Comparison``: compare to a reference level."""
 
@@ -384,6 +414,8 @@ class PlotSpecWire(_Wire):
     colors: dict[str, dict[str, str]] = _absent()
     panel_overrides: list[PanelOverrideWire] = _absent()
     difference_bars: list[DifferenceBarWire] = _absent()
+    stat_marks: StatMarksWire = _absent()
+    derived: DerivedWire = _absent()
     comparison: ComparisonWire | None = _absent()
     filters: list[FilterWire] = _absent()
     location_filter: LocationFilterWire = _absent()
@@ -459,17 +491,6 @@ class GuideStateWire(_Wire):
     done: list[str] = _absent()
 
 
-class OverlaySpecWire(_Wire):
-    """``scistackstats.spec.OverlaySpec``: brackets drawn on the linked figure."""
-
-    model_config = ConfigDict(title="OverlaySpec")
-    show: bool = _absent()
-    analysis: str | None = _absent()
-    pairs: str = _one_of(BAR_PAIRS)
-    label: str = _one_of(BAR_LABELS)
-    hidden: list[str] = _absent()
-
-
 class StatsSpecWire(_Wire):
     """``scistackstats.StatsSpec.to_dict()``: a statistics table. ``design``
     is the plot spec it analyses."""
@@ -478,12 +499,10 @@ class StatsSpecWire(_Wire):
     format: int
     design: PlotSpecWire
     dvs: list[DVWire] = _absent()
-    linked_plot: str | None = _absent()
     descriptives: DescriptiveSpecWire = _absent()
     comparisons: list[AnalysisWire] = _absent()
     variant_mode: str = _one_of(VARIANT_MODES)
     formatting: FormatSpecWire = _absent()
-    overlay: OverlaySpecWire = _absent()
     guide: GuideStateWire = _absent()
 
 

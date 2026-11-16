@@ -1,8 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import PlotRoot, { type PlotViewConfig } from './PlotRoot'
-import StatStudio, { type StatViewConfig } from './components/StatStudio/StatStudio'
+import { type PlotViewConfig } from './PlotRoot'
+import Studio from './components/Studio/Studio'
+import { type StatViewConfig } from './components/StatStudio/StatStudio'
 import ClientErrorBoundary from './components/ClientErrorBoundary'
 import { callBackend } from './api'
 import { reportBundleBuild } from './bundleBuild'
@@ -39,13 +40,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {/* Outermost, so a render crash anywhere shows itself and reaches
         scistack.log instead of blanking the webview. */}
-    {view?.view === 'plot' ? (
-      <ClientErrorBoundary where="Plot Studio tab">
-        <PlotRoot initial={view} />
-      </ClientErrorBoundary>
-    ) : view?.view === 'stat' ? (
-      <ClientErrorBoundary where="StatStudio tab">
-        <StatStudio initial={view} />
+    {view?.view === 'plot' || view?.view === 'stat' ? (
+      <ClientErrorBoundary where="Studio tab">
+        <Studio initial={view} />
       </ClientErrorBoundary>
     ) : (
       <ClientErrorBoundary where="pipeline view">

@@ -1220,6 +1220,36 @@
       "title": "DeleteRequest",
       "type": "object"
     },
+    "DerivedWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.Derived.to_dict()``: facts a layer above computed for\none resolve (test brackets, panel notes, a caption); never stored.",
+      "properties": {
+        "bars": {
+          "items": {
+            "$ref": "#/$defs/DifferenceBarWire"
+          },
+          "type": "array"
+        },
+        "caption": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "panel_notes": {
+          "items": {
+            "$ref": "#/$defs/PanelNoteWire"
+          },
+          "type": "array"
+        }
+      },
+      "title": "Derived",
+      "type": "object"
+    },
     "DescribeFunctionRequest": {
       "properties": {
         "node_id": {
@@ -1304,23 +1334,6 @@
         }
       },
       "title": "DescriptiveSpec",
-      "type": "object"
-    },
-    "DesignRequest": {
-      "description": "A linked figure + table's shared design (scistackplotdb.designs).",
-      "properties": {
-        "plot_id": {
-          "type": "string"
-        },
-        "spec": {
-          "$ref": "#/$defs/PlotSpecWire"
-        }
-      },
-      "required": [
-        "plot_id",
-        "spec"
-      ],
-      "title": "DesignRequest",
       "type": "object"
     },
     "DifferenceBarWire": {
@@ -2660,18 +2673,6 @@
       "title": "LibraryPipelineRef",
       "type": "object"
     },
-    "LinkedRequest": {
-      "properties": {
-        "plot_id": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "plot_id"
-      ],
-      "title": "LinkedRequest",
-      "type": "object"
-    },
     "LocationFilterWire": {
       "additionalProperties": false,
       "description": "``scistackplot.LocationFilter``: the schema location picker's selection.",
@@ -2752,6 +2753,40 @@
         "variable"
       ],
       "title": "LocationTreeRequest",
+      "type": "object"
+    },
+    "MarksRequest": {
+      "properties": {
+        "csv_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "plot_spec": {
+          "$ref": "#/$defs/PlotSpecWire"
+        },
+        "stats_spec": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatsSpecWire"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "plot_spec"
+      ],
+      "title": "MarksRequest",
       "type": "object"
     },
     "MatchOp": {
@@ -2961,17 +2996,6 @@
           ],
           "default": null
         },
-        "plot_id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "seed": {
           "anyOf": [
             {
@@ -3057,27 +3081,17 @@
       "title": "OutputPorts",
       "type": "object"
     },
-    "OverlayForPlotRequest": {
-      "properties": {
-        "plot_id": {
-          "type": "string"
-        },
-        "plot_spec": {
-          "$ref": "#/$defs/PlotSpecWire"
-        }
-      },
-      "required": [
-        "plot_id",
-        "plot_spec"
-      ],
-      "title": "OverlayForPlotRequest",
-      "type": "object"
-    },
-    "OverlaySpecWire": {
+    "PanelNoteWire": {
       "additionalProperties": false,
-      "description": "``scistackstats.spec.OverlaySpec``: brackets drawn on the linked figure.",
+      "description": "``scistackplot.PanelNote``: a line of text under one panel's title.",
       "properties": {
-        "analysis": {
+        "match": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "origin": {
           "anyOf": [
             {
               "type": "string"
@@ -3087,70 +3101,11 @@
             }
           ]
         },
-        "hidden": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "label": {
-          "enum": [
-            "stars",
-            "p"
-          ],
+        "text": {
           "type": "string"
-        },
-        "pairs": {
-          "enum": [
-            "significant",
-            "all",
-            "adjacent"
-          ],
-          "type": "string"
-        },
-        "show": {
-          "type": "boolean"
         }
       },
-      "title": "OverlaySpec",
-      "type": "object"
-    },
-    "PairRequest": {
-      "properties": {
-        "csv_path": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "direction": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "plot_spec": {
-          "$ref": "#/$defs/PlotSpecWire"
-        },
-        "stats_spec": {
-          "$ref": "#/$defs/StatsSpecWire"
-        }
-      },
-      "required": [
-        "stats_spec",
-        "plot_spec"
-      ],
-      "title": "PairRequest",
+      "title": "PanelNote",
       "type": "object"
     },
     "PanelOverrideWire": {
@@ -3899,6 +3854,9 @@
             }
           ]
         },
+        "derived": {
+          "$ref": "#/$defs/DerivedWire"
+        },
         "difference_bars": {
           "items": {
             "$ref": "#/$defs/DifferenceBarWire"
@@ -4027,6 +3985,9 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "stat_marks": {
+          "$ref": "#/$defs/StatMarksWire"
         },
         "style": {
           "anyOf": [
@@ -4725,61 +4686,40 @@
           ],
           "default": null
         },
-        "derived_bars": {
+        "derived": {
           "anyOf": [
             {
-              "items": {
-                "additionalProperties": false,
-                "description": "``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.\n``origin`` is written only when not ``\"manual\"``.",
-                "properties": {
-                  "a": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "A",
-                    "type": "object"
+              "additionalProperties": false,
+              "description": "``scistackplot.Derived.to_dict()``: facts a layer above computed for\none resolve (test brackets, panel notes, a caption); never stored.",
+              "properties": {
+                "bars": {
+                  "items": {
+                    "$ref": "#/$defs/DifferenceBarWire"
                   },
-                  "b": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "B",
-                    "type": "object"
-                  },
-                  "label": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "title": "Label"
-                  },
-                  "match": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "Match",
-                    "type": "object"
-                  },
-                  "origin": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "title": "Origin"
-                  }
+                  "title": "Bars",
+                  "type": "array"
                 },
-                "title": "DifferenceBar",
-                "type": "object"
+                "caption": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Caption"
+                },
+                "panel_notes": {
+                  "items": {
+                    "$ref": "#/$defs/PanelNoteWire"
+                  },
+                  "title": "Panel Notes",
+                  "type": "array"
+                }
               },
-              "type": "array"
+              "title": "Derived",
+              "type": "object"
             },
             {
               "type": "null"
@@ -5248,61 +5188,40 @@
           ],
           "default": null
         },
-        "derived_bars": {
+        "derived": {
           "anyOf": [
             {
-              "items": {
-                "additionalProperties": false,
-                "description": "``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.\n``origin`` is written only when not ``\"manual\"``.",
-                "properties": {
-                  "a": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "A",
-                    "type": "object"
+              "additionalProperties": false,
+              "description": "``scistackplot.Derived.to_dict()``: facts a layer above computed for\none resolve (test brackets, panel notes, a caption); never stored.",
+              "properties": {
+                "bars": {
+                  "items": {
+                    "$ref": "#/$defs/DifferenceBarWire"
                   },
-                  "b": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "B",
-                    "type": "object"
-                  },
-                  "label": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "title": "Label"
-                  },
-                  "match": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "Match",
-                    "type": "object"
-                  },
-                  "origin": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "title": "Origin"
-                  }
+                  "title": "Bars",
+                  "type": "array"
                 },
-                "title": "DifferenceBar",
-                "type": "object"
+                "caption": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Caption"
+                },
+                "panel_notes": {
+                  "items": {
+                    "$ref": "#/$defs/PanelNoteWire"
+                  },
+                  "title": "Panel Notes",
+                  "type": "array"
+                }
               },
-              "type": "array"
+              "title": "Derived",
+              "type": "object"
             },
             {
               "type": "null"
@@ -5359,6 +5278,46 @@
       "title": "SpecRequest",
       "type": "object"
     },
+    "StatMarksWire": {
+      "additionalProperties": false,
+      "description": "``scistackplot.StatMarks``: which statistical results the figure draws.",
+      "properties": {
+        "brackets": {
+          "type": "boolean"
+        },
+        "caption": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "label": {
+          "enum": [
+            "stars",
+            "p",
+            "effect",
+            "difference"
+          ],
+          "type": "string"
+        },
+        "omnibus": {
+          "type": "boolean"
+        },
+        "pairs": {
+          "enum": [
+            "significant",
+            "all",
+            "adjacent"
+          ],
+          "type": "string"
+        }
+      },
+      "title": "StatMarks",
+      "type": "object"
+    },
     "Statistic": {
       "enum": [
         "mean",
@@ -5408,19 +5367,6 @@
         },
         "guide": {
           "$ref": "#/$defs/GuideStateWire"
-        },
-        "linked_plot": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "overlay": {
-          "$ref": "#/$defs/OverlaySpecWire"
         },
         "variant_mode": {
           "enum": [
@@ -6179,61 +6125,40 @@
           ],
           "default": null
         },
-        "derived_bars": {
+        "derived": {
           "anyOf": [
             {
-              "items": {
-                "additionalProperties": false,
-                "description": "``scistackplot.DifferenceBar``: a bar joining two ticks of one panel.\n``origin`` is written only when not ``\"manual\"``.",
-                "properties": {
-                  "a": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "A",
-                    "type": "object"
+              "additionalProperties": false,
+              "description": "``scistackplot.Derived.to_dict()``: facts a layer above computed for\none resolve (test brackets, panel notes, a caption); never stored.",
+              "properties": {
+                "bars": {
+                  "items": {
+                    "$ref": "#/$defs/DifferenceBarWire"
                   },
-                  "b": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "B",
-                    "type": "object"
-                  },
-                  "label": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "title": "Label"
-                  },
-                  "match": {
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "title": "Match",
-                    "type": "object"
-                  },
-                  "origin": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ],
-                    "title": "Origin"
-                  }
+                  "title": "Bars",
+                  "type": "array"
                 },
-                "title": "DifferenceBar",
-                "type": "object"
+                "caption": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Caption"
+                },
+                "panel_notes": {
+                  "items": {
+                    "$ref": "#/$defs/PanelNoteWire"
+                  },
+                  "title": "Panel Notes",
+                  "type": "array"
+                }
               },
-              "type": "array"
+              "title": "Derived",
+              "type": "object"
             },
             {
               "type": "null"
@@ -6362,6 +6287,19 @@
         },
         "spec": {
           "$ref": "#/$defs/PlotSpecWire"
+        },
+        "stats": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "tsType": "object",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "variable": {
           "type": "string"
@@ -6569,12 +6507,6 @@
     },
     "delete_variant_plan": {
       "$ref": "#/$defs/DeletePlanRequest"
-    },
-    "design_apply": {
-      "$ref": "#/$defs/DesignRequest"
-    },
-    "design_update": {
-      "$ref": "#/$defs/DesignRequest"
     },
     "duplicate_hypothesis": {
       "$ref": "#/$defs/PipelineRename"
@@ -6960,17 +6892,11 @@
     "stats_guide_log": {
       "$ref": "#/$defs/GuideLogRequest"
     },
-    "stats_linked": {
-      "$ref": "#/$defs/LinkedRequest"
+    "stats_marks": {
+      "$ref": "#/$defs/MarksRequest"
     },
     "stats_open": {
       "$ref": "#/$defs/OpenRequest"
-    },
-    "stats_overlay_bars": {
-      "$ref": "#/$defs/PairRequest"
-    },
-    "stats_overlay_for_plot": {
-      "$ref": "#/$defs/OverlayForPlotRequest"
     },
     "stats_plot_guide": {
       "$ref": "#/$defs/PlotGuideRequest"
@@ -7073,8 +6999,6 @@
     "delete_pipeline",
     "delete_variant",
     "delete_variant_plan",
-    "design_apply",
-    "design_update",
     "duplicate_hypothesis",
     "duplicate_pipeline",
     "duplicate_placement",
@@ -7203,10 +7127,8 @@
     "stats_formula_apply",
     "stats_formula_check",
     "stats_guide_log",
-    "stats_linked",
+    "stats_marks",
     "stats_open",
-    "stats_overlay_bars",
-    "stats_overlay_for_plot",
     "stats_plot_guide",
     "stats_preset_apply",
     "stats_preset_hide",

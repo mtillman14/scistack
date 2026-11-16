@@ -216,7 +216,6 @@ import { PLOT_THEMES, otherPlotTheme, plotThemeVars, screenFigure } from './plot
 import { blockedClickNotice, toolButtonStyle } from './toolButton'
 import { applyTile, isTileSelected, tileKey, type KindTile } from './kindTiles'
 import { setPlotTheme, usePlotTheme } from './usePlotTheme'
-import StatsLink from './StatsLink'
 import {
   OPEN_GROUPS_STORAGE_KEY,
   appearanceSummary,
@@ -287,6 +286,24 @@ export interface Props {
    * report the controls read. One set of design controls for both studios.
    */
   design?: DesignBinding
+  /**
+   * One tab, two views (Studio/Studio.tsx). A hidden view does no work: no
+   * resolve, no test run; it takes ONE resolve when shown again if its design
+   * changed meanwhile. Default true (a studio on its own).
+   */
+  active?: boolean
+  /** Called with the whole spec whenever it changes (the tab keeps the design in memory). */
+  onSpecChange?: (spec: Record<string, unknown>) => void
+  /** A design another view edited: its design fields are copied onto this spec. */
+  incomingDesign?: { spec: Record<string, unknown>; rev: number } | null
+  /** `design_fields` of `plot_describe`, once known (the list Studio/sharedDesign consumes). */
+  onDesignFields?: (fields: string[]) => void
+  /** A request for test results on the figure (Statistics > "Show on figure"). */
+  statMarksRequest?: { patch: Record<string, unknown>; rev: number } | null
+  /** The tab's table settings (`testSettings`): brackets use the test the table shows. */
+  statsSettings?: Record<string, unknown> | null
+  /** A saved plot was opened with these table settings (null: it had none). */
+  onSavedStats?: (stats: Record<string, unknown> | null) => void
   /** Which way in opened this studio (Studio/studioOpen.ts), logged once. */
   openedFrom?: string
   onClose: () => void
@@ -321,8 +338,7 @@ export default function PlotStudio(props: Props) {
     designMode,
     designRef,
     sourceParams,
-    derivedBars,
-    setDerivedBars,
+    derived,
     resolveParams,
     variable,
     setVariable,
@@ -402,7 +418,6 @@ export default function PlotStudio(props: Props) {
     plotGuidePayload,
     setPlotGuidePayload,
     switchView,
-    applyLinkedSpec,
     restoreNotes,
     setRestoreNotes,
     savedBusy,
@@ -1058,17 +1073,6 @@ export default function PlotStudio(props: Props) {
           <button type="button" style={styles.toolPrimaryButton} onClick={handleAddToPipeline}>
             Add to pipeline
           </button>
-        )}
-        {!capabilities?.custom && (
-          <StatsLink
-            spec={spec}
-            plotId={loadedPlot?.plot_id ?? null}
-            variable={describe?.variable ?? variable}
-            csvPath={csvPath}
-            onApplySpec={applyLinkedSpec}
-            onDerivedBars={setDerivedBars}
-            buttonStyle={styles.toolButton}
-          />
         )}
         {/* Floats over the figure rather than pushing it down: a taller
             toolbar would shrink the canvas and re-request a pane preview. */}

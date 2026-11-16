@@ -6,9 +6,7 @@ StatStudio — the handler table for both transports (see ``api/plot.py``).
     POST /api/stats/preview             stats_preview
     POST /api/stats/guide-log           stats_guide_log
     POST /api/stats/export              stats_export
-    POST /api/stats/overlay             stats_overlay_bars
-    POST /api/stats/overlay-for-plot    stats_overlay_for_plot
-    POST /api/stats/linked              stats_linked
+    POST /api/stats/marks               stats_marks
     POST /api/stats/saved/list          stats_saved_list
     POST /api/stats/saved/save          stats_saved_save
     POST /api/stats/saved/rename        stats_saved_rename
@@ -27,8 +25,9 @@ StatStudio — the handler table for both transports (see ``api/plot.py``).
 
 Lock policy, as for plots: every handler whose service loads tables takes
 the connection itself, only for the load (``holds_db_lock=False``).
-A linked figure and table share one design (scistackplotdb.designs); there
-is no sync to run.
+A figure and its table are one tab holding one design in memory
+(Studio/Studio.tsx); the table's settings are saved with the figure
+(`plot_saved_save`, `stats`).
 """
 
 from __future__ import annotations
@@ -54,7 +53,6 @@ class OpenRequest(BaseModel):
     version: int | None = None
     #: A figure's spec to seed a new table from.
     seed: PlotSpecParam | None = None
-    plot_id: str | None = None
     variable: str | None = None
     #: A stat_ function to open on: the spec its generated code embeds.
     stat_function: str | None = None
@@ -81,20 +79,11 @@ class ExportRequest(BaseModel):
     path: str | None = None
 
 
-class PairRequest(BaseModel):
-    stats_spec: StatsSpecParam
+class MarksRequest(BaseModel):
     plot_spec: PlotSpecParam
-    direction: str | None = None
+    #: None = seed the table from the figure (the recommended test).
+    stats_spec: StatsSpecParam | None = None
     csv_path: str | None = None
-
-
-class OverlayForPlotRequest(BaseModel):
-    plot_id: str
-    plot_spec: PlotSpecParam
-
-
-class LinkedRequest(BaseModel):
-    plot_id: str
 
 
 class SavedSaveRequest(BaseModel):
@@ -154,7 +143,7 @@ class AddRequest(BaseModel):
 
 def _open(db, req: OpenRequest) -> dict:
     return stats_service.open_stats(db, stats_id=req.stats_id, version=req.version, seed=req.seed,
-                                    plot_id=req.plot_id, variable=req.variable, stat_function=req.stat_function,
+                                    variable=req.variable, stat_function=req.stat_function,
                                     csv_path=req.csv_path)
 
 
@@ -170,16 +159,8 @@ def _export(db, req: ExportRequest) -> dict:
     return stats_service.export(db, req.spec, req.fmt, req.which, csv_path=req.csv_path, path=req.path)
 
 
-def _overlay(db, req: PairRequest) -> dict:
-    return stats_service.overlay_bars(db, req.stats_spec, req.plot_spec, csv_path=req.csv_path)
-
-
-def _overlay_for_plot(db, req: OverlayForPlotRequest) -> dict:
-    return stats_service.overlay_for_plot(db, req.plot_id, req.plot_spec)
-
-
-def _linked(db, req: LinkedRequest) -> dict:
-    return stats_service.linked(db, req.plot_id)
+def _marks(db, req: MarksRequest) -> dict:
+    return stats_service.stats_marks(db, req.plot_spec, req.stats_spec, csv_path=req.csv_path)
 
 
 def _saved_list(db) -> dict:
@@ -258,11 +239,8 @@ STATS_HANDLERS: tuple[Handler, ...] = (
             http_errors=_BAD_REQUEST, undoable=False),
     Handler("stats_export", "/stats/export", ExportRequest, _export, holds_db_lock=False,
             http_errors={**_BAD_REQUEST, OSError: 400}, db_optional=True, undoable=False),
-    Handler("stats_overlay_bars", "/stats/overlay", PairRequest, _overlay, holds_db_lock=False,
+    Handler("stats_marks", "/stats/marks", MarksRequest, _marks, holds_db_lock=False,
             http_errors=_BAD_REQUEST, db_optional=True, undoable=False),
-    Handler("stats_overlay_for_plot", "/stats/overlay-for-plot", OverlayForPlotRequest, _overlay_for_plot,
-            holds_db_lock=False, http_errors=_BAD_REQUEST, undoable=False),
-    Handler("stats_linked", "/stats/linked", LinkedRequest, _linked, http_errors=_BAD_REQUEST, undoable=False),
     Handler("stats_saved_list", "/stats/saved/list", None, _saved_list, undoable=False),
     Handler("stats_saved_save", "/stats/saved/save", SavedSaveRequest, _saved_save,
             http_errors=_BAD_REQUEST, undoable=False),

@@ -35,7 +35,8 @@ Right rail  —                            Saved plots · Presets  Saved tables 
 | Which PlotSpec fields are the DESIGN | `scistackplot.model.design.DESIGN_FIELDS` | `copy_design`, `design_fingerprint`, the shared design store |
 | The design a fresh figure or table opens on, for a variable | `scistack_gui.services.plot_service.opening_spec` (default_spec + stored variant pins) | `plot_describe`, `stats_open {variable}` |
 | Plot → table settings | `scistackstats.seed.seed_from_plot` | every StatStudio opening, `stats_plot_guide` |
-| The shared design of a linked saved plot + its stats tables | `scistackplotdb.designs` (`_plot_design`, a `VersionedStore` keyed by plot id; `link_design`, `save_design`, `load_design`, `apply_design`) | `saved_plot_service.open_plot/save`, `stats_service.open_stats/saved_save`, `design_service.update/apply` (RPCs `design_update`, `design_apply`), the plots bundle section |
+| The design held by an open tab | `scistackplot.model.design.design_paths` (the field list); `Studio/sharedDesign.ts` consumes it | `Studio.tsx` |
+| A figure's table settings, saved with it | `scistackplotdb.save_plot(stats=)` (opaque) + `scistackstats.restore_stats_spec` | `saved_plot_service.save/open_plot` |
 | The spec a generated `stat_` function embeds | `scistackstats.codegen.embedded_spec` (inverse of `generate_stats_function`; `ast.literal_eval`, never runs it) | `stats_open {stat_function}` (the `stat_` node's 📊 Open in Stat Studio) |
 | The Data and Structure controls | Plot Studio's own groups (`PlotStudio.tsx`) | Plot Studio; StatStudio mounts them with `<PlotStudio design={…}>` (design-only mode) |
 | Rail building blocks (`Group`, `Section`) | `frontend/src/components/Studio/RailGroup.tsx` | Plot Studio, StatStudio |
@@ -128,3 +129,34 @@ button already was).
   (Linux esbuild from the scratchpad; see the frontend bundle memory).
 - **Wording.** The new lay sentences (`_FIGURE_LAY`, `_step_figure`) are
   drafts for the user's wording review, like the rest of `explain.py`.
+
+## One tab, two views (2026-11-15, plan-stats-on-figure.md)
+
+A Studio tab (`components/Studio/Studio.tsx`) holds `Figure | Statistics`
+over ONE design in memory. Both views stay mounted, the inactive one is
+hidden and does no work (`active`: no resolve, no test run) and refreshes once
+when shown again. A view is mounted the first time it is shown, seeded from
+the other's latest design.
+
+- Owner of "which fields are design": Python, `scistackplot.model.design`,
+  sent as `design_fields` with `plot_describe`. `Studio/sharedDesign.ts`
+  (`designOf`, `mergeDesign`, `sameDesign`) only consumes it.
+- Test settings (family, test, correction, ...) live in the tab's `StatsSpec`;
+  the Figure view forwards them (`testSettings`) so brackets use the test the
+  table shows. With no table opened yet the backend seeds one (`seed_from_plot`).
+- The StatStudio toolbar button and `open_stat_panel` from the figure are gone;
+  `StatsLink` keeps only the linked-saved-plot design sync (history, see below).
+- **Saved work (built).** A save writes ONE record: the figure plus the table's
+  test settings (`plot_saved_save` `stats`; stored opaquely in the saved plot
+  envelope by `scistackplotdb.save_plot`, read back by
+  `scistackstats.restore_stats_spec` in `saved_plot_service`). Reopening restores
+  both views and redraws the test results from current data. Retired:
+  `scistackplotdb.designs` (`_plot_design`, `link_design`, ...),
+  `design_service` and the `design_update` / `design_apply` / `stats_linked`
+  RPCs, `StatsSpec.linked_plot`, `StatsLink`. Existing `_plot_design` and
+  `_stats_spec` rows are left in place, never deleted; an old table with
+  `linked_plot` opens with a "no longer a setting" note. The standalone Saved
+  tables rail stays for tables with no figure (`stat_` nodes, stats-first tabs).
+
+Diagnostics: `[Studio] view figure → statistics`, `[Studio] design edited in
+the … view`, `[timing] stats_marks: load / run / marks`, `[marks] ...`.

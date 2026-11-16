@@ -42,8 +42,6 @@ frontend's route map (``frontend/src/api.ts``) names the same paths, and
     POST /api/client-timing                 report_client_timing
     POST /api/client-canvas-refresh         report_canvas_refresh
     POST /api/client-studio-open            report_studio_open
-    POST /api/design/update                 design_update
-    POST /api/design/apply                  design_apply
 
 Lock policy (``holds_db_lock``): a plot resolve spends nearly all of its
 time in pandas and matplotlib, with the database touched only while the
@@ -65,7 +63,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from scistack_gui.api.handlers import Handler, install_routes
-from scistack_gui.api.spec_params import DifferenceBarParam, PlotSpecParam, VariantSetParam
+from scistack_gui.api.spec_params import DerivedParam, PlotSpecParam, VariantSetParam
 from scistack_gui.services import plot_preset_service, plot_service, saved_plot_service
 from scistack_gui.services.client_build import report_client_build
 from scistack_gui.services.client_canvas import (
@@ -108,9 +106,9 @@ class SpecRequest(BaseModel):
     preview: dict | None = None
     #: Re-render the last resolve of this exact request (a pane resize).
     reuse_resolved: bool = False
-    #: Bars derived by a layer above (StatStudio test brackets), merged for
-    #: this request only through `scistackplot.reduce.diffbars.with_derived_bars`.
-    derived_bars: list[DifferenceBarParam] | None = None
+    #: Facts derived by a layer above (test brackets, panel notes, a caption),
+    #: merged for this request only through `scistackplot.reduce.diffbars.with_derived`.
+    derived: DerivedParam | None = None
 
 
 class ExportRequest(BaseModel):
@@ -119,7 +117,7 @@ class ExportRequest(BaseModel):
     function_name: str | None = None
     output_variable: str | None = None
     path_template: str | None = None
-    derived_bars: list[DifferenceBarParam] | None = None
+    derived: DerivedParam | None = None
 
 
 class VariantGraphRequest(BaseModel):
@@ -183,7 +181,7 @@ class SaveRequest(BaseModel):
     depth: str | None = None
     #: For "data": one column per struct field (default) or a ColName column.
     fields_as_columns: bool | None = True
-    derived_bars: list[DifferenceBarParam] | None = None
+    derived: DerivedParam | None = None
 
 
 class VariantSetsRequest(BaseModel):
@@ -207,6 +205,9 @@ class SavedSaveRequest(BaseModel):
     overwrite: bool | None = True
     #: The plot the panel has open. Saving under its own name is never a question.
     current_plot_id: str | None = None
+    #: The table's test settings, saved WITH the figure (one record per tab):
+    #: a `StatsSpec.to_dict()` without its design. Read strictly on save.
+    stats: dict | None = None
 
 
 class SavedOpenRequest(BaseModel):
@@ -413,28 +414,28 @@ def _location_tree(db, req: LocationTreeRequest) -> dict:
     )
 
 
-def _with_derived(spec: dict, derived: list[dict] | None) -> dict:
-    """The request's spec with derived bars joined, for this request only.
+def _with_derived(spec: dict, derived: dict | None) -> dict:
+    """The request's spec with derived facts joined, for this request only.
 
-    The merge is `scistackplot.reduce.diffbars.with_derived_bars` (manual bars win a
+    The merge is `scistackplot.reduce.diffbars.with_derived` (manual bars win a
     duplicate pair). The panel keeps saving its own spec, so derived bars are
     never stored. Resolve, export and save all go through here, so the
     exported figure draws the brackets the preview drew.
     """
     if not derived:
         return spec
-    from scistackplot.reduce.diffbars import DifferenceBar, with_derived_bars
+    from scistackplot.reduce.diffbars import Derived, with_derived
 
     from scistack_gui.services.plot_service import _spec_from_payload
 
-    merged = with_derived_bars(_spec_from_payload(spec), [DifferenceBar.from_dict(b) for b in derived])
+    merged = with_derived(_spec_from_payload(spec), Derived.from_dict(derived))
     return merged.to_dict()
 
 
 def _resolve(db, req: SpecRequest) -> dict:
     return plot_service.resolve_figures(
         db,
-        _with_derived(req.spec, req.derived_bars),
+        _with_derived(req.spec, req.derived),
         max_points=req.max_points,
         figure_index=req.figure_index,
         csv_path=req.csv_path,
@@ -446,7 +447,7 @@ def _resolve(db, req: SpecRequest) -> dict:
 def _export(db, req: ExportRequest) -> dict:
     return plot_service.export_code(
         db,
-        _with_derived(req.spec, req.derived_bars),
+        _with_derived(req.spec, req.derived),
         function_name=req.function_name,
         output_variable=req.output_variable,
         path_template=req.path_template,
@@ -457,7 +458,7 @@ def _export(db, req: ExportRequest) -> dict:
 def _add_to_pipeline(db, req: ExportRequest) -> dict:
     return plot_service.add_to_pipeline(
         db,
-        _with_derived(req.spec, req.derived_bars),
+        _with_derived(req.spec, req.derived),
         function_name=req.function_name,
         output_variable=req.output_variable,
         path_template=req.path_template,
@@ -483,7 +484,7 @@ def _save_start(db, req: SaveRequest) -> dict:
     """
     return plot_service.start_save_job(
         db,
-        _with_derived(req.spec, req.derived_bars),
+        _with_derived(req.spec, req.derived),
         req.path,
         dpi=req.dpi if req.dpi is not None else 200,
         figure_index=req.figure_index,
@@ -520,6 +521,7 @@ def _saved_save(db, req: SavedSaveRequest) -> dict:
         req.view,
         overwrite=req.overwrite is not False,
         current_plot_id=req.current_plot_id,
+        stats=req.stats,
     )
 
 
@@ -596,25 +598,6 @@ def _client_error(req: ClientErrorRequest) -> dict:
 def _client_build(req: ClientBuildRequest) -> dict:
     """A webview says which bundle it runs; write it into the shared log."""
     return report_client_build(req.model_dump())
-
-
-class DesignRequest(BaseModel):
-    """A linked figure + table's shared design (scistackplotdb.designs)."""
-
-    plot_id: str
-    spec: PlotSpecParam
-
-
-def _design_update(db, req: DesignRequest) -> dict:
-    from scistack_gui.services import design_service
-
-    return design_service.update(db, req.plot_id, req.spec)
-
-
-def _design_apply(db, req: DesignRequest) -> dict:
-    from scistack_gui.services import design_service
-
-    return design_service.apply(db, req.plot_id, req.spec)
 
 
 class StudioOpenRequest(BaseModel):
@@ -838,16 +821,6 @@ PLOT_HANDLERS: tuple[Handler, ...] = (
     Handler(
         "report_scope_navigation", "/client-scope-navigation", ScopeNavigationRequest,
         _scope_navigation, holds_db_lock=False, needs_db=False, undoable=False,
-    ),
-    # The shared design of a linked figure + table (studio-unification Stage
-    # 6): one row set both studios read and write.
-    Handler(
-        "design_update", "/design/update", DesignRequest, _design_update,
-        http_errors=_BAD_REQUEST, undoable=False,
-    ),
-    Handler(
-        "design_apply", "/design/apply", DesignRequest, _design_apply,
-        http_errors=_BAD_REQUEST, undoable=False,
     ),
     # One line per studio opened (Plot or Stat), naming its entry point.
     Handler(

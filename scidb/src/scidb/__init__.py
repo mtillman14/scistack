@@ -158,6 +158,8 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.inspect.mutate",
     "scidb.inspect.variant_cards",
     "scidb.provenance.intent",
+    # run_summaries: the one owner of what a run did; the GUI run report reads it (issue #17).
+    "scidb.provenance.run_summary",
     # parse_values_text: the one owner of how a typed list of expected key
     # values is read, shared by `scidb expect` (inspect.cli) and the GUI's
     # expectation popup (expectation_service), so both accept the same text.

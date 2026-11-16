@@ -29,6 +29,33 @@ from scistack_gui.services import plot_service
 logger = logging.getLogger(__name__)
 
 
+def _checked_stats(stats: dict | None, spec: dict) -> dict | None:
+    """The table settings to store with the figure, read strictly (a settings
+    block that does not parse is a bug to surface, like the spec itself)."""
+    if stats is None:
+        return None
+    from scistackstats import StatsSpec, StatsSpecError
+
+    try:
+        StatsSpec.from_dict({**stats, "design": spec, "format": 1})
+    except (StatsSpecError, ValueError, TypeError) as exc:
+        raise ValueError(f"The statistics settings could not be read: {exc}") from exc
+    return {k: v for k, v in stats.items() if k not in ("design", "guide")}
+
+
+def _restored_stats(stats: dict | None, spec) -> tuple[dict | None, list[dict]]:
+    """Saved test settings, salvaged like any stored table (``restore_stats_spec``):
+    the settings without their design copy, plus what did not survive."""
+    if not stats:
+        return None, []
+    from scistackstats.restore import restore_stats_spec
+
+    restored = restore_stats_spec({**stats, "design": spec.to_dict(), "format": 1}, fallback_measure=spec.y_measure)
+    settings = {k: v for k, v in restored.spec.to_dict().items() if k not in ("design", "guide")}
+    logger.info("[saved_plot] stats settings restored: %d note(s)", len(restored.notes))
+    return settings, [n.to_dict() for n in restored.notes]
+
+
 def list_plots(db, variable: str) -> dict:
     """The newest version of each visible saved plot of *variable*."""
     from scistackplotdb import list_saved_plots
@@ -47,8 +74,10 @@ def save(
     *,
     overwrite: bool = True,
     current_plot_id: str | None = None,
+    stats: dict | None = None,
 ) -> dict:
-    """Save the panel's spec and view settings under *name*.
+    """Save the panel's spec, view settings and the table's test settings
+    (*stats*, one record per tab) under *name*.
 
     Returns ``{"ok": True, "plot", "plots"}``: the saved version and the
     refreshed list, so the panel updates its rail from one reply.
@@ -77,14 +106,10 @@ def save(
             overwrite=overwrite,
             current_plot_id=current_plot_id,
             table_for=table_for,
+            stats=_checked_stats(stats, spec),
         )
     except SavedPlotExists as exists:
         return {"ok": False, "exists": exists.existing.to_dict(), "message": str(exists)}
-    # A plot linked to a stats table shares ONE design with it
-    # (scistackplotdb.designs): saving the figure writes that design too.
-    from scistack_gui.services import design_service
-
-    design_service.write_if_linked(db, info.plot_id, spec, route="plot_saved_save")
     return {"ok": True, "plot": info.to_dict(), **list_plots(db, variable)}
 
 
@@ -111,19 +136,7 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
             return loaded["table"]
 
         saved = load_saved_plot(db, plot_id, version=version, table_for=table_for)
-        # The newest version of a plot linked to a stats table opens on the
-        # shared design (scistackplotdb.designs), not its own envelope's copy.
-        # An older version stays exactly as it was saved.
         spec = saved.spec
-        design_version = None
-        design_notes: list = []
-        if version is None:
-            from scistackplotdb import apply_design
-
-            spec, design_notes, design_version = apply_design(db, plot_id, saved.spec)
-            if design_version is not None and spec != saved.spec:
-                # The shared design may name other variables or variants.
-                table_for(spec)
 
     caps = None
     table = loaded.get("table")
@@ -156,9 +169,7 @@ def open_plot(db, plot_id: str, version: int | None = None) -> dict:
     )
     plot = saved.to_dict()
     plot["spec"] = spec.to_dict()
-    plot["design_linked"] = design_version is not None
-    plot["design_version"] = design_version
-    plot["design_notes"] = [n.to_dict() for n in design_notes]
+    plot["stats"], plot["stats_notes"] = _restored_stats(saved.stats, spec)
     return {"plot": plot, "capabilities": caps}
 
 

@@ -35,22 +35,21 @@ def _plot() -> dict:
 
 
 def _seeded(db) -> dict:
-    opened = stats_service.open_stats(db, seed=_plot(), plot_id="plot-1")
+    opened = stats_service.open_stats(db, seed=_plot())
     assert opened["ok"] and opened["seed_notes"]
     return opened["spec"]
 
 
 def test_handlers_are_registered():
     names = {h.name for h in ALL_HANDLERS}
-    assert {"stats_open", "stats_compute", "stats_export", "stats_overlay_bars", "stats_saved_save",
-            "stats_add_to_pipeline", "design_update", "design_apply", "report_studio_open"} <= names
-    # The design is shared, not synced (studio-unification Stage 6).
-    assert not {"stats_sync", "stats_divergence"} & names
+    assert {"stats_open", "stats_compute", "stats_export", "stats_marks", "stats_saved_save",
+            "stats_add_to_pipeline", "report_studio_open"} <= names
+    # One tab holds one design in memory; the old sync and sharing RPCs are gone.
+    assert not {"stats_sync", "stats_divergence", "design_update", "design_apply", "stats_linked"} & names
 
 
-def test_open_from_a_figure_links_and_seeds(populated_db):
+def test_open_from_a_figure_seeds(populated_db):
     spec = _seeded(populated_db)
-    assert spec["linked_plot"] == "plot-1"
     assert spec["descriptives"]["cell"] == "mean_sd"
     assert spec["design"]["measures"] == ["RawSignal"]
 
@@ -79,34 +78,22 @@ def test_export_text(populated_db):
     assert out["ok"] and "*Note.*" in out["text"]
 
 
-def test_a_linked_table_and_figure_share_one_design(populated_db):
-    from scistack_gui.services import design_service
+def test_a_figure_saves_with_its_table_settings(populated_db):
+    from scistack_gui.services import saved_plot_service
 
-    stats = _seeded(populated_db)  # linked to plot-1: the design row exists now
-    regrouped = {**_plot(), "roles": {"session": "iterate", "subject": "collapse"}, "groups": []}
-    written = design_service.update(populated_db, "plot-1", regrouped)
-    assert written == {"linked": True, "changed": True, "version": 2}
-    # An echo of the same design appends nothing, so two open studios stop.
-    assert design_service.update(populated_db, "plot-1", {**regrouped, "kind": "box"})["changed"] is False
-    # The stats side reads the shared design whatever its own copy said.
-    saved = stats_service.saved_save(populated_db, "Table", stats, overwrite=True, current_stats_id=None)
-    reopened = stats_service.open_stats(populated_db, stats_id=saved["info"]["stats_id"])
-    assert reopened["design_linked"] is True
-    assert reopened["spec"]["design"]["roles"]["session"] == "group", "saving the table wrote ITS design"
-    applied = design_service.apply(populated_db, "plot-1", {**regrouped, "kind": "box"})
-    assert applied["spec"]["kind"] == "box", "display settings stay with the artifact"
-
-
-def test_an_unlinked_design_is_never_written(populated_db):
-    from scistack_gui.services import design_service
-
-    assert design_service.update(populated_db, "never-linked", _plot()) == {
-        "linked": False, "changed": False, "version": None}
-    assert design_service.apply(populated_db, "never-linked", _plot())["version"] is None
+    stats = {k: v for k, v in _seeded(populated_db).items() if k not in ("design", "guide")}
+    saved = saved_plot_service.save(populated_db, "RawSignal", "Fig", _plot(), {}, stats=stats)
+    assert saved["ok"]
+    opened = saved_plot_service.open_plot(populated_db, saved["plot"]["plot_id"])["plot"]
+    assert opened["stats"]["comparisons"][0]["id"] == "a1", "the table settings come back with the figure"
+    assert "design" not in opened["stats"]
+    assert opened["stats_notes"] == []
+    plain = saved_plot_service.save(populated_db, "RawSignal", "Plain", _plot(), {})
+    assert saved_plot_service.open_plot(populated_db, plain["plot"]["plot_id"])["plot"]["stats"] is None
 
 
 def test_open_carries_the_table_role_words(populated_db):
-    opened = stats_service.open_stats(populated_db, seed=_plot(), plot_id="plot-1")
+    opened = stats_service.open_stats(populated_db, seed=_plot())
     assert opened["role_labels"] == {"group": "Compare", "facet": "Separate sections",
                                      "iterate": "Separate tables", "collapse": "Average over"}
 
@@ -123,26 +110,30 @@ def test_saved_tables_and_the_plot_link(populated_db):
     saved = stats_service.saved_save(populated_db, "Table 1", spec, overwrite=True, current_stats_id=None)
     assert saved["ok"]
     assert [i["name"] for i in stats_service.saved_list(populated_db)["items"]] == ["Table 1"]
-    assert [i["name"] for i in stats_service.linked(populated_db, "plot-1")["items"]] == ["Table 1"]
     reopened = stats_service.open_stats(populated_db, stats_id=saved["info"]["stats_id"])
     assert reopened["spec"] == spec
 
 
-def test_brackets_are_off_unless_asked_for(populated_db):
-    spec = _seeded(populated_db)
-    assert stats_service.overlay_bars(populated_db, spec, _plot())["reason"] == "test brackets are off"
-    spec["overlay"] = {"show": True, "pairs": "all"}
-    out = stats_service.overlay_bars(populated_db, spec, _plot())
+def test_marks_are_off_unless_asked_for(populated_db):
+    out = stats_service.stats_marks(populated_db, _plot())
+    assert out["reason"] == "no test results are asked for"
+    asked = {**_plot(), "stat_marks": {"brackets": True, "pairs": "all", "caption": True}}
+    out = stats_service.stats_marks(populated_db, asked)
+    # Works on an unsaved figure: the table is seeded from it, nothing is stored.
     assert out["reason"] is None and len(out["bars"]) == 1
     assert out["bars"][0]["origin"] == "test"
+    assert out["caption"] and out["test"]
+    assert stats_service.saved_list(populated_db)["items"] == []
 
 
-def test_derived_bars_join_a_request_but_not_the_spec():
+def test_derived_facts_join_a_request_but_not_the_spec():
     plot = _plot()
     bar = {"match": {}, "a": {"session": "pre"}, "b": {"session": "post"}, "label": "*", "origin": "test"}
-    merged = _with_derived(plot, [bar])
+    facts = {"bars": [bar], "panel_notes": [{"match": {}, "text": "F", "origin": "test"}], "caption": "cap"}
+    merged = _with_derived(plot, facts)
     assert merged["difference_bars"][0]["origin"] == "test"
-    assert "difference_bars" not in plot
+    assert merged["derived"]["caption"] == "cap"
+    assert "difference_bars" not in plot and "derived" not in plot
     assert _with_derived(plot, None) is plot
 
 

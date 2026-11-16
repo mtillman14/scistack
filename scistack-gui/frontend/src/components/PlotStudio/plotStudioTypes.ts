@@ -339,7 +339,13 @@ export interface Capabilities {
   sample_overlay?: SampleOverlay
   /** Whether this plot type can carry difference bars, and why not
    *  (`scistackplot.diffbars.unavailable`). */
-  difference_bars?: { available: boolean; reason: string | null }
+  difference_bars?: {
+    available: boolean
+    reason: string | null
+    /** `scistackplot.reduce.diffbars.STAT_PAIRS` / `STAT_LABELS`. */
+    stat_pairs?: string[]
+    stat_labels?: string[]
+  }
   /** Compare to reference: the layers + levels it may name, the default,
    *  and the current comparison's state (`scistackplot.compare`). */
   comparison?: CompareCapability
@@ -510,6 +516,8 @@ export interface DescribeResponse {
   table?: TableInfo
   spec?: Spec
   capabilities?: Capabilities
+  /** `scistackplot.model.design.design_paths`: the spec fields a test result depends on. */
+  design_fields?: string[]
   /** Variables that can supply an x axis (joined). */
   joinable_with?: string[]
   /** Variables that can be plotted as another series (stacked) — same shape,

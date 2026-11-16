@@ -229,7 +229,11 @@ def test_a_series_shape_says_why_not():
 
 def test_capabilities_ship_the_answer(gait_table):
     report = capabilities(_spec(), gait_table)
-    assert report["difference_bars"] == {"available": True, "reason": None}
+    bars = report["difference_bars"]
+    assert bars["available"] is True and bars["reason"] is None
+    # The stat_marks vocabulary rides here (scistackplot.reduce.diffbars).
+    assert bars["stat_pairs"] == ["significant", "all", "adjacent"]
+    assert bars["stat_labels"] == ["stars", "p", "effect", "difference"]
 
 
 # --- ticks --------------------------------------------------------------------

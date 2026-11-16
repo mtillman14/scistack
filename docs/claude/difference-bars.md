@@ -263,3 +263,16 @@ bars can live beside derived ones.
 6. **Many pairs.** All pairs of 6 ticks is 15 bars; placement WARNs when
    crowded or unsettled, but automatic bars need a policy (adjacent only, a
    pair selection, or one "all differ" bracket).
+
+## Derived facts: bars, panel notes, caption (2026-11-15)
+
+`with_derived_bars` became `with_derived(spec, Derived(bars, panel_notes,
+caption))` (`reduce/diffbars.py`). The figure owns the REQUEST
+(`PlotSpec.stat_marks`: brackets / pairs / label / hidden / omnibus / caption);
+`scistackstats.marks.marks_for` computes the facts, `scistackstats.format`
+writes every label and sentence, the plot layer only draws them. Panel notes
+are the axes title (mpl) / a panel-domain annotation (plotly); the caption
+joins the footnote (`render.base.footnote_text`, before "Not plotted").
+`spec.derived` is never stored by callers; `to_dict` writes it only when set so
+a request payload can carry it. Generated `plot_` code still bakes brackets
+only (notes and caption are not baked yet).

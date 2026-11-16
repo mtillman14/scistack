@@ -1282,3 +1282,32 @@ def not_plotted_note(resolved: ResolvedPlot) -> str | None:
     if not resolved.spec.style.not_plotted_note or report is None or not report.items:
         return None
     return report.sentence()
+
+
+def footnote_text(resolved: ResolvedPlot, width_pt: float | None = None) -> str | None:
+    """The whole footnote both renderers draw under the figure, or None: the
+    derived statistics caption (``Derived.caption``, asked for by
+    ``StatMarks.caption``), then the "Not plotted" note, one line each.
+
+    The ONE owner of the footnote's content. With *width_pt* each part is
+    wrapped to that width (an average glyph is about half the font size wide),
+    so a long caption takes more lines and the renderers reserve their count.
+    """
+    import textwrap
+
+    from ..text.textsize import sizes_for
+
+    parts: list[str] = []
+    derived = resolved.spec.derived
+    if resolved.spec.stat_marks.caption and derived is not None and derived.caption:
+        parts.append(derived.caption)
+    note = not_plotted_note(resolved)
+    if note:
+        parts.append(note)
+    if not parts:
+        return None
+    if width_pt is not None:
+        size = sizes_for(resolved).legend
+        chars = max(int(width_pt / max(size * 0.5, 1.0)), 20)
+        parts = ["\n".join(textwrap.wrap(part, chars) or [part]) for part in parts]
+    return "\n".join(parts)

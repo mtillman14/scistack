@@ -17,14 +17,12 @@
  * - **The same shell.** Rail groups (`Studio/RailGroup`), the figure-style
  *   toolbar (Format, Save to file, Copy, Export code, Add to pipeline) and
  *   the right rail (Saved tables, Presets: Plot Studio's own components).
- * - **One shared design** with a linked saved plot (`scistackplotdb.designs`):
- *   a design edit here goes to `design_update` and is broadcast as
- *   `design_changed`; the figure's edits arrive the same way. There is no
- *   divergence banner and no Sync button, because there is one design.
+ * - **One tab, one design** (Studio/Studio.tsx): the design is held in memory
+ *   with the Figure view; a figure saves WITH this table's settings.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { addNotificationHandler, callBackend, isVSCodeMode } from '../../api'
+import { callBackend, isVSCodeMode } from '../../api'
 import PlotStudio from '../PlotStudio/PlotStudio'
 import PresetsSection, { type PresetSaveResult } from '../PlotStudio/PresetsSection'
 import { plotThemeVars } from '../PlotStudio/plotTheme'
@@ -33,7 +31,7 @@ import SavedPlotsRail, { type SaveResult } from '../PlotStudio/SavedPlotsRail'
 import type { SavedPlotInfo } from '../PlotStudio/savedPlots'
 import { usePlotTheme } from '../PlotStudio/usePlotTheme'
 import { Group, Section } from '../Studio/RailGroup'
-import { DESIGN_CHANGED, designChangeFor, newDesignOrigin } from '../Studio/sharedDesign'
+import { mergeDesign } from '../Studio/sharedDesign'
 import { reportStudioOpen } from '../Studio/studioOpen'
 import GridTable from './GridTable'
 import GuidedStudio from './Guided/GuidedStudio'
@@ -42,8 +40,8 @@ import ModelFormulaDialog from './ModelFormulaDialog'
 import { pendingActions, recommendedFor, type StratumSummary } from './statsActions'
 import {
   addAnalysis, addDV, analyses, computeKey, guideState, removeAnalysis, removeDV, setCell, setFormatting,
-  setGuide, setOverlay, setOverride, targets, toggleStatistic, updateAnalysis,
-  type Analysis, type DescriptiveCell, type FactorKind, type Grid, type Overlay, type StatsSpec,
+  setGuide, setOverride, targets, toggleStatistic, updateAnalysis,
+  type Analysis, type DescriptiveCell, type FactorKind, type Grid, type StatsSpec,
 } from './statsSpec'
 import type { PlotSpec } from '../../generated/api-types'
 
@@ -53,7 +51,6 @@ export interface StatViewConfig {
   csvPath?: string | null
   statsId?: string | null
   seed?: PlotSpec | null
-  linkedPlot?: string | null
   /** Which way in (Studio/studioOpen.ts), logged once. */
   from?: string | null
   /** A stat_ node to open on: the spec its generated function embeds. */
@@ -72,8 +69,6 @@ interface Catalog {
   missing_policies?: { id: string; label: string }[]
   tails: string[]
   spreads: string[]
-  bar_pairs: string[]
-  bar_labels: string[]
   variant_modes?: string[]
 }
 
@@ -111,7 +106,7 @@ interface ComputeResult {
 }
 
 /** A saved table as the backend lists it (`SavedStatsInfo.to_dict`). */
-interface SavedStatsInfo { stats_id: string; name: string; version: number; saved_at: string; hidden: boolean; linked_plot?: string | null }
+interface SavedStatsInfo { stats_id: string; name: string; version: number; saved_at: string; hidden: boolean }
 interface StatsPresetInfo { preset_id: string; name: string; version: number; saved_at: string; hidden: boolean }
 
 interface OpenReply {
@@ -122,7 +117,6 @@ interface OpenReply {
   seed_notes: string[]
   info: SavedStatsInfo | null
   role_labels?: Record<string, string>
-  design_linked?: boolean
 }
 
 const FORMATS = ['html', 'md', 'csv', 'latex', 'txt', 'json']
@@ -157,7 +151,21 @@ function readOpenGroups(): Record<StatGroupId, boolean> {
   }
 }
 
-export default function StatStudio({ initial }: { initial: StatViewConfig }) {
+/** One tab, two views (Studio/Studio.tsx): a hidden view computes nothing; the
+ *  design is published up and a design the Figure view edited comes back down. */
+export interface StatTabBinding {
+  active?: boolean
+  onDesignChange?: (design: Record<string, unknown>) => void
+  /** "Show on figure": the Figure view with brackets on (Studio/Studio.tsx). */
+  onShowOnFigure?: () => void
+  /** The whole table spec whenever it changes (the figure forwards its test settings). */
+  onSpecChange?: (spec: Record<string, unknown>) => void
+  /** Table settings restored from a saved figure (one record per tab): taken over this spec, its design kept. */
+  incomingSettings?: { settings: Record<string, unknown>; rev: number } | null
+  incomingDesign?: { spec: Record<string, unknown>; fields: string[]; rev: number } | null
+}
+
+export default function StatStudio({ initial, active = true, onDesignChange, incomingDesign, onShowOnFigure, onSpecChange, incomingSettings }: { initial: StatViewConfig } & StatTabBinding) {
   const theme = usePlotTheme()
   const csvPath = initial.csvPath ?? undefined
   const [spec, setSpec] = useState<StatsSpec | null>(null)
@@ -192,8 +200,6 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   const [formulaFor, setFormulaFor] = useState<string | null>(null)
   const generation = useRef(0)
   const sourceParams = useMemo(() => (csvPath ? { csv_path: csvPath } : {}), [csvPath])
-  // This tab's id in `design_changed` broadcasts, so it ignores its own.
-  const origin = useRef(newDesignOrigin('stat'))
 
   // --- open -------------------------------------------------------------------
   useEffect(() => {
@@ -203,19 +209,19 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   }, [])
   useEffect(() => {
     callBackend('stats_open', {
-      stats_id: initial.statsId ?? null, seed: initial.seed ?? null, plot_id: initial.linkedPlot ?? null,
+      stats_id: initial.statsId ?? null, seed: initial.seed ?? null,
       variable: initial.variable ?? null, stat_function: initial.statNode ?? null, ...sourceParams,
     }).then(raw => {
       const r = raw as OpenReply
       if (!r.ok) { setError(r.error ?? 'Could not open StatStudio.'); return }
-      console.info('[StatStudio] opened', { statsId: initial.statsId, seeded: !!initial.seed, statNode: initial.statNode, notes: r.notes.length, linked: r.design_linked })
+      console.info('[StatStudio] opened', { statsId: initial.statsId, seeded: !!initial.seed, statNode: initial.statNode, notes: r.notes.length })
       setSpec(r.spec)
       setBaseline(computeKey(r.spec))
       setSavedInfo(r.info)
       setRoleLabels(r.role_labels ?? {})
       setOpenNotes([...r.seed_notes.map(n => `Set up: ${n}`), ...r.notes.map(n => n.message)])
     }).catch(err => setError(String(err)))
-  }, [initial.statsId, initial.seed, initial.linkedPlot, initial.variable, initial.statNode, sourceParams])
+  }, [initial.statsId, initial.seed, initial.variable, initial.statNode, sourceParams])
 
   const firstVariable = spec ? targets(spec)[0]?.variable : undefined
   const designVariable = (spec?.design.measures?.[0] as string | undefined) ?? firstVariable
@@ -230,6 +236,26 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
     }).catch(err => console.warn('[StatStudio] describe failed', err))
   }, [firstVariable, sourceParams, mode, variables.length])
 
+  // --- one tab: publish the design, take the other view's -------------------
+  const lastSettingsRev = useRef(0)
+  useEffect(() => {
+    if (!incomingSettings || !spec || incomingSettings.rev === lastSettingsRev.current) return
+    lastSettingsRev.current = incomingSettings.rev
+    console.info('[StatStudio] settings restored from a saved figure')
+    setSpec(prev => (prev ? { ...prev, ...(incomingSettings.settings as object), design: prev.design, guide: prev.guide } as StatsSpec : prev))
+  }, [incomingSettings, spec])
+  useEffect(() => { if (spec) onSpecChange?.(spec as unknown as Record<string, unknown>) }, [spec])
+  useEffect(() => { if (spec) onDesignChange?.(spec.design as unknown as Record<string, unknown>) }, [spec?.design])
+  const lastRev = useRef(0)
+  useEffect(() => {
+    if (!incomingDesign || incomingDesign.rev === lastRev.current) return
+    lastRev.current = incomingDesign.rev
+    console.info('[StatStudio] design taken from the Figure view', { rev: incomingDesign.rev })
+    setSpec(prev => (prev
+      ? { ...prev, design: mergeDesign(prev.design as unknown as Record<string, unknown>, incomingDesign.spec, incomingDesign.fields) as unknown as StatsSpec['design'] }
+      : prev))
+  }, [incomingDesign])
+
   // --- compute (debounced, latest wins) ----------------------------------------
   // The view state (spec.guide) is not part of the key: moving between steps
   // or views never recomputes. The wizard's design steps ask for the cheap
@@ -243,7 +269,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   const haveResultsFor = useRef('')
   useEffect(() => {
     const current = specRef.current
-    if (!current || !key) return
+    if (!current || !key || !active) return
     if (!wantResults && haveResultsFor.current === key) return // the full result already covers the preview
     const mine = ++generation.current
     const method = wantResults ? 'stats_compute' : 'stats_preview'
@@ -261,7 +287,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
         .finally(() => { if (mine === generation.current) setBusy(false) })
     }, 350)
     return () => window.clearTimeout(timer)
-  }, [key, wantResults, sourceParams])
+  }, [key, wantResults, sourceParams, active])
 
   // A fresh guide that blocks a step before the one shown pulls the wizard back.
   useEffect(() => {
@@ -273,39 +299,6 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
       return clamped
     })
   }, [guidePayload])
-
-  // --- the shared design (scistackplotdb.designs) ----------------------------------
-  const linkedId = spec?.linked_plot
-  const designJson = useMemo(() => (spec ? JSON.stringify(spec.design) : ''), [spec])
-  useEffect(() => {
-    const current = specRef.current
-    if (!current || !linkedId || csvPath || !designJson) return
-    const timer = window.setTimeout(() => {
-      callBackend('design_update', { plot_id: linkedId, spec: current.design }).then(raw => {
-        const r = raw as { linked: boolean; changed: boolean; version: number | null }
-        if (!r.changed) return
-        console.info('[StatStudio] shared design changed', { plot: linkedId, version: r.version })
-        if (isVSCodeMode) {
-          callBackend('broadcast_panels', {
-            method: DESIGN_CHANGED, params: { plot_id: linkedId, version: r.version, origin: origin.current },
-          }).catch(() => undefined)
-        }
-      }).catch(err => console.warn('[StatStudio] design_update failed', err))
-    }, 500)
-    return () => window.clearTimeout(timer)
-  }, [designJson, linkedId, csvPath])
-
-  useEffect(() => addNotificationHandler(msg => {
-    const current = specRef.current
-    const change = designChangeFor(msg, current?.linked_plot, origin.current)
-    if (!change || !current) return
-    callBackend('design_apply', { plot_id: change.plot_id, spec: current.design }).then(raw => {
-      const r = raw as { spec: StatsSpec['design']; version: number | null }
-      console.info('[StatStudio] shared design taken from Plot Studio', { plot: change.plot_id, version: r.version })
-      setSpec(prev => (prev ? { ...prev, design: r.spec } : prev))
-      setMessage('Design updated from the linked figure.')
-    }).catch(err => console.warn('[StatStudio] design_apply failed', err))
-  }), [])
 
   // --- saved tables, presets, export, pipeline ---------------------------------------
   const refreshLists = useCallback(() => {
@@ -494,9 +487,6 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
 
   const notices = (
     <>
-      {linkedId && !csvPath && (
-        <div style={styles.muted}>This table and its saved figure share one design: a change in either shows in both.</div>
-      )}
       {openNotes.length > 0 && <ul style={styles.notes}>{openNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>}
       {message && <pre style={styles.message}>{message}</pre>}
       {error && <div style={styles.error}>{error}</div>}
@@ -554,8 +544,16 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
   )
 
   // The wizard's last step: the same grids as the Advanced tabs.
+  // Issue #12: one click from the table to the figure with brackets on.
+  const showOnFigure = onShowOnFigure && (
+    <button type="button" style={styles.primaryButton} onClick={onShowOnFigure}
+            title="Switch to the Figure view with these test results drawn as brackets">
+      Show on figure
+    </button>
+  )
   const resultsView = (
     <div>
+      {showOnFigure}
       {result?.refusals.map((r, i) => <div key={i} style={styles.warn}>{r.dv}: {r.reason}</div>)}
       {result?.comparisons.map(c => (
         <div key={c.id}>
@@ -804,7 +802,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
           title="Format"
           open={openGroups.format}
           onToggle={() => toggleGroup('format')}
-          summary={`${spec.formatting?.decimals ?? 'auto'} decimals${spec.overlay?.show ? '; brackets on' : ''}`}
+          summary={`${spec.formatting?.decimals ?? 'auto'} decimals`}
         >
           <Section title="Numbers">
             <div style={styles.field}>Decimals
@@ -822,22 +820,6 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
             <label style={styles.check}><input type="checkbox" checked={!!spec.formatting?.stars} onChange={e => setSpec(setFormatting(spec, { stars: e.target.checked }))} /> Stars on adjusted p</label>
           </Section>
 
-          {linkedId && (
-            <Section title="Brackets on the figure">
-              <label style={styles.check}><input type="checkbox" checked={!!spec.overlay?.show} onChange={e => setSpec(setOverlay(spec, { show: e.target.checked }))} /> Draw test brackets on the linked figure</label>
-              <div style={styles.field}>Pairs
-                <select value={spec.overlay?.pairs ?? 'significant'} onChange={e => setSpec(setOverlay(spec, { pairs: e.target.value as Overlay['pairs'] }))} style={styles.select}>
-                  {(catalog?.bar_pairs ?? []).map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-              </div>
-              <div style={styles.field}>Label
-                <select value={spec.overlay?.label ?? 'stars'} onChange={e => setSpec(setOverlay(spec, { label: e.target.value as Overlay['label'] }))} style={styles.select}>
-                  {(catalog?.bar_labels ?? []).map(p => <option key={p} value={p}>{p === 'p' ? 'adjusted p' : 'stars'}</option>)}
-                </select>
-              </div>
-              <div style={styles.muted}>Save this table, then the figure draws them (Plot Studio reads its linked table).</div>
-            </Section>
-          )}
         </Group>
       </aside>
 
@@ -871,7 +853,6 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
         </div>
 
         {notices}
-        {!spec.linked_plot && !csvPath && <div style={styles.muted}>Not linked to a saved plot.</div>}
 
         {/* Stage F: a decision the user must make is a banner with the
             choices, on both tabs, not a table of "not run" rows. The wording
@@ -891,6 +872,7 @@ export default function StatStudio({ initial }: { initial: StatViewConfig }) {
         ))}
         {result?.refusals.map((r, i) => <div key={i} style={styles.warn}>{r.dv}: {r.reason}</div>)}
         {tab === 'descriptives' && result?.descriptives.map((g, i) => <GridTable key={i} grid={g} />)}
+        {tab === 'comparisons' && showOnFigure}
         {tab === 'comparisons' && (
           analyses(spec).length === 0
             ? <div style={styles.muted}>No analyses: add one in the rail.</div>

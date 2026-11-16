@@ -118,7 +118,15 @@ from .export.custom import (
     resolve_custom,
     resolve_custom_one,
 )
-from .reduce.diffbars import DifferenceBar, bars_for_panel, slot_endpoints
+from .reduce.diffbars import (
+    Derived,
+    DifferenceBar,
+    PanelNote,
+    StatMarks,
+    bars_for_panel,
+    slot_endpoints,
+    with_derived,
+)
 from .reduce.panels import PanelOverride, override_for
 from .model.shape import Shape, classify_column, classify_value, is_plottable
 from .sources import BaseSource, CsvSource, DataFrameSource, DataSource, UnknownMeasureError
@@ -297,7 +305,11 @@ __all__ = [
     "custom_preview",
     "resolve_custom",
     "resolve_custom_one",
+    "Derived",
     "DifferenceBar",
+    "PanelNote",
+    "StatMarks",
+    "with_derived",
     "bars_for_panel",
     "slot_endpoints",
     "eligible_scope",

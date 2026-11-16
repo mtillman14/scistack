@@ -67,7 +67,7 @@ def _load(db, spec, *, csv_path: str | None, label: str) -> tuple[dict, dict]:
 # ---------------------------------------------------------------------------
 
 
-def _opened(spec, *, notes=None, info=None, seed_notes=None, design_version=None) -> dict:
+def _opened(spec, *, notes=None, info=None, seed_notes=None) -> dict:
     """The reply every way of opening StatStudio shares: the spec, its notes,
     and the table's role words (``scistackplot.model.role_labels``, the one owner
     shared with Plot Studio; the webview hardcodes none)."""
@@ -80,22 +80,7 @@ def _opened(spec, *, notes=None, info=None, seed_notes=None, design_version=None
         "info": info,
         "seed_notes": seed_notes or [],
         "role_labels": role_labels_payload("table"),
-        "design_linked": design_version is not None,
-        "design_version": design_version,
     }
-
-
-def _with_shared_design(db, spec, *, csv_path: str | None):
-    """*spec* with its linked plot's shared design (``scistackplotdb.designs``)
-    on its design carrier. ``(spec, design_version or None)``."""
-    if csv_path or not spec.linked_plot:
-        return spec, None
-    from scistackplotdb import apply_design
-
-    design, notes, version = apply_design(db, spec.linked_plot, spec.design)
-    for note in notes:
-        logger.info("[stats] shared design note: %s", note.message)
-    return (spec.with_design(design) if version is not None else spec), version
 
 
 def _stat_function_spec(stat_function: str) -> dict:
@@ -129,7 +114,6 @@ def open_stats(
     stats_id: str | None = None,
     version: int | None = None,
     seed: dict | None = None,
-    plot_id: str | None = None,
     variable: str | None = None,
     stat_function: str | None = None,
     csv_path: str | None = None,
@@ -139,9 +123,8 @@ def open_stats(
     statistics (``compute`` does).
 
     A fresh table for a variable starts from the SAME design a fresh figure
-    of it does (``plot_service.opening_spec``, one owner). A table set up
-    from a saved plot links to it: the two then share one design
-    (``scistackplotdb.designs``).
+    of it does (``plot_service.opening_spec``, one owner). The table's
+    settings are saved with the figure (one record per tab).
     """
     from scistackplot import PlotSpec
     from scistackstats import SeedError, StatsSpec, seed_from_plot
@@ -153,35 +136,23 @@ def open_stats(
 
         with db_connection("stats_open"):
             saved = load_saved_stats(db, stats_id, version=version)
-            spec, design_version = _with_shared_design(db, saved.spec, csv_path=csv_path)
-        logger.info("[stats] opened saved %r v%d: %d note(s), shared design %s", saved.info.name,
-                    saved.info.version, len(saved.notes), design_version)
-        return _opened(spec, notes=saved.notes, info=saved.info.to_dict(), design_version=design_version)
+            spec = saved.spec
+        logger.info("[stats] opened saved %r v%d: %d note(s)", saved.info.name, saved.info.version, len(saved.notes))
+        return _opened(spec, notes=saved.notes, info=saved.info.to_dict())
     if seed is not None:
         try:
             plot = PlotSpec.from_dict(seed)
-            seeded = seed_from_plot(plot, linked_plot=plot_id)
+            seeded = seed_from_plot(plot)
         except SeedError as exc:
             return {"ok": False, "error": str(exc)}
-        design_version = None
         spec = seeded.spec
-        if plot_id and not csv_path:
-            from scistackplotdb import link_design
-
-            with db_connection("stats_open"):
-                stored = link_design(db, plot_id, plot)
-            design_version = stored.version
-        logger.info("[stats] seeded from a figure of %s (linked plot %s, shared design %s): %s",
-                    spec.design.y_measure, plot_id, design_version, "; ".join(seeded.notes))
-        return _opened(spec, seed_notes=seeded.notes, design_version=design_version)
+        logger.info("[stats] seeded from a figure of %s: %s", spec.design.y_measure, "; ".join(seeded.notes))
+        return _opened(spec, seed_notes=seeded.notes)
     if stat_function:
         payload = _stat_function_spec(stat_function)
         spec = StatsSpec.from_dict(payload)
-        with db_connection("stats_open", needed=not csv_path):
-            spec, design_version = _with_shared_design(db, spec, csv_path=csv_path)
         logger.info("[stats] opened the spec embedded in %s (%d DV(s))", stat_function, len(spec.targets))
-        return _opened(spec, notes=[{"message": f"Opened the settings {stat_function} was generated with."}],
-                       design_version=design_version)
+        return _opened(spec, notes=[{"message": f"Opened the settings {stat_function} was generated with."}])
     if variable:
         with db_connection("stats_open", needed=not csv_path):
             table = plot_service.get_source(db, csv_path=csv_path).get_table([variable])
@@ -342,7 +313,7 @@ def catalog() -> dict:
     from scistackstats import CELL_LAYOUTS, EFFECT_SIZES, STATISTICS, TESTS, get_engine
     from scistackstats.run import CORRECTION_LABELS, SCOPE_LABELS
     from scistackstats.spec import (
-        BAR_LABELS, BAR_PAIRS, DIFFERENCE_SPREADS, FAMILIES, FAMILY_LABELS, FAMILY_SCOPES, MISSING_LABELS,
+        DIFFERENCE_SPREADS, FAMILIES, FAMILY_LABELS, FAMILY_SCOPES, MISSING_LABELS,
         MISSING_POLICIES, TAILS, VARIANT_MODES,
     )
 
@@ -359,8 +330,6 @@ def catalog() -> dict:
         "missing_policies": [{"id": m, "label": MISSING_LABELS[m]} for m in MISSING_POLICIES],
         "tails": list(TAILS),
         "spreads": list(DIFFERENCE_SPREADS),
-        "bar_pairs": list(BAR_PAIRS),
-        "bar_labels": list(BAR_LABELS),
         "variant_modes": list(VARIANT_MODES),
     }
 
@@ -498,38 +467,41 @@ def export(db, spec_payload: dict, fmt: str, which: str, *, csv_path: str | None
 
 
 # ---------------------------------------------------------------------------
-# Plot link: brackets. The design itself is shared, not synced
-# (scistackplotdb.designs, services/design_service.py).
+# Test results on the figure (scistackstats.marks, plan-stats-on-figure.md)
 # ---------------------------------------------------------------------------
 
 
-def overlay_bars(db, stats_payload: dict, plot_payload: dict, *, csv_path: str | None = None) -> dict:
+def stats_marks(db, plot_payload: dict, stats_payload: dict | None = None, *, csv_path: str | None = None) -> dict:
+    """The brackets, panel notes and caption the figure asks for
+    (`PlotSpec.stat_marks`), as `Derived` facts plus what ran and why nothing
+    is drawn. With no *stats_payload* the table is seeded from the figure
+    (`seed_from_plot`, the recommended test), so this works on an unsaved
+    figure. Nothing is stored. Timing: `[timing] stats_marks: load / run / marks`."""
     from scistackplot import PlotSpec
-    from scistackstats import run
-    from scistackstats.overlays import bars_for
+    from scistackstats import SeedError, run, seed_from_plot
+    from scistackstats.marks import Marks, marks_for
 
-    stats = _spec(stats_payload)
     plot = PlotSpec.from_dict(plot_payload)
-    if not stats.overlay.show or not stats.comparisons:
-        return {"bars": [], "ids": [], "reason": "test brackets are off", "notes": []}
-    tables = _tables(db, stats, csv_path=csv_path, label="stats_overlay")
-    return bars_for(run(stats, tables), stats, plot).to_dict()
+    if not plot.stat_marks.wanted:
+        return Marks(reason="no test results are asked for").to_dict()
+    if stats_payload is not None:
+        stats = _spec(stats_payload)
+    else:
+        try:
+            stats = seed_from_plot(plot).spec
+        except SeedError as exc:
+            return Marks(reason=str(exc)).to_dict()
+    if not stats.comparisons:
+        return Marks(reason="the table has no comparison to draw").to_dict()
+    t0 = time.perf_counter()
+    tables = _tables(db, stats, csv_path=csv_path, label="stats_marks")
+    t1 = time.perf_counter()
+    report = run(stats, tables)
+    t2 = time.perf_counter()
+    out = marks_for(report, stats, plot)
+    logger.info("[timing] stats_marks: load %.3fs / run %.3fs / marks %.3fs", t1 - t0, t2 - t1, time.perf_counter() - t2)
+    return out.to_dict()
 
-
-def overlay_for_plot(db, plot_id: str, plot_payload: dict) -> dict:
-    """The brackets of the first linked stats table that draws them."""
-    from scistackstatsdb import linked_stats_for, load_saved_stats
-
-    from scistack_gui.runtime.db import db_connection
-
-    with db_connection("stats_overlay_for_plot"):
-        linked = linked_stats_for(db, plot_id)
-        specs = [(info, load_saved_stats(db, info.stats_id).spec) for info in linked]
-    for info, spec in specs:
-        if spec.overlay.show:
-            out = overlay_bars(db, spec.to_dict(), plot_payload)
-            return {**out, "stats_id": info.stats_id, "stats_name": info.name}
-    return {"bars": [], "ids": [], "reason": "no linked stats table draws brackets", "notes": []}
 
 
 # ---------------------------------------------------------------------------
@@ -550,14 +522,6 @@ def saved_save(db, name: str, spec_payload: dict, *, overwrite: bool, current_st
         info = save_stats(db, name, spec_payload, overwrite=overwrite, current_stats_id=current_stats_id)
     except SavedStatsExists as exc:
         return {"ok": False, "exists": exc.existing.to_dict(), "error": str(exc)}
-    # A table linked to a saved plot shares ONE design with it
-    # (scistackplotdb.designs): saving the table writes that design too.
-    from scistack_gui.services import design_service
-
-    linked_plot = spec_payload.get("linked_plot") if isinstance(spec_payload, dict) else None
-    design = spec_payload.get("design") if isinstance(spec_payload, dict) else None
-    if linked_plot and isinstance(design, dict):
-        design_service.write_if_linked(db, linked_plot, design, route="stats_saved_save")
     return {"ok": True, "info": info.to_dict()}
 
 
@@ -577,12 +541,6 @@ def saved_history(db, stats_id: str) -> dict:
     from scistackstatsdb import saved_stats_history
 
     return {"items": [i.to_dict() for i in saved_stats_history(db, stats_id)]}
-
-
-def linked(db, plot_id: str) -> dict:
-    from scistackstatsdb import linked_stats_for
-
-    return {"items": [i.to_dict() for i in linked_stats_for(db, plot_id)]}
 
 
 def presets_list(db) -> dict:

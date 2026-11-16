@@ -16,7 +16,6 @@ def _full() -> StatsSpec:
     return StatsSpec(
         design=bar_spec(),
         dvs=(DV("Ratings"), DV("EMG", columns=("TA", "SOL"))),
-        linked_plot="plot-123",
         descriptives=DescriptiveSpec(cell="median_iqr", statistics=("n", "skewness")),
         comparisons=(Analysis(
             id="x", family="nonparametric", omnibus=False, pairwise=True, omnibus_test="kruskal",
@@ -70,11 +69,10 @@ def test_dv_key_and_targets():
     ],
 )
 def test_seed_rules(plot, cell, family):
-    seeded = seed_from_plot(plot, linked_plot="p1")
+    seeded = seed_from_plot(plot)
     assert seeded.spec.descriptives.cell == cell
     assert seeded.spec.comparisons[0].family == family
     assert seeded.spec.design == plot, "the design is the plot's own spec"
-    assert seeded.spec.linked_plot == "p1"
     assert seeded.notes
 
 

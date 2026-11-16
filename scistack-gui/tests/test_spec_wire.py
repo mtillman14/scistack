@@ -39,7 +39,10 @@ from scistackplot import (
     CompareMode,
     Comparison,
     CustomPlot,
+    Derived,
     DifferenceBar,
+    PanelNote,
+    StatMarks,
     ErrorBand,
     FacetOptions,
     FactorVariable,
@@ -66,7 +69,7 @@ from scistackplot import (
     YAxis,
 )
 from scistackstats import DV, Analysis, DescriptiveSpec, FormatSpec, GuideState, StatsSpec
-from scistackstats.spec import CELLS, FAMILIES, OverlaySpec
+from scistackstats.spec import CELLS, FAMILIES
 
 PAIRS: list[tuple[type, type[BaseModel]]] = [
     (Matcher, w.MatcherWire),
@@ -89,6 +92,9 @@ PAIRS: list[tuple[type, type[BaseModel]]] = [
     (StyleOptions, w.StyleOptionsWire),
     (PanelOverride, w.PanelOverrideWire),
     (DifferenceBar, w.DifferenceBarWire),
+    (PanelNote, w.PanelNoteWire),
+    (Derived, w.DerivedWire),
+    (StatMarks, w.StatMarksWire),
     (Comparison, w.ComparisonWire),
     (PlotSpec, w.PlotSpecWire),
     (DV, w.DVWire),
@@ -96,7 +102,6 @@ PAIRS: list[tuple[type, type[BaseModel]]] = [
     (FormatSpec, w.FormatSpecWire),
     (Analysis, w.AnalysisWire),
     (GuideState, w.GuideStateWire),
-    (OverlaySpec, w.OverlaySpecWire),
     (StatsSpec, w.StatsSpecWire),
 ]
 
@@ -209,6 +214,12 @@ def _maximal_plot_spec() -> PlotSpec:
                 match={}, a={"session": "1"}, b={"session": "2"}, label="**", origin="test"
             )
         ],
+        stat_marks=StatMarks(brackets=True, pairs="all", label="effect", hidden=("a1:x-y",), omnibus=True, caption=True),
+        derived=Derived(
+            bars=(DifferenceBar(match={}, a={"session": "1"}, b={"session": "2"}, label="*", origin="test"),),
+            panel_notes=(PanelNote(match={"side": "L"}, text="F", origin="test"),),
+            caption="cap",
+        ),
         comparison=Comparison(layer="session", level="1", mode=CompareMode.PERCENT, active=False),
         filters=[Filter(column="session", include=["1"], exclude=["3"], minimum=0.0, maximum=1.0)],
         location_filter=LocationFilter(
@@ -242,7 +253,6 @@ def _maximal_stats_spec() -> StatsSpec:
     return StatsSpec(
         design=_maximal_plot_spec(),
         dvs=(DV("Force", ("a",)),),
-        linked_plot="p1",
         descriptives=DescriptiveSpec(cell="median_iqr", statistics=("n", "mean")),
         comparisons=(
             Analysis(
@@ -272,7 +282,6 @@ def _maximal_stats_spec() -> StatsSpec:
         ),
         variant_mode="sweep",
         formatting=FormatSpec(decimals=2, p_decimals=4, effect_decimals=3, stars=True),
-        overlay=OverlaySpec(show=True, analysis="a1", pairs="all", label="p", hidden=("x",)),
         guide=GuideState(mode="guided", step="unit", done=("measure",)),
     )
 

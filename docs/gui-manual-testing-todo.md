@@ -6631,3 +6631,14 @@ Setup: a project whose PathInput has a `root_folder` (entities file) and at leas
 ## Done
 
 (Move items here once checked, with the date and anything noticed.)
+
+## Statistics on the figure / one Studio tab (2026-11-15, unchecked)
+
+- Open a variable: the tab shows `Figure | Statistics`; switching keeps scroll, open rail groups and the last result.
+- Figure > Statistics > Test results: tick Brackets; brackets appear with no save and no second tab. Change Pairs / Label (stars, adjusted p, effect size, mean difference): labels follow. A colour edit does not re-run the test (check scistack.log: no new `[timing] stats_marks`).
+- Tick Omnibus (a line above each panel) and Caption (line under the figure); wrap on a long caption; export PNG matches the preview.
+- Untick a listed test bracket: it hides; tick again: it returns.
+- Statistics view: change the test or correction; return to Figure: brackets use it. Edit the grouping in either view: the other follows.
+- Comparisons tab and the wizard results step: "Show on figure" lands on the Figure with brackets on.
+- Refusals show a reason (compare-to-reference on, no significant comparison, a pending decision).
+- A `plot_` node opens with Statistics disabled and says why.

@@ -25,7 +25,6 @@ from .saved import (
     find_saved_stats,
     hide_saved_stats,
     hide_stats_preset,
-    linked_stats_for,
     list_saved_stats,
     list_stats_presets,
     load_saved_stats,
@@ -47,7 +46,7 @@ def load_stats_tables(db: Any, stats_spec: StatsSpec) -> dict:
 __all__ = [
     "StatsEndpointCode", "generate_stats_endpoint", "required_declarations",
     "SavedStats", "SavedStatsError", "SavedStatsExists", "SavedStatsInfo", "StatsPresetInfo",
-    "apply_stats_preset", "find_saved_stats", "hide_saved_stats", "hide_stats_preset", "linked_stats_for",
+    "apply_stats_preset", "find_saved_stats", "hide_saved_stats", "hide_stats_preset",
     "list_saved_stats", "list_stats_presets", "load_saved_stats", "load_stats_tables", "rename_saved_stats",
     "rename_stats_preset", "save_stats", "save_stats_preset", "saved_stats_history",
 ]

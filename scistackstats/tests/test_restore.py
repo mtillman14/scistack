@@ -10,7 +10,7 @@ from scistackstats.spec import FormatSpec
 
 def _spec() -> StatsSpec:
     return StatsSpec(
-        design=bar_spec(), dvs=(DV("Ratings"),), linked_plot="p1",
+        design=bar_spec(), dvs=(DV("Ratings"),),
         descriptives=DescriptiveSpec(cell="median_iqr", statistics=("n", "iqr")),
         comparisons=(Analysis(id="a1", family="nonparametric"),),
         formatting=FormatSpec(decimals=1),
@@ -61,10 +61,10 @@ def test_not_a_table_opens_on_defaults():
 def test_preset_carries_only_stats_settings():
     settings = stats_settings(_spec())
     assert set(settings) == set(STATS_SETTINGS)
-    target = StatsSpec(design=bar_spec(measures=["Other"]), dvs=(DV("Other"),), linked_plot="p9")
+    target = StatsSpec(design=bar_spec(measures=["Other"]), dvs=(DV("Other"),))
     applied, notes = with_stats_settings(target, settings)
     assert notes == []
-    assert applied.design == target.design and applied.dvs == target.dvs and applied.linked_plot == "p9"
+    assert applied.design == target.design and applied.dvs == target.dvs
     assert applied.descriptives == _spec().descriptives
     assert applied.comparisons == _spec().comparisons
     assert applied.formatting == _spec().formatting

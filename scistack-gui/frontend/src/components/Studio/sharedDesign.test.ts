@@ -1,23 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DESIGN_CHANGED, designChangeFor, newDesignOrigin } from './sharedDesign.js'
+import { designOf, mergeDesign, sameDesign } from './sharedDesign.js'
 
-test('origins are unique per tab and name their kind', () => {
-  const a = newDesignOrigin('plot')
-  const b = newDesignOrigin('plot')
-  assert.notEqual(a, b)
-  assert.ok(newDesignOrigin('stat').startsWith('stat-'))
-})
-
-test('a change about this plot from another tab is taken', () => {
-  const msg = { method: DESIGN_CHANGED, params: { plot_id: 'p1', version: 3, origin: 'stat-x' } }
-  assert.deepEqual(designChangeFor(msg, 'p1', 'plot-y'), { plot_id: 'p1', version: 3, origin: 'stat-x' })
-})
-
-test('its own broadcast, another plot, another method or no link are ignored', () => {
-  const msg = { method: DESIGN_CHANGED, params: { plot_id: 'p1', version: 3, origin: 'plot-y' } }
-  assert.equal(designChangeFor(msg, 'p1', 'plot-y'), null)
-  assert.equal(designChangeFor({ ...msg, params: { ...msg.params, origin: 'z' } }, 'p2', 'plot-y'), null)
-  assert.equal(designChangeFor({ method: 'other', params: msg.params }, 'p1', 'q'), null)
-  assert.equal(designChangeFor(msg, null, 'q'), null)
+test('design binding copies design fields only, dotted paths included', () => {
+  const fields = ['measures', 'groups', 'aggregate.pooled']
+  const plot = { measures: ['A'], groups: ['g'], kind: 'bar', aggregate: { pooled: true, error: 'sd' } }
+  const stat = { measures: ['B'], kind: 'box', aggregate: { error: 'sem' }, style: { x: 1 } }
+  const merged = mergeDesign(stat, plot, fields)
+  assert.deepEqual(merged.measures, ['A'])
+  assert.deepEqual(merged.groups, ['g'])
+  assert.equal(merged.kind, 'box', 'display fields stay')
+  assert.deepEqual(merged.aggregate, { error: 'sem', pooled: true })
+  assert.equal(sameDesign(merged, plot, fields), true)
+  assert.equal(sameDesign(stat, plot, fields), false)
+  assert.equal('groups' in mergeDesign(plot, { measures: ['A'] }, fields), false, 'a missing field is removed')
+  assert.equal(designOf({}, fields).measures, null)
 })

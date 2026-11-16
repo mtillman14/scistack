@@ -15,15 +15,13 @@ import json
 
 from scistacklog import Log
 
-from . import designs, presets, saved
+from . import presets, saved
 
 LAYER = "scistackplotdb"
 
 _STORES = {
     "saved_plots.json": saved.STORE,
     "presets.json": presets.STORE,
-    # The shared design of a linked figure + table (designs.py).
-    "designs.json": designs.STORE,
 }
 
 

@@ -472,6 +472,8 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
         len(joinable),
     )
 
+    from scistackplot.model.design import design_paths
+
     return {
         "catalog": catalog,
         "variable": variable,
@@ -480,6 +482,11 @@ def _describe(db, variable, *, refresh, csv_path, timing=None) -> dict:
         "table": table.describe(),
         "spec": spec.to_dict(),
         "capabilities": report,
+        # The fields that decide which rows a figure is made of
+        # (`scistackplot.model.design.design_paths`, the one owner): a consumer
+        # re-requests test results only when one of these (or `stat_marks`)
+        # changes, never for a colour edit.
+        "design_fields": design_paths(),
         # Two different offers, deliberately kept apart: variables that can
         # STACK with this one (another series — a variant row) and variables
         # that can be JOINED as its x axis (a relational plot).

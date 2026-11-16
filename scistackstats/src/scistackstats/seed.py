@@ -46,7 +46,7 @@ class Seeded:
     notes: list[str] = field(default_factory=list)
 
 
-def seed_from_plot(plot: PlotSpec, *, linked_plot: str | None = None) -> Seeded:
+def seed_from_plot(plot: PlotSpec) -> Seeded:
     """A StatsSpec set up from ``plot`` (module docstring)."""
     if plot.comparison is not None and plot.comparison.active:
         raise SeedError(
@@ -76,7 +76,6 @@ def seed_from_plot(plot: PlotSpec, *, linked_plot: str | None = None) -> Seeded:
     spec = StatsSpec(
         design=plot,
         dvs=(DV(plot.y_measure),),
-        linked_plot=linked_plot,
         descriptives=DescriptiveSpec(cell=cell, statistics=("n",)),
         comparisons=(Analysis(id="a1", family=family),),
         # A new table opens in the step-by-step wizard (user decision

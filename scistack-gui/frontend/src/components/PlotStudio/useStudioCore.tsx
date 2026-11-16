@@ -4,6 +4,9 @@ import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import { reportStudioOpen } from '../Studio/studioOpen'
 import { callBackend } from '../../api'
 import { DescribeResponse, Spec, Capabilities, FigurePayload, applyPickedLocation, ResolveResponse, Role } from './plotStudioTypes'
+import { useStatMarks } from './useStatMarks'
+import { derivedFrom } from './statMarks'
+import { mergeDesign } from '../Studio/sharedDesign'
 import { UndoStack } from '../../undo'
 import { useUndoShortcuts, useHistoryState } from '../../hooks/useUndo'
 import { type PlotSpecAction, plotSpecReducer } from './plotSpecReducer'
@@ -33,6 +36,13 @@ export function useStudioCore({
   design,
   openedFrom,
   onClose,
+  active = true,
+  onSpecChange,
+  incomingDesign,
+  onDesignFields,
+  statMarksRequest,
+  statsSettings,
+  onSavedStats,
 }: Props) {
 
   const designMode = design !== undefined
@@ -50,14 +60,11 @@ export function useStudioCore({
     () => (csvPath ? { csv_path: csvPath } : {}),
     [csvPath]
   )
-  // StatStudio test brackets (StatsLink): joined per request by the backend
-  // (`with_derived_bars`), never saved with the plot. Resolve, export, save
-  // and add-to-pipeline all send them, so the file draws what the preview drew.
-  const [derivedBars, setDerivedBars] = useState<Record<string, unknown>[]>([])
-  const resolveParams = useMemo(
-    () => (derivedBars.length ? { ...sourceParams, derived_bars: derivedBars } : sourceParams),
-    [sourceParams, derivedBars]
-  )
+  // Test results the figure asks for (`spec.stat_marks`, useStatMarks): the
+  // facts are joined per request by the backend (`diffbars.with_derived`),
+  // never saved with the plot. Resolve, export, save and add-to-pipeline all
+  // send them, so the file draws what the preview drew.
+  const [designFields, setDesignFields] = useState<string[] | undefined>(undefined)
   // The measure on screen: the one the panel was opened on, or the other half
   // of a wide variable with text fields (`Gait` <-> `Gait (text)`, owned by
   // `scistackplotdb.text_fields`; the catalog says which, `text_of`).
@@ -71,6 +78,33 @@ export function useStudioCore({
   useUndoShortcuts(undo)
   // setSpec = a user edit (an undo step); replaceSpec = loading (not one).
   const [spec, setSpec, replaceSpec] = useHistoryState<Spec | null>(undo, null, 'figure edit')
+  const marksState = useStatMarks(spec, designFields, csvPath, active, statsSettings ?? null)
+  // One tab, two views: publish the spec (the tab keeps the design in memory),
+  // and take a design the other view edited.
+  const specNow = useRef(spec)
+  specNow.current = spec
+  useEffect(() => { if (spec) onSpecChange?.(spec as unknown as Record<string, unknown>) }, [spec])
+  useEffect(() => { if (designFields) onDesignFields?.(designFields) }, [designFields])
+  const lastRev = useRef(0)
+  const lastMarksRev = useRef(0)
+  useEffect(() => {
+    if (!statMarksRequest || statMarksRequest.rev === lastMarksRev.current || !specNow.current) return
+    lastMarksRev.current = statMarksRequest.rev
+    console.info('[Studio] test results requested on the figure', statMarksRequest.patch)
+    const current = specNow.current as unknown as { stat_marks?: Record<string, unknown> }
+    setSpec({ ...(specNow.current as object), stat_marks: { ...(current.stat_marks ?? {}), ...statMarksRequest.patch } } as unknown as Spec)
+  }, [statMarksRequest, spec])
+  useEffect(() => {
+    if (!incomingDesign || incomingDesign.rev === lastRev.current || !designFields || !specNow.current) return
+    lastRev.current = incomingDesign.rev
+    console.info('[Studio] design taken from the other view', { rev: incomingDesign.rev })
+    setSpec(mergeDesign(specNow.current as unknown as Record<string, unknown>, incomingDesign.spec, designFields) as unknown as Spec)
+  }, [incomingDesign, designFields])
+  const derived = useMemo(() => derivedFrom(marksState.result), [marksState.result])
+  const resolveParams = useMemo(
+    () => (derived ? { ...sourceParams, derived } : sourceParams),
+    [sourceParams, derived]
+  )
   // A plain field edit is an action of the spec reducer (plotSpecReducer.ts),
   // one undo step like any setSpec.
   const dispatchSpec = useCallback(
@@ -215,11 +249,6 @@ export function useStudioCore({
     try { window.localStorage.setItem(PLOT_VIEW_STORAGE_KEY, next) } catch { /* not remembered */ }
     callBackend('stats_guide_log', { event: `view ${next}`, step: null, detail: 'figure' }).catch(() => undefined)
   }, [])
-  // StatStudio "Sync to PlotStudio": its design copied onto this spec (StatsLink).
-  const applyLinkedSpec = useCallback(
-    (next: Spec) => setSpec(next),
-    [setSpec]
-  )
   const [restoreNotes, setRestoreNotes] = useState<RestoreNote[]>([])
   const [savedBusy, setSavedBusy] = useState(false)
   const [savedError, setSavedError] = useState('')
@@ -290,6 +319,7 @@ export function useStudioCore({
         if (cancelled) return
         const response = raw as DescribeResponse
         setDescribe(response)
+        setDesignFields(response.design_fields)
         // Design-only: the caller owns the spec; describe only supplies the
         // factors, catalog and offers the controls read.
         if (designRef.current) {
@@ -515,7 +545,7 @@ export function useStudioCore({
   )
 
   useEffect(() => {
-    if (!spec) return
+    if (!spec || !active) return
     if (designMode) {
       // No figure to draw: only the capability report the controls read.
       const capsTimer = window.setTimeout(() => {
@@ -540,7 +570,7 @@ export function useStudioCore({
       launchResolve(spec, figureIndex, specKey)
     }, 180)
     return () => { if (timer.current) window.clearTimeout(timer.current) }
-  }, [spec, specKey, figureIndex, sourceParams, launchResolve])
+  }, [spec, specKey, figureIndex, sourceParams, launchResolve, active])
 
   // A resize or a preview-mode toggle changes only the SIZE the labels and
   // legend are decided at. Re-render the last resolve (`reuse_resolved`)
@@ -660,8 +690,10 @@ export function useStudioCore({
     designMode,
     designRef,
     sourceParams,
-    derivedBars,
-    setDerivedBars,
+    derived,
+    marksState,
+    statsSettings,
+    onSavedStats,
     resolveParams,
     variable,
     setVariable,
@@ -741,7 +773,6 @@ export function useStudioCore({
     plotGuidePayload,
     setPlotGuidePayload,
     switchView,
-    applyLinkedSpec,
     restoreNotes,
     setRestoreNotes,
     savedBusy,

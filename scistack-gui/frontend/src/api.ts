@@ -436,9 +436,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     stats_preview:          { path: '/api/stats/preview', method: 'POST', body: true },
     stats_guide_log:        { path: '/api/stats/guide-log', method: 'POST', body: true },
     stats_export:           { path: '/api/stats/export', method: 'POST', body: true },
-    stats_overlay_bars:     { path: '/api/stats/overlay', method: 'POST', body: true },
-    stats_overlay_for_plot: { path: '/api/stats/overlay-for-plot', method: 'POST', body: true },
-    stats_linked:           { path: '/api/stats/linked', method: 'POST', body: true },
+    stats_marks:           { path: '/api/stats/marks', method: 'POST', body: true },
     stats_saved_list:       { path: '/api/stats/saved/list', method: 'POST' },
     stats_saved_save:       { path: '/api/stats/saved/save', method: 'POST', body: true },
     stats_saved_rename:     { path: '/api/stats/saved/rename', method: 'POST', body: true },
@@ -471,9 +469,6 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     report_scope_navigation: { path: '/api/client-scope-navigation', method: 'POST', body: true },
     // Which studio opened, from which entry point (docs/claude/studio-unification.md).
     report_studio_open:     { path: '/api/client-studio-open', method: 'POST', body: true },
-    // A linked figure + table's shared design (scistackplotdb.designs).
-    design_update:          { path: '/api/design/update', method: 'POST', body: true },
-    design_apply:           { path: '/api/design/apply', method: 'POST', body: true },
     // Undo / redo (docs/claude/undo-redo.md). The change id is in the body;
     // a request's own undo metadata travels in the X-SciStack-Change header.
     history_status:         { path: '/api/history/status' },

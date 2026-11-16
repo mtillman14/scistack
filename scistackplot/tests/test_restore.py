@@ -20,6 +20,9 @@ from dataclasses import fields, is_dataclass, MISSING
 import pytest
 
 from scistackplot import (
+    Derived,
+    PanelNote,
+    StatMarks,
     Aggregation,
     Alias,
     BarOptions,
@@ -173,6 +176,14 @@ def full_spec() -> PlotSpec:
                 origin="test",
             )
         ],
+        stat_marks=StatMarks(
+            brackets=True, pairs="all", label="p", hidden=("a1:x-y",), omnibus=True, caption=True
+        ),
+        derived=Derived(
+            bars=(DifferenceBar(match={}, a={"session": "pre"}, b={"session": "post"}, label="*", origin="test"),),
+            panel_notes=(PanelNote(match={"trial": "01"}, text="F", origin="test"),),
+            caption="cap",
+        ),
         comparison=Comparison(
             layer="session",
             level="pre",

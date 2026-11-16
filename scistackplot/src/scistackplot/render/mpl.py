@@ -63,7 +63,7 @@ from .base import (
     univariate_x_range,
     histogram_ticks,
     is_special_bin,
-    not_plotted_note,
+    footnote_text,
     rug_rows,
     SPECIAL_BIN_HATCH,
     is_categorical_x,
@@ -300,6 +300,7 @@ def _render(resolved: ResolvedPlot):
                 layer=LAYER,
             )
 
+            _draw_panel_notes(panel_axes, resolved)
             if resolved.labels.title:
                 fig.suptitle(resolved.labels.title)
             # tight_layout is told how much room the legend took. A FIGURE legend
@@ -751,16 +752,36 @@ def _draw_distribution(ax, frame, resolved, *, violin: bool) -> None:
 
 
 def _draw_not_plotted_note(fig, resolved: ResolvedPlot) -> float:
-    """The "Not plotted" footnote (``base.not_plotted_note``) at the bottom
-    left of the figure. Returns the figure fraction it takes, which the
-    layout keeps free (``_reserve_bottom``); 0 when there is none."""
-    note = not_plotted_note(resolved)
+    """The footnote (``base.footnote_text``: the statistics caption, then the
+    "Not plotted" note) at the bottom left of the figure. Returns the figure
+    fraction it takes, which the layout keeps free (``_reserve_bottom``); 0
+    when there is none."""
+    size = sizes_for(resolved).legend
+    note = footnote_text(resolved, fig.get_figwidth() * 72.0)
     if not note:
         return 0.0
-    size = sizes_for(resolved).legend
     height_pt = fig.get_figheight() * 72.0
+    lines = note.count("\n") + 1
     fig.text(0.01, 0.005, note, ha="left", va="bottom", fontsize=size, gid="not_plotted_note")
-    return min(size * 1.8 / height_pt, 0.25)
+    return min(size * (1.5 * lines + 0.3) / height_pt, 0.25)
+
+
+def _draw_panel_notes(panel_axes: dict[int, Any], resolved: ResolvedPlot) -> int:
+    """The derived per-panel line (``diffbars.panel_note_for``: a test's omnibus
+    result) as the axes' own title, so the layout pass measures it. Returns
+    how many were drawn."""
+    from ..reduce.diffbars import panel_note_for
+
+    if resolved.spec.derived is None or not resolved.spec.stat_marks.omnibus:
+        return 0
+    size = sizes_for(resolved).legend
+    drawn = 0
+    for index, ax in panel_axes.items():
+        note = panel_note_for(resolved, resolved.panels[index])
+        if note:
+            ax.set_title(note, loc="left", fontsize=size)
+            drawn += 1
+    return drawn
 
 
 def _reserve_bottom(rect, room: float):

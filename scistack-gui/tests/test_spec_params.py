@@ -25,6 +25,7 @@ from pydantic import ValidationError
 
 from scistack_gui.api.plot import SpecRequest, VariantSetsRequest
 from scistack_gui.api.spec_params import (
+    DerivedParam,
     DifferenceBarParam,
     FactorVariableParam,
     PlotSpecParam,
@@ -39,7 +40,7 @@ from scistackstats import StatsSpec
 
 #: Request fields that carry a spec or a spec part, by name.
 SPEC_FIELDS = {
-    "spec", "plot_spec", "stats_spec", "seed", "derived_bars", "variant_sets", "covariates",
+    "spec", "plot_spec", "stats_spec", "seed", "derived", "variant_sets", "covariates",
 }
 
 
@@ -70,7 +71,7 @@ def test_the_plot_guide_takes_a_plot_spec_not_a_table():
 MARKERS = {
     id(typing.get_args(p)[1])
     for p in (
-        PlotSpecParam, StatsSpecParam, DifferenceBarParam, VariantSetParam, FactorVariableParam,
+        PlotSpecParam, StatsSpecParam, DifferenceBarParam, DerivedParam, VariantSetParam, FactorVariableParam,
     )
 }
 

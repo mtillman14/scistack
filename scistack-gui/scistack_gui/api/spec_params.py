@@ -74,5 +74,7 @@ StatsSpecParam = Annotated[dict[str, Any], _CheckedSpec("StatsSpecWire")]
 #: bars), one ``VariantSet.to_dict()`` (a Variants row), one
 #: ``FactorVariable.to_dict()`` (a covariate).
 DifferenceBarParam = Annotated[dict[str, Any], _CheckedSpec("DifferenceBarWire")]
+#: One ``Derived.to_dict()``: the facts a layer above hands a figure.
+DerivedParam = Annotated[dict[str, Any], _CheckedSpec("DerivedWire")]
 VariantSetParam = Annotated[dict[str, Any], _CheckedSpec("VariantSetWire")]
 FactorVariableParam = Annotated[dict[str, Any], _CheckedSpec("FactorVariableWire")]

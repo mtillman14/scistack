@@ -41,6 +41,8 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
     openedVariantSets,
     restoredSignature,
     capsSpecRef,
+    statsSettings,
+    onSavedStats,
   } = s
 
   // --- saved plots ----------------------------------------------------------
@@ -91,6 +93,8 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
           view: viewState(previewMode, figureIndex),
           overwrite,
           current_plot_id: loadedPlot?.plot_id ?? null,
+          // One record per tab: the table's test settings go with the figure.
+          ...(statsSettings ? { stats: statsSettings } : {}),
         })) as { ok: boolean; plot?: SavedPlotInfo; plots?: SavedPlotInfo[]; exists?: SavedPlotInfo }
         if (!result.ok) return { ok: false, exists: result.exists }
         setSavedPlots(result.plots ?? [])
@@ -106,7 +110,7 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
         setSavedBusy(false)
       }
     },
-    [spec, savedVariable, previewMode, figureIndex, loadedPlot]
+    [spec, savedVariable, previewMode, figureIndex, loadedPlot, statsSettings]
   )
 
   /** Put an opened saved plot on screen — shared by Open and by answering
@@ -118,11 +122,13 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
             view: unknown
             notes: RestoreNote[]
             newer?: NewerVersion[]
+            stats?: Record<string, unknown> | null
+            stats_notes?: RestoreNote[]
           }
           capabilities: Capabilities | null
           plots?: SavedPlotInfo[]
         }
-        const { spec: restored, view, notes, newer = [], ...info } = result.plot
+        const { spec: restored, view, notes, newer = [], stats = null, stats_notes: statsNotes = [], ...info } = result.plot
         const shown = readView(view)
         console.info(
           `[PlotStudio] opened saved plot "${info.name}" v${info.version}: ` +
@@ -136,6 +142,9 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
         // not written as this variable's default pins.
         openedVariantSets.current = variantSetsKey(restored.variant_sets)
         setSpec(restored)
+        // The saved table settings go to the Statistics view (the tab owns them).
+        onSavedStats?.(stats)
+        if (statsNotes.length) console.info('[PlotStudio] saved stats settings: notes', statsNotes)
         if (result.plots) setSavedPlots(result.plots)
         // Newer code than the plot was saved with: ask, never switch silently.
         setNewerPrompt(
