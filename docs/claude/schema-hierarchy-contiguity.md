@@ -1,81 +1,55 @@
-# Schema Hierarchy and Non-Contiguous Key Support
+# Schema keys: order, contiguity and gaps
 
-## How the Schema Works
+*Rewritten 2026-11-15. This described `_schema_key_columns`, which no longer
+exists. For branches see `branched-schema-keys.md`.*
 
-SciDuck models dataset metadata as a **linear hierarchy**. When you configure a database with:
+## What a schema is
 
-```python
-dataset_schema = ["subject", "intervention", "timepoint", "speed", "trial", "cycle"]
-```
+`dataset_schema_keys` is an ordered list of key names, e.g.
+`["subject", "intervention", "timepoint", "speed", "trial", "cycle"]`. The
+`_schema` table has one VARCHAR column per key (in that order, after `schema_id`
+and `schema_level`). The list owns key ORDER; parents (which key sits under
+which) are `branched-schema-keys.md`'s `SchemaTree`, and a plain list is the
+one-branch tree where each key sits under the previous one.
 
-...this defines an ordered list of categorical dimensions. The `_schema` table in DuckDB has one column per schema key, plus `schema_id` and `schema_level`.
+## A record names any SET of keys
 
-## Contiguous vs Non-Contiguous Keys
-
-### Contiguous (prefix) keys
-
-The method `_schema_key_columns(schema_level)` returns a **contiguous prefix** of the schema:
-
-```python
-def _schema_key_columns(self, schema_level: str) -> List[str]:
-    idx = self.dataset_schema.index(schema_level)
-    return self.dataset_schema[: idx + 1]
-```
-
-This is used by Mode A (DataFrame) and Mode C (tuple-dict) saves, where the key set is derived from the schema level.
-
-### Non-contiguous (arbitrary subset) keys
-
-Mode B saves (keyword arguments) accept **any subset** of schema keys. The `schema_level` is set to the deepest provided key in the hierarchy, and unprovided intermediate keys are stored as NULL in `_schema`.
-
-For example, with the schema above:
+A save names whichever keys it has, as keyword arguments or as columns of a
+returned table. There is no contiguity requirement:
 
 ```python
 db.save("cohens_d", 0.85, subject="S01", intervention="RMT30", speed="SSV")
 ```
 
-- `schema_level` = `"speed"` (deepest provided key)
-- `_schema` row: `subject="S01", intervention="RMT30", timepoint=NULL, speed="SSV", trial=NULL, cycle=NULL`
+- `schema_level` is the deepest named key in the list,
+- the `_schema` row has `timepoint`, `trial` and `cycle` NULL,
+- a NULL means "this record does not name this key", not "unknown".
 
-This enables cross-cutting analyses where results collapse across intermediate dimensions (e.g., computing Cohen's d across timepoints for each speed).
+That is what lets results collapse across intermediate dimensions (Cohen's d
+across timepoints for each speed), and what lets a branched schema hold a
+record at `brand/location/person` with `category` and `item` NULL.
 
-## Where Key Resolution Happens
+## Where key resolution happens
 
-### `_infer_schema_level` (`database.py`)
+- `SciDuck.get_or_create_schema_id` (`scidb/store/sciduck.py`) derives the key
+  columns from the keys the caller gave and requires NULL in every other schema
+  column, so different key sets are different `_schema` rows even at the same
+  `schema_level`.
+- `batch_get_or_create_schema_ids` groups by `(schema_level, frozenset(keys))`
+  for the same reason.
+- `load` selects every schema column and filters on whichever keys were given.
+- Variable views select every schema column.
 
-Returns the deepest provided key in the hierarchy. Accepts any subset of schema keys — no contiguity requirement.
+## What a variable's "level" is
 
-### `_get_or_create_schema_id` (`sciduck.py`)
+A variable's level is the set of keys its records populate
+(`scidb.model.filters.schema_id_key_closure`): the populated keys plus their
+ancestors. On a linear schema that is the prefix of the list up to the deepest
+populated key, which is why this used to be called "the level index". A
+variable saved with a gap (subject and trial, no session) is still at the
+prefix through trial.
 
-Derives `key_cols` from the provided `key_values` dict (not from `_schema_key_columns`). Matches on provided keys and requires NULLs for all other schema columns, ensuring distinct `_schema` rows for different key subsets.
+## Changing keys
 
-### `batch_get_or_create_schema_ids` (`sciduck.py`)
-
-Groups by `(schema_level, frozenset(key_values.keys()))` so that entries with different key sets are handled separately, even if they share the same `schema_level`.
-
-### `save()` Mode B (`sciduck.py`)
-
-Computes `key_cols` as `[k for k in self.dataset_schema if k in schema_keys]` — the provided keys in schema order. No missing-key validation; the key set is exactly what the caller provides.
-
-### `load()` (`sciduck.py`)
-
-- Selects **all** schema columns (not just the prefix), so non-contiguous keys appear in results
-- Filters on any provided schema key
-- Resolves `parameter_id` to the latest version that has data matching the provided schema keys (via `_latest_parameter_id`)
-
-### `_schema_key_columns()` — still used
-
-Mode A (DataFrame) and Mode C (tuple-dict) saves still use `_schema_key_columns` to derive key columns from the schema level. Their contiguous-prefix semantics remain appropriate since the key set is implicit from the level.
-
-## What Does NOT Change
-
-- **`for_each`** — No contiguity logic; passes flat metadata through
-- **Bridge layer** (`sci-matlab/bridge.py`) — No contiguity logic
-- **Variable views** (`_create_variable_view`) — Already SELECT all schema columns
-- **`_split_metadata()`** — Already a flat dict partition, no prefix logic
-
-## Design Rationale
-
-The original contiguous-prefix design was chosen because it maps cleanly to hierarchical experimental designs (subjects contain sessions contain trials). Non-contiguous key support was added to handle cross-cutting analyses where the natural grouping doesn't follow the linear order — a common pattern in scientific data processing (e.g., collapsing across intermediate dimensions like timepoints).
-
-The `schema_level` is retained as the deepest provided key, preserving backward compatibility. NULLs in the `_schema` table now appear at any position (not just trailing), distinguishing non-contiguous entries from contiguous ones.
+See `changing-schema-keys.md` (rebuild while empty) and
+`branched-schema-keys.md` (add keys, and change unused ones, while data exists).

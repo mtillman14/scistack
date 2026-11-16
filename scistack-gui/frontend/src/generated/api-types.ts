@@ -368,7 +368,7 @@ export interface RunRef {
  * via the `definition` "ChangeSchemaKeysRequest".
  */
 export interface ChangeSchemaKeysRequest {
-  keys: string[]
+  keys: string[] | string[][]
   renames?: {
     [k: string]: string
   }

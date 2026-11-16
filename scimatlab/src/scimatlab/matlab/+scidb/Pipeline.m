@@ -172,7 +172,7 @@ classdef Pipeline < handle
         function run_all(obj, varargin)
             %RUN_ALL  Run own steps + their ancestors in dependency order.
             %   Options: 'skip_computed' (default true).
-            obj.drive('all', '', false, [], obj.opt_skip(varargin{:}));
+            obj.drive('all', '', false, obj.opt_skip(varargin{:}));
         end
 
         function run_until(obj, target, varargin)

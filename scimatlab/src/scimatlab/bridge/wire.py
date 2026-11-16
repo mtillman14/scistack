@@ -180,9 +180,18 @@ def _reconstruct_input_for_keys(spec):
     if kind == "variant":
         from scidb.model.variant import Variant
 
+        from scidb.model.log import Log
+
+        # MATLAB ships every name-value pair as given (fn=, code_version=,
+        # run_options= included) and keeps nesting; Variant owns their meaning.
         inner = _reconstruct_input_for_keys(spec["inner"])
-        branch_params = dict(spec.get("branch_params", {}) or {})
-        return Variant(inner, **branch_params)
+        pairs = dict(spec.get("branch_params", {}) or {})
+        variant = Variant(inner, **pairs)
+        Log.debug(
+            f"[bridge] Variant from MATLAB: pairs={pairs!r} -> pins={variant.branch_params!r}",
+            layer="matlab",
+        )
+        return variant
     if kind == "merge":
         from scifor import Merge
 

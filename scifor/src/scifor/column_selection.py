@@ -27,11 +27,11 @@ class ColumnSelection:
     per-column results into one wide row. All iterate selections in a single
     for_each() call must share the same column set (zipped by name).
 
-    An **empty** ``columns`` (the default, e.g. ``ColumnSelection(df)``) means
+    ``columns=None`` (the default, e.g. ``ColumnSelection(df)``) or ``[]`` means
     "all data columns" — every column that is not a schema key — resolved at
-    for_each time from the DataFrame. This mirrors how an empty iteration list
-    (``subject=[]``) means "all values from the data". (``None`` is accepted as
-    an alias for the empty/all sentinel for backward compatibility.)
+    for_each time from the DataFrame. ``[]`` mirrors how an empty iteration
+    list (``subject=[]``) means "all values from the data"; ``None`` is what
+    the MATLAB bridge sends for the same thing. Both normalize to ``[]``.
 
     ``excl_columns`` drops named columns from whatever ``columns`` resolves to
     (explicit list or the all-columns expansion). This is the natural companion
@@ -50,9 +50,9 @@ class ColumnSelection:
         """
         Args:
             data: A pandas DataFrame.
-            columns: List of column names to extract after filtering. An empty
-                list ``[]`` (the default) means "all data columns", resolved at
-                for_each time. ``None`` is accepted as an alias for ``[]``.
+            columns: List of column names to extract after filtering.
+                ``None`` (the default) or ``[]`` means "all data columns",
+                resolved at for_each time.
                 With ``iterate=True`` it may also give column GROUPS, each
                 passed to the function together (``parse_column_groups``):
                 a list holding sublists (``[["a", "a_date"], "b"]``, paired

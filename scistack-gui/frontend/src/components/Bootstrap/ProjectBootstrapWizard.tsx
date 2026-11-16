@@ -37,6 +37,7 @@
 
 import { useState } from "react";
 import { callBackend } from "../../api";
+import { declarationOf, describeBranches, flatKeys, parseSchemaText } from "../schemaText";
 import * as modalStyles from "../modalStyles";
 
 type DbMode = "open" | "create" | null;
@@ -55,10 +56,11 @@ export default function ProjectBootstrapWizard({ onReady }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const schemaKeysList = createSchemaKeys
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // One text box: commas within a branch, semicolons between branches
+  // ("./schemaText"). Only the split lives here; a mistake (a key with two
+  // parents) is refused by the backend and shown in the error banner.
+  const schemaBranches = parseSchemaText(createSchemaKeys);
+  const schemaKeysList = flatKeys(schemaBranches);
 
   const canSubmit =
     (dbMode === "open"
@@ -78,7 +80,7 @@ export default function ProjectBootstrapWizard({ onReady }: Props) {
         await callBackend("create_project", {
           folder: createFolder.trim(),
           filename: createFilename.trim(),
-          schema_keys: schemaKeysList,
+          schema_keys: declarationOf(schemaBranches),
           entities_file: createEntitiesFile.trim() || null,
         });
       } else {
@@ -146,13 +148,18 @@ export default function ProjectBootstrapWizard({ onReady }: Props) {
                   placeholder="my_study (.duckdb appended automatically)"
                 />
               </Field>
-              <Field label="Schema keys (comma-separated, top-down)">
+              <Field label="Schema keys (comma-separated, top-down; a semicolon starts another branch)">
                 <input
                   style={styles.input}
                   value={createSchemaKeys}
                   onChange={(e) => setCreateSchemaKeys(e.target.value)}
-                  placeholder="subject, session, trial"
+                  placeholder="subject, session, trial   or   brand, category, item; brand, location, person"
                 />
+                {schemaBranches.length > 0 && (
+                  <div style={{ fontSize: 11, color: "#aaa", marginTop: 4 }}>
+                    {describeBranches(schemaBranches)}
+                  </div>
+                )}
               </Field>
               <Field label="Entities file (Variables/Parameters/PathInputs created from the GUI, relative to the project root — not to the database folder)">
                 <input

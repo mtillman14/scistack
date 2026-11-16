@@ -271,17 +271,37 @@ class SchemaKeysMismatchError(SciStackError, ValueError):
     work. ``passed`` and ``existing`` are the two key lists."""
 
     def __init__(
-        self, passed: "list[str]", existing: "list[str]", path: "object | None" = None
+        self,
+        passed: "list[str]",
+        existing: "list[str]",
+        path: "object | None" = None,
+        *,
+        passed_parents: "dict | None" = None,
+        existing_parents: "dict | None" = None,
     ) -> None:
         self.passed = list(passed)
         self.existing = list(existing)
+        self.passed_parents = passed_parents
+        self.existing_parents = existing_parents
         where = f" for {path}" if path else ""
         lines = [
             f"Schema key mismatch{where}.",
             f"  Keys passed in:          {self.passed}",
             f"  Keys in the database:    {self.existing}",
         ]
-        if sorted(self.passed) == sorted(self.existing):
+        if passed_parents is not None and existing_parents is not None:
+            differ = sorted(
+                k
+                for k in set(passed_parents) | set(existing_parents)
+                if passed_parents.get(k) != existing_parents.get(k)
+            )
+            lines.append("The keys match but their parents differ (a key sits under one parent):")
+            for k in differ:
+                lines.append(
+                    f"  {k!r}: parent {passed_parents.get(k)!r} passed, "
+                    f"{existing_parents.get(k)!r} in the database"
+                )
+        elif sorted(self.passed) == sorted(self.existing):
             lines.append(
                 "The names match but the order differs (the order is the "
                 "hierarchy, coarse to fine)."
@@ -354,8 +374,8 @@ class DuplicateLocationError(SciStackError):
                 "this dataset has no saved data yet, so its schema keys can "
                 "still be changed"
                 if self.dataset_empty
-                else "this dataset already holds data, so its schema keys "
-                "can't be changed: that means a new project database"
+                else "this dataset already holds data, so its existing keys "
+                "can't be renamed or moved, but a new key can be added"
             )
             + ") "
             f"or change the data (remove the extra row in the "
@@ -371,12 +391,16 @@ class DuplicateLocationError(SciStackError):
     @property
     def distribute_target(self) -> "str | None":
         """The schema key below the colliding locations, where `distribute=True`
-        would number these rows. None at the deepest key."""
+        would number these rows: the single child of the level in the schema
+        tree. None at a leaf, and None where a key has several children (the
+        target would be ambiguous; ``for_each`` asks for it by name)."""
+        from scifor.schema import tree_for
+
         level = self._level()
         if level not in self.schema_keys:
             return self.schema_keys[0] if self.schema_keys else None
-        index = self.schema_keys.index(level)
-        return self.schema_keys[index + 1] if index + 1 < len(self.schema_keys) else None
+        children = tree_for(self.schema_keys).children(level)
+        return children[0] if len(children) == 1 else None
 
     def _level(self) -> str:
         """The deepest schema key the colliding locations name."""
@@ -400,17 +424,18 @@ class DuplicateLocationError(SciStackError):
                 "action": "change_schema_keys",
             }
         return {
-            "title": "Change the dataset schema",
+            "title": "Add a schema key",
             "text": (
-                f"This dataset already holds data, so its schema keys "
-                f"({keys}) can't be changed here. If the rows are separate "
-                f"observations (for example two visits or sessions), the "
-                f"dataset needs a schema key that tells them apart, and the "
-                f"data needs that column. Schema keys are set when a "
-                f"database is created, so this means creating a new project "
-                f"database with the extra key and running again."
+                f"This dataset already holds data, so the keys its records use "
+                f"({keys}) can't be renamed or moved. If the rows are separate "
+                f"observations (for example two visits or sessions), you can "
+                f"ADD a key that tells them apart: a deeper level, or a new "
+                f"branch. Existing records keep their meaning (they simply do "
+                f"not name the new key), and the data needs that column. The "
+                f"window shows the current keys and asks for the new ones."
             ),
-            "action": None,
+            "action": "change_schema_keys",
+            "button": "Add a schema key…",
         }
 
     @property

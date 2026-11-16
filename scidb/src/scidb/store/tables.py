@@ -655,6 +655,23 @@ SCHEMA_KEY_TYPE = _core(
     bundle=BUNDLE_INTENT, kept="schema key types (declarations)",
 )
 
+# Each schema key's PARENT (scidb.store.schema_tree_store, the one owner;
+# scifor.schema.SchemaTree holds the rules). One row per key, the whole tree,
+# replaced as a unit. The tree is a default, never a firewall: a record may
+# name any set of keys. Not bundled: an import builds its database from the
+# manifest's `schema_parents` (a key map could otherwise rename a parent
+# out from under these rows).
+SCHEMA_KEY_PARENT = _core(
+    "_schema_key_parent",
+    """
+    CREATE TABLE IF NOT EXISTS _schema_key_parent (
+        "key"  VARCHAR PRIMARY KEY,
+        parent VARCHAR
+    )
+    """,
+    kept="the dataset's key tree: it goes with the keys, not with the data",
+)
+
 # Why a location got no output in a run: one row per location that failed
 # or had no data (scidb.provenance.outcomes). Successes are already recorded
 # by the graph, so they are not repeated here. Not tied to ``_run``: a run

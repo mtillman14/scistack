@@ -119,7 +119,9 @@ def add_bundle_subparsers(sub: argparse._SubParsersAction) -> None:
         nargs="+",
         default=None,
         metavar="KEY",
-        help="Your schema keys, top-down (default: the exporter's).",
+        help="Your schema keys, top-down (default: the exporter's). One word per "
+        "key, or ONE quoted text for a branched schema: "
+        "'brand,category,item;brand,location,person'.",
     )
     imp.add_argument(
         "--map",
@@ -284,6 +286,19 @@ def _confirm_trust(bundle: Path) -> bool:
     return answer.strip().lower() in ("y", "yes")
 
 
+def _schema_arg(tokens):
+    """``--schema`` as the declaration: bare words are one branch; a single
+    word holding a comma or semicolon is the text form (scifor.parse_schema_text,
+    the one owner of the split)."""
+    if not tokens:
+        return None
+    if len(tokens) == 1 and any(c in tokens[0] for c in ",;"):
+        from scifor import parse_schema_text
+
+        return parse_schema_text(tokens[0])
+    return list(tokens)
+
+
 def _cmd_import(args: argparse.Namespace) -> dict:
     from scidb.project.bundle import read_bundle
 
@@ -303,7 +318,7 @@ def _cmd_import(args: argparse.Namespace) -> dict:
     report = import_project_bundle(
         args.bundle,
         into,
-        schema_keys=args.schema,
+        schema_keys=_schema_arg(args.schema),
         key_map=key_map or None,
         path_roots=path_roots or None,
         import_history=args.import_history,

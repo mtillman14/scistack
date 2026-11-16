@@ -55,8 +55,17 @@ classdef TestSchemaKeyRoundTrip < matlab.unittest.TestCase
         function test_default_keeps_caller_classes(testCase)
             for c = key_classes()
                 [seen, result] = run_once(c{1}.value, c{1}.session);
-                testCase.verifyEqual(seen.class, class(c{1}.value), c{1}.label);
-                testCase.verifyEqual(class(result.subject), class(c{1}.value), c{1}.label);
+                % Numbers keep their class (int32 stays int32). Text keys are
+                % STRINGS inside a function and in the result: a char key
+                % comes back as string (coerce_table_columns: "Strings the user
+                % originally passed stay strings"), so the same text compares
+                % the same whichever way it was passed.
+                expected = class(c{1}.value);
+                if strcmp(expected, 'char')
+                    expected = 'string';
+                end
+                testCase.verifyEqual(seen.class, expected, c{1}.label);
+                testCase.verifyEqual(class(result.subject), expected, c{1}.label);
             end
         end
 

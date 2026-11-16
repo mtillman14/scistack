@@ -48,9 +48,12 @@ export interface RemedyStep {
   text: string
   // 'distribute_rows': turn on the node's distribute run option (backend
   // set_distribute) and run it again (RERUN_NODE_EVENT).
-  // 'change_schema_keys': open the SchemaKeysDialog (the dataset is empty, so
-  // its keys can still change; backend schema_key_proposal, change_schema_keys).
+  // 'change_schema_keys': open the SchemaKeysDialog (an empty dataset can
+  // change its keys; one that holds data can add keys; backend
+  // schema_key_proposal, change_schema_keys).
   action?: 'reveal_function' | 'distribute_rows' | 'change_schema_keys' | null
+  // The label of the action's button, when the backend wants one.
+  button?: string
 }
 
 /** Asks one FunctionNode to run again, optionally with run options patched

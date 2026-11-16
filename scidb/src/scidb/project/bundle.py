@@ -596,6 +596,9 @@ def export_project(
             "package": package,
             "database": Path(str(db.dataset_db_path)).name,
             "schema_keys": list(db.dataset_schema_keys),
+            # Each key's parent: the tree travels with the keys (the database
+            # table is not bundled; see store.tables SCHEMA_KEY_PARENT).
+            "schema_parents": dict(db.schema_tree.parent_of),
             # Lets import turn the exporter's absolute in-project config paths
             # back into relative ones (the GUI's first-write seeds).
             "root": root.as_posix(),
@@ -974,6 +977,31 @@ def _write_import_record(root: Path, bundle_path, manifest: dict, keys: list[str
     Log.info(f"[bundle] import record: {state / IMPORT_RECORD}")
 
 
+def _declaration(project: dict, keys: list, overridden):
+    """What the new database is created with: what the recipient typed when
+    they overrode the schema (a plain list is one branch; branches are kept),
+    else the exporter's tree. A recipient who renames or drops keys states the
+    tree they want; nothing is inferred for them."""
+    from scifor.schema import SchemaTree, as_tree
+
+    if overridden:
+        return as_tree(overridden)
+    parents = project.get("schema_parents")
+    if not parents:
+        return keys
+    return SchemaTree.from_parents(keys, parents)
+
+
+def _branches_of(project: dict, keys: list) -> list:
+    """The exporter's declaration as one list per branch."""
+    from scifor.schema import SchemaTree
+
+    parents = project.get("schema_parents")
+    if not parents or not keys:
+        return [list(keys)] if keys else []
+    return SchemaTree.from_parents(keys, parents).paths()
+
+
 def _default_open_db(db_path: Path, schema_keys: list[str]):
     from scidb import configure_database
 
@@ -985,7 +1013,7 @@ def import_project(
     target_root: "Path | str",
     *,
     providers: "list[SectionProvider] | None" = None,
-    schema_keys: "list[str] | None" = None,
+    schema_keys: "list | None" = None,
     key_map: "dict[str, str | None] | None" = None,
     path_roots: "dict[str, str] | None" = None,
     import_history: bool = True,
@@ -1014,7 +1042,15 @@ def import_project(
     manifest = bundle.manifest
     project = manifest.get("project") or {}
     root = Path(target_root).resolve()
-    keys = list(schema_keys or project.get("schema_keys") or [])
+    from scifor.schema import SchemaTree, as_tree
+
+    if schema_keys:
+        try:
+            keys = list(as_tree(schema_keys).keys)
+        except ValueError as e:
+            raise BundleError(str(e)) from e
+    else:
+        keys = list(project.get("schema_keys") or [])
     if not keys:
         raise BundleError("no schema keys: the bundle records none and none were given")
     from scidb.project.schema_map import KeyMap, MapReport
@@ -1109,7 +1145,7 @@ def import_project(
     report.created += [p for p in init.created if p not in report.created]
     report.warnings += init.warnings
 
-    db = (open_db or _default_open_db)(db_path, keys)
+    db = (open_db or _default_open_db)(db_path, _declaration(project, keys, schema_keys))
     report.created.append(db_path)
 
     history_live = _import_history_and_data(
@@ -1167,6 +1203,10 @@ def preview(
         "path": str(Path(bundle_path).resolve()),
         "package": project.get("package"),
         "schema_keys": keys,
+        # The exporter's branches in the text form the import prompt shows
+        # ("brand, category, item; brand, location, person"); a bundle with no
+        # stored parents is one branch.
+        "schema_branches": _branches_of(project, keys),
         "database": project.get("database"),
         "exported_root": project.get("root"),
         "options": manifest.get("options") or {},

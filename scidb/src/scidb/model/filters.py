@@ -220,24 +220,20 @@ def _validate_filter_schema_level(
     filter_table_name: str,
     target_table_name: str,
 ) -> None:
-    """Validate that the filter variable's schema level is same or coarser than target.
+    """Validate that the filter variable's key set fits inside the target's.
 
-    The plan specifies:
-    - filter at same or coarser level → OK (coarser = fewer schema keys)
-    - filter at finer level → error
-    - filter schema keys must be subset of target schema keys
+    - filter keys equal or a subset of the target's (coarser) -> OK
+    - filter keys a superset (finer) -> error
+    - neither (the keys sit on different branches and no record of the target
+      names the filter's) -> error: there is no row to line them up on
 
-    We infer schema level by looking at which schema columns are non-NULL in
-    the filter variable's _schema rows.
+    A variable's key set is the keys its locations name, with their ancestors
+    (``schema_id_key_closure``); on a linear schema that is the prefix up to
+    the deepest populated key, exactly the old "level".
 
     Raises:
         ValueError: If validation fails.
     """
-    schema_keys = db.dataset_schema_keys
-
-    # Get the schema_ids used by filter and target, then look at which
-    # schema columns are populated. The "level" is the deepest key that
-    # has a non-null value.
     filter_schema_ids = _get_all_schema_ids_for_variable(db, filter_table_name)
     target_schema_ids = _get_all_schema_ids_for_variable(db, target_table_name)
 
@@ -250,55 +246,28 @@ def _validate_filter_schema_level(
         # Target has no data — nothing to filter
         return
 
-    # Get schema rows for filter
-    if filter_schema_ids:
-        placeholders = ", ".join(["?"] * len(filter_schema_ids))
-        filter_schema_rows = db._duck.fetchdf(
-            f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
-            list(filter_schema_ids),
+    filter_keys = schema_id_key_closure(db, filter_schema_ids)
+    target_keys = schema_id_key_closure(db, target_schema_ids)
+    if filter_keys <= target_keys:
+        return
+
+    tree = db.schema_tree
+    filter_level = ", ".join(tree.leaves(filter_keys)) or "unknown"
+    target_level = ", ".join(tree.leaves(target_keys)) or "unknown"
+    if filter_keys > target_keys:
+        raise ValueError(
+            f"Filter variable '{filter_class.__name__}' is stored at schema level "
+            f"'{filter_level}' which is finer than target '{target_class.__name__}' "
+            f"at level '{target_level}'. Filters must be at the same or coarser level "
+            f"than the target."
         )
-
-        if len(filter_schema_rows) > 0:
-            # Find the deepest non-null key in the filter rows → filter level
-            filter_level_idx = -1
-            for i, key in enumerate(schema_keys):
-                if key in filter_schema_rows.columns:
-                    non_null = filter_schema_rows[key].notna()
-                    if non_null.any():
-                        filter_level_idx = i
-
-            # Get target schema rows
-            placeholders2 = ", ".join(["?"] * len(target_schema_ids))
-            target_schema_rows = db._duck.fetchdf(
-                f"SELECT * FROM _schema WHERE schema_id IN ({placeholders2})",
-                list(target_schema_ids),
-            )
-
-            target_level_idx = -1
-            for i, key in enumerate(schema_keys):
-                if key in target_schema_rows.columns:
-                    non_null = target_schema_rows[key].notna()
-                    if non_null.any():
-                        target_level_idx = i
-
-            # Filter must be at same or coarser (earlier in hierarchy) level
-            if filter_level_idx > target_level_idx:
-                filter_level = (
-                    schema_keys[filter_level_idx]
-                    if filter_level_idx >= 0
-                    else "unknown"
-                )
-                target_level = (
-                    schema_keys[target_level_idx]
-                    if target_level_idx >= 0
-                    else "unknown"
-                )
-                raise ValueError(
-                    f"Filter variable '{filter_class.__name__}' is stored at schema level "
-                    f"'{filter_level}' which is finer than target '{target_class.__name__}' "
-                    f"at level '{target_level}'. Filters must be at the same or coarser level "
-                    f"than the target."
-                )
+    raise ValueError(
+        f"Filter variable '{filter_class.__name__}' (keys: {filter_level}) and target "
+        f"'{target_class.__name__}' (keys: {target_level}) sit on different branches "
+        f"of the schema, and no record of the target names "
+        f"{sorted(filter_keys - target_keys)}, so there is no row to line the filter up "
+        f"on. A variable saved at both levels is what would link them."
+    )
 
 
 def _expand_coarse_to_fine_schema_ids(
@@ -332,19 +301,11 @@ def _expand_coarse_to_fine_schema_ids(
     if len(coarse_rows) == 0:
         return set()
 
-    # Determine the coarse level (deepest non-null key in filter rows)
-    coarse_level_idx = -1
-    for i, key in enumerate(schema_keys):
-        if key in coarse_rows.columns:
-            non_null = coarse_rows[key].notna()
-            if non_null.any():
-                coarse_level_idx = i
-
-    if coarse_level_idx < 0:
+    # The coarse keys: those the filter's rows name, with their ancestors.
+    coarse_keys = schema_id_key_closure(db, coarse_schema_ids)
+    if not coarse_keys:
         return set()
-
-    # The coarse keys are those up to and including coarse_level_idx
-    coarse_key_names = schema_keys[: coarse_level_idx + 1]
+    coarse_key_names = [k for k in schema_keys if k in coarse_keys]
 
     # Get all target schema_ids
     target_all_ids = _get_all_schema_ids_for_variable(db, target_table_name)
@@ -417,12 +378,12 @@ class VariableFilter(Filter):
         filter_table_name = self.variable_class.table_name()
         sql_op = _op_to_sql(self.op)
 
-        filter_level_idx, target_level_idx = _get_level_indices(
+        filter_keys, target_keys = _get_level_keys(
             db, filter_table_name, target_table_name
         )
 
         # A filter variable finer than the target is not applicable — skip it.
-        if filter_level_idx > target_level_idx:
+        if filter_keys > target_keys:
             return _get_all_schema_ids_for_variable(db, target_table_name)
 
         # Validate schema level compatibility
@@ -449,7 +410,7 @@ class VariableFilter(Filter):
             db, filter_table_name, condition_sql, condition_params
         )
 
-        if filter_level_idx < target_level_idx:
+        if filter_keys < target_keys:
             matching_ids = _expand_coarse_to_fine_schema_ids(
                 db, matching_ids, target_table_name
             )
@@ -461,8 +422,8 @@ class VariableFilter(Filter):
                 target_variable_class,
                 filter_table_name,
                 target_table_name,
-                filter_level_idx,
-                target_level_idx,
+                filter_keys,
+                target_keys,
             )
 
         return matching_ids
@@ -521,12 +482,12 @@ class ColumnFilter(Filter):
         filter_table_name = self.variable_class.table_name()
         sql_op = _op_to_sql(self.op)
 
-        filter_level_idx, target_level_idx = _get_level_indices(
+        filter_keys, target_keys = _get_level_keys(
             db, filter_table_name, target_table_name
         )
 
         # A filter variable finer than the target is not applicable — skip it.
-        if filter_level_idx > target_level_idx:
+        if filter_keys > target_keys:
             return _get_all_schema_ids_for_variable(db, target_table_name)
 
         # Validate schema level compatibility
@@ -552,7 +513,7 @@ class ColumnFilter(Filter):
             db, filter_table_name, condition_sql, condition_params
         )
 
-        if filter_level_idx < target_level_idx:
+        if filter_keys < target_keys:
             matching_ids = _expand_coarse_to_fine_schema_ids(
                 db, matching_ids, target_table_name
             )
@@ -564,8 +525,8 @@ class ColumnFilter(Filter):
                 target_variable_class,
                 filter_table_name,
                 target_table_name,
-                filter_level_idx,
-                target_level_idx,
+                filter_keys,
+                target_keys,
             )
 
         return matching_ids
@@ -611,12 +572,12 @@ class InFilter(Filter):
     ) -> set[int]:
         filter_table_name = self.variable_class.table_name()
 
-        filter_level_idx, target_level_idx = _get_level_indices(
+        filter_keys, target_keys = _get_level_keys(
             db, filter_table_name, target_table_name
         )
 
         # A filter variable finer than the target is not applicable — skip it.
-        if filter_level_idx > target_level_idx:
+        if filter_keys > target_keys:
             return _get_all_schema_ids_for_variable(db, target_table_name)
 
         _validate_filter_schema_level(
@@ -646,7 +607,7 @@ class InFilter(Filter):
             db, filter_table_name, condition_sql, condition_params
         )
 
-        if filter_level_idx < target_level_idx:
+        if filter_keys < target_keys:
             matching_ids = _expand_coarse_to_fine_schema_ids(
                 db, matching_ids, target_table_name
             )
@@ -658,8 +619,8 @@ class InFilter(Filter):
                 target_variable_class,
                 filter_table_name,
                 target_table_name,
-                filter_level_idx,
-                target_level_idx,
+                filter_keys,
+                target_keys,
             )
 
         return matching_ids
@@ -953,9 +914,8 @@ class SchemaKeyCompareFilter(Filter):
         # If the target variable is stored at a coarser level than the filter
         # key (e.g. subject-level variable with a session filter), the filter
         # is not applicable — return all target ids unfiltered.
-        filter_key_idx = schema_keys.index(self.key)
-        target_level_idx = _get_variable_level_idx(db, target_table_name)
-        if 0 <= target_level_idx < filter_key_idx:
+        target_keys = _get_variable_key_closure(db, target_table_name)
+        if target_keys and self.key not in target_keys:
             return target_ids
 
         sql_op = _op_to_sql(self.op)
@@ -1022,9 +982,8 @@ class SchemaKeyInFilter(Filter):
         # If the target variable is stored at a coarser level than the filter
         # key (e.g. subject-level variable with a session filter), the filter
         # is not applicable — return all target ids unfiltered.
-        filter_key_idx = schema_keys.index(self.key)
-        target_level_idx = _get_variable_level_idx(db, target_table_name)
-        if 0 <= target_level_idx < filter_key_idx:
+        target_keys = _get_variable_key_closure(db, target_table_name)
+        if target_keys and self.key not in target_keys:
             return target_ids
 
         str_values = [schema_str(v) for v in self.values]
@@ -1087,41 +1046,56 @@ def split_schema_key_filters(
 # ---------------------------------------------------------------------------
 
 
-def _get_variable_level_idx(db: DatabaseManager, table_name: str) -> int:
-    """Return the index of the deepest non-null schema key for this variable.
+def schema_id_key_closure(db: DatabaseManager, schema_ids) -> frozenset:
+    """The keys a set of schema locations name, closed upward.
 
-    Returns -1 when the variable has no records or no schema columns are populated.
+    The keys with a non-NULL value in any of the locations, plus every ancestor
+    of the deepest of them. On a linear schema this is the prefix of the key
+    list up to the deepest populated key (the old "level index"); on a
+    branched one it is the chain of each populated leaf, so a person-level
+    variable is {brand, location, person} and never mentions category or item.
+    The one owner of "what key set does this variable live at"; a variable
+    that names two branches (a Purchase) keeps both. Empty when nothing is
+    populated.
     """
-    schema_keys = db.dataset_schema_keys
-    ids = _get_all_schema_ids_for_variable(db, table_name)
+    ids = set(schema_ids)
     if not ids:
-        return -1
+        return frozenset()
     placeholders = ", ".join(["?"] * len(ids))
     rows = db._duck.fetchdf(
         f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
         list(ids),
     )
     if len(rows) == 0:
-        return -1
-    level_idx = -1
-    for i, key in enumerate(schema_keys):
-        if key in rows.columns and rows[key].notna().any():
-            level_idx = i
-    return level_idx
+        return frozenset()
+    populated = {k for k in db.dataset_schema_keys if k in rows.columns and rows[k].notna().any()}
+    tree = db.schema_tree
+    closure: set[str] = set()
+    for leaf in tree.leaves(populated):
+        closure.update(tree.chain(leaf))
+    return frozenset(closure)
 
 
-def _get_level_indices(
+def _get_variable_key_closure(db: DatabaseManager, table_name: str) -> frozenset:
+    """:func:`schema_id_key_closure` of one variable's locations."""
+    return schema_id_key_closure(db, _get_all_schema_ids_for_variable(db, table_name))
+
+
+def _get_level_keys(
     db: DatabaseManager,
     filter_table_name: str,
     target_table_name: str,
-) -> tuple[int, int]:
-    """Return (filter_level_idx, target_level_idx) in dataset_schema_keys.
+) -> tuple[frozenset, frozenset]:
+    """Return (filter_keys, target_keys): each variable's key set.
 
-    -1 means no keys are populated (no records or no schema columns).
+    Compare them as sets: ``filter_keys > target_keys`` means the filter is
+    finer than the target (not applicable), ``<`` means coarser (expand to the
+    target's rows), equal means the same level. Empty means no keys are
+    populated (no records or no schema columns).
     """
     return (
-        _get_variable_level_idx(db, filter_table_name),
-        _get_variable_level_idx(db, target_table_name),
+        _get_variable_key_closure(db, filter_table_name),
+        _get_variable_key_closure(db, target_table_name),
     )
 
 
@@ -1131,8 +1105,8 @@ def _validate_filter_coverage(
     target_class,
     filter_table_name: str,
     target_table_name: str,
-    filter_level_idx: int,
-    target_level_idx: int,
+    filter_keys: frozenset,
+    target_keys: frozenset,
     target_schema_ids_override: set[int] | None = None,
 ) -> None:
     """Validate that the filter covers all schema locations the target has data for.
@@ -1162,7 +1136,7 @@ def _validate_filter_coverage(
         target_class.__name__ if target_class is not None else "the Merge result"
     )
 
-    if filter_level_idx == target_level_idx:
+    if filter_keys == target_keys:
         # Same level — every target schema_id must be in filter
         missing = target_ids - filter_ids
         if missing:
@@ -1171,10 +1145,10 @@ def _validate_filter_coverage(
                 f"{len(missing)} schema locations that {target_name} has "
                 "data for. Ensure the filter variable covers all target locations."
             )
-    elif filter_level_idx < target_level_idx:
+    elif filter_keys < target_keys:
         # Coarser level — every coarse key combination in the target must exist in filter
         schema_keys = db.dataset_schema_keys
-        coarse_key_names = schema_keys[: filter_level_idx + 1]
+        coarse_key_names = [k for k in schema_keys if k in filter_keys]
 
         # Get coarse key tuples from filter
         if filter_ids:

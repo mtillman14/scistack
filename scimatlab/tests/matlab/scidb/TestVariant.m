@@ -69,17 +69,38 @@ classdef TestVariant < matlab.unittest.TestCase
                 'scidb:Variant');
         end
 
-        function test_variant_nested_conflict_raises(testCase)
+        function test_variant_rejects_each_of(testCase)
             testCase.verifyError( ...
-                @() scidb.Variant(scidb.Variant(ProcessedSignal(), offset=10), offset=20), ...
+                @() scidb.Variant(scifor.EachOf(RawSignal(), ProcessedSignal()), offset=10), ...
                 'scidb:Variant');
         end
 
-        function test_variant_nested_merges(testCase)
+        function test_variant_nested_stays_nested(testCase)
+            % Python's scidb.Variant owns the nested merge (and fn= namespacing
+            % per level), so MATLAB keeps what the user wrote.
             v = scidb.Variant(scidb.Variant(ProcessedSignal(), offset=10), gain=2);
-            testCase.verifyEqual(v.branch_params.offset, 10);
             testCase.verifyEqual(v.branch_params.gain, 2);
-            testCase.verifyTrue(isa(v.var_type, 'ProcessedSignal'));
+            testCase.verifyFalse(isfield(v.branch_params, 'offset'));
+            testCase.verifyTrue(isa(v.var_type, 'scidb.Variant'));
+            testCase.verifyEqual(v.var_type.branch_params.offset, 10);
+        end
+
+        function test_variant_nested_conflict_raises_at_run(testCase)
+            testCase.makeTwoVariants();
+            spec = scidb.Variant(scidb.Variant(ProcessedSignal(), offset=10), offset=20);
+            try
+                scidb.for_each(@double_values, struct('x', spec), {MergedResult()}, ...
+                    'subject', 1, 'session', "A");
+                testCase.verifyFail('a conflicting nested Variant must raise');
+            catch err
+                testCase.verifySubstring(err.message, 'Conflicting branch_param');
+            end
+        end
+
+        function test_variant_stores_options_as_given(testCase)
+            v = scidb.Variant(ProcessedSignal(), fn="add_offset", offset=10, code_version="latest");
+            testCase.verifyEqual(string(v.branch_params.fn), "add_offset");
+            testCase.verifyEqual(string(v.branch_params.code_version), "latest");
         end
 
         function test_variant_stores_branch_params(testCase)
@@ -114,6 +135,18 @@ classdef TestVariant < matlab.unittest.TestCase
 
             r = MergedResult().load('subject', 1, 'session', 'A');
             testCase.verifyEqual(r.data, 50, 'AbsTol', 1e-10);
+        end
+
+        function test_variant_fn_namespaces_the_pin(testCase)
+            % fn= is Python's option, not a branch param: it pins
+            % add_offset.offset=10 (ProcessedSignal=15, double_values -> 30).
+            testCase.makeTwoVariants();
+            scidb.for_each(@double_values, ...
+                struct('x', scidb.Variant(ProcessedSignal(), fn="add_offset", offset=10)), ...
+                {MergedResult()}, ...
+                'subject', 1, 'session', "A");
+            r = MergedResult().load('subject', 1, 'session', 'A');
+            testCase.verifyEqual(r.data, 30, 'AbsTol', 1e-10);
         end
 
         % --- Variant inside Merge (per-constituent) ---

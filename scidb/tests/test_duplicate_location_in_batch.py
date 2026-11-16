@@ -213,7 +213,7 @@ def test_rule_ignores_branch_params_that_copy_the_data_columns():
     assert collisions == []
 
 
-def test_a_dataset_that_holds_data_cannot_change_its_keys(db):
+def test_a_dataset_that_holds_data_can_only_add_keys(db):
     Demo.save(pd.DataFrame({"subject": ["S0"], "score": [0.0]}), db=db)
     df = pd.DataFrame({"subject": ["S1", "S1"], "score": [1.0, 2.0]})
     with pytest.raises(DuplicateLocationError) as info:
@@ -221,10 +221,11 @@ def test_a_dataset_that_holds_data_cannot_change_its_keys(db):
     remedy = info.value.remedy
     assert remedy["dataset_empty"] is False
     step = remedy["steps"][0]
-    assert step["action"] is None
+    assert step["action"] == "change_schema_keys"  # a key can be ADDED
+    assert step["button"] == "Add a schema key…"
     assert "already holds data" in step["text"]
-    assert "new project database" in step["text"]
-    assert "can't be changed" in str(info.value)
+    assert "ADD a key" in step["text"]
+    assert "a new key can be added" in str(info.value)
 
 
 def test_data_columns_keep_the_order_across_the_batch(db):

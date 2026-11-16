@@ -56,6 +56,8 @@ results = for_each(
 )
 ```
 
+A schema can branch (`brand > category > item` beside `brand > location > person`): pass one list per branch, `set_schema([["brand", "category", "item"], ["brand", "location", "person"]])`, and read the tree with `get_schema_tree()`. The tree only picks defaults; see `docs/claude/branched-schema-keys.md`.
+
 For each of the 6 combinations (3 subjects x 2 sessions), scifor filters `data_table` to the matching rows, passes the `emg` column to `my_analysis` along with the constant `cutoff_hz=20`, and collects the return value. The result is a table with `subject`, `session`, and `output` columns — one row per combination.
 
 Your function doesn't need to know about looping, filtering, or metadata. It just receives data and returns a result.
@@ -98,7 +100,7 @@ The examples above cover the most common case, but real pipelines have real-worl
 - **Errors** — A combination whose function raises is skipped and reported, by default: one bad subject does not cost the rest their run. Each failure is recorded with the line in *your* code that raised (logged, and returned in the end-of-run summary). Pass `on_error="stop"` to stop at the first failure and get the original exception, as in a plain loop. The combinations that already finished are kept (see `scifor.stopped_run_of`). See [error surfacing](../docs/claude/error-surfacing.md).
 
 
-See the [API reference](../docs/api/for-each.md) and [batch processing guide](../docs/guide/for_each.md) for details on all of these.
+See the [API reference](../docs/api/scifor.md) (full `for_each` and wrapper syntax) and [batch processing guide](../docs/guide/for_each.md) for details on all of these.
 
 ## Relationship to SciDB
 

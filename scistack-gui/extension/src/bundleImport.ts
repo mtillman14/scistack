@@ -30,6 +30,7 @@ import {
   keysNeedingAChoice,
   parseCliJson,
 } from './bundleImportCore';
+import { declarationOf, describeSchema, flatKeys, formatSchemaText, parseSchemaText } from './schemaKeysText';
 import { resolvePythonPath } from './session';
 
 function runCli(
@@ -106,13 +107,20 @@ export async function importProjectBundle(
   const into = path.join(parent[0].fsPath, folderName.trim());
 
   // Schema: suggest the exporter's.
+  // A branched schema is one text: commas within a branch, semicolons between.
+  const exporterBranches = info.schema_branches ?? [info.schema_keys];
   const schemaInput = await vscode.window.showInputBox({
-    prompt: "Your schema keys, top-down (the exporter's are suggested)",
-    value: info.schema_keys.join(', '),
-    validateInput: (v) => (v.split(',').map((s) => s.trim()).filter(Boolean).length ? null : 'At least one key'),
+    prompt: "Your schema keys, top-down; a semicolon starts another branch (the exporter's are suggested)",
+    value: formatSchemaText(exporterBranches),
+    validateInput: (v) => {
+      const parsed = parseSchemaText(v);
+      if (parsed.error) return parsed.error;
+      return { message: describeSchema(parsed.branches), severity: vscode.InputBoxValidationSeverity.Info };
+    },
   });
   if (schemaInput === undefined) return;
-  const schema = schemaInput.split(',').map((s) => s.trim()).filter(Boolean);
+  const schemaBranches = parseSchemaText(schemaInput).branches;
+  const schema = flatKeys(schemaBranches);
 
   const keyMap: Record<string, string | null> = {};
   const free = schema.filter((k) => !info.schema_keys.includes(k));
@@ -176,11 +184,12 @@ export async function importProjectBundle(
     valueRules = choice.yes;
   }
 
-  const sameSchema = schema.join('\u0000') === info.schema_keys.join('\u0000');
+  // The same text as the exporter's keeps its tree (nothing to override).
+  const sameSchema = formatSchemaText(schemaBranches) === formatSchemaText(exporterBranches);
   const args = buildImportArgs({
     bundle,
     into,
-    schema: sameSchema ? undefined : schema,
+    schema: sameSchema ? undefined : declarationOf(schemaBranches),
     keyMap,
     pathRoots,
     importHistory,

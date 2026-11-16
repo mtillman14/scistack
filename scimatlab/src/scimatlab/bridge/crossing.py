@@ -158,10 +158,18 @@ def datetime_keys_as_text(metadata: dict) -> dict:
     would then re-save at a different address.
     """
     from scicanonicalhash import datetime_key_text
+    from scidb.model.log import Log
 
     out = {}
     for key, value in dict(metadata).items():
         text = datetime_key_text(value)
+        if text is not None:
+            # Which zone object arrived decides whether "[Zone]" is spelled.
+            Log.debug(
+                f"[bridge] datetime key {key!r}: {type(value).__name__} "
+                f"tzinfo={getattr(value, 'tzinfo', None)!r} -> {text!r}",
+                layer="matlab",
+            )
         out[key] = value if text is None else text
     return out
 
@@ -176,4 +184,11 @@ def datetime_key_text_of(value: Any) -> str:
     text = datetime_key_text(value)
     if text is None:
         raise ValueError(f"a datetime schema key must have a value, got {value!r}")
+    from scidb.model.log import Log
+
+    Log.debug(
+        f"[bridge] datetime key from MATLAB: {type(value).__name__} "
+        f"tzinfo={getattr(value, 'tzinfo', None)!r} -> {text!r}",
+        layer="matlab",
+    )
     return text

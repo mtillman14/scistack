@@ -1,7 +1,12 @@
 /**
- * SchemaKeysDialog — change the schema keys of an EMPTY dataset (GitHub
- * issue #10). Opened by RemedyDialog's "Change the schema keys…" button, which
- * the duplicate-location remedy only offers while the dataset holds no data.
+ * SchemaKeysDialog — change the schema keys (GitHub issue #10). Opened by
+ * RemedyDialog's "Change the schema keys…" button.
+ *
+ * Two modes, decided by the backend's `dataset_empty`: an EMPTY dataset takes
+ * the editor below (any key list, renames included); a dataset that HOLDS DATA
+ * can only grow: its tree is shown read-only with which branches hold data, and
+ * "Add a branch" appends new keys (a branch, or a deeper level), which changes
+ * the meaning of nothing that exists (scidb.store.schema_keys_change).
  *
  * Left: the dataset's current keys (read-only). Right: an editable list seeded
  * by the backend's proposal (the PathInput's placeholder keys, then the loaded
@@ -15,11 +20,16 @@ import { callBackend } from '../api'
 import { RERUN_NODE_EVENT } from './DAG/runFailures'
 import type { RerunNodeDetail } from './DAG/runFailures'
 import { dialog, dialogTitle, overlay } from './modalStyles'
+import { declarationOf, describeBranches, parseSchemaText } from './schemaText'
 
 interface Proposal {
   existing: string[]
   proposed: { key: string; source: 'path_input' | 'data_column' }[]
   dataset_empty: boolean
+  /** The tree as one list per branch. */
+  existing_branches?: string[][]
+  /** Which branches hold data (a used key cannot be renamed, moved or deleted). */
+  usage?: { branch: string[]; used: boolean; records: number }[]
 }
 
 interface Row {
@@ -50,6 +60,10 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [hasData, setHasData] = useState(false)
+  const [branches, setBranches] = useState<string[][]>([])
+  const [usage, setUsage] = useState<NonNullable<Proposal['usage']>>([])
+  const [newBranchText, setNewBranchText] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -64,7 +78,9 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
           source: item.source,
           origin: p.existing.includes(item.key) ? item.key : null,
         })))
-        if (!p.dataset_empty) setError('This dataset already holds data, so its schema keys cannot be changed.')
+        setHasData(!p.dataset_empty)
+        setBranches(p.existing_branches ?? [p.existing])
+        setUsage(p.usage ?? [])
         // eslint-disable-next-line no-console
         console.debug(`[schema-keys] proposal node=${nodeId} existing=${p.existing} proposed=${p.proposed.map(x => x.key)}`)
       })
@@ -90,6 +106,11 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
   const renames: Record<string, string> = {}
   for (const r of rows) if (r.origin && r.key.trim() && r.key.trim() !== r.origin) renames[r.origin] = r.key.trim()
   const keys = rows.map(r => r.key.trim())
+  // A dataset with data only grows: the existing tree, then the new branch(es).
+  const newBranches = parseSchemaText(newBranchText)
+  const sent: string[] | string[][] = hasData
+    ? declarationOf([...branches, ...newBranches])
+    : keys
   const kept = new Set(rows.map(r => r.origin).filter((o): o is string => !!o))
   const dropped = existing.filter(k => !kept.has(k))
 
@@ -97,9 +118,9 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
     setBusy(true)
     setError(null)
     // eslint-disable-next-line no-console
-    console.debug(`[schema-keys] apply node=${nodeId} keys=${keys} renames=${JSON.stringify(renames)}`)
+    console.debug(`[schema-keys] apply node=${nodeId} keys=${JSON.stringify(sent)} renames=${JSON.stringify(hasData ? {} : renames)}`)
     try {
-      const r = await callBackend('change_schema_keys', { keys, renames }) as {
+      const r = await callBackend('change_schema_keys', { keys: sent, renames: hasData ? {} : renames }) as {
         ok: boolean; error?: string; leftovers?: string[]
       }
       if (!r.ok) {
@@ -128,7 +149,31 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
           Measure columns are listed too. Delete every column that is not a key.
         </div>
         {loading && <div style={styles.text}>Loading…</div>}
-        {!loading && (
+        {!loading && hasData && (
+          <div>
+            <div style={styles.text}>
+              This dataset already holds data, so the keys it uses are fixed. You can add a
+              branch (or a deeper level) of new keys, and change keys that no record or run uses.
+            </div>
+            <div style={styles.heading}>Current keys</div>
+            {usage.length > 0
+              ? usage.map(u => (
+                  <div key={u.branch.join('>')} style={styles.mono}>
+                    {u.branch.join(' → ')} · {u.used ? `in use (${u.records} record(s))` : 'unused'}
+                  </div>
+                ))
+              : branches.map(b => <div key={b.join('>')} style={styles.mono}>{b.join(' → ')}</div>)}
+            <div style={{ ...styles.heading, marginTop: 10 }}>Add a branch</div>
+            <input
+              style={{ ...styles.input, width: '100%', boxSizing: 'border-box' }}
+              value={newBranchText}
+              placeholder="brand, location, person   (start with a key that exists to branch from it)"
+              onChange={e => setNewBranchText(e.target.value)}
+            />
+            {newBranches.length > 0 && <div style={styles.note}>{describeBranches(newBranches)}</div>}
+          </div>
+        )}
+        {!loading && !hasData && (
           <div style={styles.columns}>
             <div style={styles.left}>
               <div style={styles.heading}>Current keys</div>
@@ -164,9 +209,9 @@ export default function SchemaKeysDialog({ nodeId, fnName, dataColumns, onClose,
             type="button"
             style={styles.button}
             onClick={apply}
-            disabled={busy || loading || keys.length === 0 || keys.some(k => !k)}
+            disabled={busy || loading || (hasData ? newBranches.length === 0 : keys.length === 0 || keys.some(k => !k))}
           >
-            Change keys and run again
+            {hasData ? 'Add keys and run again' : 'Change keys and run again'}
           </button>
         </div>
       </div>

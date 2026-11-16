@@ -96,6 +96,46 @@ classdef TestConfigureDatabase < matlab.unittest.TestCase
             end
         end
 
+        function test_branched_schema_declared_per_branch(testCase)
+            % One string array per branch: the database stores the tree.
+            db_path = fullfile(testCase.test_dir, 'branched.duckdb');
+            branches = {["brand","category","item"], ["brand","location","person"]};
+            db = scidb.configure_database(db_path, branches);
+            testCase.verifyNotEmpty(db);
+            py_db = py.scidb.store.database.get_database();
+            keys = cellfun(@string, cell(py.list(py_db.dataset_schema_keys)));
+            testCase.verifyEqual(keys, ...
+                ["brand","category","item","location","person"]);
+            parents = py_db.schema_tree.parent_of;
+            testCase.verifyEqual(string(parents.get('location')), "brand");
+            testCase.verifyEqual(string(parents.get('person')), "location");
+            scidb.get_database().close();
+
+            % Reopening with the same branches works; a plain list of the
+            % same keys is a different tree and is refused.
+            scidb.configure_database(db_path, branches);
+            scidb.get_database().close();
+            try
+                scidb.configure_database(db_path, ...
+                    ["brand","category","item","location","person"]);
+                testCase.verifyFail('expected a schema key mismatch error');
+            catch err
+                testCase.verifySubstring(err.message, 'parents differ');
+            end
+        end
+
+        function test_branched_schema_save_and_load_across_branches(testCase)
+            db_path = fullfile(testCase.test_dir, 'branched2.duckdb');
+            scidb.configure_database(db_path, ...
+                {["brand","category","item"], ["brand","location","person"]});
+            RawSignal().save(1, 'brand', "B1", 'category', "c1", 'item', "i1");
+            RawSignal().save(2, 'brand', "B1", 'location', "l1", 'person', "p1");
+            a = RawSignal().load('brand', "B1", 'category', "c1", 'item', "i1");
+            b = RawSignal().load('brand', "B1", 'location', "l1", 'person', "p1");
+            testCase.verifyEqual(a.data, 1);
+            testCase.verifyEqual(b.data, 2);
+        end
+
         function test_reconfigure_database(testCase)
             % Configuring twice should work (replaces global singleton)
             db_path1 = fullfile(testCase.test_dir, 'test1.duckdb');            

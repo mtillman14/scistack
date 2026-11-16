@@ -81,7 +81,7 @@ All three work from **Python and MATLAB**. Data saved from one language can be l
 1. Install the [SciStack Pipeline GUI](https://marketplace.visualstudio.com/items?itemName=scistack.scistack-gui) extension in VS Code.
 2. Pick a Python environment (`Python: Select Interpreter` in the Command Palette) and run `pip install scistack` in it.
 3. Run **`SciStack: Open Pipeline`** from the Command Palette.
-4. Create a new database: give it a name and list your **schema keys**, the levels your data is organized by, such as `subject, session, trial`.
+4. Create a new database: give it a name and list your **schema keys**, the levels your data is organized by, such as `subject, session, trial`. If your data branches (items and people under the same brand, say), start another branch with a semicolon: `brand, category, item; brand, location, person` ([branched schema keys](docs/claude/branched-schema-keys.md)).
 
 That's it. You'll see a blank canvas, ready for your first function. The [GUI docs](https://scistack.readthedocs.io/en/latest/ui/) walk through the rest.
 

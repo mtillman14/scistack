@@ -134,7 +134,6 @@ from scidb.run.foreach_load import (  # noqa: F401 — re-exported
     _drop_unpopulated_schema_columns_in_place,
     _endpoint_policy,
     _get_loadable_class_from_spec,
-    _get_schema_level_idx,
     _jsonify_stat,
     _load_input,
     _log_loaded_input,

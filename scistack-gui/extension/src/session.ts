@@ -33,6 +33,8 @@ import { startupStatusMessage } from './startupStatus';
 import { checkServerVersion } from './versionCheck';
 import { ExtensionIdentity, prepareBuildReport } from './webviewBuild';
 import { buildPlotOnlyServerArgs, buildServerArgs } from './serverArgs';
+import { declarationText } from './schemaKeysText';
+import type { SchemaDeclaration } from './schemaKeysText';
 import {
   LogSink,
   SessionRegistry,
@@ -421,7 +423,7 @@ export class SessionManager {
    * lock race and report it as a mysterious `DatabaseLockedError`, so the
    * answer to "open this again" is "here it is".
    */
-  async open(dbPath: string, schemaKeys?: string[]): Promise<Session | undefined> {
+  async open(dbPath: string, schemaKeys?: SchemaDeclaration): Promise<Session | undefined> {
     const id = sessionIdForDb(dbPath);
     const existing = this.registry.get(id);
     if (existing) {
@@ -449,7 +451,7 @@ export class SessionManager {
       describe: [
         `  DB: ${dbPath}`,
         `  Project root: ${projectRoot ?? '(none — server will fall back, see above)'}`,
-        ...(schemaKeys ? [`  Schema keys: [${schemaKeys.join(', ')}] (new DB)`] : []),
+        ...(schemaKeys ? [`  Schema keys: [${declarationText(schemaKeys)}] (new DB)`] : []),
       ],
     });
     if (!python) return undefined;

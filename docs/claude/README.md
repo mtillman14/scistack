@@ -90,7 +90,8 @@ Rules:
 - [Multi-session GUI: one tab per database](gui-multi-session.md) — `gui-multi-session.md`
 - [Node identity: which ids are computed and which are allocated](node-identity.md) — `node-identity.md`
 - [Pending Constants in scistack-gui](scistack-gui-pending-constants.md) — `scistack-gui-pending-constants.md`
-- [Schema Hierarchy and Non-Contiguous Key Support](schema-hierarchy-contiguity.md) — `schema-hierarchy-contiguity.md`
+- [Branched schema keys](branched-schema-keys.md) — `branched-schema-keys.md`
+- [Schema keys: order, contiguity and gaps](schema-hierarchy-contiguity.md) — `schema-hierarchy-contiguity.md`
 - [SciStack Project Setup Guide](scistack-gui-project-setup-guide.md) — `scistack-gui-project-setup-guide.md`
 - [SciStack-GUI: per-handle manual-edge coverage clears "disconnected" wiring](scistack-gui-disconnected-wiring-reconnect.md) — `scistack-gui-disconnected-wiring-reconnect.md`
 - [Submodule ports](submodule-ports.md) — `submodule-ports.md`

@@ -17,11 +17,15 @@
  * project's code.
  */
 
+import { declarationArg } from './schemaKeysText';
+import type { SchemaDeclaration } from './schemaKeysText';
+
 export interface ServerArgsOptions {
   /** Path to the .duckdb file to open or create. */
   dbPath: string;
-  /** Top-down schema keys. Only meaningful when creating a new database. */
-  schemaKeys?: string[];
+  /** Top-down schema keys (a plain list, or one list per branch). Only
+   *  meaningful when creating a new database. */
+  schemaKeys?: SchemaDeclaration;
   /** The workspace folder this database belongs to, i.e. "its project". */
   projectRoot?: string;
   /**
@@ -41,7 +45,7 @@ export function buildServerArgs({
 }: ServerArgsOptions): string[] {
   const args = ['-m', 'scistack_gui.server', '--db', dbPath];
   if (schemaKeys && schemaKeys.length > 0) {
-    args.push('--schema-keys', schemaKeys.join(','));
+    args.push('--schema-keys', declarationArg(schemaKeys));
   }
   // The workspace folder is what the user thinks of as "the project", and
   // it is the server's only way to know: a .duckdb usually lives in a

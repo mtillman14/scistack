@@ -98,3 +98,19 @@ test('a plot-only server logs to the file it is given', () => {
   const args = buildPlotOnlyServerArgs({ logFile: '/ext/storage/plot-session.log' });
   assert.strictEqual(args[args.indexOf('--log-file') + 1], '/ext/storage/plot-session.log');
 });
+
+test('a branched schema is one --schema-keys word, semicolons between branches', () => {
+  const args = buildServerArgs({
+    dbPath: DB,
+    schemaKeys: [
+      ['brand', 'category', 'item'],
+      ['brand', 'location', 'person'],
+    ],
+  });
+  assert.strictEqual(args[args.indexOf('--schema-keys') + 1], 'brand,category,item;brand,location,person');
+});
+
+test('a plain list is exactly what it always was', () => {
+  const args = buildServerArgs({ dbPath: DB, schemaKeys: ['subject', 'session'] });
+  assert.strictEqual(args[args.indexOf('--schema-keys') + 1], 'subject,session');
+});

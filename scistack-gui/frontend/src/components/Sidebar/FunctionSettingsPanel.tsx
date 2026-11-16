@@ -45,6 +45,7 @@ import {
 import PanelHeader, { SECTION_ATTR, SectionBadges } from './PanelHeader'
 import { badgesFor, functionBadges } from './sidebarBadges'
 import { useRunOptionDefaults } from '../../hooks/useRunOptionDefaults'
+import { levelBoxes } from './schemaLevelBoxes'
 
 /** `get_schema_level`: the level a Run of this node would iterate, and why. */
 interface ResolvedSchemaLevel {
@@ -54,6 +55,10 @@ interface ResolvedSchemaLevel {
   schema_keys: string[]
   /** What Plot and Stat Studio call the ticked keys (scistackplot.role_labels). */
   iterate_label?: string
+  /** Keys to show a checkbox for, from the schema tree (absent: every key). */
+  offered?: string[]
+  /** Offered keys whose tick would be incoherent, with the reason (a tooltip). */
+  disabled?: Record<string, string>
 }
 
 interface VariantRow {
@@ -1187,7 +1192,8 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
               </div>
             )}
             <div style={styles.checkboxGrid}>
-              {schema.keys.map(key => {
+              {levelBoxes(schema.keys, resolvedLevel, schemaLevel ?? resolvedLevel?.keys ?? []).map(box => {
+                const key = box.key
                 const automatic = schemaLevel === null
                 const checked = automatic
                   ? (resolvedLevel?.keys ?? []).includes(key)
@@ -1195,11 +1201,13 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
                 return (
                   <label
                     key={key}
-                    style={{ ...styles.checkboxLabel, ...(automatic ? styles.automaticLevel : {}) }}
+                    title={box.reason}
+                    style={{ ...styles.checkboxLabel, ...(automatic ? styles.automaticLevel : {}), ...(box.disabled ? { opacity: 0.5 } : {}) }}
                   >
                     <input
                       type="checkbox"
                       checked={checked}
+                      disabled={box.disabled}
                       onChange={() => toggleSchemaLevel(key)}
                       style={styles.checkbox}
                     />

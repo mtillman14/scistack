@@ -668,7 +668,7 @@ def expectation(
     locations, keyless = _variable_locations(duck, name, schema_keys)
     t = lap("variable_locations", t0)
 
-    keys, keys_rule = _variable_keys(duck, name, schema_keys, locations, keyless)
+    keys, keys_rule = _variable_keys(duck, name, schema_keys, locations, keyless, db.schema_tree)
     settings_all = resolve_key_settings(schema_keys, read_key_settings(duck))
     settings = [settings_all[k] for k in keys]
     for s in settings:
@@ -839,8 +839,12 @@ def _variable_locations(duck, name: str, schema_keys: list[str]):
     return locations, int(keyless)
 
 
-def _variable_keys(duck, name, schema_keys, locations, keyless) -> tuple[list[str], str]:
-    """The key set most of the variable's locations use (ties: deeper)."""
+def _variable_keys(duck, name, schema_keys, locations, keyless, tree) -> tuple[list[str], str]:
+    """The key set most of the variable's locations use (ties: deeper).
+
+    An EMPTY variable registered at a level is expected at that level's CHAIN
+    (the level and its ancestors), not a list prefix: on a branched schema a
+    person-level variable is not expected at category or item."""
     if locations:
         counts = Counter(ks for ks, _ in locations)
         best = max(counts, key=lambda ks: (counts[ks], len(ks)))
@@ -862,7 +866,7 @@ def _variable_keys(duck, name, schema_keys, locations, keyless) -> tuple[list[st
             f"{name} has no records and is registered at {level!r}, which is not a "
             f"schema key ({schema_keys})."
         )
-    keys = schema_keys[: schema_keys.index(level) + 1]
+    keys = [k for k in schema_keys if k in set(tree.chain(level))]
     return keys, f"{name} has no records yet; registered at {level}"
 
 

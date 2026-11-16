@@ -10,6 +10,11 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
 %       dataset_db_path     - Path to the DuckDB database file (string)
 %       dataset_schema_keys - Metadata keys defining the dataset schema
 %                             (string array, e.g. ["subject", "session"])
+%                             A BRANCHED dataset is a cell array with one string
+%                             array per branch, e.g.
+%                             {["brand","category","item"], ["brand","location","person"]}
+%                             (the key tree is stored in the database; a
+%                             string array is one branch).
 %       schema_key_types    - Optional struct declaring per-key types, e.g.
 %                             struct('trial', 'numeric').  'numeric' keys
 %                             canonicalize every spelling of the same number
@@ -34,17 +39,31 @@ function db = configure_database(dataset_db_path, dataset_schema_keys, options)
 
     arguments
         dataset_db_path     string
-        dataset_schema_keys string
+        dataset_schema_keys
         options.schema_key_types struct = struct()
     end
 
-    % Convert keys to row vector
-    if size(dataset_schema_keys,1) > 1
-        dataset_schema_keys = dataset_schema_keys';
+    % One branch (a string array) or one string array per branch (a cell).
+    % py_schema_keys is what Python gets: a list of keys, or a list of lists.
+    % dataset_schema_keys becomes the FLAT row of keys, parents first, for
+    % scifor's MATLAB-side copy of the schema.
+    if iscell(dataset_schema_keys)
+        py_schema_keys = py.list();
+        flat = strings(1, 0);
+        for i = 1:numel(dataset_schema_keys)
+            branch = string(dataset_schema_keys{i});
+            branch = branch(:)';
+            py_schema_keys.append(py.list(cellstr(branch)));
+            flat = [flat, branch(~ismember(branch, flat))]; %#ok<AGROW>
+        end
+        dataset_schema_keys = flat;
+    else
+        dataset_schema_keys = string(dataset_schema_keys);
+        if size(dataset_schema_keys,1) > 1
+            dataset_schema_keys = dataset_schema_keys';
+        end
+        py_schema_keys = py.list(cellstr(dataset_schema_keys));
     end
-
-    % Convert MATLAB string array to Python list of strings
-    py_schema_keys = py.list(cellstr(dataset_schema_keys));
 
     dataset_db_path = char(dataset_db_path);
     if ~scidb.isabsolute(dataset_db_path)

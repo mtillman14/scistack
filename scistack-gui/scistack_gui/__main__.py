@@ -58,7 +58,8 @@ def main():
         "--schema-keys",
         type=str,
         default=None,
-        help="Comma-separated schema keys; if provided and db_path "
+        help="Comma-separated schema keys (semicolons between branches: "
+        "'brand,category,item;brand,location,person'); if provided and db_path "
         "does not exist, a new database is created.",
     )
     parser.add_argument(
@@ -88,9 +89,11 @@ def main():
 
     if args.db_path is not None:
         db_path = args.db_path.resolve()
+        from scifor import parse_schema_text
+
         schema_keys = None
         if args.schema_keys:
-            schema_keys = [k.strip() for k in args.schema_keys.split(",") if k.strip()]
+            schema_keys = parse_schema_text(args.schema_keys)
 
         if not db_path.exists() and not schema_keys:
             print(f"Error: database file not found: {db_path}", file=sys.stderr)

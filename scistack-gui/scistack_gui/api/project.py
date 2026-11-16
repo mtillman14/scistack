@@ -97,7 +97,7 @@ class SchemaKeyProposalRequest(BaseModel):
 
 class ChangeSchemaKeysRequest(BaseModel):
     #: The new keys, coarse to fine.
-    keys: list[str]
+    keys: list[str] | list[list[str]]
     #: {old key: new key} for existing keys renamed in the dialog.
     renames: dict[str, str] = {}
 

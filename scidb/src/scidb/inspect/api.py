@@ -348,14 +348,15 @@ class Inspector:
         against read-only opens), so lock contention is mapped to
         DatabaseLockedError with a plain-language message.
         """
-        from scidb.store.sciduck import schema_keys_from_db
+        from scidb.store.schema_tree_store import tree_from_db
 
         from scidb.store.database import DatabaseManager
         from scidb.inspect.mutate import lock_errors_mapped
 
         with lock_errors_mapped(db_path):
-            keys = schema_keys_from_db(db_path)
-            db = DatabaseManager(db_path, keys, read_only=True)
+            tree = tree_from_db(db_path)
+            keys = list(tree.keys)
+            db = DatabaseManager(db_path, tree, read_only=True)
         Log.info(f"Inspector.open: {db_path} (read-only, schema_keys={keys})")
         return cls(db, _owns_db=True)
 

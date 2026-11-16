@@ -17,6 +17,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { importProjectBundle } from './bundleImport';
 import { PlotPanel, PlotTarget } from './plotPanel';
+import { declarationOf, describeSchema, parseSchemaText } from './schemaKeysText';
+import type { SchemaDeclaration } from './schemaKeysText';
 import { Session, SessionManager } from './session';
 
 let sessions: SessionManager;
@@ -44,7 +46,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!dbChoice) return;
 
       let dbPath: string;
-      let schemaKeys: string[] | undefined;
+      let schemaKeys: SchemaDeclaration | undefined;
       if (dbChoice === 'Open existing database') {
         const dbUris = await vscode.window.showOpenDialog({
           canSelectFiles: true,
@@ -87,15 +89,18 @@ export function activate(context: vscode.ExtensionContext) {
         dbPath = path.join(folderPath, fileName);
 
         const keysInput = await vscode.window.showInputBox({
-          prompt: 'Schema keys (comma-separated, top-down)',
-          placeHolder: 'e.g. subject, session',
+          prompt: 'Schema keys (comma-separated, top-down; a semicolon starts another branch)',
+          placeHolder: 'e.g. subject, session   or   brand, category, item; brand, location, person',
+          // The rules are scifor's SchemaTree.from_paths; the live line shows
+          // the mistake (a key with two parents) or the branches it read.
           validateInput: (v) => {
-            const parts = v.split(',').map((s) => s.trim()).filter(Boolean);
-            return parts.length === 0 ? 'Provide at least one schema key' : null;
+            const parsed = parseSchemaText(v);
+            if (parsed.error) return parsed.error;
+            return { message: describeSchema(parsed.branches), severity: vscode.InputBoxValidationSeverity.Info };
           },
         });
         if (!keysInput) return;
-        schemaKeys = keysInput.split(',').map((s) => s.trim()).filter(Boolean);
+        schemaKeys = declarationOf(parseSchemaText(keysInput).branches);
       }
 
       // No "how should SciStack discover your code?" step: pipeline code is

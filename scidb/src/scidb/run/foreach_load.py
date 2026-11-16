@@ -53,6 +53,7 @@ from scidb.model.filters import VariableFilter
 from scidb.model.filters import _expand_coarse_to_fine_schema_ids
 from scidb.model.filters import _get_all_schema_ids_for_variable
 from scidb.model.filters import _validate_filter_coverage
+from scidb.model.filters import schema_id_key_closure
 from scidb.store.database import get_database
 from scifor import ColName as SciforColName
 from scifor import PathOutput
@@ -723,25 +724,6 @@ def _compute_fixed_input_rids(inputs: dict, db) -> dict:
     return fixed_rids
 
 
-def _get_schema_level_idx(db, schema_ids: set) -> int:
-    """Return the deepest populated schema key index for the given schema_ids, or -1."""
-    schema_keys = db.dataset_schema_keys
-    if not schema_ids:
-        return -1
-    placeholders = ", ".join(["?"] * len(schema_ids))
-    rows = db._duck.fetchdf(
-        f"SELECT * FROM _schema WHERE schema_id IN ({placeholders})",
-        list(schema_ids),
-    )
-    if len(rows) == 0:
-        return -1
-    level_idx = -1
-    for i, key in enumerate(schema_keys):
-        if key in rows.columns and rows[key].notna().any():
-            level_idx = i
-    return level_idx
-
-
 def _compute_merge_effective_ids(db, merge_spec: "Merge") -> set:
     """Compute the schema_ids that the Merge inner join will produce.
 
@@ -764,23 +746,25 @@ def _compute_merge_effective_ids(db, merge_spec: "Merge") -> set:
     if not constituent_data:
         return set()
 
-    # Determine level index for each constituent
+    # The key set each constituent lives at (filters.schema_id_key_closure).
     levels = [
-        (_get_schema_level_idx(db, ids), table_name, ids)
+        (schema_id_key_closure(db, ids), table_name, ids)
         for table_name, ids in constituent_data
     ]
 
-    max_level = max(lv for lv, _, _ in levels)
-    if max_level < 0:
+    # The finest level is the one naming the most keys (a prefix on a linear
+    # schema, so the same constituent the old index picked).
+    max_level = max(len(lv) for lv, _, _ in levels)
+    if max_level == 0:
         return set()
 
     # Pick the first fine-level constituent's table as expansion target
-    fine_table_name = next(tn for lv, tn, _ in levels if lv == max_level)
+    fine_table_name = next(tn for lv, tn, _ in levels if len(lv) == max_level)
 
     # Compute each constituent's contribution at the finest level
     effective_sets = []
     for lv, table_name, schema_ids in levels:
-        if lv == max_level:
+        if len(lv) == max_level:
             effective_sets.append(schema_ids)
         else:
             expanded = _expand_coarse_to_fine_schema_ids(
@@ -814,8 +798,8 @@ def _check_merge_filter_coverage(db, where, merge_effective_ids: set) -> None:
     if isinstance(where, (VariableFilter, ColumnFilter, InFilter)):
         filter_table_name = where.variable_class.table_name()
         filter_ids = _get_all_schema_ids_for_variable(db, filter_table_name)
-        filter_level_idx = _get_schema_level_idx(db, filter_ids)
-        target_level_idx = _get_schema_level_idx(db, merge_effective_ids)
+        filter_keys = schema_id_key_closure(db, filter_ids)
+        target_keys = schema_id_key_closure(db, merge_effective_ids)
 
         _validate_filter_coverage(
             db,
@@ -823,8 +807,8 @@ def _check_merge_filter_coverage(db, where, merge_effective_ids: set) -> None:
             None,
             filter_table_name,
             None,
-            filter_level_idx,
-            target_level_idx,
+            filter_keys,
+            target_keys,
             target_schema_ids_override=merge_effective_ids,
         )
 

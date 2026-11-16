@@ -17,6 +17,8 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from .schema import tree_for
+
 
 class DistributeError(ValueError):
     """``distribute=True`` cannot file this table. Deterministic across
@@ -46,21 +48,39 @@ def resolve_target(
     to the target; the rows' values in them are part of each row's address.
     """
     keys = list(schema_keys)
+    tree = tree_for(keys)
     present = {str(c) for c in columns}
-    index = keys.index(start_key)
+    if start_key not in keys:
+        raise ValueError(f"{start_key!r} is not a schema key (schema order: {keys}).")
+    # Walk DOWN the tree from start_key while the table carries the key. A
+    # linear schema walks the list; at a branch the table's own columns pick
+    # the child (exactly one of the children must be a column).
     carried: list[str] = []
-    while index < len(keys) and keys[index] in present:
-        carried.append(keys[index])
-        index += 1
-    if index >= len(keys):
-        raise DistributeError(
-            f"distribute=True but {output_name} carries {carried}, down to the "
-            f"deepest schema key. There is no lower level to distribute to. "
-            f"Schema order: {keys}. Turn distribute off: rows that carry their "
-            f"schema keys are filed by those columns without it."
-        )
-    target = keys[index]
-    below = [k for k in keys[index + 1 :] if k in present]
+    current = start_key
+    while current in present:
+        carried.append(current)
+        children = tree.children(current)
+        if not children:
+            raise DistributeError(
+                f"distribute=True but {output_name} carries {carried}, down to the "
+                f"deepest schema key. There is no lower level to distribute to. "
+                f"Schema order: {keys}. Turn distribute off: rows that carry their "
+                f"schema keys are filed by those columns without it."
+            )
+        if len(children) == 1:
+            current = children[0]
+            continue
+        carried_children = [c for c in children if c in present]
+        if len(carried_children) != 1:
+            raise DistributeError(
+                f"distribute=True but '{current}' has {len(children)} child keys "
+                f"{children} and {output_name} carries {carried_children or 'none'} of "
+                f"them, so the target is ambiguous. Add a column named for the child "
+                f"key the rows belong under, or turn distribute off."
+            )
+        current = carried_children[0]
+    target = current
+    below = [k for k in tree.descendants(target) if k in present]
     if below:
         raise DistributeError(
             f"distribute=True but {output_name} carries {below} and not {target!r}, "

@@ -130,3 +130,24 @@ test('install args and the one-line description', async () => {
   });
   assert.ok(stopped.includes('stopped') && stopped.includes('numpy') && stopped.includes('pip install x'));
 });
+
+test('a branched schema override is one text word the CLI splits', () => {
+  const args = buildImportArgs({
+    bundle: 'b',
+    into: 'i',
+    importHistory: true,
+    schema: [
+      ['brand', 'category', 'item'],
+      ['brand', 'location', 'person'],
+    ],
+  });
+  const at = args.indexOf('--schema');
+  assert.strictEqual(args[at + 1], 'brand,category,item;brand,location,person');
+  assert.strictEqual(args[at + 2], '--history');
+});
+
+test('a plain schema override stays one word per key', () => {
+  const args = buildImportArgs({ bundle: 'b', into: 'i', importHistory: true, schema: ['subject', 'session'] });
+  const at = args.indexOf('--schema');
+  assert.deepStrictEqual(args.slice(at, at + 4), ['--schema', 'subject', 'session', '--history']);
+});

@@ -2,6 +2,13 @@
 
 GitHub issue #10; plan `.claude/plan-change-schema-keys.md`; built 2026-11-15.
 
+> **Update 2026-11-15 (branched schema keys).** "Empty" is now the special case
+> "every key is unused". A dataset that holds data can still ADD keys
+> (`extend_schema_keys`) and change keys no record or run names; used keys stay
+> fixed. See `branched-schema-keys.md`. The rebuild below is still what an empty
+> dataset takes, and the popup's wording for a non-empty dataset is now "Add a
+> schema key".
+
 ## The rule
 
 Schema keys are the columns of `_schema`, fixed when a database is created.

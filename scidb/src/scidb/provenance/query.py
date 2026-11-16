@@ -2875,19 +2875,24 @@ def variable_schema_keys(duck, type_names, schema_keys) -> dict[str, list[str]]:
     }
 
 
-def finest_schema_keys(levels, schema_keys) -> list[str]:
-    """The iteration level a set of inputs implies: every key ANY of them
-    carries, in dataset order.
+def finest_schema_keys(levels, schema_keys, tree=None) -> list[str]:
+    """The iteration level a set of inputs implies, in dataset order: every
+    key ANY of them carries, or, when those keys do not lie on one branch (an
+    item input beside a person input), the keys EVERY input carries
+    (``scifor.schema.SchemaTree.default_level``, the one owner of that rule).
 
     Two inputs at different levels do not conflict — the run iterates the
     union, and an input without a key broadcasts across it
     (``docs/claude/coarse-level-inputs.md``). ``[subject, trial]`` beside
     ``[subject, session]`` iterates ``subject, session, trial``.
     """
-    wanted: set[str] = set()
-    for level in levels or []:
-        wanted.update(k for k in (level or []) if k)
-    return [k for k in (schema_keys or []) if k in wanted]
+    from scifor.schema import tree_for
+
+    tree = tree or tree_for(schema_keys or [])
+    known = set(tree.keys)
+    return list(
+        tree.default_level([[k for k in (level or []) if k in known] for level in levels or []])
+    )
 
 
 def config_call_id(fn_name: str, cfg: dict) -> str:

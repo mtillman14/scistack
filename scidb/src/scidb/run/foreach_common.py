@@ -606,18 +606,24 @@ def _output_type_label(output_obj: Any) -> str:
     return getattr(output_obj, "__name__", type(output_obj).__name__)
 
 
+def _declared_schema(db):
+    """What scifor is told: the database's key TREE (the one owner of parents),
+    or its flat key list for a database object without one."""
+    return getattr(db, "schema_tree", None) or list(db.dataset_schema_keys)
+
+
 def _propagate_schema(db, distribute: bool) -> None:
     """Propagate dataset_schema_keys from the db into scifor.set_schema()."""
     # If a db was passed explicitly and has schema keys, use them.
     if db is not None and hasattr(db, "dataset_schema_keys"):
-        _scifor.set_schema(list(db.dataset_schema_keys))
+        _scifor.set_schema(_declared_schema(db))
         return
 
     # No explicit db: the global one, or None only when none is configured.
     _global_db = database_or_none()
 
     if _global_db is not None and hasattr(_global_db, "dataset_schema_keys"):
-        _scifor.set_schema(list(_global_db.dataset_schema_keys))
+        _scifor.set_schema(_declared_schema(_global_db))
     elif distribute:
         raise ValueError(
             "distribute=True requires access to dataset_schema_keys, "

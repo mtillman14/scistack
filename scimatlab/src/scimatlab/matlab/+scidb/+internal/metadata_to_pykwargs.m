@@ -28,6 +28,10 @@ function kwargs = metadata_to_pykwargs(varargin)
         elseif isnumeric(val) && isscalar(val)
             % Whole numbers → py.int (scidb.internal.number_to_python)
             val = scidb.internal.number_to_python(val);
+        elseif isdatetime(val) && isscalar(val)
+            % A date key crosses as its exact text, never as a raw datetime:
+            % MATLAB would convert that itself and drop a named zone.
+            val = scidb.internal.datetime_key_to_python(val);
         elseif isstruct(val)
             % Structs become JSON strings so they can be stored as
             % version keys (e.g. config structs).

@@ -466,10 +466,23 @@
     "ChangeSchemaKeysRequest": {
       "properties": {
         "keys": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            }
+          ]
         },
         "renames": {
           "additionalProperties": {

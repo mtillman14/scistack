@@ -47,7 +47,8 @@ router = APIRouter(prefix="/bootstrap", tags=["bootstrap"])
 class CreateProjectRequest(BaseModel):
     folder: str
     filename: str
-    schema_keys: list[str]
+    schema_keys: list[str] | list[list[str]]
+    """A plain list of keys (one branch) or one list per branch."""
     module: str | None = None
     project: str | None = None
     entities_file: str | None = None

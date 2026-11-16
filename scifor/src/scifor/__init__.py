@@ -92,7 +92,16 @@ from .project.root import (
     set_project_root,
 )
 from .pathoutput import PathOutput
-from .schema import expand_schema_keys, get_schema, set_schema
+from .schema import (
+    SchemaTree,
+    as_tree,
+    expand_schema_keys,
+    format_schema_text,
+    get_schema,
+    get_schema_tree,
+    parse_schema_text,
+    set_schema,
+)
 from .signature import Argument, function_arguments
 from .schema_types import (
     VALID_SCHEMA_KEY_TYPES,
@@ -113,6 +122,11 @@ __all__ = [
     # Schema
     "set_schema",
     "get_schema",
+    "get_schema_tree",
+    "SchemaTree",
+    "as_tree",
+    "parse_schema_text",
+    "format_schema_text",
     "expand_schema_keys",
     # Schema-key types (numeric / string)
     "VALID_SCHEMA_KEY_TYPES",

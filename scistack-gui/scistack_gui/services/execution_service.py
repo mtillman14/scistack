@@ -1960,6 +1960,7 @@ def default_schema_level(
     stated=None,
     node_id: "str | None" = None,
     route: str = "",
+    levels_out: "list | None" = None,
 ):
     """``(SchemaLevel, rule)`` — which schema keys a run of *function_name*
     iterates. Every run route calls this, and so does the settings panel
@@ -2036,7 +2037,11 @@ def default_schema_level(
         )
         levels = []
 
-    level, rule = resolve_schema_level(schema_keys, stated, recorded, levels)
+    level, rule = resolve_schema_level(
+        schema_keys, stated, recorded, levels, tree=db.schema_tree
+    )
+    if levels_out is not None:
+        levels_out.extend(levels)  # the panel's offered keys read the same inputs
     logger.info(
         "[schema-level] %s node=%s stated=%s -> iterating %s (%s) via %s "
         "[call sites %d, recorded %s, input levels %s]",
@@ -2074,6 +2079,7 @@ def node_schema_level(
         else derive_fn_targets(db, function_name)
     )
     targets = apply_pending_overrides(targets, pipeline_store.get_pending_constants(db))
+    levels: list = []
     level, rule = default_schema_level(
         db,
         function_name,
@@ -2081,11 +2087,14 @@ def node_schema_level(
         stated=stated,
         node_id=node_id,
         route="settings panel",
+        levels_out=levels,
     )
+    from scidb.run.schema_level import level_choices
     from scistackplot.model.role_labels import role_label_for
 
+    offered = level_choices(db.schema_tree, levels, level.keys)
     return {
-        **level.to_json(rule),
+        **level.to_json(rule, offered),
         "schema_keys": list(db.dataset_schema_keys),
         "iterate_label": role_label_for("iterate", "process"),
     }

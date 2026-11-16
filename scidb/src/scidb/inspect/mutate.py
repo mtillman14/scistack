@@ -111,13 +111,14 @@ class Mutator:
         Discovers the schema keys from the database itself (like
         Inspector.open) and maps lock contention to DatabaseLockedError.
         """
-        from scidb.store.sciduck import schema_keys_from_db
+        from scidb.store.schema_tree_store import tree_from_db
 
         from scidb.store.database import DatabaseManager
 
         with lock_errors_mapped(db_path):
-            keys = schema_keys_from_db(db_path)
-            db = DatabaseManager(db_path, keys)
+            tree = tree_from_db(db_path)
+            keys = list(tree.keys)
+            db = DatabaseManager(db_path, tree)
         Log.info(f"Mutator.open: {db_path} (read-write, schema_keys={keys})")
         return cls(db, _owns_db=True)
 

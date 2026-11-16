@@ -67,8 +67,17 @@ def schema_key_proposal(db, node_id: str, data_columns: list[str]) -> dict:
             continue
         key_lists.append(_placeholder_keys(path_input))
     proposed = propose_schema_keys(key_lists, list(data_columns))
+    from scidb.store.emptiness import usage_by_branch
+
     result = {
         "existing": list(db.dataset_schema_keys),
+        # The tree as one list per branch, and which branches hold data: the
+        # dialog shows the tree read-only and lets only unused keys change.
+        "existing_branches": db.schema_tree.paths(),
+        "usage": [
+            {"branch": branch, "used": used, "records": records}
+            for branch, used, records in usage_by_branch(db)
+        ],
         "proposed": proposed,
         "dataset_empty": is_empty(db),
         "path_inputs": names,
@@ -81,10 +90,13 @@ def schema_key_proposal(db, node_id: str, data_columns: list[str]) -> dict:
     return result
 
 
-def change_schema_keys(db, keys: list[str], renames: "dict[str, str] | None" = None) -> dict:
-    """Change the keys (scidb refuses a non-empty dataset), then reopen the
-    database so this process uses the new keys. A refusal is returned as
-    ``{ok: False, error}`` with the database still open."""
+def change_schema_keys(db, keys: list, renames: "dict[str, str] | None" = None) -> dict:
+    """Change the keys, then reopen the database so this process uses the new
+    keys. *keys* is a plain list (one branch) or one list per branch. An empty
+    dataset takes any change; one that holds data takes new keys appended (a
+    branch, a deeper level) and changes to keys no record or run names; scidb
+    (``scidb.store.schema_keys_change``) says which, and a refusal is returned
+    as ``{ok: False, error}`` with the database still open."""
     from scidb.store.schema_keys_change import SchemaKeysChangeRefused, change_schema_keys as change
     from scistack_gui.runtime import db as runtime_db
 
@@ -103,5 +115,7 @@ def change_schema_keys(db, keys: list[str], renames: "dict[str, str] | None" = N
         "old_keys": change_result.old_keys,
         "new_keys": change_result.new_keys,
         "deleted_keys": change_result.deleted_keys,
+        "added_keys": change_result.added_keys,
         "leftovers": change_result.leftovers,
+        "leftovers_removed": change_result.leftovers_removed,
     }

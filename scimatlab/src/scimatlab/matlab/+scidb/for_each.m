@@ -887,6 +887,15 @@ function result_tbl = for_each(fn, inputs, outputs, varargin)
                             if all(~isnan(num) | ismissing(string(col)))
                                 result_tbl.(k) = cast(num, orig_class);
                             end
+                        elseif isnumeric(col) && ~isa(col, orig_class)
+                            % Already numeric (the loop restores a key to the
+                            % iterable's own class, always double): a key the
+                            % caller passed as int32 must not come back double.
+                            % Only when the cast loses nothing.
+                            cast_col = cast(col, orig_class);
+                            if isequaln(double(cast_col), double(col))
+                                result_tbl.(k) = cast_col;
+                            end
                         end
                     case 'logical'
                         if isstring(col) || iscellstr(col)

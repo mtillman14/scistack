@@ -76,7 +76,7 @@ function StepCard({ step, fnName, nodeId, dataColumns, onDone }: {
           console.debug(`[remedy] action=change_schema_keys node=${nodeId} fn=${fnName}`)
           setEditingKeys(true)
         }}>
-          Change the schema keys…
+          {step.button ?? 'Change the schema keys…'}
         </button>
       )}
       {editingKeys && (

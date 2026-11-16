@@ -2,15 +2,17 @@
 Schema-depth joins.
 
 Two variables can share a plot only if their schema levels can be joined.
-Because the dataset schema is an ordered, contiguous hierarchy (see
-``docs/claude/schema-hierarchy-contiguity.md``), a variable's levels are always
-a *prefix* of the schema key list — so the join rule is simple and total:
+A variable lives at a SET of schema keys (the keys its records name). The tree
+of keys is only a default (docs/claude/branched-schema-keys.md); what can join
+what is decided by comparing those sets, so a person-level variable can attach
+to a cross-branch Purchase even though its keys are not a prefix of the key
+list. On a linear schema the sets are prefixes, as before:
 
-* identical levels  → a straight merge on all of them;
-* one a prefix of the other → **broadcast**: the shallower variable's value is
-  repeated across every deeper row beneath it (subject-level Mass against
-  trial-level Speed);
-* otherwise → refuse, and say why.
+* identical key sets → a straight merge on all of them;
+* one a subset of the other → **broadcast**: the smaller variable's value is
+  repeated across every row of the larger that shares its keys (subject-level
+  Mass against trial-level Speed; a person-level age against a Purchase);
+* otherwise → refuse, and say why (no record names both).
 
 Answering this question is also what lets the GUI populate its measure list
 honestly instead of offering combinations that cannot be built.
@@ -37,10 +39,10 @@ _RIGHT_LATEST = "__latest_right"
 
 
 def join_kind(levels_a: list[str], levels_b: list[str]) -> JoinKind:
-    if levels_a == levels_b:
+    keys_a, keys_b = set(levels_a), set(levels_b)
+    if keys_a == keys_b:
         return "identical"
-    shallow, deep = (levels_a, levels_b) if len(levels_a) < len(levels_b) else (levels_b, levels_a)
-    if deep[: len(shallow)] == shallow:
+    if keys_a < keys_b or keys_b < keys_a:
         return "broadcast"
     return "incompatible"
 
@@ -65,11 +67,13 @@ def join_frames(
     """
     kind = join_kind(left.levels, right.levels)
     if kind == "incompatible":
+        only_left = [k for k in left.levels if k not in right.levels]
+        only_right = [k for k in right.levels if k not in left.levels]
         raise ValueError(
-            f"{left.name} (levels {left.levels}) and {right.name} "
-            f"(levels {right.levels}) cannot share a plot: neither variable's "
-            f"schema levels are a prefix of the other's, so there is no "
-            f"unambiguous way to line their records up."
+            f"{left.name} (keys {left.levels}) and {right.name} (keys {right.levels}) "
+            f"cannot share a plot: no record names both {only_left} and {only_right}, "
+            f"so there is no row to line their values up on. A variable saved at "
+            f"both is what would link them."
         )
 
     shallow_levels = left.levels if len(left.levels) <= len(right.levels) else right.levels

@@ -35,7 +35,10 @@ function [result, dropped] = merge_tables(parts, schema_keys, varargin)
     if isempty(labels)
         labels = "merge[" + string(0:numel(parts) - 1) + "]";
     end
-    schema_keys = string(schema_keys);
+    % A ROW of keys: `for x = array` loops over COLUMNS, so a column of keys
+    % (what string(cellstr(jsondecode(...))) gives) would be one iteration
+    % holding every key.
+    schema_keys = reshape(string(schema_keys), 1, []);
 
     if isempty(parts)
         error('scifor:Merge', 'Merge has no constituents.');
@@ -46,7 +49,7 @@ function [result, dropped] = merge_tables(parts, schema_keys, varargin)
     for i = 1:numel(parts)
         if numel(drop) >= i && drop(i)
             [parts{i}, d] = drop_constant(parts{i}, schema_keys);
-            names = string(fieldnames(d))';
+            names = reshape(string(fieldnames(d)), 1, []);
             for k = names
                 if isfield(dropped, char(k))
                     if ~isequaln(dropped.(char(k)), d.(char(k)))
@@ -62,7 +65,9 @@ function [result, dropped] = merge_tables(parts, schema_keys, varargin)
             parts{i} = select_columns(parts{i}, string(cols{i}), labels(i));
         end
     end
-    for k = unique(conflicted)
+    % reshape: unique() of an empty string array is 0x1, which a `for` loop
+    % runs ONCE (one empty column), and rmfield(dropped, '') then fails.
+    for k = reshape(unique(conflicted), 1, [])
         dropped = rmfield(dropped, char(k));
     end
 
@@ -83,7 +88,7 @@ function [tbl, dropped] = drop_constant(tbl, schema_keys)
     dropped = struct();
     cols = string(tbl.Properties.VariableNames);
     to_drop = string.empty;
-    for sk = schema_keys(ismember(schema_keys, cols))
+    for sk = reshape(schema_keys(ismember(schema_keys, cols)), 1, [])
         col = tbl.(char(sk));
         txt = key_text(col);
         if height(tbl) <= 1 || all(txt == txt(1))

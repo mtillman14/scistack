@@ -41,3 +41,15 @@ def test_spec_carries_everything():
         "template": "{s}/a.csv",
         "root_folder": "/d",
     }
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("{subject}/x.csv", "/data"), ("{subject}/x.csv", None, True)],
+    ids=["root_folder", "root_folder+regex"],
+)
+def test_options_after_the_template_are_keyword_only(args):
+    # One spelling on every surface: MATLAB name-value pairs, TOML fields and
+    # Python keywords (.claude/plan-wrapper-api-cleanup.md).
+    with pytest.raises(TypeError):
+        PathInput(*args, name="x")

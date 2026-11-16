@@ -936,18 +936,18 @@ class ScidbSource(BaseSource):
                     f"{factor!r}, which this table already has. Rename the "
                     f"column in the source data, or group by something else."
                 )
-            if len(variable.levels) > len(levels) or levels[
-                : len(variable.levels)
-            ] != list(variable.levels):
-                # Deeper than the data, or a different branch of the schema:
-                # merging would multiply rows or match nothing, and either way
-                # the figure would be quietly wrong about how many observations
-                # it holds.
+            if not set(variable.levels) <= set(levels):
+                # It names a key the data's rows do not carry (deeper than the
+                # data, or on a branch the rows never visit): merging would
+                # multiply rows or match nothing, and either way the figure
+                # would be quietly wrong about how many observations it holds.
+                extra = [k for k in variable.levels if k not in levels]
                 raise ValueError(
-                    f"{group.label!r} sits at {variable.levels}, which is not a "
-                    f"prefix of {levels} — there is no unambiguous way to "
-                    f"attach one of its values to each row. Group by a variable "
-                    f"recorded at or above the level of the data."
+                    f"{group.label!r} sits at {variable.levels}, but the data's rows "
+                    f"({levels}) never name {extra}, so there is no unambiguous way "
+                    f"to attach one of its values to each row. Group by a variable "
+                    f"recorded at keys the data's rows also name (no record of the "
+                    f"measure names both; a variable saved at both would link them)."
                 )
             on, right = self._keyed_values(variable, group)
             frame = frame.merge(right, on=on, how="left")
@@ -971,7 +971,10 @@ class ScidbSource(BaseSource):
             # Depth is the grouping variable's own schema depth: a subject-level
             # sheet pins one value per subject, so it sits at the same level as
             # `subject` and OUTSIDE `session` when both share the x axis.
-            attached[factor] = len(on)
+            # Its depth is its place in the flat key order: after the last key
+            # that pins it. A prefix gives len(on), as before; a branch (a
+            # person-level label on a cross-branch table) sits after `person`.
+            attached[factor] = max((levels.index(k) + 1 for k in on), default=0)
             n_levels = frame[factor].nunique(dropna=True)
             Log.info(
                 "attached %r as factor %r on %s (%d level(s))",

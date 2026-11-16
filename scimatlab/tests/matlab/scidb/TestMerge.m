@@ -221,8 +221,11 @@ classdef TestMerge < matlab.unittest.TestCase
             testCase.verifyEqual(result.data, [2, 4]');
         end
 
-        function test_merge_multi_record_inner_join_drops_unmatched(testCase)
-            % RawSignal has 3 sessions, ProcessedSignal only 2
+        function test_merge_multi_record_unmatched_is_refused(testCase)
+            % One Merge rule (P6, docs/claude/merge-cases.json "unmatched"): a
+            % Merge that would DROP rows is an error, not a quiet inner join.
+            % RawSignal has 3 sessions, ProcessedSignal only 2: session C has
+            % no partner, so the combination fails and nothing is saved.
             RawSignal().save(10, 'subject', 1, 'session', 'A');
             RawSignal().save(20, 'subject', 1, 'session', 'B');
             RawSignal().save(30, 'subject', 1, 'session', 'C');
@@ -234,9 +237,8 @@ classdef TestMerge < matlab.unittest.TestCase
                 {MergedResult()}, ...
                 'subject', 1);
 
-            result = MergedResult().load('subject', 1);
-            % Inner join drops session C → 2 rows, 4 cols
-            testCase.verifyEqual(result.data, [2, 4]');
+            testCase.verifyError(@() MergedResult().load('subject', 1), ...
+                'scidb:NotFoundError');
         end
 
         function test_merge_mixed_single_and_multi_record(testCase)

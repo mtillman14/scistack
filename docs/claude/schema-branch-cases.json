@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "about": [
+    "The branched-schema-key rules, as data. Prose is in",
+    "docs/claude/branched-schema-keys.md (written in the docs stage); the plan",
+    "is .claude/plan-branched-schema-keys.md. Read by scifor/tests/test_schema_tree.py",
+    "today, and by the frontend test for the level checkboxes (stage level_default).",
+    "",
+    "The idea: the tree is a default, the key set is the truth. Nothing here",
+    "refuses a key set; 'coherent' only decides defaults and what to offer.",
+    "",
+    "trees: named declarations, one list per branch.",
+    "rule  : the SchemaTree method under test.",
+    "  chain(key)             -> expect: [root .. key]",
+    "  children(key)          -> expect: [children]",
+    "  leaves(keys)           -> expect: [members with no descendant in keys]",
+    "  is_chain(keys)         -> expect: bool",
+    "  coherent(keys, inputs) -> expect: bool",
+    "  default_level(inputs)  -> expect: [keys]",
+    "  offered(inputs, ticked)-> expect: {offered: [keys], disabled: [keys]}"
+  ],
+  "trees": {
+    "shop": [["brand", "category", "item"], ["brand", "location", "person"]],
+    "linear": [["subject", "session", "trial"]]
+  },
+  "refused": [
+    {"id": 1, "name": "two-parents", "paths": [["brand", "category", "item"], ["brand", "location", "item"]], "match": "item"},
+    {"id": 2, "name": "repeated-in-path", "paths": [["a", "b", "a"]], "match": "'a'"},
+    {"id": 3, "name": "empty-path", "paths": [["a"], []], "match": "empty"},
+    {"id": 4, "name": "root-and-child", "paths": [["a", "b"], ["b"]], "match": "'b'"}
+  ],
+  "cases": [
+    {"id": 1, "name": "chain-of-item", "tree": "shop", "rule": "chain", "args": {"key": "item"}, "expect": ["brand", "category", "item"], "why": "A chain is the key and its ancestors, not a list prefix."},
+    {"id": 2, "name": "chain-of-person", "tree": "shop", "rule": "chain", "args": {"key": "person"}, "expect": ["brand", "location", "person"], "why": "The empty-variable expectation owner: category and item are NOT person's ancestors."},
+    {"id": 3, "name": "brand-has-two-children", "tree": "shop", "rule": "children", "args": {"key": "brand"}, "expect": ["category", "location"], "why": "distribute from brand must ask for the target by name."},
+    {"id": 4, "name": "item-has-no-child", "tree": "shop", "rule": "children", "args": {"key": "item"}, "expect": [], "why": "distribute from item: no child on its branch, today's error."},
+    {"id": 5, "name": "linear-child", "tree": "linear", "rule": "children", "args": {"key": "session"}, "expect": ["trial"], "why": "A plain list behaves as before: the next key."},
+    {"id": 6, "name": "leaves-of-cross-branch-set", "tree": "shop", "rule": "leaves", "args": {"keys": ["brand", "category", "item", "person"]}, "expect": ["item", "person"], "why": "Two leaves: the set spans two branches."},
+    {"id": 7, "name": "chain-is-a-chain", "tree": "shop", "rule": "is_chain", "args": {"keys": ["brand", "item"]}, "expect": true, "why": "Skipping a level is still one chain."},
+    {"id": 8, "name": "two-branches-not-a-chain", "tree": "shop", "rule": "is_chain", "args": {"keys": ["category", "location"]}, "expect": false, "why": "Different branches."},
+    {"id": 9, "name": "empty-set-is-a-chain", "tree": "shop", "rule": "is_chain", "args": {"keys": []}, "expect": true, "why": "Nothing to disagree about."},
+    {"id": 10, "name": "cross-branch-set-coherent-via-input", "tree": "shop", "rule": "coherent", "args": {"keys": ["category", "person"], "inputs": [["brand", "category", "item", "location", "person"]]}, "expect": true, "why": "A Purchase-like input carries both: the data shows the combination exists."},
+    {"id": 11, "name": "cross-branch-set-incoherent-without-input", "tree": "shop", "rule": "coherent", "args": {"keys": ["category", "person"], "inputs": [["brand", "category", "item"], ["brand", "location", "person"]]}, "expect": false, "why": "No bound input names both."},
+    {"id": 12, "name": "default-item-input", "tree": "shop", "rule": "default_level", "args": {"inputs": [["brand", "category", "item"]]}, "expect": ["brand", "category", "item"], "why": "One input: its own keys."},
+    {"id": 13, "name": "default-item-and-person", "tree": "shop", "rule": "default_level", "args": {"inputs": [["brand", "category", "item"], ["brand", "location", "person"]]}, "expect": ["brand"], "why": "The union is incoherent: iterate the keys EVERY input carries."},
+    {"id": 14, "name": "default-item-person-and-purchase", "tree": "shop", "rule": "default_level", "args": {"inputs": [["brand", "category", "item"], ["brand", "location", "person"], ["brand", "category", "item", "location", "person"]]}, "expect": ["brand", "category", "item", "location", "person"], "why": "The union lies inside Purchase's key set: coherent, all five."},
+    {"id": 15, "name": "default-brand-and-item", "tree": "shop", "rule": "default_level", "args": {"inputs": [["brand"], ["brand", "category", "item"]]}, "expect": ["brand", "category", "item"], "why": "The union is a chain."},
+    {"id": 16, "name": "default-no-inputs", "tree": "shop", "rule": "default_level", "args": {"inputs": []}, "expect": [], "why": "Nothing bound, nothing implied."},
+    {"id": 17, "name": "default-linear-is-union", "tree": "linear", "rule": "default_level", "args": {"inputs": [["subject"], ["subject", "session", "trial"]]}, "expect": ["subject", "session", "trial"], "why": "Linear trees behave as before."},
+    {"id": 25, "name": "default-ignores-a-dataset-level-input", "tree": "shop", "rule": "default_level", "args": {"inputs": [[], ["brand", "category", "item"], ["brand", "location", "person"]]}, "expect": ["brand"], "why": "A keyless input broadcasts anywhere: it neither adds keys nor narrows the shared ones."},
+    {"id": 18, "name": "offered-item-input", "tree": "shop", "rule": "offered", "args": {"inputs": [["brand", "category", "item"]], "ticked": []}, "expect": {"offered": ["brand", "category", "item"], "disabled": []}, "why": "Only the input's own branch."},
+    {"id": 19, "name": "offered-person-input", "tree": "shop", "rule": "offered", "args": {"inputs": [["brand", "location", "person"]], "ticked": []}, "expect": {"offered": ["brand", "location", "person"], "disabled": []}, "why": "Only the input's own branch."},
+    {"id": 20, "name": "offered-brand-only-input", "tree": "shop", "rule": "offered", "args": {"inputs": [["brand"]], "ticked": []}, "expect": {"offered": ["brand", "category", "item", "location", "person"], "disabled": []}, "why": "A brand-only input can be taken down either branch."},
+    {"id": 21, "name": "offered-cross-branch-input", "tree": "shop", "rule": "offered", "args": {"inputs": [["brand", "category", "item", "location", "person"]], "ticked": []}, "expect": {"offered": ["brand", "category", "item", "location", "person"], "disabled": []}, "why": "Every key it carries; no firewall."},
+    {"id": 22, "name": "offered-item-and-person-inputs", "tree": "shop", "rule": "offered", "args": {"inputs": [["brand", "category", "item"], ["brand", "location", "person"]], "ticked": []}, "expect": {"offered": ["brand"], "disabled": []}, "why": "Only what both can share, matching the default [brand]."},
+    {"id": 23, "name": "disabled-other-branch-after-tick", "tree": "shop", "rule": "offered", "args": {"inputs": [["brand"]], "ticked": ["category"]}, "expect": {"offered": ["brand", "category", "item", "location", "person"], "disabled": ["location", "person"]}, "why": "Ticking category makes location and person incoherent for a brand-only input."},
+    {"id": 24, "name": "nothing-disabled-with-cross-branch-input", "tree": "shop", "rule": "offered", "args": {"inputs": [["brand"], ["brand", "category", "item", "location", "person"]], "ticked": ["category"]}, "expect": {"offered": ["brand", "category", "item", "location", "person"], "disabled": []}, "why": "A bound cross-branch input makes any combination coherent."}
+  ]
+}

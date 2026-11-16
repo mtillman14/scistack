@@ -105,7 +105,7 @@ def test_a_categorical_variable_is_a_factor_and_a_measure(seeded):
 def test_a_deeper_variable_cannot_group(seeded):
     """Grouping trial-level data by something recorded per trial-and-more would
     multiply rows; say so instead of quietly inflating n."""
-    with pytest.raises(ValueError, match="not a prefix"):
+    with pytest.raises(ValueError, match="never name"):
         ScidbSource(seeded).get_table(
             ["Mass"], factor_variables=[FactorVariable("StepLength")]
         )

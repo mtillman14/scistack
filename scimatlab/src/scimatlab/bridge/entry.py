@@ -8,7 +8,7 @@ batch cache) is module state here, keyed by an integer handle.
 """
 
 from .convert import is_datetime_value, split_flat_to_lists
-from .crossing import matlab_entry
+from .crossing import datetime_keys_as_text, matlab_entry
 from .wire import (
     _locations_from_matlab,
     _make_matlab_fn_sentinel,
@@ -1419,7 +1419,9 @@ def wrap_batch_bridge(py_vars_list):
         record_ids.append(v.record_id or "")
         content_hashes.append(v.content_hash or "")
         meta = v.metadata
-        meta_dicts.append(dict(meta) if meta is not None else {})
+        # A date key reaches MATLAB as its exact schema-key text, never a
+        # Timestamp (not JSON, and a MATLAB datetime would lose the named zone).
+        meta_dicts.append(datetime_keys_as_text(meta) if meta is not None else {})
         branch_params_list.append(json.dumps(v.branch_params or {}))
         data.append(v.data)
 

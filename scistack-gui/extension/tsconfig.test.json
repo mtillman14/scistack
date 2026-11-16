@@ -11,6 +11,7 @@
     "src/startupDiagnostics.ts",
     "src/matlabRunTracker.ts",
     "src/serverArgs.ts",
+    "src/schemaKeysText.ts",
     "src/matlabConnectionGate.ts",
     "src/panelRegistry.ts",
     "src/sessionCore.ts",

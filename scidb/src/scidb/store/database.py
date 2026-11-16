@@ -16,6 +16,7 @@ import pandas as pd
 
 from scicanonicalhash import canonical_hash, datetime_key_text, frame_path_counts, generate_record_id
 from scifor.outputs import is_empty_table
+from scifor.schema import as_tree as scifor_as_tree
 from sciduckdb import (
     bulk_df_to_storage_rows,
     column_type_change,
@@ -39,6 +40,7 @@ from sciduckdb import (
 
 from scidb.provenance import query as provenance_query
 from scidb.store import schema_types
+from scidb.store import schema_tree_store
 from scidb.run.bindings import variant_signature
 from scidb.model.exceptions import (
     AmbiguousVersionError,
@@ -113,6 +115,10 @@ def configure_database(
         dataset_schema_keys: List of metadata keys that define the dataset schema
             (e.g., ["subject", "visit", "channel"]). These keys identify the
             logical location of data and are used for the folder hierarchy.
+            A BRANCHED dataset is declared with one list per branch
+            (``[["brand", "category", "item"], ["brand", "location", "person"]]``);
+            a plain list is one branch. The database stores the tree and a
+            different one on reopen raises ``SchemaKeysMismatchError``.
             Any metadata keys not in this list are treated as version parameters
             that distinguish different computational versions of the same data.
         schema_key_types: Optional per-key type declaration, e.g.
@@ -173,7 +179,7 @@ def configure_database(
             try:
                 import scifor
 
-                scifor.set_schema(list(dataset_schema_keys))
+                scifor.set_schema(db.schema_tree)
             except ImportError:
                 pass
 
@@ -181,7 +187,8 @@ def configure_database(
     # versions produced it) when debugging an archived log or a colleague's.
     Log.info(
         f"configure_database: path={dataset_db_path}, "
-        f"schema_keys={list(dataset_schema_keys)}, "
+        f"schema_keys={db.dataset_schema_keys}, "
+        f"schema_tree={db.schema_tree.describe()}, "
         f"schema_key_types={schema_types.describe(db.dataset_schema_key_types)} "
         f"(stored in the database) | {_run_context()}"
     )
@@ -614,7 +621,11 @@ class DatabaseManager(SchemaKeysMixin, SaveMixin, BatchSaveMixin, LoadMixin, Ver
                 "dataset_schema_keys must be an ordered sequence (list or tuple), "
                 "not a set. Schema key order defines the dataset hierarchy."
             )
-        self.dataset_schema_keys = list(dataset_schema_keys)
+        # A plain list is one branch; a list of lists is one per branch
+        # (scifor.schema.SchemaTree owns the rules). The flat list stays the
+        # one owner of key ORDER.
+        self.schema_tree = scifor_as_tree(dataset_schema_keys)
+        self.dataset_schema_keys = list(self.schema_tree.keys)
 
         # Validated before the file is opened; recorded in the database once
         # its tables exist (scidb.store.schema_types.declare, below). The database
@@ -647,10 +658,17 @@ class DatabaseManager(SchemaKeysMixin, SaveMixin, BatchSaveMixin, LoadMixin, Ver
             with timer.phase("duck_open"):
                 self._duck = SciDuck(
                     self.dataset_db_path,
-                    dataset_schema=dataset_schema_keys,
+                    dataset_schema=self.dataset_schema_keys,
                     read_only=self.read_only,
                 )
                 self._duck.add_rollback_listener(self._forget_uncommitted_caches)
+                try:
+                    schema_tree_store.reconcile(
+                        self._duck, self.schema_tree, db_path=self.dataset_db_path
+                    )
+                except Exception:
+                    self._duck.close()  # a refused tree must not leave the file locked
+                    raise
 
             with timer.phase("schema_key_types"):
                 self._refresh_schema_key_types()

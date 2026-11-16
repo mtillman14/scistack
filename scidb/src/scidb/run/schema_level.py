@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from scifor import EachOf, PathInput
+from scifor.schema import Offered, tree_for
 
 from scidb.provenance import query as provenance_query
 from scidb.model.log import Log
@@ -40,6 +41,9 @@ RULE_RECORDED_NARROWED = (
     "the level it last ran at, narrowed to the keys its inputs carry"
 )
 RULE_INPUTS = "the finest level its inputs carry"
+RULE_INPUTS_COMMON = (
+    "the keys every input carries (its inputs sit on different branches of the schema)"
+)
 RULE_NOTHING = "no history and no bound input to read a level from"
 
 
@@ -133,11 +137,20 @@ class SchemaLevel:
             return "nothing: one call over the whole dataset"
         return "[" + ", ".join(self.keys) + "]"
 
-    def to_json(self, rule: str | None = None) -> dict:
-        """Wire shape for the settings panel."""
+    def to_json(self, rule: str | None = None, offered=None) -> dict:
+        """Wire shape for the settings panel.
+
+        *offered* (a ``scifor.schema.Offered``, see :func:`level_choices`) adds
+        ``offered`` (the keys to show a checkbox for) and ``disabled``
+        (``{key: reason}`` for offered keys whose tick would be incoherent).
+        The panel holds no rule of its own; it renders these.
+        """
         out = {"state": self.state, "keys": list(self.keys)}
         if rule is not None:
             out["rule"] = rule
+        if offered is not None:
+            out["offered"] = list(offered.keys)
+            out["disabled"] = dict(offered.disabled)
         return out
 
 
@@ -199,11 +212,22 @@ def input_levels(duck, variable_types, path_inputs, schema_keys) -> list[list[st
 # ---------------------------------------------------------------------------
 
 
+def level_choices(tree, levels, keys) -> Offered:
+    """Which level checkboxes to offer for inputs at *levels*, with *keys*
+    ticked (``SchemaTree.offered``; keys the tree does not know are ignored)."""
+    known = set(tree.keys)
+    return tree.offered(
+        [[k for k in (lv or []) if k in known] for lv in levels or []],
+        [k for k in keys if k in known],
+    )
+
+
 def resolve_schema_level(
     schema_keys,
     stated: Any = None,
     recorded: "list[str] | None" = None,
     levels: "list[list[str]] | None" = None,
+    tree=None,
 ) -> "tuple[SchemaLevel, str]":
     """``(level, rule)`` — pure, so every route and the panel agree.
 
@@ -211,9 +235,10 @@ def resolve_schema_level(
     2. **recorded**: the keys THIS call site iterated on its last run
        (``None`` = no history under its current wiring; ``[]`` = it ran as
        one call) — never finer than the inputs' union (below);
-    3. **inputs**: the union of every bound input's level; a coarser input
-       broadcasts (docs/claude/coarse-level-inputs.md). An empty union is
-       one call;
+    3. **inputs**: the union of every bound input's level when it lies on one
+       branch of the schema tree (or inside one input), else the keys EVERY
+       input carries (``SchemaTree.default_level``); a coarser input broadcasts
+       (docs/claude/coarse-level-inputs.md). An empty result is one call;
     4. every dataset key, only with nothing to go on.
 
     Why the recorded level is narrowed: it is read off where the last run's
@@ -227,12 +252,13 @@ def resolve_schema_level(
     really wants that fan-out states its level, which wins above.
     """
     schema_keys = list(schema_keys or [])
+    tree = tree or tree_for(schema_keys)
     level = SchemaLevel.from_stated(stated, schema_keys)
     if not level.is_unset:
         return level, RULE_STATED
     if recorded is not None:
         if levels:
-            carried = set(provenance_query.finest_schema_keys(levels, schema_keys))
+            carried = set(provenance_query.finest_schema_keys(levels, schema_keys, tree))
             dropped = [k for k in recorded if k not in carried]
             if dropped:
                 kept = [k for k in recorded if k in carried]
@@ -249,6 +275,16 @@ def resolve_schema_level(
                 return narrowed, RULE_RECORDED_NARROWED
         return SchemaLevel.of(recorded, schema_keys), RULE_RECORDED
     if levels:
-        inferred = provenance_query.finest_schema_keys(levels, schema_keys)
-        return SchemaLevel.of(inferred, schema_keys), RULE_INPUTS
+        inferred = provenance_query.finest_schema_keys(levels, schema_keys, tree)
+        carried_by_any = {k for lv in levels for k in (lv or [])}
+        narrowed = bool(carried_by_any - set(inferred))
+        if narrowed:
+            Log.info(
+                f"[schema-level] inputs {levels} do not lie on one branch of the "
+                f"schema ({tree.describe()}); iterating the keys every input "
+                f"carries: {inferred}"
+            )
+        return SchemaLevel.of(inferred, schema_keys), (
+            RULE_INPUTS_COMMON if narrowed else RULE_INPUTS
+        )
     return SchemaLevel.of(schema_keys, schema_keys), RULE_NOTHING

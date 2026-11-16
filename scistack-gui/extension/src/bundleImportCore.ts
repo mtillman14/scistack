@@ -10,12 +10,15 @@
  * (`scistack import`) and this command run one implementation.
  */
 
+import { schemaArg } from './schemaKeysText';
+
 /** What the dialogs collected; each maps onto one CLI flag. */
 export interface ImportChoices {
   bundle: string;
   into: string;
-  /** Recipient schema keys; undefined = keep the exporter's. */
-  schema?: string[];
+  /** Recipient schema keys (a plain list, or one list per branch);
+   *  undefined = keep the exporter's, tree included. */
+  schema?: string[] | string[][];
   /** Exporter key -> recipient key, or null to drop it. */
   keyMap?: Record<string, string | null>;
   /** PathInput name -> the recipient's folder. */
@@ -29,11 +32,17 @@ export interface ImportChoices {
   valueRules?: boolean;
 }
 
+function isBranched(schema: string[] | string[][]): schema is string[][] {
+  return schema.length > 0 && Array.isArray(schema[0]);
+}
+
 /** `bundle-info --json`'s `info` (scidb.project.bundle.preview). */
 export interface BundleInfo {
   path: string;
   package: string | null;
   schema_keys: string[];
+  /** The exporter's schema as one list per branch (absent in older output). */
+  schema_branches?: string[][];
   database: string | null;
   options: Record<string, boolean>;
   sections: Record<string, { files: number; bytes: number }>;
@@ -69,7 +78,12 @@ export function buildInfoArgs(bundle: string): string[] {
 
 export function buildImportArgs(c: ImportChoices): string[] {
   const args = ['-m', BUNDLE_CLI_MODULE, 'import', c.bundle, '--into', c.into, '--json'];
-  if (c.schema && c.schema.length > 0) args.push('--schema', ...c.schema);
+  if (c.schema && c.schema.length > 0) {
+    // Branches travel as ONE text word ("a,b;a,c"), which the CLI splits with
+    // scifor.parse_schema_text; a plain list stays one word per key.
+    if (isBranched(c.schema)) args.push('--schema', schemaArg(c.schema));
+    else args.push('--schema', ...c.schema);
+  }
   for (const [from, to] of Object.entries(c.keyMap ?? {})) {
     args.push('--map', `${from}=${to ?? ''}`);
   }

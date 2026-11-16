@@ -513,24 +513,14 @@ def close_initial_connection() -> None:
 
 
 def read_schema_keys(db_path: Path) -> list[str]:
+    """The flat schema key list of an existing database.
+
+    Delegates to scidb (``schema_keys_from_db``), the one owner of reading
+    the keys out of a file; :func:`init_db` reads the whole TREE instead.
     """
-    Read the schema keys from an existing SciStack database without needing
-    to know them in advance. The schema keys are stored as columns in the
-    _schema table (all columns except schema_id and schema_level).
-    """
-    logger.debug("read_schema_keys: opening read-only connection to %s", db_path)
-    con = duckdb.connect(str(db_path), read_only=True)
-    try:
-        rows = con.execute(
-            "SELECT column_name FROM information_schema.columns "
-            "WHERE table_name = '_schema' "
-            "AND column_name NOT IN ('schema_id', 'schema_level') "
-            "ORDER BY ordinal_position"
-        ).fetchall()
-        return [row[0] for row in rows]
-    finally:
-        con.close()
-        logger.debug("read_schema_keys: closed read-only connection to %s", db_path)
+    from scidb.store.sciduck import schema_keys_from_db
+
+    return schema_keys_from_db(db_path)
 
 
 def init_db(db_path: Path) -> DatabaseManager:
@@ -542,11 +532,13 @@ def init_db(db_path: Path) -> DatabaseManager:
     global _db, _db_path, _db_open
 
     logger.info("[db] reading schema keys from database")
-    schema_keys = read_schema_keys(db_path)
-    logger.info("[db] found %d schema key(s): %s", len(schema_keys), schema_keys)
+    from scidb.store.schema_tree_store import tree_from_db
+
+    tree = tree_from_db(db_path)
+    logger.info("[db] found %d schema key(s): %s", len(tree.keys), tree.describe())
 
     logger.info("[db] configuring database connection")
-    _db = scidb.configure_database(db_path, schema_keys)
+    _db = scidb.configure_database(db_path, tree)
     _db_path = db_path
     _db_open = True
     logger.info("[db] database connection established")
@@ -555,9 +547,10 @@ def init_db(db_path: Path) -> DatabaseManager:
     return _db
 
 
-def create_db(db_path: Path, schema_keys: list[str]) -> DatabaseManager:
+def create_db(db_path: Path, schema_keys: list) -> DatabaseManager:
     """
-    Create a new SciStack database at db_path with the given schema keys.
+    Create a new SciStack database at db_path with the given schema keys
+    (a plain list, or one list per branch).
     The parent directory must already exist. Fails if the file already exists.
     """
     logger.info(
@@ -575,7 +568,10 @@ def create_db(db_path: Path, schema_keys: list[str]) -> DatabaseManager:
     if not schema_keys:
         raise ValueError("schema_keys must not be empty")
 
-    logger.info("[db] configuring new database with %d schema key(s)", len(schema_keys))
+    from scifor.schema import as_tree
+
+    n_keys = len(as_tree(schema_keys).keys)
+    logger.info("[db] configuring new database with %d schema key(s)", n_keys)
     _db = scidb.configure_database(db_path, schema_keys)
     _db_path = db_path
     _db_open = True

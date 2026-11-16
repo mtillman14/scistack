@@ -23,10 +23,24 @@ classdef Variant
 %   branch_params are namespaced per producing function (e.g. bandpass.low_hz);
 %   a bare name (low_hz) is matched by suffix at load time.
 %
+%   Three names are options, not branch params, exactly as in Python:
+%
+%       scidb.Variant(X, fn="bandpass", low_hz=20)   % pins bandpass.low_hz
+%       scidb.Variant(X, code_version="v1")          % or "latest"
+%       scidb.Variant(X, run_options="distribute=true")
+%
+%   MATLAB stores every name-value pair as given, and Python's
+%   scidb.Variant (scidb/src/scidb/model/variant.py) decides what each one
+%   means: the bridge rebuilds Variant(inner, **pairs). A nested Variant is
+%   kept nested, not merged here, so Python's merge (and its fn= namespacing,
+%   which applies only to its own level) is the one rule. A conflicting
+%   value in a nested Variant raises when for_each runs.
+%
 %   Properties:
 %       var_type      - Variable instance (e.g. FilteredEMG()), a column
 %                       selection (FilteredEMG("col")), or a scidb.Fixed
-%       branch_params - Struct of branch_param key/value pairs to pin
+%       branch_params - Struct of the pairs to pin (branch params, plus fn,
+%                       code_version, run_options when given)
 %
 %   Example:
 %       % Run fn over only the low_hz=20 variant of FilteredEMG
@@ -36,7 +50,7 @@ classdef Variant
 %           subject=[1 2]);
 
     properties (SetAccess = private)
-        var_type        % BaseVariable instance / column selection / scidb.Fixed
+        var_type        % BaseVariable / column selection / scidb.Fixed / scidb.Variant
         branch_params  struct  % branch_param pins
     end
 
@@ -48,10 +62,11 @@ classdef Variant
         %
         %   Arguments:
         %       var_type - A BaseVariable instance, a column selection
-        %                  (MyVar("col")), or a scidb.Fixed wrapper.
+        %                  (MyVar("col")), a scidb.Fixed or a scidb.Variant.
         %
         %   Name-Value Arguments:
-        %       branch_param keys and their pinned values
+        %       branch_param keys and their pinned values, plus the options
+        %       fn, code_version and run_options (see the class help)
 
             if isa(var_type, 'scidb.Merge')
                 error('scidb:Variant', ...
@@ -61,36 +76,27 @@ classdef Variant
                      'constituent instead: Merge(Variant(A, low_hz=20), B).']);
             end
 
+            if isa(var_type, 'scifor.EachOf')
+                error('scidb:Variant', ...
+                    ['Variant cannot wrap an EachOf. EachOf must stay the ', ...
+                     'outermost wrapper: EachOf(Variant(A, low_hz=20), ', ...
+                     'Variant(A, low_hz=50)).']);
+            end
+
             if mod(numel(varargin), 2) ~= 0
                 error('scidb:Variant', ...
                     'Variant branch_params must be name-value pairs.');
             end
             if isempty(varargin)
                 error('scidb:Variant', ...
-                    ['Variant requires at least one branch_param to pin, ', ...
-                     'e.g. scidb.Variant(FilteredEMG(), low_hz=20).']);
+                    ['Variant requires at least one branch_param, ', ...
+                     'code_version or run_options to pin, e.g. ', ...
+                     'scidb.Variant(FilteredEMG(), low_hz=20).']);
             end
 
             s = struct();
             for i = 1:2:numel(varargin)
                 s.(string(varargin{i})) = varargin{i+1};
-            end
-
-            % Nested Variant: merge the dicts; raise on conflicting key value.
-            if isa(var_type, 'scidb.Variant')
-                inner_bp = var_type.branch_params;
-                inner_fields = fieldnames(inner_bp);
-                for i = 1:numel(inner_fields)
-                    k = inner_fields{i};
-                    if isfield(s, k) && ~isequal(s.(k), inner_bp.(k))
-                        error('scidb:Variant', ...
-                            'Conflicting branch_param "%s" in nested Variant.', k);
-                    end
-                    if ~isfield(s, k)
-                        s.(k) = inner_bp.(k);
-                    end
-                end
-                var_type = var_type.var_type;
             end
 
             obj.var_type = var_type;

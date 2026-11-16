@@ -6,7 +6,7 @@
 from scidb import configure_database, BaseVariable, for_each, Fixed, Parameter
 ```
 
-`scidb` re-exports the `scifor` wrappers (`Fixed`, `EachOf`, `ColName`, `PathInput`, `PathOutput`, `Col`, `set_schema`, `get_schema`), so one import covers both layers. See [scifor](scifor.md) for those wrappers.
+`scidb` re-exports the `scifor` wrappers (`Fixed`, `EachOf`, `ColName`, `PathInput`, `PathOutput`, `Col`, `LocationFilter`, `set_schema`, `get_schema`), so one import covers both layers. See [scifor](scifor.md) for those wrappers.
 
 ## Setup
 
@@ -21,6 +21,10 @@ db = configure_database("experiment.duckdb", ["subject", "session", "trial"],
 ```
 
 `schema_keys` are the location of a value, outermost first. Any other keyword you save with is treated as a *version* parameter, which tells apart different computations at the same location. `schema_key_types` marks a key as `"numeric"`, so that `"001"`, `1` and `1.0` are the same trial. Undeclared keys are compared as strings, so `"01"` and `"1"` are different values.
+
+**Branched schemas.** Real datasets branch (`brand > category > item` beside `brand > location > person`). Declare one list per branch: `configure_database(path, [["brand", "category", "item"], ["brand", "location", "person"]])`. A plain list is one branch. The database stores the tree, and reopening it with a different tree raises `SchemaKeysMismatchError` naming the keys whose parent differs. The tree is only a default (it picks which level checkboxes to offer and where `distribute` goes): a record may name any set of keys, including keys from both branches. `db.schema_tree` is the `scifor.SchemaTree`. See `docs/claude/branched-schema-keys.md`.
+
+A dataset that already holds data can still **grow**: `scidb.store.schema_keys_change.extend_schema_keys(db, paths)` adds a branch or a deeper level (existing records name no such key, so nothing they mean changes), and `change_schema_keys` can rename, re-parent or delete keys that no record or run uses (`scidb.store.emptiness.key_usage` says which). Both close the database; reopen it with the new keys.
 
 Every function below that touches the database also accepts `db=` to target a database other than the current one.
 
@@ -58,12 +62,54 @@ The columns of a variable are fixed by its first save. A later save with a diffe
 
 ## Batch processing
 
+/// tab | Python
 ```python
-for_each(fn, inputs, outputs, *, where=None, skip_computed=False,
-         distribute=False, as_table=None, dry_run=False, save=True,
-         schema_keys=None, schema_filter=None, locations=None,
-         glue=None, **metadata_iterables)
+for_each(
+    fn,                        # the function to run once per combination
+    inputs,                    # {arg_name: VariableClass | wrapper | PathInput | constant}
+    outputs,                   # [OutputClass, ...], one per return value
+    dry_run=False,             # print what would load/run/save, do nothing
+    save=True,                 # False: record nothing (a plot_/stat_ endpoint makes a draft)
+    as_table=None,             # True | [input names]: pass those inputs as full tables
+    db=None,                   # a DatabaseManager other than the current one
+    distribute=False,          # save each piece of a return one schema level deeper
+    where=None,                # filter on which records load (see Filters)
+    introspect=False,          # add _record_id_*, _branch_params_*, _call_id columns to the result
+    skip_computed=False,       # skip combinations whose outputs and history are unchanged
+    schema_filter=None,        # {key: [values]}; not with **metadata_iterables
+    schema_keys=None,          # keys to iterate over every DB value; [] = all keys; None = one call
+    schema_key_types=None,     # {key: "numeric" | "string"}, recorded in the database
+    on_error="continue",       # "continue" | "stop"
+    locations=None,            # LocationFilter | {"include": ..., "exclude_levels": ...} | JSON text
+    share_limits=None,         # {input_name: [keys held fixed]} -> fn gets `<input>_limits=(min, max)`
+    project_root=None,         # folder a rootless PathInput resolves against
+    glue=None,                 # {input_name: glue_fn | GlueSpec | [GlueSpec, ...]}
+    parameter_names=None,      # {arg_name: declared Parameter name}, for history only
+    step=None,                 # a step name recorded on the run (not identity)
+    pipeline=<unset>,          # omit: register if a pipeline is active; None: run now; a Pipeline
+    hooks=None,                # scifor.LoopHooks(progress_fn=..., cancel_check=...)
+    **metadata_iterables,      # subject=[1, 2], session=[] ([] = every value in the database)
+) -> pd.DataFrame | Step | None    # Step when registered into a pipeline; None on dry_run
 ```
+
+`step` and `pipeline` are reserved and cannot be schema keys.
+///
+
+/// tab | MATLAB
+```matlab
+result = scidb.for_each(@fn, inputs, outputs, Name=Value, ...)
+result = scidb.for_each(@fn, inputs, outputs={Out1(), Out2()}, Name=Value, ...)
+
+% inputs:  struct, field order = argument order
+% outputs: cell array of BaseVariable instances
+% Name=Value: dry_run, save, distribute, db, where, as_table, introspect,
+%   skip_computed, on_error, schema_keys (string array), schema_filter (struct),
+%   glue (struct of glue_ function handles), step, parameter_names (struct),
+%   locations (JSON text), project_root, share_limits (struct),
+%   schema_key_types (struct), pipeline, categorical; any other name = a metadata iterable,
+%   e.g. subject=[1 2 3], session=["A" "B"]
+```
+///
 
 `for_each` adds the database to [`scifor.for_each`](scifor.md#for_each). Inputs given as variable classes are loaded per combination. Each return value is saved as the matching class in `outputs`, and provenance is recorded for every saved record.
 
@@ -102,16 +148,127 @@ scidb.for_each(@bandpass, ...
 | `where=` | Load only records that pass a [filter](#filters). |
 | `glue={param: fn}` | Reshape one loaded input in memory before `fn` sees it. Nothing is saved; see [Glue](#glue). |
 
-**Input wrappers specific to scidb** (all nest with `Fixed`, `Merge` and column selection):
+### Input wrappers
 
-| Wrapper | Purpose |
+`scidb.for_each` takes every [scifor wrapper](scifor.md#input-wrappers), with variable classes in place of DataFrames. The three below exist only in scidb: they decide **which stored records** load. All of them nest with `Fixed`, `Merge` and column selection.
+
+| Wrapper | Use it to |
 |---|---|
-| `Parameter(*values, description="")` | A named constant with one or more values; each value is a separate run. Declare it at module level (`WINDOW = Parameter(10, 20)`) or in the [entities file](#project-configuration) so it appears by name in the GUI and in history. A `Parameter` is an `EachOf`. |
-| `Variant(MyVar, **branch_params)` | Load one specific variant of an input, e.g. `Variant(Filtered, low_hz=20)`. |
-| `AcrossVariants(MyVar)` | Pool *every* variant into one table, with the settings as columns. For multiverse or robustness analysis. Without it, an aggregating run is split per variant automatically. |
-| `Merge(A, B)`, `ColumnSelection` | The `scifor` wrappers, extended with database loading and `to_csv`. Comparing a column selection (`MyVar["c"] == 1`) yields a filter. |
+| [`Fixed`](scifor.md#fixed), [`Merge`](scifor.md#merge), [`EachOf`](scifor.md#eachof), [`ColName`](scifor.md#colname), [`PathInput`](scifor.md#pathinput), [`PathOutput`](scifor.md#pathoutput) | As in scifor. `Merge` here also has `.to_csv(path, **meta)`. |
+| [Column selection](#column-selection) | `MyVar["c"]`, `MyVar.for_columns(...)`: the scidb spelling of `ColumnSelection`. |
+| [`Parameter`](#parameter) | A named constant with one or more values. |
+| [`Variant`](#variant) | Load one specific variant of an input. |
+| [`AcrossVariants`](#acrossvariants) | Pool every variant of an input into one table. |
 
-**Function roles.** The prefix of a function's name selects its role. `function_role(name)` returns it, and `FUNCTION_ROLES` lists the roles.
+/// tab | Python
+```python
+inputs={
+    "baseline": Fixed(StepLength, session="BL"),
+    "both":     Merge(Kinematics, Fixed(Force, session="BL")),
+    "speed":    GaitData["speed"],
+    "cutoff":   EachOf(10, 20),
+    "raw":      PathInput("{subject}/raw.csv", name="raw"),
+}
+```
+///
+
+/// tab | MATLAB
+```matlab
+struct( ...
+    'baseline', scidb.Fixed(StepLength(), session="BL"), ...
+    'both',     scidb.Merge(Kinematics(), scidb.Fixed(Force(), session="BL")), ...
+    'speed',    GaitData("speed"), ...
+    'cutoff',   scifor.EachOf(10, 20), ...
+    'raw',      scidb.PathInput("{subject}/raw.csv", name="raw"))
+```
+///
+
+#### Column selection
+
+```python
+MyVar["col"]                    # one column
+MyVar[["a", "b"]]               # several, as one DataFrame
+MyVar.for_columns(columns=None) # one call per column; None or [] = every data column
+MyVar.for_columns({"A": ["a", "a_date"]})        # column groups
+ColumnSelection(MyVar, columns=None, iterate=False, excl_columns=None)   # the long form
+```
+
+The arguments are those of [scifor's `ColumnSelection`](scifor.md#columnselection). `MyVar["col"] == 0` builds a [filter](#filters). In MATLAB: `MyVar("col")`, `MyVar(["a" "b"])`, `MyVar().for_columns()`, `MyVar().for_columns({["a" "a_date"], ["b" "b_date"]})`.
+
+#### Parameter
+
+```python
+Parameter(*values, description="")
+```
+
+Each value is a separate run (a `Parameter` is an `EachOf`). Declare it once, so the GUI and the history show it by name. A Parameter may be declared with no values yet, but running with none raises. `description` is shown in the GUI.
+
+/// tab | Python
+```python
+WINDOW = Parameter(10, 20, description="window, s")
+```
+///
+
+/// tab | MATLAB
+```matlab
+window = scidb.Parameter(10, 20, description="window, s");
+```
+///
+
+/// tab | TOML
+```toml
+[parameters]
+WINDOW = [10, 20]
+```
+///
+
+#### Variant
+
+```python
+Variant(var_type, *, fn=None, code_version=None, run_options=None, **branch_params)
+```
+
+| Argument | Meaning |
+|---|---|
+| `var_type` | A variable class, a column selection, a `Fixed`, or another `Variant`. Not a `Merge` (pin each constituent instead: `Merge(Variant(A, low_hz=20), B)`), and not an `EachOf` (`EachOf` stays outermost). |
+| `**branch_params` | The constants to pin, e.g. `low_hz=20`. A bare name matches whichever upstream step has a constant of that name. |
+| `fn` | The producing function, for when two upstream steps share a constant name: `fn="bandpass", low_hz=20` pins `bandpass.low_hz`. It applies only to this level of a nested `Variant`. |
+| `code_version` | Pin the code that produced the record: `"v1"`, `"v2"`, ... (per function) or `"latest"`. A named version drops locations that never ran it; `"latest"` is decided per location and drops none. |
+| `run_options` | Pin the `for_each` flags the producer ran with, e.g. `"distribute=true"` or `"distribute=false, as_table=[df]"`, or `"latest"`. |
+
+At least one pin is required. A nested `Variant` with a conflicting value for the same key raises.
+
+/// tab | Python
+```python
+Variant(Filtered, low_hz=20)
+Variant(Filtered, fn="bandpass", low_hz=20)
+Variant(Filtered, code_version="v1")
+EachOf(Variant(Filtered, low_hz=10), Variant(Filtered, low_hz=20))
+```
+///
+
+/// tab | MATLAB
+```matlab
+scidb.Variant(Filtered(), low_hz=20)
+scidb.Variant(Filtered(), fn="bandpass", low_hz=20)
+scidb.Variant(Filtered(), code_version="v1")
+scifor.EachOf(scidb.Variant(Filtered(), low_hz=10), scidb.Variant(Filtered(), low_hz=20))
+```
+///
+
+To pick a variant in `load()` instead, pass the constant (`Filtered.load(subject="S01", low_hz=20)`), or `**branch_param("bandpass", low_hz=20)` when two steps share the name.
+
+#### AcrossVariants
+
+```python
+AcrossVariants(var_type)
+```
+
+Pools every variant into one table, with each upstream constant as a column (e.g. `bandpass.low_hz`), for multiverse or robustness analysis. Without it, a run that aggregates is split per variant automatically. `var_type` is a variable class, a `Fixed` or a `Variant`; a column selection, a `Merge` or an `EachOf` is an error. In MATLAB: `scidb.AcrossVariants(Filtered())`.
+
+### Function roles and helpers
+
+The prefix of a function's name selects its role. `function_role(name)` returns it, and `FUNCTION_ROLES` lists the roles.
 
 - `plot_...` functions draw a figure to a `PathOutput`.
 - `stat_...` functions produce a statistics result and receive their inputs as tables by default.
@@ -219,9 +376,27 @@ Pass `within=["group"]` to check each study arm separately, so a subject is not 
 | `scifor.project.colors` (`[colors]`) | Fixed colours per level in plots. |
 | `scan_project(root)`, `scan_package(name)`, `discover_module(mod)` | Find the variables, parameters and functions a project defines without running its pipelines. |
 
+## Schema keys of an empty dataset
+
+`scidb.is_empty(db=None)` is true when no variable holds a saved record (run history and declarations are not data). While it is true, the schema keys can still change: `scidb.store.schema_keys_change.change_schema_keys(db, new_keys, renames={old: new})` rebuilds the key-shaped tables in one transaction, keeps exclusions, expectation marks and key types (a new key reads NULL = every value), then **closes** the database; reopen it with `configure_database(path, new_keys)`. It raises `SchemaKeysChangeRefused` when a key a record or run names would be renamed, moved or deleted (a dataset that holds data can only grow, and change keys nothing uses), for invalid keys, or when an exclusion names a key that would be deleted. The GUI offers it in the duplicate-location popup (details: `docs/claude/changing-schema-keys.md`).
+
 ## Glue
 
 `GlueSpec` describes a short reshaping function applied to one input between steps, for example renaming columns or pivoting a table. A glue function may change the columns but not the rows, and its result is never saved. Only a provenance node is recorded, so editing a glue function still marks downstream results as out of date. Violations raise `GlueRowsChangedError`, `GlueSchemaKeysAlteredError` and the other `GlueError` subclasses.
+
+```python
+GlueSpec(name, fn=None, per_schema_key=False, pipe_param=None, extra_inputs={})
+for_each(fn, inputs, outputs, glue={"x": glue_tidy})        # a function alone is enough
+```
+
+| Argument | Meaning |
+|---|---|
+| `name`, `fn` | The glue step's name and its function. Passing the function alone fills both. |
+| `per_schema_key` | `False`: run once on the whole loaded table. `True`: run on each combination's slice, just before `fn`. |
+| `pipe_param` | Which of the glue function's arguments receives the input being reshaped. Default: its first. |
+| `extra_inputs` | `{glue_arg: value}` for the glue function's other arguments. |
+
+`language`, `source_file` and `source_text` are set by the GUI and the MATLAB bridge. In MATLAB, `glue=` takes a struct of named `glue_` function handles.
 
 ## Command line
 
@@ -259,8 +434,4 @@ All errors derive from `SciStackError`. The ones you are most likely to see:
 | `ColumnSetChangedError` | A table variable was saved with different columns. |
 | `OutputSaveError` | A `for_each` output could not be saved. |
 | `PipelineCycleError` | A pipeline's steps depend on each other in a loop. |
-## Schema keys of an empty dataset
-
-`scidb.is_empty(db=None)` is true when no variable holds a saved record (run history and declarations are not data). While it is true, the schema keys can still change: `scidb.store.schema_keys_change.change_schema_keys(db, new_keys, renames={old: new})` rebuilds the key-shaped tables in one transaction, keeps exclusions, expectation marks and key types (a new key reads NULL = every value), then **closes** the database; reopen it with `configure_database(path, new_keys)`. It raises `SchemaKeysChangeRefused` for a dataset that holds data, for invalid keys, or when an exclusion names a key that would be deleted. The GUI offers it in the duplicate-location popup (details: `docs/claude/changing-schema-keys.md`).
-
 | `SchemaKeysMismatchError` | `configure_database` got different schema keys than the database has (a `ValueError`; the message shows both lists). |

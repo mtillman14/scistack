@@ -43,6 +43,7 @@ from scifor import (
     ColName,
     EachOf,
     Fixed,
+    LocationFilter,
     PathInput,
     PathOutput,
     get_schema,
@@ -80,8 +81,8 @@ from scidb.model.exceptions import (
     SchemaKeyTypeChangeError,
     SchemaKeyTypeConflictError,
     SchemaKeyTypeError,
-    SciStackError,
     SchemaKeysMismatchError,
+    SciStackError,
 )
 from scidb.store.exclusions import exclude_schema, include_schema, list_exclusions
 from scidb.model.filters import raw_sql, schema_key
@@ -138,9 +139,9 @@ SUPPORTED_MODULES: tuple[str, ...] = (
     "scidb.model.across_variants",
     "scidb.run.bindings",
     "scidb.store.clear_data",
-    "scidb.model.column_selection",
     "scidb.store.emptiness",
     "scidb.store.schema_keys_change",
+    "scidb.model.column_selection",
     "scidb.store.database",
     "scidb.model.exceptions",
     "scidb.store.exclusions",
@@ -214,8 +215,8 @@ __all__ = [
     # Configuration
     "configure_database",
     "get_database",
-    "using_db",
     "is_empty",
+    "using_db",
     # Save
     "save",
     # Pipeline node staleness
@@ -245,6 +246,7 @@ __all__ = [
     "ForEachConfig",
     "PathInput",
     "PathOutput",
+    "LocationFilter",
     # Glue nodes (transient in-memory reshaping; never saved)
     "GlueSpec",
     # Standalone / DataFrame support
@@ -273,9 +275,9 @@ __all__ = [
     "DatabaseLockedError",
     "PipelineCycleError",
     "SchemaKeyTypeError",
+    "SchemaKeysMismatchError",
     "SchemaKeyTypeConflictError",
     "SchemaKeyTypeChangeError",
-    "SchemaKeysMismatchError",
     "GlueError",
     "GlueRowsChangedError",
     "GlueSchemaKeysAlteredError",

@@ -74,10 +74,12 @@ def test_apply_reopens_the_database_with_the_new_keys(empty_db, wired_node):
     SkGuiVar.save(np.arange(3.0), db=_gui_db.get_db(), subject="S1", visit="1")
 
 
-def test_a_dataset_with_data_is_refused_and_stays_open(empty_db):
+def test_a_used_key_is_refused_and_the_database_stays_open(empty_db):
     SkGuiVar.save(np.arange(3.0), db=empty_db, subject="S1")
-    result = schema_keys_service.change_schema_keys(empty_db, ["subject", "visit"], {})
+    result = schema_keys_service.change_schema_keys(
+        empty_db, ["participant"], {"subject": "participant"}
+    )
     assert result["ok"] is False
-    assert "already holds data" in result["error"]
+    assert "in use" in result["error"]
     assert _gui_db.get_db().dataset_schema_keys == ["subject"]
     assert _gui_db.get_db()._duck.is_open

@@ -540,7 +540,11 @@ end
 
 function [values, numbers] = describe_values(v, numbers)
 %DESCRIBE_VALUES  One metadata iterable: numbers, texts, or mixed items.
-    if isnumeric(v) || islogical(v)
+    if islogical(v)
+        % Logicals stay BOOLEANS on the wire: as numbers, k=true arrives as 1.0
+        % and a text key column "true" never matches it (key-match case 11).
+        values = struct('items', {num2cell(v(:)')});
+    elseif isnumeric(v)
         [ref, numbers] = push_numbers(numbers, double(v(:)));
         values = struct('numbers', ref);
     elseif isstring(v)

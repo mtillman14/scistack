@@ -11,6 +11,45 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzz. Branched schema keys — added 2026-11-15
+
+**What changed:** a dataset's schema keys can branch (`brand > category > item` beside
+`brand > location > person`). The tree is a default; a record may still name any set of keys.
+Declaration, storage, `distribute`, expected locations, the level checkboxes, Plot Studio / Stat
+Studio joins, adding keys to a dataset that holds data, the VS Code prompts and the GUI wizard all
+changed. Built stage by stage per `.claude/plan-branched-schema-keys.md`; pytest was green through
+`tree_owner`, the rest is untested by eye. Rules: `docs/claude/branched-schema-keys.md`.
+
+**Backend steps:**
+1. Regenerate the committed API types once (the `change_schema_keys` request now takes branches):
+   `python scistack-gui/tools/gen_ts_types.py`.
+2. Rebuild the bundles: `npm run build:all` in `scistack-gui/extension` (the webview bundle changed).
+3. `scistack.log` should show `schema tree set: keys=[...], parents=[...], branched` when a branched
+   database opens, and `[schema-level] ... iterating the keys every input carries` for an item + person node.
+
+**Frontend steps:**
+1. Command Palette -> **SciStack: Open Pipeline** -> Create. Type
+   `brand, category, item; brand, location, person` as the schema keys. The prompt's line should read
+   "2 branches: brand → category → item  |  brand → location → person". Typing
+   `brand, category, item; brand, location, item` should show the two-parents message instead.
+2. Create variables at the item branch, the person branch and brand, plus one at all five keys, and
+   save a few records each (script or MATLAB).
+3. Wire an item-level variable and a person-level variable into one function node. Open its settings:
+   Schema level should say "the keys every input carries" and offer only `brand`. Add the all-five
+   variable as a third input: all five keys are offered and ticked.
+4. Wire only a brand-level variable. Tick `category`: `location` and `person` should grey out with a
+   tooltip naming the clash.
+5. Force a duplicate-location failure on a dataset that already holds data: the popup should now offer
+   **Add a schema key…**. Open it: the current branches show with "in use (N records)" / "unused", and a
+   text box takes a new branch (`brand, size` etc.). Apply, and the node re-runs.
+6. Plot Studio: plot the all-five variable, group by a person-level variable and by `category`
+   together; the figure should build. Group an item-level measure by a person-level variable: it should
+   be refused with "no record names both ... a variable saved at both would link them".
+7. Open the schema location picker for a person-level variable: it must not show `category` or `item`.
+
+**What you should see:** every step above as described. Anything where a person-branch variable
+appears under `item`, or a tick is refused without a reason, is a bug worth recording.
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzz. Runs and Plot Studio after the grug refactors — added 2026-11-10
 
 **What changed:** no feature changed; code moved. `run_service._run_in_thread` was split into named

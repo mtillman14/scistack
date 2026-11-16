@@ -275,13 +275,16 @@ class PathInput:
     def __init__(
         self,
         path_template: str,
-        root_folder: str | Path | None = None,
-        regex: bool = False,
-        aliases: "dict[str, dict[str, list[str]]] | None" = None,
-        key_regex: "dict[str, str] | None" = None,
         *,
         name: str,
+        root_folder: str | Path | None = None,
+        aliases: "dict[str, dict[str, list[str]]] | None" = None,
+        key_regex: "dict[str, str] | None" = None,
+        regex: bool = False,
     ):
+        # Everything after the template is keyword-only (2026-11-12): the
+        # same spelling as MATLAB's name-value pairs and the TOML fields, so
+        # one call reads the same on every surface.
         self.path_template = path_template
         self.root_folder = Path(root_folder) if root_folder is not None else None
         self.regex = bool(regex)

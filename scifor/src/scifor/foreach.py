@@ -84,7 +84,7 @@ from .outputs import (
 from .pathinput import PathInput
 from .pathoutput import PathOutput
 from .project.root import project_root as current_project_root
-from .schema import expand_schema_keys, get_schema
+from .schema import expand_schema_keys, get_schema, tree_for
 from .schema_types import (
     canonicalize_combos,
     canonicalize_values,
@@ -1048,21 +1048,47 @@ def _distribute_target(schema_keys: "list[str]", metadata_iterables: dict) -> st
             layer="scifor",
         )
         return target
-    deepest_iterated = iter_keys_in_schema[-1]
-    deepest_idx = real_schema_keys.index(deepest_iterated)
-    if deepest_idx + 1 >= len(real_schema_keys):
+    # The target is the single child of the deepest iterated key, by the
+    # schema TREE (a linear schema: the next key in the list).
+    tree = tree_for(real_schema_keys)
+    leaves = tree.leaves(iter_keys_in_schema)
+    if len(leaves) > 1:
+        raise ValueError(
+            f"distribute=True but the iterated keys {iter_keys_in_schema} span "
+            f"{len(leaves)} branches (deepest: {leaves}), so there is no one level "
+            f"below them. Iterate one branch, or turn distribute off."
+        )
+    deepest_iterated = leaves[0]
+    children = tree.children(deepest_iterated)
+    if not children:
         raise ValueError(
             f"distribute=True but '{deepest_iterated}' is the deepest schema key. "
             f"There is no lower level to distribute to. "
             f"Schema order: {real_schema_keys}"
         )
-    target = real_schema_keys[deepest_idx + 1]
+    if len(children) > 1:
+        raise ValueError(
+            f"distribute=True but '{deepest_iterated}' has {len(children)} child keys "
+            f"{children}, so the target is ambiguous. Iterate down one of them "
+            f"first (for example {children[0]}=[...]), or turn distribute off and "
+            f"give the rows a column named for the key they belong at."
+        )
+    target = children[0]
     Log.info(
         "resolve_distribute_target: '%s' (one level below '%s')",
         target,
         deepest_iterated,
         layer="scifor",
     )
+    list_next = real_schema_keys[real_schema_keys.index(deepest_iterated) + 1 :][:1]
+    if list_next and list_next != [target]:
+        Log.info(
+            "resolve_distribute_target: the schema tree chose '%s'; the next key in the "
+            "list is '%s'",
+            target,
+            list_next[0],
+            layer="scifor",
+        )
     return target
 
 

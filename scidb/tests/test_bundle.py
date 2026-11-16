@@ -90,6 +90,8 @@ class TestExport:
             "package": "gait",
             "database": "gait.duckdb",
             "schema_keys": SCHEMA,
+            # Each key's parent: the schema tree travels with the keys.
+            "schema_parents": {"subject": None, "session": "subject"},
             # Stage 6: lets import make the exporter's absolute config paths relative.
             "root": project[0].resolve().as_posix(),
         }

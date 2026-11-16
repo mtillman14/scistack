@@ -168,7 +168,7 @@ function py_obj = constituent_to_py(spec)
     if isa(spec, 'scidb.Fixed')
         inner = constituent_to_py(spec.var_type);
         kv = struct_to_pykwargs(spec.fixed_metadata);
-        py_obj = py.scidb.fixed.Fixed(inner, pyargs(kv{:}));
+        py_obj = py.scifor.Fixed(inner, pyargs(kv{:}));
 
     elseif isa(spec, 'scidb.Variant')
         inner = constituent_to_py(spec.var_type);

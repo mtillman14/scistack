@@ -94,11 +94,13 @@ def test_change_then_the_colliding_csv_saves(path, tmp_path):
     db.close()
 
 
-def test_non_empty_is_refused_and_nothing_changes(path):
+def test_a_used_key_cannot_change_and_nothing_changes(path):
+    """Data exists: a key it names is fixed (a NEW key may be added: see
+    test_extend_schema_keys.py)."""
     db = _open(path, ["subject"])
     SkDemo.save(1.0, db=db, subject="S1")
-    with pytest.raises(SchemaKeysChangeRefused, match="already holds data"):
-        change_schema_keys(db, ["subject", "visit"])
+    with pytest.raises(SchemaKeysChangeRefused, match="in use"):
+        change_schema_keys(db, ["participant"], renames={"subject": "participant"})
     cols = [r[0] for r in db._duck.fetchall(
         "SELECT column_name FROM information_schema.columns WHERE table_name='_schema' ORDER BY ordinal_position")]
     assert cols == ["schema_id", "schema_level", "subject"]

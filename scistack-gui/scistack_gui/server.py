@@ -855,7 +855,9 @@ def main():
     _send_progress("Opening database...")
     try:
         if create_new:
-            schema_keys = [k.strip() for k in args.schema_keys.split(",") if k.strip()]
+            from scifor import parse_schema_text
+
+            schema_keys = parse_schema_text(args.schema_keys)
             db = create_db(db_path, schema_keys)
             logger.info("Created database: %s (schema_keys=%s)", db_path, schema_keys)
         else:

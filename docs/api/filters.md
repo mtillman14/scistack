@@ -51,7 +51,7 @@ GaitData["speed"] >= 1.5
 ```
 
 The same column expression also drives
-[column selection](for-each.md#column-selection) in `for_each` inputs.
+[column selection](scidb.md#column-selection) in `for_each` inputs.
 
 ---
 
