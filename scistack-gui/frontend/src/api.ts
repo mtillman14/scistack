@@ -336,6 +336,7 @@ async function callFetch(method: string, rawParams: Record<string, unknown>): Pr
     add_project_path:       { path: '/api/project/paths', method: 'POST', body: true },
     remove_project_path:    { path: (p) => `/api/project/paths?path=${encodeURIComponent(p.path as string)}`, method: 'DELETE' },
     set_entities_file:      { path: '/api/project/entities-file', method: 'POST', body: true },
+    set_output_folder:      { path: '/api/project/output-folder', method: 'POST', body: true },
     clear_entities_file:    { path: '/api/project/entities-file', method: 'DELETE' },
     // Nested-pipeline scopes (method names match the JSON-RPC handlers in server.py)
     list_pipelines:         { path: '/api/pipelines' },

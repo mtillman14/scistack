@@ -28,7 +28,8 @@ export function useStatMarks(
   const [state, setState] = useState<StatMarksState>(NONE)
   const key = marksKey(spec, designFields, csvPath, settings)
   useEffect(() => {
-    if (key === null) { setState(NONE); return }
+    // No spec, nothing to test (marksKey is null then too; this says so to tsc).
+    if (key === null || spec === null) { setState(NONE); return }
     if (!active) return // a hidden view runs no test
     let live = true
     setState(prev => ({ ...prev, loading: true, error: '' }))

@@ -868,6 +868,13 @@ def _make_plot_wrapper(fn: Any, path_param: str) -> Any:
                     f"returned a Figure but no path was resolved for input "
                     f"'{path_param}'."
                 )
+            # The output folder is a project setting ([outputs] folder) and a
+            # template may name sub-folders per key, so the folder may not
+            # exist yet. Creating it is the endpoint's job, not the user's.
+            parent = _Path(str(path)).parent
+            if not parent.exists():
+                parent.mkdir(parents=True, exist_ok=True)
+                Log.info("[plot] created output folder %s", parent)
             result.savefig(str(path))
             try:
                 import matplotlib.pyplot as _plt

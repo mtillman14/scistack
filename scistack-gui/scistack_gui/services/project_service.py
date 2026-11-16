@@ -244,6 +244,23 @@ def set_project_entities_file(path_str: "str | None") -> dict:
     return result
 
 
+def set_project_output_folder(folder: "str | None") -> dict:
+    """Set or clear (``None``/blank) the project's ``[outputs] folder``:
+    where relative output paths — figures from ``plot_`` nodes — are written
+    (``scifor.project.outputs``). No rescan: it changes no discovered code,
+    and the next run reads it live."""
+    from scistack_gui.project.config import set_output_folder
+
+    try:
+        set_output_folder(get_db_path(), folder)
+    except (ValueError, OSError) as e:
+        logger.warning("[project.paths] set_project_output_folder failed: %s", e)
+        return {"ok": False, "error": str(e)}
+    result = get_project_paths()
+    result["ok"] = True
+    return result
+
+
 def clear_project_entities_file() -> dict:
     """Clear the configured entities_file (loose-script projects only).
     Never deletes the file itself -- see ``config.clear_entities_file``."""

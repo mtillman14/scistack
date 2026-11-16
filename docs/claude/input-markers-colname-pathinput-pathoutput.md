@@ -112,6 +112,36 @@ overloaded `ColName(template)` for this — reverted, because a column-name mark
 shouldn't emit a filesystem path — and `PathInput` is the wrong host because of
 its input-discovery baggage above.
 
+## The output folder (2026-11-16)
+
+A **relative** resolved path goes under the project's `[outputs] folder` when
+scistack.toml states one (`scifor.project.outputs.under_output_folder`, called
+at the end of `PathOutput.resolve`). An absolute path is never moved. When no
+folder is stated, the result is exactly what it always was: relative, written
+under the working directory (the project root in any GUI/MATLAB run). Many
+outputs therefore share one root without repeating it in every template. See
+config-file-formats.md § `[outputs]`.
+
+## Output paths on the canvas (2026-11-16)
+
+A function node's argument can receive `PathOutput(template)`. The template is
+typed into the Inputs section's **output path** field, or written there by
+"Save … Add to pipeline". It is shown on a `plot_` node's unwired rows and on
+any row that already has one. This is the ColName machinery with a value:
+
+- intent aspect `ASPECT_PATHOUTPUT` (`scidb.provenance.intent`, per key, value =
+  template), shape owner `normalize_pathoutput_inputs`; blob key `pathOutputs`
+  (`intent_store.set_pathoutput_inputs`);
+- `execution_service._attach_pathoutput_inputs` (via `_attach_stated_inputs`,
+  after ColName) → `domain/pathoutput_inputs.apply_to_target` → binding
+  `BINDING_PATHOUTPUT` (ref = template) → `build_run_inputs` renders
+  `PathOutput(ref)`;
+- it replaces a Parameter/PathInput/ColName/recorded-constant binding with a
+  WARN, and never replaces a variable;
+- it counts as "fed" for port visibility, and the canvas port reads `→ <template>`;
+- it is not part of call identity, like ColName;
+- **MATLAB v1:** `variable_inputs_view` WARNs and leaves the argument unbound.
+
 ## How PathOutput resolves (scifor only)
 
 scidb **delegates the core loop to `scifor.for_each`** (`scidb/run/foreach.py:437`),

@@ -44,6 +44,8 @@ interface FnNodeData {
   input_params?: Record<string, string>
   columnSelections?: ColumnSelectionMap
   colNameInputs?: string[]
+  // Parameters that receive an output path (PathOutput): {param: template}.
+  pathOutputs?: Record<string, string>
   unusedIntent?: UnusedIntentMap
   // Output types, in handle order (FunctionNode draws them from this).
   output_types?: string[]
@@ -210,6 +212,7 @@ export default function Sidebar() {
             isMatlab={(selectedNode.data as FnNodeData).language === 'matlab'}
             outputOrderNote={(selectedNode.data as FnNodeData).outputOrderNote}
             colNameInputs={(selectedNode.data as FnNodeData).colNameInputs ?? []}
+            pathOutputs={(selectedNode.data as FnNodeData).pathOutputs ?? {}}
             unusedIntent={(selectedNode.data as FnNodeData).unusedIntent}
           />
         )}

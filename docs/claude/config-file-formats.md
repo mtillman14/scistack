@@ -244,6 +244,34 @@ default = "#333333"               # the one colour of a figure with no colour la
   `set_project_color` canonicalises to `#rrggbb` before writing.
 - **Diagnosing:** `grep "\[colors\]" scistack.log`.
 
+## `[outputs]`: the project's output folder
+
+```toml
+[outputs]
+folder = "outputs"          # relative to the project root
+# folder = "/data/aim2/out" # or absolute
+# folder = "{results}/aim2" # or a machine root
+```
+
+Where every **relative** `PathOutput` path is written (figures from `plot_`
+nodes, any file a function is handed an output path for). Each node keeps only
+its own relative template, so moving every output is one edit here, not one per
+node (GitHub issue #19).
+
+- **Owner:** `scifor/project/outputs.py` (`declared_folder` reads the shape,
+  `output_folder` resolves it, `under_output_folder` joins a path).
+  `PathOutput.resolve` calls it; an absolute template is never moved.
+- **Unset means unchanged:** a relative path stays relative, so it is written
+  under the working directory, which every GUI and generated MATLAB run sets to
+  the project root.
+- **Read live** like `[aliases]`: located through `schema_order.locate_config`,
+  parsed on the file's mtime; `config_file.write` clears the cache.
+- **Not part of identity.** Changing it does not make nodes stale; files already
+  written stay put until their node runs again (force).
+- **The GUI writes it** from the Paths popup (`config.set_output_folder`, RPC
+  `set_output_folder`) and shows it with `describe_output_folder`.
+- **Diagnosing:** `grep "\[outputs\]" scistack.log`.
+
 ## All fields are optional
 
 Every config field has a sensible default. An empty `scistack.toml` produces a valid config:

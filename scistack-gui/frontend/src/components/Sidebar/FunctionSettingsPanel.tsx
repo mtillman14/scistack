@@ -202,6 +202,9 @@ interface Props {
   // Parameters that receive the current for_columns column name (deferred
   // ColName()) — the `colname` intent aspect, blob key `colNameInputs`.
   colNameInputs: string[]
+  // Parameters that receive an output path (PathOutput) — the `pathoutput`
+  // intent aspect, blob key `pathOutputs`: {param: template}.
+  pathOutputs?: Record<string, string>
   unusedIntent?: UnusedIntentMap
 }
 
@@ -301,6 +304,57 @@ function WhereFilterRow({ nodeId, index, filter, variableNames, onUpdateCanvas, 
         onClick={() => onRemove(index)}
         title="Remove filter"
       >&times;</button>
+    </div>
+  )
+}
+
+/**
+ * The output path one parameter receives — `PathOutput(template)` in code.
+ * `{key}` placeholders fill per call; a relative path goes under the
+ * project's output folder (Paths popup). Committed on Enter or blur; blank
+ * clears it. Shown on a plot_ node's unwired rows and on any row that
+ * already has one (backend: domain/pathoutput_inputs.py).
+ */
+function OutputPathField({ param, template, onCommit }: {
+  param: string
+  template: string
+  onCommit: (param: string, template: string) => void
+}) {
+  const [draft, setDraft] = useState(template)
+  useEffect(() => { setDraft(template) }, [template])
+  const commit = () => {
+    if (draft.trim() !== template) onCommit(param, draft)
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '2px 0 6px 0' }}>
+      <span style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>output path</span>
+      <input
+        type="text"
+        value={draft}
+        placeholder="plots/{subject}.png"
+        title={
+          'The file path this argument receives on each call. {key} placeholders '
+          + '(e.g. {subject}) are filled per call; a relative path is written under the '
+          + "project's output folder (set in Paths). Blank: not an output path."
+        }
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+          if (e.key === 'Escape') setDraft(template)
+        }}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: '#0e0e20',
+          color: '#ccc',
+          border: '1px solid #3a3a5a',
+          borderRadius: 4,
+          padding: '2px 6px',
+          fontSize: 11,
+          fontFamily: 'monospace',
+        }}
+      />
     </div>
   )
 }
@@ -738,7 +792,7 @@ const unusedIntentBadgeStyle: React.CSSProperties = {
   marginRight: 4,
 }
 
-export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions: storedRunOptions, endpointKind, belowHeader, inputParams, columnSelections, colNameInputs, unusedIntent, outputTypes = [], outputPorts, isMatlab = false, outputOrderNote }: Props) {
+export default function FunctionSettingsPanel({ id, label, variants, constantNames, inputTypeNames, schemaSelection, schemaLevel, whereFilters, runOptions: storedRunOptions, endpointKind, belowHeader, inputParams, columnSelections, colNameInputs, pathOutputs = {}, unusedIntent, outputTypes = [], outputPorts, isMatlab = false, outputOrderNote }: Props) {
   const { setNodes } = useReactFlow()
   const { markNodeDirty, clearNodeDirty } = useScope()
   const [schema, setSchema] = useState<SchemaInfo | null>(null)
@@ -882,6 +936,7 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
         if (d.runOptions) config.runOptions = d.runOptions
         if (d.columnSelections) config.columnSelections = d.columnSelections
         if (d.colNameInputs) config.colNameInputs = d.colNameInputs
+        if (d.pathOutputs) config.pathOutputs = d.pathOutputs
         callBackend('put_node_config', { node_id: id, config })
           .then(() => clearNodeDirty(id))
           .catch(err => console.error('[FunctionSettings] save error:', err))
@@ -961,6 +1016,17 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
     updateNodeData({ colNameInputs: withColName(colNameInputs, param, on) })
   }, [colNameInputs, updateNodeData])
   const colNameAvailable = hasIterateInput(columnSelections)
+
+  // Set (or clear, with a blank) one parameter's output path. Same save route;
+  // the backend stores one statement per parameter (intent_store
+  // .set_pathoutput_inputs) and binds PathOutput(template) on every run.
+  const setPathOutput = useCallback((param: string, template: string) => {
+    const next = { ...pathOutputs }
+    if (template.trim()) next[param] = template.trim()
+    else delete next[param]
+    console.info('[FunctionSettings] output path for', param, '->', next[param] ?? '(cleared)')
+    updateNodeData({ pathOutputs: next })
+  }, [pathOutputs, updateNodeData])
 
   // Toggle a run option.
   const toggleRunOption = useCallback((opt: BooleanRunOption) => {
@@ -1127,6 +1193,9 @@ export default function FunctionSettingsPanel({ id, label, variants, constantNam
                   onColNameChange={setColName}
                   outputNames={outputTypes}
                 />
+                {(pathOutputs[param] !== undefined || (endpointKind === 'plot' && !type)) && (
+                  <OutputPathField param={param} template={pathOutputs[param] ?? ''} onCommit={setPathOutput} />
+                )}
                 {unusedIntent?.[param] && (
                   <UnusedIntentNote param={param} note={unusedIntent[param]} />
                 )}

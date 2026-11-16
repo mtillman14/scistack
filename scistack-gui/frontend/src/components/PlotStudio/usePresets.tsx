@@ -47,6 +47,10 @@ export function usePresets(s: StudioCoreState & StepByStepState & CombinesState 
     openSaved,
     renameSaved,
     removeSaved,
+    canAddToPipeline,
+    addToPipeline,
+    setAddToPipeline,
+    pipelineNote,
   } = s
 
   // --- presets --------------------------------------------------------------
@@ -160,6 +164,9 @@ export function usePresets(s: StudioCoreState & StepByStepState & CombinesState 
       busy={savedBusy}
       error={savedError}
       onSave={saveCurrent}
+      addToPipeline={addToPipeline}
+      onAddToPipelineChange={canAddToPipeline ? setAddToPipeline : undefined}
+      pipelineNote={pipelineNote}
       onOpen={openSaved}
       onRename={renameSaved}
       onRemove={removeSaved}

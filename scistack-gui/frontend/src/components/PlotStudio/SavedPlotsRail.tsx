@@ -51,6 +51,15 @@ interface Props {
   words?: SavedWords
   /** Width store key for the drag handle (one per studio). */
   panelKey?: string
+  /**
+   * "Add to pipeline" on save (issue #19): the saved plot also becomes
+   * permanent plot_/stat_ nodes on the canvas. Shown only when the studio
+   * passes `onAddToPipelineChange` (a database plot, not a custom one).
+   */
+  addToPipeline?: boolean
+  onAddToPipelineChange?: (on: boolean) => void
+  /** What the last save put on the canvas, or why not. */
+  pipelineNote?: string
 }
 
 export interface SavedWords {
@@ -93,6 +102,9 @@ export default function SavedPlotsRail({
   children,
   words = PLOT_WORDS,
   panelKey = 'plotStudio.savedPlots',
+  addToPipeline = false,
+  onAddToPipelineChange,
+  pipelineNote = '',
 }: Props) {
   const [pending, setPending] = useState<Pending>(null)
   const [showNotes, setShowNotes] = useState(false)
@@ -168,6 +180,21 @@ export default function SavedPlotsRail({
               {loaded ? 'Save…' : `Save ${words.noun}…`}
             </button>
           )}
+          {onAddToPipelineChange && (
+            <label
+              style={railStyles.pipelineToggle}
+              title="Also put this plot (and its statistics) on the pipeline canvas as permanent nodes that write the figure files, so the figure can be reproduced by running the pipeline. Saving again updates those nodes."
+            >
+              <input
+                type="checkbox"
+                checked={addToPipeline}
+                onChange={e => onAddToPipelineChange(e.target.checked)}
+                disabled={busy}
+              />
+              Add to pipeline
+            </label>
+          )}
+          {pipelineNote && <div style={railStyles.pipelineNote}>{pipelineNote}</div>}
           {pending?.kind === 'replace' && (
             <Question
               text={`"${pending.existing.name}" is another saved ${words.noun}. Save this as its next version? Its earlier versions are kept.`}
@@ -417,6 +444,11 @@ export const railStyles: Record<string, React.CSSProperties> = {
     fontSize: 11, color: 'var(--ps-error-soft)', marginBottom: 8, whiteSpace: 'pre-wrap',
   },
   hint: { fontSize: 10, color: 'var(--ps-text-faint)', fontStyle: 'italic' },
+  pipelineToggle: {
+    display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ps-text-muted)',
+    marginTop: 6, cursor: 'pointer',
+  },
+  pipelineNote: { fontSize: 10, color: 'var(--ps-text-faint)', marginTop: 4, whiteSpace: 'pre-wrap' },
   list: { display: 'flex', flexDirection: 'column', gap: 2 },
   row: {
     display: 'flex', alignItems: 'center', gap: 2, borderRadius: 4,

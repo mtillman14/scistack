@@ -51,7 +51,7 @@ MATLAB_ORDER = ("functions", "variables", "sources", "variable_dir", "entities_f
 
 #: Tables rendered last, in this order (a TOML table swallows every key after
 #: its header, so all top-level keys must come first).
-TABLE_ORDER = ("matlab", "schema_keys", "aliases", "colors")
+TABLE_ORDER = ("matlab", "outputs", "schema_keys", "aliases", "colors")
 
 
 def _toml_str(s: str) -> str:
@@ -152,6 +152,16 @@ def render(section: dict) -> str:
     if matlab_lines:
         lines += ["", "[matlab]", *matlab_lines]
 
+    # The project's output folder (scifor.project.outputs owns its meaning).
+    outputs = dict(section.get("outputs") or {})
+    output_lines = []
+    for key, value in outputs.items():
+        line = _generic_line(key, value, "outputs.")
+        if line is not None:
+            output_lines.append(line)
+    if output_lines:
+        lines += ["", "[outputs]", *output_lines]
+
     # Hand-authored level order (scifor.project.schema_order reads it, nothing writes it).
     schema_keys = section.get("schema_keys")
     if schema_keys:
@@ -204,8 +214,9 @@ def _forget_cached_reads() -> None:
     a write followed at once by a read -- listing a library and seeding it in
     the same request -- saw the OLD answer. This module is the only writer,
     so it is the one place to invalidate."""
-    from . import names, schema_order
+    from . import names, outputs, schema_order
 
     schema_order.clear_cache()
     names.clear_cache()
-    Log.debug("[config_file] cleared cached config reads (schema_order, names)")
+    outputs.clear_cache()
+    Log.debug("[config_file] cleared cached config reads (schema_order, names, outputs)")

@@ -6349,6 +6349,17 @@
     },
     "scistack_gui__api__plot__SavedSaveRequest": {
       "properties": {
+        "add_to_pipeline": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": false
+        },
         "current_plot_id": {
           "anyOf": [
             {
@@ -6373,6 +6384,17 @@
             }
           ],
           "default": true
+        },
+        "pipeline_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "spec": {
           "$ref": "#/$defs/PlotSpecWire"
@@ -6930,6 +6952,9 @@
     "set_note": {
       "$ref": "#/$defs/NoteUpdate"
     },
+    "set_output_folder": {
+      "$ref": "#/$defs/PathBody"
+    },
     "set_output_ports": {
       "$ref": "#/$defs/OutputPorts"
     },
@@ -7205,6 +7230,7 @@
     "set_entities_file",
     "set_key_expectation",
     "set_note",
+    "set_output_folder",
     "set_output_ports",
     "set_parameter_group_checked",
     "set_schema_key_type",

@@ -554,6 +554,52 @@ def _attach_colname_inputs(
     return out
 
 
+def _attach_pathoutput_inputs(
+    db, node_id: str, targets: list[dict], function_name: str = ""
+) -> list[dict]:
+    """Bind the node's stated output paths (``pathOutputs``) on every target.
+
+    The twin of :func:`_attach_colname_inputs`, for the same reasons: the
+    statement is node-scoped, history never records a PathOutput (scidb keeps
+    it out of version keys), so the statement is the only source and is
+    re-applied on every run. Rules: ``domain/pathoutput_inputs.apply_to_target``.
+    """
+    if not targets:
+        return targets
+    from scistack_gui.stores import pipeline_store
+    from scistack_gui.domain import pathoutput_inputs as _po
+
+    stated = _po.normalize(
+        (pipeline_store.get_node_config(db, node_id) or {}).get("pathOutputs")
+    )
+    if not stated:
+        return targets
+    context = f"'{function_name or '?'}' (node {node_id})"
+    out = [_po.apply_to_target(t, stated, context=context) for t in targets]
+    # Its ABSENCE is the diagnostic when a plot_ node fails with "no path was
+    # resolved" although the panel shows a template.
+    logger.info(
+        "[execution] %s: output path(s) stated %s on %d target(s)",
+        context,
+        stated,
+        len(out),
+    )
+    return out
+
+
+def _attach_stated_inputs(
+    db, node_id: str, targets: list[dict], function_name: str = ""
+) -> list[dict]:
+    """Every per-node input statement that is not an edge, in order: ColName
+    (after column selections, which it may need), then output paths."""
+    return _attach_pathoutput_inputs(
+        db,
+        node_id,
+        _attach_colname_inputs(db, node_id, targets, function_name),
+        function_name,
+    )
+
+
 def _hidden_constant_values(db, pipeline_id: "str | None" = None) -> dict[str, set[str]]:
     """{const_name: {hidden values}} from the ``ConstantNode.tsx`` checkbox
     state — grouped once per derivation call so ``filter_hidden_
@@ -897,7 +943,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         for t in matching:
             if resolved.glue_chains and not t.get("glue_chains"):
                 t["glue_chains"] = dict(resolved.glue_chains)
-        return _attach_colname_inputs(
+        return _attach_stated_inputs(
             db,
             node_id,
             _attach_column_selections(
@@ -930,7 +976,7 @@ def derive_target_for_node(db, node_id: str) -> list[dict]:
         ).across_variants,
         f"node {node_id} ('{function_name}')",
     )
-    return _attach_colname_inputs(
+    return _attach_stated_inputs(
         db,
         node_id,
         _attach_column_selections(
@@ -1660,6 +1706,7 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
         BINDING_COLNAME,
         BINDING_PARAMETER,
         BINDING_PATHINPUT,
+        BINDING_PATHOUTPUT,
         BINDING_VARIABLE,
         path_input_names,
     )
@@ -1790,6 +1837,19 @@ def build_run_inputs(target: dict, function_name: str, db=None) -> dict:
                 param,
             )
 
+        elif kind == BINDING_PATHOUTPUT:
+            # The function receives a finished output path per combo; scifor
+            # resolves {keys}/{ColName} and the [outputs] folder.
+            from scifor import PathOutput
+
+            inputs[param] = PathOutput(str(ref))
+            logger.info(
+                "[execution] '%s': input '%s' receives output path %r",
+                function_name,
+                param,
+                ref,
+            )
+
         else:
             logger.warning(
                 "[execution] '%s': parameter '%s' has unknown binding kind %r "
@@ -1906,11 +1966,26 @@ def variable_inputs_view(targets: list[dict], function_name: str = "") -> dict:
     that reads variable inputs emits ``scidb.ColName()`` with no new argument.
     """
     from scistack_gui.domain import column_selection as _cs
-    from scistack_gui.domain.edge_resolver import BINDING_COLNAME, BINDING_VARIABLE
+    from scistack_gui.domain.edge_resolver import (
+        BINDING_COLNAME,
+        BINDING_PATHOUTPUT,
+        BINDING_VARIABLE,
+    )
 
     out: dict = {}
     for t in targets or []:
         for param, binding in (t.get("bindings") or {}).items():
+            if binding.get("kind") == BINDING_PATHOUTPUT:
+                # v1: output paths on the canvas are Python-only (Plot Studio
+                # generates Python). Say so rather than drop it silently.
+                logger.warning(
+                    "[execution] '%s': output path %r for '%s' is not passed to "
+                    "MATLAB runs yet — the argument is left unbound",
+                    function_name or "?",
+                    binding.get("ref"),
+                    param,
+                )
+                continue
             if binding.get("kind") == BINDING_COLNAME:
                 out[param] = {"colname": True}
                 continue

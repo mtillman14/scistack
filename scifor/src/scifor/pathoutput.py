@@ -95,7 +95,13 @@ class PathOutput:
                 resolved = resolved.replace("{" + str(key) + "}", str(value))
         if column is not None:
             resolved = resolved.replace(COLUMN_TOKEN, column)
-        return Path(resolved) if isinstance(self.template, Path) else resolved
+        # A relative result goes under the project's [outputs] folder when one
+        # is stated (scifor.project.outputs — the one owner). Unset: unchanged.
+        from scifor.project.outputs import under_output_folder
+
+        return under_output_folder(
+            Path(resolved) if isinstance(self.template, Path) else resolved
+        )
 
     def __repr__(self) -> str:
         return f"PathOutput({self.template!r})"

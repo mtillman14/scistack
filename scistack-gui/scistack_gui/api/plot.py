@@ -218,6 +218,11 @@ class SavedSaveRequest(BaseModel):
     #: The table's test settings, saved WITH the figure (one record per tab):
     #: a `StatsSpec.to_dict()` without its design. Read strictly on save.
     stats: dict | None = None
+    #: Also place the saved plot (and its statistics) on the canvas as permanent
+    #: plot_/stat_ nodes (issue #19); the reply's `pipeline` says what was placed.
+    add_to_pipeline: bool | None = False
+    #: The canvas scope to place them on; None = the root canvas.
+    pipeline_id: str | None = None
 
 
 class SavedOpenRequest(BaseModel):
@@ -542,6 +547,8 @@ def _saved_save(db, req: SavedSaveRequest) -> dict:
         overwrite=req.overwrite is not False,
         current_plot_id=req.current_plot_id,
         stats=req.stats,
+        add_to_pipeline=bool(req.add_to_pipeline),
+        pipeline_id=req.pipeline_id,
     )
 
 

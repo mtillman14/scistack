@@ -179,3 +179,37 @@ export function newerVersionsText(newer: readonly NewerVersion[]): string {
 export function variantSetsKey(variantSets: unknown): string {
   return JSON.stringify(variantSets ?? null)
 }
+
+/** One endpoint the save put on the canvas, as the backend reports it
+ *  (`endpoint_node_service.save_onto_canvas`). */
+export interface PipelinePlacement {
+  kind: 'plot' | 'stat'
+  function_name?: string
+  output_variable?: string
+  file?: string
+  action?: 'wrote' | 'replaced' | 'appended'
+  node_id?: string
+  placed?: boolean
+  edges?: number
+  /** The function was written but the canvas cannot express its inputs. */
+  skipped?: string
+  /** Nothing was written for this endpoint. */
+  error?: string
+}
+
+/** The rail's line about what a save with "Add to pipeline" did — one line
+ *  per endpoint, so a placed figure and a refused stats node read as two
+ *  facts. '' when nothing was asked. */
+export function pipelineNoteText(results: readonly PipelinePlacement[] | undefined): string {
+  if (!results || results.length === 0) return ''
+  return results
+    .map(r => {
+      const what = r.kind === 'stat' ? 'Statistics' : 'Figure'
+      if (r.error) return `${what}: not added to the pipeline — ${r.error}`
+      if (r.skipped) return `${what}: ${r.function_name ?? 'function'} written, not placed — ${r.skipped}`
+      const verb = r.action === 'replaced' ? 'updated' : 'added'
+      const where = r.placed ? 'placed on the canvas' : 'its node on the canvas updated'
+      return `${what}: ${r.function_name} ${verb}, ${where} (writes ${r.output_variable}).`
+    })
+    .join('\n')
+}

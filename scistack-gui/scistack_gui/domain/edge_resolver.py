@@ -29,6 +29,11 @@ BINDING_PARAMETER = "parameter"  # ref: declared Parameter name
 # iteration is on (deferred ``ColName()``). Stated on the node, never drawn as
 # an edge — see ``domain/colname_inputs.py``.
 BINDING_COLNAME = "colname"
+# ref: the output-path TEMPLATE (a string). The parameter receives
+# ``PathOutput(template)``, resolved per combo by scifor; relative templates go
+# under the project's [outputs] folder. Stated on the node, never drawn as an
+# edge — see ``domain/pathoutput_inputs.py``.
+BINDING_PATHOUTPUT = "pathoutput"
 
 # Manual-node type for a glue node. A glue node is a *variant of a function
 # node*, not a new kind of thing: same ``in__{param}`` / ``out__`` handles, so
@@ -121,6 +126,10 @@ def parameter_binding(declared_name: str) -> dict:
 
 def colname_binding() -> dict:
     return {"kind": BINDING_COLNAME, "ref": None}
+
+
+def pathoutput_binding(template: str) -> dict:
+    return {"kind": BINDING_PATHOUTPUT, "ref": template}
 
 
 def bindings_of_kind(bindings: dict[str, dict], kind: str) -> dict:

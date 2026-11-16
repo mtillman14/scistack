@@ -1114,3 +1114,18 @@ no longer a setting"). Figure and Statistics are two views of one tab over one
 in-memory design (Python's `design_fields` is the one list). The
 saved record is one per tab: the figure plus the table's settings; the
 shared-design store (`_plot_design`) and `linked_plot` are retired (rows kept).
+
+## D-2026-11-16: saved plots become pipeline nodes (issue #19)
+
+"Save" in Plot Studio takes an **Add to pipeline** checkbox (default on). It
+writes the generated `plot_` (and `stat_`, when the plot carries exportable
+test settings) function between id markers, and places the node wired on the
+root canvas. The **marker** is the saved-plot ↔ function link, not an envelope
+field. The snippet and the canvas wiring render from one map
+(`EndpointCode.inputs`). `Variant(...)` pins are refused for placement in v1.
+Output paths get a canvas binding (`pathoutput` aspect, mirroring ColName).
+The shared root is **one** `[outputs] folder` in scistack.toml (owner
+`scifor.project.outputs`): unset = unchanged behaviour, and it is not part of
+identity. Rejected: named output roots, and a `{root}` placeholder inside the
+template (it clashes with schema-key substitution). Stats get no file output in
+v1, because the DB record plus `scidb report` already cover it.

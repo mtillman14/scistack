@@ -273,3 +273,46 @@ def test_generated_variant_source_compiles(table, comparison_spec):
     code = generate_endpoint(comparison_spec, table, input_variable="StepLength")
 
     compile(code.function_source, "<generated>", "exec")
+
+
+# --- The inputs map: ONE owner for the snippet and the canvas (issue #19) ----
+
+
+def test_a_plain_plot_is_fed_by_a_bare_variable_and_an_output_path(table, iterating_spec):
+    from scistackplotdb import why_not_wireable
+
+    code = generate_endpoint(iterating_spec, table, input_variable="StepLength")
+
+    assert list(code.inputs) == ["df", "filename"]
+    assert code.inputs["df"].variable == "StepLength"
+    assert code.inputs["df"].column is None
+    assert code.inputs["filename"].template == code.path_template
+    assert code.as_table == ["df"]
+    assert why_not_wireable(code.inputs) is None
+
+
+def test_the_snippet_is_rendered_from_the_inputs_map(table, iterating_spec):
+    """Every input line of the for_each call is an `inputs` entry, in order —
+    the canvas wiring reads the same map, so the two cannot drift."""
+    code = generate_endpoint(iterating_spec, table, input_variable="StepLength")
+
+    rendered = [f'        "{p}": {i.expression},' for p, i in code.inputs.items()]
+    lines = code.foreach_source.splitlines()
+    start = lines.index("    inputs={") + 1
+    assert lines[start : start + len(rendered)] == rendered
+    assert f'"filename": PathOutput("{code.path_template}")' in code.foreach_source
+
+
+def test_a_variant_pin_is_not_wireable_and_says_which_input(table, comparison_spec):
+    from scistackplotdb import why_not_wireable
+
+    code = generate_endpoint(comparison_spec, table, input_variable="StepLength")
+
+    assert code.inputs["baseline"].variable is None
+    assert not code.inputs["baseline"].wireable
+    reason = why_not_wireable(code.inputs)
+    assert reason is not None
+    assert "baseline = Variant(StepLength" in reason
+    assert "new_filter = Variant(StepLength" in reason
+    # The output path is always wireable.
+    assert code.inputs["filename"].wireable

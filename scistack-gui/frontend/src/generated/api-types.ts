@@ -287,6 +287,7 @@ export interface ApiParams {
   set_entities_file: PathBody
   set_key_expectation: KeyExpectationUpdate
   set_note: NoteUpdate
+  set_output_folder: PathBody
   set_output_ports: OutputPorts
   set_parameter_group_checked: ParameterGroupChecked
   set_schema_key_type: SchemaKeyTypeUpdate
@@ -1535,9 +1536,11 @@ export interface SavedRenameRequest {
  * via the `definition` "scistack_gui__api__plot__SavedSaveRequest".
  */
 export interface SavedSaveRequest {
+  add_to_pipeline?: boolean | null
   current_plot_id?: string | null
   name: string
   overwrite?: boolean | null
+  pipeline_id?: string | null
   spec: PlotSpec
   stats?: object | null
   variable: string

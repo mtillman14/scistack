@@ -223,3 +223,61 @@ salvaging open). A stats table may link to a saved plot by its `plot_id`
 `scistackstatsdb.linked_stats_for(plot_id)` finds a plot's tables. Both
 stores travel in project bundles (`scistackstatsdb.bundle_section`, the
 `stats` section). See [statistics.md](statistics.md).
+
+## Saved plots on the DAG (2026-11-16, GitHub issue #19)
+
+A saved plot is a bookmark in the Studio. For reproducibility, **Save** can
+also put the figure on the pipeline canvas as permanent nodes. The rail's
+**Add to pipeline** checkbox is on by default. It is not offered for a CSV
+plot, or for a `plot_` node's own figure, whose function already is the
+pipeline's.
+
+What a save with the box ticked does (`saved_plot_service.save(add_to_pipeline=True)`
+→ `endpoint_node_service.save_onto_canvas`):
+
+1. **Writes the function** into `scistack_plots.py` beside the entities file,
+   between `# scistack:generated plot id=<plot_id>` and `# scistack:end plot id=<plot_id>`.
+   When the plot carries statistics settings and they are exportable, it also
+   writes the `stat_` function into `scistack_stats.py` (same id).
+2. **Declares the output**: `<Name>Figure` / `<Name>Stats`, from the saved name.
+3. **Places the node** on the root canvas (or `pipeline_id`). It draws an edge
+   from each input variable (`in__<param>`) and one to the output variable, and
+   states the output path (`pathOutputs`), the iteration level (`schemaLevel`:
+   the fan-out keys, `[]` = one call) and `as_table`.
+
+| Concept | Owner |
+|---|---|
+| What the endpoint is fed (snippet AND canvas) | `scistackplotdb.endpoint.endpoint_inputs` → `EndpointCode.inputs` |
+| What the canvas cannot express yet | `scistackplotdb.why_not_wireable` |
+| The saved plot ↔ function link | the marker block in the generated file (`endpoint_node_service._block_span`) |
+| Function / output names | `endpoint_node_service.function_name_for` / `output_variable_for` |
+| Writing a generated function (all three entry points) | `endpoint_node_service.write_function` |
+| Placing + configuring the node | `endpoint_node_service.place` |
+| The rail's sentence about it | `savedPlots.ts: pipelineNoteText` |
+
+Rules:
+
+- **The marker is the link.** It is not a field in the envelope: the envelope
+  is written before the code is generated, and two places to look would drift.
+  Re-saving finds the block by id, **keeps the function name it already has**
+  (so a renamed saved plot does not orphan its node), and replaces the block.
+  The node is reused, and only missing edges are drawn. The settings derived
+  from the spec are re-stated every time ("saving owns them"), while the node's
+  own location filters and other run options are kept.
+- **Never overwrites what it did not write.** If a function of that name exists
+  outside the block, the save is refused. If the block lost its end marker, the
+  save is refused too ("edited by hand").
+- **Refuses what the canvas cannot say.** A `Variant(...)` pin (two or more
+  variant rows, a frozen old version, a pinned grouping variable) has no edge
+  form yet. The function is written, the node is not placed, and the reason is
+  shown.
+- **Never fails the save.** Every problem comes back as
+  `{"kind", "placed": False, "error" | "skipped"}` in the reply's `pipeline`, and
+  is logged under `[endpoint-node]`.
+- **Not undoable.** `plot_saved_save` is `undoable=False`, so the file write and
+  the placement are not on the undo stack.
+- **Root canvas.** The Studio tab does not know which canvas the user is on, so
+  `pipeline_id` defaults to root.
+
+The output path itself: [input-markers-colname-pathinput-pathoutput.md](input-markers-colname-pathinput-pathoutput.md)
+§ "Output paths on the canvas" and § "The output folder".

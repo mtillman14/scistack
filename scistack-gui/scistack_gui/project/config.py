@@ -1234,6 +1234,8 @@ def describe_managed_paths(db_path: Path) -> dict:
         "managed_path_details": details,
         "project_root": str(project_root),
         "config_path": str(toml_path) if toml_path is not None else None,
+        # [outputs] folder: where relative output paths (figures) are written.
+        "output_folder": describe_output_folder(db_path),
     }
 
 
@@ -1772,6 +1774,62 @@ def clear_entities_file(db_path: Path) -> Path:
 #: Sentinel for "leave the name alone" in :func:`set_project_alias` — None
 #: means "clear it".
 _UNCHANGED = object()
+
+
+def describe_output_folder(db_path: Path) -> dict:
+    """The Paths popup's output-folder row: ``{entry, resolved, problem}``.
+
+    ``entry`` is ``[outputs] folder`` as written (``None`` = unset: relative
+    output paths stay relative to the project root). The meaning is
+    ``scifor.project.outputs``'; this only reports it."""
+    from scifor.project.machine import unresolvable_here
+    from scifor.project.outputs import declared_folder
+
+    project_root = resolve_project_root(None, db_path)
+    toml_path = locate_config_at(project_root)
+    entry = declared_folder(load_config_file(toml_path)) if toml_path is not None else None
+    if entry is None:
+        return {"entry": None, "resolved": str(project_root), "problem": None}
+    problem = unresolvable_here(entry)
+    resolved = None if problem else str(_config_path(project_root, entry))
+    return {"entry": entry, "resolved": resolved, "problem": problem}
+
+
+def set_output_folder(db_path: Path, folder: "str | None") -> dict:
+    """Set (text) or clear (``None``/blank) ``[outputs] folder`` in scistack.toml.
+
+    Written as given — relative to the project root, absolute, or a machine
+    root (``{results}/aim2``) — through the one whole-file writer. A project
+    with no config file is refused, like an alias (creating the first file
+    switches discovery modes). Returns :func:`describe_output_folder`.
+    """
+    from scifor.project import outputs as _outputs
+
+    folder = (folder or "").strip() or None
+    project_root = resolve_project_root(None, db_path)
+    toml_path = locate_config_at(project_root)
+    if toml_path is None:
+        raise FileNotFoundError(
+            f"No scistack.toml at {project_root}. Add a code path first, which "
+            "creates the project config, then set the output folder."
+        )
+    section = load_config_file(toml_path)
+    table = dict(section.get(_outputs.SECTION) or {})
+    if folder is None:
+        table.pop(_outputs.FOLDER_KEY, None)
+    else:
+        from scifor.project.config import is_windows_absolute
+
+        # Portable spelling for a project-relative folder (see _portable_relpath);
+        # an absolute one is this machine's and kept as typed.
+        absolute = Path(folder).is_absolute() or is_windows_absolute(folder)
+        table[_outputs.FOLDER_KEY] = folder if absolute else folder.replace("\\", "/")
+    new_section = {**section, _outputs.SECTION: table}
+    if not table:
+        new_section.pop(_outputs.SECTION, None)
+    _write_config(toml_path, new_section)
+    logger.info("[config] set_output_folder: [outputs] folder = %r in %s", folder, toml_path)
+    return describe_output_folder(db_path)
 
 
 def set_project_alias(

@@ -75,9 +75,17 @@ def save(
     overwrite: bool = True,
     current_plot_id: str | None = None,
     stats: dict | None = None,
+    add_to_pipeline: bool = False,
+    pipeline_id: str | None = None,
 ) -> dict:
     """Save the panel's spec, view settings and the table's test settings
     (*stats*, one record per tab) under *name*.
+
+    With *add_to_pipeline*, the saved plot also becomes permanent nodes on the
+    canvas (scope *pipeline_id*, root by default): its ``plot_`` endpoint and,
+    when *stats* are set and exportable, its ``stat_`` endpoint
+    (``endpoint_node_service.save_onto_canvas``). The reply's ``pipeline``
+    lists what was placed, or why not; a problem there never undoes the save.
 
     Returns ``{"ok": True, "plot", "plots"}``: the saved version and the
     refreshed list, so the panel updates its rail from one reply.
@@ -110,7 +118,21 @@ def save(
         )
     except SavedPlotExists as exists:
         return {"ok": False, "exists": exists.existing.to_dict(), "message": str(exists)}
-    return {"ok": True, "plot": info.to_dict(), **list_plots(db, variable)}
+    reply = {"ok": True, "plot": info.to_dict(), **list_plots(db, variable)}
+    if add_to_pipeline:
+        from scistack_gui.ids import ROOT_SCOPE
+        from scistack_gui.services import endpoint_node_service
+
+        reply["pipeline"] = endpoint_node_service.save_onto_canvas(
+            db,
+            plot_id=info.plot_id,
+            saved_name=name,
+            spec_payload=spec,
+            stats=_checked_stats(stats, spec),
+            scope=pipeline_id or ROOT_SCOPE,
+        )
+        logger.info("[saved_plot] %s (%s) onto the canvas: %s", name, info.plot_id, reply["pipeline"])
+    return reply
 
 
 def open_plot(db, plot_id: str, version: int | None = None) -> dict:

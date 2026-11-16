@@ -11,6 +11,47 @@ steps (clicks in the GUI), and what you should see.
 
 ---
 
+## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Saved plots become pipeline nodes (issue #19) — added 2026-11-16
+
+**What changed:** Plot Studio's Save row has an **Add to pipeline** checkbox (ticked by default).
+Saving with it ticked writes the figure's `plot_` function into `scistack_plots.py` (between
+`# scistack:generated plot id=…` markers) and places the node on the root canvas, wired from the
+input variable to a new `<Name>Figure` variable. If the plot carries statistics settings, it also
+places a `stat_` node writing `<Name>Stats`. Function nodes have a new **output path** field in their
+Inputs section. The Paths popup has an **Output folder** row (`[outputs] folder` in scistack.toml):
+every relative output path is written under it. Plan: `.claude/plan-saved-endpoints-on-dag.md`.
+Doc: `docs/claude/saved-plots.md` § Saved plots on the DAG.
+
+**Backend steps:**
+1. Regenerate the committed API types (new `add_to_pipeline`/`pipeline_id` on `plot_saved_save`,
+   new `set_output_folder`): `python scistack-gui/tools/gen_ts_types.py`. The JSON was edited by hand
+   to match; if the script changes it, keep the script's version. Then rebuild the bundles
+   (`npm run build:all` in `scistack-gui/extension`).
+2. After a save with the box ticked, `scistack-debug.log` shows `[endpoint-node] wrote plot_<name> in …`,
+   then `[endpoint-node] placed plot_<name> on scope 'main' as fn__…: N edge(s) drawn, level=…`.
+3. After a run of the placed node: `[execution] '<fn>' (node …): output path(s) stated {…}` and
+   `[outputs] relative output paths are written under …` (or "states no [outputs] folder").
+
+**Frontend steps:**
+- Open a variable in Plot Studio, set up a figure, **Save plot…** with *Add to pipeline* ticked.
+  The rail says "Figure: plot_… added, placed on the canvas (writes …Figure)." The canvas shows the
+  node wired `Var → plot_… → …Figure`; its `filename` port reads `→ plots/…png`.
+- Run the node: one PNG per figure appears under `<project>/plots/` (or under the output folder).
+  Compare with the preview.
+- Save again with a change: the rail says "updated"; the canvas has still one node, no duplicate
+  edges; `scistack_plots.py` has one `def` for it. The node turns red until it is run again.
+- Rename the saved plot and save: the function name does NOT change.
+- Untick the box and save: nothing is written to the pipeline and no note appears.
+- A figure with two variant rows (or a pinned old version): the note says the function was written,
+  not placed, and names the `Variant(...)` input.
+- With Statistics settings on the figure: a second line for the `stat_` node (or why it was not exportable).
+- Paths popup → **Output folder** → Set `outputs` → Save: the row shows the full path. Run the plot
+  node with **force**: files now land in `<project>/outputs/plots/`. Clear it: back to the project root.
+- A hand-written `plot_` node: its unwired `filename` row shows an **output path** field; type
+  `figs/{subject}.png`, press Enter, run: the files are written there.
+
+---
+
 ## 0zzzzzzzzzzzzzzzzzzzzzzzzzzzzz. Run report popup (issue #17) — added 2026-11-15
 
 **What changed:** every run of a function is now recorded (`_run_summary`), and a **Run report**

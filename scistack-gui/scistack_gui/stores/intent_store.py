@@ -49,6 +49,7 @@ from scidb.provenance.intent import (
     INTENT_TABLE,
     ASPECT_COLNAME,
     ASPECT_COLUMNS,
+    ASPECT_PATHOUTPUT,
     ASPECT_CONSTANTS,
     ASPECT_HIDDEN,
     ASPECT_RUN_OPTIONS,
@@ -63,6 +64,7 @@ from scidb.provenance.intent import (
     Statement,
     normalize,
     normalize_colname_inputs,
+    normalize_pathoutput_inputs,
 )
 
 from scistack_gui.ids import PARAM_ID_PREFIX, PATH_INPUT_ID_PREFIX, VAR_ID_PREFIX
@@ -77,6 +79,9 @@ NODE_CONFIG_KEYS = {
     # (deferred ColName()) — a list of names in the blob, one statement per
     # name in the store.
     ASPECT_COLNAME: "colNameInputs",
+    # Parameters that receive an output path (PathOutput) — {param: template}
+    # in the blob, one statement per parameter in the store.
+    ASPECT_PATHOUTPUT: "pathOutputs",
 }
 
 def _duck(db):
@@ -634,6 +639,42 @@ def set_colname_inputs(
         )
 
 
+def set_pathoutput_inputs(
+    db, node_id: str, templates, *, scope: str | None = None
+) -> None:
+    """Replace a call site's output-path parameters — one statement per
+    parameter, value the template (the per-key shape ColName uses).
+
+    *templates* is anything
+    :func:`scidb.provenance.intent.normalize_pathoutput_inputs` takes (the
+    panel sends ``{param: template}``; a blank template clears that one).
+    """
+    from scistack_gui.ids import strip_placement
+
+    bare = strip_placement(node_id)
+    scope = scope or scope_of_node(db, node_id)
+    clear_aspect(db, bare, ASPECT_PATHOUTPUT, scope)
+    stated = normalize_pathoutput_inputs(templates)
+    put_statements(
+        db,
+        [
+            Statement(
+                subject_kind=SUBJECT_CALL_SITE,
+                subject_ref=bare,
+                aspect=ASPECT_PATHOUTPUT,
+                value=template,
+                key=param,
+                scope=scope,
+            )
+            for param, template in stated.items()
+        ],
+    )
+    if stated:
+        logger.info(
+            "[intent_store] %s@%s: output path(s) stated: %s", bare, scope, stated
+        )
+
+
 def set_run_options(
     db, node_id: str, options: dict | None, *, scope: str | None = None
 ) -> None:
@@ -709,6 +750,7 @@ SETTERS = {
     ASPECT_RUN_OPTIONS: set_run_options,
     ASPECT_SCHEMA_LOCATION: _set_schema_location_from_blob,
     ASPECT_COLNAME: set_colname_inputs,
+    ASPECT_PATHOUTPUT: set_pathoutput_inputs,
 }
 
 
@@ -729,6 +771,10 @@ def split_node_config(db, node_id: str, config: dict, *, scope: str | None = Non
         set_run_options(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_RUN_OPTIONS]), scope=scope)
     if NODE_CONFIG_KEYS[ASPECT_COLNAME] in rest:
         set_colname_inputs(db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_COLNAME]), scope=scope)
+    if NODE_CONFIG_KEYS[ASPECT_PATHOUTPUT] in rest:
+        set_pathoutput_inputs(
+            db, node_id, rest.pop(NODE_CONFIG_KEYS[ASPECT_PATHOUTPUT]), scope=scope
+        )
     if any(k in rest for k in SCHEMA_LOCATION_KEYS):
         set_schema_location(
             db, node_id, {k: rest.pop(k) for k in SCHEMA_LOCATION_KEYS if k in rest}, scope=scope
@@ -778,6 +824,18 @@ def node_config_overlay(db, scope: str = GLOBAL_SCOPE) -> dict[str, dict]:
         params = normalize_colname_inputs(by_param)
         if params:
             out.setdefault(ref, {})[NODE_CONFIG_KEYS[ASPECT_COLNAME]] = params
+    pathoutputs: dict[str, dict[str, str]] = {}
+    for st in _in_scope_order(
+        load_statements(
+            db, aspect=ASPECT_PATHOUTPUT, subject_kind=SUBJECT_CALL_SITE, scopes=wanted
+        )
+    ):
+        if st.key:
+            pathoutputs.setdefault(st.subject_ref, {})[st.key] = st.value
+    for ref, by_param in pathoutputs.items():
+        templates = normalize_pathoutput_inputs(by_param)
+        if templates:
+            out.setdefault(ref, {})[NODE_CONFIG_KEYS[ASPECT_PATHOUTPUT]] = templates
     for st in _in_scope_order(
         load_statements(
             db, aspect=ASPECT_SCHEMA_LOCATION, subject_kind=SUBJECT_CALL_SITE, scopes=wanted

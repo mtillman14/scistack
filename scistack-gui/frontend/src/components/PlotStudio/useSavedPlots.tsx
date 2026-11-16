@@ -1,7 +1,7 @@
 // PlotStudio state, part 7 of 8: saved plots.
-import { useEffect, useMemo, useCallback } from 'react'
+import { useEffect, useMemo, useCallback, useState } from 'react'
 import { callBackend } from '../../api'
-import { type SavedPlotInfo, modifiedKey, viewState, isModified, type RestoreNote, type NewerVersion, readView, iterateSignature as iterateSignatureOf, variantSetsKey, newerVersionsText } from './savedPlots'
+import { type SavedPlotInfo, modifiedKey, viewState, isModified, type RestoreNote, type NewerVersion, readView, iterateSignature as iterateSignatureOf, variantSetsKey, newerVersionsText, pipelineNoteText, type PipelinePlacement } from './savedPlots'
 import { type SaveResult } from './SavedPlotsRail'
 import { Spec, Capabilities } from './plotStudioTypes'
 import type { StudioCoreState } from './useStudioCore'
@@ -66,6 +66,14 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
     return () => { cancelled = true }
   }, [savedVariable])
 
+  // "Add to pipeline" on save (issue #19): on by default — reproducibility is
+  // the point of saving. Not offered for a plot_ node's own figure (custom
+  // kinds: its function is already the pipeline's).
+  const canAddToPipeline = Boolean(savedVariable) && !describe?.plot_node
+  const [addToPipeline, setAddToPipeline] = useState(true)
+  const [pipelineNote, setPipelineNote] = useState('')
+  useEffect(() => { setPipelineNote('') }, [savedVariable])
+
   const currentKey = useMemo(
     () => modifiedKey(spec, viewState(previewMode, figureIndex)),
     [spec, previewMode, figureIndex]
@@ -95,11 +103,14 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
           current_plot_id: loadedPlot?.plot_id ?? null,
           // One record per tab: the table's test settings go with the figure.
           ...(statsSettings ? { stats: statsSettings } : {}),
-        })) as { ok: boolean; plot?: SavedPlotInfo; plots?: SavedPlotInfo[]; exists?: SavedPlotInfo }
+          add_to_pipeline: canAddToPipeline && addToPipeline,
+        })) as { ok: boolean; plot?: SavedPlotInfo; plots?: SavedPlotInfo[]; exists?: SavedPlotInfo; pipeline?: PipelinePlacement[] }
         if (!result.ok) return { ok: false, exists: result.exists }
         setSavedPlots(result.plots ?? [])
         setLoadedPlot(result.plot ?? null)
         setRestoreNotes([])
+        if (result.pipeline) console.info('[PlotStudio] saved onto the pipeline:', result.pipeline)
+        setPipelineNote(pipelineNoteText(result.pipeline))
         captureBaseline.current = true
         setBaseline(null)
         return { ok: true }
@@ -110,7 +121,7 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
         setSavedBusy(false)
       }
     },
-    [spec, savedVariable, previewMode, figureIndex, loadedPlot, statsSettings]
+    [spec, savedVariable, previewMode, figureIndex, loadedPlot, statsSettings, canAddToPipeline, addToPipeline]
   )
 
   /** Put an opened saved plot on screen — shared by Open and by answering
@@ -237,6 +248,10 @@ export function useSavedPlots(s: StudioCoreState & StepByStepState & CombinesSta
 
   return {
     savedVariable,
+    canAddToPipeline,
+    addToPipeline,
+    setAddToPipeline,
+    pipelineNote,
     currentKey,
     modified,
     saveCurrent,

@@ -17,6 +17,7 @@ import { callBackend } from '../api'
 import ProjectConfigPanel from './Sidebar/ProjectConfigPanel'
 import ManagedPathsList, { type ManagedPathDetail } from './ManagedPathsList'
 import EntitiesFileEditor from './EntitiesFileEditor'
+import OutputFolderEditor, { type OutputFolderInfo } from './OutputFolderEditor'
 
 interface PathsInfo {
   configured: boolean
@@ -37,6 +38,8 @@ interface PathsInfo {
   matlab_variables?: string[]
   matlab_addpath?: string[]
   matlab_variable_dir?: string | null
+  /** `[outputs] folder`: where relative output paths (figures) are written. */
+  output_folder?: OutputFolderInfo
 }
 
 export default function PathsPopup({ onClose }: { onClose: () => void }) {
@@ -86,6 +89,7 @@ export default function PathsPopup({ onClose }: { onClose: () => void }) {
                   Each path is recursively scanned for Python (.py) and MATLAB (.m) code — typically a shared, reusable code repository, not necessarily anything inside this project's own folder.
                 </div>
                 <EntitiesFileEditor entitiesFile={paths.entities_file ?? null} onChange={fetchPaths} />
+                <OutputFolderEditor info={paths.output_folder ?? null} onChange={fetchPaths} />
                 {(paths.variable_file || paths.matlab_entities_file) && (
                   <div style={styles.hint}>
                     Declarations in{' '}

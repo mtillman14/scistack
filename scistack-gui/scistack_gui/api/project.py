@@ -8,6 +8,7 @@ Project config panel: the handler table for both transports
     DELETE /api/project/paths          remove_project_path
     POST   /api/project/entities-file  set_entities_file
     DELETE /api/project/entities-file  clear_entities_file
+    POST   /api/project/output-folder   set_output_folder  — [outputs] folder (blank clears)
     POST   /api/project/refresh        refresh_project    — re-run both scans
     GET    /api/project/clear-data/plan clear_data_plan — what a clear would delete
     POST   /api/project/clear-data     clear_data         — delete records, keep the canvas
@@ -56,6 +57,10 @@ def _add_project_path(req: PathBody) -> dict:
 
 def _remove_project_path(req: PathBody) -> dict:
     return project_service.remove_project_path(req.path or "")
+
+
+def _set_output_folder(req: PathBody) -> dict:
+    return project_service.set_project_output_folder(req.path or None)
 
 
 def _set_entities_file(req: PathBody) -> dict:
@@ -124,6 +129,7 @@ PROJECT_HANDLERS: tuple[Handler, ...] = (
     Handler("remove_project_path", "/project/paths", PathBody, _remove_project_path, http_method="DELETE", body=False, notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="remove path"),
     Handler("set_entities_file", "/project/entities-file", PathBody, _set_entities_file, notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="set entities file"),
     Handler("clear_entities_file", "/project/entities-file", None, _clear_entities_file, http_method="DELETE", notify_dag_updated=True, **_NO_DB, undoable=True, undo_label="clear entities file"),
+    Handler("set_output_folder", "/project/output-folder", PathBody, _set_output_folder, **_NO_DB, undoable=True, undo_label="set output folder"),
     Handler("refresh_project", "/project/refresh", None, _refresh_project, notify_dag_updated=True, **_NO_DB, undoable=False),
     # Clear all data, keep the pipeline (plan-clear-data.md, GUI half).
     # Not undoable: it deletes records (a tombstone and the optional backup

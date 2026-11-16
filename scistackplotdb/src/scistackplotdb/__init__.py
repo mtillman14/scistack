@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from .endpoint import (
     EndpointCode,
+    EndpointInput,
+    why_not_wireable,
     default_output_variable,
     default_path_template,
     generate_endpoint,
@@ -147,6 +149,8 @@ __all__ = [
     "joined_levels",
     "generate_endpoint",
     "EndpointCode",
+    "EndpointInput",
+    "why_not_wireable",
     "default_output_variable",
     "default_path_template",
 ]

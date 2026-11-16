@@ -7,6 +7,7 @@ import {
   iterateSignature,
   modifiedKey,
   newerVersionsText,
+  pipelineNoteText,
   notesSummary,
   readView,
   savedAtLabel,
@@ -119,4 +120,26 @@ test('the pin baseline serialises rows the way the pin effect compares them', ()
   const rows = [{ name: null, selection: {}, frozen: { 'Code:f': ['v1'] } }]
   assert.equal(variantSetsKey(rows), JSON.stringify(rows))
   assert.equal(variantSetsKey(undefined), 'null')
+})
+
+test('a save without Add to pipeline says nothing about the pipeline', () => {
+  assert.equal(pipelineNoteText(undefined), '')
+  assert.equal(pipelineNoteText([]), '')
+})
+
+test('each endpoint is one line: placed, replaced, skipped or refused', () => {
+  const text = pipelineNoteText([
+    { kind: 'plot', function_name: 'plot_gait', output_variable: 'GaitFigure', action: 'wrote', placed: true },
+    { kind: 'stat', function_name: 'stat_gait', output_variable: 'GaitStats', action: 'replaced', placed: false },
+  ])
+  assert.equal(
+    text,
+    'Figure: plot_gait added, placed on the canvas (writes GaitFigure).\n'
+      + 'Statistics: stat_gait updated, its node on the canvas updated (writes GaitStats).',
+  )
+  assert.match(
+    pipelineNoteText([{ kind: 'plot', function_name: 'plot_gait', skipped: 'pinned variant' }]),
+    /^Figure: plot_gait written, not placed — pinned variant$/,
+  )
+  assert.match(pipelineNoteText([{ kind: 'stat', error: 'boom' }]), /^Statistics: not added to the pipeline — boom$/)
 })

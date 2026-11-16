@@ -45,6 +45,11 @@ class EndpointCode:
     iterate_keys: list[str] = field(default_factory=list)
     path_template: str = ""
     output_variable: str = ""
+    #: ``{param: EndpointInput}`` — what the call is fed (:func:`endpoint_inputs`,
+    #: the one owner the snippet and the canvas wiring both render from).
+    inputs: "dict[str, EndpointInput]" = field(default_factory=dict)
+    #: The ``as_table`` parameters of the call.
+    as_table: list[str] = field(default_factory=list)
 
     @property
     def source(self) -> str:
@@ -81,14 +86,18 @@ def generate_endpoint(
     template = path_template or default_path_template(name, iterate_keys)
 
     function_source = generate_plot_function(spec, table, function_name=name)
-    foreach_source = _foreach_call(
+    inputs, table_inputs = endpoint_inputs(
         spec=spec,
         table=table,
-        function_name=name,
         input_variable=input_variable,
         x_variable=x_variable,
-        output_variable=output,
         path_template=template,
+    )
+    foreach_source = _foreach_call(
+        function_name=name,
+        inputs=inputs,
+        table_inputs=table_inputs,
+        output_variable=output,
         iterate_keys=iterate_keys,
     )
 
@@ -107,6 +116,8 @@ def generate_endpoint(
         iterate_keys=iterate_keys,
         path_template=template,
         output_variable=output,
+        inputs=inputs,
+        as_table=table_inputs,
     )
 
 
@@ -227,17 +238,50 @@ def _single_variant_expression(input_variable: str, spec, table=None) -> str:
     return row_expression(sets[0].variable or input_variable, sets[0], table)
 
 
-def _foreach_call(
+@dataclass(frozen=True)
+class EndpointInput:
+    """One ``for_each`` input of a generated endpoint.
+
+    ``expression`` is its source text in the generated call. The other fields
+    say what the CANVAS can express of it, and are filled only when it can:
+
+    * ``variable`` (+ ``column``): a plain variable load, optionally one
+      column (``Var["col"]``) — an edge from that variable node;
+    * ``template``: an output path (``PathOutput(template)``) — the node's
+      ``pathOutputs`` statement.
+
+    Anything else (a ``Variant(...)`` pin) has neither, and
+    :func:`why_not_wireable` names it.
+    """
+
+    expression: str
+    variable: str | None = None
+    column: str | None = None
+    template: str | None = None
+
+    @property
+    def wireable(self) -> bool:
+        return self.variable is not None or self.template is not None
+
+
+def _bare(expression: str) -> str | None:
+    """The variable an expression loads when it is a bare variable name."""
+    return expression if expression.isidentifier() else None
+
+
+def endpoint_inputs(
     *,
     spec: PlotSpec,
     table: LongTable | None = None,
-    function_name: str,
     input_variable: str,
     x_variable: str | None,
-    output_variable: str,
     path_template: str,
-    iterate_keys: list[str],
-) -> str:
+) -> "tuple[dict[str, EndpointInput], list[str]]":
+    """``({param: EndpointInput}, as_table params)`` — THE owner of what the
+    generated endpoint is fed. The ``for_each`` snippet (:func:`_foreach_call`)
+    and the canvas wiring (the GUI's ``endpoint_node_service``) are both
+    rendered from this one map, so they cannot disagree."""
+    inputs: dict[str, EndpointInput] = {}
     variant_inputs = variant_params(spec)
     if variant_inputs:
         # One input per named variant, each loaded through its own pin. See
@@ -245,20 +289,19 @@ def _foreach_call(
         # Zipped against `defined_sets`, not `spec.variant_sets`: unfilled rows
         # produce no input, so indexing the raw list would pair a parameter with
         # the wrong variant's selection.
-        inputs = [
-            f'        "{generated.param}": '
-            f"{row_expression(generated.variable, variant, table)},"
-            for generated, variant in zip(
-                variant_inputs, defined_sets(spec.variant_sets), strict=True
+        for generated, variant in zip(
+            variant_inputs, defined_sets(spec.variant_sets), strict=True
+        ):
+            inputs[generated.param] = EndpointInput(
+                row_expression(generated.variable, variant, table)
             )
-        ]
         table_inputs = [generated.param for generated in variant_inputs]
     else:
         pinned = _single_variant_expression(input_variable, spec, table)
-        inputs = [f'        "df": {pinned},']
+        inputs["df"] = EndpointInput(pinned, variable=_bare(pinned))
         table_inputs = ["df"]
     if x_variable:
-        inputs.append(f'        "df_x": {x_variable},')
+        inputs["df_x"] = EndpointInput(x_variable, variable=_bare(x_variable))
         table_inputs.append("df_x")
     for group in spec.joined_factor_variables:
         # A grouping variable arrives as its own input and is merged onto the
@@ -276,6 +319,7 @@ def _foreach_call(
             if group.column is None
             else f"{group.variable}[{group.column!r}]"
         )
+        wire = {"variable": group.variable, "column": group.column}
         if group.selection:
             # The grouping's own variant pin, exported so the generated figure
             # is stratified by the same version of the sheet the preview used.
@@ -287,15 +331,46 @@ def _foreach_call(
             # VariantSet both provide — one translation from frame columns to
             # `Variant(...)` keywords, not two that can disagree.
             expression = variant_expression(expression, group)
-        inputs.append(f'        "{group_param(group)}": {expression},')
+            wire = {}
+        inputs[group_param(group)] = EndpointInput(expression, **wire)
         table_inputs.append(group_param(group))
-    inputs.append(f'        "filename": PathOutput("{path_template}"),')
+    inputs["filename"] = EndpointInput(
+        f'PathOutput("{path_template}")', template=path_template
+    )
+    return inputs, table_inputs
 
+
+def why_not_wireable(inputs: "dict[str, EndpointInput]") -> str | None:
+    """Why the canvas cannot place a node fed by *inputs*, or ``None``.
+
+    v1 places plain variable loads (optionally one column) and output paths.
+    A ``Variant(...)`` pin — a saved plot frozen to an older code version, two
+    or more variant rows, a pinned grouping variable — has no edge form yet,
+    so the node is not placed and the reason is shown instead.
+    """
+    blocked = [f"{param} = {inp.expression}" for param, inp in inputs.items() if not inp.wireable]
+    if not blocked:
+        return None
+    return (
+        "the canvas cannot express a pinned variant load yet ("
+        + "; ".join(blocked)
+        + "). The function was written; wire it by hand or paste the for_each snippet."
+    )
+
+
+def _foreach_call(
+    *,
+    function_name: str,
+    inputs: "dict[str, EndpointInput]",
+    table_inputs: list[str],
+    output_variable: str,
+    iterate_keys: list[str],
+) -> str:
     lines = [
         "for_each(",
         f"    {function_name},",
         "    inputs={",
-        *inputs,
+        *(f'        "{param}": {inp.expression},' for param, inp in inputs.items()),
         "    },",
         f"    outputs=[{output_variable}],",
         # A plot_ function receives the long-format table (schema keys as

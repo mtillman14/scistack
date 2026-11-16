@@ -1682,7 +1682,7 @@ def assign_input_ports(
     land out of order. Which ports are drawn is :func:`port_visibility`
     (*arguments*: ``{label: signature}``; *fed*: ``{node_id: argument names
     the canvas's drawn edges feed}``, plus each node's own
-    ``columnSelections``, ``colNameInputs`` and ``shownArguments``). The frontend draws
+    ``columnSelections``, ``colNameInputs``, ``pathOutputs`` and ``shownArguments``). The frontend draws
     ``input_ports`` as is and never re-orders. ``input_params`` keeps exactly
     the drawn ports, re-ordered with the same rule, so the Inputs panel lists
     arguments the way the node draws them (its ``""`` fill-in is display-only:
@@ -1704,6 +1704,7 @@ def assign_input_ports(
             set(fed.get(node.get("id"), ()))
             | set(data.get("columnSelections") or {})
             | set(data.get("colNameInputs") or [])
+            | set(data.get("pathOutputs") or {})
             | set(data.get("shownArguments") or [])
         )
         variable_first = list(params) + [c for c in constants if c not in params]
@@ -3513,6 +3514,9 @@ _SAVED_CONFIG_KEYS = (
     # Parameters that receive the current for_columns column name (deferred
     # ColName()) — a list of names. See domain/colname_inputs.py.
     "colNameInputs",
+    # Parameters that receive an output path (PathOutput) — {param: template}.
+    # See domain/pathoutput_inputs.py.
+    "pathOutputs",
     # Optional arguments the user revealed with "+ argument" (a list of
     # names); port_visibility draws them even while nothing feeds them.
     "shownArguments",

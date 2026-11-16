@@ -104,6 +104,11 @@ ASPECT_VARIANT_SELECTION = "variant_selection"
 #: parameter. Value ``True``; absent means "not ColName". A different concept
 #: from ``columns`` (which restricts a VARIABLE input), so a different aspect.
 ASPECT_COLNAME = "colname"
+#: A call-site parameter that receives an OUTPUT path (``PathOutput(template)``),
+#: keyed by the parameter, value the template string. Relative templates go
+#: under the project's ``[outputs] folder`` (``scifor.project.outputs``). Like
+#: ColName it is a resolution marker, never part of call identity.
+ASPECT_PATHOUTPUT = "pathoutput"
 ASPECTS = (
     ASPECT_COLUMNS,
     ASPECT_RUN_OPTIONS,
@@ -113,6 +118,7 @@ ASPECTS = (
     ASPECT_CONSTANTS,
     ASPECT_VARIANT_SELECTION,
     ASPECT_COLNAME,
+    ASPECT_PATHOUTPUT,
 )
 
 #: Aspects whose value is a mapping KEYED BY PART (parameter, constant name,
@@ -127,6 +133,7 @@ PER_KEY_ASPECTS = (
     ASPECT_HIDDEN,
     ASPECT_VARIANT_SELECTION,
     ASPECT_COLNAME,
+    ASPECT_PATHOUTPUT,
 )
 
 #: Origins, and the surfaces each reads IN ORDER (rule 3).
@@ -530,6 +537,40 @@ def normalize_colname_inputs(raw: Any) -> list[str]:
         )
         return []
     return sorted({str(n) for n in names if n})
+
+
+def normalize_pathoutput_inputs(raw: Any) -> dict[str, str]:
+    """The parameters stated to receive an output path, as
+    ``{param: template}`` sorted by parameter.
+
+    THE owner of this shape. Tolerates what crosses the JSON boundary:
+
+    * ``{"filename": "figures/{subject}.png", ...}`` — the canonical map;
+    * ``None`` — none.
+
+    A blank template means "not an output path" and is dropped, so clearing
+    the field on the node is how a statement is removed. Templates are kept
+    exactly as written (``{key}`` placeholders, ``{ColName}``); a relative
+    one goes under the project's ``[outputs] folder`` at resolution time
+    (``scifor.project.outputs``), never here.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        logger.warning(
+            "[intent] ignoring PathOutput inputs of unexpected type %s: %r",
+            type(raw).__name__,
+            raw,
+        )
+        return {}
+    out: dict[str, str] = {}
+    for param, template in raw.items():
+        if not param or template is None:
+            continue
+        text = str(template).strip()
+        if text:
+            out[str(param)] = text
+    return dict(sorted(out.items()))
 
 
 #: ``{aspect: normalizer}`` — a value entering resolution is normalized by

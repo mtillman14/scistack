@@ -77,6 +77,9 @@ interface FunctionNodeData {
   // ColName()). Display only here, like columnSelections; written by the
   // Inputs section's n/a | ColName dropdown.
   colNameInputs?: string[]
+  // Parameters that receive an output path (PathOutput): {param: template}.
+  // Display only here; written by the Inputs section's output-path field.
+  pathOutputs?: Record<string, string>
   // Per-parameter "stated here, not used by the last run" — see
   // FunctionSettingsPanel.UnusedIntent and docs/claude/intent-and-fact.md §7.
   unusedIntent?: Record<string, { reason: string; origin: string | null }>
@@ -416,8 +419,13 @@ function PipelineFunctionNode({ id, data }: Props) {
   const colNameInputs = new Set(data.colNameInputs ?? [])
   // What a port carries besides "the whole variable": its column pick, or
   // `ColName` for a parameter fed the current column's name.
+  const pathOutputs = data.pathOutputs ?? {}
   const describePort = (param: string): string | null =>
-    colNameInputs.has(param) ? 'ColName' : describeColumns(columnSelections[param])
+    colNameInputs.has(param)
+      ? 'ColName'
+      : pathOutputs[param] !== undefined
+        ? `\u2192 ${pathOutputs[param]}`
+        : describeColumns(columnSelections[param])
   const leftHandles = inputPorts(data).map(({ name: param, type }) => {
     const cols = describePort(param)
     const base = type ? `${param}: ${type}` : param
