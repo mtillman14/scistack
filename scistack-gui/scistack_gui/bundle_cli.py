@@ -38,6 +38,10 @@ EXPORT_FLAGS = {
         "wheelhouse",
         "Wheelhouse: a wheel of each library the project uses, so it installs without being published",
     ),
+    "hide_path_locations": (
+        "hide-path-locations",
+        "Hide PathInput folders (for a public release)",
+    ),
 }
 
 
@@ -249,7 +253,7 @@ def _parse_pairs(pairs: list[str], what: str, *, empty_is_none: bool) -> dict:
 
 
 def _cmd_export(args: argparse.Namespace) -> dict:
-    from scidb.project.bundle import EXTENSION, ExportOptions
+    from scidb.project.bundle import EXTENSION, ExportOptions, ExportReport
     from scidb.inspect.cli import CLIError, resolve_db_path
 
     from scistack_gui.headless import export_project_bundle
@@ -262,13 +266,19 @@ def _cmd_export(args: argparse.Namespace) -> dict:
         raise BundleCLIError(f"Database not found: {db_path} (from {source})")
     options = ExportOptions(**{f: getattr(args, f) for f in EXPORT_FLAGS})
     out = args.out or Path.cwd() / f"{Path(db_path).stem}{EXTENSION}"
-    path = export_project_bundle(db_path, out, options=options)
+    report = ExportReport()
+    path = export_project_bundle(db_path, out, options=options, report=report)
     if not args.json:
         size = path.stat().st_size
         print(f"exported {db_path} ({source})")
         print(f"      to {path} ({size:,} bytes)")
         print(f" options {', '.join(f'{f}={getattr(options, f)}' for f in EXPORT_FLAGS)}")
-    return {"path": str(path), "options": options.to_dict()}
+        if report.redaction is not None:
+            hidden = sorted({name for _, name in report.redaction["hidden"]})
+            print(f"  hidden PathInput folders: {', '.join(hidden) or '(none declared a folder)'}")
+        for w in report.warnings:
+            print(f"  note: {w}")
+    return {**report.to_dict(), "path": str(path), "options": options.to_dict()}
 
 
 # ---------------------------------------------------------------------------

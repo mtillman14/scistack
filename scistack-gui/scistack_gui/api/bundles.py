@@ -67,8 +67,17 @@ def _export_project_bundle(db, req: ExportBundle) -> dict:
     if not out.is_absolute():
         raise ValueError(f"export path must be absolute, got {req.out_path!r}")
     logger.info("[bundles] export_project_bundle -> %s (options %s)", out, options)
-    path = export_open_project(out, options=options, db=db)
-    return {"path": str(path), "bytes": path.stat().st_size, "options": options.to_dict()}
+    from scidb.project.bundle import ExportReport
+
+    report = ExportReport()
+    path = export_open_project(out, options=options, db=db, report=report)
+    return {
+        "path": str(path),
+        "bytes": path.stat().st_size,
+        "options": options.to_dict(),
+        "redaction": report.redaction,
+        "warnings": report.warnings,
+    }
 
 
 class VerifyRequest(BaseModel):

@@ -135,6 +135,15 @@ def test_the_gui_offers_exactly_the_cli_options(client):
     assert body["default_name"].endswith(body["extension"])
 
 
+def test_hide_path_locations_is_offered_with_the_option_default():
+    from scidb.project.bundle import ExportOptions
+    from scistack_gui.bundle_cli import export_choices
+
+    choice = {c["name"]: c for c in export_choices()}["hide_path_locations"]
+    assert choice["flag"] == "hide-path-locations"
+    assert choice["default"] is ExportOptions().hide_path_locations is False
+
+
 def test_pairs_parse_and_refuse_bad_input():
     from scistack_gui.bundle_cli import BundleCLIError, _parse_pairs
 

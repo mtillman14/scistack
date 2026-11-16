@@ -141,6 +141,50 @@ never hashed. So changing the root doesn't fork anything, and the imported
 history (which records the exporter's spec on the `__pathinput__` record, an
 accurate fact of what was read) stays valid.
 
+## Hiding PathInput locations (issue #16)
+
+`ExportOptions.hide_path_locations` (CLI `--hide-path-locations`, a checkbox in
+the GUI export dialog; default **off**, for internal transfers) writes a bundle
+that keeps WHICH files a PathInput names (name, template shape, aliases,
+key_regex) but not WHERE they are: `root_folder` is removed, an absolute
+template loses its leading placeholder-free folders
+(`/Volumes/Lab/Study/{subject}/a.csv` -> `{subject}/a.csv`,
+`scifor.pathinput.split_template_location`), and the exporter's project folder
+is left out of the manifest. Identity is the name alone, so no id changes and
+`scistack verify` is unaffected. Not hidden, by design: schema key VALUES
+(anonymizing was dropped 2026-10-08).
+
+One owner: `scidb/project/path_redaction.py`. `ExportContext.redaction` is the
+`PathRedaction` (or `None`); each section applies it to its own data and every
+folder it removes becomes a *needle*. After ALL providers ran, `bundle._hide_locations`
+rewrites the code section's entities TOML, then every table dump (`tables.json`
+anywhere but the data section) in a scratch in-memory DuckDB: structural rules
+(`_constant` PathInput specs; the GUI's `_pipeline_path_input_history`, registered
+by `GuiSection`), then one textual replace over every VARCHAR column. The live
+database is never touched.
+
+Where a location can sit, and what happens (the scope of "hide"):
+
+| | Place | Treatment |
+|---|---|---|
+| L1 | entities TOML `[path_inputs]` | rewritten (`bundle._map_path_inputs`, shared with import) |
+| L2 | `.py` / `.m` declaring a PathInput with a root | **never edited**: leftover refuses the export |
+| L3 | `gui/gui.json` `path_inputs` | `PathRedaction.display` (every registered PathInput is a needle, not only canvas ones) |
+| L4 | `gui/verbatim` `_pipeline_path_input_history` | table rule: roots emptied, rows de-duplicated |
+| L5 | `_constant` PathInput specs | structural rule |
+| L6 | history free text (failure reasons, notes, source) | textual replace by `<PathInput NAME>` / `<project>` |
+| L7 | manifest `project.root` | omitted |
+| L8 | `scistack.toml` absolute in-project paths | made relative at export (`bundle._config_paths_relative`, the transform import uses) |
+| L9 | external code folders | not rewritten; refused only if they contain a needle |
+| L10 | saved data (`data` section) | exported as it is; the report says so |
+
+**Leftovers refuse.** After every section is built, every text member (and every
+table cell) is searched for the needles. Any hit raises `BundleError` naming the
+place and the PathInput (never the folder) and writes no bundle: a public-release
+export must not scroll a warning past. Import of a hidden bundle flags each
+PathInput that has no root (`--path-root NAME=FOLDER`); `preview()` reports
+`paths_hidden`. Tests: `scidb/tests/test_path_redaction.py`.
+
 ## History import
 
 History and data are imported **only into a new, empty project with the
@@ -246,6 +290,7 @@ Status as of 2026-10-08.
 | E15 | Subset of locations | ❌ | Stage 9b: `ExportOptions.locations` (a `LocationFilter`), owner `scidb.subset`. Anonymizing was DROPPED (user, 2026-10-08): subject codes are normally pseudonyms already, real identifiers belong upstream of the raw files, data content would not be covered, and pseudonyms would defeat `verify`. |
 | E16 | Manifest, format version, `.scistack` archive | ✅ | `scidb/project/bundle.py`: manifest with per-file SHA-256, plain zip, `ExportOptions` as the one owner of defaults (Stage 4). |
 | E17 | Plain-script export | ✅ | `code_export_service.py`. |
+| E18 | Hide PathInput locations | ✅ (pytest unrun, GUI unchecked) | `ExportOptions.hide_path_locations`, `scidb/project/path_redaction.py`; see "Hiding PathInput locations". |
 
 ## Import steps
 

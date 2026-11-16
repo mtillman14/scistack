@@ -66,8 +66,13 @@ class GuiSection:
                 for p in pipelines
             ],
             "canvas": snap.to_dict(),
-            **portability_service.export_globals(db, snap, pipeline_ids),
+            **portability_service.export_globals(
+                db, snap, pipeline_ids, redaction=getattr(ctx, "redaction", None)
+            ),
         }
+        if getattr(ctx, "redaction", None) is not None:
+            # Its rows hold the folders PathInputs were once run from.
+            ctx.redaction.add_table_rule("_pipeline_path_input_history", _hide_path_input_history)
         logger.info(
             "[bundle_section] gui export: %d pipeline(s); %d library pipeline(s) by "
             "reference; canvas %s",
@@ -284,6 +289,22 @@ def _verbatim_export(db) -> "dict[str, bytes]":
     }
     logger.info("[bundle_section] gui verbatim export: %d file(s)", len(files))
     return files
+
+
+def _hide_path_input_history(duck, redaction) -> None:
+    """``_pipeline_path_input_history`` in a scratch copy: no root, no location
+    in the template. ``root_folder`` is part of the primary key, so the rows are
+    rebuilt rather than updated: two rows that differed only by root become one."""
+    rows = duck.fetchall("SELECT name, template, root_folder FROM _pipeline_path_input_history")
+    hidden = {(name, redaction.template(name, template, root or None), "") for name, template, root in rows}
+    duck.execute("DELETE FROM _pipeline_path_input_history")
+    for row in sorted(hidden):
+        duck.execute(
+            "INSERT INTO _pipeline_path_input_history (name, template, root_folder) VALUES (?, ?, ?)",
+            list(row),
+        )
+    redaction.report.hidden.extend(("gui/verbatim/_pipeline_path_input_history", n) for n, _, _ in sorted(hidden))
+    logger.info("[bundle_section] hid locations in %d path-input history row(s) -> %d", len(rows), len(hidden))
 
 
 def _verbatim_import(db, files: "dict[str, bytes]") -> dict:

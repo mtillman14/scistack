@@ -95,7 +95,7 @@ def bundle_providers() -> list:
     return [CodeSection(), GuiSection(), PlotsSection(), StatsSection()]
 
 
-def export_open_project(out_path: "Path | str", *, options=None, db=None) -> Path:
+def export_open_project(out_path: "Path | str", *, options=None, db=None, report=None) -> Path:
     """Write the project THIS process has open as a ``.scistack``. The one
     export composition: the terminal reaches it through
     :func:`export_project_bundle` (which opens first), the GUI's
@@ -108,16 +108,19 @@ def export_open_project(out_path: "Path | str", *, options=None, db=None) -> Pat
 
     db = db if db is not None else gui_db.get_db()
     out = export_project(
-        project_root(), db, out_path, options=options, providers=bundle_providers()
+        project_root(), db, out_path, options=options, providers=bundle_providers(),
+        report=report,
     )
     logger.info("[headless] exported %s to %s (options %s)", gui_db.get_db_path(), out, options)
     return out
 
 
-def export_project_bundle(db_path: "Path | str", out_path: "Path | str", *, options=None) -> Path:
+def export_project_bundle(
+    db_path: "Path | str", out_path: "Path | str", *, options=None, report=None
+) -> Path:
     """Open the project WITH discovery and write it as a ``.scistack``."""
     open_for_export(db_path)
-    return export_open_project(out_path, options=options)
+    return export_open_project(out_path, options=options, report=report)
 
 
 def preview_bundle(bundle_path: "Path | str") -> dict:

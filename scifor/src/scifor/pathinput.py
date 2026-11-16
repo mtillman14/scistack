@@ -178,6 +178,31 @@ def clear_listing_cache() -> None:
     _DIR_CACHE.clear()
 
 
+def split_template_location(template: str) -> "tuple[str, str]":
+    """Split *template* into ``(location, rest)``: the leading folders that say
+    WHERE the files are on this machine, and the part that says WHICH files.
+
+    The anchor of an absolute template (POSIX `/`, a Windows drive `Y:`, a UNC
+    `\\\\server\\share`) and the placeholder-free folders after it are the
+    location. A relative template has none. A fully literal path keeps its
+    last segment (the file name) as *rest*. Same anchoring rule as
+    ``PathInput._root_and_segments`` (the one that resolves it).
+    """
+    normalised = template.replace("\\", "/")
+    segments = [s for s in normalised.split("/") if s]
+    if normalised.startswith("//") and len(segments) >= 2:
+        anchor, segments = "//" + segments[0] + "/" + segments[1], segments[2:]
+    elif normalised.startswith("/"):
+        anchor = "/"
+    elif segments and re.fullmatch(r"[A-Za-z]:", segments[0]):
+        anchor, segments = segments[0], segments[1:]
+    else:
+        return "", template
+    cut = next((i for i, s in enumerate(segments) if "{" in s), max(len(segments) - 1, 0))
+    location = "/".join([anchor.rstrip("/"), *segments[:cut]]) or "/"
+    return location, "/".join(segments[cut:])
+
+
 def _expects_file(segment: str) -> bool:
     """Heuristic: does this LAST path segment's template text look like a
     file (has a literal ``.ext``-style suffix) rather than a directory?
@@ -417,6 +442,23 @@ class PathInput:
         """Where a relative template resolves: the bound root, else
         ``scifor.project.root.project_root()``."""
         return self._project_root if self._project_root is not None else project_root()
+
+    def without_location(self) -> "PathInput":
+        """A copy that keeps WHICH files (name, template shape, aliases,
+        key_regex) and loses WHERE they are on this machine: no
+        ``root_folder``, and an absolute template without its leading
+        placeholder-free folders (:func:`split_template_location`). Identity is
+        the name alone, so nothing it hashes changes. Used by the bundle
+        export's "hide locations" option."""
+        _, rest = split_template_location(self.path_template)
+        return PathInput(
+            rest,
+            name=self.name,
+            root_folder=None,
+            aliases=self.aliases,
+            key_regex=self.key_regex,
+            regex=self.regex,
+        )
 
     def to_key(self) -> str:
         """The IDENTITY of this PathInput: its name, as a JSON string.

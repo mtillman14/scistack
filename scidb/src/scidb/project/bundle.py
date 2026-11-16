@@ -228,6 +228,10 @@ class ExportOptions:
     include_history: bool = True
     include_data: bool = False
     include_wheelhouse: bool = False
+    #: Keep each PathInput's name and template shape but not WHERE its files
+    #: are (``scidb.project.path_redaction``): for a public release. Off, the
+    #: exporter's folders travel as they are (internal project transfers).
+    hide_path_locations: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -244,6 +248,25 @@ class ExportContext:
     db: Any
     options: ExportOptions
     package: "str | None"
+    #: ``scidb.project.path_redaction.PathRedaction`` when the export hides
+    #: PathInput locations, else ``None``. A section that writes a location
+    #: passes it through this when it is not ``None``.
+    redaction: Any = None
+
+
+@dataclass
+class ExportReport:
+    """What an export did beyond writing the file, filled in by
+    :func:`export_project` when the caller passes one."""
+
+    path: "Path | None" = None
+    #: Present only when locations were hidden (``RedactionReport.to_dict``).
+    redaction: "dict | None" = None
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {"path": str(self.path) if self.path else None,
+                "redaction": self.redaction, "warnings": list(self.warnings)}
 
 
 @dataclass
@@ -322,13 +345,68 @@ def _scistack_version() -> str:
 # ---------------------------------------------------------------------------
 
 
-def _config_section(root: Path) -> "dict[str, bytes]":
+def _config_section(root: Path, relative_paths: bool = False) -> "dict[str, bytes]":
+    """The project config. *relative_paths* (a location-hiding export, which
+    leaves the exporter's root out of the manifest) makes its absolute
+    in-project paths relative here, the same transform import applies with the
+    manifest's root."""
+    from scifor.project import config_file
     from scifor.project.config import project_config_at
 
     config = project_config_at(root)
     if config is None:
         return {}
-    return {"scistack.toml": config.read_bytes()}
+    data = config.read_bytes()
+    if relative_paths:
+        section = _toml_loads(data.decode("utf-8"))
+        new = _config_paths_relative(section, root.as_posix())
+        if new != json.loads(json.dumps(section, default=str)):
+            data = config_file.render(new).encode("utf-8")
+            Log.info("[redaction] config: in-project paths made relative")
+    return {"scistack.toml": data}
+
+
+def _hide_locations(sections: "dict[str, dict[str, bytes]]", redaction) -> list:
+    """Hide PathInput locations in every section already built, in place:
+    entities files of the code section, then every table dump. Returns the
+    ``[(where, label, count)]`` still found in a table cell.
+
+    Runs AFTER all providers, so every folder a declaration revealed is a
+    needle by the time the history text is searched. Saved data
+    (``DATA_SECTION``) is exported as it is."""
+    from scidb.project import path_redaction, table_copy
+    from scifor.project.entities_file import PATH_INPUTS
+
+    for rel, data in list(sections.get("code", {}).items()):
+        if not rel.endswith(".toml"):
+            continue
+        try:
+            text = data.decode("utf-8")
+            if PATH_INPUTS not in _toml_loads(text):
+                continue
+        except Exception:
+            continue
+        text, changed = _map_path_inputs(
+            text,
+            lambda name, arms: [redaction.arm(name, a, f"code/{rel}") for a in arms],
+        )
+        if changed:
+            sections["code"][rel] = text.encode("utf-8")
+            Log.info(f"[redaction] code/{rel}: location removed from {changed}")
+
+    left: list = []
+    for name, files in sections.items():
+        if name == DATA_SECTION:
+            continue
+        for rel in [r for r in files if r == table_copy.TABLES_FILE or r.endswith("/" + table_copy.TABLES_FILE)]:
+            prefix = rel[: -len(table_copy.TABLES_FILE)]
+            dump = {r[len(prefix):]: d for r, d in files.items() if r.startswith(prefix) and "/" not in r[len(prefix):]}
+            new, found = path_redaction.redact_tables(dump, redaction, f"{name}/{prefix}".rstrip("/"))
+            for r in dump:
+                del files[prefix + r]
+            files.update({prefix + r: d for r, d in new.items()})
+            left += found
+    return left
 
 
 def _env_section() -> "dict[str, bytes]":
@@ -541,9 +619,16 @@ def export_project(
     *,
     options: "ExportOptions | None" = None,
     providers: "list[SectionProvider] | None" = None,
+    report: "ExportReport | None" = None,
 ) -> Path:
     """Write the project at *root* (whose database *db* the caller opened) to
-    *out_path* (``.scistack`` appended when missing). Returns the path."""
+    *out_path* (``.scistack`` appended when missing). Returns the path; *report*,
+    when given, is filled with what else the export did.
+
+    With ``options.hide_path_locations`` the PathInput folders are removed
+    from every section (``scidb.project.path_redaction``); a folder that is
+    still in a file afterwards -- code is never rewritten -- raises
+    ``BundleError`` and writes nothing."""
     from scifor.project.discovery import own_package_dir, read_project_name
 
     root = Path(root).resolve()
@@ -560,9 +645,12 @@ def export_project(
             "derived data needs its history: data without the record of what "
             "produced it cannot be loaded consistently (include_history=True)"
         )
-    ctx = ExportContext(root=root, db=db, options=options, package=package)
+    from scidb.project.path_redaction import PathRedaction
+
+    redaction = PathRedaction(root) if options.hide_path_locations else None
+    ctx = ExportContext(root=root, db=db, options=options, package=package, redaction=redaction)
     sections: dict[str, dict[str, bytes]] = {
-        CONFIG_SECTION: _config_section(root),
+        CONFIG_SECTION: _config_section(root, relative_paths=redaction is not None),
         ENV_SECTION: _env_section(),
     }
     from scidb.project import table_copy
@@ -588,6 +676,8 @@ def export_project(
         sections[provider.name] = files
         Log.info(f"[bundle] section {provider.name}: {len(files)} file(s)")
 
+    table_leftovers = _hide_locations(sections, redaction) if redaction is not None else []
+
     manifest = {
         "format_version": FORMAT_VERSION,
         "scistack_version": _scistack_version(),
@@ -601,7 +691,9 @@ def export_project(
             "schema_parents": dict(db.schema_tree.parent_of),
             # Lets import turn the exporter's absolute in-project config paths
             # back into relative ones (the GUI's first-write seeds).
-            "root": root.as_posix(),
+            # Left out when locations are hidden: it names the exporter's folder
+            # (the config's paths were made relative at export instead).
+            **({} if redaction is not None else {"root": root.as_posix()}),
         },
         "options": options.to_dict(),
         #: Dataset-intent rows the exporter held, for the import's warnings.
@@ -615,6 +707,29 @@ def export_project(
         },
     }
 
+    if redaction is not None:
+        from scidb.project import path_redaction
+
+        found = table_leftovers + path_redaction.leftovers(
+            {**sections, "": {MANIFEST: json.dumps(manifest).encode("utf-8")}},
+            redaction,
+            skip={DATA_SECTION},
+        )
+        redaction.report.remaining = found
+        Log.info(
+            f"[redaction] hidden {len(redaction.report.hidden)} location(s), replaced "
+            f"{sum(redaction.report.replaced.values())} in text, {len(found)} place(s) remain"
+        )
+        if found:
+            raise BundleError(path_redaction.refusal(found))
+        if report is not None:
+            report.redaction = redaction.report.to_dict()
+            if options.include_data:
+                report.warnings.append(
+                    "saved data is exported as it is; SciStack does not look inside it "
+                    "for folder names"
+                )
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.name + ".tmp")
     with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -627,6 +742,8 @@ def export_project(
         f"[bundle] wrote {out_path}: sections {sorted(sections)}, "
         f"{sum(len(f) for f in sections.values())} file(s)"
     )
+    if report is not None:
+        report.path = out_path
     return out_path
 
 
@@ -706,14 +823,11 @@ def _relative_to_exporter(value: Any, exporter_root: "str | None") -> Any:
     return value
 
 
-def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
-    """Write the bundle's ``scistack.toml`` into the new project: in-project
-    absolute paths made relative, schema-keyed tables (``[schema_keys]``,
-    ``[aliases]``, ``[colors]``) remapped. Unchanged -> the bytes verbatim
-    (comments kept); changed -> through ``config_file`` (every key kept)."""
-    from scifor.project import config_file
-
-    section = _toml_loads(data.decode("utf-8"))
+def _config_paths_relative(section: dict, exporter_root: "str | None") -> dict:
+    """A copy of the parsed ``scistack.toml`` with its absolute in-project
+    paths made relative to *exporter_root*. The one place that knows which
+    config keys hold paths: import uses it with the manifest's root, a
+    location-hiding export with the real one."""
     new = json.loads(json.dumps(section, default=str))
 
     def rel(v):
@@ -732,6 +846,18 @@ def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
         for key in ("variable_dir", "entities_file"):
             if key in matlab:
                 matlab[key] = rel(matlab[key])
+    return new
+
+
+def _write_config(path: Path, data: bytes, kmap, exporter_root, report) -> None:
+    """Write the bundle's ``scistack.toml`` into the new project: in-project
+    absolute paths made relative, schema-keyed tables (``[schema_keys]``,
+    ``[aliases]``, ``[colors]``) remapped. Unchanged -> the bytes verbatim
+    (comments kept); changed -> through ``config_file`` (every key kept)."""
+    from scifor.project import config_file
+
+    section = _toml_loads(data.decode("utf-8"))
+    new = _config_paths_relative(section, exporter_root)
     for table in ("schema_keys", "aliases", "colors"):
         if table in new:
             new[table] = kmap.table(new[table], f"scistack.toml [{table}]", report)
@@ -760,22 +886,58 @@ def _declared_path_inputs(root: Path) -> "tuple[Path, str, dict[str, list[dict]]
         return None
     path = Path(path)
     text = path.read_text(encoding="utf-8")
+    return path, text, _arms_in(text)
+
+
+def _arms_in(text: str) -> "dict[str, list[dict]]":
+    """The ``[path_inputs]`` of an entities file's *text*: ``{name: [{"template",
+    "root_folder", "aliases", "key_regex"}, ...]}``, one dict per arm. THE
+    reader of the section: import, preview and a location-hiding export."""
+    from scifor.project.entities_file import PATH_INPUTS
+
     declared = {}
     for name, raw in (_toml_loads(text).get(PATH_INPUTS) or {}).items():
         raw_arms = raw if isinstance(raw, list) else [raw]
         declared[name] = [
-            {"template": a, "root_folder": None, "aliases": {}} if isinstance(a, str) else
+            {"template": a, "root_folder": None, "aliases": {}, "key_regex": {}}
+            if isinstance(a, str) else
             {
                 "template": a.get("template", ""),
                 "root_folder": a.get("root_folder"),
                 "aliases": a.get("aliases") or {},
+                "key_regex": a.get("key_regex") or {},
             }
             for a in raw_arms
         ]
-    return path, text, declared
+    return declared
 
 
-def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report) -> dict:
+def _map_path_inputs(text: str, per_name: "Callable[[str, list[dict]], list[dict]]") -> "tuple[str, list[str]]":
+    """*text* with every ``[path_inputs]`` entry whose arms *per_name* changes
+    re-rendered (the rest of the file, comments included, is untouched), and
+    the names changed. THE writer: import's roots and key remap and an
+    export's hidden locations both go through it."""
+    from scifor.project.entities_file import PATH_INPUTS, render_path_input_value, upsert_entry
+
+    changed = []
+    for name, arms in _arms_in(text).items():
+        new_arms = per_name(name, arms)
+        if new_arms == arms:
+            continue
+        first, rest = new_arms[0], new_arms[1:]
+        text = upsert_entry(
+            text, PATH_INPUTS, name,
+            render_path_input_value(
+                first["template"], first["root_folder"], rest, first["aliases"], first["key_regex"]
+            ),
+        )
+        changed.append(name)
+    return text, changed
+
+
+def _rewrite_path_inputs(
+    root: Path, kmap, path_roots: "dict[str, str]", report, locations_hidden: bool = False
+) -> dict:
     """The PathInputs the new project's entities TOML declares: template
     placeholders renamed through *kmap*; ``root_folder`` set from
     *path_roots* (``{name: folder}``, the recipient's copy of the raw data,
@@ -783,34 +945,15 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
     ``root_folder`` is reported, as is a root given for an unknown name.
     PathInputs declared in Python source cannot be rewritten here and keep
     their templates."""
-    from scifor.project.entities_file import PATH_INPUTS, render_path_input_value, upsert_entry
-
-    out = {"rewritten": [], "roots_unchanged": [], "unknown_roots": []}
+    out = {"rewritten": [], "roots_unchanged": [], "roots_hidden": [], "unknown_roots": []}
     found = _declared_path_inputs(root)
     if found is None:
         out["unknown_roots"] = sorted(path_roots)
         return out
     path, text, declared = found
 
-    for name, arms in declared.items():
+    def remap(name: str, arms: "list[dict]") -> "list[dict]":
         where = f"PathInput {name}"
-        new_arms = [
-            {
-                "template": kmap.template(a["template"], where, report),
-                "root_folder": path_roots.get(name, a["root_folder"]),
-                "aliases": _rename_alias_keys(a["aliases"], kmap),
-            }
-            for a in arms
-        ]
-        if new_arms != arms:
-            first, rest = new_arms[0], new_arms[1:]
-            text = upsert_entry(
-                text, PATH_INPUTS, name,
-                render_path_input_value(
-                    first["template"], first["root_folder"], rest, first["aliases"]
-                ),
-            )
-            out["rewritten"].append(name)
         if name not in path_roots:
             roots = sorted({a["root_folder"] for a in arms if a["root_folder"]})
             if roots:
@@ -818,12 +961,30 @@ def _rewrite_path_inputs(root: Path, kmap, path_roots: "dict[str, str]", report)
                 report.flagged.append(
                     (where, f"root_folder is still the exporter's {roots}; give your own")
                 )
+            elif locations_hidden:
+                out["roots_hidden"].append(name)
+                report.flagged.append(
+                    (where, "the exporter hid its folder; give yours with --path-root "
+                     f"{name}=FOLDER, otherwise files are looked for in the project folder")
+                )
+        return [
+            {
+                "template": kmap.template(a["template"], where, report),
+                "root_folder": path_roots.get(name, a["root_folder"]),
+                "aliases": _rename_alias_keys(a["aliases"], kmap),
+                "key_regex": a["key_regex"],
+            }
+            for a in arms
+        ]
+
+    new_text, out["rewritten"] = _map_path_inputs(text, remap)
     out["unknown_roots"] = sorted(set(path_roots) - set(declared))
     if out["rewritten"]:
-        path.write_text(text, encoding="utf-8")
+        path.write_text(new_text, encoding="utf-8")
     Log.info(
         f"[bundle] PathInputs: {len(out['rewritten'])} rewritten, "
         f"{len(out['roots_unchanged'])} keep the exporter's root, "
+        f"{len(out['roots_hidden'])} hidden by the exporter, "
         f"{len(out['unknown_roots'])} root(s) given for unknown names"
     )
     return out
@@ -1107,7 +1268,10 @@ def import_project(
     # exporter's (a copy) and init only fills in what is missing.
     _run(PHASE_FILES, ImportContext(root=root, db=None, db_path=db_path, schema_keys=keys,
                                     manifest=manifest, key_map=kmap, map_report=map_report))
-    report.sections["path_inputs"] = _rewrite_path_inputs(root, kmap, path_roots or {}, map_report)
+    report.sections["path_inputs"] = _rewrite_path_inputs(
+        root, kmap, path_roots or {}, map_report,
+        locations_hidden=bool((manifest.get("options") or {}).get("hide_path_locations")),
+    )
 
     env_files = bundle.sections.get(ENV_SECTION, {})
     from scidb.project.environment import ENVIRONMENT_FILE, STATE_DIR, WHEELHOUSE_DIR
@@ -1210,6 +1374,8 @@ def preview(
         "database": project.get("database"),
         "exported_root": project.get("root"),
         "options": manifest.get("options") or {},
+        # The exporter hid its PathInput folders: the dialog says so instead of "(none)".
+        "paths_hidden": bool((manifest.get("options") or {}).get("hide_path_locations")),
         "sections": {
             name: {"files": len(files), "bytes": sum(len(d) for d in files.values())}
             for name, files in sorted(bundle.sections.items())

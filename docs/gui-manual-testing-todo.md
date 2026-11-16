@@ -6617,6 +6617,17 @@ Setup: a NEW project database with schema keys `subject` only, a PathInput `{sub
 
 ---
 
+## Hide PathInput folders at export (issue #16)
+
+Setup: a project whose PathInput has a `root_folder` (entities file) and at least one run with it.
+
+1. Export project: the dialog lists **Hide PathInput folders (for a public release)**, unticked.
+2. Tick it and export. Unzip the `.scistack`: `grep -r` for the root folder and for your project folder finds nothing; `code/.../scistack_entities.toml` keeps the PathInput with no `root_folder`.
+3. Add `root_folder="/your/folder"` to a PathInput in a `.py` file and export with the box ticked: the export is refused, the message names the file and the PathInput (not the folder), and no file is written.
+4. Import the hidden bundle: the report flags each PathInput "the exporter hid its folder"; importing with a path root for one fills it in.
+
+---
+
 ## Done
 
 (Move items here once checked, with the date and anything noticed.)

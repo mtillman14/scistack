@@ -127,7 +127,7 @@ def hypothesis_of(db, pipeline_id: str) -> "dict | None":
     }
 
 
-def export_globals(db, snap, pipeline_ids: list[str]) -> dict:
+def export_globals(db, snap, pipeline_ids: list[str], redaction=None) -> dict:
     """The project-wide GUI state the captured nodes depend on -- shared by
     a pipeline document and a whole-project bundle (one owner):
 
@@ -138,6 +138,11 @@ def export_globals(db, snap, pipeline_ids: list[str]) -> dict:
     * ``builtin_functions``: manually declared library references the canvas
       uses (no source file to rediscover them from);
     * ``parameter_value_groups``: a Parameter's generated-set grouping.
+
+    *redaction* (``scidb.project.path_redaction.PathRedaction``, a bundle export
+    that hides PathInput locations) removes where each PathInput's files are.
+    EVERY registered PathInput is passed through it, not only the ones on the
+    canvas, so a folder declared in code is a needle for the whole export.
 
     Needs the code registry (the project is opened WITH discovery to export).
     """
@@ -152,10 +157,13 @@ def export_globals(db, snap, pipeline_ids: list[str]) -> dict:
     labels = {n.label for n in snap.nodes}
 
     path_input_registry = registry.get_path_inputs_registry()
+    shown = {name: path_input_display(obj) for name, obj in path_input_registry.items()}
+    if redaction is not None:
+        shown = {name: redaction.display(name, d, "gui") for name, d in shown.items()}
     path_inputs = [
-        {"name": name, **path_input_display(path_input_registry[name])}
+        {"name": name, **shown[name]}
         for name in sorted(referenced["pathInputNode"])
-        if name in path_input_registry
+        if name in shown
     ]
     # Constants and Sweeps are ONE node type on the canvas (Parameters, D6):
     # PARTITIONED, never duplicated. A Parameter the registry knows as a Sweep
