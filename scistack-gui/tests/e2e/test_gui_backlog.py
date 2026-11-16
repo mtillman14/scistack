@@ -159,10 +159,17 @@ def test_node_panel_header_and_back_to_palette(page, server):
     """Item 0zzzzzzzzzzzzzzzz (node panels) steps 1-2: selecting a node shows
     the shared header with its kind; ← Palette returns to the palette."""
     open_canvas(page, server)
-    node(page, "function", "backlog_double").click()
+    # The header corner, not the centre: a small function node's centre is
+    # its Run button, and a stray run's report then covered the NEXT test's
+    # canvas (CI 2026-11-16, test_plot_studio_rail_groups_all_render).
+    node(page, "function", "backlog_double").click(position={"x": 8, "y": 6})
     assert page.get_by_test_id("panel-kind").is_visible()
     page.get_by_test_id("panel-back-to-palette").click()
     page.get_by_test_id("palette-search").wait_for()
+    # Selecting a node must not run it (a run streams run_output first).
+    page.wait_for_timeout(500)
+    runs = [f for f in page.smoke_frames if f.get("type") in ("run_output", "run_done")]
+    assert runs == [], f"selecting the node started a run: {runs[:2]}"
 
 
 def test_plot_studio_rail_groups_all_render(page, server):

@@ -103,6 +103,14 @@ def make_page():
     with sync_api.sync_playwright() as pw:
         browser = pw.chromium.launch()
         pg = browser.new_page()
+        # The Run report opens by itself when ANY run finishes (issue #17) and
+        # floats over the right of the canvas. A run started by one test can
+        # finish while the next test's page is connected (the server is per
+        # module), so every page starts with auto-open off; a test of the
+        # report itself turns it back on. Key: runReportTypes.AUTO_OPEN_STORAGE_KEY.
+        pg.add_init_script(
+            "try { localStorage.setItem('scistack.runReport.autoOpen', 'off') } catch (e) {}"
+        )
         errors: list[str] = []
         frames: list[dict] = []
         pg.on("pageerror", lambda exc: errors.append(str(exc)))
